@@ -10,6 +10,53 @@ source-provenance decision code. It does not manufacture a replacement VRS
 algorithm. Full-graph convergence, learned-strength generation, online
 assimilation, durable World commits and actuators are not implemented here.
 
+**Connection direction:** your existing agent (the MCP client) calls this server
+and receives results. This server does not call, host, replace or control an LLM.
+The public `main` branch is the runnable **v0.1 read-only preview**, not the
+in-progress stateful-core integration. Try this preview for MCP connectivity and
+memory/evidence diagnostics; it cannot yet learn from new agent conversations.
+
+Public repository: [raspie10032/SWEGCA-VRS-MCP](https://github.com/raspie10032/SWEGCA-VRS-MCP).
+
+## Connect to Claude Code
+
+Install [uv](https://docs.astral.sh/uv/getting-started/installation/) and Claude
+Code first. On Linux/macOS, clone this public repository and install the locked
+dependencies (no GPU, model download or API key is needed by this MCP server):
+
+```sh
+git clone https://github.com/raspie10032/SWEGCA-VRS-MCP.git
+cd SWEGCA-VRS-MCP
+uv sync --locked
+```
+
+In the project where you want to use Claude Code, register the server with
+**both paths replaced by absolute paths to that clone**:
+
+```sh
+claude mcp add --transport stdio --scope local swegca-vrs -- \
+  /absolute/path/SWEGCA-VRS-MCP/.venv/bin/swegca-vrs-mcp \
+  --dataset /absolute/path/SWEGCA-VRS-MCP/examples/synthetic.json
+claude mcp get swegca-vrs
+```
+
+Start Claude Code in that project, then check `/mcp`. Ask:
+
+> Use the swegca-vrs MCP server. Call system_status, then recall with query
+> "demo" and current_cues ["demo"]. Report the tools and memory outcome types.
+> Treat the fixture as synthetic, and do not claim persistent learning.
+
+Expected discovery: `system_status`, `get_episode`, `recall`, `evaluate_vrs`.
+The fixture has eight records spanning six outcome categories. Use the example
+call below to test the four-stage conditional evaluation as well.
+
+`--scope local` restricts the registration to the current Claude Code project;
+these instructions do not automatically modify any host settings. On Windows,
+substitute the absolute `.venv\\Scripts\\swegca-vrs-mcp.exe` path. The CLI syntax
+follows [Claude Code's official MCP guide](https://code.claude.com/docs/en/mcp).
+Actual SDK stdio tests are verified; a live Claude Code session is **not yet
+verified**. See [the publication checks](docs/PUBLIC_RELEASE.md).
+
 ## Install and run
 
 Python 3.11+; the development environment is Python 3.12.14. Use an isolated
@@ -152,8 +199,9 @@ separately published MPL-2.0 architecture package.
 
 MCP transport uses the [official Python SDK](https://py.sdk.modelcontextprotocol.io/).
 The MIT license covers first-party code here, not third-party dependency licenses.
-This package is prepared locally for public use; no remote repository or registry
-release is implied by these files.
+The source is published on GitHub. No PyPI publication is implied; install from
+the repository. The unfinished local stateful work and its separately licensed
+architecture imports are not part of this read-only source release.
 
 ## Codex 작업 실수 및 교정
 
