@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "swegca-vrs-mcp"
+version = "0.1.0"
+description = "Independent MCP interface for public SWEGCA/VRS reference components"
+requires-python = ">=3.11"
+license = "MIT"
+readme = "README.md"
+dependencies = ["mcp>=2,<3"]
+
+[project.optional-dependencies]
+test = ["pytest>=8", "pytest-asyncio>=0.24"]
+
+[project.scripts]
+swegca-vrs-mcp = "swegca_vrs_mcp.server:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"

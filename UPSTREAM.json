@@ -1,0 +1,66 @@
+{
+  "source_repository": "https://github.com/raspie10032/SWEGCA-VRS-PoC",
+  "source_commit": "9d0fcc9eb58c2fec1aea5d6034b9b0a886208bb3",
+  "license": "MIT",
+  "transformations": [
+    "Replace tinylm_slicer imports with swegca_vrs_mcp.core",
+    "Rename entity-specific schema labels to swegca; resulting schema IDs are a distinct namespace",
+    "Normalize trailing EOF whitespace to one newline",
+    "Omit one private-runtime integration test, not counted as passing"
+  ],
+  "algorithm_changes": false,
+  "files": [
+    {
+      "source": "reference/src/tinylm_slicer/mosaic_memory_activation.py",
+      "destination": "src/swegca_vrs_mcp/core/mosaic_memory_activation.py",
+      "upstream_sha256": "cfccbc2246c1d3099d9a2d8bdd837876c9f5e83600e7643b2340e75d6ddc4715",
+      "port_sha256": "330e518ce890572ec91334515142ec83195c5100fa10d27751a3992fb138bfc6"
+    },
+    {
+      "source": "reference/src/tinylm_slicer/mosaic_paper_hot_causal_ablation.py",
+      "destination": "src/swegca_vrs_mcp/core/mosaic_paper_hot_causal_ablation.py",
+      "upstream_sha256": "30cbbb8f09052a14235625164003ab3dfa929cb898ffed45b25a7227bf559b4c",
+      "port_sha256": "e2d1dcdd84746286fc838c01eb64c7dd96f9d81e132dcf354281ab57c728f7b7"
+    },
+    {
+      "source": "reference/src/tinylm_slicer/mosaic_paper_crossing_provenance.py",
+      "destination": "src/swegca_vrs_mcp/core/mosaic_paper_crossing_provenance.py",
+      "upstream_sha256": "964b0b4ad2da8c42b5c865d0c23e08a25045b4b8f52916815eca71d6ec3eebd9",
+      "port_sha256": "a2ab9ff1f4d73d788b1bc5f2d074392618ee7875495818cce85b1c5c407027c0"
+    },
+    {
+      "source": "reference/src/tinylm_slicer/mosaic_paper_hot_source_provenance.py",
+      "destination": "src/swegca_vrs_mcp/core/mosaic_paper_hot_source_provenance.py",
+      "upstream_sha256": "032cd3b14ee4d44e34c3edda0ff09e64b1bf5c8e1703b920bcabd7dcc4a49018",
+      "port_sha256": "812a4dc1a47f3bb0a544d53377f5035e9bc1d7c6945728e68687d420b8cb73b6"
+    },
+    {
+      "source": "reference/tests/test_mosaic_memory_activation.py",
+      "destination": "tests/test_mosaic_memory_activation.py",
+      "omitted_test": null,
+      "upstream_sha256": "8346ee246c96dd9b332b2c4c98ec47632c9698a71daa828fbff84aa32ac833a5",
+      "port_sha256": "ef8cf77428c8f8a25d2ee8b1e87d24fa8a6f6bc0e0951109a8b38a83694fd305"
+    },
+    {
+      "source": "reference/tests/test_mosaic_paper_hot_causal_ablation.py",
+      "destination": "tests/test_mosaic_paper_hot_causal_ablation.py",
+      "omitted_test": null,
+      "upstream_sha256": "01b0fe6394b0a7168996437c14344379b11ad297f6b12224186bdc61376d1e31",
+      "port_sha256": "4720314656fef6b1260651d13e1e491495acf260574d9cb855a785d641040d0b"
+    },
+    {
+      "source": "reference/tests/test_mosaic_paper_crossing_provenance.py",
+      "destination": "tests/test_mosaic_paper_crossing_provenance.py",
+      "omitted_test": null,
+      "upstream_sha256": "3cdf49aca821f1dfccb62758aab1e57e064604d0c27f12c823e8a6a71e69824c",
+      "port_sha256": "e5a2c3f11970f529442bc09e840c40f40af6af172c462cce1d210abadca88507"
+    },
+    {
+      "source": "reference/tests/test_mosaic_paper_hot_source_provenance.py",
+      "destination": "tests/test_mosaic_paper_hot_source_provenance.py",
+      "omitted_test": "test_integrated_read_only_handler_emits_source_receipts_and_rejects_writes",
+      "upstream_sha256": "dff6a906c8f31cb8176d89b62fa33eee6cafe0054531842b381aa8fce7d72e92",
+      "port_sha256": "986b8905276f86ee4b62f06de2db98020551ff073443483ec5961ce5f2b02091"
+    }
+  ]
+}

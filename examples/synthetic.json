@@ -1,0 +1,252 @@
+{
+  "schema_version": "swegca-vrs-mcp-dataset-v1",
+  "label": "Synthetic software diagnostic; not learned VRS",
+  "synthetic": true,
+  "episodes": [
+    {
+      "episode_id": "experience:success",
+      "cues": [
+        "demo",
+        "source"
+      ],
+      "steps": [
+        {
+          "phase": "synthetic_observation_outcome",
+          "observation": {
+            "source_item_id": "fixture:0"
+          },
+          "relations": [
+            "demo"
+          ],
+          "judgment": "synthetic success record",
+          "outcome": "success",
+          "evidence_refs": [
+            "fixture:episode:0"
+          ]
+        }
+      ],
+      "source_addresses": [
+        "fixture:source:0"
+      ],
+      "revision": "fixture-r1",
+      "verification_state": "historical_only"
+    },
+    {
+      "episode_id": "experience:failure",
+      "cues": [
+        "demo",
+        "source"
+      ],
+      "steps": [
+        {
+          "phase": "synthetic_observation_outcome",
+          "observation": {
+            "source_item_id": "fixture:1"
+          },
+          "relations": [
+            "demo"
+          ],
+          "judgment": "synthetic failure record",
+          "outcome": "failure",
+          "evidence_refs": [
+            "fixture:episode:1"
+          ]
+        }
+      ],
+      "source_addresses": [
+        "fixture:source:1"
+      ],
+      "revision": "fixture-r1",
+      "verification_state": "historical_only"
+    },
+    {
+      "episode_id": "experience:negative",
+      "cues": [
+        "demo",
+        "source"
+      ],
+      "steps": [
+        {
+          "phase": "synthetic_observation_outcome",
+          "observation": {
+            "source_item_id": "fixture:2"
+          },
+          "relations": [
+            "demo"
+          ],
+          "judgment": "synthetic negative record",
+          "outcome": "negative",
+          "evidence_refs": [
+            "fixture:episode:2"
+          ]
+        }
+      ],
+      "source_addresses": [
+        "fixture:source:2"
+      ],
+      "revision": "fixture-r1",
+      "verification_state": "historical_only"
+    },
+    {
+      "episode_id": "experience:uncertain",
+      "cues": [
+        "demo",
+        "source"
+      ],
+      "steps": [
+        {
+          "phase": "synthetic_observation_outcome",
+          "observation": {
+            "source_item_id": "fixture:3"
+          },
+          "relations": [
+            "demo"
+          ],
+          "judgment": "synthetic uncertain record",
+          "outcome": "uncertain",
+          "evidence_refs": [
+            "fixture:episode:3"
+          ]
+        }
+      ],
+      "source_addresses": [
+        "fixture:source:3"
+      ],
+      "revision": "fixture-r1",
+      "verification_state": "historical_only"
+    },
+    {
+      "episode_id": "experience:conflict",
+      "cues": [
+        "demo",
+        "source"
+      ],
+      "steps": [
+        {
+          "phase": "synthetic_observation_outcome",
+          "observation": {
+            "source_item_id": "fixture:4"
+          },
+          "relations": [
+            "demo"
+          ],
+          "judgment": "synthetic conflict record",
+          "outcome": "conflict",
+          "evidence_refs": [
+            "fixture:episode:4"
+          ]
+        }
+      ],
+      "source_addresses": [
+        "fixture:source:4"
+      ],
+      "revision": "fixture-r1",
+      "verification_state": "historical_only"
+    },
+    {
+      "episode_id": "experience:pending",
+      "cues": [
+        "demo",
+        "source"
+      ],
+      "steps": [
+        {
+          "phase": "synthetic_observation_outcome",
+          "observation": {
+            "source_item_id": "fixture:5"
+          },
+          "relations": [
+            "demo"
+          ],
+          "judgment": "synthetic pending record",
+          "outcome": "pending",
+          "evidence_refs": [
+            "fixture:episode:5"
+          ]
+        }
+      ],
+      "source_addresses": [
+        "fixture:source:5"
+      ],
+      "revision": "fixture-r1",
+      "verification_state": "historical_only"
+    },
+    {
+      "episode_id": "vrs-edge-group:7",
+      "cues": [
+        "demo"
+      ],
+      "steps": [
+        {
+          "phase": "synthetic_relation",
+          "observation": {
+            "source_term": "experience:success",
+            "target_term": "demo",
+            "sign": 1,
+            "canonical_group_id": 7
+          },
+          "relations": [
+            "demo"
+          ],
+          "judgment": "synthetic relation, not learned",
+          "outcome": "pending",
+          "evidence_refs": [
+            "fixture:relation:7"
+          ]
+        }
+      ],
+      "source_addresses": [
+        "fixture:relation:7"
+      ],
+      "revision": "vrs-report-sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "verification_state": "historical_only"
+    },
+    {
+      "episode_id": "vrs-edge-group:8",
+      "cues": [
+        "demo"
+      ],
+      "steps": [
+        {
+          "phase": "synthetic_relation",
+          "observation": {
+            "source_term": "experience:failure",
+            "target_term": "demo",
+            "sign": 1,
+            "canonical_group_id": 8
+          },
+          "relations": [
+            "demo"
+          ],
+          "judgment": "synthetic relation, not learned",
+          "outcome": "pending",
+          "evidence_refs": [
+            "fixture:relation:8"
+          ]
+        }
+      ],
+      "source_addresses": [
+        "fixture:relation:8"
+      ],
+      "revision": "vrs-report-sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "verification_state": "historical_only"
+    }
+  ],
+  "current_vrs": {
+    "snapshot_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "strengths": {
+      "vrs-edge-group:7": 1.2,
+      "vrs-edge-group:8": 0.8
+    }
+  },
+  "frozen_vrs": {
+    "snapshot_id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "strengths": {
+      "vrs-edge-group:7": 0.8,
+      "vrs-edge-group:8": 0.8
+    }
+  },
+  "repair_source_ids": [
+    "experience:success"
+  ]
+}
