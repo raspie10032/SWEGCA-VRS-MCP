@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "swegca-vrs-mcp"
-version = "0.2.0"
+version = "0.3.0"
 description = "Persistent experience, recall and SWEGCA/VRS tools for MCP agents"
 requires-python = ">=3.11"
 license = "MIT AND MPL-2.0"
@@ -13,7 +13,7 @@ readme = "README.md"
 dependencies = ["mcp>=2,<3"]
 
 [project.optional-dependencies]
-test = ["pytest>=8", "pytest-asyncio>=0.24"]
+test = ["pytest>=8", "pytest-asyncio>=0.24", "PyYAML>=6,<7"]
 core = ["torch>=2.6,<3", "numpy>=2,<3", "filelock>=3,<4"]
 
 [[tool.uv.index]]
@@ -26,6 +26,7 @@ torch = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux' or sys_platf
 
 [project.scripts]
 swegca-vrs-mcp = "swegca_vrs_mcp.server:main"
+swegca-vrs-memory = "swegca_vrs_mcp.agent_service:main"
 
 [project.urls]
 Repository = "https://github.com/raspie10032/SWEGCA-VRS-MCP"

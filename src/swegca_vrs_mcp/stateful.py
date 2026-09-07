@@ -273,6 +273,32 @@ class StatefulCore:
                     "next_offset": offset + limit if offset + limit < len(recalled.candidates) else None,
                     "retrieval": "lexical_cues_not_embedding_semantics", "authority_granted": False}
 
+    def recall_context(self, query, *, offset=0, limit=20):
+        """Hot four-stage activation for an agent prompt, without fabricated evidence.
+
+        A natural-language query is not a current authenticated observation.
+        Every related replay therefore remains contextual, not verified support.
+        Pagination applies after activation and never restricts the hot index.
+        """
+        with self._mutex:
+            self._check()
+            if not query.strip() or offset < 0 or not 1 <= limit <= 200:
+                raise ValueError("invalid query or pagination")
+            activation = activate_memory(self._memory, query=query,
+                current_cues=tuple(dict.fromkeys([query, *re.findall(r"\w+", query.casefold())])),
+                judge=lambda replay: CurrentEvidenceVerdict(replay.episode_id,
+                    self._records[replay.episode_id]["event"]["hypothesis_id"],
+                    "insufficient", "Query is not independent current evidence; context only", (), ()))
+            ids = [c.episode_id for c in activation.recall.candidates]
+            selected = ids[offset:offset + limit]
+            return {"revision": self.revision, "memory_snapshot_id": activation.snapshot_id,
+                    "stage_order": list(activation.stage_order), "candidate_count": len(ids),
+                    "episodes": [plain(self._memory.episode(eid)) for eid in selected],
+                    "re_evidence": [plain(j) for j in activation.re_evidence.judgments[offset:offset + limit]],
+                    "next_offset": offset + limit if offset + limit < len(ids) else None,
+                    "query": query, "should_abstain_from_verified_claim": True,
+                    "authority_granted": False, "retrieval": "lexical_cues_not_embedding_semantics"}
+
     def ingest(self, rows, *, request_id, expected_revision):
         with self._mutex:
             fp = digest({"kind": "ingest", "rows": [r.model_dump() for r in rows]})

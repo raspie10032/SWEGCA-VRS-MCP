@@ -1,0 +1,6 @@
+name: swegca-vrs
+version: 0.1.0
+description: Local SWEGCA+VRS automatic memory provider (CLI profiles)
+hooks:
+  - on_turn_start
+  - on_session_switch

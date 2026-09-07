@@ -1,0 +1,18 @@
+# Replace the three /absolute/private paths before installing as a user unit.
+[Unit]
+Description=SWEGCA VRS resident memory for Hermes
+
+[Service]
+Type=simple
+ExecStart=/absolute/private/SWEGCA-VRS-MCP/.venv/bin/swegca-vrs-memory --state-dir /absolute/private/swegca-hermes-store --socket %t/swegca-vrs-hermes/m.sock --vrs-interval 30
+RuntimeDirectory=swegca-vrs-hermes
+RuntimeDirectoryMode=0700
+UMask=0077
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+NoNewPrivileges=true
+RestrictAddressFamilies=AF_UNIX
+
+[Install]
+WantedBy=default.target

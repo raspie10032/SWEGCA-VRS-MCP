@@ -1,8 +1,17 @@
 # SWEGCA + VRS MCP
 
-**v0.2: persistent experience storage, recall and VRS tools for existing agents.**
+**v0.3: persistent experience, MCP tools, and an automatic Hermes memory adapter.**
 Your agent is the MCP client; this server owns its external memory store. It does
-not host, call or replace an LLM, intercept conversations or control the agent.
+not host, call or replace an LLM or control the agent. The optional Hermes native
+adapter explicitly records completed user/assistant turns through host lifecycle
+callbacks; ordinary MCP mode does not intercept conversations.
+
+For automatic memory **instead of Hermes' built-in MEMORY.md/USER.md provider**,
+see [Hermes integration](docs/HERMES_MEMORY.md). It uses one private resident
+service, automatic four-stage context retrieval, a durable delivery outbox and
+coalesced VRS maintenance. Multiple CLI sessions can share that service. OpenClaw
+is not implemented or verified in this release. A host lifecycle test is not a
+live LLM conversation test; see [validation](docs/AGENT_MEMORY_VALIDATION.md).
 
 Unlike the historical v0.1 read-only preview, core mode can record new experience,
 update its VRS graph, survive restart, recall stored content, re-evaluate evidence
