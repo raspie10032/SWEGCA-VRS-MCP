@@ -1,0 +1,17 @@
+{
+  "origin": "First-party generic numerical extraction; no private runtime imported",
+  "source_revision": "9ec73bdda92dfc7dbee168f0828827edea166a0d",
+  "source_file_sha256": "5739e1e0ecce627144406e6c5b6747019b3e4ef9189bb3870db79be9fcc2273f",
+  "function_ast_sha256": {
+    "refine_vrs": "bbb9673d083ae2d5e006a60270859740a1b209db2f2d276e862efe3bfefea06d",
+    "direct_score_tensor": "aaea349a7d61d1119f48d2ff2604f80d5d4d6022d287ffe750e3f2f1aab1185f"
+  },
+  "license": "MIT",
+  "algorithm_changes": false,
+  "files": [
+    {
+      "destination": "src/swegca_vrs_mcp/core/vrs_refinement.py",
+      "port_sha256": "d39bd95a31efe3439f5ae74d0e9d3be5daa31dc816ca852b52701ec1ed44663c"
+    }
+  ]
+}

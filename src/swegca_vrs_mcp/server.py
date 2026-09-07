@@ -1,8 +1,9 @@
-"""Stdio MCP only: no private runtime adapter, model, HTTP server or write tools."""
+"""Stdio MCP: persistent core or legacy read-only diagnostics; no embedded model."""
 from __future__ import annotations
 
 import argparse
 import json
+import sqlite3
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -76,9 +77,32 @@ def create_server(runtime: Runtime) -> MCPServer:
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--dataset", type=Path, required=True,
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--dataset", type=Path,
                         help="Operator-authorized standalone dataset; read once at startup")
+    mode.add_argument("--state-dir", type=Path, help="Private persistent store directory, not a dataset file")
+    parser.add_argument("--enable-writes", action="store_true", help="Expose experience/VRS/World mutation tools")
+    parser.add_argument("--producer-keys", type=Path, help="Optional owner-only trusted-producer configuration")
     args = parser.parse_args()
+    if args.state_dir is not None:
+        core = None
+        try:
+            from .observations import Authenticator
+            from .stateful import StatefulCore
+            from .core_server import create_core_server
+            auth = Authenticator.load(args.producer_keys) if args.producer_keys else Authenticator()
+            core = StatefulCore(args.state_dir, writable=args.enable_writes, authenticator=auth)
+            create_core_server(core).run(transport="stdio")
+        except ImportError:
+            parser.exit(2, "Core dependencies missing; install the core extra: uv sync --extra core.\n")
+        except (OSError, ValueError, TypeError, KeyError, RuntimeError, sqlite3.Error):
+            parser.exit(2, "Core startup/runtime failed; check store ownership, integrity and producer policy.\n")
+        finally:
+            if core is not None:
+                core.close()
+        return
+    if args.enable_writes or args.producer_keys:
+        parser.error("write/trust options require --state-dir")
     try:
         runtime = Runtime(load_dataset(args.dataset))
     except (OSError, ValueError, TypeError, KeyError):

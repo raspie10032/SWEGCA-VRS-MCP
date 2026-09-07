@@ -1,209 +1,187 @@
 # SWEGCA + VRS MCP
 
-Independent, model-agnostic **read-only MCP server for the public SWEGCA/VRS
-reference components**. MIT licensed. No private entity, resident service,
-model, GPU, screen/audio collector, private experience or account is required.
+**v0.2: persistent experience storage, recall and VRS tools for existing agents.**
+Your agent is the MCP client; this server owns its external memory store. It does
+not host, call or replace an LLM, intercept conversations or control the agent.
 
-This is a bounded component port, **not a complete autonomous cognitive system**.
-It runs the actual published memory activation, VRS promotion-projection and
-source-provenance decision code. It does not manufacture a replacement VRS
-algorithm. Full-graph convergence, learned-strength generation, online
-assimilation, durable World commits and actuators are not implemented here.
+Unlike the historical v0.1 read-only preview, core mode can record new experience,
+update its VRS graph, survive restart, recall stored content, re-evaluate evidence
+and request gated, bounded verification-state commits. This is a tested software
+integration, not a claim of autonomous cognition or empirical cognitive growth.
 
-**Connection direction:** your existing agent (the MCP client) calls this server
-and receives results. This server does not call, host, replace or control an LLM.
-The public `main` branch is the runnable **v0.1 read-only preview**, not the
-in-progress stateful-core integration. Try this preview for MCP connectivity and
-memory/evidence diagnostics; it cannot yet learn from new agent conversations.
+## Install and connect to Claude Code
 
-Public repository: [raspie10032/SWEGCA-VRS-MCP](https://github.com/raspie10032/SWEGCA-VRS-MCP).
-
-## Connect to Claude Code
-
-Install [uv](https://docs.astral.sh/uv/getting-started/installation/) and Claude
-Code first. On Linux/macOS, clone this public repository and install the locked
-dependencies (no GPU, model download or API key is needed by this MCP server):
+Requires Python 3.11+ and [uv](https://docs.astral.sh/uv/getting-started/installation/).
+Linux is verified; Windows/macOS runtime integration is not yet verified.
 
 ```sh
 git clone https://github.com/raspie10032/SWEGCA-VRS-MCP.git
 cd SWEGCA-VRS-MCP
-uv sync --locked
+uv sync --locked --extra core
 ```
 
-In the project where you want to use Claude Code, register the server with
-**both paths replaced by absolute paths to that clone**:
+For an existing clone, run `git pull --ff-only` first. The core extra includes
+PyTorch, NumPy and filelock. The uv lock uses CPU-only PyTorch on Linux/Windows;
+no model weights or CUDA packages are needed. Plain pip does not use uv's index
+configuration and may select a larger PyTorch distribution.
+
+In the project where you use Claude Code, register **absolute paths** to the
+installed command and a **private local state directory outside this Git clone**:
 
 ```sh
 claude mcp add --transport stdio --scope local swegca-vrs -- \
   /absolute/path/SWEGCA-VRS-MCP/.venv/bin/swegca-vrs-mcp \
-  --dataset /absolute/path/SWEGCA-VRS-MCP/examples/synthetic.json
+  --state-dir /absolute/path/private-swegca-memory --enable-writes
 claude mcp get swegca-vrs
 ```
 
-Start Claude Code in that project, then check `/mcp`. Ask:
+If the name is already registered to v0.1, inspect that entry and deliberately
+replace just that entry with the command above; do not delete unrelated servers.
+Inside Claude Code check `/mcp` and reconnect if necessary. Approval and execution
+permissions belong to the host/user, not this server. Registration syntax follows
+[Claude Code's official MCP guide](https://code.claude.com/docs/en/mcp).
+**Actual SDK stdio processes are tested; a live Claude Code session is not yet
+verified.** On Windows use the absolute `.venv\\Scripts\\swegca-vrs-mcp.exe` path.
 
-> Use the swegca-vrs MCP server. Call system_status, then recall with query
-> "demo" and current_cues ["demo"]. Report the tools and memory outcome types.
-> Treat the fixture as synthetic, and do not claim persistent learning.
+Ask the agent:
 
-Expected discovery: `system_status`, `get_episode`, `recall`, `evaluate_vrs`.
-The fixture has eight records spanning six outcome categories. Use the example
-call below to test the four-stage conditional evaluation as well.
+> Use swegca-vrs. Read system_status. Record one clearly labeled test experience
+> using record_experiences with the current revision and a unique request_id.
+> Use an actual integer Unix nanosecond timestamp. Then call converge_vrs and
+> recall the record by its words. Do not treat stored agent notes as verified
+> truth. Report actual tool results, not just installation success.
 
-`--scope local` restricts the registration to the current Claude Code project;
-these instructions do not automatically modify any host settings. On Windows,
-substitute the absolute `.venv\\Scripts\\swegca-vrs-mcp.exe` path. The CLI syntax
-follows [Claude Code's official MCP guide](https://code.claude.com/docs/en/mcp).
-Actual SDK stdio tests are verified; a live Claude Code session is **not yet
-verified**. See [the publication checks](docs/PUBLIC_RELEASE.md).
+The writable server exposes **nine tools**. Omitting `--enable-writes` opens an
+existing store read-only with five tools; it cannot create a new store.
 
-## Install and run
+## Tools
 
-Python 3.11+; the development environment is Python 3.12.14. Use an isolated
-environment; dependencies are the official MCP SDK 2.x and its dependencies.
+| Tool | Function |
+|---|---|
+| `system_status` | Owner identity, revision, outcome counts, memory/VRS snapshots |
+| `record_experiences` | Atomically store observation/outcome records and update the hot index |
+| `get_episode` | Read an exact event and provenance |
+| `recall` | Return related episodes and content by lexical words/cues |
+| `converge_vrs` | Run CPU VRS rounds and persist graph strengths, scores and convergence receipt |
+| `judge` | Déjà vu → Recall → Replay → Re-evidence for a hypothesis/current event |
+| `get_world` | Read bounded verification state and current claim authority |
+| `commit_judgment` | Request evidence, arbitration and bounded-write gates |
+| `rollback_world` | Undo only the latest World commit without deleting experience |
 
-```sh
-python -m venv .venv
-.venv/bin/python -m pip install -e '.[test]'
-.venv/bin/swegca-vrs-mcp --dataset examples/synthetic.json
-```
+Resource: `swegca://capabilities`. No shell, arbitrary file read, network actuator,
+model-update, distribution or P3 tool is exposed.
 
-The last command speaks MCP on stdin/stdout; a terminal will wait for protocol
-input. Use an MCP host or SDK client, not ordinary chat text. Logs go to stderr.
-On Windows use `.venv\Scripts\python.exe` and `.venv\Scripts\swegca-vrs-mcp.exe`.
-No network listener or background service is installed. Disconnecting the MCP
-host stops its stdio child; no capture/experience jobs are started.
+## Experience format and agent workflow
 
-Example host configuration (replace both absolute paths):
+`record_experiences` takes `observations`, `request_id` and `expected_revision`.
+Each observation needs:
 
-```json
-{
-  "mcpServers": {
-    "swegca-vrs": {
-      "command": "/absolute/path/SWEGCA-VRS-MCP/.venv/bin/swegca-vrs-mcp",
-      "args": ["--dataset", "/absolute/path/SWEGCA-VRS-MCP/examples/synthetic.json"]
-    }
-  }
-}
-```
+- `event_id`: immutable source-event identity; identical retries do not add rows.
+- `hypothesis_id`: the proposition the observation bears on.
+- `producer_id`, `context_id`: provenance, not a claim of independent truth.
+- `axis`: observational, counterfactual, intervention or cross_context.
+- `outcome`: success, failure, negative, uncertain, conflict or pending.
+- `observation`: a JSON object holding the actual content.
+- `evidence_refs`: nonempty source references (not automatically fetched).
+- `observed_at_ns`: integer Unix nanoseconds, not seconds or milliseconds.
+- Optional `cues`, `expires_at_ns`, `supersedes` and producer `signature`.
 
-This is a portable example, not an automatic edit to any host's global settings.
-Host-specific configuration formats can differ. Current and legacy MCP clients
-are exercised separately in the SDK subprocess tests.
+Read the revision from `system_status` or the last successful mutation receipt.
+Use a unique request ID for each mutation. After a lost response, retry the
+**same ID and payload**; committed operations are recovered without duplication.
+Stale revisions fail closed. One server process exclusively owns a store at a
+time; different agents can use the same persistent directory sequentially.
+Multiple simultaneous stdio processes cannot share it; a shared multi-client
+service is not implemented.
 
-## Tools and resource
+Agent integration is explicit: record observed outcomes, converge when useful,
+recall before related work, and submit later contradictory outcomes as well.
+MCP registration alone does not guarantee a model will call these tools on each
+turn. Repeated examples or new row IDs are not evidence of distinct experiences;
+producers remain responsible for honest source identity and lineage.
 
-| Interface | Operation | Boundary |
-|---|---|---|
-| `system_status` | Dataset identity, outcome counts, capabilities | No cognition or growth claim |
-| `get_episode` | Exact episode and provenance | No file-path or arbitrary URL access |
-| `recall` | Déjà vu → Recall with paginated candidates | Pagination limits returned rows, not memory access |
-| `evaluate_vrs` | Déjà vu → Recall → Replay → Re-evidence and five diagnostic arms | Caller assessments are untrusted conditional proposals |
-| `swegca://capabilities` | Read-only capability resource | No action/write authority |
+## Verification versus ordinary memory
 
-The five original diagnostic arms are current VRS, frozen VRS, no VRS,
-base-only promotion and repair-only promotion. Every arm recalls the same
-related records, including failure, negative, uncertain, conflicting and pending
-outcomes. Role restrictions affect only diagnostic promotion, never ordinary
-memory access. The no-VRS arm is a causal diagnostic, not the normal architecture.
-Strength `>= 1.0` allows the published conditional re-evidence path; it grants no
-World, action, write, model update, distribution or P3 authority.
+**No producer key is needed for ordinary storage and recall.** Unsigned,
+unsuccessful and unresolved records remain accessible and participate in the
+graph. They are not automatically elevated to verified belief.
 
-## Example call
+For authority-bearing evidence an operator may supply
+`--producer-keys /private/path/producer-keys.json`. The owner-only JSON file
+contains `producers`, mapping each producer ID to `key_hex` (32–64 bytes encoded
+as lowercase hex), `source_family` and `allowed_axes`. A producer signs the
+canonical observation excluding `signature` with HMAC-SHA256; the Python helper
+is `swegca_vrs_mcp.observations.sign_observation`. Never put keys in prompts,
+MCP arguments, public repositories or model-visible files. There is no MCP
+signing tool. Store policy is bound at creation; changing it requires a future
+explicit migration, not an implicit change of trust on reopen.
 
-With the **synthetic** example dataset:
+Authentication proves origin under the configured trust policy, **not physical
+truth or source independence**. Source/context/axis sufficiency, current evidence,
+VRS state, contradiction handling, arbitration and bounded World gates still
+apply. A single agent assertion is not enough to pass those gates.
 
-```json
-{
-  "query": "demo",
-  "current_cues": ["demo"],
-  "assessments": [{
-    "episode_id": "vrs-edge-group:7",
-    "proposition": "demo-outcome",
-    "verdict": "support",
-    "rationale": "Constructed conditional evidence for a software test",
-    "current_evidence_refs": ["fixture:current"]
-  }]
-}
-```
+## Implementation boundaries
 
-Call `evaluate_vrs` with those arguments. Expected branch decisions are
-`success, abstain, abstain, abstain, success`. These are labels from a constructed
-source-outcome assay, **not proof of learning, real-world success or an isolated
-empirical VRS effect**. Missing assessments produce abstention. Contradictory
-current evidence and opposing source outcomes remain visible and cause
-abstention on the affected decision. User/model-supplied evidence references
-are not fetched or authenticated by this server.
+- All six outcomes remain hot-addressable; pagination only bounds responses.
+- Recall uses normalized lexical tokens/cues, not embeddings or an LLM semantic
+  parser. Precise `hypothesis_id` values identify propositions for `judge`.
+- SQLite transactions persist raw events, VRS generation, state and successful
+  operation receipts. Hot recall/judgment does not do disk/JSON/hash work.
+- VRS uses the existing numerical refinement kernel with a **new star-graph
+  adapter** connecting observations to hypotheses. This is not a port of a
+  complete multimodal experience graph. It does not invent cross-proposition
+  semantic connections.
+- Refinement uses reinforcement 1.01 and weakening 0.995. All outcomes are active;
+  there is no pre-convergence pruning. Maximum rounds are bounded; insufficient
+  convergence remains pending and cannot authorize a World commit.
+- VRS arithmetic currently traverses the whole graph on an explicit convergence
+  call. Local-only numerical equivalence is not established. It is not run on
+  every recall; incremental large-graph convergence is future work.
+- A `>= 1.0` connection alone grants no World/action authority. Expiration
+  invalidates cached authority at read time; explicit convergence refreshes it.
+- World writes affect the published kernel's **bounded verification slot**,
+  not arbitrary semantic entities or an agent's private internal state. The
+  32-slot/8-wide state adapter is a bounded integration representation, not a
+  claim that all experience is encoded in those tensors.
+- Supersession is authenticated, same-producer and same-proposition; old records
+  remain stored and active. New evidence invalidates affected committed claims.
+- Resource and concurrency limits are tested only on small synthetic stores.
+  This is not a production-hardening or cognitive-growth claim.
+- A local user able to edit the store and keys is outside this integrity model.
+  Do not expose private stored content to an untrusted MCP host.
 
-## Datasets, provenance and authority
+## Legacy diagnostic mode
 
-The operator chooses one local JSON dataset at launch. It is validated and
-loaded once into a detached immutable hot index. No model-selected file read,
-dataset reload, shell, write, ingestion, URL fetching or strength-edit tool exists.
-Use `examples/synthetic.json` as the schema example; Pydantic rejects unknown
-top-level fields, duplicate IDs, bad strength references and nonfinite strengths.
-Unknown/missing source bindings fail or abstain rather than inventing evidence.
-
-`dataset_id` hashes the complete normalized dataset, including both projections;
-`projection_content_sha256` binds the actual strength map. A supplied VRS report
-identifier is not independently authenticated. Compare **dataset_id**, not just
-a caller-declared report ID, when checking identity across clients/restarts.
-All records in the chosen dataset remain addressable. This does not claim access
-to unprovided data elsewhere on the operator's machine. A larger/new generation
-can be supplied at a later launch; this MVP has no online accumulation path.
-
-Read-only means the **server has no consequential write tools**. An external MCP
-host can still act on tool output under its own permissions, so it must not treat
-these diagnostics as authorization. Tool annotations are hints, not an access
-control mechanism. Anyone given this local stdio server can read its loaded
-dataset. Do not connect private data to an untrusted/remote-model host.
-
-The hot component decision path does no disk/network/JSON/hash work. MCP input
-validation and output serialization are a separate transport boundary and incur
-ordinary overhead. Evaluation receipts are limited to 2 MiB at that boundary;
-oversize replies return an error, never silently truncated cognitive evidence.
-Each request allows up to 256 cues and 4096 conditional assessments; these are
-transport payload bounds, not caps on stored memory or recalled candidates.
-Recall supports output pagination. Startup loads and hashes the supplied dataset;
-there is no per-request full-corpus reload. This is not a large-corpus performance
-or production-hardening claim.
+`swegca-vrs-mcp --dataset /absolute/path/examples/synthetic.json` preserves the
+v0.1 four-tool read-only mode, including `evaluate_vrs` and its five comparison
+arms. Its supplied strengths and caller assessments are conditional inputs.
+That mode does **not** ingest new experience or expose the stateful core tools.
+Historical verification: [v0.1 report](docs/VALIDATION.md).
 
 ## Verify
 
 ```sh
+uv sync --locked --extra core --extra test
 .venv/bin/python -m pytest -q
 .venv/bin/python tools/verify_port.py
+.venv/bin/python tools/smoke_core_mcp.py --server /absolute/path/to/swegca-vrs-mcp
 ```
 
-`tools/smoke_mcp.py --server /absolute/path/to/swegca-vrs-mcp --dataset
-/absolute/path/to/examples/synthetic.json` exercises an installed server over
-stdio and closes it afterwards. Run with the environment's Python; optionally
-add `--mode legacy` to check the older initialization flow.
+The smoke check creates and removes only its own temporary synthetic store.
+It tests actual MCP storage, VRS, recall and recall after a new server process.
+See [the core ledger](docs/CORE_NOTE.md) and [core validation](docs/CORE_VALIDATION.md).
 
-Tests cover the public components, detached state, all outcome types, provenance,
-promotion/revocation, conflicts, source-decision gating, hot-path I/O guards,
-malformed requests and real MCP stdio subprocess calls. One original test tied
-to a private resident service is deliberately **not ported**; it is not counted as
-passing. New standalone MCP integration tests replace only transport coverage,
-not evidence of the excluded private system.
+## License and provenance
 
-## Source and license
-
-Derived from the MIT public
-[SWEGCA-VRS-PoC](https://github.com/raspie10032/SWEGCA-VRS-PoC), pinned at
-`9d0fcc9eb58c2fec1aea5d6034b9b0a886208bb3`. `UPSTREAM.json` records source and
-ported hashes, namespace/schema-label transformations and the excluded test.
-The numerical/decision algorithms were not rewritten. No private Git history,
-models or media are imported. This project does not copy or relicense the
-separately published MPL-2.0 architecture package.
-
-MCP transport uses the [official Python SDK](https://py.sdk.modelcontextprotocol.io/).
-The MIT license covers first-party code here, not third-party dependency licenses.
-The source is published on GitHub. No PyPI publication is implied; install from
-the repository. The unfinished local stateful work and its separately licensed
-architecture imports are not part of this read-only source release.
+First-party integration is **MIT**. Imported public SWEGCA-Architecture files and
+their tests retain **MPL-2.0**; the combined distribution is not MIT-only.
+See [NOTICE](NOTICE.md), LICENSE and LICENSES/MPL-2.0.txt. The three upstream
+manifests record hashes and transformations. No private entity, private Git
+history, personal experience, models, media or credentials are bundled.
 
 ## Codex 작업 실수 및 교정
 
-See [the chronological development ledger](docs/IMPLEMENTATION_NOTE.md) for the
-initial scope correction, implementation failures, repairs and verification limits.
+The earlier read-only release did not fulfill the requested stateful integration.
+Its limitations and the subsequent repairs remain in the chronological ledgers;
+protocol success is not substituted for real-client or cognitive-growth success.

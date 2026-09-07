@@ -1,4 +1,6 @@
 include LICENSE README.md UPSTREAM.json uv.lock
+include ARCHITECTURE_UPSTREAM.json VRS_UPSTREAM.json NOTICE.md
+recursive-include LICENSES *.txt
 recursive-include docs *.md
 recursive-include examples *.json
 recursive-include tests *.py

@@ -1,0 +1,158 @@
+{
+  "source_repository": "https://github.com/raspie10032/SWEGCA-Architecture",
+  "source_commit": "5901a5aa2dcbd0ac7ad12ac6dd745699f72288a8",
+  "license": "MPL-2.0",
+  "algorithm_changes": false,
+  "files": [
+    {
+      "source": "src/swegca/__init__.py",
+      "destination": "src/swegca_vrs_mcp/architecture/__init__.py",
+      "upstream_sha256": "cc83c3d3de085fb492664b29d8b4cfc16e62a19fbfcb28912d85b805d4959d03",
+      "port_sha256": "34be070cfb9822e8d8da5703ddb9976ce7569960da029badbd2a46f6d2d9dac2"
+    },
+    {
+      "source": "src/swegca/mosaic_autonomous_cognition.py",
+      "destination": "src/swegca_vrs_mcp/architecture/mosaic_autonomous_cognition.py",
+      "upstream_sha256": "401281e2db017ddeab8402d4373f8b7c060acfb4083e2b5c59bfd4a9aa3a7d34",
+      "port_sha256": "9fbcc2a7d52240c4ad8c6fa8c01f5736541d59c20c81784913d6a272e6c5c369"
+    },
+    {
+      "source": "src/swegca/mosaic_bounded_world_write.py",
+      "destination": "src/swegca_vrs_mcp/architecture/mosaic_bounded_world_write.py",
+      "upstream_sha256": "f8a78f45c2a07d636257ffe43e1d3c57a41a4dfb0c077f33bc273f057723d82f",
+      "port_sha256": "8ce1dc8e5ac696f876feaa6d9f07d6ef685182c73a9a5c3a48806c411f9b9304"
+    },
+    {
+      "source": "src/swegca/mosaic_cognitive_kernel.py",
+      "destination": "src/swegca_vrs_mcp/architecture/mosaic_cognitive_kernel.py",
+      "upstream_sha256": "7f40002114efc8fbb71865628aaa6a0a66be176208c6410d42370a8f5a0c586e",
+      "port_sha256": "94f5ff1770095a9dd6a3fa73c8cd2b00bad763f35514488a36d29cec116f07dc"
+    },
+    {
+      "source": "src/swegca/mosaic_cognitive_slot_memory.py",
+      "destination": "src/swegca_vrs_mcp/architecture/mosaic_cognitive_slot_memory.py",
+      "upstream_sha256": "b224e07a24f76bfc6b5f1f8d8e014aaaa660636e27ebd9d650206c06058e8362",
+      "port_sha256": "cc307503b3cc27a5cdfd6605b9911ac0282e63842bb70e1406f6e31c5c439426"
+    },
+    {
+      "source": "src/swegca/mosaic_cognitive_slot_topology.py",
+      "destination": "src/swegca_vrs_mcp/architecture/mosaic_cognitive_slot_topology.py",
+      "upstream_sha256": "c9d07e929619a0aed2d1bdfd87c03eee703b43f97e556b046bdcb5c7e7bb25dc",
+      "port_sha256": "7a957780f6b55cabceec660279e17c0473e4ca5cd55e0ca1d606d2a9511199ca"
+    },
+    {
+      "source": "src/swegca/mosaic_evidence_accumulator.py",
+      "destination": "src/swegca_vrs_mcp/architecture/mosaic_evidence_accumulator.py",
+      "upstream_sha256": "21ea34ed0cbff51f91f1463e5429419d4ac34b4afc664e52091cb4ca26a68ab6",
+      "port_sha256": "ef62c72e8aa6edba3b50b6f06f0dd38a5597e175b446cdd8c4e54d010250bc59"
+    },
+    {
+      "source": "src/swegca/mosaic_evidence_revision.py",
+      "destination": "src/swegca_vrs_mcp/architecture/mosaic_evidence_revision.py",
+      "upstream_sha256": "3d7508dd1e0f454ac3acb46a1c8421c886e024f5f64220dc7a0d3eb3d3673412",
+      "port_sha256": "4bc4831d4f447ba2dfe4d3e6d1b064241b53077fdcc164f5f4a9eea16ef8986c"
+    },
+    {
+      "source": "src/swegca/mosaic_external_memory.py",
+      "destination": "src/swegca_vrs_mcp/architecture/mosaic_external_memory.py",
+      "upstream_sha256": "8368b2db8ec1c0ff964c60448f24ae55a59e619c1c8f37a899173ca550736165",
+      "port_sha256": "2dfaa2deacb33d2e3f760f8128f4f819618b5c162b75ff6ea7cfd7f5902ac8b6"
+    },
+    {
+      "source": "src/swegca/mosaic_memory_promotion.py",
+      "destination": "src/swegca_vrs_mcp/architecture/mosaic_memory_promotion.py",
+      "upstream_sha256": "1791271da526d6232a1ac088201ce711ef5ed7ff7a7b84947843ebf3d8fea0a5",
+      "port_sha256": "4b36d8f2c49c6d7193e8b459e932d2880889925a0bea1d8e01a1c77e97e040a7"
+    },
+    {
+      "source": "src/swegca/mosaic_omni.py",
+      "destination": "src/swegca_vrs_mcp/architecture/mosaic_omni.py",
+      "upstream_sha256": "487533d86850389665d74589ede02f7e64e6e041e24002f25667a77834de192f",
+      "port_sha256": "7f6be9192a143b71093b231804023492ffbc1b9b8af459d7fb1616a65c26a36d"
+    },
+    {
+      "source": "src/swegca/mosaic_sqlite_memory.py",
+      "destination": "src/swegca_vrs_mcp/architecture/mosaic_sqlite_memory.py",
+      "upstream_sha256": "cf83106450c303319de1ecad1146c5ff2f725f0110e5fc97e1a343b1d06f5b29",
+      "port_sha256": "c83ee258633636b24cdbd92dcf7da151879c43f6e4dfe983023e185c225fdaf2"
+    },
+    {
+      "source": "src/swegca/mosaic_synapse_arbiter.py",
+      "destination": "src/swegca_vrs_mcp/architecture/mosaic_synapse_arbiter.py",
+      "upstream_sha256": "61f66801a8357549ecff7e90c8afe0d91d4a6fef6799d7aca33b846806ee36a3",
+      "port_sha256": "3896d79c9e2b8e9dfc1a685de25d2c01f1c37ae8d2aa4a0e804abe4fd3ca9de5"
+    },
+    {
+      "source": "src/swegca/mosaic_unrestricted_experience.py",
+      "destination": "src/swegca_vrs_mcp/architecture/mosaic_unrestricted_experience.py",
+      "upstream_sha256": "d4d0611704f4d88414b2b9f4ecac23702f8c47ed8409f6d8d7d2c1976a9b000e",
+      "port_sha256": "bfa80b677b83ca11492782d44316054305cfc91f644be89bc22b07c75716c8f8"
+    },
+    {
+      "source": "src/swegca/mosaic_versioned_memory.py",
+      "destination": "src/swegca_vrs_mcp/architecture/mosaic_versioned_memory.py",
+      "upstream_sha256": "d18132c68f327f0e5c31c92f0fec3d15db4f6d8edb25a4759ae929d15710c4cd",
+      "port_sha256": "0c4c5531c440bf13cb255978af1db4a9f508c12932cc99bead66f1aaea81f38a"
+    },
+    {
+      "source": "src/swegca/mosaic_world_memory_transaction.py",
+      "destination": "src/swegca_vrs_mcp/architecture/mosaic_world_memory_transaction.py",
+      "upstream_sha256": "3e158958dd281f3dd76b0f7c2b596457487d89dfcee0a1b3e9de17ca82f414f8",
+      "port_sha256": "c328999d186f11f0056fb23046ce5d99826af2e741b01840c41173f3f09b5241"
+    },
+    {
+      "source": "tests/__init__.py",
+      "destination": "tests/architecture/__init__.py",
+      "upstream_sha256": "8376aac2d3229aad72ba1cd250ee1d4e14d7fbcfae7b1dbcbb71cd2c7a6c920f",
+      "port_sha256": "6b5067def16e65ce124af7d29b69a1fd8199bcd3d8eecb937b759786ddac032b"
+    },
+    {
+      "source": "tests/_database.py",
+      "destination": "tests/architecture/_database.py",
+      "upstream_sha256": "ff232800011043e09e358c5da07440de959078bfbe6bea51a1459b9d763a7c8a",
+      "port_sha256": "e18a3edfb73dc519fe95e399148b0473c680e55a9a6dfe1040b13300f60e2b06"
+    },
+    {
+      "source": "tests/test_mosaic_autonomous_cognition.py",
+      "destination": "tests/architecture/test_mosaic_autonomous_cognition.py",
+      "upstream_sha256": "31fa0bd614dc8873af3264772fa552b2216a6005f4a00f557e1638b9b5354a50",
+      "port_sha256": "9f757b9f76ad29b755069a6d70741eb36d9d2950bb9bca41b31651518a743b59"
+    },
+    {
+      "source": "tests/test_mosaic_bounded_world_write.py",
+      "destination": "tests/architecture/test_mosaic_bounded_world_write.py",
+      "upstream_sha256": "8a286a8bae6054cb6c5f4a00d103fd73c8bdb746c392fece4b085c36bd112a62",
+      "port_sha256": "a6bd9f51e57169395174c2ce4e5bc85fc489d4332231c89162cf1f83b4e974a9"
+    },
+    {
+      "source": "tests/test_mosaic_cognitive_kernel.py",
+      "destination": "tests/architecture/test_mosaic_cognitive_kernel.py",
+      "upstream_sha256": "e002ca35e5656112e567182d678149556e7a40710d632aa4acf6761b367ee9dd",
+      "port_sha256": "e99187ae4eb3d930f34570ba37f2483338c6a57d29236c68c2f77466828c23ee"
+    },
+    {
+      "source": "tests/test_mosaic_evidence_accumulator.py",
+      "destination": "tests/architecture/test_mosaic_evidence_accumulator.py",
+      "upstream_sha256": "571c90070b7b757f534a45be16e211aeebeb81d5d6b7b10da931f04b8d2d5a1a",
+      "port_sha256": "5871cfcb41ca1d816f60fe3a4866ec3e2892d7215da9b31d8c5b2e2ac1ab9ecf"
+    },
+    {
+      "source": "tests/test_mosaic_synapse_arbiter.py",
+      "destination": "tests/architecture/test_mosaic_synapse_arbiter.py",
+      "upstream_sha256": "97344a509c8dd20d6249a92da69eb2402e6b7b6ea98772e370838e1f718c37b4",
+      "port_sha256": "ebb43c801cdfbcaed152b43ac7f360e767212004d917b1cae166943cf999c346"
+    },
+    {
+      "source": "tests/test_mosaic_unrestricted_experience.py",
+      "destination": "tests/architecture/test_mosaic_unrestricted_experience.py",
+      "upstream_sha256": "05b70c8798a8440a14b05bea47448670afabb1e15dc1e17f8da021f753f896e8",
+      "port_sha256": "c7119ac51d99561d7b790078480ca0520689b47f9da81c63e7724bd00cec012d"
+    },
+    {
+      "source": "tests/test_mosaic_world_memory_transaction.py",
+      "destination": "tests/architecture/test_mosaic_world_memory_transaction.py",
+      "upstream_sha256": "12a16d3aa643aa3c6523b5ce72920560fbc3db71eca89b34e43c19608bfd4848",
+      "port_sha256": "4c776c8b34925d4a54d10c09c96ac9aa2697562ec225559ca5816d6a599f7208"
+    }
+  ]
+}
