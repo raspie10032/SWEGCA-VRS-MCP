@@ -57,25 +57,43 @@ class LoopbackClient:
 
     def __init__(self, port, timeout_seconds=45):
         self.port, self.timeout_seconds = int(port), float(timeout_seconds)
+        self._connection = self._stream = None      # reused across requests (line protocol)
+
+    def _open(self):
+        self._connection = socket.create_connection((HOST, self.port), timeout=self.timeout_seconds)
+        self._stream = self._connection.makefile('rb')
+
+    def close(self):
+        for item in (self._stream, self._connection):
+            try:
+                if item is not None:
+                    item.close()
+            except OSError:
+                pass
+        self._connection = self._stream = None
 
     def request(self, command, **arguments):
         if command not in RESIDENT_COMMANDS | LOCAL_COMMANDS:
             raise InterfaceError('resident_operation_not_exported')
-        try:
-            with socket.create_connection((HOST, self.port), timeout=self.timeout_seconds) as connection:
-                connection.sendall(encode({'command': command, **arguments}) + b'\n')
-                with connection.makefile('rb') as stream:
-                    raw = stream.readline(MAX_BYTES + 1)
-            if not raw.endswith(b'\n'):
-                raise InterfaceError('resident_frame_invalid')
-            result = decode(raw)
-            if result.get('status') == 'rejected':
-                raise InterfaceError('resident_rejected: ' + str(result.get('reason', ''))[:120])
-            return result
-        except InterfaceError:
-            raise
-        except OSError:
-            raise InterfaceError('resident_request_failed') from None
+        payload = encode({'command': command, **arguments}) + b'\n'
+        raw = b''
+        for attempt in (0, 1):
+            try:
+                if self._connection is None:
+                    self._open()
+                self._connection.sendall(payload)
+                raw = self._stream.readline(MAX_BYTES + 1)
+                if not raw.endswith(b'\n'):
+                    raise OSError('closed')
+                break
+            except OSError:
+                self.close()
+                if attempt:
+                    raise InterfaceError('resident_request_failed') from None
+        result = decode(raw)
+        if result.get('status') == 'rejected':
+            raise InterfaceError('resident_rejected: ' + str(result.get('reason', ''))[:120])
+        return result
 
 
 def ensure_daemon(state_dir, *, allow_ingest=True, python=None, wait_seconds=30):
@@ -194,16 +212,23 @@ def serve(state_dir, *, port=0, allow_ingest=False, idle_hours=8.0):
 
     class Handler(socketserver.StreamRequestHandler):
         def handle(self):
-            raw = self.rfile.readline(MAX_BYTES + 1)
-            try:
-                if not raw.endswith(b'\n'):
-                    raise InterfaceError('resident_frame_invalid')
-                reply = daemon.handle(decode(raw))
-            except (InterfaceError, ValueError, KeyError, TypeError) as error:
-                reply = dict(status='rejected', reason=str(error)[:200])
-            except Exception as error:      # never take the daemon down for one request
-                reply = dict(status='rejected', reason='internal: ' + type(error).__name__)
-            self.wfile.write(encode(reply) + b'\n')
+            # one connection may carry many requests, one JSON line each, until EOF
+            while True:
+                raw = self.rfile.readline(MAX_BYTES + 1)
+                if not raw:
+                    return
+                try:
+                    if not raw.endswith(b'\n'):
+                        raise InterfaceError('resident_frame_invalid')
+                    reply = daemon.handle(decode(raw))
+                except (InterfaceError, ValueError, KeyError, TypeError) as error:
+                    reply = dict(status='rejected', reason=str(error)[:200])
+                except Exception as error:      # never take the daemon down for one request
+                    reply = dict(status='rejected', reason='internal: ' + type(error).__name__)
+                self.wfile.write(encode(reply) + b'\n')
+                self.wfile.flush()
+                if reply.get('status') == 'stopping':
+                    return
 
     class Server(socketserver.ThreadingMixIn, socketserver.TCPServer):
         daemon_threads = True
