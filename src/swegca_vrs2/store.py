@@ -23,9 +23,11 @@ import numpy as np
 
 from .engine.mosaic_memory_activation import (
     OUTCOMES, MemoryEpisode, MemoryStep, FullCurrentMemoryVrsSnapshot,
-    AtomicFullCurrentMemoryVrsOwner, activate_memory, current_experience_verdict,
-    CurrentEvidenceVerdict,
+    AtomicFullCurrentMemoryVrsOwner, current_experience_verdict,
+    CurrentEvidenceVerdict, MemoryActivationReceipt, RecallResult,
+    detect_deja_vu, recall_memory, replay_memory, re_evidence_memory,
 )
+import math
 
 from .engine.mosaic_vrs_event_signal import VERSION
 from .engine.mosaic_vrs_state_update import VRSConnectionStateUpdate, VRSStateUpdateReceipt
@@ -565,12 +567,26 @@ class Main:
         query = text_field(query, 'query', 4096)
         memory, graph, pair = self.memory, self.graph, self.pair
         candidates = keys(query)
-        selected = tuple(c for c in candidates if memory.episode_ids_for_cue(c))
+        fanout = {c: len(memory.episode_ids_for_cue(c)) for c in candidates}
+        selected = tuple(c for c in candidates if fanout[c])
+        # Local adapter (2026-09-14): a cue carried by half the store or more is a
+        # function word for this corpus (Korean one-character particles such as
+        # 왜/안 match nearly every record). Such cues still generate candidates —
+        # nothing is dropped — but they neither open proposition closure nor weigh
+        # in candidate order; otherwise every proposition in the store is pulled
+        # in by one particle and its closure cue inflates unrelated records.
+        total = max(1, memory.episode_count)
+        informative = tuple(c for c in selected if fanout[c] * 2 <= total)
         # Complete explicit same-proposition evidence closure, including opponents
         # whose text has no query overlap. Historical outcomes alone never conflict.
         propositions = {memory.episode(i).steps[0].observation.get('proposition_id')
-            for cue in selected for i in memory.episode_ids_for_cue(cue)} - {None}
+            for cue in informative for i in memory.episode_ids_for_cue(cue)} - {None}
         cues = (*selected, *('proposition:' + p for p in sorted(propositions)))
+        # Candidate order: rarity-weighted matched cues first, then the engine's Jaccard.
+        # The engine states candidate order is not semantic acceptance; the whole set
+        # stays addressable. Jaccard alone ranks short records above rich ones that
+        # match more of the question (v0.2 verdict obs:cue-overlap-penalizes-rich-documents).
+        weight = {c: math.log(1.0 + total / fanout[c]) for c in informative}
         opponents = {}
         for p in propositions:
             active = [memory.episode(i) for i in memory.propositions[p] if i not in memory.superseded]
@@ -585,11 +601,24 @@ class Main:
             return current_experience_verdict(episode, memory_snapshot_id=memory.snapshot_id,
                 vrs_snapshot_id=graph.snapshot_id, current_strength=graph.strength(episode.episode_id),
                 proposition=p or 'experience:' + episode.episode_id)
-        receipt = activate_memory(memory, query=query, current_cues=cues, judge=judge)
+        signal = detect_deja_vu(memory, query=query, current_cues=cues)
+        recalled = recall_memory(memory, signal)
+        def order(row):
+            return (-sum(weight.get(c, 0.0) for c in row.matched_cues), -row.cue_overlap, row.episode_id)
+        recalled = RecallResult(recalled.query, tuple(sorted(recalled.candidates, key=order)),
+                                recalled.snapshot_id, source_dependencies=recalled.source_dependencies)
+        replayed = replay_memory(memory, recalled)
+        re_evidenced = re_evidence_memory(replayed, judge=judge)
+        receipt = MemoryActivationReceipt(schema_version='rozephine-memory-activation-v1',
+            snapshot_id=memory.snapshot_id, deja_vu=signal, recall=recalled,
+            replay=replayed, re_evidence=re_evidenced)
         ids = [c.episode_id for c in receipt.recall.candidates]
-        selection = dict(candidate_counts={c: len(memory.episode_ids_for_cue(c)) for c in candidates},
+        selection = dict(candidate_counts={c: fanout[c] for c in candidates},
             selected_cues=cues, rejected_cues=tuple(c for c in candidates if c not in selected),
+            function_word_cues=tuple(c for c in selected if c not in informative),
             selection_method='all_matching_lexical_keys_and_explicit_proposition_closure',
+            closure_rule='propositions of records matched by an informative cue (fanout below half the store)',
+            candidate_order='rarity_weighted_matched_cues_then_cue_overlap',
             semantic_acceptance_claimed=False)
         return dict(receipt={'activation': receipt}, memory_selection=selection,
             vrs_selection=dict(selection_method='native_event_signal_and_connectivity_regions',
