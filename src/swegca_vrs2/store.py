@@ -5,10 +5,11 @@ No model, HTTP client, subprocess, Hermes store or action executor is used here.
 """
 from __future__ import annotations
 
-from collections import deque
 from dataclasses import dataclass, fields, is_dataclass, replace
+import copyreg
 import hashlib
 import json
+import pickle
 import re
 import sqlite3
 from pathlib import Path
@@ -25,14 +26,12 @@ from .engine.mosaic_memory_activation import (
     AtomicFullCurrentMemoryVrsOwner, activate_memory, current_experience_verdict,
     CurrentEvidenceVerdict,
 )
-from .engine.mosaic_immutable_numeric import immutable_numeric_array as frozen
-from .engine.mosaic_vrs_event_kernel import EventVrsInputs
-from .engine.mosaic_vrs_event_signal import settle_event_signal, VERSION
-from .engine.mosaic_vrs_event_delta import prepare_event_delta
-from .engine.mosaic_vrs_dependency_index import EndpointDependencyIndex
-from .engine.mosaic_vrs_connectivity_regions import ConnectivityRegions
+
+from .engine.mosaic_vrs_event_signal import VERSION
 from .engine.mosaic_vrs_state_update import VRSConnectionStateUpdate, VRSStateUpdateReceipt
 from .engine.mosaic_memory_promotion import assess_vrs_experience_promotion
+from .flat_vrs import FlatGraph, settle, frozen  # noqa: F401 — tests import frozen from here
+from .fast_regions import build_regions
 
 AUTHORITY = MappingProxyType({k: False for k in ('world', 'action', 'persistent_write', 'model_update', 'distribution', 'p3')})
 EDGE = np.dtype([('source', '<u4'), ('target', '<u4'), ('sign', 'i1'), ('vrs_strength', '<f4')])
@@ -178,40 +177,63 @@ class HotIndex:
             propositions, self.superseded if previous is None else self.superseded.set(previous, identifier)), identifier
 
 
-@dataclass(frozen=True)
 class Graph:
-    inputs: EventVrsInputs
-    nodes: Map
-    components: Map
-    regions: Map
-    last_receipt: object
+    """One immutable VRS generation on flat arrays (local Windows-scale adapter, 2026-09-14).
+
+    Same construction and rules as the ported composition: nodes are records plus
+    ``cue:`` terms, edges record<->cue both ways (sign 1, strength .5), a new record
+    gets direct .1, explicit same-proposition re-evidence edits outgoing strengths
+    once per ingress, and the event signal settles to a float32 fixed point or the
+    generation is not published. Representation and arithmetic vehicle come from
+    ``flat_vrs``; see that module for the (bit-verified) equivalence.
+
+    Connectivity regions are derived topology, prepared cold at ingress for the
+    changed connected component only (unchanged components stay shared), exactly
+    as the ported composition. Large components use ``fast_regions`` (same rule,
+    vectorized, warm-started from the previous generation); see that module.
+    """
+    __slots__ = ('snapshot_id', 'flat', 'nodes', 'components', 'regions', 'last_receipt', '_names')
+
+    def __init__(self, snapshot_id, flat, nodes, components, regions, last_receipt):
+        self.snapshot_id, self.flat, self.nodes = snapshot_id, flat, nodes
+        self.components, self.regions, self.last_receipt = components, regions, last_receipt
+        self._names = None
 
     @classmethod
     def empty(cls, identity):
-        edges = frozen(np.empty(0, dtype=EDGE))
-        zeros = frozen(np.empty(0, dtype=np.float32))
-        inputs = EventVrsInputs(digest(('vrs2', identity)), zeros, zeros, edges, zeros,
-            frozen(np.empty(0, dtype=bool)), EndpointDependencyIndex.build(edges))
-        return cls(inputs, Map(), Map(), Map(), MappingProxyType({}))
+        return cls(digest(('vrs2', identity)), FlatGraph.empty(), Map(), Map(), Map(), MappingProxyType({}))
+
+    @property
+    def edge_count(self):
+        return len(self.flat.src)
+
+    @property
+    def inputs(self):
+        """Compatibility shim for callers that only need ``.snapshot_id``."""
+        return SimpleNamespace(snapshot_id=self.snapshot_id)
+
+    def names(self):
+        if self._names is None:
+            names = [None] * len(self.nodes)
+            for name, index in self.nodes.items():
+                names[index] = name
+            self._names = tuple(names)
+        return self._names
 
     def append(self, episode, snapshot, memory):
         # Full original episodes link to shared literal cues. These are numerical
         # dependencies/navigation associations, never syllogistic entailments.
-        nodes = self.nodes
+        flat, nodes = self.flat, self.nodes
         new_names = [episode.episode_id] + [c for c in episode.cues if 'cue:' + c not in nodes]
         names = [episode.episode_id] + ['cue:' + c for c in new_names[1:]]
         for name in names:
             nodes = nodes.set(name, len(nodes))
         center = nodes[episode.episode_id]
         endpoints = [nodes['cue:' + c] for c in episode.cues]
-        added = np.array([(a, b, 1, .5) for n in endpoints for a, b in ((center, n), (n, center))], dtype=EDGE)
-        count = len(names)
-        direct = np.zeros(count, dtype=np.float32)
-        # Presence is a numerical observation signal, not historical truth.
-        direct[0] = .1
-        inputs = prepare_event_delta(self.inputs, snapshot_id=snapshot, appended_direct=direct,
-            appended_score=np.zeros(count, dtype=np.float32), appended_unresolved=np.ones(count, dtype=bool),
-            appended_edges=added, appended_strength=added['vrs_strength'].copy())
+        src = [x for n in endpoints for x in (center, n)]
+        dst = [x for n in endpoints for x in (n, center)]
+        direct = np.zeros(len(names), dtype=np.float32)
+        direct[0] = .1                       # presence is a numerical observation signal, not truth
         # Re-evidence compares only explicit, source-bound propositions. Shared
         # keywords/outcome labels cannot reinforce a proposition. An actual
         # opposing claim keeps the conflict and preserves its numerical strength.
@@ -225,81 +247,123 @@ class Graph:
             if replaced.steps[0].observation.get('proposition_id') == proposition:
                 prior.append(replaced)
         updates = []
-        for old in sorted(prior, key=lambda e:e.episode_id):
+        for old in sorted(prior, key=lambda e: e.episode_id):
             opposing = old.steps[0].observation.get('evidence_polarity') != obs.get('evidence_polarity')
             retracted = opposing and old.episode_id == replaced_id
             conflict = opposing and not retracted
             # Another report from the same source/revision is retained, but is
             # not another independent strength update for this proposition.
             duplicate_source = old.source_addresses == episode.source_addresses and old.revision == episode.revision
-            for edge in self.inputs.dependencies.edges_for(self.nodes[old.episode_id], direction='outgoing'):
-                edge = int(edge)
-                previous = float(inputs.strength[edge])
+            old_node = self.nodes[old.episode_id]
+            for edge in sorted(int(e) for e in flat.out_edge[flat.out_ptr[old_node]:flat.out_ptr[old_node + 1]]):
+                previous = float(flat.strength[edge])
                 value = previous if conflict or duplicate_source else previous * (.995 if retracted else 1.01)
                 action = 'abstain_conflict' if conflict else 'preserve_unresolved' if duplicate_source else 'weaken' if retracted else 'reinforce'
                 verdict = 'conflict' if conflict else 'available' if duplicate_source else 'refute' if retracted else 'support'
                 connection = 'vrs-edge:' + str(edge)
-                updates.append(VRSConnectionStateUpdate(old.episode_id,connection,proposition,verdict,
-                    previous,value,action,assess_vrs_experience_promotion(snapshot_id=snapshot,
-                        connection_id=connection,previous_strength=previous,current_strength=value),
-                    source_judgments=((episode.episode_id,proposition,verdict),)))
+                updates.append(VRSConnectionStateUpdate(old.episode_id, connection, proposition, verdict,
+                    previous, value, action, assess_vrs_experience_promotion(snapshot_id=snapshot,
+                        connection_id=connection, previous_strength=previous, current_strength=value),
+                    source_judgments=((episode.episode_id, proposition, verdict),)))
         # If any record opposes this new claim, do not reinforce matching records
         # on the same unresolved proposition either (falsification first).
         if any(u.verdict == 'conflict' for u in updates):
             updates = [replace(u, verdict='conflict', current_strength=u.previous_strength,
                 update_action='abstain_conflict', promotion=assess_vrs_experience_promotion(
-                    snapshot_id=snapshot,connection_id=u.connection_id,
-                    previous_strength=u.previous_strength,current_strength=u.previous_strength)) for u in updates]
+                    snapshot_id=snapshot, connection_id=u.connection_id,
+                    previous_strength=u.previous_strength, current_strength=u.previous_strength)) for u in updates]
         strength_receipt = VRSStateUpdateReceipt(snapshot, tuple(updates))
-        proposal = settle_event_signal(inputs, changed_nodes=(center, *endpoints),
-            strength_updates=strength_receipt, maximum_rounds=512)
-        if proposal.pending_nodes:
+        # Stored strength is rounded to float32 before arithmetic; an edit that does
+        # not change the stored value is not a seed (engine _bind_strength_updates).
+        edits, seeds = [], [center, *endpoints]
+        for u in updates:
+            edge = int(u.connection_id[len('vrs-edge:'):])
+            value = np.float32(u.current_strength)
+            if value.view(np.uint32) != np.float32(flat.strength[edge]).view(np.uint32):
+                edits.append((edge, value))
+                seeds.append(int(flat.dst[edge]))
+        grown = flat.extend(new_direct=direct, new_src=src, new_dst=dst, new_sign=[1] * len(src),
+                            new_strength=[.5] * len(src), strength_updates=edits)
+        settled, fields = settle(grown, seeds, maximum_rounds=512)
+        if fields['pending_node_count']:
             raise ValueError('vrs_signal_pending_no_publication')
-        # Immutable numeric successor; no full parent vector materialization.
-        score_ids = tuple(sorted(proposal.scores))
-        strength_ids = tuple(sorted(proposal.strengths))
-        settled = prepare_event_delta(inputs, snapshot_id=digest((snapshot, 'settled', [(i, float(proposal.scores[i])) for i in score_ids])),
-            appended_direct=np.empty(0, dtype=np.float32), appended_score=np.empty(0, dtype=np.float32),
-            appended_unresolved=np.empty(0, dtype=bool), appended_edges=np.empty(0, dtype=EDGE),
-            appended_strength=np.empty(0, dtype=np.float32), score_indices=score_ids,
-            score_values=np.array([proposal.scores[i] for i in score_ids], dtype=np.float32),
-            strength_indices=strength_ids, strength_values=np.array([proposal.strengths[i] for i in strength_ids],dtype=np.float32))
+        changed = np.flatnonzero(settled.view(np.uint32) != grown.score.view(np.uint32))
+        score_ids = [int(i) for i in changed]
+        # Same bytes as digest((snapshot, 'settled', [(i, score), ...])) without the generic
+        # plain() recursion over thousands of pairs.
+        payload = json.dumps([snapshot, 'settled', [[i, float(settled[i])] for i in score_ids]],
+                             ensure_ascii=False, sort_keys=True, separators=(',', ':'), allow_nan=False)
+        settled_id = hashlib.sha256(payload.encode('utf-8')).hexdigest()
+        grown = grown.with_score(settled)
         # Recompute only the changed connected component. Modularity within that
         # component is global; unchanged disconnected components stay shared.
-        members, queue = set(), deque((center, *(self.nodes[e.episode_id] for e in prior)))
-        edge_ids = set()
-        while queue:
-            n = queue.popleft()
-            if n in members:
-                continue
-            members.add(n)
-            for e in settled.dependencies.edges_for(n, direction='outgoing'):
-                e = int(e); edge_ids.add(e)
-                queue.append(int(settled.edges['target'][e]))
-        ordered, edges = sorted(members), sorted(edge_ids)
-        local = {n: i for i, n in enumerate(ordered)}
-        source = SimpleNamespace(terms=tuple(ordered),
-            edge_source=np.array([local[int(settled.edges['source'][e])] for e in edges], dtype=np.int64),
-            edge_target=np.array([local[int(settled.edges['target'][e])] for e in edges], dtype=np.int64),
-            edge_sign=np.array([int(settled.edges['sign'][e]) for e in edges], dtype=np.int8),
-            vrs_strength=np.array([float(settled.strength[e]) for e in edges]))
-        regions = ConnectivityRegions.build(source, vrs_snapshot_id=settled.snapshot_id)
+        members = self._component_members(grown, [center, *(self.nodes[e.episode_id] for e in prior)])
+        edge_mask = np.isin(grown.src, members)
+        edges = np.flatnonzero(edge_mask)
+        local = np.full(len(nodes), -1, dtype=np.int64)
+        local[members] = np.arange(len(members))
+        all_names = self.names() + tuple(names)
+        source = SimpleNamespace(terms=tuple(all_names[i] for i in members),
+            edge_source=local[grown.src[edges].astype(np.int64)],
+            edge_target=local[grown.dst[edges].astype(np.int64)],
+            edge_sign=grown.sign[edges].astype(np.int8),
+            vrs_strength=grown.strength[edges].astype(np.float64))
+        # A merge can only happen through the new record's own edges, so the previous
+        # component ids are exactly those of its endpoints that already existed.
+        previous_ids = {self.components[n] for n in endpoints if n in self.components}
+        previous = self.regions[next(iter(previous_ids))] if len(previous_ids) == 1 else None
+        regions, backend = build_regions(source, vrs_snapshot_id=settled_id, previous=previous)
         if not regions.converged:
             raise ValueError('region_topology_pending_no_publication')
-        component_id = min(ordered)
+        component_id = int(members[0])
         components, directory = self.components, self.regions
-        for old in {components[n] for n in members if n in components}:
+        for old in previous_ids:
             directory = directory.delete(old)
-        for n in ordered:
-            components = components.set(n, component_id)
-        directory = directory.set(component_id, (regions, Map(local)))
-        receipt = proposal.receipt() | dict(changed_component_nodes=len(ordered), changed_component_edges=len(edges),
+        for n in members:
+            n = int(n)
+            if components.get(n) != component_id:
+                components = components.set(n, component_id)
+        directory = directory.set(component_id, (regions, Map({int(n): i for i, n in enumerate(members)})))
+        receipt = dict(version=fields['version'], parent_snapshot_id=self.snapshot_id,
+            status=fields['status'], pending_node_count=0, rounds=fields['rounds'],
+            node_evaluations=fields['node_evaluations'], edge_evaluations=fields['edge_evaluations'],
+            changed_scores=len(score_ids), changed_strengths=len(edits),
+            legacy_numerical_equivalence=False, whole_graph_convergence_claimed=False,
+            logical_implication_claimed=False, cognitive_completion=False,
+            persistent_state_mutated=False, authority_granted=False,
+            strength_updates_reapplied_during_iterations=0, numerical_compatibility_controls_strength=False,
+            strength_storage_dtype='<f4', storage_binding_verified=True,
+            input_strength_proposal_count=len(updates),
+            arithmetic_vehicle='flat_vectorized_same_rule',
+            changed_component_nodes=len(members), changed_component_edges=len(edges),
             global_recomputation_reason='Only affected connected component: modularity equivalence cannot be guaranteed by local moves alone.',
+            region_backend=backend, region_sweeps=list(regions.sweeps),
             source_episode_count_added=1, historical_outcome=episode.steps[0].outcome,
             re_evidence_updates=plain(strength_receipt),
             recorded_agreement_is_not_independent_factual_corroboration=True,
-            logical_implication_claimed=False, grants_authority=False)
-        return Graph(settled, nodes, components, directory, freeze_view(receipt))
+            logical_implication_claimed_by_regions=False, grants_authority=False)
+        successor = Graph(settled_id, grown, nodes, components, directory, freeze_view(receipt))
+        successor._names = all_names
+        return successor
+
+    @staticmethod
+    def _component_members(flat, starts):
+        """Sorted node ids of the connected component(s) reachable from ``starts``."""
+        seen = np.zeros(flat.count, dtype=bool)
+        frontier = np.unique(np.asarray(starts, np.int64))
+        seen[frontier] = True
+        while len(frontier):
+            lo, hi = flat.out_ptr[frontier], flat.out_ptr[frontier + 1]
+            counts = hi - lo
+            total = int(counts.sum())
+            if not total:
+                break
+            idx = np.repeat(lo, counts) + (np.arange(total) - np.repeat(np.cumsum(counts) - counts, counts))
+            reached = flat.dst[flat.out_edge[idx]].astype(np.int64)
+            reached = reached[~seen[reached]]
+            frontier = np.unique(reached)
+            seen[frontier] = True
+        return np.flatnonzero(seen)
 
     def memberships(self, identifier):
         node = self.nodes[identifier]
@@ -307,15 +371,33 @@ class Graph:
         return tuple((region.topology_id, n, w) for n, w in region.memberships_for_term(positions[node]))
 
     def strength(self, identifier):
-        edges = self.inputs.dependencies.edges_for(self.nodes[identifier], direction='outgoing')
-        return max((float(self.inputs.strength[int(e)]) for e in edges), default=0.0)
+        node = self.nodes[identifier]
+        lo, hi = self.flat.out_ptr[node], self.flat.out_ptr[node + 1]
+        edges = self.flat.out_edge[lo:hi]
+        return float(self.flat.strength[edges].max()) if len(edges) else 0.0
 
     def summary(self):
-        return {k: plain(v) for k,v in self.last_receipt.items() if k != 're_evidence_updates'}
+        return {k: plain(v) for k, v in self.last_receipt.items() if k != 're_evidence_updates'}
+
+
+def _mapping_proxy(data):
+    return MappingProxyType(data)
+
+
+# pickle cannot name the mappingproxy type; rebuild frozen views through a module function.
+copyreg.pickle(MappingProxyType, lambda m: (_mapping_proxy, (dict(m),)))
+CHECKPOINT_EVERY = 8      # bounds crash replay to a few ingests; close() always checkpoints
 
 
 class Main:
-    """Sole owner for one state directory; transaction commit precedes publication."""
+    """Sole owner for one state directory; transaction commit precedes publication.
+
+    Restart: load the last checkpoint (pickled hot index, flat VRS generation and
+    request table), verify it against the journal row it claims, then replay only
+    the observations after it. Without a matching checkpoint the whole journal is
+    replayed as before. The journal remains the source of truth; a checkpoint is a
+    verified cache written every CHECKPOINT_EVERY ingests and on close.
+    """
     def __init__(self, state_dir, *, allow_ingest=False):
         self.directory = Path(state_dir).expanduser().resolve()
         self.directory.mkdir(parents=True, exist_ok=True)
@@ -326,12 +408,15 @@ class Main:
             raise ValueError('state_directory_already_owned') from None
         self.closed, self.allow_ingest = False, allow_ingest
         self.db = None
+        self._dirty = 0
+        self.restore = {}
         try:
             self.db = sqlite3.connect(self.directory / 'memory.sqlite3', isolation_level=None)
             self.db.execute('PRAGMA journal_mode=WAL')
             self.db.execute('PRAGMA synchronous=FULL')
             self.db.execute('CREATE TABLE IF NOT EXISTS identity (id INTEGER PRIMARY KEY CHECK(id=1), value TEXT NOT NULL)')
             self.db.execute('CREATE TABLE IF NOT EXISTS observations (seq INTEGER PRIMARY KEY, request_id TEXT UNIQUE NOT NULL, body TEXT NOT NULL, fingerprint TEXT NOT NULL, pair TEXT NOT NULL)')
+            self.db.execute('CREATE TABLE IF NOT EXISTS checkpoint (id INTEGER PRIMARY KEY CHECK(id=1), seq INTEGER NOT NULL, pair TEXT NOT NULL, blob BLOB NOT NULL)')
             identity = self.db.execute('SELECT value FROM identity WHERE id=1').fetchone()
             if identity is None:
                 identity = (str(uuid.uuid4()),)
@@ -340,22 +425,84 @@ class Main:
             self.memory = HotIndex(digest(('memory', self.identity)), Map(), Map(), Map({o: 0 for o in OUTCOMES}), Map(), Map())
             self.graph = Graph.empty(self.identity)
             self.operations = Map()
-            self.pair = FullCurrentMemoryVrsSnapshot(self.memory, self.graph.inputs.snapshot_id)
-            for req, body, fingerprint, expected in self.db.execute('SELECT request_id,body,fingerprint,pair FROM observations ORDER BY seq'):
+            self.pair = FullCurrentMemoryVrsSnapshot(self.memory, self.graph.snapshot_id)
+            started = perf_counter_ns()
+            after = self._load_checkpoint()
+            # The journal stays the source of truth: every row the checkpoint claims to
+            # cover is re-validated (fingerprint and request identity) before use.
+            for req, body, fingerprint in self.db.execute(
+                    'SELECT request_id,body,fingerprint FROM observations WHERE seq<=? ORDER BY seq', (after,)):
+                row = observation(json.loads(body))
+                if digest(row) != fingerprint or row['request_id'] != req:
+                    raise ValueError('stored_observation_integrity_failed')
+            replayed = 0
+            for req, body, fingerprint, expected in self.db.execute(
+                    'SELECT request_id,body,fingerprint,pair FROM observations WHERE seq>? ORDER BY seq', (after,)):
                 row = observation(json.loads(body))
                 if digest(row) != fingerprint or row['request_id'] != req:
                     raise ValueError('stored_observation_integrity_failed')
                 memory, identifier = self.memory.append(row)
-                graph = self.graph if memory is self.memory else self.graph.append(memory.episode(identifier), digest((self.graph.inputs.snapshot_id, fingerprint)), memory)
-                pair = FullCurrentMemoryVrsSnapshot(memory, graph.inputs.snapshot_id)
+                graph = self.graph if memory is self.memory else self.graph.append(memory.episode(identifier), digest((self.graph.snapshot_id, fingerprint)), memory)
+                pair = FullCurrentMemoryVrsSnapshot(memory, graph.snapshot_id)
                 if pair.snapshot_id != expected:
                     raise ValueError('stored_generation_integrity_failed')
                 self.memory, self.graph, self.pair = memory, graph, pair
                 self.operations = self.operations.set(req, (fingerprint, identifier, pair.snapshot_id))
+                replayed += 1
+            self._dirty = replayed
+            self.restore.update(replayed_after_checkpoint=replayed, elapsed_ns=perf_counter_ns() - started)
             self.owner = AtomicFullCurrentMemoryVrsOwner(self.pair)
         except BaseException:
             self.close()
             raise
+
+    def _load_checkpoint(self):
+        """Return the journal seq the loaded state corresponds to (0 = nothing loaded)."""
+        row = self.db.execute('SELECT seq, pair, blob FROM checkpoint WHERE id=1').fetchone()
+        if row is None:
+            self.restore['checkpoint'] = 'none'
+            return 0
+        seq, pair, blob = row
+        journal = self.db.execute('SELECT pair FROM observations WHERE seq=?', (seq,)).fetchone()
+        if journal is None or journal[0] != pair:
+            self.restore['checkpoint'] = 'stale_ignored'
+            return 0
+        try:
+            state = pickle.loads(blob)
+            if state['pair'] != pair or state['identity'] != self.identity:
+                raise ValueError('checkpoint identity mismatch')
+        except Exception as error:
+            self.restore['checkpoint'] = 'unreadable_ignored: ' + type(error).__name__
+            return 0
+        self.memory, self.graph, self.operations = state['memory'], state['graph'], state['operations']
+        self.pair = FullCurrentMemoryVrsSnapshot(self.memory, self.graph.snapshot_id)
+        if self.pair.snapshot_id != pair:
+            raise ValueError('checkpoint_generation_integrity_failed')
+        self.restore['checkpoint'] = f'loaded seq {seq}'
+        return seq
+
+    def checkpoint(self):
+        """Write the current verified state as a checkpoint for the latest journal row."""
+        self._check()
+        row = self.db.execute('SELECT seq, pair FROM observations ORDER BY seq DESC LIMIT 1').fetchone()
+        if row is None:
+            return None
+        seq, pair = row
+        if pair != self.pair.snapshot_id:
+            raise ValueError('checkpoint_does_not_match_journal_head')
+        started = perf_counter_ns()
+        blob = pickle.dumps(dict(identity=self.identity, pair=pair, memory=self.memory,
+                                 graph=self.graph, operations=self.operations), protocol=pickle.HIGHEST_PROTOCOL)
+        self.db.execute('BEGIN IMMEDIATE')
+        try:
+            self.db.execute('INSERT OR REPLACE INTO checkpoint(id, seq, pair, blob) VALUES (1,?,?,?)', (seq, pair, blob))
+            self.db.execute('COMMIT')
+        except BaseException:
+            if self.db.in_transaction:
+                self.db.execute('ROLLBACK')
+            raise
+        self._dirty = 0
+        return dict(seq=seq, bytes=len(blob), elapsed_ns=perf_counter_ns() - started)
 
     def _check(self):
         if self.closed:
@@ -364,13 +511,14 @@ class Main:
     def status(self):
         self._check()
         return dict(status='ready', identity=self.identity, pair_snapshot_id=self.pair.snapshot_id,
-            memory_snapshot_id=self.memory.snapshot_id, vrs_snapshot_id=self.graph.inputs.snapshot_id,
+            memory_snapshot_id=self.memory.snapshot_id, vrs_snapshot_id=self.graph.snapshot_id,
             hot_episode_count=len(self.memory.records), outcome_counts=dict(self.memory.outcome_counts),
             lookup_requires_io=False, internal_llm_calls=0, final_utterance_calls=0,
             backend='standalone_native_vrs2', native_engine_bundled=True, scheduled_dialogue_available=True,
             writes_enabled=self.allow_ingest, authority=dict(AUTHORITY), numerical_version=VERSION,
-            vrs_node_count=len(self.graph.nodes), vrs_edge_count=len(self.graph.inputs.edges),
-            last_vrs_event=self.graph.summary())
+            vrs_node_count=len(self.graph.nodes), vrs_edge_count=self.graph.edge_count,
+            last_vrs_event=self.graph.summary(), restore=dict(self.restore),
+            checkpoint_pending_ingests=self._dirty)
 
     def ingest(self, arguments):
         self._check()
@@ -387,8 +535,8 @@ class Main:
                 current_pair_snapshot_id=self.pair.snapshot_id, idempotent_replay=True, grants_authority=False)
         memory, identifier = self.memory.append(row)
         added = memory is not self.memory
-        graph = self.graph if not added else self.graph.append(memory.episode(identifier), digest((self.graph.inputs.snapshot_id, fingerprint)), memory)
-        pair = FullCurrentMemoryVrsSnapshot(memory, graph.inputs.snapshot_id)
+        graph = self.graph if not added else self.graph.append(memory.episode(identifier), digest((self.graph.snapshot_id, fingerprint)), memory)
+        pair = FullCurrentMemoryVrsSnapshot(memory, graph.snapshot_id)
         operations = self.operations.set(row['request_id'], (fingerprint, identifier, pair.snapshot_id))
         self.db.execute('BEGIN IMMEDIATE')
         try:
@@ -401,6 +549,9 @@ class Main:
             raise
         self.owner.replace(self.pair.snapshot_id, pair)
         self.memory, self.graph, self.pair, self.operations = memory, graph, pair, operations
+        self._dirty += 1
+        if self._dirty >= CHECKPOINT_EVERY:
+            self.checkpoint()
         return dict(status='observation_recorded', episode_id=identifier, pair_snapshot_id=pair.snapshot_id,
             revision=row['revision'], source=row['source'], outcome=row['outcome'],
             idempotent_replay=False, observation_only=True, grants_authority=False,
@@ -432,7 +583,7 @@ class Main:
                     'Opposing recorded claims for the same explicit proposition; neither is certified true.',
                     ('memory-snapshot:' + memory.snapshot_id, *episode.source_addresses), opponents[p])
             return current_experience_verdict(episode, memory_snapshot_id=memory.snapshot_id,
-                vrs_snapshot_id=graph.inputs.snapshot_id, current_strength=graph.strength(episode.episode_id),
+                vrs_snapshot_id=graph.snapshot_id, current_strength=graph.strength(episode.episode_id),
                 proposition=p or 'experience:' + episode.episode_id)
         receipt = activate_memory(memory, query=query, current_cues=cues, judge=judge)
         ids = [c.episode_id for c in receipt.recall.candidates]
@@ -453,6 +604,11 @@ class Main:
     def close(self):
         if self.closed:
             return
+        try:
+            if self.db is not None and self._dirty and self.allow_ingest and hasattr(self, 'owner'):
+                self.checkpoint()
+        except Exception:
+            pass                        # 체크포인트는 캐시다 — 닫기를 막지 않는다
         self.closed = True
         if self.db is not None:
             self.db.close()
