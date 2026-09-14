@@ -208,6 +208,12 @@ class Daemon:
             if command == 'checkpoint':
                 return dict(status='ok', checkpoint=self.main.checkpoint())
             if command == 'shutdown':
+                # Drop the port file now, not after the closing checkpoint: a client that
+                # arrives meanwhile must spawn a fresh daemon, not attach to this dying one.
+                try:
+                    (self.state_dir / PORT_FILE).unlink()
+                except OSError:
+                    pass
                 self.stop.set()
                 return dict(status='stopping')
         raise InterfaceError('resident_operation_not_exported')

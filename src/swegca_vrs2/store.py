@@ -76,6 +76,12 @@ def keys(text):
     """Lexical address keys; Hangul substrings are retrieval cues, never claims."""
     result = dict.fromkeys(re.findall(r'\w+', text.casefold()))
     result.update(dict.fromkeys(re.findall(r'memory:[0-9a-f]{64}', text.casefold())))
+    # Local adapter (2026-09-14): a mixed-script token (270인지, 폴더블8, 8월) also addresses
+    # its script runs. Upstream gives such a token neither a whole-token match against the
+    # separately written form ("big_chunk 270") nor the Hangul substrings below.
+    for word in tuple(result):
+        if not re.fullmatch('[가-힣]+', word):
+            result.update(dict.fromkeys(part for part in re.findall('[가-힣]+|[^가-힣]+', word) if part != word))
     for word in tuple(result):
         if re.fullmatch('[가-힣]+', word):
             for size in range(2, min(4, len(word)) + 1):
