@@ -283,7 +283,8 @@ class Graph:
     as the ported composition. Large components use ``fast_regions`` (same rule,
     vectorized, warm-started from the previous generation); see that module.
     """
-    __slots__ = ('snapshot_id', 'flat', 'nodes', 'components', 'regions', 'last_receipt')
+    # '_names' is kept only so checkpoints written by the earlier Graph layout still unpickle.
+    __slots__ = ('snapshot_id', 'flat', 'nodes', 'components', 'regions', 'last_receipt', '_names')
 
     def __init__(self, snapshot_id, flat, nodes, components, regions, last_receipt):
         self.snapshot_id, self.flat, self.nodes = snapshot_id, flat, nodes
@@ -407,7 +408,7 @@ class Graph:
             n = int(n)
             if components.get(n) != component_id:
                 components = components.set(n, component_id)
-        directory = directory.set(component_id, (regions, Map({int(n): i for i, n in enumerate(members)})))
+        directory = directory.set(component_id, (regions, frozen(local, np.int32)))   # node -> local position
         receipt = dict(version=fields['version'], parent_snapshot_id=self.snapshot_id,
             status=fields['status'], pending_node_count=0, rounds=fields['rounds'],
             node_evaluations=fields['node_evaluations'], edge_evaluations=fields['edge_evaluations'],
@@ -427,6 +428,31 @@ class Graph:
             recorded_agreement_is_not_independent_factual_corroboration=True,
             logical_implication_claimed_by_regions=False, grants_authority=False)
         return Graph(settled_id, grown, nodes, components, directory, freeze_view(receipt))
+
+    def rebuild_regions(self):
+        """Rebuild every component's regions in the shared-array layout (one-time after conversion)."""
+        flat, nodes = self.flat, self.nodes
+        seen = np.zeros(flat.count, dtype=bool)
+        components, directory = Map(), Map()
+        for start in range(flat.count):
+            if seen[start]:
+                continue
+            members = self._component_members(flat, [start])
+            seen[members] = True
+            edges = np.flatnonzero(np.isin(flat.src, members))
+            local = np.full(flat.count, -1, dtype=np.int64)
+            local[members] = np.arange(len(members))
+            source = SimpleNamespace(terms=LazyTerms(nodes, frozen(members, np.int64)),
+                edge_source=local[flat.src[edges].astype(np.int64)], edge_target=local[flat.dst[edges].astype(np.int64)],
+                edge_sign=flat.sign[edges].astype(np.int8), vrs_strength=flat.strength[edges].astype(np.float64))
+            previous = self.regions.get(int(members[0]))
+            regions, _ = build_regions(source, vrs_snapshot_id=self.snapshot_id, previous=previous)
+            if not regions.converged:
+                raise ValueError('region_topology_pending_no_publication')
+            for n in members:
+                components = components.set(int(n), int(members[0]))
+            directory = directory.set(int(members[0]), (regions, frozen(local, np.int32)))
+        return Graph(self.snapshot_id, flat, nodes, components, directory, self.last_receipt)
 
     @staticmethod
     def _component_members(flat, starts):
@@ -591,6 +617,12 @@ class Main:
                                              frozen(node_cue, np.int32), count)
             self._dirty += 1
             self.restore['converted_graph'] = 'string_nodes_to_directory'
+        if getattr(self.graph, '_names', None) is not None:
+            self.graph._names = None                  # old layout kept every node name resident
+        if any(not isinstance(pos, np.ndarray) for _, pos in self.graph.regions.values()):
+            self.graph = self.graph.rebuild_regions()  # old layout: duplicated edge arrays, name tuples, position Maps
+            self._dirty += 1
+            self.restore['converted_regions'] = 'rebuilt_shared_layout'
         self.pair = FullCurrentMemoryVrsSnapshot(self.memory, self.graph.snapshot_id)
         if self.pair.snapshot_id != pair:
             raise ValueError('checkpoint_generation_integrity_failed')
@@ -608,7 +640,9 @@ class Main:
             raise ValueError('checkpoint_does_not_match_journal_head')
         started = perf_counter_ns()
         raw = pickle.dumps(dict(identity=self.identity, pair=pair, memory=self.memory,
-                                graph=self.graph, operations=self.operations), protocol=pickle.HIGHEST_PROTOCOL)
+                                graph=self.graph, operations=self.operations), protocol=4)
+        # protocol 4 on purpose: protocol 5 unpickles every array as a view on the one big blob,
+        # so any live array keeps the whole blob resident (measured: 2x the data).
         blob = CHECKPOINT_MAGIC + zlib.compress(raw, 6)
         self.db.execute('BEGIN IMMEDIATE')
         try:

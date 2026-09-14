@@ -131,6 +131,17 @@ def ensure_daemon(state_dir, *, allow_ingest=True, python=None, wait_seconds=30)
 
 # ── daemon ────────────────────────────────────────────────────────────
 
+def _asks_of(text):
+    """The record's own "찾을 때 묻는 말" (verdict tail line or memory-doc section), else ''."""
+    marker = '찾을 때 묻는 말'
+    at = text.find(marker)
+    if at < 0:
+        return ''
+    tail = text[at + len(marker):]
+    tail = tail.split('\n## ', 1)[0]          # doc section ends at the next heading
+    return tail.strip(': \n')[:800]
+
+
 def hook_recall(main, arguments):
     """Short packet for hooks: top candidates with provenance and a snippet."""
     query = str(arguments.get('query') or '')
@@ -153,7 +164,9 @@ def hook_recall(main, arguments):
             verdict=judgment.verdict if judgment else None,
             superseded_by=main.memory.superseded.get(candidate.episode_id),
             metadata=dict(obs.get('metadata') or {}),
-            text=obs.get('text', '')[:snippet], text_chars=len(obs.get('text', ''))))
+            text=obs.get('text', '')[:snippet], text_chars=len(obs.get('text', '')),
+            # verdict records end with their asks line; hooks match query cues against it
+            asks=_asks_of(obs.get('text', ''))))
     controls = activation.re_evidence
     return dict(status='ok', query=query, pair_snapshot_id=status['pair_snapshot_id'],
                 candidate_count=len(activation.recall.candidates), returned=len(rows), memories=rows,
@@ -161,6 +174,8 @@ def hook_recall(main, arguments):
                 conflicting_propositions=list(controls.conflicting_propositions),
                 insufficient_evidence=controls.insufficient_evidence,
                 selection={k: root['memory_selection'][k] for k in ('function_word_cues', 'candidate_order', 'closure_rule')},
+                fanout={c: n for c, n in root['memory_selection']['candidate_counts'].items() if n},
+                record_count=status['hot_episode_count'],
                 grants_authority=False)
 
 

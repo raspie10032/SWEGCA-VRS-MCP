@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sys
 import zlib
 from collections import OrderedDict
 
@@ -36,8 +37,10 @@ from immutables import Map
 from .engine.mosaic_memory_activation import MemoryEpisode, MemoryStep, OUTCOMES, _cue
 
 BLOCK = 128           # cue strings per vocabulary block
-BLOCK_CACHE = 512     # decoded vocabulary blocks kept resident
-EPISODE_CACHE = 4096  # rebuilt MemoryEpisode objects kept resident
+BLOCK_CACHE = 1 << 20  # decoded vocabulary blocks kept resident: strings are interned and shared, so the
+                       # whole decoded vocabulary is cheaper than re-decoding blocks on every episode rebuild
+EPISODE_CACHE = 4096  # rebuilt MemoryEpisode objects kept resident (cue strings are interned, so a cached
+                      # episode costs one reference per cue, not one string per cue)
 
 
 def _hash64(text):
@@ -73,7 +76,8 @@ class Vocab:
         if strings is None:
             if number == len(self.blocks):
                 return self.tail
-            strings = zlib.decompress(self.blocks[number]).decode('utf-8').split('\n')
+            # interned: every episode that carries this cue shares one string object
+            strings = [sys.intern(t) for t in zlib.decompress(self.blocks[number]).decode('utf-8').split('\n')]
             self._cache[number] = strings
             if len(self._cache) > BLOCK_CACHE:
                 self._cache.popitem(last=False)
@@ -99,7 +103,7 @@ class Vocab:
         """Ids for ``texts`` (all distinct, none present yet), appended in order."""
         first = self.count
         for text in texts:
-            self.tail.append(text)
+            self.tail.append(sys.intern(text))
             if len(self.tail) == BLOCK:
                 self.blocks.append(zlib.compress('\n'.join(self.tail).encode('utf-8'), 6))
                 self.tail = []
@@ -287,35 +291,47 @@ class CompactIndex:
     # ── conversion from the ported HotIndex (old checkpoints) ───────────
     @classmethod
     def from_hot(cls, hot):
+        """Bulk conversion of a ported HotIndex: one vocabulary build, postings by one sort."""
         index = cls.empty('convert')
         store = index._store
         rows = list(hot.records.items())
+        # 1. vocabulary in one pass (insertion order = first appearance), ids per record
+        first_id = {}
+        order = []
+        per_record = []
+        for identifier, episode in rows:
+            ids = []
+            for cue in dict.fromkeys(_cue(c) for c in episode.cues):
+                cue_id = first_id.get(cue)
+                if cue_id is None:
+                    cue_id = len(order)
+                    first_id[cue] = cue_id
+                    order.append(cue)
+                ids.append(cue_id)
+            per_record.append(np.asarray(ids, dtype=np.uint32))
+        store['vocab'].add(order)
+        # 2. records
         for row_number, (identifier, episode) in enumerate(rows):
             obs = episode.steps[0].observation
-            cues = tuple(dict.fromkeys(_cue(c) for c in episode.cues))
-            vocab = store['vocab']
-            cue_ids, fresh = [], []
-            for cue in cues:
-                found = vocab.id_of(cue)
-                if found is None:
-                    fresh.append(cue); cue_ids.append(None)
-                else:
-                    cue_ids.append(found)
-            if fresh:
-                new_ids = iter(vocab.add(fresh))
-                cue_ids = [next(new_ids) if c is None else c for c in cue_ids]
             store['ids'].append(identifier)
             store['row_of'][identifier] = row_number
-            store['cues'].append(np.asarray(cue_ids, dtype=np.uint32))
-            for cue_id in cue_ids:
-                old_rows = store['postings'].get(cue_id)
-                store['postings'][cue_id] = (np.array([row_number], dtype=np.uint32) if old_rows is None
-                                             else np.append(old_rows, np.uint32(row_number)))
+            store['cues'].append(per_record[row_number])
             payload = dict(text=obs['text'], metadata=dict(obs.get('metadata') or {}),
                            proposition=obs.get('proposition_id'), polarity=obs.get('evidence_polarity'),
                            supersedes=obs.get('supersedes'), outcome=episode.steps[0].outcome,
                            source=episode.source_addresses[0], revision=episode.revision)
             store['blobs'].append(zlib.compress(json.dumps(payload, ensure_ascii=False, separators=(',', ':')).encode('utf-8'), 6))
+        # 3. postings: sort all (cue_id, row) pairs once and slice per cue
+        if per_record:
+            cue_col = np.concatenate(per_record)
+            row_col = np.repeat(np.arange(len(per_record), dtype=np.uint32),
+                                [len(a) for a in per_record])
+            sort = np.lexsort((row_col, cue_col))
+            cue_col, row_col = cue_col[sort], row_col[sort]
+            bounds = np.flatnonzero(np.r_[True, cue_col[1:] != cue_col[:-1], True])
+            postings = store['postings']
+            for lo, hi in zip(bounds[:-1], bounds[1:]):
+                postings[int(cue_col[lo])] = row_col[lo:hi].copy()
         return cls(store, len(rows), hot.snapshot_id, hot.outcome_counts, hot.propositions, hot.superseded)
 
     def __getstate__(self):

@@ -35,7 +35,16 @@ VERSION = 'vrs-re-evidence-event-signal-f32-v2-experimental'   # same rule, flat
 
 
 def frozen(values, dtype=None):
-    """Immutable bytes-backed copy (the engine's immutability contract)."""
+    """Immutable bytes-backed array (the engine's immutability contract).
+
+    An array that already satisfies the contract (read-only, contiguous, its own
+    ``bytes`` base, right dtype) is returned as is — unpickled checkpoint arrays are
+    exactly that, and copying them doubled resident memory.
+    """
+    if (isinstance(values, np.ndarray) and not values.flags.writeable and values.flags.c_contiguous
+            and isinstance(values.base, bytes) and len(values.base) == values.nbytes
+            and (dtype is None or values.dtype == np.dtype(dtype))):
+        return values
     array = np.ascontiguousarray(values, dtype=dtype)
     return np.frombuffer(array.tobytes(), dtype=array.dtype).reshape(array.shape)
 
