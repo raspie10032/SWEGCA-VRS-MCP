@@ -833,7 +833,7 @@ class Main:
         cue_counts = memory._store['cues'] if hasattr(memory, '_store') else None
         rows_of = memory._store['row_of'] if cue_counts is not None else None
         average = (sum(len(a) for a in cue_counts) / max(1, len(cue_counts))) if cue_counts else 1.0
-        k1, b = 1.2, 0.75
+        k1, b = 1.2, 0.3   # b measured over 15 known-answer queries: .75 MRR .63, .5 .69, .3 .69 (top3 12/15), .15 .65, 0 .38
         opponents = {}
         for p in propositions:
             active = [memory.episode(i) for i in memory.propositions[p] if i not in memory.superseded]
