@@ -15,6 +15,7 @@ import sqlite3
 from pathlib import Path
 from time import perf_counter_ns
 from types import MappingProxyType, SimpleNamespace
+import os
 import uuid
 import zlib
 
@@ -36,6 +37,28 @@ from .engine.mosaic_memory_promotion import assess_vrs_experience_promotion
 from .flat_vrs import FlatGraph, settle, frozen  # noqa: F401 — tests import frozen from here
 from .fast_regions import build_regions
 from .compact_index import CompactIndex
+
+# Local adapter (2026-09-14): generated Hangul n-gram cues (2-4 chars, produced by keys() for every
+# Hangul word) stay retrieval keys in the postings but do not become VRS nodes. As nodes they joined
+# every record into one component (2,620 records: 168,699 nodes / 1.64M edges, every ingest settled
+# and re-regioned the whole graph). Candidate order never used VRS strengths, so recall is unchanged.
+# Set VRS2_GRAPH_SUBSTRING_CUES=1 to restore the upstream node set (then rebuild the graph).
+GRAPH_SUBSTRING_CUES = os.environ.get('VRS2_GRAPH_SUBSTRING_CUES') == '1'
+_HANGUL_FRAGMENT = re.compile('[가-힣]{2,4}')
+
+
+def graph_cue_ids(memory, row):
+    """Cue ids of record ``row`` that become graph endpoints."""
+    ids = [int(c) for c in memory._store['cues'][row]]
+    if GRAPH_SUBSTRING_CUES:
+        return ids
+    vocab = memory._store['vocab']
+    names = [vocab.string_of(c) for c in ids]
+    blob = '\x00'.join(names)
+    # a short pure-Hangul cue that also occurs inside another cue of the same record is a fragment
+    return [c for c, n in zip(ids, names)
+            if not (_HANGUL_FRAGMENT.fullmatch(n) and blob.count(n) >= 2)]
+
 
 AUTHORITY = MappingProxyType({k: False for k in ('world', 'action', 'persistent_write', 'model_update', 'distribution', 'p3')})
 EDGE = np.dtype([('source', '<u4'), ('target', '<u4'), ('sign', 'i1'), ('vrs_strength', '<f4')])
@@ -315,7 +338,7 @@ class Graph:
         # dependencies/navigation associations, never syllogistic entailments.
         flat = self.flat
         row = memory._store['row_of'][episode.episode_id]
-        cue_ids = [int(c) for c in memory._store['cues'][row]]
+        cue_ids = graph_cue_ids(memory, row)
         directory = self.nodes if self.nodes.vocab is not None else NodeDirectory.empty(memory._store['vocab'])
         fresh = [c for c in cue_ids if directory.cue(c) < 0]
         nodes = directory.extend(episode.episode_id, fresh)
@@ -634,6 +657,59 @@ class Main:
             raise ValueError('checkpoint_generation_integrity_failed')
         self.restore['checkpoint'] = f'loaded seq {seq}'
         return seq
+
+    def rebuild_from_journal(self, progress=None):
+        """Rebuild index and graph from the whole journal under the current rules (e.g. after
+        changing the node set). Row contents and fingerprints are untouched; the per-row pair ids
+        are re-derived and rewritten, because a VRS snapshot id digests the settled values and so
+        certifies the arithmetic that produced them — a new node rule is a new certificate chain.
+        Returns (rows, seconds)."""
+        self._check()
+        started = perf_counter_ns()
+        memory = CompactIndex.empty(self.identity)
+        graph = Graph.empty(self.identity, memory._store['vocab'])
+        operations = Map()
+        pair = FullCurrentMemoryVrsSnapshot(memory, graph.snapshot_id)
+        pairs = {}
+        rows = 0
+        for seq, req, body, fingerprint, _ in self._journal_rows(0, None):
+            row = observation(json.loads(body))
+            if digest(row) != fingerprint or row['request_id'] != req:
+                raise ValueError('stored_observation_integrity_failed')
+            memory2, identifier = memory.append(row)
+            graph = graph if memory2 is memory else graph.append(memory2.episode(identifier), digest((graph.snapshot_id, fingerprint)), memory2)
+            memory = memory2
+            pair = FullCurrentMemoryVrsSnapshot(memory, graph.snapshot_id)
+            pairs[seq] = pair.snapshot_id
+            operations = operations.set(req, (fingerprint, identifier, pair.snapshot_id))
+            rows += 1
+            if progress and rows % 50 == 0:
+                progress(rows, seq, graph)
+        self.db.execute('BEGIN IMMEDIATE')
+        try:
+            for seq, value in pairs.items():
+                self.db.execute('UPDATE observations SET pair=? WHERE seq=?', (value, seq))
+            for segment, blob in self.db.execute('SELECT segment, blob FROM journal_archive').fetchall():
+                if blob[:2] != ARCHIVE_MAGIC:
+                    raise ValueError('journal_archive_segment_corrupt')
+                lines = []
+                for line in zlib.decompress(blob[2:]).decode('utf-8').splitlines():
+                    seq, req, body, fingerprint, _ = json.loads(line)
+                    lines.append(json.dumps([seq, req, body, fingerprint, pairs[seq]], ensure_ascii=False, separators=(',', ':')))
+                last_seq = json.loads(lines[-1])[0]
+                self.db.execute('UPDATE journal_archive SET blob=?, last_pair=? WHERE segment=?',
+                                (ARCHIVE_MAGIC + zlib.compress('\n'.join(lines).encode('utf-8'), 6), pairs[last_seq], segment))
+            self.db.execute('DELETE FROM checkpoint')          # the old checkpoint certifies the old chain
+            self.db.execute('COMMIT')
+        except BaseException:
+            if self.db.in_transaction:
+                self.db.execute('ROLLBACK')
+            raise
+        self.owner.replace(self.pair.snapshot_id, pair)
+        self.memory, self.graph, self.pair, self.operations = memory, graph, pair, operations
+        self._dirty += 1
+        self.checkpoint()
+        return rows, (perf_counter_ns() - started) / 1e9
 
     def checkpoint(self):
         """Write the current verified state as a checkpoint for the latest journal row."""
