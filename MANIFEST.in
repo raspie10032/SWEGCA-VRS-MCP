@@ -1,9 +1,12 @@
-include LICENSE README.md UPSTREAM.json uv.lock
-include ARCHITECTURE_UPSTREAM.json VRS_UPSTREAM.json NOTICE.md
+prune docs
+prune tools
+prune tests
+prune examples
+prune integrations
+include LICENSE README.md uv.lock NATIVE_VRS2_PORT.json NOTICE.md
 recursive-include LICENSES *.txt
-recursive-include docs *.md
-recursive-include examples *.json
-recursive-include tests *.py
-recursive-include tools *.py
-recursive-include integrations *.py *.yaml *.md
-recursive-include integrations *.example
+include docs/VRS2_STANDALONE_LEDGER.md docs/WINDOWS.md docs/VRS2_STANDALONE_VALIDATION.md
+include examples/claude-vrs2-windows.json
+recursive-include tests/standalone *.py
+include tools/verify_standalone.py tools/extract_vrs2_runtime.py tools/install_windows.ps1
+prune src/swegca_vrs_mcp

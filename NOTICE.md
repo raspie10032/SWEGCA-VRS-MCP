@@ -1,5 +1,13 @@
 # Source and license boundaries
 
+v2.1 standalone distribution contains only first-party `swegca_vrs2` and its
+native VRS2 component port (MIT). NATIVE_VRS2_PORT.json records exact source
+lineage. The historical packages and integrations described below remain in
+the repository, but are excluded from the v2.1 wheel/source archive. New local
+main, persistence and text-ingress composition is not claimed byte-equivalent
+to the entire private Rozephine application. No experiences, weights or private
+runtime state are publication inputs.
+
 - First-party MCP integration, persistence adapter, graph adapter and tests: MIT,
   copyright 2026 Dongjun Park. See LICENSE.
 - `src/swegca_vrs_mcp/core/mosaic_*.py` and their original ported tests: MIT,

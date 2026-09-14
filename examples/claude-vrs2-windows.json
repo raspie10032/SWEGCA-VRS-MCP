@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "vrs2-memory": {
+      "command": "C:\\Users\\YOUR_NAME\\AppData\\Local\\SWEGCA\\VRS2-venv\\Scripts\\swegca-vrs2-mcp.exe",
+      "args": ["--state-dir", "C:\\Users\\YOUR_NAME\\AppData\\Local\\SWEGCA\\VRS2", "--allow-ingest"]
+    }
+  }
+}

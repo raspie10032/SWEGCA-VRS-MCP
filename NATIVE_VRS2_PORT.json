@@ -1,0 +1,121 @@
+{
+  "schema": "native-vrs2-first-party-port-v1",
+  "source_base_revision": "3bddcb7adc8c07e21a57d8c921d312aed83270e5",
+  "source_state": "2026-09-14 working source; per-file hashes authoritative",
+  "license": "MIT",
+  "records": [
+    {
+      "module": "mosaic_vrs_address_index",
+      "source_sha256": "7edceca917194419828845d7350f7b19a2747b19fbddd1a7ccfbf07a2be6cf56",
+      "port_sha256": "7edceca917194419828845d7350f7b19a2747b19fbddd1a7ccfbf07a2be6cf56",
+      "definitions": "whole_module"
+    },
+    {
+      "module": "mosaic_vrs_dependency_index",
+      "source_sha256": "db3eac9ac08e70dbb6afdf4d9ccd6df61fe0d9f50148959c91e6d69b70ddc225",
+      "port_sha256": "db3eac9ac08e70dbb6afdf4d9ccd6df61fe0d9f50148959c91e6d69b70ddc225",
+      "definitions": "whole_module"
+    },
+    {
+      "module": "mosaic_immutable_numeric",
+      "source_sha256": "9b7b8c325d0859ddf90a85e77b682a174deb78fc114dfec964ff5c219a450027",
+      "port_sha256": "9b7b8c325d0859ddf90a85e77b682a174deb78fc114dfec964ff5c219a450027",
+      "definitions": "whole_module"
+    },
+    {
+      "module": "mosaic_vrs_event_kernel",
+      "source_sha256": "3bb83f4a052e46ad76eca44372a6d7c68fa23e7ba27c56c7f6319e558900f0b1",
+      "port_sha256": "3bb83f4a052e46ad76eca44372a6d7c68fa23e7ba27c56c7f6319e558900f0b1",
+      "definitions": "whole_module"
+    },
+    {
+      "module": "mosaic_vrs_event_signal",
+      "source_sha256": "f851084f095a539a8098ce3f94a366a7ec91defcc040b7c2ce9db5ba305a51b1",
+      "port_sha256": "f851084f095a539a8098ce3f94a366a7ec91defcc040b7c2ce9db5ba305a51b1",
+      "definitions": "whole_module"
+    },
+    {
+      "module": "mosaic_vrs_region_arrays",
+      "source_sha256": "46b20ec5b36e02e39d8b4d93c94620ebad0193b38fe51d66e3103c8c7b1e6503",
+      "port_sha256": "46b20ec5b36e02e39d8b4d93c94620ebad0193b38fe51d66e3103c8c7b1e6503",
+      "definitions": "whole_module"
+    },
+    {
+      "module": "mosaic_vrs_connectivity_regions",
+      "source_sha256": "6f3aa7119a54fb04939da00ba67737591d73eae574da4b03cfac5cd116464908",
+      "port_sha256": "6f3aa7119a54fb04939da00ba67737591d73eae574da4b03cfac5cd116464908",
+      "definitions": "whole_module"
+    },
+    {
+      "module": "mosaic_hot_evidence_pages",
+      "source_sha256": "944b51173bcd40d35848c83cd2ab9ec250f01221c158a67f17ced59bb5463aa6",
+      "port_sha256": "944b51173bcd40d35848c83cd2ab9ec250f01221c158a67f17ced59bb5463aa6",
+      "definitions": "whole_module"
+    },
+    {
+      "module": "mosaic_memory_activation",
+      "source_sha256": "b05cf0d1be31ec00a44bd04af647f7f52b20110e9121cf61fe8f1c966bc5ab2d",
+      "port_sha256": "1e5a7810eea4bea442d0bfa4eea2aa3679b753376d8c1b78471c1931bd75873e",
+      "definitions": [
+        "_text",
+        "_cue",
+        "_freeze_json",
+        "_plain_json",
+        "MemoryStep",
+        "MemoryEpisode",
+        "HotMemoryIndex",
+        "FullCurrentMemoryVrsSnapshot",
+        "AtomicFullCurrentMemoryVrsOwner",
+        "DejaVuSignal",
+        "RuntimeCueSelection",
+        "select_runtime_cues",
+        "detect_deja_vu",
+        "RecallCandidate",
+        "RecallResult",
+        "recall_memory",
+        "ReplayedEpisode",
+        "ReplayResult",
+        "replay_memory",
+        "CurrentEvidenceVerdict",
+        "current_experience_verdict",
+        "ReEvidenceResult",
+        "re_evidence_memory",
+        "MemoryActivationReceipt",
+        "activate_memory"
+      ]
+    },
+    {
+      "module": "mosaic_memory_promotion",
+      "source_sha256": "336073a8eb69357d5761add74316a6f06719c61bbaeb93b82fd3e4005390d9e5",
+      "port_sha256": "b6c02f7ba1b2675b2e26b7f7a1c7abf5ce759f89b60e8e62bbd8b5f0d078b45f",
+      "definitions": [
+        "VRSExperiencePromotionDecision",
+        "assess_vrs_experience_promotion"
+      ]
+    },
+    {
+      "module": "mosaic_vrs_state_update",
+      "source_sha256": "e43aafe08e0a3b6e0ba6b8fa10150768d563645f5767749836552d1d8ecef39a",
+      "port_sha256": "c5711b6b998d2baabb45ddf42c776002eb1194ac161e70fb99cb5f7562b63696",
+      "definitions": [
+        "VRSConnectionStateUpdate",
+        "VRSStateUpdateReceipt",
+        "plan_vrs_state_update"
+      ]
+    },
+    {
+      "module": "mosaic_vrs_event_delta",
+      "source_sha256": "4fe59c75cb81c2eca7e52ad9b864efa75547b6822a07c1942de1ada72e1b4334",
+      "port_sha256": "99a10fd45f372c469279911228681eb9e43587816b782e0b1447044d5061f5aa",
+      "definitions": [
+        "array_binding",
+        "_put",
+        "SparseEventVector",
+        "SparseEventEdges",
+        "prepare_event_delta"
+      ]
+    }
+  ],
+  "scope": "Memory activation, event-local VRS2 numeric settlement, overlapping connectivity regions, exact evidence pages. No model, Hermes or private experiences.",
+  "modifications": "Selected definitions with explicit dependency headers; absolute imports made relative. Standalone persistent main and ingestion are separate composition code."
+}
