@@ -1,6 +1,6 @@
 # Windows standalone VRS2 correction — 2026-09-14
 
-Status: implementation and validation pending. This is not a completion report.
+Status: implementation and Windows validation completed; evidence ledger, not a whole-Rozephine completion claim.
 Base: public main 2eeee70cc9faea25d05ec4c9745be4f6f2195a98 (v2.0.0).
 The user requires VRS2 MCP on one Windows machine, independently of Linux main,
 and without Hermes in the distributed artifact. This supersedes the bridge-only
@@ -74,14 +74,14 @@ AGENTS preflight: PASS
 
 | User requirement | Evidence required before completion | Current status |
 | --- | --- | --- |
-| Windows on one machine | Actual Windows fresh artifact installation and MCP stdio lifecycle, without Linux/WSL/remote backend | Missing |
-| Required VRS2 engine included | Dependency-closed first-party runtime, source lineage and meaningful native equivalence checks | Missing |
-| New memory works | MCP observation ingress, atomic successor and recall with original text/provenance | Missing |
-| Persistence works | Process exit/restart, same store identity and restored memory/VRS retrieval | Missing |
-| Hermes absent | Inspect both wheel and source archive; imports, entrypoints, dependencies and integrations excluded | Missing |
-| Memory use structure retained | Four-stage receipt, actual conflicts, all outcomes, same snapshot, complete paged access | Bridge only; standalone missing |
-| No hidden cognition LLM | Runtime dependency and normal/error-path blocking tests | Standalone missing |
-| Ownership and permissions | Duplicate owner, failed transaction, stale generation, forged grants and restart checks | Standalone missing |
+| Windows on one machine | Actual Windows fresh artifact installation and MCP stdio lifecycle, without Linux/WSL/remote backend | Verified by installed-artifact CI 34804114244 |
+| Required VRS2 engine included | Dependency-closed first-party runtime, source lineage and meaningful native equivalence checks | Verified by installed-artifact CI 34804114244 |
+| New memory works | MCP observation ingress, atomic successor and recall with original text/provenance | Verified by installed-artifact CI 34804114244 |
+| Persistence works | Process exit/restart, same store identity and restored memory/VRS retrieval | Verified by installed-artifact CI 34804114244 |
+| Hermes absent | Inspect both wheel and source archive; imports, entrypoints, dependencies and integrations excluded | Verified by installed-artifact CI 34804114244 |
+| Memory use structure retained | Four-stage receipt, actual conflicts, all outcomes, same snapshot, complete paged access | Standalone four-stage/conflict/source tests passed in CI 34804114244 |
+| No hidden cognition LLM | Runtime dependency and normal/error-path blocking tests | Verified by standalone CI 34804114244 |
+| Ownership and permissions | Duplicate owner, failed transaction, stale generation, forged grants and restart checks | Verified by standalone CI 34804114244 |
 
 No number of passing tests substitutes for a missing row above. Actual Claude
 application testing must be reported separately from MCP SDK/stdio verification.
@@ -182,3 +182,41 @@ for accessing a known stored address. New address-specific regression included.
 Missing Windows checkout line-ending contract was an implementation/packaging
 omission by Codex. CI caught it before release. Prior invalid Windows run and
 logs are retained; rerun is necessary because the relevant checkout was changed.
+
+## Actual Windows acceptance completed
+
+Candidate e99ddb829cf1fd928049afc2289a471506c7f476, GitHub Actions run
+34804114244 succeeded on Windows Python 3.11, Windows Python 3.12 and Ubuntu
+Python 3.12. Each installed its built wheel, exercised real SDK stdio with both
+protocol modes, original-source ingress/retrieval/restart and the full 21-test
+standalone suite. Both Windows jobs also passed the PowerShell installation
+script and verified generated Claude executable paths. This is real Windows
+runner validation, not a Linux mock. Claude application UI was not exercised.
+
+Local 50-record synthetic latency diagnostic: median ingress 22.666775 ms,
+maximum 41.132150 ms; one context page 5.816108 ms (50 candidates, 3 delivered);
+restart/replay 1098.196591 ms. CPU/Python 3.12.14, one connected test dataset,
+not a population-wide performance guarantee or cognitive growth result.
+Existing live main remains active, PID105583; no restart or source replacement.
+Twelve native source/selected AST definitions match their original hashed
+source. All 34 historical public upstream port files remain unchanged.
+
+### Codex 작업 실수 및 교정
+The first CI artifact download failed with explicit /tmp disk quota exceeded.
+Retain the failure; use command-local TMPDIR=/var/tmp for the download. This
+provides additional evidence for the earlier temporary-directory I/O failures,
+but does not retrospectively prove each earlier error's exact cause. No deletion
+of unrelated temporary data, experiences or models is authorized or performed.
+
+## Final validation report delivery
+
+Completed report docs/VRS2_STANDALONE_VALIDATION.md, 9336 bytes, SHA-256
+3208b9fb73cf3b5b9f314e148d9c135a0ef3b17d32b52bc61fb570bd9c2576b3.
+Uploaded to the established Drive reports folder, file
+1o2fbaPKrlW-UWcn7t9pz8uidKU40mqk9; exact downloaded bytes verified before main
+publication. Runtime source and Windows workflow remain identical to the
+successfully tested e99ddb8 commit; only report/ledger evidence changed.
+Windows 3.11: 21 passed/4.051 s; Windows 3.12: 21 passed/4.397 s; Ubuntu 3.12:
+21 passed/3.291 s, zero failures/errors/skips. Windows 3.12's actual tested wheel
+is selected for release without rebuilding its bytes. Existing v2.0.0 stays as
+history; v2.1.0 will carry the corrected standalone implementation.
