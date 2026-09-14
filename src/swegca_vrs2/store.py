@@ -16,6 +16,7 @@ from pathlib import Path
 from time import perf_counter_ns
 from types import MappingProxyType, SimpleNamespace
 import uuid
+import zlib
 
 from filelock import FileLock, Timeout
 from immutables import Map
@@ -34,6 +35,7 @@ from .engine.mosaic_vrs_state_update import VRSConnectionStateUpdate, VRSStateUp
 from .engine.mosaic_memory_promotion import assess_vrs_experience_promotion
 from .flat_vrs import FlatGraph, settle, frozen  # noqa: F401 — tests import frozen from here
 from .fast_regions import build_regions
+from .compact_index import CompactIndex
 
 AUTHORITY = MappingProxyType({k: False for k in ('world', 'action', 'persistent_write', 'model_update', 'distribution', 'p3')})
 EDGE = np.dtype([('source', '<u4'), ('target', '<u4'), ('sign', 'i1'), ('vrs_strength', '<f4')])
@@ -179,6 +181,93 @@ class HotIndex:
             propositions, self.superseded if previous is None else self.superseded.set(previous, identifier)), identifier
 
 
+class NodeDirectory:
+    """Node ids for records and cues without a resident string per node.
+
+    ``episode_node``: record id -> node; ``cue_node[cue_id]``: node or -1; ``node_cue[node]``:
+    cue id or -1; ``node_episode``: node -> record id (records only). Names are decoded
+    from the shared vocabulary on demand (``name(node)``), so ``'cue:'+string`` keys are
+    never materialized for the whole graph. Supports the old ``graph.nodes[...]`` reads.
+    """
+    __slots__ = ('vocab', 'episode_node', 'node_episode', 'cue_node', 'node_cue', 'count')
+
+    def __init__(self, vocab, episode_node, node_episode, cue_node, node_cue, count):
+        self.vocab, self.count = vocab, count
+        self.episode_node, self.node_episode = episode_node, node_episode
+        self.cue_node, self.node_cue = cue_node, node_cue
+
+    @classmethod
+    def empty(cls, vocab):
+        return cls(vocab, Map(), Map(), np.full(0, -1, np.int32), np.full(0, -1, np.int32), 0)
+
+    def __len__(self):
+        return self.count
+
+    def __contains__(self, name):
+        return self.get(name) is not None
+
+    def __getitem__(self, name):
+        node = self.get(name)
+        if node is None:
+            raise KeyError(name)
+        return node
+
+    def get(self, name):
+        if name.startswith('cue:'):
+            cue_id = self.vocab.id_of(name[4:])
+            if cue_id is None or cue_id >= len(self.cue_node) or self.cue_node[cue_id] < 0:
+                return None
+            return int(self.cue_node[cue_id])
+        return self.episode_node.get(name)
+
+    def cue(self, cue_id):
+        return int(self.cue_node[cue_id]) if cue_id < len(self.cue_node) else -1
+
+    def name(self, node):
+        cue_id = int(self.node_cue[node])
+        return 'cue:' + self.vocab.string_of(cue_id) if cue_id >= 0 else self.node_episode[node]
+
+    def items(self):
+        for node in range(self.count):
+            yield self.name(node), node
+
+    def extend(self, episode_id, new_cue_ids):
+        """Successor with one record node followed by nodes for ``new_cue_ids`` (fresh cues)."""
+        first = self.count
+        total = first + 1 + len(new_cue_ids)
+        need = (max(new_cue_ids) + 1) if new_cue_ids else len(self.cue_node)
+        cue_node = np.full(max(len(self.cue_node), need), -1, np.int32)
+        cue_node[:len(self.cue_node)] = self.cue_node
+        node_cue = np.full(total, -1, np.int32)
+        node_cue[:first] = self.node_cue
+        for offset, cue_id in enumerate(new_cue_ids, first + 1):
+            cue_node[cue_id] = offset
+            node_cue[offset] = cue_id
+        return NodeDirectory(self.vocab, self.episode_node.set(episode_id, first),
+                             self.node_episode.set(first, episode_id), frozen(cue_node, np.int32),
+                             frozen(node_cue, np.int32), total)
+
+
+class LazyTerms:
+    """Sequence of node names for a component, decoded from the directory on access."""
+    __slots__ = ('directory', 'members')
+
+    def __init__(self, directory, members):
+        self.directory, self.members = directory, members
+
+    def __len__(self):
+        return len(self.members)
+
+    def __getitem__(self, index):
+        if isinstance(index, slice):
+            return tuple(self[i] for i in range(*index.indices(len(self))))
+        return self.directory.name(int(self.members[index]))
+
+    def __iter__(self):
+        for member in self.members:
+            yield self.directory.name(int(member))
+
+
 class Graph:
     """One immutable VRS generation on flat arrays (local Windows-scale adapter, 2026-09-14).
 
@@ -194,16 +283,16 @@ class Graph:
     as the ported composition. Large components use ``fast_regions`` (same rule,
     vectorized, warm-started from the previous generation); see that module.
     """
-    __slots__ = ('snapshot_id', 'flat', 'nodes', 'components', 'regions', 'last_receipt', '_names')
+    __slots__ = ('snapshot_id', 'flat', 'nodes', 'components', 'regions', 'last_receipt')
 
     def __init__(self, snapshot_id, flat, nodes, components, regions, last_receipt):
         self.snapshot_id, self.flat, self.nodes = snapshot_id, flat, nodes
         self.components, self.regions, self.last_receipt = components, regions, last_receipt
-        self._names = None
 
     @classmethod
-    def empty(cls, identity):
-        return cls(digest(('vrs2', identity)), FlatGraph.empty(), Map(), Map(), Map(), MappingProxyType({}))
+    def empty(cls, identity, vocab=None):
+        return cls(digest(('vrs2', identity)), FlatGraph.empty(), NodeDirectory.empty(vocab), Map(), Map(),
+                   MappingProxyType({}))
 
     @property
     def edge_count(self):
@@ -214,24 +303,18 @@ class Graph:
         """Compatibility shim for callers that only need ``.snapshot_id``."""
         return SimpleNamespace(snapshot_id=self.snapshot_id)
 
-    def names(self):
-        if self._names is None:
-            names = [None] * len(self.nodes)
-            for name, index in self.nodes.items():
-                names[index] = name
-            self._names = tuple(names)
-        return self._names
-
     def append(self, episode, snapshot, memory):
         # Full original episodes link to shared literal cues. These are numerical
         # dependencies/navigation associations, never syllogistic entailments.
-        flat, nodes = self.flat, self.nodes
-        new_names = [episode.episode_id] + [c for c in episode.cues if 'cue:' + c not in nodes]
-        names = [episode.episode_id] + ['cue:' + c for c in new_names[1:]]
-        for name in names:
-            nodes = nodes.set(name, len(nodes))
+        flat = self.flat
+        row = memory._store['row_of'][episode.episode_id]
+        cue_ids = [int(c) for c in memory._store['cues'][row]]
+        directory = self.nodes if self.nodes.vocab is not None else NodeDirectory.empty(memory._store['vocab'])
+        fresh = [c for c in cue_ids if directory.cue(c) < 0]
+        nodes = directory.extend(episode.episode_id, fresh)
         center = nodes[episode.episode_id]
-        endpoints = [nodes['cue:' + c] for c in episode.cues]
+        endpoints = [nodes.cue(c) for c in cue_ids]
+        names = [episode.episode_id] + ['cue:' + memory._store['vocab'].string_of(c) for c in fresh]
         src = [x for n in endpoints for x in (center, n)]
         dst = [x for n in endpoints for x in (n, center)]
         direct = np.zeros(len(names), dtype=np.float32)
@@ -304,8 +387,7 @@ class Graph:
         edges = np.flatnonzero(edge_mask)
         local = np.full(len(nodes), -1, dtype=np.int64)
         local[members] = np.arange(len(members))
-        all_names = self.names() + tuple(names)
-        source = SimpleNamespace(terms=tuple(all_names[i] for i in members),
+        source = SimpleNamespace(terms=LazyTerms(nodes, frozen(members, np.int64)),
             edge_source=local[grown.src[edges].astype(np.int64)],
             edge_target=local[grown.dst[edges].astype(np.int64)],
             edge_sign=grown.sign[edges].astype(np.int8),
@@ -344,9 +426,7 @@ class Graph:
             re_evidence_updates=plain(strength_receipt),
             recorded_agreement_is_not_independent_factual_corroboration=True,
             logical_implication_claimed_by_regions=False, grants_authority=False)
-        successor = Graph(settled_id, grown, nodes, components, directory, freeze_view(receipt))
-        successor._names = all_names
-        return successor
+        return Graph(settled_id, grown, nodes, components, directory, freeze_view(receipt))
 
     @staticmethod
     def _component_members(flat, starts):
@@ -389,6 +469,9 @@ def _mapping_proxy(data):
 # pickle cannot name the mappingproxy type; rebuild frozen views through a module function.
 copyreg.pickle(MappingProxyType, lambda m: (_mapping_proxy, (dict(m),)))
 CHECKPOINT_EVERY = 8      # bounds crash replay to a few ingests; close() always checkpoints
+CHECKPOINT_MAGIC = b'Z1'  # zlib-compressed checkpoint blob; a bare pickle is the older form
+ARCHIVE_MAGIC = b'A1'     # zlib-compressed journal segment: JSON lines of observation rows
+SEGMENT_ROWS = 64         # archive segment size — partial decompression granularity
 
 
 class Main:
@@ -422,27 +505,29 @@ class Main:
             self.db.execute('CREATE TABLE IF NOT EXISTS identity (id INTEGER PRIMARY KEY CHECK(id=1), value TEXT NOT NULL)')
             self.db.execute('CREATE TABLE IF NOT EXISTS observations (seq INTEGER PRIMARY KEY, request_id TEXT UNIQUE NOT NULL, body TEXT NOT NULL, fingerprint TEXT NOT NULL, pair TEXT NOT NULL)')
             self.db.execute('CREATE TABLE IF NOT EXISTS checkpoint (id INTEGER PRIMARY KEY CHECK(id=1), seq INTEGER NOT NULL, pair TEXT NOT NULL, blob BLOB NOT NULL)')
+            # Lossless hard compression (2026-09-14): journal rows older than the checkpoint
+            # move into compressed segments. archive + observations is still the whole journal.
+            self.db.execute('CREATE TABLE IF NOT EXISTS journal_archive (segment INTEGER PRIMARY KEY, first_seq INTEGER NOT NULL, last_seq INTEGER NOT NULL, last_pair TEXT NOT NULL, rows INTEGER NOT NULL, blob BLOB NOT NULL)')
             identity = self.db.execute('SELECT value FROM identity WHERE id=1').fetchone()
             if identity is None:
                 identity = (str(uuid.uuid4()),)
                 self.db.execute('INSERT INTO identity VALUES (1,?)', identity)
             self.identity = identity[0]
-            self.memory = HotIndex(digest(('memory', self.identity)), Map(), Map(), Map({o: 0 for o in OUTCOMES}), Map(), Map())
-            self.graph = Graph.empty(self.identity)
+            # HotIndex (ported) stays importable for older checkpoints; the live index is compact.
+            self.memory = CompactIndex.empty(self.identity)
+            self.graph = Graph.empty(self.identity, self.memory._store['vocab'])
             self.operations = Map()
             self.pair = FullCurrentMemoryVrsSnapshot(self.memory, self.graph.snapshot_id)
             started = perf_counter_ns()
             after = self._load_checkpoint()
             # The journal stays the source of truth: every row the checkpoint claims to
             # cover is re-validated (fingerprint and request identity) before use.
-            for req, body, fingerprint in self.db.execute(
-                    'SELECT request_id,body,fingerprint FROM observations WHERE seq<=? ORDER BY seq', (after,)):
+            for _, req, body, fingerprint, _ in self._journal_rows(0, after):
                 row = observation(json.loads(body))
                 if digest(row) != fingerprint or row['request_id'] != req:
                     raise ValueError('stored_observation_integrity_failed')
             replayed = 0
-            for req, body, fingerprint, expected in self.db.execute(
-                    'SELECT request_id,body,fingerprint,pair FROM observations WHERE seq>? ORDER BY seq', (after,)):
+            for _, req, body, fingerprint, expected in self._journal_rows(after, None):
                 row = observation(json.loads(body))
                 if digest(row) != fingerprint or row['request_id'] != req:
                     raise ValueError('stored_observation_integrity_failed')
@@ -468,11 +553,13 @@ class Main:
             self.restore['checkpoint'] = 'none'
             return 0
         seq, pair, blob = row
-        journal = self.db.execute('SELECT pair FROM observations WHERE seq=?', (seq,)).fetchone()
-        if journal is None or journal[0] != pair:
+        journal = self._journal_pair(seq)
+        if journal != pair:
             self.restore['checkpoint'] = 'stale_ignored'
             return 0
         try:
+            if blob[:2] == CHECKPOINT_MAGIC:
+                blob = zlib.decompress(blob[2:])
             state = pickle.loads(blob)
             if state['pair'] != pair or state['identity'] != self.identity:
                 raise ValueError('checkpoint identity mismatch')
@@ -480,6 +567,30 @@ class Main:
             self.restore['checkpoint'] = 'unreadable_ignored: ' + type(error).__name__
             return 0
         self.memory, self.graph, self.operations = state['memory'], state['graph'], state['operations']
+        if isinstance(self.memory, HotIndex):        # older uncompressed checkpoint: convert once
+            self.memory = CompactIndex.from_hot(self.memory)
+            self._dirty += 1
+            self.restore['converted'] = 'hot_index_to_compact'
+        if isinstance(self.graph.nodes, Map):          # older Graph with string node keys
+            vocab = self.memory._store['vocab']
+            count = len(self.graph.nodes)
+            episode_node, node_episode = Map(), Map()
+            cue_node = np.full(vocab.count, -1, np.int32)
+            node_cue = np.full(count, -1, np.int32)
+            for name, node in self.graph.nodes.items():
+                if name.startswith('cue:'):
+                    cue_id = vocab.id_of(name[4:])
+                    if cue_id is None:
+                        raise ValueError('checkpoint_conversion_unknown_cue')
+                    cue_node[cue_id] = node
+                    node_cue[node] = cue_id
+                else:
+                    episode_node = episode_node.set(name, node)
+                    node_episode = node_episode.set(node, name)
+            self.graph.nodes = NodeDirectory(vocab, episode_node, node_episode, frozen(cue_node, np.int32),
+                                             frozen(node_cue, np.int32), count)
+            self._dirty += 1
+            self.restore['converted_graph'] = 'string_nodes_to_directory'
         self.pair = FullCurrentMemoryVrsSnapshot(self.memory, self.graph.snapshot_id)
         if self.pair.snapshot_id != pair:
             raise ValueError('checkpoint_generation_integrity_failed')
@@ -489,15 +600,16 @@ class Main:
     def checkpoint(self):
         """Write the current verified state as a checkpoint for the latest journal row."""
         self._check()
-        row = self.db.execute('SELECT seq, pair FROM observations ORDER BY seq DESC LIMIT 1').fetchone()
-        if row is None:
+        head = self._journal_head()
+        if head is None:
             return None
-        seq, pair = row
+        seq, pair = head
         if pair != self.pair.snapshot_id:
             raise ValueError('checkpoint_does_not_match_journal_head')
         started = perf_counter_ns()
-        blob = pickle.dumps(dict(identity=self.identity, pair=pair, memory=self.memory,
-                                 graph=self.graph, operations=self.operations), protocol=pickle.HIGHEST_PROTOCOL)
+        raw = pickle.dumps(dict(identity=self.identity, pair=pair, memory=self.memory,
+                                graph=self.graph, operations=self.operations), protocol=pickle.HIGHEST_PROTOCOL)
+        blob = CHECKPOINT_MAGIC + zlib.compress(raw, 6)
         self.db.execute('BEGIN IMMEDIATE')
         try:
             self.db.execute('INSERT OR REPLACE INTO checkpoint(id, seq, pair, blob) VALUES (1,?,?,?)', (seq, pair, blob))
@@ -506,8 +618,92 @@ class Main:
             if self.db.in_transaction:
                 self.db.execute('ROLLBACK')
             raise
+        self.db.execute('PRAGMA wal_checkpoint(TRUNCATE)')
         self._dirty = 0
-        return dict(seq=seq, bytes=len(blob), elapsed_ns=perf_counter_ns() - started)
+        return dict(seq=seq, bytes=len(blob), raw_bytes=len(raw), elapsed_ns=perf_counter_ns() - started)
+
+    # ── journal access across archive segments and live rows ────────────
+    def _journal_rows(self, after, upto):
+        """Yield (seq, request_id, body, fingerprint, pair) for after < seq <= upto (None = all)."""
+        for first, last, blob in self.db.execute(
+                'SELECT first_seq, last_seq, blob FROM journal_archive WHERE last_seq>? ORDER BY segment', (after,)):
+            if upto is not None and first > upto:
+                break
+            if blob[:2] != ARCHIVE_MAGIC:
+                raise ValueError('journal_archive_segment_corrupt')
+            for line in zlib.decompress(blob[2:]).decode('utf-8').splitlines():
+                seq, req, body, fingerprint, pair = json.loads(line)
+                if seq <= after:
+                    continue
+                if upto is not None and seq > upto:
+                    return
+                yield seq, req, body, fingerprint, pair
+        query = 'SELECT seq,request_id,body,fingerprint,pair FROM observations WHERE seq>?'
+        params = [after]
+        if upto is not None:
+            query += ' AND seq<=?'
+            params.append(upto)
+        yield from self.db.execute(query + ' ORDER BY seq', params)
+
+    def _journal_pair(self, seq):
+        row = self.db.execute('SELECT pair FROM observations WHERE seq=?', (seq,)).fetchone()
+        if row is not None:
+            return row[0]
+        for found, *_ , pair in self._journal_rows(seq - 1, seq):
+            if found == seq:
+                return pair
+        return None
+
+    def _journal_head(self):
+        row = self.db.execute('SELECT seq, pair FROM observations ORDER BY seq DESC LIMIT 1').fetchone()
+        if row is not None:
+            return tuple(row)
+        row = self.db.execute('SELECT last_seq, last_pair FROM journal_archive ORDER BY segment DESC LIMIT 1').fetchone()
+        return tuple(row) if row is not None else None
+
+    def compact(self, *, keep_live=CHECKPOINT_EVERY, vacuum=True):
+        """Lossless hard compression: checkpoint, archive covered journal rows, vacuum.
+
+        Rows at or below the checkpoint seq (minus ``keep_live`` recent rows) are
+        written as one zlib segment of JSON lines and deleted from ``observations``.
+        ``archive + observations`` remains the complete journal: restart re-validates
+        every archived row's fingerprint and a stale checkpoint replays through the
+        archive, so nothing is lost and the same pair ids are reproduced.
+        """
+        self._check()
+        started = perf_counter_ns()
+        checkpoint = self.checkpoint() if self._dirty or self._journal_head() else None
+        row = self.db.execute('SELECT seq FROM checkpoint WHERE id=1').fetchone()
+        archived = 0
+        if row is not None:
+            cutoff = int(row[0]) - int(keep_live)
+            rows = self.db.execute('SELECT seq,request_id,body,fingerprint,pair FROM observations '
+                                   'WHERE seq<=? ORDER BY seq', (cutoff,)).fetchall()
+            if rows:
+                self.db.execute('BEGIN IMMEDIATE')
+                try:
+                    # segments of SEGMENT_ROWS rows: reading one row decompresses one small block
+                    for at in range(0, len(rows), SEGMENT_ROWS):
+                        part = rows[at:at + SEGMENT_ROWS]
+                        lines = '\n'.join(json.dumps(list(r), ensure_ascii=False, separators=(',', ':')) for r in part)
+                        blob = ARCHIVE_MAGIC + zlib.compress(lines.encode('utf-8'), 6)
+                        self.db.execute('INSERT INTO journal_archive(first_seq,last_seq,last_pair,rows,blob) VALUES (?,?,?,?,?)',
+                                        (part[0][0], part[-1][0], part[-1][4], len(part), blob))
+                    self.db.execute('DELETE FROM observations WHERE seq<=?', (cutoff,))
+                    self.db.execute('COMMIT')
+                except BaseException:
+                    if self.db.in_transaction:
+                        self.db.execute('ROLLBACK')
+                    raise
+                archived = len(rows)
+        if vacuum:
+            self.db.execute('VACUUM')
+        self.db.execute('PRAGMA wal_checkpoint(TRUNCATE)')
+        size = sum(f.stat().st_size for f in self.directory.glob('memory.sqlite3*'))
+        return dict(status='compacted', archived_rows=archived, checkpoint=checkpoint,
+                    segments=self.db.execute('SELECT COUNT(*) FROM journal_archive').fetchone()[0],
+                    live_rows=self.db.execute('SELECT COUNT(*) FROM observations').fetchone()[0],
+                    disk_bytes=size, elapsed_ns=perf_counter_ns() - started)
 
     def _check(self):
         if self.closed:
@@ -517,7 +713,7 @@ class Main:
         self._check()
         return dict(status='ready', identity=self.identity, pair_snapshot_id=self.pair.snapshot_id,
             memory_snapshot_id=self.memory.snapshot_id, vrs_snapshot_id=self.graph.snapshot_id,
-            hot_episode_count=len(self.memory.records), outcome_counts=dict(self.memory.outcome_counts),
+            hot_episode_count=self.memory.episode_count, outcome_counts=dict(self.memory.outcome_counts),
             lookup_requires_io=False, internal_llm_calls=0, final_utterance_calls=0,
             backend='standalone_native_vrs2', native_engine_bundled=True, scheduled_dialogue_available=True,
             writes_enabled=self.allow_ingest, authority=dict(AUTHORITY), numerical_version=VERSION,
@@ -551,6 +747,8 @@ class Main:
         except BaseException:
             if self.db.in_transaction:
                 self.db.execute('ROLLBACK')
+            if added:
+                self.memory.truncate_to(self.memory.count)   # the successor never became durable
             raise
         self.owner.replace(self.pair.snapshot_id, pair)
         self.memory, self.graph, self.pair, self.operations = memory, graph, pair, operations

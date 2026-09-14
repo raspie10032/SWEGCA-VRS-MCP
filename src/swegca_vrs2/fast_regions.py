@@ -24,6 +24,7 @@ unchanged. Membership coefficients are normalized with NumPy sums instead of
 from __future__ import annotations
 
 import hashlib
+from types import SimpleNamespace
 
 import numpy as np
 
@@ -190,9 +191,11 @@ def build_regions(source, *, vrs_snapshot_id, previous=None, maximum_sweeps=100,
     ``previous`` is an optional ``(regions, positions)`` pair for the same component in
     the earlier generation; its core labels seed level 0 for nodes that already existed.
     """
-    terms = tuple(source.terms)
+    terms = source.terms
     if len(terms) <= SMALL:
-        built = ConnectivityRegions.build(source, vrs_snapshot_id=vrs_snapshot_id,
+        small = SimpleNamespace(terms=tuple(terms), edge_source=source.edge_source, edge_target=source.edge_target,
+                                edge_sign=source.edge_sign, vrs_strength=source.vrs_strength)
+        built = ConnectivityRegions.build(small, vrs_snapshot_id=vrs_snapshot_id,
                                           maximum_sweeps=maximum_sweeps, maximum_levels=maximum_levels)
         return built, 'engine_sequential'
     u = np.asarray(source.edge_source, np.int64)
@@ -204,11 +207,22 @@ def build_regions(source, *, vrs_snapshot_id, previous=None, maximum_sweeps=100,
     if previous is not None:
         old_regions, old_positions = previous
         initial = np.full(len(terms), len(terms) + 1, np.int64)   # sentinel: fresh
-        by_name = {t: i for i, t in enumerate(old_regions.terms)}
-        for i, name in enumerate(terms):
-            j = by_name.get(name)
-            if j is not None:
-                initial[i] = int(old_regions.core_labels[j])
+        # nodes keep their global ids across generations; previous local positions come
+        # from the stored member arrays when available, else from names
+        old_members = getattr(old_regions.terms, 'members', None)
+        new_members = getattr(terms, 'members', None)
+        if old_members is not None and new_members is not None:
+            position = {int(n): i for i, n in enumerate(old_members)}
+            for i, n in enumerate(new_members):
+                j = position.get(int(n))
+                if j is not None:
+                    initial[i] = int(old_regions.core_labels[j])
+        else:
+            by_name = {t: i for i, t in enumerate(old_regions.terms)}
+            for i, name in enumerate(terms):
+                j = by_name.get(name)
+                if j is not None:
+                    initial[i] = int(old_regions.core_labels[j])
         fresh = initial > len(terms)
         initial[fresh] = np.arange(int(fresh.sum())) + (int(initial[~fresh].max()) + 1 if (~fresh).any() else 0)
     labels = np.arange(len(terms))
@@ -233,8 +247,11 @@ def build_regions(source, *, vrs_snapshot_id, previous=None, maximum_sweeps=100,
     digest.update(vrs_snapshot_id.encode('ascii'))
     digest.update(core.astype('<i8').tobytes())
     digest.update(str((maximum_sweeps, maximum_levels, converged)).encode('ascii'))
+    # the regions object and its source share one set of frozen edge arrays (no duplicate)
+    fu, fv, fsign, fstrength = _frozen(u), _frozen(v), _frozen(sign), _frozen(strength)
+    shared_source = SimpleNamespace(terms=terms, edge_source=fu, edge_target=fv, edge_sign=fsign, vrs_strength=fstrength)
     built = ConnectivityRegions(vrs_snapshot_id, digest.hexdigest(), terms, _frozen(core),
-                                _frozen(u), _frozen(v), _frozen(sign), _frozen(strength),
+                                fu, fv, fsign, fstrength,
                                 member_offsets, memberships, coefficients, region_terms,
-                                converged, tuple(sweeps), source)
+                                converged, tuple(sweeps), shared_source)
     return built, 'vectorized_warm_start' if previous is not None else 'vectorized_cold'
