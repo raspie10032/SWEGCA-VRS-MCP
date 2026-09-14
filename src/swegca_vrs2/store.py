@@ -563,7 +563,10 @@ def _mapping_proxy(data):
 
 # pickle cannot name the mappingproxy type; rebuild frozen views through a module function.
 copyreg.pickle(MappingProxyType, lambda m: (_mapping_proxy, (dict(m),)))
-CHECKPOINT_EVERY = 8      # bounds crash replay to a few ingests; close() always checkpoints
+CHECKPOINT_EVERY = 64     # in-ingest safety bound on crash replay; the daemon checkpoints after a
+                          # quiet spell instead (CHECKPOINT_IDLE), close() always checkpoints
+CHECKPOINT_IDLE = 5.0     # seconds without requests before a resident main writes its checkpoint
+KEEP_LIVE_ROWS = 8        # live journal rows kept by compact()
 CHECKPOINT_MAGIC = b'Z1'  # zlib-compressed checkpoint blob; a bare pickle is the older form
 ARCHIVE_MAGIC = b'A1'     # zlib-compressed journal segment: JSON lines of observation rows
 SEGMENT_ROWS = 64         # archive segment size — partial decompression granularity
@@ -751,6 +754,15 @@ class Main:
         self.checkpoint()
         return rows, (perf_counter_ns() - started) / 1e9
 
+    @property
+    def dirty(self):
+        """Ingests since the last checkpoint (a resident main flushes these when idle)."""
+        return self._dirty
+
+    def checkpoint_if_dirty(self):
+        """Checkpoint when there is anything to save; returns the receipt or None."""
+        return self.checkpoint() if self._dirty else None
+
     def checkpoint(self):
         """Write the current verified state as a checkpoint for the latest journal row."""
         self._check()
@@ -817,7 +829,7 @@ class Main:
         row = self.db.execute('SELECT last_seq, last_pair FROM journal_archive ORDER BY segment DESC LIMIT 1').fetchone()
         return tuple(row) if row is not None else None
 
-    def compact(self, *, keep_live=CHECKPOINT_EVERY, vacuum=True):
+    def compact(self, *, keep_live=KEEP_LIVE_ROWS, vacuum=True):
         """Lossless hard compression: checkpoint, archive covered journal rows, vacuum.
 
         Rows at or below the checkpoint seq (minus ``keep_live`` recent rows) are

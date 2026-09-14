@@ -34,6 +34,7 @@ import time
 from pathlib import Path
 
 from .native_transport import InterfaceError, encode, decode, MAX_BYTES
+from .store import CHECKPOINT_IDLE
 
 HOST = '127.0.0.1'
 PORT_FILE = 'loopback.port'
@@ -263,8 +264,15 @@ def serve(state_dir, *, port=0, allow_ingest=False, idle_hours=8.0):
     try:
         while not daemon.stop.is_set():
             time.sleep(1.0)
-            if time.time() - daemon.last > daemon.idle_seconds:
+            quiet = time.time() - daemon.last
+            if quiet > daemon.idle_seconds:
                 break
+            # checkpoint after a quiet spell, not inside an ingest: a Stop hook's burst of
+            # entries pays for one checkpoint, after it, instead of one per 8 ingests
+            if daemon.main.dirty and quiet >= CHECKPOINT_IDLE:
+                with daemon.lock:
+                    if daemon.main.dirty:
+                        daemon.main.checkpoint_if_dirty()
     finally:
         server.shutdown()
         server.server_close()
