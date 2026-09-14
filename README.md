@@ -48,6 +48,8 @@ prompt. Normal stdout is reserved for MCP JSON messages; diagnostics use stderr.
 3. Follow `next_call` and deferred references before relying on missing content.
    `memory_read_path` and `memory_read` provide exact source access. Page sizes
    bound transport, never the total accessible memory.
+   To open a known original address, use its exact `memory:...` episode ID as the
+   `memory_context` query; lexical similarity is not required for address access.
 4. `memory_release`: release the transient request; accumulated records remain.
 5. When explicitly remembering an observation or result, use `memory_store`
    with `request_id`, original `text`, `source`, and `revision`. It is exposed

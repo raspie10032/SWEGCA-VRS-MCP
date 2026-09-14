@@ -204,8 +204,14 @@ def test_unrelated_component_is_shared_and_all_sources_remain_addressable(main):
     main.ingest(dict(request_id='b',text='beta',source='test:b',revision='r1'))
     component=main.graph.components[main.graph.nodes[a['episode_id']]]
     assert main.graph.regions[component] is before[component]
-    assert main.graph.last_receipt['changed_component_nodes']==2
+    assert main.graph.last_receipt['changed_component_nodes']==3
     assert len(main.memory.records)==2
+
+
+def test_exact_original_address_access_without_matching_source_text(main):
+    first=record(main)
+    result=main.recall(first['episode_id'],main.pair.snapshot_id)
+    assert [r.episode_id for r in result['receipt']['activation'].recall.candidates]==[first['episode_id']]
 
 
 def test_duplicate_source_is_not_new_experience_or_reinforcement(main):

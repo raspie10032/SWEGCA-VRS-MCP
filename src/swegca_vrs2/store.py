@@ -72,6 +72,7 @@ def freeze_view(value):
 def keys(text):
     """Lexical address keys; Hangul substrings are retrieval cues, never claims."""
     result = dict.fromkeys(re.findall(r'\w+', text.casefold()))
+    result.update(dict.fromkeys(re.findall(r'memory:[0-9a-f]{64}', text.casefold())))
     for word in tuple(result):
         if re.fullmatch('[가-힣]+', word):
             for size in range(2, min(4, len(word)) + 1):
@@ -156,6 +157,9 @@ class HotIndex:
             cues = (*cues, 'proposition:' + row['proposition'])
         if not cues:
             cues = ('source:' + row['source'],)
+        # Every returned original address can be retrieved directly through the
+        # same four-stage API, independently of lexical similarity.
+        cues = (*cues, identifier)
         episode = MemoryEpisode(identifier, cues,
             (MemoryStep('external_observation', {'text': row['text'], 'metadata': row['metadata'],
                 'proposition_id': row['proposition'], 'evidence_polarity': row['polarity'],

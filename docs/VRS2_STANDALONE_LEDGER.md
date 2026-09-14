@@ -167,3 +167,18 @@ The original transient I/O cause is not proven; do not erase or relabel that run
 Next publication is a clearly unfinished validation branch to run actual Windows
 CI. This is not phase closure or a release tag. Final main/tag follow verified
 Windows results and the required completed report.
+
+## First actual Windows CI failure and correction
+
+GitHub run 34804004050, candidate 7536139: Ubuntu installed-artifact job passed.
+Both Windows 3.11/3.12 jobs built archives then failed the exact native source
+hash check (mosaic_vrs_address_index). Windows checkout converted LF to CRLF;
+Codex had omitted repository eol rules. Added .gitattributes to retain LF text
+bytes instead of weakening hash verification. No Windows runtime pass claimed
+from this failed run. Also added direct original episode-address retrieval
+through the same four-stage API so lexical query matching is not a prerequisite
+for accessing a known stored address. New address-specific regression included.
+### Codex 작업 실수 및 교정
+Missing Windows checkout line-ending contract was an implementation/packaging
+omission by Codex. CI caught it before release. Prior invalid Windows run and
+logs are retained; rerun is necessary because the relevant checkout was changed.
