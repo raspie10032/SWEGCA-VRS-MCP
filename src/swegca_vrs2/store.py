@@ -817,11 +817,17 @@ class Main:
         propositions = {memory.episode(i).steps[0].observation.get('proposition_id')
             for cue in informative for i in memory.episode_ids_for_cue(cue)} - {None}
         cues = (*selected, *('proposition:' + p for p in sorted(propositions)))
-        # Candidate order: rarity-weighted matched cues first, then the engine's Jaccard.
-        # The engine states candidate order is not semantic acceptance; the whole set
-        # stays addressable. Jaccard alone ranks short records above rich ones that
-        # match more of the question (v0.2 verdict obs:cue-overlap-penalizes-rich-documents).
-        weight = {c: math.log(1.0 + total / fanout[c]) for c in informative}
+        # Candidate order: BM25 over the matched informative cues (tf is 1 in a cue set;
+        # idf from postings fanout; length normalization from the record's cue count),
+        # then the engine's Jaccard. The engine states candidate order is not semantic
+        # acceptance and the whole set stays addressable. Plain rarity sums let long
+        # records win by matching many middling words of the instruction; Jaccard alone
+        # ranks short records above rich ones (v0.2 verdict obs:cue-overlap-penalizes-rich-documents).
+        idf = {c: math.log(1.0 + (total - fanout[c] + 0.5) / (fanout[c] + 0.5)) for c in informative}
+        cue_counts = memory._store['cues'] if hasattr(memory, '_store') else None
+        rows_of = memory._store['row_of'] if cue_counts is not None else None
+        average = (sum(len(a) for a in cue_counts) / max(1, len(cue_counts))) if cue_counts else 1.0
+        k1, b = 1.2, 0.75
         opponents = {}
         for p in propositions:
             active = [memory.episode(i) for i in memory.propositions[p] if i not in memory.superseded]
@@ -838,8 +844,20 @@ class Main:
                 proposition=p or 'experience:' + episode.episode_id)
         signal = detect_deja_vu(memory, query=query, current_cues=cues)
         recalled = recall_memory(memory, signal)
+        def words(matched):
+            # a matched cue that is a substring of another matched cue is the same word
+            # (Hangul 2-4-gram cues): score each word once, by its longest matched form
+            longest = sorted((c for c in matched if c in idf), key=len, reverse=True)
+            kept = []
+            for c in longest:
+                if not any(c in k for k in kept):
+                    kept.append(c)
+            return kept
+
         def order(row):
-            return (-sum(weight.get(c, 0.0) for c in row.matched_cues), -row.cue_overlap, row.episode_id)
+            length = len(cue_counts[rows_of[row.episode_id]]) if cue_counts is not None else average
+            norm = (k1 + 1.0) / (1.0 + k1 * (1.0 - b + b * length / average))
+            return (-sum(idf[c] for c in words(row.matched_cues)) * norm, -row.cue_overlap, row.episode_id)
         recalled = RecallResult(recalled.query, tuple(sorted(recalled.candidates, key=order)),
                                 recalled.snapshot_id, source_dependencies=recalled.source_dependencies)
         replayed = replay_memory(memory, recalled)
@@ -853,7 +871,7 @@ class Main:
             function_word_cues=tuple(c for c in selected if c not in informative),
             selection_method='all_matching_lexical_keys_and_explicit_proposition_closure',
             closure_rule='propositions of records matched by an informative cue (fanout below half the store)',
-            candidate_order='rarity_weighted_matched_cues_then_cue_overlap',
+            candidate_order='bm25_over_matched_informative_words_then_cue_overlap',
             semantic_acceptance_claimed=False)
         return dict(receipt={'activation': receipt}, memory_selection=selection,
             vrs_selection=dict(selection_method='native_event_signal_and_connectivity_regions',
