@@ -125,6 +125,38 @@ class StandaloneMCP(MemoryMCPServer):
         return result
 
 
+class LoopbackMCP(MemoryMCPServer):
+    """stdio bridge to the loopback daemon (``swegca_vrs2.loopback``) that owns the store.
+
+    Local Windows adapter (2026-09-14): the same nine tools as StandaloneMCP, but the
+    main lives in a separate resident process so hooks and several sessions share it.
+    memory_store is forwarded as the daemon's ``ingest`` command.
+    """
+    server_name = 'swegca-vrs2-memory'
+
+    def __init__(self, client, writes_enabled):
+        super().__init__(client)
+        self.writes_enabled = writes_enabled
+        self.tool_definitions = [*MEMORY_TOOLS, *([INGEST] if writes_enabled else [])]
+
+    def call_tool(self, name, arguments):
+        if name == 'memory_store':
+            return self.resident.request('ingest', **arguments)
+        if name == 'memory_status':
+            if arguments != {}:
+                raise InterfaceError('invalid_tool_arguments')
+            return dict(self.resident.request('status'), memory_only=True, model_tools_exported=False,
+                write_tools_exported=self.writes_enabled, receipt_transport='paged_main_evidence',
+                resident='loopback_daemon')
+        result = super().call_tool(name, arguments)
+        if name == 'memory_context' and result.get('status') == 'memory_context_ready':
+            result['usage'] = dict(result['usage'], ingress='Use memory_store when the daemon runs with --allow-ingest. '
+                'Stores external observations only; no automatic conversation capture or truth certification.')
+        return result
+
+    dispatch = StandaloneMCP.dispatch
+
+
 def default_state_dir():
     if os.name == 'nt':
         return Path(os.environ.get('LOCALAPPDATA', Path.home() / 'AppData/Local')) / 'SWEGCA/VRS2'
@@ -135,7 +167,22 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--state-dir', type=Path, default=default_state_dir())
     parser.add_argument('--allow-ingest', action='store_true', help='Permit explicit external observation recording; grants no action or belief authority.')
+    parser.add_argument('--loopback', action='store_true', help='Bridge to the resident loopback daemon owning --state-dir (start it if needed) instead of owning the store in this process.')
     options = parser.parse_args()
+    if options.loopback:
+        from .loopback import ensure_daemon
+        server = None
+        try:
+            client = ensure_daemon(options.state_dir, allow_ingest=options.allow_ingest)
+            server = LoopbackMCP(client, options.allow_ingest and bool(client.request('ping').get('writes_enabled')))
+            server.serve(sys.stdin.buffer, sys.stdout.buffer)
+        except (ValueError, OSError) as error:
+            print('VRS2 loopback bridge error: ' + str(error), file=sys.stderr)
+            return 1
+        finally:
+            if server is not None:
+                server.close()
+        return 0
     owner = server = None
     try:
         owner = Main(options.state_dir, allow_ingest=options.allow_ingest)

@@ -413,7 +413,10 @@ class Main:
         self._dirty = 0
         self.restore = {}
         try:
-            self.db = sqlite3.connect(self.directory / 'memory.sqlite3', isolation_level=None)
+            # check_same_thread=False: the loopback daemon serves requests from handler threads
+            # and serializes every main call under one lock (loopback.Daemon.handle).
+            self.db = sqlite3.connect(self.directory / 'memory.sqlite3', isolation_level=None,
+                                      check_same_thread=False)
             self.db.execute('PRAGMA journal_mode=WAL')
             self.db.execute('PRAGMA synchronous=FULL')
             self.db.execute('CREATE TABLE IF NOT EXISTS identity (id INTEGER PRIMARY KEY CHECK(id=1), value TEXT NOT NULL)')
