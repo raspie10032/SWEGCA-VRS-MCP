@@ -160,7 +160,7 @@ def hook_recall(main, arguments):
         rows.append(dict(
             episode_id=candidate.episode_id, source=episode.source_addresses[0], revision=episode.revision,
             outcome=episode.steps[0].outcome, matched=len(candidate.matched_cues),
-            matched_cues=list(candidate.matched_cues)[:12], cue_overlap=candidate.cue_overlap,
+            matched_cues=list(candidate.matched_cues)[:64], cue_overlap=candidate.cue_overlap,   # 12 undercounted 9% of rows (2026-09-14)
             proposition=obs.get('proposition_id'), polarity=obs.get('evidence_polarity'),
             verdict=judgment.verdict if judgment else None,
             superseded_by=main.memory.superseded.get(candidate.episode_id),
