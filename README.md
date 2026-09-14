@@ -1,5 +1,19 @@
 # SWEGCA + VRS MCP
 
+**v2.0.0: native VRS2 memory-use packets and a Claude-ready stdio bridge.**
+
+See [VRS2 installation and Claude setup](docs/NATIVE_VRS2.md) for the new
+`memory_context` workflow: main-owned selection/re-evidence, joined original
+records, source/revision, conflict visibility and bounded continuation. This
+mode requires an existing compatible native main Unix socket. It does not
+bundle the native cognition engine or migrate the old local store.
+
+The existing stateful storage, Hermes adapter and diagnostic modes below remain
+available with their original data formats. [v2.0 validation](docs/VRS2_VALIDATION.md)
+distinguishes public SDK tests, real native-backend checks and Claude testing.
+
+## Existing standalone and Hermes modes
+
 **v0.3: persistent experience, MCP tools, and an automatic Hermes memory adapter.**
 Your agent is the MCP client; this server owns its external memory store. It does
 not host, call or replace an LLM or control the agent. The optional Hermes native
@@ -60,7 +74,7 @@ Ask the agent:
 > recall the record by its words. Do not treat stored agent notes as verified
 > truth. Report actual tool results, not just installation success.
 
-The writable server exposes **nine tools**. Omitting `--enable-writes` opens an
+The existing stateful writable mode exposes **nine tools**. Omitting `--enable-writes` opens an
 existing store read-only with five tools; it cannot create a new store.
 
 ## Tools

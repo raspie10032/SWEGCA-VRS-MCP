@@ -81,9 +81,17 @@ def main():
     mode.add_argument("--dataset", type=Path,
                         help="Operator-authorized standalone dataset; read once at startup")
     mode.add_argument("--state-dir", type=Path, help="Private persistent store directory, not a dataset file")
+    mode.add_argument("--native-socket", type=Path, help="Existing native VRS2 Unix socket; separate from the local store")
+    parser.add_argument("--native-timeout", type=float, default=45)
     parser.add_argument("--enable-writes", action="store_true", help="Expose experience/VRS/World mutation tools")
     parser.add_argument("--producer-keys", type=Path, help="Optional owner-only trusted-producer configuration")
     args = parser.parse_args()
+    if args.native_socket is not None:
+        if args.enable_writes or args.producer_keys:
+            parser.error("native memory mode exports no write/trust tools")
+        from .native_memory import run
+        run(args.native_socket, args.native_timeout)
+        return
     if args.state_dir is not None:
         core = None
         try:

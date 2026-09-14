@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "swegca-vrs2": {
+      "command": "/absolute/path/SWEGCA-VRS-MCP/.venv/bin/swegca-vrs2-mcp",
+      "args": ["--socket", "/absolute/path/to/native-main.sock", "--timeout", "45"]
+    }
+  }
+}

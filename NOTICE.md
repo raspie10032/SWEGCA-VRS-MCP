@@ -15,3 +15,8 @@
 The combined source distribution is not MIT-only. Third-party dependencies keep
 their respective licenses. The new graph construction and stopping adapter are
 not claimed byte-equivalent to an entire prior runtime or production system.
+
+The v2.0 native_memory/native_context/native_transport modules are first-party
+MIT transport and memory-use integration, published by explicit owner request.
+They contain no native cognition engine, private experience, model weights or
+private repository history. The existing upstream manifests remain unchanged.
