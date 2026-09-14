@@ -37,6 +37,8 @@ from .engine.mosaic_memory_promotion import assess_vrs_experience_promotion
 from .flat_vrs import FlatGraph, settle, frozen  # noqa: F401 — tests import frozen from here
 from .fast_regions import build_regions
 from .compact_index import CompactIndex
+from . import csr_cache
+from .engine.mosaic_vrs_connectivity_regions import _csr as _engine_csr
 
 # Local adapter (2026-09-14): generated Hangul n-gram cues (2-4 chars, produced by keys() for every
 # Hangul word) stay retrieval keys in the postings but do not become VRS nodes. As nodes they joined
@@ -313,11 +315,23 @@ class Graph:
     vectorized, warm-started from the previous generation); see that module.
     """
     # '_names' is kept only so checkpoints written by the earlier Graph layout still unpickle.
-    __slots__ = ('snapshot_id', 'flat', 'nodes', 'components', 'regions', 'last_receipt', '_names')
+    # '_csr' caches the level-0 regions adjacency of the whole-graph component (csr_cache);
+    # it is memory-only: not pickled, rebuilt once through the engine's _csr after a restart.
+    __slots__ = ('snapshot_id', 'flat', 'nodes', 'components', 'regions', 'last_receipt', '_names', '_csr')
 
-    def __init__(self, snapshot_id, flat, nodes, components, regions, last_receipt):
+    def __init__(self, snapshot_id, flat, nodes, components, regions, last_receipt, csr=None):
         self.snapshot_id, self.flat, self.nodes = snapshot_id, flat, nodes
         self.components, self.regions, self.last_receipt = components, regions, last_receipt
+        self._csr = csr
+
+    def __getstate__(self):
+        return {k: getattr(self, k) for k in self.__slots__ if k != '_csr' and hasattr(self, k)}
+
+    def __setstate__(self, state):
+        if isinstance(state, tuple):          # checkpoints written before __getstate__ existed
+            state = state[1] or {}
+        for k in self.__slots__:
+            setattr(self, k, state.get(k))
 
     @classmethod
     def empty(cls, identity, vocab=None):
@@ -412,21 +426,43 @@ class Graph:
         grown = grown.with_score(settled)
         # Recompute only the changed connected component. Modularity within that
         # component is global; unchanged disconnected components stay shared.
-        members = self._component_members(grown, [center, *(self.nodes[e.episode_id] for e in prior)])
-        edge_mask = np.isin(grown.src, members)
-        edges = np.flatnonzero(edge_mask)
-        local = np.full(len(nodes), -1, dtype=np.int64)
-        local[members] = np.arange(len(members))
-        source = SimpleNamespace(terms=LazyTerms(nodes, frozen(members, np.int64)),
-            edge_source=local[grown.src[edges].astype(np.int64)],
-            edge_target=local[grown.dst[edges].astype(np.int64)],
-            edge_sign=grown.sign[edges].astype(np.int8),
-            vrs_strength=grown.strength[edges].astype(np.float64))
         # A merge can only happen through the new record's own edges, so the previous
         # component ids are exactly those of its endpoints that already existed.
         previous_ids = {self.components[n] for n in endpoints if n in self.components}
         previous = self.regions[next(iter(previous_ids))] if len(previous_ids) == 1 else None
-        regions, backend = build_regions(source, vrs_snapshot_id=settled_id, previous=previous)
+        # Common case at scale: the previous component already spanned the whole graph, so the
+        # new component is every node in id order (local == global), its edges are all edges,
+        # and the level-0 adjacency extends the cached one instead of being re-sorted.
+        whole = (previous is not None and len(previous[0].terms) == len(self.nodes))
+        csr_in = None
+        if whole and self._csr is not None and self._csr[0] == next(iter(previous_ids)) \
+                and self._csr[1] == len(self.nodes) and self._csr[2] == len(self.flat.src):
+            csr_in = csr_cache.extended(self._csr, grown, len(self.flat.src), edits)
+            if csr_cache.VERIFY:
+                csr_cache.verify(*csr_in, grown, _engine_csr)
+        if whole:
+            members = np.arange(len(nodes), dtype=np.int64)
+            edges = np.arange(len(grown.src), dtype=np.int64)
+            local = members
+            source = SimpleNamespace(terms=LazyTerms(nodes, frozen(members, np.int64)),
+                edge_source=grown.src.astype(np.int64), edge_target=grown.dst.astype(np.int64),
+                edge_sign=grown.sign.astype(np.int8), vrs_strength=grown.strength.astype(np.float64))
+        else:
+            members = self._component_members(grown, [center, *(self.nodes[e.episode_id] for e in prior)])
+            edge_mask = np.isin(grown.src, members)
+            edges = np.flatnonzero(edge_mask)
+            local = np.full(len(nodes), -1, dtype=np.int64)
+            local[members] = np.arange(len(members))
+            source = SimpleNamespace(terms=LazyTerms(nodes, frozen(members, np.int64)),
+                edge_source=local[grown.src[edges].astype(np.int64)],
+                edge_target=local[grown.dst[edges].astype(np.int64)],
+                edge_sign=grown.sign[edges].astype(np.int8),
+                vrs_strength=grown.strength[edges].astype(np.float64))
+        csr_out = {}
+        regions, backend = build_regions(source, vrs_snapshot_id=settled_id, previous=previous,
+                                         csr=csr_in, csr_out=csr_out)
+        if csr_in is not None:
+            backend += '_incremental_csr'
         if not regions.converged:
             raise ValueError('region_topology_pending_no_publication')
         component_id = int(members[0])
@@ -438,6 +474,10 @@ class Graph:
             if components.get(n) != component_id:
                 components = components.set(n, component_id)
         directory = directory.set(component_id, (regions, frozen(local, np.int32)))   # node -> local position
+        # cache the whole-graph level-0 adjacency for the next append (memory only)
+        csr = None
+        if len(members) == len(nodes) and csr_out.get('csr') is not None:
+            csr = (component_id, len(nodes), len(grown.src), *csr_out['csr'])
         receipt = dict(version=fields['version'], parent_snapshot_id=self.snapshot_id,
             status=fields['status'], pending_node_count=0, rounds=fields['rounds'],
             node_evaluations=fields['node_evaluations'], edge_evaluations=fields['edge_evaluations'],
@@ -456,7 +496,7 @@ class Graph:
             re_evidence_updates=plain(strength_receipt),
             recorded_agreement_is_not_independent_factual_corroboration=True,
             logical_implication_claimed_by_regions=False, grants_authority=False)
-        return Graph(settled_id, grown, nodes, components, directory, freeze_view(receipt))
+        return Graph(settled_id, grown, nodes, components, directory, freeze_view(receipt), csr)
 
     def rebuild_regions(self):
         """Rebuild every component's regions in the shared-array layout (one-time after conversion)."""

@@ -185,11 +185,15 @@ def _memberships(offsets, neighbors, weights, core):
     return (_frozen(member_offsets), _frozen(g.astype(np.int64)), _frozen(coefficients.astype(np.float64)))
 
 
-def build_regions(source, *, vrs_snapshot_id, previous=None, maximum_sweeps=100, maximum_levels=32):
+def build_regions(source, *, vrs_snapshot_id, previous=None, maximum_sweeps=100, maximum_levels=32,
+                  csr=None, csr_out=None):
     """``ConnectivityRegions`` for one component; engine build below SMALL nodes.
 
     ``previous`` is an optional ``(regions, positions)`` pair for the same component in
     the earlier generation; its core labels seed level 0 for nodes that already existed.
+    ``csr`` is an optional precomputed level-0 ``(offsets, neighbors, weights)`` in local
+    node order (what the engine's ``_csr`` would return); ``csr_out`` (a dict) receives the
+    level-0 CSR actually used under key ``'csr'`` so a caller can cache it.
     """
     terms = source.terms
     if len(terms) <= SMALL:
@@ -202,7 +206,12 @@ def build_regions(source, *, vrs_snapshot_id, previous=None, maximum_sweeps=100,
     v = np.asarray(source.edge_target, np.int64)
     sign = np.asarray(source.edge_sign)
     strength = np.asarray(source.vrs_strength, np.float64)
-    offsets, neighbors, weights = _csr(np.r_[u, v], np.r_[v, u], np.r_[strength, strength], len(terms))
+    if csr is not None:
+        offsets, neighbors, weights = csr
+    else:
+        offsets, neighbors, weights = _csr(np.r_[u, v], np.r_[v, u], np.r_[strength, strength], len(terms))
+    if csr_out is not None:
+        csr_out['csr'] = (offsets, neighbors, weights)
     initial = fresh = None
     if previous is not None:
         old_regions, old_positions = previous
