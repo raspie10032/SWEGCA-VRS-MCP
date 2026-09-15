@@ -391,9 +391,14 @@ def consolidate(graph, memory, previous, *, seed=SEED, cycles=CYCLES, labels=Non
     flat = graph.flat
     e = len(inp['src']); n_real = inp['real_nodes']; n_flat_fwd = len(inp['forward'])
     strength = inp['base'].copy()
-    strength[:n_flat_fwd] = np.asarray(flat.strength)[inp['forward']]
+    # edges refined before keep their refined strength (the flat arrays carry it); an edge appended since
+    # the last consolidation starts at its base w — the .75 placeholder written at append time is not a
+    # strength (measured 2026-09-15: starting from it let a w=.25 record hit its cap in two generations)
+    refined = int(previous.edge_count // 2) if previous is not None else 0
+    refined = min(refined, n_flat_fwd)
+    strength[:refined] = np.asarray(flat.strength)[inp['forward'][:refined]]
     # the evidence may have moved a record's weight since its edges were refined: keep the refined
-    # value inside the new clamp (base x [.25, 4]); a fresh edge starts at its base
+    # value inside the new clamp (base x [.25, 4])
     strength = np.minimum(np.maximum(strength, inp['base'] * np.float32(0.25)), inp['base'] * np.float32(4.0))
     state = inp['direct'].copy()
     fresh = np.ones(e, bool)
