@@ -635,6 +635,7 @@ def _mapping_proxy(data):
 # pickle cannot name the mappingproxy type; rebuild frozen views through a module function.
 copyreg.pickle(MappingProxyType, lambda m: (_mapping_proxy, (dict(m),)))
 UNBRIDGED_FACTOR = 1.0   # order factor for candidates reached only through an unpromoted region pair (1.0 = receipt only)
+PROMOTION_GATE = 0.25    # promoted (strength >= 1.0) records rank as if 25% stronger (0 = ordering ignores VRS; recall-bench toggles it)
 ASK_GATE = 0.5           # per rare query word found in the record's own 「찾을 때 묻는 말」, up to ASK_GATE_MAX_HITS (measured 2026-09-15: 0 / .25 / .5 / 1.0 -> MRR .871 / .944 / .950 / .956, no regressions with the rarity bar)
 ASK_GATE_MAX_HITS = 3
 DESCRIPTION_GATE = 1.0   # per rare query word found in a memory doc's front-matter description (14 fresh questions: 0 / .25 / .5 / 1.0 -> MRR .416 / .524 / .605 / .742; the tuned 15 go .956 -> .856)
@@ -1361,9 +1362,9 @@ class Main:
                     kept.append(c)
             return kept
 
-        promotion_gate = 0.25   # vrs-regions: promoted (strength >= 1.0) records rank as if 25% stronger;
-        #                        measured 15 known-answer queries: MRR .550 -> .673, stable across consolidations,
-        #                        while weighting by the raw strength value collapses once pending edges hit the floor
+        promotion_gate = PROMOTION_GATE   # vrs-regions: measured 15 known-answer queries under the old kernel rule:
+        #                        MRR .550 -> .673, stable across consolidations, while weighting by the raw strength
+        #                        value collapses once pending edges hit the floor
         unbridged_factor = UNBRIDGED_FACTOR
         ask_gate, desc_gate = ASK_GATE, DESCRIPTION_GATE
         def ask_hits(row, matched_words):

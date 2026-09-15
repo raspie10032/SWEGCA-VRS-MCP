@@ -228,3 +228,31 @@ because of the rule: it spreads as records age differently and as evidence gains
 and axes. Recall without any promotion: tuned 15 MRR .834 (auto scope .838), fresh 14 MRR .813,
 hook 10/14 — carried by BM25 with the asks and description gates.
 
+
+## Producers (same day, last) — evidence from more than one source
+
+The accumulator abstains on one producer by design, so the next step was not a rule but more
+producers writing observations on the **same hypothesis strings** the verdicts declare. Each is a
+string proxy for a producer id (`metadata.producer`), with its own source family and context:
+
+| producer | what it observes | where |
+| --- | --- | --- |
+| `asm-agent` | verdicts (signed v0.2 + vrs2 mirror), axes re-declared 2026-09-15 (`obs:<slug>@axes`) | `swegca-verdict.py`, `swegca-verdict-axes.py` |
+| `probe-runner` | re-runs a checkable claim (AF_UNIX present? does one producer leave abstain?) | `vrs2-probe.py` |
+| `pytest-runner` | the standalone suite passing on this branch | `vrs2-produce.py` from the shell |
+| `recall-bench` | fresh-14 ranks with the promotion gate on vs off, auto scope vs full recall | `vrs2-recall-bench.py` (`PROMOTION_GATE` is a module constant so it can be toggled) |
+| `sonnet-subagent` | a delegation's returned yaml: status + tests, and whether `state_corrections` is empty | `vrs2-delegate-record.py` |
+| `settlement-batch` | the daily audit batch's exit (0/1; exit 2 "no input" is not an outcome) | `SETTLEMENT/jobs/run_daily.py` finally block |
+
+The common entry is `vrs2-produce.py` (`produce(producer, hypothesis, outcome, axes, context,
+source, text, evidence, confidence)` → daemon ingest with `proposition`/`polarity`, `kind:
+evidence`). A producer measures a comparison the claim states; it does not pick thresholds.
+
+First live effect (37 observations, 31 hypotheses): the two probed verdicts and the two benched
+ones now have source diversity 2 and context diversity 2, still `abstain: minimum_effective_samples`
+(fewer than four effective samples per axis — the architecture's answer, not a defect). One
+hypothesis became **unresolved**: the 2026-09-15 verdict "region-wise consolidation … gives the
+promotion gate a real recall signal" (support, family `verdict:`) against recall-bench's refute
+(family `bench:` — under the evidence rule nothing is promoted yet, so the gate moves no rank).
+That is the arbiter's directional conflict doing what it should: the verdict was made under the
+discarded kernel rule. Record weights now take three values (.25 / .5 / .75).
