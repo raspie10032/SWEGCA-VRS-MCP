@@ -148,9 +148,9 @@ def hook_recall(main, arguments):
     query = str(arguments.get('query') or '')
     limit = max(1, min(int(arguments.get('limit', 5)), 50))
     snippet = max(80, min(int(arguments.get('snippet', 400)), 4000))
-    status = main.status()
     exclude = tuple(str(k) for k in (arguments.get('exclude_kinds') or ()) if k)[:8]
-    root = main.recall(query, status['pair_snapshot_id'], exclude_kinds=exclude)
+    root = main.recall(query, None, exclude_kinds=exclude)      # current generation, no lock
+    status = {'pair_snapshot_id': root['pair_snapshot_id']}
     activation = root['receipt']['activation']
     judgments = {j.episode_id: j for j in activation.re_evidence.judgments}
     rows = []
@@ -177,7 +177,7 @@ def hook_recall(main, arguments):
                 insufficient_evidence=controls.insufficient_evidence,
                 selection={k: root['memory_selection'][k] for k in ('function_word_cues', 'candidate_order', 'closure_rule')},
                 fanout={c: n for c, n in root['memory_selection']['candidate_counts'].items() if n},
-                record_count=status['hot_episode_count'],
+                record_count=root['record_count'],
                 grants_authority=False)
 
 
@@ -197,14 +197,17 @@ class Daemon:
         command = message.get('command')
         arguments = {k: v for k, v in message.items() if k != 'command'}
         self.last = time.time()
+        # Reads run without the lock (2026-09-15): a generation is immutable and Main publishes the
+        # next one as a single tuple, so a recall during an ingest sees the old or the new store,
+        # never a mix, and a Stop hook's ingest burst no longer stalls another session's prompt hook.
+        if command == 'ping':
+            return dict(status='ok', pid=os.getpid(), state_dir=str(self.state_dir),
+                        writes_enabled=self.main.allow_ingest)
+        if command == 'hook_recall':
+            return hook_recall(self.main, arguments)
         with self.lock:
             if command in RESIDENT_COMMANDS:
                 return self.resident.request(command, **arguments)
-            if command == 'ping':
-                return dict(status='ok', pid=os.getpid(), state_dir=str(self.state_dir),
-                            writes_enabled=self.main.allow_ingest)
-            if command == 'hook_recall':
-                return hook_recall(self.main, arguments)
             if command == 'ingest':
                 return self.main.ingest(arguments)
             if command == 'checkpoint':

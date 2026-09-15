@@ -28,6 +28,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sys
+import threading
 import zlib
 from collections import OrderedDict
 
@@ -53,31 +54,52 @@ def _digest(value):
 
 
 class Vocab:
-    """Append-only cue dictionary with block compression and hashed lookup."""
-    __slots__ = ('blocks', 'tail', 'hashes', 'ids', 'count', '_cache')
+    """Append-only cue dictionary with block compression and hashed lookup.
+
+    Readers (recall) run without the owner's lock while one writer appends (2026-09-15), so the
+    lookup table is one ``(hashes, ids)`` tuple replaced atomically, the block cache is guarded by
+    a small lock, and ``_block`` reads ``tail`` before ``blocks`` (the writer appends the flushed
+    block before it resets the tail, so a reader never sees a fresh empty tail with old blocks).
+    """
+    __slots__ = ('blocks', 'tail', '_table', 'count', '_cache', '_lock')
 
     def __init__(self):
         self.blocks, self.tail = [], []
-        self.hashes = np.empty(0, dtype=np.uint64)
-        self.ids = np.empty(0, dtype=np.uint32)
+        self._table = (np.empty(0, dtype=np.uint64), np.empty(0, dtype=np.uint32))
         self.count = 0
         self._cache = OrderedDict()
+        self._lock = threading.Lock()
+
+    @property
+    def hashes(self):
+        return self._table[0]
+
+    @property
+    def ids(self):
+        return self._table[1]
 
     def __getstate__(self):
-        return dict(blocks=self.blocks, tail=self.tail, hashes=self.hashes, ids=self.ids, count=self.count)
+        hashes, ids = self._table
+        return dict(blocks=self.blocks, tail=self.tail, hashes=hashes, ids=ids, count=self.count)
 
     def __setstate__(self, state):
-        for key, value in state.items():
-            setattr(self, key, value)
+        self.blocks, self.tail, self.count = state['blocks'], state['tail'], state['count']
+        self._table = (state['hashes'], state['ids'])
         self._cache = OrderedDict()
+        self._lock = threading.Lock()
 
     def _block(self, number):
-        strings = self._cache.get(number)
-        if strings is None:
-            if number == len(self.blocks):
-                return self.tail
-            # interned: every episode that carries this cue shares one string object
-            strings = [sys.intern(t) for t in zlib.decompress(self.blocks[number]).decode('utf-8').split('\n')]
+        tail = self.tail                      # before blocks: see class docstring
+        blocks = self.blocks
+        if number >= len(blocks):
+            return tail
+        with self._lock:
+            strings = self._cache.get(number)
+            if strings is not None:
+                return strings
+        # interned: every episode that carries this cue shares one string object
+        strings = [sys.intern(t) for t in zlib.decompress(blocks[number]).decode('utf-8').split('\n')]
+        with self._lock:
             self._cache[number] = strings
             if len(self._cache) > BLOCK_CACHE:
                 self._cache.popitem(last=False)
@@ -88,12 +110,13 @@ class Vocab:
 
     def id_of(self, text, limit=None):
         """Id of ``text`` below ``limit`` (a generation's cue count) or None."""
-        if not len(self.hashes):
+        hashes, ids = self._table             # one atomic read of the pair
+        if not len(hashes):
             return None
         h = np.uint64(_hash64(text))
-        lo = int(np.searchsorted(self.hashes, h, side='left'))
-        hi = int(np.searchsorted(self.hashes, h, side='right'))
-        for cue_id in self.ids[lo:hi]:
+        lo = int(np.searchsorted(hashes, h, side='left'))
+        hi = int(np.searchsorted(hashes, h, side='right'))
+        for cue_id in ids[lo:hi]:
             cue_id = int(cue_id)
             if (limit is None or cue_id < limit) and self.string_of(cue_id) == text:
                 return cue_id
@@ -110,10 +133,11 @@ class Vocab:
         self.count += len(texts)
         new_hashes = np.fromiter((_hash64(t) for t in texts), dtype=np.uint64, count=len(texts))
         new_ids = np.arange(first, self.count, dtype=np.uint32)
-        hashes = np.concatenate([self.hashes, new_hashes])
-        ids = np.concatenate([self.ids, new_ids])
+        hashes, ids = self._table
+        hashes = np.concatenate([hashes, new_hashes])
+        ids = np.concatenate([ids, new_ids])
         order = np.argsort(hashes, kind='stable')
-        self.hashes, self.ids = hashes[order], ids[order]
+        self._table = (hashes[order], ids[order])     # single assignment: readers see old or new, never mixed
         return list(range(first, self.count))
 
 
@@ -183,14 +207,17 @@ class CompactIndex:
         if row is None or row >= self.count:
             raise KeyError(identifier)
         cache = store['cache']
-        episode = cache.get(row)
-        if episode is not None:
-            cache.move_to_end(row)
-            return episode
+        lock = store.setdefault('cache_lock', threading.Lock())
+        with lock:
+            episode = cache.get(row)
+            if episode is not None:
+                cache.move_to_end(row)
+                return episode
         episode = self._build(row)
-        cache[row] = episode
-        if len(cache) > EPISODE_CACHE:
-            cache.popitem(last=False)
+        with lock:
+            cache[row] = episode
+            if len(cache) > EPISODE_CACHE:
+                cache.popitem(last=False)
         return episode
 
     def _build(self, row):
@@ -343,6 +370,7 @@ class CompactIndex:
         shared = dict(state['_store'])
         shared['cache'] = None
         shared.pop('kind_masks', None)            # per-process mask cache, rebuilt on demand
+        shared.pop('cache_lock', None)
         state['_store'] = shared
         return state
 
@@ -374,7 +402,7 @@ class CompactIndex:
             return self
         store = self._store
         key = (self.count, exclude)
-        masks = store.setdefault('kind_masks', {})
+        masks = store.get('kind_masks') or {}
         mask = masks.get(key)
         if mask is None:
             kinds = store.get('kinds') or []
@@ -382,7 +410,7 @@ class CompactIndex:
             mask = np.fromiter((k not in exclude for k in kinds[:n]), dtype=bool, count=n)
             if n < self.count:                      # rows appended without a kind entry: keep them
                 mask = np.concatenate([mask, np.ones(self.count - n, dtype=bool)])
-            masks.clear(); masks[key] = mask
+            store['kind_masks'] = {key: mask}      # atomic replace; readers hold old or new dict
         view = MaskedIndex.__new__(MaskedIndex)
         view.__dict__.update(self.__dict__)
         view._mask = mask

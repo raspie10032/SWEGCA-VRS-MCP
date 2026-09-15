@@ -581,6 +581,49 @@ class Main:
     replayed as before. The journal remains the source of truth; a checkpoint is a
     verified cache written every CHECKPOINT_EVERY ingests and on close.
     """
+    # One generation tuple, replaced atomically: recall reads it once without the owner's lock
+    # while an ingest builds and publishes the successor (2026-09-15).
+    _generation = (None, None, None, None)
+
+    def _set_generation(self, memory, graph, pair, operations):
+        self._generation = (memory, graph, pair, operations)
+
+    @property
+    def memory(self):
+        return self._generation[0]
+
+    @memory.setter
+    def memory(self, value):
+        m, g, p, o = self._generation
+        self._generation = (value, g, p, o)
+
+    @property
+    def graph(self):
+        return self._generation[1]
+
+    @graph.setter
+    def graph(self, value):
+        m, g, p, o = self._generation
+        self._generation = (m, value, p, o)
+
+    @property
+    def pair(self):
+        return self._generation[2]
+
+    @pair.setter
+    def pair(self, value):
+        m, g, p, o = self._generation
+        self._generation = (m, g, value, o)
+
+    @property
+    def operations(self):
+        return self._generation[3]
+
+    @operations.setter
+    def operations(self, value):
+        m, g, p, o = self._generation
+        self._generation = (m, g, p, value)
+
     def __init__(self, state_dir, *, allow_ingest=False):
         self.directory = Path(state_dir).expanduser().resolve()
         self.directory.mkdir(parents=True, exist_ok=True)
@@ -612,10 +655,9 @@ class Main:
                 self.db.execute('INSERT INTO identity VALUES (1,?)', identity)
             self.identity = identity[0]
             # HotIndex (ported) stays importable for older checkpoints; the live index is compact.
-            self.memory = CompactIndex.empty(self.identity)
-            self.graph = Graph.empty(self.identity, self.memory._store['vocab'])
-            self.operations = Map()
-            self.pair = FullCurrentMemoryVrsSnapshot(self.memory, self.graph.snapshot_id)
+            memory = CompactIndex.empty(self.identity)
+            graph = Graph.empty(self.identity, memory._store['vocab'])
+            self._set_generation(memory, graph, FullCurrentMemoryVrsSnapshot(memory, graph.snapshot_id), Map())
             started = perf_counter_ns()
             after = self._load_checkpoint()
             # The journal stays the source of truth: every row the checkpoint claims to
@@ -634,8 +676,7 @@ class Main:
                 pair = FullCurrentMemoryVrsSnapshot(memory, graph.snapshot_id)
                 if pair.snapshot_id != expected:
                     raise ValueError('stored_generation_integrity_failed')
-                self.memory, self.graph, self.pair = memory, graph, pair
-                self.operations = self.operations.set(req, (fingerprint, identifier, pair.snapshot_id))
+                self._set_generation(memory, graph, pair, self.operations.set(req, (fingerprint, identifier, pair.snapshot_id)))
                 replayed += 1
             self._dirty = replayed
             self.restore.update(replayed_after_checkpoint=replayed, elapsed_ns=perf_counter_ns() - started)
@@ -664,7 +705,7 @@ class Main:
         except Exception as error:
             self.restore['checkpoint'] = 'unreadable_ignored: ' + type(error).__name__
             return 0
-        self.memory, self.graph, self.operations = state['memory'], state['graph'], state['operations']
+        self._set_generation(state['memory'], state['graph'], self.pair, state['operations'])
         if isinstance(self.memory, HotIndex):        # older uncompressed checkpoint: convert once
             self.memory = CompactIndex.from_hot(self.memory)
             self._dirty += 1
@@ -695,7 +736,7 @@ class Main:
             self.graph = self.graph.rebuild_regions()  # old layout: duplicated edge arrays, name tuples, position Maps
             self._dirty += 1
             self.restore['converted_regions'] = 'rebuilt_shared_layout'
-        self.pair = FullCurrentMemoryVrsSnapshot(self.memory, self.graph.snapshot_id)
+        self._set_generation(self.memory, self.graph, FullCurrentMemoryVrsSnapshot(self.memory, self.graph.snapshot_id), self.operations)
         if self.pair.snapshot_id != pair:
             raise ValueError('checkpoint_generation_integrity_failed')
         self.restore['checkpoint'] = f'loaded seq {seq}'
@@ -749,7 +790,7 @@ class Main:
                 self.db.execute('ROLLBACK')
             raise
         self.owner.replace(self.pair.snapshot_id, pair)
-        self.memory, self.graph, self.pair, self.operations = memory, graph, pair, operations
+        self._set_generation(memory, graph, pair, operations)
         self._dirty += 1
         self.checkpoint()
         return rows, (perf_counter_ns() - started) / 1e9
@@ -940,7 +981,7 @@ class Main:
                 self.memory.truncate_to(self.memory.count)   # the successor never became durable
             raise
         self.owner.replace(self.pair.snapshot_id, pair)
-        self.memory, self.graph, self.pair, self.operations = memory, graph, pair, operations
+        self._set_generation(memory, graph, pair, operations)
         self._dirty += 1
         if self._dirty >= CHECKPOINT_EVERY:
             self.checkpoint()
@@ -951,11 +992,12 @@ class Main:
             vrs_event=graph.summary() if added else {'status':'unchanged_duplicate_observation'}, elapsed_ns=perf_counter_ns()-began)
 
     def recall(self, query, expected_snapshot, exclude_kinds=()):
+        """``expected_snapshot`` None = whatever generation is current (lock-free hook path)."""
         self._check()
-        if expected_snapshot != self.pair.snapshot_id:
+        memory, graph, pair, _ = self._generation       # one atomic read (lock-free readers)
+        if expected_snapshot is not None and expected_snapshot != pair.snapshot_id:
             raise ValueError('snapshot_mismatch')
         query = text_field(query, 'query', 4096)
-        memory, graph, pair = self.memory, self.graph, self.pair
         if exclude_kinds:
             memory = memory.masked(exclude_kinds)      # same generation, postings filtered by record kind
         candidates = keys(query)
@@ -1031,7 +1073,7 @@ class Main:
             closure_rule='propositions of records matched by an informative cue (fanout below half the store)',
             candidate_order='bm25_over_matched_informative_words_then_cue_overlap',
             semantic_acceptance_claimed=False)
-        return dict(receipt={'activation': receipt}, memory_selection=selection,
+        return dict(record_count=memory.episode_count, receipt={'activation': receipt}, memory_selection=selection,
             vrs_selection=dict(selection_method='native_event_signal_and_connectivity_regions',
                 numerical_version=VERSION, logical_implication_claimed=False, grants_authority=False),
             current_strengths={i: graph.strength(i) for i in ids}, current_promotions={i: graph.strength(i) >= 1.0 for i in ids},
