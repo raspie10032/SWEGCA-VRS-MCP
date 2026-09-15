@@ -154,6 +154,21 @@ def observation(arguments):
     return result
 
 
+_ASKS_MARK = re.compile(r'(?:^|\n)[ \t]*(?:##[ \t]*)?찾을 때 묻는 말[ \t]*[:：]?|\(찾을 때 묻는 말[ \t]*[:：]')
+
+
+def asks_of(text):
+    """The record's own 「찾을 때 묻는 말」: a verdict's tail line, a memory doc's section heading, or a
+    log entry's parenthesized tail — never an inline mention of the phrase (a doc that *talks about*
+    asks would otherwise claim every example word it quotes; measured 2026-09-15). '' when absent."""
+    m = _ASKS_MARK.search(text)
+    if m is None:
+        return ''
+    tail = text[m.end():]
+    tail = tail.split('\n## ', 1)[0]          # doc section ends at the next heading
+    return tail.strip(': \n')[:800]
+
+
 def journal_entry(request_id, body, fingerprint):
     """Validate one journal row: ('observation', row) or ('consolidation', spec). Both are fingerprinted."""
     entry = json.loads(body)
@@ -1319,11 +1334,9 @@ class Main:
             # it below short log entries that merely mention the words (measured 2026-09-15: rank 7 -> 17).
             if not ask_gate:
                 return 0
-            text = memory.episode(row.episode_id).steps[0].observation.get('text', '')
-            at = text.find('찾을 때 묻는 말')
-            if at < 0:
+            asks = asks_of(memory.episode(row.episode_id).steps[0].observation.get('text', '')).casefold()
+            if not asks:
                 return 0
-            asks = text[at + 8:].split('\n## ', 1)[0].casefold()
             # only rare words count (a broad asks list such as the setup doc's would otherwise catch
             # every question that shares a common word with it)
             return sum(1 for w in matched_words if w.casefold() in asks and fanout.get(w, 0) <= ASK_GATE_RARE_SHARE * total)

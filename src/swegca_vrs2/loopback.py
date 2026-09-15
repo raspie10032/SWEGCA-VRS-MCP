@@ -133,14 +133,9 @@ def ensure_daemon(state_dir, *, allow_ingest=True, python=None, wait_seconds=30)
 # ── daemon ────────────────────────────────────────────────────────────
 
 def _asks_of(text):
-    """The record's own "찾을 때 묻는 말" (verdict tail line or memory-doc section), else ''."""
-    marker = '찾을 때 묻는 말'
-    at = text.find(marker)
-    if at < 0:
-        return ''
-    tail = text[at + len(marker):]
-    tail = tail.split('\n## ', 1)[0]          # doc section ends at the next heading
-    return tail.strip(': \n')[:800]
+    """The record's own "찾을 때 묻는 말" (verdict tail line, memory-doc section, log-entry tail), else ''."""
+    from .store import asks_of
+    return asks_of(text)
 
 
 def hook_recall(main, arguments):
