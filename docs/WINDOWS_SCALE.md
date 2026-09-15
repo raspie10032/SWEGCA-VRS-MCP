@@ -74,3 +74,35 @@ Measured on the real 2,696-record store (Korean session-log entries, memory-doc 
   two distinct values in this single-producer store (verdict
   `vrs-strengths-carry-no-ranking-signal-in-a-single-producer-store`).
 * `hook_recall` now reports up to 64 matched cues (the 12 cap undercounted evidence in 9% of rows).
+
+## 2026-09-15: 5k records, kind filter, reads without the daemon lock
+
+The store grew to 5,075 records when 2,267 Desktop folder listings were ingested (one record per
+folder, `metadata.kind = fs_listing`, `scope = global`; tool `desktop-fs-ingest.py`, incremental by
+listing hash). Effects and the changes they forced, measured on that store:
+
+| item | before | after |
+|---|---|---|
+| recall on an ordinary prompt (listing records doubled the candidate set) | 1.66 s, 4,575 candidates | 120–235 ms end-to-end; daemon 23–57 ms, 230–610 candidates |
+| daemon lock held by the idle checkpoint | 2.5 s (a concurrent hook waited) | DB write only; pickle+zlib run outside (`checkpoint_prepare/serialize/commit`) |
+| hook recall while another session ingests | up to 1 s wait per ingest | median 144 ms, p90 183, max 856 during 30 ingests (avg 1.02 s each), 0 errors |
+| hook process start | 580–700 ms | 85–115 ms (`loopback` no longer imports `store` at module level) |
+| nodes / edges / RSS / checkpoint / disk after compact | 89,773 / 800,426 / 233 MB / 16 MB / 19 MB | 102k / 1.02M / 265 MB / 19 MB / 22 MB |
+
+* `CompactIndex` keeps a per-row `kinds` column (old checkpoints backfill it from the blobs) and
+  `masked(exclude_kinds)` returns a `MaskedIndex` view of the same generation whose postings skip
+  those rows. `Main.recall(..., exclude_kinds=)` and `hook_recall` pass it through; the hook and the
+  delegation tool exclude `fs_listing` unless the prompt carries a location word. Receipts, ids and
+  the snapshot are unchanged — only the candidate set shrinks.
+* Reads take no daemon lock. A generation is immutable, so the shared mutable parts were made safe
+  for one writer and any readers: `Main` publishes `(memory, graph, pair, operations)` as one tuple
+  (`_set_generation`; the properties read it), `recall` reads the tuple once and accepts
+  `expected_snapshot=None` (current generation), `Vocab` publishes `(hashes, ids)` as one tuple and
+  reads `tail` before `blocks` (the writer appends a block, then resets the tail, so a reader never
+  sees an empty tail with old blocks), the block cache and the episode LRU have small locks, and
+  `kind_masks` is replaced as a whole dict. `Daemon.handle` serves `hook_recall` and `ping` outside
+  `self.lock`; ingest, checkpoint, compact and resident commands stay inside. Stress
+  (`test_rw_concurrency.py` on a copy of the live store): numbers in the table. Two readers in a busy
+  loop do slow ingest to 8 s through the GIL — not a real-use load, noted only.
+* `compact` is a daemon command (the resident main owns the state directory, so a separate process
+  cannot compact while the daemon is up).
