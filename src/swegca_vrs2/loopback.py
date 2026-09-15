@@ -41,7 +41,7 @@ PORT_FILE = 'loopback.port'
 RESIDENT_COMMANDS = {'status', 'cognitive_dialogue_start', 'cognitive_dialogue_continue',
                      'cognitive_dialogue_evidence_open', 'cognitive_dialogue_evidence',
                      'cognitive_dialogue_release'}
-LOCAL_COMMANDS = {'hook_recall', 'ingest', 'checkpoint', 'ping', 'shutdown'}
+LOCAL_COMMANDS = {'hook_recall', 'ingest', 'checkpoint', 'compact', 'ping', 'shutdown'}
 
 
 # ── client ────────────────────────────────────────────────────────────
@@ -209,6 +209,8 @@ class Daemon:
                 return self.main.ingest(arguments)
             if command == 'checkpoint':
                 return dict(status='ok', checkpoint=self.main.checkpoint())
+            if command == 'compact':
+                return dict(status='ok', compact=self.main.compact())
             if command == 'shutdown':
                 # Drop the port file now, not after the closing checkpoint: a client that
                 # arrives meanwhile must spawn a fresh daemon, not attach to this dying one.
