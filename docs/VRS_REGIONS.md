@@ -83,7 +83,29 @@ unbridged; the unbridged factor (1.0 / .9 / .8 / .6) did not move any known answ
 throughout), so it stays a receipt. `hook_recall` rows carry `region` {region, path, portal, score};
 packets carry `region_navigation` (active regions, portals touching them) and `rejected_paths`.
 
-## Not done here
+## Region-scoped recall (same day, later)
 
-Region-restricted recall (candidates generated only inside active regions plus portal hops) — the
-receipts now say what such a restriction would have excluded; measure that before restricting.
+`Main.recall(..., region_scope='all' | 'regions' | 'auto')`. `regions`: the rows outside the active
+regions and their candidate-portal partners are masked out of candidate generation (a row-mask view
+of the index, like the kind exclusion); below `REGION_SCOPE_FLOOR` candidates the whole store is
+used; exact address access ignores scope. `auto` applies `regions` only when the whole-store
+candidate set has at least `REGION_SCOPE_AUTO_CANDIDATES` (5,000) rows. The receipt
+(`region_navigation.scope`) names the allowed regions and the excluded row count. The hook and the
+delegation tool request `auto`.
+
+Measured on the migrated copy (15 known-answer queries, kinds fs_listing/test excluded):
+
+| scope | candidates (mean) | recall ms (median) | excluded rows | known answers |
+|---|---|---|---|---|
+| all | 1,633 | 126 | 0 | 10/15 top-3, MRR .673 |
+| regions, hits>=1, portal floor 0 | 1,564 | 115 | 68 | same ranks |
+| regions, hits>=1, portal floor .05 | 1,119 | 74 | 513 | MRR .668, one answer 7 -> 251 |
+| regions, hits>=2, portal floor .05 | 860 | 49 | 773 | one answer lost |
+| regions, hits>=3, portal floor .05 | 528 | 31 | 1,104 | two lost |
+
+Why the safe setting removes so little: 14 populated regions, queries activate 4-9 of them and the
+candidate portals all reach the hub region, so the allowed set is nearly the store. The strict
+settings buy 2-4x speed at the price of known answers — at 5k records recall is ~120 ms and no
+restriction is worth an answer, hence `auto` with a threshold the store does not reach yet.
+Making scope pay at scale needs finer regions (the modularity resolution of `fast_regions`) or
+activation by cue-hit mass; both are measurements to run when candidate sets grow.

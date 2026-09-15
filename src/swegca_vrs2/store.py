@@ -331,7 +331,7 @@ class Graph:
     # '_names' is kept only so checkpoints written by the earlier Graph layout still unpickle.
     # '_csr' caches the level-0 regions adjacency of the whole-graph component (csr_cache);
     # it is memory-only: not pickled, rebuilt once through the engine's _csr after a restart.
-    __slots__ = ('snapshot_id', 'flat', 'nodes', 'components', 'regions', 'last_receipt', '_names', '_csr', 'stable', '_labels')
+    __slots__ = ('snapshot_id', 'flat', 'nodes', 'components', 'regions', 'last_receipt', '_names', '_csr', 'stable', '_labels', '_row_labels')
 
     def __init__(self, snapshot_id, flat, nodes, components, regions, last_receipt, csr=None, stable=None):
         self.snapshot_id, self.flat, self.nodes = snapshot_id, flat, nodes
@@ -339,9 +339,10 @@ class Graph:
         self._csr = csr
         self.stable = stable                 # vrs_refine.VRSVersion of the last consolidation, or None
         self._labels = None                  # memory-only: core region label per node (see labels())
+        self._row_labels = None              # memory-only: region label per memory row (see row_labels())
 
     def __getstate__(self):
-        return {k: getattr(self, k) for k in self.__slots__ if k not in ('_csr', '_labels') and hasattr(self, k)}
+        return {k: getattr(self, k) for k in self.__slots__ if k not in ('_csr', '_labels', '_row_labels') and hasattr(self, k)}
 
     def __setstate__(self, state):
         if isinstance(state, tuple):          # checkpoints written before __getstate__ existed
@@ -536,6 +537,22 @@ class Graph:
             self._labels = vrs_refine.region_labels(self)
         return self._labels
 
+    def row_labels(self, memory):
+        """Region label per memory row (rows without a graph node -> -1), cached per generation."""
+        cached = self._row_labels
+        if cached is not None and len(cached) == memory.count:
+            return cached
+        labels = self.labels()
+        ids = memory._store['ids']
+        node_of = self.nodes.episode_node
+        out = np.full(memory.count, -1, np.int64)
+        for row in range(memory.count):
+            node = node_of.get(ids[row])
+            if node is not None and node < len(labels):
+                out[row] = labels[node]
+        self._row_labels = out
+        return out
+
     def region_of(self, identifier):
         node = self.nodes.episode_node.get(identifier)
         return None if node is None else int(self.labels()[node])
@@ -573,6 +590,11 @@ def _mapping_proxy(data):
 # pickle cannot name the mappingproxy type; rebuild frozen views through a module function.
 copyreg.pickle(MappingProxyType, lambda m: (_mapping_proxy, (dict(m),)))
 UNBRIDGED_FACTOR = 1.0   # order factor for candidates reached only through an unpromoted region pair (1.0 = receipt only)
+REGION_SCOPE_FLOOR = 3   # region-scoped recall falls back to the whole store below this many candidates
+REGION_SCOPE_AUTO_CANDIDATES = 5000   # 'auto' scope applies the region restriction only above this many whole-store candidates
+REGION_SCOPE_INFORMATIVE_ONLY = True   # activate regions from informative cues only (function words activate everything)
+REGION_SCOPE_MIN_HITS = 1              # a region is active when at least this many informative cues sit in it (all regions if none reach it)
+PORTAL_SCORE_FLOOR = 0.0               # portal partners join the scope only at or above this promoted share
 CHECKPOINT_EVERY = 64     # in-ingest safety bound on crash replay; the daemon checkpoints after a
                           # quiet spell instead (CHECKPOINT_IDLE), close() always checkpoints
 CHECKPOINT_IDLE = 5.0     # seconds without requests before a resident main writes its checkpoint
@@ -1085,8 +1107,14 @@ class Main:
             current_truth_claimed=False, distinct_source_episode_added=int(added),
             vrs_event=graph.summary() if added else {'status':'unchanged_duplicate_observation'}, elapsed_ns=perf_counter_ns()-began)
 
-    def recall(self, query, expected_snapshot, exclude_kinds=()):
-        """``expected_snapshot`` None = whatever generation is current (lock-free hook path)."""
+    def recall(self, query, expected_snapshot, exclude_kinds=(), region_scope='all'):
+        """``expected_snapshot`` None = whatever generation is current (lock-free hook path).
+
+        ``region_scope``: 'all' generates candidates from the whole store; 'regions' (G6) generates them
+        only from the regions the matched cues activate plus the regions reachable through a candidate
+        portal, falling back to the whole store when fewer than ``REGION_SCOPE_FLOOR`` candidates
+        remain. Either way every record stays addressable and the receipt says what the scope excluded.
+        """
         self._check()
         memory, graph, pair, _ = self._generation       # one atomic read (lock-free readers)
         if expected_snapshot is not None and expected_snapshot != pair.snapshot_id:
@@ -1094,6 +1122,7 @@ class Main:
         query = text_field(query, 'query', 4096)
         if exclude_kinds:
             memory = memory.masked(exclude_kinds)      # same generation, postings filtered by record kind
+        full_memory = memory
         candidates = keys(query)
         fanout = {c: len(memory.episode_ids_for_cue(c)) for c in candidates}
         selected = tuple(c for c in candidates if fanout[c])
@@ -1135,6 +1164,48 @@ class Main:
             return current_experience_verdict(episode, memory_snapshot_id=memory.snapshot_id,
                 vrs_snapshot_id=graph.snapshot_id, current_strength=graph.strength(episode.episode_id),
                 proposition=p or 'experience:' + episode.episode_id)
+        # G6 region scope (vrs-regions): the matched cues' regions plus their candidate-portal partners
+        # bound candidate generation; the excluded rows are counted for the receipt; too few -> whole store
+        scope = dict(requested=region_scope, applied='all', allowed_regions=[], excluded_rows=0, fallback=None)
+        if region_scope == 'auto':
+            # scope only when the whole-store candidate set is large enough for the restriction to pay:
+            # below the threshold the receipts and the ranks stay those of the whole store (measured 2026-09-15:
+            # at 5k records the safe scope removes 4% of candidates and a strict one loses known answers)
+            matched_all = set()
+            for c in selected:
+                matched_all.update(full_memory.episode_ids_for_cue(c))
+            region_scope = 'regions' if len(matched_all) >= REGION_SCOPE_AUTO_CANDIDATES else 'all'
+            scope.update(requested='auto', auto_candidates=len(matched_all), auto_threshold=REGION_SCOPE_AUTO_CANDIDATES)
+        if region_scope == 'regions' and graph.stable is not None and len(graph.labels()):
+            vocab0 = memory._store['vocab'] if hasattr(memory, '_store') else None
+            hits = {}
+            for c in (informative if REGION_SCOPE_INFORMATIVE_ONLY else selected):
+                cue_id = vocab0.id_of(c) if vocab0 is not None else None
+                node = graph.nodes.cue(cue_id) if cue_id is not None else -1
+                if node >= 0:
+                    r0 = int(graph.labels()[node]); hits[r0] = hits.get(r0, 0) + 1
+            active0 = {r0 for r0, n in hits.items() if n >= REGION_SCOPE_MIN_HITS} or set(hits)
+            allowed = set(active0)
+            for (a, b_), portal in (getattr(graph.stable, 'portals', None) or {}).items():
+                if portal['status'] == 'candidate' and portal['score'] >= PORTAL_SCORE_FLOOR and (a in active0 or b_ in active0):
+                    allowed.update((a, b_))
+            if allowed:
+                row_labels = graph.row_labels(full_memory)
+                mask = np.isin(row_labels, list(allowed)) | (row_labels < 0)     # pending rows stay visible
+                scoped = full_memory.masked_rows(mask)
+                matched_rows = set()
+                for c in selected:
+                    matched_rows.update(full_memory.episode_ids_for_cue(c))
+                kept = set()
+                for c in selected:
+                    kept.update(scoped.episode_ids_for_cue(c))
+                excluded = len(matched_rows - kept)
+                if len(kept) >= REGION_SCOPE_FLOOR:
+                    memory = scoped
+                    scope.update(applied='regions', allowed_regions=sorted(allowed), excluded_rows=excluded)
+                else:
+                    scope.update(fallback='fewer_than_floor', allowed_regions=sorted(allowed), excluded_rows=0,
+                                 would_exclude=excluded)
         signal = detect_deja_vu(memory, query=query, current_cues=cues)
         recalled = recall_memory(memory, signal)
         # G6 (vrs-regions): region preactivation after déjà vu — the matched cues' regions are active;
@@ -1225,7 +1296,9 @@ class Main:
                 portals={f'{a}:{b}': dict(score=p['score'], promoted=p['promoted'], bridges=p['bridges'])
                          for (a, b), p in ((getattr(graph.stable, 'portals', None) or {}).items() if graph.stable is not None else ())
                          if a in active_regions or b in active_regions},
-                unbridged_factor=unbridged_factor, semantic_acceptance_claimed=False, restricts_memory_access=False),
+                unbridged_factor=unbridged_factor, scope=scope, semantic_acceptance_claimed=False,
+                restricts_memory_access=(scope['applied'] == 'regions'),
+                restriction_rule='candidates from active regions and candidate-portal partners; whole store when fewer than the floor; every record stays addressable by id'),
             last_vrs_event=graph.last_receipt,
             superseded_by={i: memory.superseded.get(i) for i in ids},
             pair_snapshot_id=pair.snapshot_id, grants_authority=False)

@@ -322,3 +322,26 @@ def test_portals_between_regions_are_navigation_receipts_not_gates(main):
     assert all(r['path']=='unbridged' and r['reason'] for r in nav['rejected'])
     assert nav['restricts_memory_access'] is False and nav['unbridged_factor']==1.0
     assert main.graph.region_of(v['episode_id']) is not None
+
+
+def test_region_scope_restricts_candidates_only_when_asked_and_never_loses_addressability(main):
+    """G6 scope: 'all' keeps every matching record; 'regions' keeps the active regions plus candidate-portal
+    partners (falling back to the whole store below the floor); 'auto' restricts only above a candidate
+    threshold. Every record stays addressable by id whatever the scope."""
+    for i in range(6):
+        main.ingest(dict(request_id=f'r{i}',text=f'루프백 데몬 유휴 체크포인트 기록 {i} 원문',source=f'test:r{i}',revision='r1'))
+    v=main.ingest(dict(request_id='v',text='판정 데몬 체크포인트 락 밖 직렬화 asks: 체크포인트 락',source='verdict/v',revision='1',outcome='failure',proposition='P',polarity='refute'))
+    main.consolidate_until_converged()
+    full=main.recall('데몬 체크포인트 락',main.pair.snapshot_id,region_scope='all')
+    scoped=main.recall('데몬 체크포인트 락',main.pair.snapshot_id,region_scope='regions')
+    auto=main.recall('데몬 체크포인트 락',main.pair.snapshot_id,region_scope='auto')
+    ids_full={c.episode_id for c in full['receipt']['activation'].recall.candidates}
+    ids_scoped={c.episode_id for c in scoped['receipt']['activation'].recall.candidates}
+    assert full['region_navigation']['scope']['applied']=='all' and not full['region_navigation']['restricts_memory_access']
+    sc=scoped['region_navigation']['scope']
+    assert sc['requested']=='regions' and sc['applied'] in ('regions','all')
+    assert ids_scoped<=ids_full and (sc['applied']=='all' or len(ids_scoped)+sc['excluded_rows']>=len(ids_full))
+    assert auto['region_navigation']['scope']['requested']=='auto' and auto['region_navigation']['scope']['applied']=='all'
+    # exact address access ignores scope: the verdict is found by id even under the strictest scope
+    direct=main.recall(v['episode_id'],main.pair.snapshot_id,region_scope='regions')
+    assert [c.episode_id for c in direct['receipt']['activation'].recall.candidates]==[v['episode_id']]

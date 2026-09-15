@@ -411,6 +411,17 @@ class CompactIndex:
             if n < self.count:                      # rows appended without a kind entry: keep them
                 mask = np.concatenate([mask, np.ones(self.count - n, dtype=bool)])
             store['kind_masks'] = {key: mask}      # atomic replace; readers hold old or new dict
+        return self.masked_rows(mask)
+
+    def masked_rows(self, mask):
+        """A view whose postings skip rows where ``mask`` is False (same generation; ids and receipts
+        unchanged). A view of a view intersects the masks (region scope on top of kind exclusion)."""
+        mask = np.asarray(mask, dtype=bool)
+        if len(mask) < self.count:                          # rows appended after the mask was built: keep them
+            mask = np.concatenate([mask, np.ones(self.count - len(mask), dtype=bool)])
+        current = getattr(self, '_mask', None)
+        if current is not None:
+            mask = mask[:len(current)] & current if len(mask) >= len(current) else mask & current[:len(mask)]
         view = MaskedIndex.__new__(MaskedIndex)
         view.__dict__.update(self.__dict__)
         view._mask = mask

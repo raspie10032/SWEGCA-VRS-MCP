@@ -149,7 +149,8 @@ def hook_recall(main, arguments):
     limit = max(1, min(int(arguments.get('limit', 5)), 50))
     snippet = max(80, min(int(arguments.get('snippet', 400)), 4000))
     exclude = tuple(str(k) for k in (arguments.get('exclude_kinds') or ()) if k)[:8]
-    root = main.recall(query, None, exclude_kinds=exclude)      # current generation, no lock
+    scope = arguments.get('region_scope') if arguments.get('region_scope') in ('all', 'regions', 'auto') else 'all'
+    root = main.recall(query, None, exclude_kinds=exclude, region_scope=scope)      # current generation, no lock
     status = {'pair_snapshot_id': root['pair_snapshot_id']}
     activation = root['receipt']['activation']
     judgments = {j.episode_id: j for j in activation.re_evidence.judgments}
@@ -186,7 +187,7 @@ def hook_recall(main, arguments):
                 vrs_stable=None if stable is None else dict(version_id=stable.version_id, created=stable.created,
                                                             promoted=stable.promoted, converged=stable.converged,
                                                             stale=main.consolidation_stale()),
-                region_navigation={k: root['region_navigation'][k] for k in ('active_regions', 'portals', 'unbridged_factor')},
+                region_navigation={k: root['region_navigation'][k] for k in ('active_regions', 'portals', 'unbridged_factor', 'scope')},
                 rejected_paths=root['region_navigation']['rejected'][:20],
                 grants_authority=False)
 
