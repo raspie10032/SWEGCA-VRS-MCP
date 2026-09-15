@@ -59,8 +59,31 @@ A store written under v2.1 rules opens only when its checkpoint is current (no j
 replay); `vrs2-rebuild-graph.py --state <dir>` then re-derives every pair id under the new rules
 (5,110 rows: see the session log for the time) and the daemon consolidates at the next idle.
 
+## G6 portals (same day, later)
+
+`vrs_refine.build_portals` runs inside every consolidation: one object per region pair that shares
+connector edges — `bridges`, `promoted` (bridges at or above 1.0), `score` = promoted share,
+`mean/max_strength`, `status` (`candidate` when at least one bridge is promoted, else `weak`),
+`provenance` (the three strongest bridges as (record node, cue node, strength)). Decay and
+withdrawal come from the strengths themselves (a bridge whose endpoints stop being resolved decays
+at the next consolidation; the portal is withdrawn when its last promoted bridge falls below 1.0);
+`portal_events` records opened/withdrawn against the previous version.
+
+Recall (G6 order, kept inside the engine's déjà vu -> recall -> replay -> re-evidence): after déjà
+vu the matched cues' regions are *active*; every candidate is classified `local` (its record sits in
+an active region), `portal` (reached through a candidate portal from an active region; the pair and
+score are reported), `unbridged` (no candidate portal; the reason is reported) or `pending` (not yet
+consolidated). Nothing is dropped and access is not restricted (`restricts_memory_access: False`);
+`UNBRIDGED_FACTOR` is an optional order factor, 1.0 by default.
+
+Measured on the migrated copy: 77 region pairs share connectors, 9 candidate portals (all through
+the hub region 1; scores .011-.020 — only 30 records are resolved, so promoted bridges are rare).
+Over the 15 known-answer queries the top-20 candidates were 90% local, 8% via portal, 2%
+unbridged; the unbridged factor (1.0 / .9 / .8 / .6) did not move any known answer (MRR .673
+throughout), so it stays a receipt. `hook_recall` rows carry `region` {region, path, portal, score};
+packets carry `region_navigation` (active regions, portals touching them) and `rejected_paths`.
+
 ## Not done here
 
-G6 portals as navigation objects (region-pair scores with decay/withdrawal and receipts) and
-region-restricted recall (déjà vu -> region preactivation -> local recall) — the connector pass
-gives bridge strengths, nothing consumes them yet.
+Region-restricted recall (candidates generated only inside active regions plus portal hops) — the
+receipts now say what such a restriction would have excluded; measure that before restricting.

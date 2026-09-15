@@ -170,7 +170,9 @@ def hook_recall(main, arguments):
             # verdict records end with their asks line; hooks match query cues against it
             asks=_asks_of(obs.get('text', '')),
             # vrs-regions: refined strength, promotion, state/stability, pending (not yet consolidated)
-            vrs=main.graph.vrs_of(candidate.episode_id)))
+            vrs=main.graph.vrs_of(candidate.episode_id),
+            # G6: how this candidate was reached — local region, via a candidate portal, or unbridged
+            region=root['region_navigation']['paths'].get(candidate.episode_id)))
     controls = activation.re_evidence
     stable = main.graph.stable
     return dict(status='ok', query=query, pair_snapshot_id=status['pair_snapshot_id'],
@@ -184,6 +186,8 @@ def hook_recall(main, arguments):
                 vrs_stable=None if stable is None else dict(version_id=stable.version_id, created=stable.created,
                                                             promoted=stable.promoted, converged=stable.converged,
                                                             stale=main.consolidation_stale()),
+                region_navigation={k: root['region_navigation'][k] for k in ('active_regions', 'portals', 'unbridged_factor')},
+                rejected_paths=root['region_navigation']['rejected'][:20],
                 grants_authority=False)
 
 

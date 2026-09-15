@@ -331,16 +331,17 @@ class Graph:
     # '_names' is kept only so checkpoints written by the earlier Graph layout still unpickle.
     # '_csr' caches the level-0 regions adjacency of the whole-graph component (csr_cache);
     # it is memory-only: not pickled, rebuilt once through the engine's _csr after a restart.
-    __slots__ = ('snapshot_id', 'flat', 'nodes', 'components', 'regions', 'last_receipt', '_names', '_csr', 'stable')
+    __slots__ = ('snapshot_id', 'flat', 'nodes', 'components', 'regions', 'last_receipt', '_names', '_csr', 'stable', '_labels')
 
     def __init__(self, snapshot_id, flat, nodes, components, regions, last_receipt, csr=None, stable=None):
         self.snapshot_id, self.flat, self.nodes = snapshot_id, flat, nodes
         self.components, self.regions, self.last_receipt = components, regions, last_receipt
         self._csr = csr
         self.stable = stable                 # vrs_refine.VRSVersion of the last consolidation, or None
+        self._labels = None                  # memory-only: core region label per node (see labels())
 
     def __getstate__(self):
-        return {k: getattr(self, k) for k in self.__slots__ if k != '_csr' and hasattr(self, k)}
+        return {k: getattr(self, k) for k in self.__slots__ if k not in ('_csr', '_labels') and hasattr(self, k)}
 
     def __setstate__(self, state):
         if isinstance(state, tuple):          # checkpoints written before __getstate__ existed
@@ -529,6 +530,16 @@ class Graph:
                 best = max(best, prop)
         return best
 
+    def labels(self):
+        """Core region label per node, derived once per generation from the connectivity regions."""
+        if self._labels is None:
+            self._labels = vrs_refine.region_labels(self)
+        return self._labels
+
+    def region_of(self, identifier):
+        node = self.nodes.episode_node.get(identifier)
+        return None if node is None else int(self.labels()[node])
+
     def vrs_of(self, identifier):
         """Per-record VRS view for receipts: strength, promotion, state, stability, pending (not yet consolidated)."""
         node = self.nodes.episode_node.get(identifier)
@@ -561,6 +572,7 @@ def _mapping_proxy(data):
 
 # pickle cannot name the mappingproxy type; rebuild frozen views through a module function.
 copyreg.pickle(MappingProxyType, lambda m: (_mapping_proxy, (dict(m),)))
+UNBRIDGED_FACTOR = 1.0   # order factor for candidates reached only through an unpromoted region pair (1.0 = receipt only)
 CHECKPOINT_EVERY = 64     # in-ingest safety bound on crash replay; the daemon checkpoints after a
                           # quiet spell instead (CHECKPOINT_IDLE), close() always checkpoints
 CHECKPOINT_IDLE = 5.0     # seconds without requests before a resident main writes its checkpoint
@@ -1125,6 +1137,43 @@ class Main:
                 proposition=p or 'experience:' + episode.episode_id)
         signal = detect_deja_vu(memory, query=query, current_cues=cues)
         recalled = recall_memory(memory, signal)
+        # G6 (vrs-regions): region preactivation after déjà vu — the matched cues' regions are active;
+        # a candidate is 'local' when its record sits in an active region, 'portal' when it is reached
+        # through a region pair with a promoted bridge (a candidate portal of the stable version), and
+        # 'unbridged' otherwise. Nothing is dropped: the path is a receipt (and, if measured useful,
+        # a small order factor); rejected paths and their reasons are listed for the caller.
+        labels = graph.labels() if graph.stable is not None else None
+        navigation = {}
+        active_regions = set()
+        if labels is not None and len(labels):
+            vocab = memory._store['vocab'] if hasattr(memory, '_store') else None
+            cue_region = {}
+            for c in selected:
+                cue_id = vocab.id_of(c) if vocab is not None else None
+                node = graph.nodes.cue(cue_id) if cue_id is not None else -1
+                if node >= 0:
+                    cue_region[c] = int(labels[node]); active_regions.add(int(labels[node]))
+            stable = graph.stable
+            for candidate in recalled.candidates:
+                region = graph.region_of(candidate.episode_id)
+                if region is None:
+                    navigation[candidate.episode_id] = dict(region=None, path='pending')
+                elif region in active_regions:
+                    navigation[candidate.episode_id] = dict(region=region, path='local')
+                else:
+                    best = None
+                    for c in candidate.matched_cues:
+                        r = cue_region.get(c)
+                        if r is None or r == region:
+                            continue
+                        portal = stable.portal(r, region)
+                        if portal is not None and portal['status'] == 'candidate' and (best is None or portal['score'] > best[1]['score']):
+                            best = ((min(r, region), max(r, region)), portal)
+                    if best is not None:
+                        navigation[candidate.episode_id] = dict(region=region, path='portal', portal=best[0], score=best[1]['score'])
+                    else:
+                        navigation[candidate.episode_id] = dict(region=region, path='unbridged',
+                            reason='no candidate portal from an active region (bridges not promoted)')
         def words(matched):
             # a matched cue that is a substring of another matched cue is the same word
             # (Hangul 2-4-gram cues): score each word once, by its longest matched form
@@ -1138,10 +1187,13 @@ class Main:
         promotion_gate = 0.25   # vrs-regions: promoted (strength >= 1.0) records rank as if 25% stronger;
         #                        measured 15 known-answer queries: MRR .550 -> .673, stable across consolidations,
         #                        while weighting by the raw strength value collapses once pending edges hit the floor
+        unbridged_factor = UNBRIDGED_FACTOR
         def order(row):
             length = len(cue_counts[rows_of[row.episode_id]]) if cue_counts is not None else average
             norm = (k1 + 1.0) / (1.0 + k1 * (1.0 - b + b * length / average))
             gate = 1.0 + promotion_gate * (graph.strength(row.episode_id) >= vrs_refine.PROMOTION)
+            path = navigation.get(row.episode_id, {}).get('path')
+            gate *= unbridged_factor if path == 'unbridged' else 1.0
             return (-sum(idf[c] for c in words(row.matched_cues)) * norm * gate, -row.cue_overlap, row.episode_id)
         recalled = RecallResult(recalled.query, tuple(sorted(recalled.candidates, key=order)),
                                 recalled.snapshot_id, source_dependencies=recalled.source_dependencies)
@@ -1168,6 +1220,12 @@ class Main:
             current_strengths={i: graph.strength(i) for i in ids}, current_promotions={i: graph.strength(i) >= 1.0 for i in ids},
             current_propositions={i: memory.episode(i).steps[0].observation.get('proposition_id') for i in ids},
             region_memberships={i: graph.memberships(i) for i in ids},
+            region_navigation=dict(active_regions=sorted(active_regions), paths={i: navigation.get(i) for i in ids},
+                rejected=[dict(episode_id=i, **navigation[i]) for i in ids if navigation.get(i, {}).get('path') == 'unbridged'],
+                portals={f'{a}:{b}': dict(score=p['score'], promoted=p['promoted'], bridges=p['bridges'])
+                         for (a, b), p in ((getattr(graph.stable, 'portals', None) or {}).items() if graph.stable is not None else ())
+                         if a in active_regions or b in active_regions},
+                unbridged_factor=unbridged_factor, semantic_acceptance_claimed=False, restricts_memory_access=False),
             last_vrs_event=graph.last_receipt,
             superseded_by={i: memory.superseded.get(i) for i in ids},
             pair_snapshot_id=pair.snapshot_id, grants_authority=False)

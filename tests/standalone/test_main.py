@@ -298,3 +298,27 @@ def test_rebuild_from_journal_rederives_consolidations(main):
     rows,_=main.rebuild_from_journal()
     assert rows>=4 and main.pair.snapshot_id==before and main.graph.stable.version_id==version
     assert main.graph.strength(a['episode_id'])>=1.0
+
+
+def test_portals_between_regions_are_navigation_receipts_not_gates(main):
+    """G6: after consolidation every region pair sharing connector edges has a portal object; a pair with a
+    promoted bridge is a candidate; recall reports each candidate's path (local / portal / unbridged) and
+    the rejected paths, without dropping any record."""
+    for i in range(4):
+        main.ingest(dict(request_id=f'log{i}',text=f'루프백 데몬 유휴 체크포인트 기록 {i} 원문',source=f'test:log{i}',revision='r1'))
+    v=main.ingest(dict(request_id='v',text='판정 데몬 체크포인트 락 밖 직렬화 asks: 체크포인트 락',source='verdict/v',revision='1',outcome='failure',proposition='P',polarity='refute'))
+    main.consolidate_until_converged()
+    stable=main.graph.stable
+    counts=stable.portal_counts()
+    assert counts['pairs']>=1 and counts['candidates']<=counts['pairs']
+    for (a,b),portal in stable.portals.items():
+        assert a<b and portal['bridges']>=1 and 0.0<=portal['score']<=1.0 and portal['status'] in ('candidate','weak')
+        assert len(portal['provenance'])>=1 and all(len(p)==3 for p in portal['provenance'])
+    root=main.recall('데몬 체크포인트 락',main.pair.snapshot_id)
+    nav=root['region_navigation']
+    ids=[c.episode_id for c in root['receipt']['activation'].recall.candidates]
+    assert v['episode_id'] in ids and len(nav['active_regions'])>=1
+    assert all(nav['paths'][i]['path'] in ('local','portal','unbridged','pending') for i in ids)
+    assert all(r['path']=='unbridged' and r['reason'] for r in nav['rejected'])
+    assert nav['restricts_memory_access'] is False and nav['unbridged_factor']==1.0
+    assert main.graph.region_of(v['episode_id']) is not None

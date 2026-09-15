@@ -128,7 +128,8 @@ class VRSVersion:
     __slots__ = ('version_id', 'parent_id', 'created', 'seed', 'cycles', 'node_count', 'edge_count',
                  'state', 'stability', 'labels', 'labels_digest', 'proposition_ids', 'prop_src', 'prop_strength',
                  'prop_state', 'prop_pid', 'region_delta', 'delta', 'converged', 'promoted', 'reinforced', 'evaluations',
-                 'resolved_count', 'seconds', 'regions', 'connector_edges', 'direct', 'unresolved', 'prop_direct', 'prop_unresolved')
+                 'resolved_count', 'seconds', 'regions', 'connector_edges', 'direct', 'unresolved', 'prop_direct', 'prop_unresolved',
+                 'portals', 'portal_events')
 
     def __init__(self, **k):
         for name in self.__slots__:
@@ -139,11 +140,23 @@ class VRSVersion:
                     seed=self.seed, cycles=self.cycles, nodes=self.node_count, edges=self.edge_count,
                     regions=self.regions, connector_edges=self.connector_edges, promoted=self.promoted,
                     reinforced=self.reinforced, resolved_records=self.resolved_count, delta=self.delta,
-                    converged=self.converged, seconds=self.seconds, evaluations=self.evaluations)
+                    converged=self.converged, seconds=self.seconds, evaluations=self.evaluations,
+                    portals=self.portal_counts())
 
     def proposition_strength(self, node):
         mask = self.prop_src == node
         return float(self.prop_strength[mask].max()) if mask.any() else None
+
+    def portal(self, a, b):
+        """The portal between two regions (order-free), or None when they share no connector edge."""
+        return (getattr(self, 'portals', None) or {}).get((min(a, b), max(a, b)))
+
+    def portal_counts(self):
+        portals = getattr(self, 'portals', None) or {}          # versions pickled before portals existed
+        events = getattr(self, 'portal_events', None) or ()
+        return dict(pairs=len(portals), candidates=sum(1 for v in portals.values() if v['status'] == 'candidate'),
+                    opened=sum(1 for e in events if e['event'] == 'opened'),
+                    withdrawn=sum(1 for e in events if e['event'] == 'withdrawn'))
 
 
 def region_labels(graph):
@@ -159,6 +172,50 @@ def region_labels(graph):
         labels[members] = base + core[local[members]]
         base += int(core.max()) + 1 if len(core) else 1
     return labels
+
+
+def build_portals(inp, strength, labels_of_nodes, previous):
+    """G6 portals (design Phase 3): one navigation object per region pair that shares connector edges.
+
+    ``score`` = share of the pair's connector edges at or above the promotion threshold (trusted bridges);
+    ``status`` 'candidate' when at least one bridge is promoted, else 'weak'. Provenance = the strongest
+    bridges (record node, cue node, strength). Decay and withdrawal are inherited from the strengths:
+    a bridge whose endpoints stop being resolved decays at consolidation, and the portal is withdrawn
+    when its last promoted bridge drops below 1.0. Events against the previous version are recorded.
+    Region scores are navigation, never truth certification, and nothing here restricts memory access.
+    """
+    src, dst = inp['src'], inp['dst']
+    la, lb = labels_of_nodes[src], labels_of_nodes[dst]
+    cross = np.flatnonzero(la != lb)
+    portals = {}
+    if len(cross):
+        a = np.minimum(la[cross], lb[cross]); b = np.maximum(la[cross], lb[cross])
+        key = a.astype(np.int64) * (int(labels_of_nodes.max()) + 2) + b
+        order = np.argsort(key, kind='stable')
+        key_sorted = key[order]
+        bounds = np.flatnonzero(np.r_[True, key_sorted[1:] != key_sorted[:-1], True])
+        for i in range(len(bounds) - 1):
+            block = cross[order[bounds[i]:bounds[i + 1]]]
+            st = strength[block]
+            promoted = int((st >= PROMOTION).sum())
+            top = block[np.argsort(-st)[:3]]
+            pair = (int(a[order[bounds[i]]]), int(b[order[bounds[i]]]))
+            portals[pair] = dict(bridges=int(len(block)), promoted=promoted, score=round(promoted / len(block), 4),
+                                 mean_strength=round(float(st.mean()), 4), max_strength=round(float(st.max()), 4),
+                                 status='candidate' if promoted else 'weak',
+                                 provenance=[(int(src[e]), int(dst[e]), round(float(strength[e]), 4)) for e in top])
+    events = []
+    old = (getattr(previous, 'portals', None) or {}) if previous is not None else {}
+    for pair, portal in portals.items():
+        was = old.get(pair, {}).get('status')
+        if portal['status'] == 'candidate' and was != 'candidate':
+            events.append(dict(pair=pair, event='opened', score=portal['score'], promoted=portal['promoted']))
+        elif portal['status'] != 'candidate' and was == 'candidate':
+            events.append(dict(pair=pair, event='withdrawn', score=portal['score']))
+    for pair in old:
+        if pair not in portals and old[pair].get('status') == 'candidate':
+            events.append(dict(pair=pair, event='withdrawn', score=0.0))
+    return portals, events
 
 
 def _seed(seed, region):
@@ -315,6 +372,7 @@ def consolidate(graph, memory, previous, *, seed=SEED, cycles=CYCLES, labels=Non
     prop_src = inp['src'][n_flat_fwd:].astype(np.int64)
     prop_pid = [inp['proposition_ids'][int(d) - n_real] for d in inp['dst'][n_flat_fwd:]]
     labels_digest = hashlib.sha256(np.ascontiguousarray(labels, np.int64).tobytes()).hexdigest()
+    portals, portal_events = build_portals(inp, strength, inp['labels'], previous)
     promoted = int((strength >= PROMOTION).sum())
     version_id = hashlib.sha256(b'|'.join([
         (previous.version_id if previous is not None else 'none').encode(), str(seed).encode(), str(cycles).encode(),
@@ -331,6 +389,7 @@ def consolidate(graph, memory, previous, *, seed=SEED, cycles=CYCLES, labels=Non
                          resolved_count=inp['resolved_count'], seconds=round(time.perf_counter() - started, 3),
                          regions=len(region_ids), connector_edges=int((~same).sum()),
                          direct=inp['direct'][:n_real].astype(np.float32), unresolved=inp['unresolved'][:n_real].copy(),
-                         prop_direct=inp['direct'][n_real:].astype(np.float32), prop_unresolved=inp['unresolved'][n_real:].copy())
+                         prop_direct=inp['direct'][n_real:].astype(np.float32), prop_unresolved=inp['unresolved'][n_real:].copy(),
+                         portals=portals, portal_events=portal_events)
     version.prop_pid = prop_pid
     return version, flat_strength, flat_score
