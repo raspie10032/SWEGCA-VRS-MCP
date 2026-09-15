@@ -150,3 +150,25 @@ per-region seeds carry across. Connectors are refined in bundles by the source r
 skipped like regions. Cost after one new record: 3.4 s + 3.6 s to converge (was 25 s + 25 s), of
 which the warm fine split is 1.8 s and the input build 0.8 s.
 
+## Fresh questions (same day, last): asks gate, description gate, and what the tuned set hid
+
+The 15 known-answer queries had been used to tune ordering rules and, today, to write asks for
+four of their targets, so they no longer measure generalization. 14 fresh questions (user phrasing,
+targets = memory docs never touched) gave the honest picture:
+
+| order | tuned 15 (MRR) | fresh 14 (MRR, top-3) | hook injects the answer |
+|---|---|---|---|
+| BM25 x promotion gate (before today's asks) | .673 | — | — |
+| + asks gate x1.5 per rare word in the record's own 「찾을 때 묻는 말」 | .956 | .416, 6/14 | 5/14 |
+| + description gate x2 per rare word in a doc's front-matter description | .843 | **.813, 13/14** | **10/14** |
+
+The asks gate exists because a doc that gains an asks section gets longer and BM25's length term
+pushed it below short log entries that merely mention the words (rank 7 -> 17). Only 23 of 295
+memory docs have an asks section; every doc has a description written in task words, so the
+description is the phrasing the rest of the store was missing. `asks_and_description` recognizes
+a verdict's tail line, a doc's section heading and a log entry's parenthesized tail — not an
+inline mention of the phrase, which let a doc *about* asks claim every example word it quoted.
+
+Region scope re-checked on the fresh set: 50 activating rows dropped one fresh answer entirely;
+100 rows keep every answer (fresh .849 scoped vs .813 unscoped, 120 vs 180 ms per query).
+
