@@ -532,10 +532,20 @@ class Graph:
         return best
 
     def labels(self):
-        """Core region label per node, derived once per generation from the connectivity regions."""
+        """Region label per node: the stable version's (fine) labels, padded with -1 for nodes appended since
+        (pending: always in scope, never activate a region); before any consolidation, the coarse labels."""
         if self._labels is None:
-            self._labels = vrs_refine.region_labels(self)
+            stable = self.stable
+            if stable is not None and getattr(stable, 'labels', None) is not None:
+                fine = np.asarray(stable.labels, np.int64)
+                n = self.flat.count
+                self._labels = np.concatenate([fine[:n], np.full(max(0, n - len(fine)), -1, np.int64)])
+            else:
+                self._labels = vrs_refine.region_labels(self)
         return self._labels
+
+    def lazy_terms(self, members):
+        return LazyTerms(self.nodes, frozen(np.asarray(members, np.int64)))
 
     def row_labels(self, memory):
         """Region label per memory row (rows without a graph node -> -1), cached per generation."""
@@ -591,10 +601,14 @@ def _mapping_proxy(data):
 copyreg.pickle(MappingProxyType, lambda m: (_mapping_proxy, (dict(m),)))
 UNBRIDGED_FACTOR = 1.0   # order factor for candidates reached only through an unpromoted region pair (1.0 = receipt only)
 REGION_SCOPE_FLOOR = 3   # region-scoped recall falls back to the whole store below this many candidates
-REGION_SCOPE_AUTO_CANDIDATES = 5000   # 'auto' scope applies the region restriction only above this many whole-store candidates
+REGION_SCOPE_AUTO_CANDIDATES = 2000   # 'auto' scope applies the region restriction only above this many whole-store candidates
 REGION_SCOPE_INFORMATIVE_ONLY = True   # activate regions from informative cues only (function words activate everything)
-REGION_SCOPE_MIN_HITS = 1              # a region is active when at least this many informative cues sit in it (all regions if none reach it)
-PORTAL_SCORE_FLOOR = 0.0               # portal partners join the scope only at or above this promoted share
+REGION_SCOPE_MIN_HITS = 1              # ('cues' activation) a region is active when at least this many informative cues sit in it
+REGION_ACTIVATION = 'rows'             # 'rows': regions of the lexically strongest rows; 'mass': regions by summed cue mass; 'cues': by cue-node labels
+REGION_SCOPE_TOP_ROWS = 50             # ('rows') how many strongest rows activate their regions
+REGION_SCOPE_TOP = 8                   # ('mass') the top regions by mass are active ...
+REGION_SCOPE_MASS_SHARE = 0.25         # ... plus every region with at least this share of the top region's mass
+PORTAL_SCORE_FLOOR = 0.05              # portal partners join the scope only at or above this promoted share
 CHECKPOINT_EVERY = 64     # in-ingest safety bound on crash replay; the daemon checkpoints after a
                           # quiet spell instead (CHECKPOINT_IDLE), close() always checkpoints
 CHECKPOINT_IDLE = 5.0     # seconds without requests before a resident main writes its checkpoint
@@ -1178,19 +1192,54 @@ class Main:
             scope.update(requested='auto', auto_candidates=len(matched_all), auto_threshold=REGION_SCOPE_AUTO_CANDIDATES)
         if region_scope == 'regions' and graph.stable is not None and len(graph.labels()):
             vocab0 = memory._store['vocab'] if hasattr(memory, '_store') else None
-            hits = {}
-            for c in (informative if REGION_SCOPE_INFORMATIVE_ONLY else selected):
-                cue_id = vocab0.id_of(c) if vocab0 is not None else None
-                node = graph.nodes.cue(cue_id) if cue_id is not None else -1
-                if node >= 0:
-                    r0 = int(graph.labels()[node]); hits[r0] = hits.get(r0, 0) + 1
-            active0 = {r0 for r0, n in hits.items() if n >= REGION_SCOPE_MIN_HITS} or set(hits)
+            row_labels = graph.row_labels(full_memory)
+            if REGION_ACTIVATION == 'rows':
+                # déjà vu as cheap lexical familiarity per row (sum of idf over the informative cues a row
+                # carries), then the regions of the strongest rows are active: the engine's recall then
+                # runs only there (+ portal partners). The strongest rows are in scope by construction, so
+                # the top ranks are those of the whole store; only the long tail is cut (measured 2026-09-15).
+                row_of = full_memory._store['row_of']
+                acc = {}
+                for c in informative:
+                    for i in full_memory.episode_ids_for_cue(c):
+                        r_ = row_of[i]
+                        acc[r_] = acc.get(r_, 0.0) + idf[c]
+                ranked_rows = sorted(acc.items(), key=lambda kv: -kv[1])[:REGION_SCOPE_TOP_ROWS]
+                active0 = {int(row_labels[r_]) for r_, v in ranked_rows if row_labels[r_] >= 0}
+                scope['top_rows'] = len(ranked_rows)
+            elif REGION_ACTIVATION == 'mass':
+                # activation by cue-hit mass: a region is active in proportion to the idf-weighted matched cues
+                # its own records carry (a record's region, not its cues' regions — a record links to cues in
+                # many regions, so cue-node labels miss the region the answer sits in; measured 2026-09-15)
+                mass = {}
+                for c in informative:
+                    rows_c = full_memory.episode_ids_for_cue(c)
+                    if not rows_c:
+                        continue
+                    labels_c = row_labels[[full_memory._store['row_of'][i] for i in rows_c]]
+                    labels_c = labels_c[labels_c >= 0]
+                    if len(labels_c):
+                        u_, n_ = np.unique(labels_c, return_counts=True)
+                        for r0, k in zip(u_.tolist(), n_.tolist()):
+                            mass[r0] = mass.get(r0, 0.0) + idf[c] * k
+                ranked = sorted(mass.items(), key=lambda kv: -kv[1])
+                top = ranked[:REGION_SCOPE_TOP]
+                floor_mass = (ranked[0][1] * REGION_SCOPE_MASS_SHARE) if ranked else 0.0
+                active0 = {r0 for r0, v in top} | {r0 for r0, v in ranked if v >= floor_mass}
+                scope['region_mass'] = [(r0, round(v, 2)) for r0, v in ranked[:12]]
+            else:
+                hits = {}
+                for c in (informative if REGION_SCOPE_INFORMATIVE_ONLY else selected):
+                    cue_id = vocab0.id_of(c) if vocab0 is not None else None
+                    node = graph.nodes.cue(cue_id) if cue_id is not None else -1
+                    if node >= 0 and graph.labels()[node] >= 0:
+                        r0 = int(graph.labels()[node]); hits[r0] = hits.get(r0, 0) + 1
+                active0 = {r0 for r0, n in hits.items() if n >= REGION_SCOPE_MIN_HITS} or set(hits)
             allowed = set(active0)
             for (a, b_), portal in (getattr(graph.stable, 'portals', None) or {}).items():
                 if portal['status'] == 'candidate' and portal['score'] >= PORTAL_SCORE_FLOOR and (a in active0 or b_ in active0):
                     allowed.update((a, b_))
             if allowed:
-                row_labels = graph.row_labels(full_memory)
                 mask = np.isin(row_labels, list(allowed)) | (row_labels < 0)     # pending rows stay visible
                 scoped = full_memory.masked_rows(mask)
                 matched_rows = set()
@@ -1222,12 +1271,12 @@ class Main:
             for c in selected:
                 cue_id = vocab.id_of(c) if vocab is not None else None
                 node = graph.nodes.cue(cue_id) if cue_id is not None else -1
-                if node >= 0:
+                if node >= 0 and labels[node] >= 0:
                     cue_region[c] = int(labels[node]); active_regions.add(int(labels[node]))
             stable = graph.stable
             for candidate in recalled.candidates:
                 region = graph.region_of(candidate.episode_id)
-                if region is None:
+                if region is None or region < 0:
                     navigation[candidate.episode_id] = dict(region=None, path='pending')
                 elif region in active_regions:
                     navigation[candidate.episode_id] = dict(region=region, path='local')

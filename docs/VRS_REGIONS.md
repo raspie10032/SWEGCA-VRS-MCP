@@ -109,3 +109,37 @@ settings buy 2-4x speed at the price of known answers — at 5k records recall i
 restriction is worth an answer, hence `auto` with a threshold the store does not reach yet.
 Making scope pay at scale needs finer regions (the modularity resolution of `fast_regions`) or
 activation by cue-hit mass; both are measurements to run when candidate sets grow.
+
+## Fine regions and row-activated scope (same day, later)
+
+`vrs_refine.fine_regions` splits every connectivity region again with the same modularity rule on
+its induced subgraph (regions under `FINE_MIN_NODES` = 400 stay whole). Consolidation runs on the
+fine regions and stores their labels in the stable version (`coarse_labels` kept); `Graph.labels()`
+serves them, padded with -1 (pending) for nodes appended since. Live copy: 16 coarse regions ->
+**213 fine** (nodes max 3,174 / median 307; records per region max 922 / median 6); the split costs
+3.7 s inside a consolidation; strengths and the whole-store ranking are unchanged (MRR .673).
+
+Activation had to change with it. By cue-node labels the finest safe setting lost 2 of 15 known
+answers (a record links to cues in many regions; its own region is not where its cues sit). By
+summed cue mass per region (`REGION_ACTIVATION='mass'`) nothing was lost but ranks moved (MRR
+.617): a region with one strong record loses to a region with fifty weak ones. The setting kept is
+**`'rows'`**: déjà vu as a cheap per-row lexical score (sum of idf over the informative cues a row
+carries); the regions of the strongest `REGION_SCOPE_TOP_ROWS` rows are active, plus candidate
+portals at or above `PORTAL_SCORE_FLOOR`. The strongest rows are in scope by construction, so the
+top ranks are those of the whole store and only the tail is cut.
+
+| setting (15 queries, fs/test excluded) | candidates | ms median / max | known answers |
+|---|---|---|---|
+| all | 1,633 | 158 / 835 | 10/15, MRR .673 |
+| rows 50, portal >= .05 | 700 | 78 / 136 | 10/15, **.676** |
+| rows 30 | 521 | 55 / 88 | one lost (the rank-24 answer) |
+| rows 20 | 436 | 59 / 85 | one lost |
+| rows 10 | 274 | 33 / 106 | four lost |
+| with fs listings, rows 30 | 2,161 -> 571 | 167 / 1,589 -> 86 / 146 | one lost |
+
+Defaults: rows 50, portal floor .05, `auto` threshold 2,000 whole-store candidates (location prompts
+that admit the folder listings reach 4,600 and take up to 1.6 s unscoped). The tail answer at rank
+24 is the price of any scope; below the threshold nothing is cut. Fine-region ids are recomputed at
+each consolidation (no warm start yet), so the converged-region skip does not apply across
+consolidations — a consolidation currently refines every region (~10 s at 5k records).
+

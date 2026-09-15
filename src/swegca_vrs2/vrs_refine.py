@@ -53,6 +53,8 @@ BATCH = 4096
 SEED = 1729
 TOLERANCE = 1e-3          # v0.2 converge_graph: consolidate until the largest move is below this
 CONNECTOR_LABEL = -1
+FINE_REGIONS = True       # split each connectivity region again with the same modularity rule (finer units)
+FINE_MIN_NODES = 400      # regions below this many nodes are not split further
 VERSION = 'vrs-regions-consolidation-v1'
 
 
@@ -129,7 +131,7 @@ class VRSVersion:
                  'state', 'stability', 'labels', 'labels_digest', 'proposition_ids', 'prop_src', 'prop_strength',
                  'prop_state', 'prop_pid', 'region_delta', 'delta', 'converged', 'promoted', 'reinforced', 'evaluations',
                  'resolved_count', 'seconds', 'regions', 'connector_edges', 'direct', 'unresolved', 'prop_direct', 'prop_unresolved',
-                 'portals', 'portal_events')
+                 'portals', 'portal_events', 'coarse_labels', 'fine_seconds')
 
     def __init__(self, **k):
         for name in self.__slots__:
@@ -141,7 +143,7 @@ class VRSVersion:
                     regions=self.regions, connector_edges=self.connector_edges, promoted=self.promoted,
                     reinforced=self.reinforced, resolved_records=self.resolved_count, delta=self.delta,
                     converged=self.converged, seconds=self.seconds, evaluations=self.evaluations,
-                    portals=self.portal_counts())
+                    portals=self.portal_counts(), fine_seconds=getattr(self, 'fine_seconds', None))
 
     def proposition_strength(self, node):
         mask = self.prop_src == node
@@ -216,6 +218,41 @@ def build_portals(inp, strength, labels_of_nodes, previous):
         if pair not in portals and old[pair].get('status') == 'candidate':
             events.append(dict(pair=pair, event='withdrawn', score=0.0))
     return portals, events
+
+
+def fine_regions(graph, coarse, *, min_nodes=FINE_MIN_NODES):
+    """Split every coarse region again by the same modularity rule on its induced subgraph.
+
+    The connectivity regions the graph maintains are few and large (16 for 100k nodes, a hub of 20k):
+    queries activate half of them and a scope built on them excludes almost nothing. Applying the
+    rule recursively inside each region gives units small enough for region scope and portals to
+    mean something, with no new algorithm. Labels are 0..k-1 over all fine regions; small regions
+    stay whole. Returns (fine_labels, region_count).
+    """
+    from .fast_regions import build_regions
+    from types import SimpleNamespace
+    flat = graph.flat
+    src = np.asarray(flat.src, np.int64); dst = np.asarray(flat.dst, np.int64)
+    sign = np.asarray(flat.sign, np.int8); strength = np.asarray(flat.strength, np.float64)
+    coarse = np.asarray(coarse, np.int64)
+    fine = np.full(len(coarse), -1, np.int64)
+    next_id = 0
+    for r in np.unique(coarse):
+        members = np.flatnonzero(coarse == r)
+        if len(members) < min_nodes:
+            fine[members] = next_id; next_id += 1
+            continue
+        local = np.full(len(coarse), -1, np.int64); local[members] = np.arange(len(members))
+        e = np.flatnonzero((coarse[src] == r) & (coarse[dst] == r))
+        if len(e) == 0:
+            fine[members] = next_id; next_id += 1
+            continue
+        source = SimpleNamespace(terms=graph.lazy_terms(members), edge_source=local[src[e]], edge_target=local[dst[e]],
+                                 edge_sign=sign[e], vrs_strength=strength[e])
+        regions, _ = build_regions(source, vrs_snapshot_id=graph.snapshot_id)
+        sub = np.asarray(regions.core_labels, np.int64)
+        fine[members] = next_id + sub; next_id += int(sub.max()) + 1
+    return fine, next_id
 
 
 def _seed(seed, region):
@@ -299,7 +336,14 @@ def consolidate(graph, memory, previous, *, seed=SEED, cycles=CYCLES, labels=Non
     states from the previous version; the virtual proposition edges warm-start by proposition id.
     """
     started = time.perf_counter()
-    labels = region_labels(graph) if labels is None else np.asarray(labels, np.int64)
+    coarse = region_labels(graph) if labels is None else np.asarray(labels, np.int64)
+    fine_seconds = 0.0
+    if labels is None and FINE_REGIONS and len(coarse):
+        t_fine = time.perf_counter()
+        labels, _ = fine_regions(graph, coarse)
+        fine_seconds = round(time.perf_counter() - t_fine, 3)
+    else:
+        labels = coarse
     inp = build_inputs(graph, memory, labels)
     flat = graph.flat
     e = len(inp['src']); n_real = inp['real_nodes']; n_flat_fwd = len(inp['forward'])
@@ -390,6 +434,7 @@ def consolidate(graph, memory, previous, *, seed=SEED, cycles=CYCLES, labels=Non
                          regions=len(region_ids), connector_edges=int((~same).sum()),
                          direct=inp['direct'][:n_real].astype(np.float32), unresolved=inp['unresolved'][:n_real].copy(),
                          prop_direct=inp['direct'][n_real:].astype(np.float32), prop_unresolved=inp['unresolved'][n_real:].copy(),
-                         portals=portals, portal_events=portal_events)
+                         portals=portals, portal_events=portal_events, coarse_labels=coarse.astype(np.int32),
+                         fine_seconds=fine_seconds)
     version.prop_pid = prop_pid
     return version, flat_strength, flat_score
