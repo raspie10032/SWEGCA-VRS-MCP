@@ -959,7 +959,8 @@ class Main:
         """True when no overlay exists or the graph grew since it was refined (new edges sit at base until then)."""
         overlay = self.overlay
         graph = self.graph
-        return overlay is None or overlay.edge_count_flat != len(graph.flat.src) or overlay.real_nodes != graph.flat.count
+        return (overlay is None or overlay.edge_count_flat != len(graph.flat.src) or overlay.real_nodes != graph.flat.count
+                or not overlay.converged)
 
     def overlay_prepare(self):
         """Freeze the current generation for a refinement (cheap; call under the owner's lock)."""

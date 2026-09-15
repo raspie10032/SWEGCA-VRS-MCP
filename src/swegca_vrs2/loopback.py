@@ -249,6 +249,7 @@ class Daemon:
 
 def serve(state_dir, *, port=0, allow_ingest=False, idle_hours=8.0):
     from .store import CHECKPOINT_IDLE
+    from .vrs_overlay import IDLE_CYCLES
     daemon = Daemon(state_dir, allow_ingest=allow_ingest, idle_seconds=idle_hours * 3600)
 
     class Handler(socketserver.StreamRequestHandler):
@@ -304,9 +305,11 @@ def serve(state_dir, *, port=0, allow_ingest=False, idle_hours=8.0):
                 with daemon.lock:
                     prepared = daemon.main.overlay_prepare()
                 try:
-                    overlay = daemon.main.overlay_refine(prepared)
+                    # one chunk per pass; the loop comes back while still not converged (v0.2 converge_graph)
+                    overlay = daemon.main.overlay_refine(prepared, cycles=IDLE_CYCLES)
                     with daemon.lock:
                         daemon.main.overlay_commit(overlay)
+                    time.sleep(0.5)                       # let a concurrent hook recall through between chunks
                 except Exception as error:               # never let a refinement stop the daemon
                     daemon.main.restore['overlay_refine'] = type(error).__name__ + ': ' + str(error)[:200]
                     daemon.overlay_backoff = time.time() + 600

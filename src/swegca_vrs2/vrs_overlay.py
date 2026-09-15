@@ -52,6 +52,8 @@ BATCH = 4096
 SEED = 1729
 CONNECTOR_LABEL = -1
 VERSION = 'vrs-overlay-regions-v1'
+TOLERANCE = 1e-3          # v0.2 converge_graph: refine until max |delta| of state and strength is below this
+IDLE_CYCLES = 32          # cycles per idle chunk (~3.5 s at 5k records); chunks repeat while not converged
 
 
 # ── kernel (numpy port of v0.2 refine_vrs; same arithmetic order, float32) ────────────────────
@@ -204,7 +206,7 @@ class Overlay:
     __slots__ = ('version', 'created', 'seed', 'cycles', 'node_count', 'real_nodes', 'edge_count', 'edge_count_flat',
                  'strength', 'state', 'stability', 'flat_edge', 'src', 'dst', 'sign', 'labels', 'propositions',
                  'regions', 'connector_edges', 'promoted', 'resolved_count', 'seconds', 'evaluations', 'reinforced',
-                 'record_mean', 'record_max', 'record_promoted', 'record_edges', 'pair')
+                 'record_mean', 'record_max', 'record_promoted', 'record_edges', 'pair', 'delta', 'converged', 'region_delta')
 
     def __init__(self, **k):
         for name, value in k.items():
@@ -232,7 +234,7 @@ class Overlay:
                     promoted=int(self.promoted), min=float(s.min()) if len(s) else None, max=float(s.max()) if len(s) else None,
                     median=float(np.median(s)) if len(s) else None, regions=self.regions, connector_edges=self.connector_edges,
                     resolved_records=self.resolved_count, seconds=self.seconds, evaluations=self.evaluations,
-                    reinforced=self.reinforced, seed=self.seed, cycles=self.cycles)
+                    reinforced=self.reinforced, seed=self.seed, cycles=self.cycles, delta=self.delta, converged=self.converged)
 
     def to_blob(self):
         payload = {name: getattr(self, name) for name in self.__slots__}
@@ -240,7 +242,9 @@ class Overlay:
 
     @classmethod
     def from_blob(cls, blob):
-        return cls(**pickle.loads(zlib.decompress(blob)))
+        payload = pickle.loads(zlib.decompress(blob))
+        payload.setdefault('delta', 1.0); payload.setdefault('converged', False); payload.setdefault('region_delta', {})
+        return cls(**payload)
 
 
 def _refine_subgraph(inputs, strength, state, edge_mask, *, seed, cycles):
@@ -282,26 +286,45 @@ def refine_overlay(main, previous=None, *, seed=SEED, cycles=CYCLES, labels=None
         strength[mask] = previous.strength[keep[mask]]
         m = min(previous.real_nodes, inputs.real_nodes)
         state[:m] = previous.state[:m]
+        old_prop = {pid: previous.real_nodes + i for i, pid in enumerate(previous.propositions)}
+        for i, pid in enumerate(inputs.propositions):          # virtual nodes warm-start by proposition id
+            if pid in old_prop:
+                state[inputs.real_nodes + i] = previous.state[old_prop[pid]]
     evaluations = reinforced = 0
     region_ids = sorted(set(int(x) for x in np.unique(inputs.labels)))
     same = inputs.labels[inputs.src] == inputs.labels[inputs.dst]
-    stability = np.zeros(inputs.node_count, np.float32)
-    for r in region_ids:
-        mask = same & (inputs.labels[inputs.src] == r)
-        result = _refine_subgraph(inputs, strength, state, mask, seed=_seed(seed, r), cycles=cycles)
+    stability = np.zeros(inputs.node_count, np.float32) if previous is None else np.concatenate(
+        [previous.stability[:min(previous.node_count, inputs.node_count)],
+         np.zeros(max(0, inputs.node_count - previous.node_count), np.float32)])[:inputs.node_count]
+    fresh = np.ones(e, bool) if previous is None else ~mask          # edges without a warm start
+    old_delta = {} if previous is None else dict(getattr(previous, 'region_delta', {}) or {})
+    region_delta = {}
+    passes = [(r, same & (inputs.labels[inputs.src] == r), _seed(seed, r)) for r in region_ids]
+    passes.append((CONNECTOR_LABEL, ~same, _seed(seed, CONNECTOR_LABEL)))   # connectors last, from the settled region states
+    for r, mask_r, region_seed in passes:
+        # a region that converged last time and gained no edge is left alone (steady-state cost = touched regions)
+        if not fresh[mask_r].any() and old_delta.get(r, 1.0) <= TOLERANCE:
+            region_delta[r] = old_delta[r]
+            continue
+        before_s = strength[mask_r].copy(); before_n = None
+        result = _refine_subgraph(inputs, strength, state, mask_r, seed=region_seed, cycles=cycles)
         if result is None:
             continue
         edges, local_nodes, mean, stab, new_strength, evals, rf = result
-        strength[edges] = new_strength; state[local_nodes] = mean; stability[local_nodes] = stab
+        strength[edges] = new_strength
         evaluations += evals; reinforced += rf
-    # connectors: edges whose endpoints settled in different regions, from the settled states
-    cross = ~same
-    result = _refine_subgraph(inputs, strength, state, cross, seed=_seed(seed, CONNECTOR_LABEL), cycles=cycles)
-    if result is not None:
-        edges, local_nodes, mean, stab, new_strength, evals, rf = result
-        strength[edges] = new_strength; state[local_nodes] = mean; stability[local_nodes] = stab
-        evaluations += evals; reinforced += rf
+        if r == CONNECTOR_LABEL:
+            # node states are owned by their regions: a bridge is judged against the settled region
+            # states, its pass moves strengths only (otherwise the two passes pull each node between
+            # two fixed points and nothing converges — measured 2026-09-15)
+            region_delta[r] = float(np.abs(new_strength - before_s).max())
+        else:
+            before_n = state[local_nodes].copy()
+            state[local_nodes] = mean; stability[local_nodes] = stab
+            region_delta[r] = float(max(np.abs(new_strength - before_s).max(), np.abs(mean - before_n).max()))
     n = inputs.node_count
+    # convergence (v0.2 converge_graph): largest move of any warm-started strength or node state
+    delta = max(region_delta.values()) if region_delta else 0.0
     record_edges = np.bincount(inputs.src, minlength=n)
     record_mean = np.bincount(inputs.src, weights=strength, minlength=n) / np.maximum(1, record_edges)
     record_max = np.zeros(n, np.float32); np.maximum.at(record_max, inputs.src, strength)
@@ -311,10 +334,11 @@ def refine_overlay(main, previous=None, *, seed=SEED, cycles=CYCLES, labels=None
                    edge_count_flat=inputs.edge_count_flat, strength=strength, state=state, stability=stability,
                    flat_edge=inputs.flat_edge.astype(np.int64), src=inputs.src.astype(np.uint32), dst=inputs.dst.astype(np.uint32),
                    sign=inputs.sign, labels=inputs.labels.astype(np.int32), propositions=inputs.propositions,
-                   regions=len(region_ids), connector_edges=int(cross.sum()), promoted=int((strength >= PROMOTION).sum()),
+                   regions=len(region_ids), connector_edges=int((~same).sum()), promoted=int((strength >= PROMOTION).sum()),
                    resolved_count=inputs.resolved_count, seconds=round(time.perf_counter() - started, 3),
                    evaluations=evaluations, reinforced=reinforced, record_mean=record_mean.astype(np.float32),
-                   record_max=record_max, record_promoted=record_promoted.astype(np.int32), record_edges=record_edges.astype(np.int32))
+                   record_max=record_max, record_promoted=record_promoted.astype(np.int32), record_edges=record_edges.astype(np.int32),
+                   delta=round(delta, 6), converged=bool(delta <= TOLERANCE), region_delta=region_delta)
 
 
 def _seed(seed, region):
