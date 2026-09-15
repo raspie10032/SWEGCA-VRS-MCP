@@ -150,7 +150,7 @@ class CompactIndex:
 
     @classmethod
     def empty(cls, identity):
-        store = dict(vocab=Vocab(), ids=[], row_of={}, cues=[], postings={}, blobs=[], cache=OrderedDict())
+        store = dict(vocab=Vocab(), ids=[], row_of={}, cues=[], postings={}, blobs=[], cache=OrderedDict(), kinds=[])
         return cls(store, 0, _digest(['memory', identity]), Map({o: 0 for o in OUTCOMES}), Map(), Map())
 
     # ── HotMemoryIndex contract ─────────────────────────────────────────
@@ -256,6 +256,7 @@ class CompactIndex:
                        polarity=row['polarity'], supersedes=previous, outcome=row['outcome'],
                        source=row['source'], revision=row['revision'])
         store['blobs'].append(zlib.compress(json.dumps(payload, ensure_ascii=False, separators=(',', ':')).encode('utf-8'), 6))
+        store.setdefault('kinds', []).append(str((row['metadata'] or {}).get('kind') or ''))
         propositions = self.propositions
         if row['proposition']:
             p = row['proposition']
@@ -276,6 +277,8 @@ class CompactIndex:
         while len(store['ids']) > count:
             row = len(store['ids']) - 1
             identifier = store['ids'].pop()
+            if store.get('kinds'):
+                store['kinds'].pop()
             store['row_of'].pop(identifier, None)
             store['blobs'].pop()
             for cue_id in store['cues'].pop():
@@ -321,6 +324,7 @@ class CompactIndex:
                            supersedes=obs.get('supersedes'), outcome=episode.steps[0].outcome,
                            source=episode.source_addresses[0], revision=episode.revision)
             store['blobs'].append(zlib.compress(json.dumps(payload, ensure_ascii=False, separators=(',', ':')).encode('utf-8'), 6))
+            store.setdefault('kinds', []).append(str((payload.get('metadata') or {}).get('kind') or ''))
         # 3. postings: sort all (cue_id, row) pairs once and slice per cue
         if per_record:
             cue_col = np.concatenate(per_record)
@@ -338,6 +342,7 @@ class CompactIndex:
         state = dict(self.__dict__)
         shared = dict(state['_store'])
         shared['cache'] = None
+        shared.pop('kind_masks', None)            # per-process mask cache, rebuilt on demand
         state['_store'] = shared
         return state
 
@@ -345,6 +350,43 @@ class CompactIndex:
         self.__dict__.update(state)
         if self._store.get('cache') is None:
             self._store['cache'] = OrderedDict()
+        if 'kinds' not in self._store:            # checkpoints written before the kind column (2026-09-15)
+            self._store['kinds'] = self._backfill_kinds()
+
+    def _backfill_kinds(self):
+        store = self._store
+        kinds = []
+        for blob in store['blobs']:
+            payload = json.loads(zlib.decompress(blob).decode('utf-8'))
+            kinds.append(str((payload.get('metadata') or {}).get('kind') or ''))
+        return kinds
+
+    def masked(self, exclude_kinds):
+        """A view of this generation whose postings skip records of the given kinds.
+
+        Local adapter (2026-09-15): folder-listing records (kind ``fs_listing``) carry hundreds of
+        file-name tokens and doubled the candidate set of ordinary prompts; the hook asks for them
+        only on location-shaped prompts. Everything else (episode, propositions, superseded,
+        snapshot) is the same generation, so receipts and ids are unchanged.
+        """
+        exclude = tuple(exclude_kinds or ())
+        if not exclude:
+            return self
+        store = self._store
+        key = (self.count, exclude)
+        masks = store.setdefault('kind_masks', {})
+        mask = masks.get(key)
+        if mask is None:
+            kinds = store.get('kinds') or []
+            n = min(self.count, len(kinds))
+            mask = np.fromiter((k not in exclude for k in kinds[:n]), dtype=bool, count=n)
+            if n < self.count:                      # rows appended without a kind entry: keep them
+                mask = np.concatenate([mask, np.ones(self.count - n, dtype=bool)])
+            masks.clear(); masks[key] = mask
+        view = MaskedIndex.__new__(MaskedIndex)
+        view.__dict__.update(self.__dict__)
+        view._mask = mask
+        return view
 
     def footprint(self):
         store = self._store
@@ -353,3 +395,23 @@ class CompactIndex:
                     cue_id_bytes=sum(a.nbytes for a in store['cues']),
                     posting_bytes=sum(a.nbytes for a in store['postings'].values()),
                     text_bytes=sum(len(b) for b in store['blobs']))
+
+
+class MaskedIndex(CompactIndex):
+    """CompactIndex generation with postings filtered by a row mask (see ``CompactIndex.masked``)."""
+
+    def episode_ids_for_cue(self, cue):
+        store = self._store
+        cue_id = store['vocab'].id_of(cue)
+        if cue_id is None:
+            return ()
+        rows = store['postings'].get(cue_id)
+        if rows is None:
+            return ()
+        visible = rows[:int(np.searchsorted(rows, self.count))]
+        visible = visible[self._mask[visible]]
+        ids = store['ids']
+        return tuple(ids[int(r)] for r in visible)
+
+    def __getstate__(self):
+        raise TypeError('a masked view is not persisted')

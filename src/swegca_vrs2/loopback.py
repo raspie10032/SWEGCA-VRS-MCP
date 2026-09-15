@@ -149,7 +149,8 @@ def hook_recall(main, arguments):
     limit = max(1, min(int(arguments.get('limit', 5)), 50))
     snippet = max(80, min(int(arguments.get('snippet', 400)), 4000))
     status = main.status()
-    root = main.recall(query, status['pair_snapshot_id'])
+    exclude = tuple(str(k) for k in (arguments.get('exclude_kinds') or ()) if k)[:8]
+    root = main.recall(query, status['pair_snapshot_id'], exclude_kinds=exclude)
     activation = root['receipt']['activation']
     judgments = {j.episode_id: j for j in activation.re_evidence.judgments}
     rows = []

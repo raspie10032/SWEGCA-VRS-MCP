@@ -929,12 +929,14 @@ class Main:
             current_truth_claimed=False, distinct_source_episode_added=int(added),
             vrs_event=graph.summary() if added else {'status':'unchanged_duplicate_observation'}, elapsed_ns=perf_counter_ns()-began)
 
-    def recall(self, query, expected_snapshot):
+    def recall(self, query, expected_snapshot, exclude_kinds=()):
         self._check()
         if expected_snapshot != self.pair.snapshot_id:
             raise ValueError('snapshot_mismatch')
         query = text_field(query, 'query', 4096)
         memory, graph, pair = self.memory, self.graph, self.pair
+        if exclude_kinds:
+            memory = memory.masked(exclude_kinds)      # same generation, postings filtered by record kind
         candidates = keys(query)
         fanout = {c: len(memory.episode_ids_for_cue(c)) for c in candidates}
         selected = tuple(c for c in candidates if fanout[c])
@@ -1004,6 +1006,7 @@ class Main:
             selected_cues=cues, rejected_cues=tuple(c for c in candidates if c not in selected),
             function_word_cues=tuple(c for c in selected if c not in informative),
             selection_method='all_matching_lexical_keys_and_explicit_proposition_closure',
+            excluded_kinds=list(exclude_kinds or ()),
             closure_rule='propositions of records matched by an informative cue (fanout below half the store)',
             candidate_order='bm25_over_matched_informative_words_then_cue_overlap',
             semantic_acceptance_claimed=False)
