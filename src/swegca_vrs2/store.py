@@ -451,9 +451,11 @@ class Graph:
             members = np.arange(len(nodes), dtype=np.int64)
             edges = np.arange(len(grown.src), dtype=np.int64)
             local = members
+            # regions are navigation topology: unit weights, so trust (refined strengths, near zero for
+            # pending records) does not reshape them (vrs-regions, SWEGCA: selection grants no authority)
             source = SimpleNamespace(terms=LazyTerms(nodes, frozen(members, np.int64)),
                 edge_source=grown.src.astype(np.int64), edge_target=grown.dst.astype(np.int64),
-                edge_sign=grown.sign.astype(np.int8), vrs_strength=grown.strength.astype(np.float64))
+                edge_sign=grown.sign.astype(np.int8), vrs_strength=np.ones(len(grown.src), np.float64))
         else:
             members = self._component_members(grown, [center, *(self.nodes[e.episode_id] for e in prior)])
             edge_mask = np.isin(grown.src, members)
@@ -464,7 +466,7 @@ class Graph:
                 edge_source=local[grown.src[edges].astype(np.int64)],
                 edge_target=local[grown.dst[edges].astype(np.int64)],
                 edge_sign=grown.sign[edges].astype(np.int8),
-                vrs_strength=grown.strength[edges].astype(np.float64))
+                vrs_strength=np.ones(len(edges), np.float64))
         csr_out = {}
         regions, backend = build_regions(source, vrs_snapshot_id=settled_id, previous=previous,
                                          csr=csr_in, csr_out=csr_out)
@@ -598,14 +600,17 @@ class Graph:
         return None if node is None else int(self.labels()[node])
 
     def vrs_of(self, identifier):
-        """Per-record VRS view for receipts: strength, promotion, state, stability, pending (not yet consolidated)."""
+        """Per-record VRS view for receipts: refined strength, kernel promotion (>= 1), the record's evidence
+        weight w, its proposition's accumulator decision (SWEGCA), state/stability, pending (not consolidated)."""
         node = self.nodes.episode_node.get(identifier)
         if node is None:
             return None
         stable = self.stable
         pending = stable is None or node >= stable.node_count
+        weights = getattr(stable, 'record_weight', None) if stable is not None else None
+        weight = None if pending or weights is None else round(float(weights[node]), 4)
         return dict(strength=round(self.strength(identifier), 4), promoted=self.strength(identifier) >= vrs_refine.PROMOTION,
-                    state=None if pending else round(float(stable.state[node]), 4),
+                    weight=weight, state=None if pending else round(float(stable.state[node]), 4),
                     stability=None if pending else round(float(stable.stability[node]), 4), pending=pending)
 
     def consolidate(self, memory, *, seed=vrs_refine.SEED, cycles=vrs_refine.CYCLES):
@@ -825,7 +830,7 @@ class Main:
         self.restore['checkpoint'] = f'loaded seq {seq}'
         return seq
 
-    def rebuild_from_journal(self, progress=None):
+    def rebuild_from_journal(self, progress=None, drop_consolidations=False):
         """Rebuild index and graph from the whole journal under the current rules (e.g. after
         changing the node set). Row contents and fingerprints are untouched; the per-row pair ids
         are re-derived and rewritten, because a VRS snapshot id digests the settled values and so
@@ -840,8 +845,15 @@ class Main:
         pairs = {}
         rows = 0
         bodies = {}
+        dropped = []
         for seq, req, body, fingerprint, _ in self._journal_rows(0, None):
             kind, row = journal_entry(req, body, fingerprint)
+            if kind == 'consolidation' and drop_consolidations:
+                # a consolidation row certifies a derived computation under the rules of its day; when the
+                # rules change (vrs-regions -> SWEGCA evidence, 2026-09-15) the rows are dropped and the
+                # daemon consolidates afresh — observations, the source of truth, are untouched
+                dropped.append(seq)
+                continue
             if kind == 'consolidation':
                 # a consolidation is re-derived under the current rules: its version id is a certificate
                 # like the pair id, so the row body (and fingerprint) are rewritten with the new one
@@ -868,15 +880,22 @@ class Main:
                 self.db.execute('UPDATE observations SET pair=? WHERE seq=?', (value, seq))
             for seq, (body, fingerprint) in bodies.items():
                 self.db.execute('UPDATE observations SET body=?, fingerprint=? WHERE seq=?', (body, fingerprint, seq))
+            for seq in dropped:
+                self.db.execute('DELETE FROM observations WHERE seq=?', (seq,))
             for segment, blob in self.db.execute('SELECT segment, blob FROM journal_archive').fetchall():
                 if blob[:2] != ARCHIVE_MAGIC:
                     raise ValueError('journal_archive_segment_corrupt')
                 lines = []
                 for line in zlib.decompress(blob[2:]).decode('utf-8').splitlines():
                     seq, req, body, fingerprint, _ = json.loads(line)
+                    if seq in dropped:
+                        continue
                     if seq in bodies:
                         body, fingerprint = bodies[seq]
                     lines.append(json.dumps([seq, req, body, fingerprint, pairs[seq]], ensure_ascii=False, separators=(',', ':')))
+                if not lines:
+                    self.db.execute('DELETE FROM journal_archive WHERE segment=?', (segment,))
+                    continue
                 last_seq = json.loads(lines[-1])[0]
                 self.db.execute('UPDATE journal_archive SET blob=?, last_pair=? WHERE segment=?',
                                 (ARCHIVE_MAGIC + zlib.compress('\n'.join(lines).encode('utf-8'), 6), pairs[last_seq], segment))
@@ -1041,8 +1060,12 @@ class Main:
         """True when the graph has edges the stable version has not refined, or it has not converged."""
         graph = self.graph
         stable = graph.stable
-        return len(graph.flat.src) > 0 and (stable is None or stable.edge_count != len(graph.flat.src)
-                                             or stable.node_count != graph.flat.count or not stable.converged)
+        # one refinement per generation: stale when the graph grew since the last consolidation (every
+        # append grows it, and a supersede or new verdict arrives as an append), never because strengths
+        # could still move — a connection's strength is how many generations it stayed stable
+        if len(graph.flat.src) == 0:
+            return False
+        return stable is None or stable.edge_count != len(graph.flat.src) or stable.node_count != graph.flat.count
 
     def consolidate_prepare(self):
         """Freeze the current generation (cheap; under the owner's lock)."""

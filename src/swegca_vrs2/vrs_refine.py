@@ -41,14 +41,18 @@ import zlib
 
 import numpy as np
 
+from . import vrs_evidence
+
 REINFORCE = np.float32(1.01)
 WEAKEN = np.float32(0.995)
-BASE = np.float32(0.75)
+BASE = np.float32(0.75)   # legacy placeholder for an edge appended before its first consolidation
+BASE_FLOOR = np.float32(0.05)   # a record with no evidence weight still gets a tiny base so the clamp is defined
 PROMOTION = 1.0
-CYCLES = 32               # cycles per manual/test consolidation chunk (~2.5 s at 5k records)
-IDLE_CYCLES = 512         # cycles per idle consolidation: pending edges reach the floor (.75 -> .1875 takes
-                          # ~450 weakening cycles) in one journal row instead of fourteen; ~30 s CPU at 5k records,
-                          # outside the daemon lock
+CYCLES = 16               # shuffle cycles per consolidation — one refinement per generation, as the original
+                          # organizer runs it (16-20); strengths carry over, so a connection's strength is how many
+                          # generations it stayed stable, not a fixed point (running to convergence saturated every
+                          # edge at the clamp — measured 2026-09-15)
+IDLE_CYCLES = 16
 BATCH = 4096
 SEED = 1729
 TOLERANCE = 1e-3          # v0.2 converge_graph: consolidate until the largest move is below this
@@ -109,17 +113,7 @@ def refine(direct, unresolved, src, dst, sign, strength, base, *, cycles=CYCLES,
 
 # ── record semantics ─────────────────────────────────────────────────────────────────────────
 
-def record_polarity(episode, superseded):
-    """+1 / -1 for a resolved record (outcome, else explicit evidence polarity), 0 when unresolved."""
-    step = episode.steps[0]
-    if episode.episode_id in superseded:
-        return 0
-    if step.outcome == 'success':
-        return 1
-    if step.outcome == 'failure':
-        return -1
-    polarity = step.observation.get('evidence_polarity')
-    return 1 if polarity == 'support' else -1 if polarity == 'refute' else 0
+record_polarity = vrs_evidence.record_polarity
 
 
 # ── the stable version ───────────────────────────────────────────────────────────────────────
@@ -131,7 +125,7 @@ class VRSVersion:
                  'state', 'stability', 'labels', 'labels_digest', 'proposition_ids', 'prop_src', 'prop_strength',
                  'prop_state', 'prop_pid', 'region_delta', 'delta', 'converged', 'promoted', 'reinforced', 'evaluations',
                  'resolved_count', 'seconds', 'regions', 'connector_edges', 'direct', 'unresolved', 'prop_direct', 'prop_unresolved',
-                 'portals', 'portal_events', 'coarse_labels', 'fine_seconds')
+                 'portals', 'portal_events', 'coarse_labels', 'fine_seconds', 'decisions', 'record_weight', 'evidence_counts')
 
     def __init__(self, **k):
         for name in self.__slots__:
@@ -143,7 +137,8 @@ class VRSVersion:
                     regions=self.regions, connector_edges=self.connector_edges, promoted=self.promoted,
                     reinforced=self.reinforced, resolved_records=self.resolved_count, delta=self.delta,
                     converged=self.converged, seconds=self.seconds, evaluations=self.evaluations,
-                    portals=self.portal_counts(), fine_seconds=getattr(self, 'fine_seconds', None))
+                    portals=self.portal_counts(), fine_seconds=getattr(self, 'fine_seconds', None),
+                    evidence=getattr(self, 'evidence_counts', None))
 
     def proposition_strength(self, node):
         mask = self.prop_src == node
@@ -291,7 +286,16 @@ def _seed(seed, region):
 
 
 def build_inputs(graph, memory, labels):
-    """Overlay arrays for the current generation: real nodes (records + cues) then virtual propositions."""
+    """Kernel inputs for the current generation from the SWEGCA evidence layer (``vrs_evidence``).
+
+    Real nodes are records and cues, then one virtual node per declared proposition (hypothesis).
+    A cue is association, not a declared hypothesis: direct 0, never unresolved, edge sign +1 — its
+    state is numerical dependency on the records touching it (the engine's own reading of an edge).
+    A record's direct is tanh(w) with w the arbiter's proposal weight from its proposition's evidence
+    (0 for a pending record or a bare outcome without a declared hypothesis: undefined stays
+    insufficient), and w is the base strength of its edges. A proposition's direct and unresolved come
+    from the accumulator (see vrs_evidence); a record -> proposition edge carries the polarity as sign.
+    """
     flat, nodes = graph.flat, graph.nodes
     n = flat.count
     src = np.asarray(flat.src, np.int64); dst = np.asarray(flat.dst, np.int64)
@@ -299,41 +303,43 @@ def build_inputs(graph, memory, labels):
     forward = np.arange(0, len(src), 2)
     if len(src) and not (record_mask[src[forward]].all() and (src[forward] == dst[forward + 1]).all()):
         raise ValueError('flat edge layout is not (record->cue, cue->record) pairs')
-    direct = np.zeros(n, np.float32); unresolved = np.ones(n, bool)
-    polarity = np.zeros(n, np.int8)
-    superseded = memory.superseded
+    evidence = vrs_evidence.build(graph, memory)
+    direct = np.zeros(n, np.float32); unresolved = np.zeros(n, bool)
+    weight = np.zeros(n, np.float32)
     resolved_count = 0
     for node in np.flatnonzero(record_mask):
-        episode = memory.episode(nodes.node_episode[int(node)])
-        p = record_polarity(episode, superseded)
-        if p:
-            direct[node] = np.tanh(1.0); unresolved[node] = False; polarity[node] = p; resolved_count += 1
+        eid = nodes.node_episode[int(node)]
+        pol = evidence.record_polarity.get(eid, 0)
+        w = float(evidence.record_weight.get(eid, 0.0)) if pol else 0.0
+        primary = evidence.record_primary.get(eid)
+        h = evidence.hypotheses.get(primary) if primary else None
+        if pol:
+            resolved_count += 1
+        weight[node] = w
+        direct[node] = np.tanh(w)
+        unresolved[node] = (not pol) or (h is not None and h.unresolved())
     f_src, f_dst = src[forward], dst[forward]
-    pol = polarity[f_src]
-    support = np.bincount(f_dst[pol > 0], minlength=n); refute = np.bincount(f_dst[pol < 0], minlength=n)
-    cue_nodes = ~record_mask
-    total = np.maximum(1, support + refute)
-    direct[cue_nodes] = np.tanh((support[cue_nodes] - refute[cue_nodes]) / total[cue_nodes]).astype(np.float32)
-    unresolved[cue_nodes] = (support[cue_nodes] > 0) & (refute[cue_nodes] > 0)
-    sign = np.where(pol < 0, -1, 1).astype(np.int8)
+    base = np.maximum(weight[f_src], BASE_FLOOR).astype(np.float32)
+    sign = np.ones(len(forward), np.int8)                      # association edges carry no polarity
     prop_ids = sorted(memory.propositions)
-    p_direct, p_unresolved, p_src, p_dst, p_sign, p_label = [], [], [], [], [], []
+    p_direct, p_unresolved, p_src, p_dst, p_sign, p_base, p_label = [], [], [], [], [], [], []
+    decisions = {}
     for k, pid in enumerate(prop_ids):
-        pnode = n + k; s = r = 0; first = None
+        pnode = n + k; first = None
+        h = evidence.hypotheses.get('proposition:' + pid)
         for eid in sorted(memory.propositions[pid]):
             rnode = nodes.episode_node.get(eid)
             if rnode is None:
                 continue
             first = rnode if first is None else first
-            episode = memory.episode(eid)
-            if episode.episode_id in superseded:
-                p_src.append(rnode); p_dst.append(pnode); p_sign.append(1)
-                continue
-            supports = episode.steps[0].observation.get('evidence_polarity') != 'refute'
-            s += supports; r += (not supports)
-            p_src.append(rnode); p_dst.append(pnode); p_sign.append(1 if supports else -1)
-        p_direct.append(np.tanh((s - r) / max(1, s + r))); p_unresolved.append(bool(s and r))
+            pol = evidence.record_polarity.get(eid, 0)
+            p_src.append(rnode); p_dst.append(pnode); p_sign.append(pol if pol else 1)
+            p_base.append(max(float(evidence.record_weight.get(eid, 0.0)) if pol else 0.0, BASE_FLOOR))
+        p_direct.append(h.direct() if h is not None else 0.0)
+        p_unresolved.append(h.unresolved() if h is not None else False)
         p_label.append(int(labels[first]) if first is not None else 0)
+        if h is not None:
+            decisions[pid] = h.summary()
     extra = len(prop_ids)
     return dict(node_count=n + extra, real_nodes=n, forward=forward,
                 direct=np.concatenate([direct, np.asarray(p_direct, np.float32)]),
@@ -342,7 +348,13 @@ def build_inputs(graph, memory, labels):
                 src=np.concatenate([f_src, np.asarray(p_src, np.int64)]),
                 dst=np.concatenate([f_dst, np.asarray(p_dst, np.int64)]),
                 sign=np.concatenate([sign, np.asarray(p_sign, np.int8)]),
-                proposition_ids=prop_ids, prop_edges=len(p_src), resolved_count=resolved_count)
+                base=np.concatenate([base, np.asarray(p_base, np.float32)]),
+                proposition_ids=prop_ids, prop_edges=len(p_src), resolved_count=resolved_count,
+                decisions=decisions, record_weight=weight,
+                evidence_counts=dict(hypotheses=len(evidence.hypotheses), observations=evidence.observation_count,
+                                     accepted=sum(1 for h in evidence.hypotheses.values() if h.decision.status == 'accept'),
+                                     rejected=sum(1 for h in evidence.hypotheses.values() if h.decision.status == 'reject'),
+                                     abstain=sum(1 for h in evidence.hypotheses.values() if h.decision.status == 'abstain')))
 
 
 def _refine_subgraph(inp, strength, state, edge_mask, *, seed, cycles):
@@ -352,7 +364,7 @@ def _refine_subgraph(inp, strength, state, edge_mask, *, seed, cycles):
     src, dst = inp['src'][edges], inp['dst'][edges]
     local_nodes, inverse = np.unique(np.concatenate([src, dst]), return_inverse=True)
     l_src, l_dst = inverse[:len(src)], inverse[len(src):]
-    base = np.full(len(edges), BASE, np.float32)
+    base = inp['base'][edges]
     mean, stability, new_strength, evals, reinforced = refine(
         inp['direct'][local_nodes], inp['unresolved'][local_nodes], l_src, l_dst, inp['sign'][edges],
         strength[edges], base, cycles=cycles, seed=seed, state=state[local_nodes])
@@ -378,8 +390,11 @@ def consolidate(graph, memory, previous, *, seed=SEED, cycles=CYCLES, labels=Non
     inp = build_inputs(graph, memory, labels)
     flat = graph.flat
     e = len(inp['src']); n_real = inp['real_nodes']; n_flat_fwd = len(inp['forward'])
-    strength = np.full(e, BASE, np.float32)
+    strength = inp['base'].copy()
     strength[:n_flat_fwd] = np.asarray(flat.strength)[inp['forward']]
+    # the evidence may have moved a record's weight since its edges were refined: keep the refined
+    # value inside the new clamp (base x [.25, 4]); a fresh edge starts at its base
+    strength = np.minimum(np.maximum(strength, inp['base'] * np.float32(0.25)), inp['base'] * np.float32(4.0))
     state = inp['direct'].copy()
     fresh = np.ones(e, bool)
     old_delta = {}
@@ -397,7 +412,7 @@ def consolidate(graph, memory, previous, *, seed=SEED, cycles=CYCLES, labels=Non
         for i in range(n_flat_fwd, e):
             k = old_map.get((int(inp['src'][i]), inp['proposition_ids'][int(inp['dst'][i]) - n_real]))
             if k is not None:
-                strength[i] = previous.prop_strength[k]; fresh[i] = False
+                strength[i] = min(max(previous.prop_strength[k], inp['base'][i] * 0.25), inp['base'][i] * 4.0); fresh[i] = False
         fresh[:min(n_flat_fwd, previous.edge_count // 2)] = False
         # a node whose inputs changed (resolved, superseded, a cue's support/refute balance, a proposition's
         # members) makes every edge touching it fresh, even in a region that had converged
@@ -470,6 +485,7 @@ def consolidate(graph, memory, previous, *, seed=SEED, cycles=CYCLES, labels=Non
                          direct=inp['direct'][:n_real].astype(np.float32), unresolved=inp['unresolved'][:n_real].copy(),
                          prop_direct=inp['direct'][n_real:].astype(np.float32), prop_unresolved=inp['unresolved'][n_real:].copy(),
                          portals=portals, portal_events=portal_events, coarse_labels=coarse.astype(np.int32),
-                         fine_seconds=fine_seconds)
+                         fine_seconds=fine_seconds, decisions=inp['decisions'], record_weight=inp['record_weight'],
+                         evidence_counts=inp['evidence_counts'])
     version.prop_pid = prop_pid
     return version, flat_strength, flat_score

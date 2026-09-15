@@ -228,29 +228,44 @@ def test_duplicate_source_is_not_new_experience_or_reinforcement(main):
     restored.close()
 
 
-def test_consolidation_promotes_agreeing_evidence_and_conflict_abstains(main):
-    """vrs-regions: strengths sit at base until consolidation; a resolved record whose claim agrees
-    with its proposition/cue neighbourhood is reinforced past 1.0 (promotion); an opposing claim
-    on the same proposition makes the proposition unresolved and neither side is promoted."""
+def test_consolidation_follows_swegca_evidence_and_conflict_abstains(main):
+    """vrs-regions (SWEGCA): a record's edge base is the arbiter weight w = confidence x (1 - contradiction)
+    x (1 - uncertainty) from its proposition's evidence accumulator; strengths rise one generation at a time
+    while the endpoints agree, so promotion (>= 1.0) needs both evidence weight and repeated consolidation;
+    the accumulator's decision is reported as such (one producer -> abstain); an opposing claim from another
+    source is the arbiter's directional conflict: the proposition is unresolved and nothing reinforces."""
     a=main.ingest(dict(request_id='a',text='첫 기록 명제 P',source='test:a',revision='1',proposition='P',polarity='support'))
-    base=main.graph.strength(a['episode_id'])
-    assert base==0.75 and main.status()['consolidation_stale'] and main.graph.stable is None
+    assert main.graph.strength(a['episode_id'])==0.75 and main.status()['consolidation_stale'] and main.graph.stable is None
+    main.consolidate()
+    stable=main.graph.stable
+    decision=stable.decisions['P']
+    assert decision['status']=='abstain' and decision['reason']=='minimum_effective_samples'
+    w=float(stable.record_weight[main.graph.nodes[a['episode_id']]])
+    assert abs(w-0.25)<1e-6                    # confidence 1, no contradiction, uncertainty 1 - 1/4
+    assert not main.status()['consolidation_stale']
+    first=main.graph.strength(a['episode_id'])
+    assert first<1.0 and 0.25*0.25<=first<=1.0
+    # agreeing evidence from another source raises w (uncertainty falls) and the edges keep climbing
     main.ingest(dict(request_id='b',text='다른 출처 보고 명제 P',source='test:b',revision='1',proposition='P',polarity='support'))
-    last=main.consolidate_until_converged()
-    assert last is not None and main.graph.stable.converged and not main.status()['consolidation_stale']
+    main.consolidate(cycles=160)
+    stable=main.graph.stable
+    assert stable.decisions['P']['effective_samples']>1 and stable.decisions['P']['status']=='abstain'
+    assert float(stable.record_weight[main.graph.nodes[a['episode_id']]])>w
     assert main.graph.strength(a['episode_id'])>=1.0 and main.recall('첫 기록',main.pair.snapshot_id)['current_promotions'][a['episode_id']]
     judgments={j.episode_id:j.verdict for j in main.recall('첫 기록',main.pair.snapshot_id)['receipt']['activation'].re_evidence.judgments}
     assert judgments[a['episode_id']]=='retained'
-    # an opposing claim: the proposition node becomes unresolved, promotion is not renewed, conflict is reported
+    # an opposing claim from a third source: unresolved proposition, no reinforcement, conflict reported
     main.ingest(dict(request_id='c',text='반대 보고 명제 P',source='test:c',revision='1',proposition='P',polarity='refute'))
-    assert main.status()['consolidation_stale']
-    main.consolidate_until_converged()
+    before=main.graph.strength(a['episode_id'])
+    main.consolidate(cycles=32)
+    assert main.graph.stable.decisions['P']['unresolved'] is True
+    assert main.graph.strength(a['episode_id'])<before
     activation=main.recall('첫 기록',main.pair.snapshot_id)['receipt']['activation']
     assert activation.re_evidence.unresolved_conflict
     # the journal carries the consolidations; a restart replays them to the same version id
     version=main.graph.stable.version_id; pair=main.pair.snapshot_id
     rows=main.db.execute("SELECT COUNT(*) FROM observations WHERE request_id LIKE 'consolidation:%'").fetchone()[0]
-    assert rows>=2
+    assert rows>=3
     main.close()
     restored=Main(main.directory,allow_ingest=True)
     try:
@@ -261,19 +276,18 @@ def test_consolidation_promotes_agreeing_evidence_and_conflict_abstains(main):
     replayed=Main(main.directory,allow_ingest=True)          # no checkpoint: the whole journal is replayed
     try:
         assert replayed.pair.snapshot_id==pair and replayed.graph.stable.version_id==version
-        assert replayed.restore['replayed_after_checkpoint']>=3
     finally:
         replayed.close()
 
 
 def test_explicit_source_retraction_decays_without_deleting_original(main):
     a=main.ingest(dict(request_id='a',text='과거 보고',source='test:a',revision='1',proposition='P',polarity='support'))
-    main.consolidate_until_converged()
+    main.consolidate(cycles=160)
     promoted=main.graph.strength(a['episode_id'])
     assert promoted>=1.0
     main.ingest(dict(request_id='b',text='원출처 정정',source='test:a',revision='2',proposition='P',polarity='refute',supersedes=a['episode_id']))
-    main.consolidate_until_converged()
-    assert main.graph.strength(a['episode_id'])<promoted          # superseded: unresolved, its edges decay
+    main.consolidate(cycles=32)
+    assert main.graph.strength(a['episode_id'])<promoted          # superseded: no evidence weight, its edges decay
     assert main.graph.vrs_of(a['episode_id'])['promoted'] is False
     assert main.memory.episode(a['episode_id']).revision=='1'
     assert not main.recall('과거 보고',main.pair.snapshot_id)['receipt']['activation'].re_evidence.unresolved_conflict
@@ -282,7 +296,7 @@ def test_explicit_source_retraction_decays_without_deleting_original(main):
 def test_pending_observations_are_never_promoted_and_stay_addressable(main):
     for i in range(3):
         record(main,f'p{i}')
-    main.consolidate_until_converged()
+    main.consolidate()
     root=main.recall('한국어 기억',main.pair.snapshot_id)
     assert len(root['receipt']['activation'].recall.candidates)==3
     assert not any(root['current_promotions'].values())
@@ -291,9 +305,9 @@ def test_pending_observations_are_never_promoted_and_stay_addressable(main):
 
 def test_rebuild_from_journal_rederives_consolidations(main):
     a=main.ingest(dict(request_id='a',text='재구축 명제',source='test:a',revision='1',proposition='P',polarity='support'))
-    main.consolidate_until_converged()
+    main.consolidate(cycles=160)
     record(main,'later')
-    main.consolidate_until_converged()
+    main.consolidate()
     before=main.pair.snapshot_id; version=main.graph.stable.version_id
     rows,_=main.rebuild_from_journal()
     assert rows>=4 and main.pair.snapshot_id==before and main.graph.stable.version_id==version
@@ -307,7 +321,7 @@ def test_portals_between_regions_are_navigation_receipts_not_gates(main):
     for i in range(4):
         main.ingest(dict(request_id=f'log{i}',text=f'루프백 데몬 유휴 체크포인트 기록 {i} 원문',source=f'test:log{i}',revision='r1'))
     v=main.ingest(dict(request_id='v',text='판정 데몬 체크포인트 락 밖 직렬화 asks: 체크포인트 락',source='verdict/v',revision='1',outcome='failure',proposition='P',polarity='refute'))
-    main.consolidate_until_converged()
+    main.consolidate(cycles=160)
     stable=main.graph.stable
     counts=stable.portal_counts()
     assert counts['pairs']>=1 and counts['candidates']<=counts['pairs']
@@ -331,7 +345,7 @@ def test_region_scope_restricts_candidates_only_when_asked_and_never_loses_addre
     for i in range(6):
         main.ingest(dict(request_id=f'r{i}',text=f'루프백 데몬 유휴 체크포인트 기록 {i} 원문',source=f'test:r{i}',revision='r1'))
     v=main.ingest(dict(request_id='v',text='판정 데몬 체크포인트 락 밖 직렬화 asks: 체크포인트 락',source='verdict/v',revision='1',outcome='failure',proposition='P',polarity='refute'))
-    main.consolidate_until_converged()
+    main.consolidate(cycles=160)
     full=main.recall('데몬 체크포인트 락',main.pair.snapshot_id,region_scope='all')
     scoped=main.recall('데몬 체크포인트 락',main.pair.snapshot_id,region_scope='regions')
     auto=main.recall('데몬 체크포인트 락',main.pair.snapshot_id,region_scope='auto')

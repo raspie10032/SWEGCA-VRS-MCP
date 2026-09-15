@@ -172,3 +172,48 @@ inline mention of the phrase, which let a doc *about* asks claim every example w
 Region scope re-checked on the fresh set: 50 activating rows dropped one fresh answer entirely;
 100 rows keep every answer (fresh .849 scoped vs .813 unscoped, 120 vs 180 ms per query).
 
+## SWEGCA evidence layer (same day, last) — the numeric core rebuilt on the architecture
+
+Everything above this heading built the numeric core on the v0.2 MCP adapter's star-graph rule
+(binary direct = tanh(1) for any resolved record, constant base .75, refinement run to a fixed
+point). That produced exactly two strength values (floor and cap) on the live store — not a
+property of VRS but of those inputs and of running to convergence. The user's objection was
+right, and the core now follows the SWEGCA architecture (`SWEGCA-Architecture/paper/swegca/
+ARCHITECTURE_SPEC.md` §3-4, `main.tex` §"Evidence accumulation and admission", and
+`src/swegca/mosaic_evidence_accumulator.py`, vendored unchanged as
+`engine/mosaic_evidence_accumulator.py`, MPL-2.0):
+
+* **hypotheses are declared propositions only.** "An experience record becomes evidence only when
+  it is addressable, relevant to a declared hypothesis, and admitted under the evidence policy."
+  A cue is association, not a hypothesis: direct 0, never unresolved, sign +1; its state is numerical
+  dependency on the records touching it (the engine's own reading of an edge).
+* **evidence observations** per (hypothesis, address = record source, source_family = source file,
+  context = project, axis, support/refute from the record's polarity, producer, confidence). The
+  producer declares the axes — `swegca-verdict.py` now takes `axes` from the four
+  (observational / counterfactual / intervention / cross_context) and the importer carries them as
+  `metadata.axes`; undeclared = observational. Evidence from a different context than the
+  hypothesis's first is additionally cross-context (a structural fact). Pending and superseded
+  records are not evidence.
+* **the accumulator's decision is the decision**: Wilson 90% bounds per axis, accept when the minimum
+  lower bound exceeds .45, reject when the overall upper bound stays below, abstain on fewer than
+  four effective samples per axis, fewer than two source families, fewer than four contexts, or a
+  suspected regime change. Groups sharing (source, context) count as fractions. With one producer
+  every hypothesis abstains on source diversity — reported as such, not relaxed.
+* **kernel inputs are continuous**: hypothesis direct = tanh(ratio x sufficiency), ratio = (effective
+  support - refute) / samples, sufficiency = min(1, samples/4); hypothesis unresolved = opposing
+  evidence from different source families (the arbiter's directional conflict) or a suspected
+  regime change; record weight w = confidence x (1 - contradiction) x (1 - uncertainty) — the
+  arbiter's proposal weight — with confidence 1 for an explicit claim and .5 for an outcome-only
+  record, contradiction the opposing share on the record's proposition, uncertainty 1 -
+  sufficiency; record direct = tanh(w); **w is the base strength of the record's edges**, so the
+  clamp base x [.25, 4] means only well-evidenced records can reach the promotion threshold.
+* **one refinement per generation** (16 shuffle cycles per consolidation, as the original organizer),
+  strengths carried over — a connection's strength is how many generations it stayed stable, not a
+  fixed point. `consolidation_stale` = the graph grew since the last consolidation.
+* regions are computed on unit weights (navigation topology; trust does not reshape them).
+* migration: `vrs2-rebuild-graph.py --drop-consolidations` drops the consolidation rows written
+  under the previous rule (derived certificates, not observations) and re-derives the chain.
+
+Two tiers are reported and kept apart: `promoted` (kernel: strength >= 1.0, the engine's
+re-evidence `retained`) and the accumulator's `accept` (the architecture's verified promotion).
+
