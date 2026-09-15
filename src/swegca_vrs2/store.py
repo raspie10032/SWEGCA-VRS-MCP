@@ -600,6 +600,9 @@ def _mapping_proxy(data):
 # pickle cannot name the mappingproxy type; rebuild frozen views through a module function.
 copyreg.pickle(MappingProxyType, lambda m: (_mapping_proxy, (dict(m),)))
 UNBRIDGED_FACTOR = 1.0   # order factor for candidates reached only through an unpromoted region pair (1.0 = receipt only)
+ASK_GATE = 0.5           # per rare query word found in the record's own 「찾을 때 묻는 말」, up to ASK_GATE_MAX_HITS (measured 2026-09-15: 0 / .25 / .5 / 1.0 -> MRR .871 / .944 / .950 / .956, no regressions with the rarity bar)
+ASK_GATE_MAX_HITS = 3
+ASK_GATE_RARE_SHARE = 0.05   # an ask hit counts only for a word carried by at most this share of the store
 REGION_SCOPE_FLOOR = 3   # region-scoped recall falls back to the whole store below this many candidates
 REGION_SCOPE_AUTO_CANDIDATES = 2000   # 'auto' scope applies the region restriction only above this many whole-store candidates
 REGION_SCOPE_INFORMATIVE_ONLY = True   # activate regions from informative cues only (function words activate everything)
@@ -1308,13 +1311,31 @@ class Main:
         #                        measured 15 known-answer queries: MRR .550 -> .673, stable across consolidations,
         #                        while weighting by the raw strength value collapses once pending edges hit the floor
         unbridged_factor = UNBRIDGED_FACTOR
+        ask_gate = ASK_GATE
+        def ask_hits(row, matched_words):
+            # the record's own 「찾을 때 묻는 말」 (verdict tail line / memory-doc section / log-entry tail):
+            # a query word found there is the author's declared phrasing, the strongest signal we have.
+            # Without this a doc that gains an asks section gets *longer* and BM25's length term pushes
+            # it below short log entries that merely mention the words (measured 2026-09-15: rank 7 -> 17).
+            if not ask_gate:
+                return 0
+            text = memory.episode(row.episode_id).steps[0].observation.get('text', '')
+            at = text.find('찾을 때 묻는 말')
+            if at < 0:
+                return 0
+            asks = text[at + 8:].split('\n## ', 1)[0].casefold()
+            # only rare words count (a broad asks list such as the setup doc's would otherwise catch
+            # every question that shares a common word with it)
+            return sum(1 for w in matched_words if w.casefold() in asks and fanout.get(w, 0) <= ASK_GATE_RARE_SHARE * total)
         def order(row):
             length = len(cue_counts[rows_of[row.episode_id]]) if cue_counts is not None else average
             norm = (k1 + 1.0) / (1.0 + k1 * (1.0 - b + b * length / average))
             gate = 1.0 + promotion_gate * (graph.strength(row.episode_id) >= vrs_refine.PROMOTION)
             path = navigation.get(row.episode_id, {}).get('path')
             gate *= unbridged_factor if path == 'unbridged' else 1.0
-            return (-sum(idf[c] for c in words(row.matched_cues)) * norm * gate, -row.cue_overlap, row.episode_id)
+            matched_words = words(row.matched_cues)
+            gate *= 1.0 + ask_gate * min(ASK_GATE_MAX_HITS, ask_hits(row, matched_words))
+            return (-sum(idf[c] for c in matched_words) * norm * gate, -row.cue_overlap, row.episode_id)
         recalled = RecallResult(recalled.query, tuple(sorted(recalled.candidates, key=order)),
                                 recalled.snapshot_id, source_dependencies=recalled.source_dependencies)
         replayed = replay_memory(memory, recalled)
@@ -1329,7 +1350,8 @@ class Main:
             selection_method='all_matching_lexical_keys_and_explicit_proposition_closure',
             excluded_kinds=list(exclude_kinds or ()),
             closure_rule='propositions of records matched by an informative cue (fanout below half the store)',
-            candidate_order='bm25_over_matched_informative_words_x_promotion_gate_then_cue_overlap',
+            candidate_order='bm25_over_matched_informative_words_x_promotion_gate_x_asks_gate_then_cue_overlap',
+            asks_gate=ask_gate,
             semantic_acceptance_claimed=False)
         return dict(record_count=memory.episode_count, receipt={'activation': receipt}, memory_selection=selection,
             vrs_selection=dict(selection_method='region_consolidated_strengths_and_connectivity_regions',
