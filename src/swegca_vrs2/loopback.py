@@ -41,7 +41,7 @@ PORT_FILE = 'loopback.port'
 RESIDENT_COMMANDS = {'status', 'cognitive_dialogue_start', 'cognitive_dialogue_continue',
                      'cognitive_dialogue_evidence_open', 'cognitive_dialogue_evidence',
                      'cognitive_dialogue_release'}
-LOCAL_COMMANDS = {'hook_recall', 'ingest', 'checkpoint', 'compact', 'refine', 'ping', 'shutdown'}
+LOCAL_COMMANDS = {'hook_recall', 'ingest', 'checkpoint', 'compact', 'consolidate', 'refine', 'ping', 'shutdown'}
 
 
 # ── client ────────────────────────────────────────────────────────────
@@ -169,10 +169,10 @@ def hook_recall(main, arguments):
             text=obs.get('text', '')[:snippet], text_chars=len(obs.get('text', '')),
             # verdict records end with their asks line; hooks match query cues against it
             asks=_asks_of(obs.get('text', '')),
-            # refined VRS strength of this record's edges (overlay, 2026-09-15); None before the first refinement
-            vrs=main.overlay_of(candidate.episode_id)))
+            # vrs-regions: refined strength, promotion, state/stability, pending (not yet consolidated)
+            vrs=main.graph.vrs_of(candidate.episode_id)))
     controls = activation.re_evidence
-    overlay = main.overlay
+    stable = main.graph.stable
     return dict(status='ok', query=query, pair_snapshot_id=status['pair_snapshot_id'],
                 candidate_count=len(activation.recall.candidates), returned=len(rows), memories=rows,
                 should_abstain=controls.should_abstain, unresolved_conflict=controls.unresolved_conflict,
@@ -181,8 +181,9 @@ def hook_recall(main, arguments):
                 selection={k: root['memory_selection'][k] for k in ('function_word_cues', 'candidate_order', 'closure_rule')},
                 fanout={c: n for c, n in root['memory_selection']['candidate_counts'].items() if n},
                 record_count=root['record_count'],
-                vrs_overlay=None if overlay is None else dict(created=overlay.created, promoted=overlay.promoted,
-                                                              stale=main.overlay_stale()),
+                vrs_stable=None if stable is None else dict(version_id=stable.version_id, created=stable.created,
+                                                            promoted=stable.promoted, converged=stable.converged,
+                                                            stale=main.consolidation_stale()),
                 grants_authority=False)
 
 
@@ -210,13 +211,14 @@ class Daemon:
                         writes_enabled=self.main.allow_ingest)
         if command == 'hook_recall':
             return hook_recall(self.main, arguments)
-        if command == 'refine':
-            # manual refinement: the run itself is lock-free (frozen generation); prepare/commit lock briefly
+        if command in ('consolidate', 'refine'):
+            # manual consolidation: the refinement is lock-free (frozen generation); prepare/commit lock briefly
             with self.lock:
-                prepared = self.main.overlay_prepare()
-            overlay = self.main.overlay_refine(prepared, **{k: int(v) for k, v in arguments.items() if k in ('seed', 'cycles')})
+                prepared = self.main.consolidate_prepare()
+            graph = self.main.consolidate_run(prepared, **{k: int(v) for k, v in arguments.items() if k in ('seed', 'cycles')})
             with self.lock:
-                return dict(status='ok', refine=self.main.overlay_commit(overlay))
+                result = self.main.consolidate_commit(prepared, graph)
+            return dict(status='ok', consolidate=result, raced=result is None)
         with self.lock:
             if command in RESIDENT_COMMANDS:
                 return self.resident.request(command, **arguments)
@@ -249,7 +251,7 @@ class Daemon:
 
 def serve(state_dir, *, port=0, allow_ingest=False, idle_hours=8.0):
     from .store import CHECKPOINT_IDLE
-    from .vrs_overlay import IDLE_CYCLES
+    from .vrs_refine import IDLE_CYCLES
     daemon = Daemon(state_dir, allow_ingest=allow_ingest, idle_seconds=idle_hours * 3600)
 
     class Handler(socketserver.StreamRequestHandler):
@@ -298,21 +300,21 @@ def serve(state_dir, *, port=0, allow_ingest=False, idle_hours=8.0):
                     serialized = daemon.main.checkpoint_serialize(prepared)
                     with daemon.lock:
                         daemon.main.checkpoint_commit(prepared, serialized)
-            # VRS overlay (2026-09-15): refine strengths region by region once the graph has grown and
-            # the daemon is quiet; ~2-3 s at 5k records, all of it outside the lock but the commit.
-            if (quiet >= CHECKPOINT_IDLE and not daemon.main.dirty and daemon.main.overlay_stale()
-                    and time.time() >= getattr(daemon, 'overlay_backoff', 0)):
+            # VRS consolidation (vrs-regions): once the daemon is quiet and the graph has edges the stable
+            # version has not refined (or it has not converged), refine one chunk region by region — outside
+            # the lock but for prepare/commit — and come back for the next chunk until converged.
+            if (quiet >= CHECKPOINT_IDLE and daemon.main.allow_ingest and daemon.main.consolidation_stale()
+                    and time.time() >= getattr(daemon, 'consolidation_backoff', 0)):
                 with daemon.lock:
-                    prepared = daemon.main.overlay_prepare()
+                    prepared = daemon.main.consolidate_prepare()
                 try:
-                    # one chunk per pass; the loop comes back while still not converged (v0.2 converge_graph)
-                    overlay = daemon.main.overlay_refine(prepared, cycles=IDLE_CYCLES)
+                    graph = daemon.main.consolidate_run(prepared, cycles=IDLE_CYCLES)
                     with daemon.lock:
-                        daemon.main.overlay_commit(overlay)
+                        daemon.main.consolidate_commit(prepared, graph)
                     time.sleep(0.5)                       # let a concurrent hook recall through between chunks
-                except Exception as error:               # never let a refinement stop the daemon
-                    daemon.main.restore['overlay_refine'] = type(error).__name__ + ': ' + str(error)[:200]
-                    daemon.overlay_backoff = time.time() + 600
+                except Exception as error:               # never let a consolidation stop the daemon
+                    daemon.main.restore['consolidation'] = type(error).__name__ + ': ' + str(error)[:200]
+                    daemon.consolidation_backoff = time.time() + 600
     finally:
         server.shutdown()
         server.server_close()

@@ -96,15 +96,21 @@ class FlatGraph:
                    np.empty(0, dtype=np.uint32), np.empty(0, dtype=np.int8), z)
 
     def extend(self, *, new_direct, new_src, new_dst, new_sign, new_strength,
-               strength_updates=(), score=None):
-        """Successor with appended nodes/edges, optional strength edits and a new score vector."""
+               strength_updates=(), score=None, new_unresolved=None, node_updates=()):
+        """Successor with appended nodes/edges, optional strength edits, per-node direct/unresolved
+        edits (``node_updates``: (node, direct, unresolved) — e.g. a superseded record) and a new score vector."""
         strength = self.strength.copy()
         for edge, value in strength_updates:
             strength[edge] = value
+        direct, unresolved = self.direct.copy(), self.unresolved.copy()
+        for node, d, u in node_updates:
+            direct[node] = d; unresolved[node] = u
+        if new_unresolved is None:
+            new_unresolved = np.ones(len(new_direct), bool)
         return FlatGraph(
-            np.concatenate([self.direct, np.asarray(new_direct, np.float32)]),
+            np.concatenate([direct, np.asarray(new_direct, np.float32)]),
             np.concatenate([self.score if score is None else score, np.zeros(len(new_direct), np.float32)]),
-            np.concatenate([self.unresolved, np.ones(len(new_direct), bool)]),
+            np.concatenate([unresolved, np.asarray(new_unresolved, bool)]),
             np.concatenate([self.src, np.asarray(new_src, np.uint32)]),
             np.concatenate([self.dst, np.asarray(new_dst, np.uint32)]),
             np.concatenate([self.sign, np.asarray(new_sign, np.int8)]),
@@ -116,6 +122,12 @@ class FlatGraph:
             object.__setattr__(g, name, getattr(self, name))
         object.__setattr__(g, 'score', frozen(score, np.float32))
         return g
+
+    def with_arrays(self, *, strength=None, score=None):
+        """Same topology with replaced strengths and/or scores (a consolidation); CSR layout is rebuilt
+        because ``den`` depends on the strengths."""
+        return FlatGraph(self.direct, self.score if score is None else score, self.unresolved, self.src, self.dst,
+                         self.sign, self.strength if strength is None else strength)
 
     def outgoing_targets(self, node):
         lo, hi = self.out_ptr[node], self.out_ptr[node + 1]
