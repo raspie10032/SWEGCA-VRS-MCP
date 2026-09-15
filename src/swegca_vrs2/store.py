@@ -154,6 +154,7 @@ def observation(arguments):
     return result
 
 
+_DESCRIPTION = re.compile(r'(?m)^description:[ \t]*(.+)$')
 _ASKS_MARK = re.compile(r'(?:^|\n)[ \t]*(?:##[ \t]*)?찾을 때 묻는 말[ \t]*[:：]?|\(찾을 때 묻는 말[ \t]*[:：]')
 
 
@@ -161,12 +162,26 @@ def asks_of(text):
     """The record's own 「찾을 때 묻는 말」: a verdict's tail line, a memory doc's section heading, or a
     log entry's parenthesized tail — never an inline mention of the phrase (a doc that *talks about*
     asks would otherwise claim every example word it quotes; measured 2026-09-15). '' when absent."""
+    return asks_and_description(text)[0]
+
+
+def asks_and_description(text):
+    """(asks, description): the explicit 「찾을 때 묻는 말」 and, for a memory doc, its front-matter
+    description — the author's one-line phrasing of what the doc answers, written in task words
+    (23 of 295 docs have an asks section; every doc has a description). Either may be ''."""
+    asks = ''
     m = _ASKS_MARK.search(text)
-    if m is None:
-        return ''
-    tail = text[m.end():]
-    tail = tail.split('\n## ', 1)[0]          # doc section ends at the next heading
-    return tail.strip(': \n')[:800]
+    if m is not None:
+        tail = text[m.end():]
+        tail = tail.split('\n## ', 1)[0]          # doc section ends at the next heading
+        asks = tail.strip(': \n')[:800]
+    description = ''
+    if text.startswith('---'):
+        head = text[3:].split('\n---', 1)[0]
+        d = _DESCRIPTION.search(head)
+        if d is not None:
+            description = d.group(1).strip().strip('"\'')[:400]
+    return asks, description
 
 
 def journal_entry(request_id, body, fingerprint):
@@ -617,13 +632,14 @@ copyreg.pickle(MappingProxyType, lambda m: (_mapping_proxy, (dict(m),)))
 UNBRIDGED_FACTOR = 1.0   # order factor for candidates reached only through an unpromoted region pair (1.0 = receipt only)
 ASK_GATE = 0.5           # per rare query word found in the record's own 「찾을 때 묻는 말」, up to ASK_GATE_MAX_HITS (measured 2026-09-15: 0 / .25 / .5 / 1.0 -> MRR .871 / .944 / .950 / .956, no regressions with the rarity bar)
 ASK_GATE_MAX_HITS = 3
+DESCRIPTION_GATE = 1.0   # per rare query word found in a memory doc's front-matter description (14 fresh questions: 0 / .25 / .5 / 1.0 -> MRR .416 / .524 / .605 / .742; the tuned 15 go .956 -> .856)
 ASK_GATE_RARE_SHARE = 0.05   # an ask hit counts only for a word carried by at most this share of the store
 REGION_SCOPE_FLOOR = 3   # region-scoped recall falls back to the whole store below this many candidates
 REGION_SCOPE_AUTO_CANDIDATES = 2000   # 'auto' scope applies the region restriction only above this many whole-store candidates
 REGION_SCOPE_INFORMATIVE_ONLY = True   # activate regions from informative cues only (function words activate everything)
 REGION_SCOPE_MIN_HITS = 1              # ('cues' activation) a region is active when at least this many informative cues sit in it
 REGION_ACTIVATION = 'rows'             # 'rows': regions of the lexically strongest rows; 'mass': regions by summed cue mass; 'cues': by cue-node labels
-REGION_SCOPE_TOP_ROWS = 50             # ('rows') how many strongest rows activate their regions
+REGION_SCOPE_TOP_ROWS = 100            # ('rows') how many strongest rows activate their regions (50 lost a fresh answer entirely; 100 lost none — 14 fresh questions, 2026-09-15)
 REGION_SCOPE_TOP = 8                   # ('mass') the top regions by mass are active ...
 REGION_SCOPE_MASS_SHARE = 0.25         # ... plus every region with at least this share of the top region's mass
 PORTAL_SCORE_FLOOR = 0.05              # portal partners join the scope only at or above this promoted share
@@ -1326,20 +1342,24 @@ class Main:
         #                        measured 15 known-answer queries: MRR .550 -> .673, stable across consolidations,
         #                        while weighting by the raw strength value collapses once pending edges hit the floor
         unbridged_factor = UNBRIDGED_FACTOR
-        ask_gate = ASK_GATE
+        ask_gate, desc_gate = ASK_GATE, DESCRIPTION_GATE
         def ask_hits(row, matched_words):
             # the record's own 「찾을 때 묻는 말」 (verdict tail line / memory-doc section / log-entry tail):
             # a query word found there is the author's declared phrasing, the strongest signal we have.
             # Without this a doc that gains an asks section gets *longer* and BM25's length term pushes
             # it below short log entries that merely mention the words (measured 2026-09-15: rank 7 -> 17).
-            if not ask_gate:
-                return 0
-            asks = asks_of(memory.episode(row.episode_id).steps[0].observation.get('text', '')).casefold()
-            if not asks:
-                return 0
+            # A doc's front-matter description counts too, at its own weight (measured on 14 fresh
+            # questions: MRR .416 -> .605 with descriptions; the tuned 15 lose a little at equal weight).
+            if not ask_gate and not desc_gate:
+                return 0.0
+            asks, description = asks_and_description(memory.episode(row.episode_id).steps[0].observation.get('text', ''))
+            asks, description = asks.casefold(), description.casefold()
             # only rare words count (a broad asks list such as the setup doc's would otherwise catch
             # every question that shares a common word with it)
-            return sum(1 for w in matched_words if w.casefold() in asks and fanout.get(w, 0) <= ASK_GATE_RARE_SHARE * total)
+            rare = [w.casefold() for w in matched_words if fanout.get(w, 0) <= ASK_GATE_RARE_SHARE * total]
+            a = sum(1 for w in rare if asks and w in asks)
+            d = sum(1 for w in rare if description and w in description)
+            return (1.0 + ask_gate * min(ASK_GATE_MAX_HITS, a)) * (1.0 + desc_gate * min(ASK_GATE_MAX_HITS, d))
         def order(row):
             length = len(cue_counts[rows_of[row.episode_id]]) if cue_counts is not None else average
             norm = (k1 + 1.0) / (1.0 + k1 * (1.0 - b + b * length / average))
@@ -1347,7 +1367,7 @@ class Main:
             path = navigation.get(row.episode_id, {}).get('path')
             gate *= unbridged_factor if path == 'unbridged' else 1.0
             matched_words = words(row.matched_cues)
-            gate *= 1.0 + ask_gate * min(ASK_GATE_MAX_HITS, ask_hits(row, matched_words))
+            gate *= ask_hits(row, matched_words)
             return (-sum(idf[c] for c in matched_words) * norm * gate, -row.cue_overlap, row.episode_id)
         recalled = RecallResult(recalled.query, tuple(sorted(recalled.candidates, key=order)),
                                 recalled.snapshot_id, source_dependencies=recalled.source_dependencies)
