@@ -217,3 +217,14 @@ ARCHITECTURE_SPEC.md` §3-4, `main.tex` §"Evidence accumulation and admission",
 Two tiers are reported and kept apart: `promoted` (kernel: strength >= 1.0, the engine's
 re-evidence `retained`) and the accumulator's `accept` (the architecture's verified promotion).
 
+Live store after migration (`--drop-consolidations`, 5,158 rows, 1,146 s; daemon consolidates one
+16-cycle generation per idle spell, 3.6-5.5 s): 29 hypotheses (declared propositions), 31
+observations, every decision `abstain: minimum_effective_samples` (one observation each, one producer,
+one axis); record weights w in {.25, .5} (one or two members on the proposition); pending edges at
+base .05 decaying (.0426 after three generations), verdict edges climbing (.6875 for w = .5 after
+three generations; the cap is 4w and promotion needs ~139 stable cycles, nine generations). The
+distribution has three distinct values because the store has three distinct evidence states, not
+because of the rule: it spreads as records age differently and as evidence gains sources, contexts
+and axes. Recall without any promotion: tuned 15 MRR .834 (auto scope .838), fresh 14 MRR .813,
+hook 10/14 — carried by BM25 with the asks and description gates.
+
