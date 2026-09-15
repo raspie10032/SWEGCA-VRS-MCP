@@ -38,6 +38,7 @@ from .flat_vrs import FlatGraph, settle, frozen  # noqa: F401 — tests import f
 from .fast_regions import build_regions
 from .compact_index import CompactIndex
 from . import csr_cache
+from . import vrs_overlay
 from .engine.mosaic_vrs_connectivity_regions import _csr as _engine_csr
 
 # Local adapter (2026-09-14): generated Hangul n-gram cues (2-4 chars, produced by keys() for every
@@ -636,6 +637,7 @@ class Main:
         self.db = None
         self._dirty = 0
         self.restore = {}
+        self.overlay = None                      # vrs_overlay.Overlay or None; replaced atomically
         try:
             # check_same_thread=False: the loopback daemon serves requests from handler threads
             # and serializes every main call under one lock (loopback.Daemon.handle).
@@ -649,6 +651,9 @@ class Main:
             # Lossless hard compression (2026-09-14): journal rows older than the checkpoint
             # move into compressed segments. archive + observations is still the whole journal.
             self.db.execute('CREATE TABLE IF NOT EXISTS journal_archive (segment INTEGER PRIMARY KEY, first_seq INTEGER NOT NULL, last_seq INTEGER NOT NULL, last_pair TEXT NOT NULL, rows INTEGER NOT NULL, blob BLOB NOT NULL)')
+            # VRS strength overlay (2026-09-15): region-wise refinement of the current generation, kept
+            # outside the certificate chain (journal/pair ids are untouched) and recomputed at idle.
+            self.db.execute('CREATE TABLE IF NOT EXISTS vrs_overlay (id INTEGER PRIMARY KEY CHECK(id=1), created TEXT NOT NULL, pair TEXT NOT NULL, node_count INTEGER NOT NULL, edge_count INTEGER NOT NULL, promoted INTEGER NOT NULL, blob BLOB NOT NULL)')
             identity = self.db.execute('SELECT value FROM identity WHERE id=1').fetchone()
             if identity is None:
                 identity = (str(uuid.uuid4()),)
@@ -680,6 +685,7 @@ class Main:
                 replayed += 1
             self._dirty = replayed
             self.restore.update(replayed_after_checkpoint=replayed, elapsed_ns=perf_counter_ns() - started)
+            self._load_overlay()
             self.owner = AtomicFullCurrentMemoryVrsOwner(self.pair)
         except BaseException:
             self.close()
@@ -939,9 +945,67 @@ class Main:
         if self.closed:
             raise ValueError('main_closed')
 
+    # ── VRS strength overlay ─────────────────────────────────────────────
+    def _load_overlay(self):
+        row = self.db.execute('SELECT blob FROM vrs_overlay WHERE id=1').fetchone()
+        if row is None:
+            return
+        try:
+            self.overlay = vrs_overlay.Overlay.from_blob(row[0])
+        except Exception as error:
+            self.restore['overlay'] = 'unreadable_ignored: ' + type(error).__name__
+
+    def overlay_stale(self):
+        """True when no overlay exists or the graph grew since it was refined (new edges sit at base until then)."""
+        overlay = self.overlay
+        graph = self.graph
+        return overlay is None or overlay.edge_count_flat != len(graph.flat.src) or overlay.real_nodes != graph.flat.count
+
+    def overlay_prepare(self):
+        """Freeze the current generation for a refinement (cheap; call under the owner's lock)."""
+        self._check()
+        memory, graph, pair, _ = self._generation
+        return SimpleNamespace(memory=memory, graph=graph, pair=pair.snapshot_id, previous=self.overlay)
+
+    @staticmethod
+    def overlay_refine(prepared, *, seed=vrs_overlay.SEED, cycles=vrs_overlay.CYCLES):
+        """Run the region-wise refinement on a frozen generation. Needs no lock: generations are immutable."""
+        overlay = vrs_overlay.refine_overlay(prepared, prepared.previous, seed=seed, cycles=cycles)
+        overlay.pair = prepared.pair
+        return overlay
+
+    def overlay_commit(self, overlay):
+        """Publish a refined overlay (under the lock): one row, replaced in place; readers swap atomically."""
+        self._check()
+        blob = overlay.to_blob()
+        self.db.execute('BEGIN IMMEDIATE')
+        try:
+            self.db.execute('INSERT OR REPLACE INTO vrs_overlay VALUES (1,?,?,?,?,?,?)',
+                            (overlay.created, overlay.pair, overlay.node_count, overlay.edge_count, overlay.promoted, blob))
+            self.db.execute('COMMIT')
+        except BaseException:
+            self.db.execute('ROLLBACK')
+            raise
+        self.overlay = overlay
+        return dict(overlay.summary(), blob_bytes=len(blob), stale=self.overlay_stale())
+
+    def refine_overlay(self, **options):
+        """Prepare + refine + commit in one call (used by tests and the manual command)."""
+        return self.overlay_commit(self.overlay_refine(self.overlay_prepare(), **options))
+
+    def overlay_of(self, episode_id):
+        """Per-record overlay view for a recall row, or None when there is no overlay / the record postdates it."""
+        overlay = self.overlay
+        if overlay is None:
+            return None
+        node = self.graph.nodes.episode_node.get(episode_id)
+        return overlay.record_summary(node)
+
     def status(self):
         self._check()
+        overlay = self.overlay
         return dict(status='ready', identity=self.identity, pair_snapshot_id=self.pair.snapshot_id,
+            vrs_overlay=None if overlay is None else dict(overlay.summary(), stale=self.overlay_stale()),
             memory_snapshot_id=self.memory.snapshot_id, vrs_snapshot_id=self.graph.snapshot_id,
             hot_episode_count=self.memory.episode_count, outcome_counts=dict(self.memory.outcome_counts),
             lookup_requires_io=False, internal_llm_calls=0, final_utterance_calls=0,
