@@ -220,14 +220,19 @@ def build_portals(inp, strength, labels_of_nodes, previous):
     return portals, events
 
 
-def fine_regions(graph, coarse, *, min_nodes=FINE_MIN_NODES):
+def fine_regions(graph, coarse, *, min_nodes=FINE_MIN_NODES, previous=None):
     """Split every coarse region again by the same modularity rule on its induced subgraph.
 
     The connectivity regions the graph maintains are few and large (16 for 100k nodes, a hub of 20k):
     queries activate half of them and a scope built on them excludes almost nothing. Applying the
     rule recursively inside each region gives units small enough for region scope and portals to
-    mean something, with no new algorithm. Labels are 0..k-1 over all fine regions; small regions
-    stay whole. Returns (fine_labels, region_count).
+    mean something, with no new algorithm. Small regions stay whole.
+
+    Warm start (``previous`` = the last consolidation's fine labels, same node ids): the local moves
+    start from the previous membership, and each resulting sub-region takes over the previous fine
+    id it overlaps most (unclaimed ids only), so ids stay put for regions that did not change — the
+    per-region convergence skip and the per-region shuffle seeds then carry across consolidations.
+    Returns (fine_labels, region_count).
     """
     from .fast_regions import build_regions
     from types import SimpleNamespace
@@ -235,24 +240,50 @@ def fine_regions(graph, coarse, *, min_nodes=FINE_MIN_NODES):
     src = np.asarray(flat.src, np.int64); dst = np.asarray(flat.dst, np.int64)
     sign = np.asarray(flat.sign, np.int8); strength = np.asarray(flat.strength, np.float64)
     coarse = np.asarray(coarse, np.int64)
-    fine = np.full(len(coarse), -1, np.int64)
-    next_id = 0
+    n = len(coarse)
+    prev = None
+    if previous is not None and len(previous):
+        prev = np.full(n, -1, np.int64); m = min(n, len(previous)); prev[:m] = np.asarray(previous[:m], np.int64)
+    fine = np.full(n, -1, np.int64)
+    claimed = set()
+    next_id = (int(prev.max()) + 1) if prev is not None and prev.max() >= 0 else 0
+
+    def take(candidates_prev):
+        # the previous fine id most of these nodes had, if unclaimed; else a fresh id
+        nonlocal next_id
+        if len(candidates_prev):
+            ids, counts = np.unique(candidates_prev[candidates_prev >= 0], return_counts=True)
+            for k in np.argsort(-counts):
+                fid = int(ids[k])
+                if fid not in claimed:
+                    claimed.add(fid); return fid
+        fid = next_id; next_id += 1; claimed.add(fid); return fid
+
     for r in np.unique(coarse):
         members = np.flatnonzero(coarse == r)
         if len(members) < min_nodes:
-            fine[members] = next_id; next_id += 1
+            fine[members] = take(prev[members] if prev is not None else np.empty(0, np.int64))
             continue
-        local = np.full(len(coarse), -1, np.int64); local[members] = np.arange(len(members))
+        local = np.full(n, -1, np.int64); local[members] = np.arange(len(members))
         e = np.flatnonzero((coarse[src] == r) & (coarse[dst] == r))
         if len(e) == 0:
-            fine[members] = next_id; next_id += 1
+            fine[members] = take(prev[members] if prev is not None else np.empty(0, np.int64))
             continue
         source = SimpleNamespace(terms=graph.lazy_terms(members), edge_source=local[src[e]], edge_target=local[dst[e]],
                                  edge_sign=sign[e], vrs_strength=strength[e])
-        regions, _ = build_regions(source, vrs_snapshot_id=graph.snapshot_id)
+        warm = None
+        if prev is not None:
+            had = members[prev[members] >= 0]
+            if len(had):
+                # previous fine ids of these members as local sub-labels 0..k-1 (build_regions warm start)
+                _, sub_old = np.unique(prev[had], return_inverse=True)
+                warm = (SimpleNamespace(terms=SimpleNamespace(members=had), core_labels=sub_old), None)
+        regions, _ = build_regions(source, vrs_snapshot_id=graph.snapshot_id, previous=warm)
         sub = np.asarray(regions.core_labels, np.int64)
-        fine[members] = next_id + sub; next_id += int(sub.max()) + 1
-    return fine, next_id
+        for k in np.unique(sub):
+            group = members[sub == k]
+            fine[group] = take(prev[group] if prev is not None else np.empty(0, np.int64))
+    return fine, len(claimed)
 
 
 def _seed(seed, region):
@@ -340,7 +371,7 @@ def consolidate(graph, memory, previous, *, seed=SEED, cycles=CYCLES, labels=Non
     fine_seconds = 0.0
     if labels is None and FINE_REGIONS and len(coarse):
         t_fine = time.perf_counter()
-        labels, _ = fine_regions(graph, coarse)
+        labels, _ = fine_regions(graph, coarse, previous=getattr(previous, 'labels', None) if previous is not None else None)
         fine_seconds = round(time.perf_counter() - t_fine, 3)
     else:
         labels = coarse
@@ -388,8 +419,12 @@ def consolidate(graph, memory, previous, *, seed=SEED, cycles=CYCLES, labels=Non
     region_ids = sorted(set(int(x) for x in np.unique(inp['labels'])))
     same = inp['labels'][inp['src']] == inp['labels'][inp['dst']]
     region_delta = {}
-    passes = [(r, same & (inp['labels'][inp['src']] == r), _seed(seed, r)) for r in region_ids]
-    passes.append((CONNECTOR_LABEL, ~same, _seed(seed, CONNECTOR_LABEL)))
+    src_label = inp['labels'][inp['src']]
+    passes = [(r, same & (src_label == r), _seed(seed, r)) for r in region_ids]
+    # connectors in bundles by the source record's region (with fine regions most edges cross, so one
+    # global connector pass would run every time; a bundle is skipped like a region when nothing in it
+    # is fresh and it converged last time)
+    passes.extend((('c', r), ~same & (src_label == r), _seed(seed, f'c{r}')) for r in region_ids)
     for r, mask_r, region_seed in passes:
         if not fresh[mask_r].any() and old_delta.get(r, 1.0) <= TOLERANCE:
             region_delta[r] = old_delta[r]
@@ -401,7 +436,7 @@ def consolidate(graph, memory, previous, *, seed=SEED, cycles=CYCLES, labels=Non
         edges, local_nodes, mean, stab, new_strength, evals, rf = result
         strength[edges] = new_strength
         evaluations += evals; reinforced += rf
-        if r == CONNECTOR_LABEL:
+        if isinstance(r, tuple):
             region_delta[r] = float(np.abs(new_strength - before_s).max())
         else:
             before_n = state[local_nodes].copy()

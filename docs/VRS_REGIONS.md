@@ -139,7 +139,14 @@ top ranks are those of the whole store and only the tail is cut.
 
 Defaults: rows 50, portal floor .05, `auto` threshold 2,000 whole-store candidates (location prompts
 that admit the folder listings reach 4,600 and take up to 1.6 s unscoped). The tail answer at rank
-24 is the price of any scope; below the threshold nothing is cut. Fine-region ids are recomputed at
-each consolidation (no warm start yet), so the converged-region skip does not apply across
-consolidations — a consolidation currently refines every region (~10 s at 5k records).
+24 is the price of any scope; below the threshold nothing is cut.
+
+Warm start (later the same day): the fine split starts each coarse region's local moves from the
+previous fine membership and gives every resulting sub-region the previous fine id it overlaps
+most (unclaimed ids only), so ids stay put for regions that did not change — labels agree 100%
+between consecutive consolidations on the live copy — and the per-region convergence skip and
+per-region seeds carry across. Connectors are refined in bundles by the source record's region
+(with fine regions most edges cross, so one global connector pass would have run every time) and
+skipped like regions. Cost after one new record: 3.4 s + 3.6 s to converge (was 25 s + 25 s), of
+which the warm fine split is 1.8 s and the input build 0.8 s.
 
