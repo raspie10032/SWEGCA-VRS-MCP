@@ -159,7 +159,6 @@ def build(graph, memory):
     """Fold every resolved record's evidence into the hypotheses it touches (journal order)."""
     store = memory._store
     ids = store['ids']
-    vocab = store['vocab']
     superseded = memory.superseded
     ev = Evidence()
     touched = {}                      # episode id -> [hypothesis ids] for the weight pass
@@ -181,31 +180,20 @@ def build(graph, memory):
         proposition = obs.get('proposition_id')
         confidence = CONFIDENCE_CLAIM if proposition else CONFIDENCE_OUTCOME
         outcome = 'support' if pol > 0 else 'refute'
-        hids = []
-        if proposition:
-            hids.append('proposition:' + proposition)
-        for c in store['cues'][row]:
-            hids.append('cue:' + vocab.string_of(int(c)))
-        for hid in hids:
-            ev.hypothesis(hid).observe(source, family, context, axes, outcome, producer, confidence, row)
-            ev.observation_count += 1
-        touched[eid] = (hids, confidence, pol)
+        # "an experience record becomes evidence only when it is addressable, relevant to a declared
+        # hypothesis, and admitted under the evidence policy" — a resolved record without a declared
+        # proposition is an outcome, not evidence for anything: undefined stays insufficient (I04), w = 0
+        if not proposition:
+            ev.record_weight[eid] = 0.0
+            continue
+        hid = 'proposition:' + proposition
+        ev.hypothesis(hid).observe(source, family, context, axes, outcome, producer, confidence, row)
+        ev.observation_count += 1
+        touched[eid] = (hid, confidence, pol)
     for h in ev.hypotheses.values():
         h.finish()
-    # record weights from the primary hypothesis (its proposition, else the cue with most evidence)
-    for eid, (hids, confidence, pol) in touched.items():
-        primary = None
-        if hids and hids[0].startswith('proposition:'):
-            primary = hids[0]
-        else:
-            best = -1.0
-            for hid in hids:
-                samples = ev.hypotheses[hid].counts()[2]
-                if samples > best:
-                    best, primary = samples, hid
-        if primary is None:
-            ev.record_weight[eid] = confidence
-            continue
+    # record weight = the arbiter's proposal weight against its proposition's accumulated evidence
+    for eid, (primary, confidence, pol) in touched.items():
         support, refute, samples = ev.hypotheses[primary].counts()
         opposing = (refute if pol > 0 else support) / samples if samples > 0 else 0.0
         uncertainty = 1.0 - min(1.0, samples / CONFIG.minimum_effective_samples_per_axis)
