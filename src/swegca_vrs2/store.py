@@ -763,8 +763,8 @@ class Main:
         """Checkpoint when there is anything to save; returns the receipt or None."""
         return self.checkpoint() if self._dirty else None
 
-    def checkpoint(self):
-        """Write the current verified state as a checkpoint for the latest journal row."""
+    def checkpoint_prepare(self):
+        """Grab the current generation for a checkpoint (call under the owner's lock; cheap)."""
         self._check()
         head = self._journal_head()
         if head is None:
@@ -772,12 +772,33 @@ class Main:
         seq, pair = head
         if pair != self.pair.snapshot_id:
             raise ValueError('checkpoint_does_not_match_journal_head')
-        started = perf_counter_ns()
-        raw = pickle.dumps(dict(identity=self.identity, pair=pair, memory=self.memory,
-                                graph=self.graph, operations=self.operations), protocol=4)
-        # protocol 4 on purpose: protocol 5 unpickles every array as a view on the one big blob,
-        # so any live array keeps the whole blob resident (measured: 2x the data).
-        blob = CHECKPOINT_MAGIC + zlib.compress(raw, 6)
+        return dict(seq=seq, pair=pair, identity=self.identity, memory=self.memory, graph=self.graph,
+                    operations=self.operations, started=perf_counter_ns())
+
+    @staticmethod
+    def checkpoint_serialize(prepared):
+        """Pickle + compress a prepared generation. Needs no lock: generations are immutable.
+        protocol 4 on purpose: protocol 5 unpickles every array as a view on the one big blob,
+        so any live array keeps the whole blob resident (measured: 2x the data)."""
+        raw = pickle.dumps(dict(identity=prepared['identity'], pair=prepared['pair'], memory=prepared['memory'],
+                                graph=prepared['graph'], operations=prepared['operations']), protocol=4)
+        return len(raw), CHECKPOINT_MAGIC + zlib.compress(raw, 6)
+
+    def checkpoint_commit(self, prepared, serialized):
+        """Write a serialized generation if it is still the current one (under the lock)."""
+        if prepared['pair'] != self.pair.snapshot_id:
+            return None                                # a newer generation exists; its own checkpoint will follow
+        return self._checkpoint_write(prepared['seq'], prepared['pair'], serialized, prepared['started'])
+
+    def checkpoint(self):
+        """Write the current verified state as a checkpoint for the latest journal row."""
+        prepared = self.checkpoint_prepare()
+        if prepared is None:
+            return None
+        return self._checkpoint_write(prepared['seq'], prepared['pair'], self.checkpoint_serialize(prepared), prepared['started'])
+
+    def _checkpoint_write(self, seq, pair, serialized, started):
+        raw_len, blob = serialized
         self.db.execute('BEGIN IMMEDIATE')
         try:
             self.db.execute('INSERT OR REPLACE INTO checkpoint(id, seq, pair, blob) VALUES (1,?,?,?)', (seq, pair, blob))
@@ -788,7 +809,7 @@ class Main:
             raise
         self.db.execute('PRAGMA wal_checkpoint(TRUNCATE)')
         self._dirty = 0
-        return dict(seq=seq, bytes=len(blob), raw_bytes=len(raw), elapsed_ns=perf_counter_ns() - started)
+        return dict(seq=seq, bytes=len(blob), raw_bytes=raw_len, elapsed_ns=perf_counter_ns() - started)
 
     # ── journal access across archive segments and live rows ────────────
     def _journal_rows(self, after, upto):

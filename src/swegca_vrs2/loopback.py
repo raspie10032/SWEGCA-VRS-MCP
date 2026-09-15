@@ -271,9 +271,14 @@ def serve(state_dir, *, port=0, allow_ingest=False, idle_hours=8.0):
             # checkpoint after a quiet spell, not inside an ingest: a Stop hook's burst of
             # entries pays for one checkpoint, after it, instead of one per 8 ingests
             if daemon.main.dirty and quiet >= CHECKPOINT_IDLE:
+                # serialize outside the lock (2-3 s at 5k records) so a concurrent hook recall does
+                # not wait; only the short DB write holds the lock
                 with daemon.lock:
-                    if daemon.main.dirty:
-                        daemon.main.checkpoint_if_dirty()
+                    prepared = daemon.main.checkpoint_prepare() if daemon.main.dirty else None
+                if prepared is not None:
+                    serialized = daemon.main.checkpoint_serialize(prepared)
+                    with daemon.lock:
+                        daemon.main.checkpoint_commit(prepared, serialized)
     finally:
         server.shutdown()
         server.server_close()
