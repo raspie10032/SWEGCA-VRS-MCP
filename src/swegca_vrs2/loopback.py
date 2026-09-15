@@ -34,7 +34,7 @@ import time
 from pathlib import Path
 
 from .native_transport import InterfaceError, encode, decode, MAX_BYTES
-from .store import CHECKPOINT_IDLE
+# .store (numpy, scipy, filelock: ~0.5 s) is imported only on the daemon side; a hook process needs the socket client alone
 
 HOST = '127.0.0.1'
 PORT_FILE = 'loopback.port'
@@ -236,6 +236,7 @@ class Daemon:
 
 
 def serve(state_dir, *, port=0, allow_ingest=False, idle_hours=8.0):
+    from .store import CHECKPOINT_IDLE
     daemon = Daemon(state_dir, allow_ingest=allow_ingest, idle_seconds=idle_hours * 3600)
 
     class Handler(socketserver.StreamRequestHandler):
