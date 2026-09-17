@@ -256,3 +256,25 @@ promotion gate a real recall signal" (support, family `verdict:`) against recall
 (family `bench:` — under the evidence rule nothing is promoted yet, so the gate moves no rank).
 That is the arbiter's directional conflict doing what it should: the verdict was made under the
 discarded kernel rule. Record weights now take three values (.25 / .5 / .75).
+
+### Current-vs-past collision (2026-09-17)
+
+The design runs memory activation as Déjà vu → Recall → Replay → Re-evidence, and re-evidence is
+meant to collide the *current* request's evidence with past experience and send conflicts to
+revalidation. Until today the only collision the hook could show was past-vs-past (the store's own
+verdicts disagreeing). Two small pieces close the loop:
+
+* `hook_recall` now returns `conflicts`: for each proposition the re-evidence stage found in
+  conflict among the activated candidates, both sides (source, producer, date, polarity) and the
+  accumulator's standing decision. The hook renders it as 「재검증 필요 — 〈proposition〉: 지지 … 대
+  반박 … · accumulator abstain/…」 followed by the exact call that answers it.
+* `vrs2-confirm.py` admits the session's current evidence as an observation on that proposition
+  (producer `session-main`, source = the file[:line] just examined so the source family is that
+  file, context = project-date, confidence .5 by default because it is a self-report). `--holds` /
+  `--fails` are about the proposition, not about the verdict's label. Only a real opposing
+  observation on the same proposition counts — labels and shared keywords are not conflicts.
+
+First live use: the 2026-09-15 verdict "region-wise consolidation … gives the promotion gate a
+real recall signal" (made under the discarded kernel rule) now stands against recall-bench's
+refute and the session's refute (live stable: promoted 0): three source families, abstain,
+unresolved — exactly what revalidation should look like until a new verdict supersedes it.

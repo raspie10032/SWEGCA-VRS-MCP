@@ -171,7 +171,31 @@ def hook_recall(main, arguments):
             region=root['region_navigation']['paths'].get(candidate.episode_id)))
     controls = activation.re_evidence
     stable = main.graph.stable
-    return dict(status='ok', query=query, pair_snapshot_id=status['pair_snapshot_id'],
+    # current-vs-past collision (2026-09-17): for each proposition the re-evidence stage found in
+    # conflict among the activated candidates, hand the hook both sides (source, producer, date,
+    # polarity) and the accumulator's standing decision, so the main can see *what* collided and
+    # answer it with a session observation (vrs2-confirm.py) instead of a bare "conflict" flag.
+    conflicts = []
+    for proposition in controls.conflicting_propositions:
+        sides = dict(support=[], refute=[])
+        for candidate in activation.recall.candidates:
+            if candidate.episode_id in main.memory.superseded:
+                continue
+            episode = main.memory.episode(candidate.episode_id)
+            obs = episode.steps[0].observation
+            if obs.get('proposition_id') != proposition:
+                continue
+            meta = obs.get('metadata') or {}
+            polarity = obs.get('evidence_polarity')
+            if polarity in sides:
+                sides[polarity].append(dict(source=episode.source_addresses[0][:120], producer=meta.get('producer'),
+                                            date=meta.get('date') or (str(episode.revision)[:10] if str(episode.revision)[:4].isdigit() else ''),
+                                            outcome=episode.steps[0].outcome,
+                                            episode_id=candidate.episode_id))
+        decision = (stable.decisions or {}).get(proposition) if stable is not None and getattr(stable, 'decisions', None) else None
+        conflicts.append(dict(proposition=proposition, support=sides['support'][:4], refute=sides['refute'][:4],
+                              decision=None if decision is None else {k: decision.get(k) for k in ('status', 'reason', 'unresolved', 'source_diversity')}))
+    return dict(status='ok', query=query, pair_snapshot_id=status['pair_snapshot_id'], conflicts=conflicts,
                 candidate_count=len(activation.recall.candidates), returned=len(rows), memories=rows,
                 should_abstain=controls.should_abstain, unresolved_conflict=controls.unresolved_conflict,
                 conflicting_propositions=list(controls.conflicting_propositions),
