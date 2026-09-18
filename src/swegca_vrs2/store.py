@@ -1510,6 +1510,7 @@ class Main:
         #                        value collapses once pending edges hit the floor
         unbridged_factor = UNBRIDGED_FACTOR
         ask_gate, desc_gate = ASK_GATE, DESCRIPTION_GATE
+        query_tokens = [t.casefold() for t in re.findall(r"\w+", str(query))]
         def ask_hits(row, matched_words):
             # the record's own 「찾을 때 묻는 말」 (verdict tail line / memory-doc section / log-entry tail):
             # a query word found there is the author's declared phrasing, the strongest signal we have.
@@ -1523,7 +1524,11 @@ class Main:
             asks, description = asks.casefold(), description.casefold()
             # only rare words count (a broad asks list such as the setup doc's would otherwise catch
             # every question that shares a common word with it)
-            rare = [w.casefold() for w in matched_words if fanout.get(w, 0) <= ASK_GATE_RARE_SHARE * total]
+            # ... and only words that *open* a query token (a Korean stem): a matched fragment such as
+            # 자는 (from 청약일자는) is not the query's word, and as a substring it hits 사용자는 in an
+            # unrelated doc's asks/description (2026-09-18: a 3-word doc outranked the 12-word answer)
+            rare = [w.casefold() for w in matched_words if fanout.get(w, 0) <= ASK_GATE_RARE_SHARE * total
+                    and any(t == w.casefold() or t.startswith(w.casefold()) for t in query_tokens)]
             a = sum(1 for w in rare if asks and w in asks)
             d = sum(1 for w in rare if description and w in description)
             return (1.0 + ask_gate * min(ASK_GATE_MAX_HITS, a)) * (1.0 + desc_gate * min(ASK_GATE_MAX_HITS, d))
