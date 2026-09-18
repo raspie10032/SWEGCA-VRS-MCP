@@ -44,7 +44,8 @@ def main():
 
     # 4. before_context_loss — snapshot from a tiny fake transcript into a throwaway project log
     lab = tempfile.mkdtemp(prefix="vrs2-harness-")
-    proj = os.path.join(os.path.expanduser("~"), ".claude", "projects", adapter.hook("project_dir.py").slug_of(lab), "memory")
+    from swegca_vrs2.harness.project_dir import slug_of
+    proj = os.path.join(os.path.expanduser("~"), ".claude", "projects", slug_of(lab), "memory")
     os.makedirs(proj, exist_ok=True)
     open(os.path.join(proj, "session-log.md"), "w", encoding="utf-8").write("- 2026-09-18 00:0x: 시험 로그\n")
     transcript = os.path.join(lab, "t.jsonl")
