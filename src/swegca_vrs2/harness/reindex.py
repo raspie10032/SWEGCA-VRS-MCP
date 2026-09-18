@@ -129,6 +129,7 @@ def run(cwd, session_id=""):
             name = os.path.basename(path)
             rows = mod.log_records(project, Path(path)) if name == "session-log.md" else mod.doc_records(project, Path(path))
             failed_before = len(errors)
+            pending = []
             for r in rows:
                 prev = manifest.get(r["source"])
                 if prev and prev["revision"] == r["revision"]:
@@ -150,6 +151,19 @@ def run(cwd, session_id=""):
                             cues=list(dict.fromkeys(cues))[:128], metadata=r["metadata"])
                 if prev:
                     args["supersedes"] = prev["episode"]
+                pending.append((r, args, prev))
+
+            def settle(r, prev, out):
+                nonlocal added, updated, skipped
+                manifest[r["source"]] = dict(revision=r["revision"], episode=out["episode_id"])
+                if out.get("idempotent_replay"):
+                    skipped += 1
+                elif prev:
+                    updated += 1
+                else:
+                    added += 1
+
+            def one(r, args, prev):
                 try:
                     out = client.request("ingest", **args)
                 except Exception as error:
@@ -158,16 +172,22 @@ def run(cwd, session_id=""):
                         try:
                             out = client.request("ingest", **args)
                         except Exception as error2:
-                            errors.append(f"{r['source'][:50]}: {error2}"[:160]); continue
+                            errors.append(f"{r['source'][:50]}: {error2}"[:160]); return
                     else:
-                        errors.append(f"{r['source'][:50]}: {error}"[:160]); continue
-                manifest[r["source"]] = dict(revision=r["revision"], episode=out["episode_id"])
-                if out.get("idempotent_replay"):
-                    skipped += 1
-                elif prev:
-                    updated += 1
-                else:
-                    added += 1
+                        errors.append(f"{r['source'][:50]}: {error}"[:160]); return
+                settle(r, prev, out)
+
+            if pending:
+                # batch generations (2026-09-18): one generation per file's rows — the per-record rebuild of the
+                # whole graph (500 ms each at 5.6k records) happens once. All-or-nothing on the daemon; any
+                # refusal (older daemon, a bad supersedes) falls back to the per-row path with its own retries.
+                try:
+                    out = client.request("ingest_many", rows=[a for _, a, _ in pending])
+                    for (r, _, prev), res in zip(pending, out["results"]):
+                        settle(r, prev, res)
+                except Exception:
+                    for r, args, prev in pending:
+                        one(r, args, prev)
             if len(errors) == failed_before:
                 state[path] = stamp(path)       # a file with a failed row is retried next Stop (daemon down, rebuild...)
         if code_lines and not attached and not code_lines[0].startswith("원장 오류"):

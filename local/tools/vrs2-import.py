@@ -168,6 +168,12 @@ class DaemonMain:
             raise ValueError(out.get("reason", "rejected"))
         return out
 
+    def ingest_many(self, rows):
+        out = self.client.request("ingest_many", rows=rows)
+        if out.get("status") == "rejected":
+            raise ValueError(out.get("reason", "rejected"))
+        return out
+
     def status(self):
         return self.client.request("status")
 
@@ -209,6 +215,8 @@ def main():
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--daemon", action="store_true",
                     help="상주 데몬(loopback)의 ingest 로 넣는다 — 데몬이 state 를 쥐고 있을 때(owner.lock) 필수")
+    ap.add_argument("--batch", type=int, default=200,
+                    help="묶음 세대(2026-09-18): 이만큼을 한 세대로 넣는다(ingest_many). 0 이면 한 건씩(옛 경로)")
     a = ap.parse_args()
     sys.stdout.reconfigure(encoding="utf-8")
     state = Path(a.state)
@@ -227,6 +235,51 @@ def main():
     main_ = DaemonMain(state) if a.daemon else Main(state, allow_ingest=True)
     added = skipped = superseded = failed = 0
     started = time.time()
+    def settle(r, prev, out):
+        nonlocal added, skipped, superseded
+        if out.get("idempotent_replay"):
+            skipped += 1
+        else:
+            added += 1
+            if prev:
+                superseded += 1
+        manifest[r["source"]] = dict(revision=r["revision"], episode=out["episode_id"])
+
+    def one(r, args, prev):
+        nonlocal failed
+        try:
+            out = main_.ingest(args)
+        except ValueError as error:
+            # supersedes 가 거절되면(같은 source 규칙 등) 새 기록으로만 넣는다
+            if "supersedes" in args:
+                args.pop("supersedes")
+                out = main_.ingest(args)
+            else:
+                failed += 1
+                print(f"  실패 {r['source'][:60]}: {error}")
+                return
+        settle(r, prev, out)
+
+    def flush(pending, i):
+        # 묶음 세대: 한 묶음 = 한 세대(그래프 재구성 한 번). 데몬/Main 이 묶음을 거절하면 한 건씩으로 물러난다.
+        if not pending:
+            return
+        t = time.perf_counter()
+        try:
+            out = main_.ingest_many([a for _, a, _ in pending])
+            for (r, _, prev), res in zip(pending, out["results"]):
+                settle(r, prev, res)
+        except Exception:
+            for r, args, prev in pending:
+                one(r, args, prev)
+        dt = time.perf_counter() - t
+        st = main_.status()
+        print(f"  [{i+1}/{len(records)}] 넣음 {added} 건너뜀 {skipped} | 묶음 {len(pending)}건 {dt:.2f}s ({dt/len(pending)*1000:.0f} ms/건) | "
+              f"노드 {st['vrs_node_count']:,} 간선 {st['vrs_edge_count']:,} | 경과 {time.time()-started:.0f}s", flush=True)
+        io.open(manifest_path, "w", encoding="utf-8").write(json.dumps(manifest, ensure_ascii=False, indent=0))
+        pending.clear()
+
+    pending = []
     try:
         for i, r in enumerate(records):
             prev = manifest.get(r["source"])
@@ -240,32 +293,17 @@ def main():
                 args.update(proposition=r["proposition"], polarity=r["polarity"])
             if prev and prev["revision"] != r["revision"]:
                 args["supersedes"] = prev["episode"]
-                if not r.get("proposition"):
-                    pass
-            t = time.perf_counter()
-            try:
-                out = main_.ingest(args)
-            except ValueError as error:
-                # supersedes 가 거절되면(같은 source 규칙 등) 새 기록으로만 넣는다
-                if "supersedes" in args:
-                    args.pop("supersedes")
-                    out = main_.ingest(args)
-                else:
-                    failed += 1
-                    print(f"  실패 {r['source'][:60]}: {error}")
-                    continue
-            dt = time.perf_counter() - t
-            if out.get("idempotent_replay"):
-                skipped += 1
-            else:
-                added += 1
-                if prev:
-                    superseded += 1
-            manifest[r["source"]] = dict(revision=r["revision"], episode=out["episode_id"])
-            if added % 25 == 0 and added:
-                st = main_.status()
-                print(f"  [{i+1}/{len(records)}] 넣음 {added} 건너뜀 {skipped} | 최근 {dt:.2f}s | 노드 {st['vrs_node_count']:,} 간선 {st['vrs_edge_count']:,} | 경과 {time.time()-started:.0f}s", flush=True)
-                io.open(manifest_path, "w", encoding="utf-8").write(json.dumps(manifest, ensure_ascii=False, indent=0))
+            if a.batch <= 0:
+                one(r, args, prev)
+                if added % 25 == 0 and added:
+                    st = main_.status()
+                    print(f"  [{i+1}/{len(records)}] 넣음 {added} 건너뜀 {skipped} | 노드 {st['vrs_node_count']:,} 간선 {st['vrs_edge_count']:,} | 경과 {time.time()-started:.0f}s", flush=True)
+                    io.open(manifest_path, "w", encoding="utf-8").write(json.dumps(manifest, ensure_ascii=False, indent=0))
+                continue
+            pending.append((r, args, prev))
+            if len(pending) >= a.batch:
+                flush(pending, i)
+        flush(pending, len(records) - 1)
     finally:
         io.open(manifest_path, "w", encoding="utf-8").write(json.dumps(manifest, ensure_ascii=False, indent=0))
         t = time.perf_counter()

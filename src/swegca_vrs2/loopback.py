@@ -41,7 +41,7 @@ PORT_FILE = 'loopback.port'
 RESIDENT_COMMANDS = {'status', 'cognitive_dialogue_start', 'cognitive_dialogue_continue',
                      'cognitive_dialogue_evidence_open', 'cognitive_dialogue_evidence',
                      'cognitive_dialogue_release'}
-LOCAL_COMMANDS = {'hook_recall', 'ingest', 'checkpoint', 'compact', 'consolidate', 'refine', 'ping', 'shutdown', 'usage', 'alias'}
+LOCAL_COMMANDS = {'hook_recall', 'ingest', 'ingest_many', 'checkpoint', 'compact', 'consolidate', 'refine', 'ping', 'shutdown', 'usage', 'alias'}
 
 
 # ── client ────────────────────────────────────────────────────────────
@@ -267,6 +267,9 @@ class Daemon:
                 return self.resident.request(command, **arguments)
             if command == 'ingest':
                 return self.main.ingest(arguments)
+            if command == 'ingest_many':
+                # batch generations (2026-09-18): K observations -> one generation; all-or-nothing
+                return self.main.ingest_many(list(arguments.get('rows') or []))
             if command == 'alias':
                 # hypothesis registry (2026-09-18): bind alias propositions to a canonical one
                 return self.main.alias_update(arguments.get('canonical'), arguments.get('aliases') or [])

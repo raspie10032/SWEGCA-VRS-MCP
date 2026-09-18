@@ -35,3 +35,11 @@ Since 2026-09-18 these are six-line shims; the bodies are `src/swegca_vrs2/harne
 
 Task cards and scorer for the goal-consistency-under-compaction test (needs a logged-in CLI to
 run with `--autocompact 100000`; inputs are not included).
+
+## bench/vrs2-scale-curve.py
+
+Scale curve (2026-09-18): grows a synthetic store (records mixed from live text, no company data
+leaves the lab dir) to 10k/20k/50k/100k/200k and records ingest ms/record, consolidation seconds,
+regions, edges, recall latency, RSS and disk per step. `--batch 500` uses batch generations
+(`docs/VRS_REGIONS.md`, "Batch generations"); `--batch 1` is the old one-record-one-generation
+path that the first run measured at 150 → 651 ms/record between 2k and 10k.

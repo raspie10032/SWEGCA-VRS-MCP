@@ -448,55 +448,83 @@ class Graph:
         return SimpleNamespace(snapshot_id=self.snapshot_id)
 
     def append(self, episode, snapshot, memory):
+        """One record = one generation (the pre-batch path); identical certificate chain as before."""
+        return self.append_many([episode], snapshot, memory)
+
+    def append_many(self, episodes, snapshot, memory):
+        """K records enter as one generation (batch generations, 2026-09-18).
+
+        Every ingest used to rebuild the whole flat graph and its regions (O(E) per record, E ~ 200 N):
+        measured 500 ms per record at 5.6k records. A batch extends the flat arrays once and builds the
+        regions once. ``snapshot`` is the fingerprint fold over the batch's added records; the journal rows
+        of a batch share the resulting pair id, and replay regroups consecutive equal-pair rows into the same
+        batch, so the region labels (which the consolidation certificate digests) are reproduced exactly.
+        A batch of one is byte-for-byte the old single-record generation.
+        """
         # Full original episodes link to shared literal cues. These are numerical
         # dependencies/navigation associations, never syllogistic entailments.
+        episodes = list(episodes)
+        if not episodes:
+            raise ValueError('append_many_needs_at_least_one_episode')
         flat = self.flat
-        row = memory._store['row_of'][episode.episode_id]
-        cue_ids = graph_cue_ids(memory, row)
-        directory = self.nodes if self.nodes.vocab is not None else NodeDirectory.empty(memory._store['vocab'])
-        fresh = [c for c in cue_ids if directory.cue(c) < 0]
-        nodes = directory.extend(episode.episode_id, fresh)
-        center = nodes[episode.episode_id]
-        endpoints = [nodes.cue(c) for c in cue_ids]
-        names = [episode.episode_id] + ['cue:' + memory._store['vocab'].string_of(c) for c in fresh]
-        src = [x for n in endpoints for x in (center, n)]
-        dst = [x for n in endpoints for x in (n, center)]
-        # vrs-regions (2026-09-15): the record enters as a v0.2 event. Resolved (outcome success/failure or
-        # an explicit proposition polarity) -> direct tanh(1); otherwise 0 and unresolved, so its edges can
-        # only decay at consolidation. Edge sign = the record's polarity. No numerical settling at ingress:
-        # strengths sit at base until the next consolidation refines them region by region.
-        obs = episode.steps[0].observation
-        polarity = vrs_refine.record_polarity(episode, memory.superseded)
-        direct = np.zeros(len(names), dtype=np.float32)
-        new_unresolved = np.ones(len(names), dtype=bool)
-        if polarity:
-            direct[0] = np.tanh(1.0); new_unresolved[0] = False
-        node_updates = []
-        replaced_id = obs.get('supersedes')
-        if replaced_id is not None and replaced_id in self.nodes.episode_node:
-            node_updates.append((self.nodes.episode_node[replaced_id], 0.0, True))   # superseded: no longer resolved
+        vocab = memory._store['vocab']
+        nodes = self.nodes if self.nodes.vocab is not None else NodeDirectory.empty(vocab)
+        old_count = len(nodes)
+        src, dst, sign = [], [], []
+        direct, unresolved = [], []          # per new node, in directory order (record, then its fresh cues)
+        node_updates, late_updates = [], {}  # existing nodes / nodes created earlier in this batch
+        centers, endpoints_all, polarities = [], [], []
+        for episode in episodes:
+            row = memory._store['row_of'][episode.episode_id]
+            cue_ids = graph_cue_ids(memory, row)
+            fresh = [c for c in cue_ids if nodes.cue(c) < 0]
+            nodes = nodes.extend(episode.episode_id, fresh)
+            center = nodes[episode.episode_id]
+            endpoints = [nodes.cue(c) for c in cue_ids]
+            # vrs-regions (2026-09-15): the record enters as a v0.2 event. Resolved (outcome success/failure or
+            # an explicit proposition polarity) -> direct tanh(1); otherwise 0 and unresolved, so its edges can
+            # only decay at consolidation. Edge sign = the record's polarity. No numerical settling at ingress:
+            # strengths sit at base until the next consolidation refines them region by region.
+            polarity = vrs_refine.record_polarity(episode, memory.superseded)
+            direct.append(np.tanh(1.0) if polarity else 0.0); unresolved.append(not polarity)
+            direct.extend([0.0] * len(fresh)); unresolved.extend([True] * len(fresh))
+            replaced_id = episode.steps[0].observation.get('supersedes')
+            if replaced_id is not None and replaced_id in nodes.episode_node:
+                replaced = nodes.episode_node[replaced_id]
+                if replaced < old_count:
+                    node_updates.append((replaced, 0.0, True))   # superseded: no longer resolved
+                else:
+                    late_updates[replaced - old_count] = True    # superseded within this batch
+            src.extend(x for n in endpoints for x in (center, n))
+            dst.extend(x for n in endpoints for x in (n, center))
+            sign.extend([polarity or 1] * (2 * len(endpoints)))
+            centers.append(center); endpoints_all.extend(endpoints); polarities.append(bool(polarity))
+        direct = np.asarray(direct, dtype=np.float32)
+        new_unresolved = np.asarray(unresolved, dtype=bool)
+        for offset in late_updates:
+            direct[offset] = 0.0; new_unresolved[offset] = True
         edits = []
-        grown = flat.extend(new_direct=direct, new_src=src, new_dst=dst, new_sign=[polarity or 1] * len(src),
+        grown = flat.extend(new_direct=direct, new_src=src, new_dst=dst, new_sign=sign,
                             new_strength=[float(vrs_refine.BASE)] * len(src), new_unresolved=new_unresolved,
                             node_updates=node_updates)
-        prior = []
         stable_id = self.stable.version_id if self.stable is not None else 'none'
-        payload = json.dumps([snapshot, 'append', episode.episode_id, len(grown.src), stable_id],
+        ids = episodes[0].episode_id if len(episodes) == 1 else [e.episode_id for e in episodes]
+        payload = json.dumps([snapshot, 'append', ids, len(grown.src), stable_id],
                              ensure_ascii=False, sort_keys=True, separators=(',', ':'), allow_nan=False)
         settled_id = hashlib.sha256(payload.encode('utf-8')).hexdigest()
         # Recompute only the changed connected component. Modularity within that
         # component is global; unchanged disconnected components stay shared.
-        # A merge can only happen through the new record's own edges, so the previous
-        # component ids are exactly those of its endpoints that already existed.
-        previous_ids = {self.components[n] for n in endpoints if n in self.components}
+        # A merge can only happen through the new records' own edges, so the previous
+        # component ids are exactly those of their endpoints that already existed.
+        previous_ids = {self.components[n] for n in endpoints_all if n in self.components}
         previous = self.regions[next(iter(previous_ids))] if len(previous_ids) == 1 else None
         # Common case at scale: the previous component already spanned the whole graph, so the
         # new component is every node in id order (local == global), its edges are all edges,
         # and the level-0 adjacency extends the cached one instead of being re-sorted.
-        whole = (previous is not None and len(previous[0].terms) == len(self.nodes))
+        whole = (previous is not None and len(previous[0].terms) == old_count)
         csr_in = None
         if whole and self._csr is not None and self._csr[0] == next(iter(previous_ids)) \
-                and self._csr[1] == len(self.nodes) and self._csr[2] == len(self.flat.src):
+                and self._csr[1] == old_count and self._csr[2] == len(self.flat.src):
             csr_in = csr_cache.extended(self._csr, grown, len(self.flat.src), edits)
             if csr_cache.VERIFY:
                 csr_cache.verify(*csr_in, grown, _engine_csr)
@@ -510,7 +538,7 @@ class Graph:
                 edge_source=grown.src.astype(np.int64), edge_target=grown.dst.astype(np.int64),
                 edge_sign=grown.sign.astype(np.int8), vrs_strength=np.ones(len(grown.src), np.float64))
         else:
-            members = self._component_members(grown, [center, *(self.nodes[e.episode_id] for e in prior)])
+            members = self._component_members(grown, centers)
             edge_mask = np.isin(grown.src, members)
             edges = np.flatnonzero(edge_mask)
             local = np.full(len(nodes), -1, dtype=np.int64)
@@ -531,7 +559,9 @@ class Graph:
         components, directory = self.components, self.regions
         for old in previous_ids:
             directory = directory.delete(old)
-        for n in members:
+        # every existing member already carries this id when the component kept its id: only new nodes
+        first = old_count if (whole and previous_ids == {component_id}) else 0
+        for n in members[first:] if whole else members:
             n = int(n)
             if components.get(n) != component_id:
                 components = components.set(n, component_id)
@@ -543,17 +573,20 @@ class Graph:
         receipt = dict(version=vrs_refine.VERSION, parent_snapshot_id=self.snapshot_id,
             status='appended_pending_consolidation', pending_node_count=0,
             pending_edges=len(grown.src) - (self.stable.edge_count if self.stable is not None else 0),
-            stable_version_id=stable_id, resolved=bool(polarity), superseded_marked=len(node_updates),
+            stable_version_id=stable_id, resolved=polarities[-1] if len(episodes) == 1 else sum(polarities),
+            superseded_marked=len(node_updates) + len(late_updates),
             legacy_numerical_equivalence=False, whole_graph_convergence_claimed=False,
             logical_implication_claimed=False, cognitive_completion=False,
             persistent_state_mutated=False, authority_granted=False,
             arithmetic_vehicle='region_consolidation_at_idle',
             changed_component_nodes=len(members), changed_component_edges=len(edges),
             region_backend=backend, region_sweeps=list(regions.sweeps),
-            source_episode_count_added=1, historical_outcome=episode.steps[0].outcome,
+            source_episode_count_added=len(episodes), historical_outcome=episodes[-1].steps[0].outcome,
             recorded_agreement_is_not_independent_factual_corroboration=True,
             logical_implication_claimed_by_regions=False, grants_authority=False)
-        return Graph(settled_id, grown, nodes, components, directory, freeze_view(receipt), csr, self.stable)
+        # usage/aliases ride along (before 2026-09-18 an append silently dropped both journaled maps)
+        return Graph(settled_id, grown, nodes, components, directory, freeze_view(receipt), csr, self.stable,
+                     self.usage, self.aliases)
 
     def rebuild_regions(self):
         """Rebuild every component's regions in the shared-array layout (one-time after conversion)."""
@@ -578,7 +611,8 @@ class Graph:
             for n in members:
                 components = components.set(int(n), int(members[0]))
             directory = directory.set(int(members[0]), (regions, frozen(local, np.int32)))
-        return Graph(self.snapshot_id, flat, nodes, components, directory, self.last_receipt)
+        return Graph(self.snapshot_id, flat, nodes, components, directory, self.last_receipt, None, self.stable,
+                     self.usage, self.aliases)
 
     @staticmethod
     def _component_members(flat, starts):
@@ -807,27 +841,50 @@ class Main:
             for _, req, body, fingerprint, _ in self._journal_rows(0, after):
                 kind, row = journal_entry(req, body, fingerprint)
             replayed = 0
-            for _, req, body, fingerprint, expected in self._journal_rows(after, None):
-                kind, row = journal_entry(req, body, fingerprint)
-                if kind == 'alias':
-                    memory, identifier = self.memory, None
-                    graph = self.graph.with_aliases(row['canonical'], row['aliases'])
-                elif kind == 'usage':
-                    memory, identifier = self.memory, None
-                    graph = self.graph.with_usage(row['counts'])
-                elif kind == 'consolidation':
-                    memory, identifier = self.memory, None
-                    graph = self.graph.consolidate(memory, seed=row['seed'], cycles=row['cycles'])
-                    if graph.stable.version_id != row['version_id']:
-                        raise ValueError('stored_generation_integrity_failed')
-                else:
-                    memory, identifier = self.memory.append(row)
-                    graph = self.graph if memory is self.memory else self.graph.append(memory.episode(identifier), digest((self.graph.snapshot_id, fingerprint)), memory)
+            pending = []          # observation rows sharing one pair id = one batch generation (2026-09-18)
+
+            def flush():
+                if not pending:
+                    return
+                expected = pending[0][3]
+                memory, snapshot, episodes, operations = self.memory, self.graph.snapshot_id, [], self.operations
+                for req, row, fingerprint, _ in pending:
+                    memory2, identifier = memory.append(row)
+                    if memory2 is not memory:
+                        episodes.append(memory2.episode(identifier))
+                        snapshot = digest((snapshot, fingerprint))
+                    memory = memory2
+                    operations = operations.set(req, (fingerprint, identifier, expected))
+                graph = self.graph.append_many(episodes, snapshot, memory) if episodes else self.graph
                 pair = FullCurrentMemoryVrsSnapshot(memory, graph.snapshot_id)
                 if pair.snapshot_id != expected:
                     raise ValueError('stored_generation_integrity_failed')
-                self._set_generation(memory, graph, pair, self.operations.set(req, (fingerprint, identifier, pair.snapshot_id)))
+                self._set_generation(memory, graph, pair, operations)
+                pending.clear()
+
+            for _, req, body, fingerprint, expected in self._journal_rows(after, None):
+                kind, row = journal_entry(req, body, fingerprint)
+                if kind in ('alias', 'usage', 'consolidation'):
+                    flush()
+                    memory, identifier = self.memory, None
+                    if kind == 'alias':
+                        graph = self.graph.with_aliases(row['canonical'], row['aliases'])
+                    elif kind == 'usage':
+                        graph = self.graph.with_usage(row['counts'])
+                    else:
+                        graph = self.graph.consolidate(memory, seed=row['seed'], cycles=row['cycles'])
+                        if graph.stable.version_id != row['version_id']:
+                            raise ValueError('stored_generation_integrity_failed')
+                    pair = FullCurrentMemoryVrsSnapshot(memory, graph.snapshot_id)
+                    if pair.snapshot_id != expected:
+                        raise ValueError('stored_generation_integrity_failed')
+                    self._set_generation(memory, graph, pair, self.operations.set(req, (fingerprint, identifier, pair.snapshot_id)))
+                else:
+                    if pending and pending[0][3] != expected:
+                        flush()
+                    pending.append((req, row, fingerprint, expected))
                 replayed += 1
+            flush()
             self._dirty = replayed
             self.restore.update(replayed_after_checkpoint=replayed, elapsed_ns=perf_counter_ns() - started)
             self.owner = AtomicFullCurrentMemoryVrsOwner(self.pair)
@@ -1283,44 +1340,87 @@ class Main:
             checkpoint_pending_ingests=self._dirty)
 
     def ingest(self, arguments):
+        """One observation = one generation (unchanged chain); see ``ingest_many``."""
+        return self.ingest_many([arguments])['results'][0]
+
+    def ingest_many(self, batch):
+        """K observations enter as one generation (batch generations, 2026-09-18).
+
+        All-or-nothing: rows are validated first, memory rows appended in order, the graph extended once
+        (``Graph.append_many``), and the K journal rows written in one transaction with the *same* pair id —
+        that shared id is what tells replay to regroup them. Rows already journaled with the same content
+        are idempotent replays (skipped, reported); a reused request id with other content rejects the whole
+        batch. ``results`` holds one per-row receipt in input order, shaped like the old ``ingest`` result.
+        """
         self._check()
         if not self.allow_ingest:
             raise ValueError('observation_ingress_disabled')
         began = perf_counter_ns()
-        row = observation(arguments)
-        fingerprint = digest(row)
-        existing = self.operations.get(row['request_id'])
-        if existing is not None:
-            if existing[0] != fingerprint:
-                raise ValueError('request_id_reused_with_different_content')
-            return dict(status='observation_recorded', episode_id=existing[1], pair_snapshot_id=existing[2],
-                current_pair_snapshot_id=self.pair.snapshot_id, idempotent_replay=True, grants_authority=False)
-        memory, identifier = self.memory.append(row)
-        added = memory is not self.memory
-        graph = self.graph if not added else self.graph.append(memory.episode(identifier), digest((self.graph.snapshot_id, fingerprint)), memory)
+        if type(batch) is not list or not batch:
+            raise ValueError('ingest_many_needs_a_nonempty_list')
+        rows, seen = [], {}
+        for arguments in batch:
+            row = observation(arguments)
+            fingerprint = digest(row)
+            request_id = row['request_id']
+            existing = self.operations.get(request_id) or seen.get(request_id)
+            if existing is not None:
+                if existing[0] != fingerprint:
+                    raise ValueError('request_id_reused_with_different_content')
+                rows.append((row, fingerprint, existing))       # idempotent replay: not journaled again
+                continue
+            seen[request_id] = (fingerprint, None, None)
+            rows.append((row, fingerprint, None))
+        memory, graph_snapshot, episodes, fresh = self.memory, self.graph.snapshot_id, [], []
+        for row, fingerprint, existing in rows:
+            if existing is not None:
+                continue
+            memory2, identifier = memory.append(row)
+            if memory2 is not memory:
+                episodes.append(memory2.episode(identifier))
+                graph_snapshot = digest((graph_snapshot, fingerprint))
+            memory = memory2
+            fresh.append((row, fingerprint, identifier))
+        graph = self.graph.append_many(episodes, graph_snapshot, memory) if episodes else self.graph
         pair = FullCurrentMemoryVrsSnapshot(memory, graph.snapshot_id)
-        operations = self.operations.set(row['request_id'], (fingerprint, identifier, pair.snapshot_id))
-        self.db.execute('BEGIN IMMEDIATE')
-        try:
-            self.db.execute('INSERT INTO observations(request_id,body,fingerprint,pair) VALUES (?,?,?,?)',
-                (row['request_id'], canonical(row), fingerprint, pair.snapshot_id))
-            self.db.execute('COMMIT')
-        except BaseException:
-            if self.db.in_transaction:
-                self.db.execute('ROLLBACK')
-            if added:
-                self.memory.truncate_to(self.memory.count)   # the successor never became durable
-            raise
-        self.owner.replace(self.pair.snapshot_id, pair)
-        self._set_generation(memory, graph, pair, operations)
-        self._dirty += 1
-        if self._dirty >= CHECKPOINT_EVERY:
-            self.checkpoint()
-        return dict(status='observation_recorded', episode_id=identifier, pair_snapshot_id=pair.snapshot_id,
-            revision=row['revision'], source=row['source'], outcome=row['outcome'],
-            idempotent_replay=False, observation_only=True, grants_authority=False,
-            current_truth_claimed=False, distinct_source_episode_added=int(added),
-            vrs_event=graph.summary() if added else {'status':'unchanged_duplicate_observation'}, elapsed_ns=perf_counter_ns()-began)
+        operations = self.operations
+        for row, fingerprint, identifier in fresh:
+            operations = operations.set(row['request_id'], (fingerprint, identifier, pair.snapshot_id))
+        if fresh:
+            self.db.execute('BEGIN IMMEDIATE')
+            try:
+                self.db.executemany('INSERT INTO observations(request_id,body,fingerprint,pair) VALUES (?,?,?,?)',
+                    [(row['request_id'], canonical(row), fingerprint, pair.snapshot_id) for row, fingerprint, _ in fresh])
+                self.db.execute('COMMIT')
+            except BaseException:
+                if self.db.in_transaction:
+                    self.db.execute('ROLLBACK')
+                if memory is not self.memory:
+                    self.memory.truncate_to(self.memory.count)   # the successor never became durable
+                raise
+            self.owner.replace(self.pair.snapshot_id, pair)
+            self._set_generation(memory, graph, pair, operations)
+            self._dirty += len(fresh)
+            if self._dirty >= CHECKPOINT_EVERY:
+                self.checkpoint()
+        added_ids = {e.episode_id for e in episodes}
+        summary = graph.summary() if episodes else None
+        results, cursor = [], 0
+        for row, fingerprint, existing in rows:
+            if existing is not None:
+                results.append(dict(status='observation_recorded', episode_id=existing[1], pair_snapshot_id=existing[2],
+                    current_pair_snapshot_id=pair.snapshot_id, idempotent_replay=True, grants_authority=False))
+                continue
+            _, _, identifier = fresh[cursor]; cursor += 1
+            added = identifier in added_ids
+            results.append(dict(status='observation_recorded', episode_id=identifier, pair_snapshot_id=pair.snapshot_id,
+                revision=row['revision'], source=row['source'], outcome=row['outcome'],
+                idempotent_replay=False, observation_only=True, grants_authority=False,
+                current_truth_claimed=False, distinct_source_episode_added=int(added),
+                vrs_event=summary if added else {'status': 'unchanged_duplicate_observation'},
+                elapsed_ns=perf_counter_ns() - began))
+        return dict(status='observations_recorded', count=len(rows), journaled=len(fresh), added=len(episodes),
+                    pair_snapshot_id=pair.snapshot_id, results=results, elapsed_ns=perf_counter_ns() - began)
 
     def recall(self, query, expected_snapshot, exclude_kinds=(), region_scope='all'):
         """``expected_snapshot`` None = whatever generation is current (lock-free hook path).

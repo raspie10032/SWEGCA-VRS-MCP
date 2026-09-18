@@ -318,3 +318,38 @@ before over the merged sources, contexts and axes. Tool: `mcp/vrs2-alias.py --ca
 (`--list` shows live propositions with observation counts and producers). Unknown propositions are
 refused. Live registry on 2026-09-18: empty — no two live propositions are the same claim yet; the
 first candidates will come from `settlement-batch` versus a verdict about the same batch.
+
+### Batch generations (2026-09-18, later) — ingest cost was O(E) per record
+
+The first scale run (`mcp/vrs2-scale-curve.py`, synthetic records mixed from live text) showed
+ingest cost rising linearly with the store: 150 ms/record at 2k, 271 at 4k, 385 at 6k, 498 at 8k,
+651 at 10k — before memory was any concern (RSS 553 MB at 10k). A cProfile of 40 ingests on a
+copy of the live store (5,621 records, ~1.1 M edges) put all of it inside `Graph.append`: every
+record rebuilt the whole generation — `build_regions` 294 ms (level-1 `_csr`, `_memberships`
+and the frozen edge copies walk every edge even with the warm start), `FlatGraph.__init__`
+129 ms (`flat.extend` concatenates seven arrays and argsorts twice), the component map loop
+~30 ms (every node), `csr_cache.extended` 20 ms. Checkpoints were not the cause.
+
+Fix: K observations enter as **one generation**. `Graph.append_many` extends the flat arrays once
+and builds the regions once (`append` is the K = 1 case, byte-for-byte the old generation);
+`Main.ingest_many(rows)` validates all rows first, appends the memory rows in order, and writes
+the K journal rows in one transaction **sharing the batch's pair id**. That shared id is the
+batch marker: the replay after a checkpoint regroups consecutive observation rows with one pair
+id into one batch and calls `append_many` once, so the region labels — which the consolidation
+certificate digests through `labels_digest` — come out identical (crash-replay test with
+batches of 20/5/1/4 plus a consolidation: pair id, count and `version_id` reproduced).
+Batches are all-or-nothing; a row already journaled with the same content is an idempotent
+replay inside the batch, a reused request id with other content refuses the whole batch.
+`rebuild_from_journal` stays sequential (it re-derives the chain anyway; a rebuild of 5.6k rows
+is ~47 min and grows quadratically — a batched rebuild is the next step if that ever matters).
+
+Measured on the live copy: K = 1 770 ms/record, K = 10 47, K = 100 43 (includes a checkpoint),
+K = 500 **11.5 ms/record** (includes a checkpoint). Callers: the daemon command `ingest_many`
+(`rows=[…]`), the Stop-hook reindex (one batch per changed file, per-row fallback on any
+refusal or an older daemon), `vrs2-import.py --batch 200` (0 = per row), `vrs2-scale-curve.py
+--batch 500`. Single-record producers (`vrs2-produce.py`, sheet index) are unchanged.
+
+Found on the way and fixed in the same change: `Graph.append` constructed the successor without
+`usage` and `aliases`, so every ingest since the morning silently emptied both journaled maps
+(the journal rows were intact; only the live generation lost them). `append_many` and
+`rebuild_regions` now carry both; `tests/standalone/test_batch.py` pins it.
