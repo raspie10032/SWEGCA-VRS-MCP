@@ -353,3 +353,30 @@ Found on the way and fixed in the same change: `Graph.append` constructed the su
 `usage` and `aliases`, so every ingest since the morning silently emptied both journaled maps
 (the journal rows were intact; only the live generation lost them). `append_many` and
 `rebuild_regions` now carry both; `tests/standalone/test_batch.py` pins it.
+
+### Recall columns (2026-09-18, later) — recall cost was one episode build per candidate row
+
+The same scale run put recall at 2.2 s (auto scope) / 11.4 s (all) per query at 10k records. A
+profile on that store: 83% of an auto-scope recall was the proposition closure at
+`store.recall` — `memory.episode(i)` for every record in every informative cue's posting list,
+just to read its proposition id — and the rest was the engine building every candidate
+(`recall_memory`, ~330 vocabulary lookups per record for cue strings the stages never use) and
+replaying every candidate (`replay_memory`, full builds again), plus the asks gate building each
+candidate to read its text.
+
+Fix, all in the compact index (the engine is untouched):
+
+* per-row columns `props`, `asks` (casefolded asks/description pair), `revs`, `outs`, appended
+  with the row and backfilled once from the blobs for a checkpoint written before them;
+  `rows_for_cue`, `proposition_of(_row)`, `asks_of` read them (the masked view keeps its mask);
+* `recall_candidates(signal)`: the engine's `recall_memory` on cue ids — the same candidate set,
+  the same `matched_cues` in record order, the same Jaccard and the same order (checked equal
+  on 8 live queries and in `test_recall_columns.py`), decoding only the matched cue strings;
+* `episode_light` / `LightView`: a record without its cue strings for the replay and re-evidence
+  stages and for the opponents check (steps, sources, revision are all they read), cached apart
+  from full episodes.
+
+Measured at 10k records (the old-code lab store): auto 3.4 s → **0.33 s**, all 12.7 s → **0.73 s**
+per query. Live store (5.6k, warm daemon): hook recall 186 → 69 ms. Ranking unchanged: the
+14 fresh questions give MRR .778 before and after (and, as of this store, the promotion gate
+moves no rank at all — `promotion-signal` now has a refuting observation of its own).

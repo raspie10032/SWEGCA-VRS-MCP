@@ -154,8 +154,7 @@ def observation(arguments):
     return result
 
 
-_DESCRIPTION = re.compile(r'(?m)^description:[ \t]*(.+)$')
-_ASKS_MARK = re.compile(r'(?:^|\n)[ \t]*(?:##[ \t]*)?찾을 때 묻는 말[ \t]*[:：]?|\(찾을 때 묻는 말[ \t]*[:：]')
+from .compact_index import asks_and_description, LightView  # noqa: E402  (recall columns, 2026-09-18)
 
 
 def asks_of(text):
@@ -163,25 +162,6 @@ def asks_of(text):
     log entry's parenthesized tail — never an inline mention of the phrase (a doc that *talks about*
     asks would otherwise claim every example word it quotes; measured 2026-09-15). '' when absent."""
     return asks_and_description(text)[0]
-
-
-def asks_and_description(text):
-    """(asks, description): the explicit 「찾을 때 묻는 말」 and, for a memory doc, its front-matter
-    description — the author's one-line phrasing of what the doc answers, written in task words
-    (23 of 295 docs have an asks section; every doc has a description). Either may be ''."""
-    asks = ''
-    m = _ASKS_MARK.search(text)
-    if m is not None:
-        tail = text[m.end():]
-        tail = tail.split('\n## ', 1)[0]          # doc section ends at the next heading
-        asks = tail.strip(': \n')[:800]
-    description = ''
-    if text.startswith('---'):
-        head = text[3:].split('\n---', 1)[0]
-        d = _DESCRIPTION.search(head)
-        if d is not None:
-            description = d.group(1).strip().strip('"\'')[:400]
-    return asks, description
 
 
 def journal_entry(request_id, body, fingerprint):
@@ -1451,8 +1431,8 @@ class Main:
         informative = tuple(c for c in selected if fanout[c] * 2 <= total)
         # Complete explicit same-proposition evidence closure, including opponents
         # whose text has no query overlap. Historical outcomes alone never conflict.
-        propositions = {memory.episode(i).steps[0].observation.get('proposition_id')
-            for cue in informative for i in memory.episode_ids_for_cue(cue)} - {None}
+        # recall columns (2026-09-18): a list read per posting row, not an episode build per row
+        propositions = {memory.proposition_of_row(int(r)) for cue in informative for r in memory.rows_for_cue(cue)} - {None}
         cues = (*selected, *('proposition:' + p for p in sorted(propositions)))
         # Candidate order: BM25 over the matched informative cues (tf is 1 in a cue set;
         # idf from postings fanout; length normalization from the record's cue count),
@@ -1467,7 +1447,8 @@ class Main:
         k1, b = 1.2, 0.3   # b measured over 15 known-answer queries: .75 MRR .63, .5 .69, .3 .69 (top3 12/15), .15 .65, 0 .38
         opponents = {}
         for p in propositions:
-            active = [memory.episode(i) for i in memory.propositions[p] if i not in memory.superseded]
+            fetch = getattr(memory, 'episode_light', memory.episode)     # polarity only: no cue strings needed
+            active = [fetch(i) for i in memory.propositions[p] if i not in memory.superseded]
             if {e.steps[0].observation['evidence_polarity'] for e in active} == {'support', 'refute'}:
                 opponents[p] = tuple(sorted(e.episode_id for e in active))
         def judge(episode):
@@ -1557,7 +1538,8 @@ class Main:
                     scope.update(fallback='fewer_than_floor', allowed_regions=sorted(allowed), excluded_rows=0,
                                  would_exclude=excluded)
         signal = detect_deja_vu(memory, query=query, current_cues=cues)
-        recalled = recall_memory(memory, signal)
+        # recall columns (2026-09-18): the engine's recall_memory on cue ids — same RecallResult, no episode builds
+        recalled = memory.recall_candidates(signal) if hasattr(memory, 'recall_candidates') else recall_memory(memory, signal)
         # G6 (vrs-regions): region preactivation after déjà vu — the matched cues' regions are active;
         # a candidate is 'local' when its record sits in an active region, 'portal' when it is reached
         # through a region pair with a promoted bridge (a candidate portal of the stable version), and
@@ -1620,8 +1602,7 @@ class Main:
             # questions: MRR .416 -> .605 with descriptions; the tuned 15 lose a little at equal weight).
             if not ask_gate and not desc_gate:
                 return 0.0
-            asks, description = asks_and_description(memory.episode(row.episode_id).steps[0].observation.get('text', ''))
-            asks, description = asks.casefold(), description.casefold()
+            asks, description = memory.asks_of(row.episode_id)      # casefolded, from the recall columns
             # only rare words count (a broad asks list such as the setup doc's would otherwise catch
             # every question that shares a common word with it)
             # ... and only words that *open* a query token (a Korean stem): a matched fragment such as
@@ -1643,7 +1624,7 @@ class Main:
             return (-sum(idf[c] for c in matched_words) * norm * gate, -row.cue_overlap, row.episode_id)
         recalled = RecallResult(recalled.query, tuple(sorted(recalled.candidates, key=order)),
                                 recalled.snapshot_id, source_dependencies=recalled.source_dependencies)
-        replayed = replay_memory(memory, recalled)
+        replayed = replay_memory(LightView(memory) if hasattr(memory, 'episode_light') else memory, recalled)
         re_evidenced = re_evidence_memory(replayed, judge=judge)
         receipt = MemoryActivationReceipt(schema_version='rozephine-memory-activation-v1',
             snapshot_id=memory.snapshot_id, deja_vu=signal, recall=recalled,
@@ -1665,7 +1646,7 @@ class Main:
                 pending_edges=len(graph.flat.src) - (graph.stable.edge_count if graph.stable is not None else 0),
                 promotion_gate=promotion_gate),
             current_strengths={i: graph.strength(i) for i in ids}, current_promotions={i: graph.strength(i) >= 1.0 for i in ids},
-            current_propositions={i: memory.episode(i).steps[0].observation.get('proposition_id') for i in ids},
+            current_propositions={i: memory.proposition_of(i) for i in ids},
             region_memberships={i: graph.memberships(i) for i in ids},
             region_navigation=dict(active_regions=sorted(active_regions), paths={i: navigation.get(i) for i in ids},
                 rejected=[dict(episode_id=i, **navigation[i]) for i in ids if navigation.get(i, {}).get('path') == 'unbridged'],

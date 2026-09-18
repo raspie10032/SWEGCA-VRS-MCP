@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import sys
 import threading
 import zlib
@@ -35,11 +36,58 @@ from collections import OrderedDict
 import numpy as np
 from immutables import Map
 
-from .engine.mosaic_memory_activation import MemoryEpisode, MemoryStep, OUTCOMES, _cue
+from .engine.mosaic_memory_activation import MemoryEpisode, MemoryStep, OUTCOMES, _cue, RecallCandidate, RecallResult
+
+_DESCRIPTION = re.compile(r'(?m)^description:[ \t]*(.+)$')
+_ASKS_MARK = re.compile(r'(?:^|\n)[ \t]*(?:##[ \t]*)?찾을 때 묻는 말[ \t]*[:：]?|\(찾을 때 묻는 말[ \t]*[:：]')
+
+
+def asks_and_description(text):
+    """(asks, description): the explicit 「찾을 때 묻는 말」 and, for a memory doc, its front-matter
+    description — the author's one-line phrasing of what the doc answers, written in task words
+    (23 of 295 docs have an asks section; every doc has a description). Either may be ''."""
+    asks = ''
+    m = _ASKS_MARK.search(text)
+    if m is not None:
+        tail = text[m.end():]
+        tail = tail.split('\n## ', 1)[0]          # doc section ends at the next heading
+        asks = tail.strip(': \n')[:800]
+    description = ''
+    if text.startswith('---'):
+        head = text[3:].split('\n---', 1)[0]
+        d = _DESCRIPTION.search(head)
+        if d is not None:
+            description = d.group(1).strip().strip('"\'')[:400]
+    return asks, description
+
+
+def _recall_columns(text, proposition):
+    """Per-row recall columns (2026-09-18): the proposition id ('' when none) and the casefolded
+    (asks, description) pair. Recall reads these instead of materializing the episode: at 10k records
+    the proposition closure alone built ~4k episodes per query (measured 2.8 s of a 3.4 s recall)."""
+    asks, description = asks_and_description(text or '')
+    return proposition or '', (asks.casefold(), description.casefold())
+
+
+RECALL_COLUMNS = ('props', 'asks', 'revs', 'outs')
+
+
+class LightView:
+    """The engine's replay/re-evidence stages need each candidate's steps, sources and revision — never its
+    cue strings, which are what an episode build spends its time on (~330 vocabulary lookups per record).
+    This view answers ``episode`` with the same generation's light episode (cues empty)."""
+    __slots__ = ('_index', 'snapshot_id')
+
+    def __init__(self, index):
+        self._index, self.snapshot_id = index, index.snapshot_id
+
+    def episode(self, identifier):
+        return self._index.episode_light(identifier)
 
 BLOCK = 128           # cue strings per vocabulary block
 BLOCK_CACHE = 1 << 20  # decoded vocabulary blocks kept resident: strings are interned and shared, so the
                        # whole decoded vocabulary is cheaper than re-decoding blocks on every episode rebuild
+LIGHT_CACHE = 16384   # light episodes (no cue strings) kept resident for replay/re-evidence (2026-09-18)
 EPISODE_CACHE = 4096  # rebuilt MemoryEpisode objects kept resident (cue strings are interned, so a cached
                       # episode costs one reference per cue, not one string per cue)
 
@@ -284,6 +332,9 @@ class CompactIndex:
                        source=row['source'], revision=row['revision'])
         store['blobs'].append(zlib.compress(json.dumps(payload, ensure_ascii=False, separators=(',', ':')).encode('utf-8'), 6))
         store.setdefault('kinds', []).append(str((row['metadata'] or {}).get('kind') or ''))
+        prop, asks = _recall_columns(row['text'], row['proposition'])
+        store.setdefault('props', []).append(prop); store.setdefault('asks', []).append(asks)
+        store.setdefault('revs', []).append(row['revision']); store.setdefault('outs', []).append(row['outcome'])
         propositions = self.propositions
         if row['proposition']:
             p = row['proposition']
@@ -304,8 +355,9 @@ class CompactIndex:
         while len(store['ids']) > count:
             row = len(store['ids']) - 1
             identifier = store['ids'].pop()
-            if store.get('kinds'):
-                store['kinds'].pop()
+            for column in ('kinds', *RECALL_COLUMNS):
+                if store.get(column):
+                    store[column].pop()
             store['row_of'].pop(identifier, None)
             store['blobs'].pop()
             for cue_id in store['cues'].pop():
@@ -317,6 +369,7 @@ class CompactIndex:
                     else:
                         del store['postings'][int(cue_id)]
             store['cache'].pop(row, None)
+            store.get('light_cache', {}).pop(row, None)
 
     # ── conversion from the ported HotIndex (old checkpoints) ───────────
     @classmethod
@@ -352,6 +405,9 @@ class CompactIndex:
                            source=episode.source_addresses[0], revision=episode.revision)
             store['blobs'].append(zlib.compress(json.dumps(payload, ensure_ascii=False, separators=(',', ':')).encode('utf-8'), 6))
             store.setdefault('kinds', []).append(str((payload.get('metadata') or {}).get('kind') or ''))
+            prop, asks = _recall_columns(payload['text'], payload.get('proposition'))
+            store.setdefault('props', []).append(prop); store.setdefault('asks', []).append(asks)
+            store.setdefault('revs', []).append(payload['revision']); store.setdefault('outs', []).append(payload['outcome'])
         # 3. postings: sort all (cue_id, row) pairs once and slice per cue
         if per_record:
             cue_col = np.concatenate(per_record)
@@ -380,6 +436,125 @@ class CompactIndex:
             self._store['cache'] = OrderedDict()
         if 'kinds' not in self._store:            # checkpoints written before the kind column (2026-09-15)
             self._store['kinds'] = self._backfill_kinds()
+        if any(c not in self._store for c in RECALL_COLUMNS):   # before the recall columns (2026-09-18)
+            self._store['props'], self._store['asks'], self._store['revs'], self._store['outs'] = self._backfill_recall_columns()
+
+    def _backfill_recall_columns(self):
+        store = self._store
+        props, asks, revs, outs = [], [], [], []
+        for blob in store['blobs']:
+            payload = json.loads(zlib.decompress(blob).decode('utf-8'))
+            p, a = _recall_columns(payload.get('text') or '', payload.get('proposition'))
+            props.append(p); asks.append(a); revs.append(payload['revision']); outs.append(payload['outcome'])
+        return props, asks, revs, outs
+
+    def recall_candidates(self, signal, navigation_cues=()):
+        """The engine's ``recall_memory`` on cue ids (2026-09-18): the same ``RecallResult`` — the same
+        candidate set (every record carrying a matched or navigation cue; this index has no semantic
+        families), the same ``matched_cues`` in record cue order, the same Jaccard ``cue_overlap``
+        (|matched| / |record cues ∪ current cues|) and the same order — without decoding any record's
+        ~330 cue strings: only the matched ones are looked up. Measured at 10k records: recall 0.9 s -> ?"""
+        if signal.snapshot_id != self.snapshot_id:
+            raise ValueError("déjà vu snapshot changed before recall")
+        store = self._store
+        vocab = store['vocab']
+        navigation = tuple(dict.fromkeys(_cue(cue) for cue in navigation_cues))
+        current = set(signal.current_cues).union(navigation)
+        current_ids = {}
+        for cue in current:
+            cue_id = vocab.id_of(cue)
+            if cue_id is not None:
+                current_ids[cue_id] = cue
+        rows = set()
+        for cue in dict.fromkeys((*signal.matched_cues, *navigation)):
+            rows.update(int(r) for r in self.rows_for_cue(cue))
+        ids, cue_rows = store['ids'], store['cues']
+        revs, outs = store.get('revs'), store.get('outs')
+        size = len(current)
+        candidates = []
+        for row in rows:
+            row_cues = cue_rows[row]
+            matched = tuple(current_ids[int(c)] for c in row_cues if int(c) in current_ids)
+            if revs is not None and row < len(revs):
+                revision, outcome = revs[row], outs[row]
+            else:
+                episode = self.episode(ids[row]); revision, outcome = episode.revision, episode.steps[0].outcome
+            candidates.append(RecallCandidate(episode_id=ids[row], matched_cues=matched,
+                cue_overlap=len(matched) / (len(row_cues) + size - len(matched)),
+                revision=revision, verification_state='unverified', historical_outcomes=(outcome,)))
+        candidates.sort(key=lambda c: (-c.cue_overlap, c.episode_id))
+        return RecallResult(signal.query, tuple(candidates), self.snapshot_id, source_dependencies=())
+
+    def episode_light(self, identifier):
+        """The record without its cue strings (steps, sources, revision) — what replay and re-evidence
+        read. Cached separately from full episodes (a light one is a few hundred bytes of payload)."""
+        store = self._store
+        row = store['row_of'].get(identifier)
+        if row is None or row >= self.count:
+            raise KeyError(identifier)
+        cache = store.setdefault('light_cache', OrderedDict())
+        lock = store.setdefault('cache_lock', threading.Lock())
+        with lock:
+            episode = cache.get(row)
+            if episode is not None:
+                cache.move_to_end(row)
+                return episode
+            full = store['cache'].get(row)          # a resident full episode: no blob decode at all
+        if full is not None:
+            steps, source, revision = full.steps, full.source_addresses[0], full.revision
+        else:
+            payload = json.loads(zlib.decompress(store['blobs'][row]).decode('utf-8'))
+            steps = (MemoryStep('external_observation', {'text': payload['text'], 'metadata': payload['metadata'],
+                'proposition_id': payload['proposition'], 'evidence_polarity': payload['polarity'],
+                'supersedes': payload['supersedes'], 'current_truth_claimed': False}, (),
+                'Recorded external observation; truth and action authority not granted.',
+                payload['outcome'], (payload['source'],)),)
+            source, revision = payload['source'], payload['revision']
+        episode = object.__new__(MemoryEpisode)
+        for name, value in (('episode_id', store['ids'][row]), ('cues', ()), ('steps', steps),
+                            ('source_addresses', (source,)), ('revision', revision),
+                            ('verification_state', 'unverified')):
+            object.__setattr__(episode, name, value)
+        with lock:
+            cache[row] = episode
+            if len(cache) > LIGHT_CACHE:
+                cache.popitem(last=False)
+        return episode
+
+    def rows_for_cue(self, cue):
+        """Visible row numbers carrying ``cue`` (the id-free form of ``episode_ids_for_cue``)."""
+        store = self._store
+        cue_id = store['vocab'].id_of(cue)
+        if cue_id is None:
+            return ()
+        rows = store['postings'].get(cue_id)
+        if rows is None:
+            return ()
+        return rows[:int(np.searchsorted(rows, self.count))]
+
+    def proposition_of_row(self, row):
+        """The row's explicit proposition id or None — a list read, no episode build."""
+        props = self._store.get('props')
+        if props is None or row >= len(props):
+            return self.episode(self._store['ids'][row]).steps[0].observation.get('proposition_id')
+        return props[row] or None
+
+    def proposition_of(self, identifier):
+        row = self._store['row_of'].get(identifier)
+        if row is None or row >= self.count:
+            raise KeyError(identifier)
+        return self.proposition_of_row(row)
+
+    def asks_of(self, identifier):
+        """Casefolded (asks, description) of the record — the ask/description gate's input."""
+        row = self._store['row_of'].get(identifier)
+        if row is None or row >= self.count:
+            raise KeyError(identifier)
+        asks = self._store.get('asks')
+        if asks is None or row >= len(asks):
+            a, d = asks_and_description(self.episode(identifier).steps[0].observation.get('text', ''))
+            return a.casefold(), d.casefold()
+        return asks[row]
 
     def _backfill_kinds(self):
         store = self._store
@@ -451,6 +626,10 @@ class MaskedIndex(CompactIndex):
         visible = visible[self._mask[visible]]
         ids = store['ids']
         return tuple(ids[int(r)] for r in visible)
+
+    def rows_for_cue(self, cue):
+        rows = CompactIndex.rows_for_cue(self, cue)
+        return rows[self._mask[rows]] if len(rows) else rows
 
     def __getstate__(self):
         raise TypeError('a masked view is not persisted')
