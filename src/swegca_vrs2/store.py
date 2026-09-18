@@ -187,6 +187,11 @@ def asks_and_description(text):
 def journal_entry(request_id, body, fingerprint):
     """Validate one journal row: ('observation', row) or ('consolidation', spec). Both are fingerprinted."""
     entry = json.loads(body)
+    if isinstance(entry, dict) and entry.get('kind') == 'usage':
+        # usage re-evidence (2026-09-18): {source: [injected, opened]} counts from the hooks' ledger
+        if digest(entry) != fingerprint or not request_id.startswith('usage:'):
+            raise ValueError('stored_observation_integrity_failed')
+        return 'usage', entry
     if isinstance(entry, dict) and entry.get('kind') == 'consolidation':
         if digest(entry) != fingerprint or not request_id.startswith('consolidation:'):
             raise ValueError('stored_observation_integrity_failed')
@@ -361,13 +366,15 @@ class Graph:
     # '_names' is kept only so checkpoints written by the earlier Graph layout still unpickle.
     # '_csr' caches the level-0 regions adjacency of the whole-graph component (csr_cache);
     # it is memory-only: not pickled, rebuilt once through the engine's _csr after a restart.
-    __slots__ = ('snapshot_id', 'flat', 'nodes', 'components', 'regions', 'last_receipt', '_names', '_csr', 'stable', '_labels', '_row_labels')
+    __slots__ = ('snapshot_id', 'flat', 'nodes', 'components', 'regions', 'last_receipt', '_names', '_csr', 'stable', '_labels', '_row_labels',
+                 'usage')
 
-    def __init__(self, snapshot_id, flat, nodes, components, regions, last_receipt, csr=None, stable=None):
+    def __init__(self, snapshot_id, flat, nodes, components, regions, last_receipt, csr=None, stable=None, usage=None):
         self.snapshot_id, self.flat, self.nodes = snapshot_id, flat, nodes
         self.components, self.regions, self.last_receipt = components, regions, last_receipt
         self._csr = csr
         self.stable = stable                 # vrs_refine.VRSVersion of the last consolidation, or None
+        self.usage = dict(usage or {})       # usage re-evidence: record source -> [injected, opened] (journaled)
         self._labels = None                  # memory-only: core region label per node (see labels())
         self._row_labels = None              # memory-only: region label per memory row (see row_labels())
 
@@ -379,6 +386,8 @@ class Graph:
             state = state[1] or {}
         for k in self.__slots__:
             setattr(self, k, state.get(k))
+        if self.usage is None:               # checkpoints written before usage existed
+            self.usage = {}
 
     @classmethod
     def empty(cls, identity, vocab=None):
@@ -388,6 +397,21 @@ class Graph:
     @property
     def edge_count(self):
         return len(self.flat.src)
+
+    @property
+    def usage_digest(self):
+        return digest(sorted((k, list(v)) for k, v in self.usage.items())) if self.usage else ''
+
+    def with_usage(self, counts):
+        """Successor generation with usage counts merged in (same topology, strengths, stable version).
+        The snapshot id chains through the counts, so a replay lands on the same pair id."""
+        merged = dict(self.usage)
+        for source, pair in counts.items():
+            merged[str(source)] = [int(pair[0]), int(pair[1])]
+        snapshot_id = digest((self.snapshot_id, 'usage', digest(sorted((k, v) for k, v in merged.items()))))
+        receipt = dict(self.last_receipt, status='usage', parent_snapshot_id=self.snapshot_id, usage_sources=len(merged))
+        return Graph(snapshot_id, self.flat, self.nodes, self.components, self.regions, freeze_view(receipt), self._csr,
+                     self.stable, merged)
 
     @property
     def inputs(self):
@@ -599,7 +623,7 @@ class Graph:
         node = self.nodes.episode_node.get(identifier)
         return None if node is None else int(self.labels()[node])
 
-    def vrs_of(self, identifier):
+    def vrs_of(self, identifier, source=None):
         """Per-record VRS view for receipts: refined strength, kernel promotion (>= 1), the record's evidence
         weight w, its proposition's accumulator decision (SWEGCA), state/stability, pending (not consolidated)."""
         node = self.nodes.episode_node.get(identifier)
@@ -611,7 +635,8 @@ class Graph:
         weight = None if pending or weights is None else round(float(weights[node]), 4)
         return dict(strength=round(self.strength(identifier), 4), promoted=self.strength(identifier) >= vrs_refine.PROMOTION,
                     weight=weight, state=None if pending else round(float(stable.state[node]), 4),
-                    stability=None if pending else round(float(stable.stability[node]), 4), pending=pending)
+                    stability=None if pending else round(float(stable.stability[node]), 4), pending=pending,
+                    usage=self.usage.get(source) if source else None)   # [injected, opened] from the sessions' ledger
 
     def consolidate(self, memory, *, seed=vrs_refine.SEED, cycles=vrs_refine.CYCLES):
         """One consolidation chunk: refine strengths region by region from the current stable version.
@@ -622,7 +647,7 @@ class Graph:
         receipt = dict(self.last_receipt, status='consolidated', stable_version_id=version.version_id,
                        consolidation=version.summary(), parent_snapshot_id=self.snapshot_id)
         # the level-0 adjacency cache weighs edges by strength: rebuilt at the next append
-        return Graph(snapshot_id, flat, self.nodes, self.components, self.regions, freeze_view(receipt), None, version)
+        return Graph(snapshot_id, flat, self.nodes, self.components, self.regions, freeze_view(receipt), None, version, self.usage)
 
     def summary(self):
         return {k: plain(v) for k, v in self.last_receipt.items() if k != 're_evidence_updates'}
@@ -754,7 +779,10 @@ class Main:
             replayed = 0
             for _, req, body, fingerprint, expected in self._journal_rows(after, None):
                 kind, row = journal_entry(req, body, fingerprint)
-                if kind == 'consolidation':
+                if kind == 'usage':
+                    memory, identifier = self.memory, None
+                    graph = self.graph.with_usage(row['counts'])
+                elif kind == 'consolidation':
                     memory, identifier = self.memory, None
                     graph = self.graph.consolidate(memory, seed=row['seed'], cycles=row['cycles'])
                     if graph.stable.version_id != row['version_id']:
@@ -855,7 +883,10 @@ class Main:
                 # daemon consolidates afresh — observations, the source of truth, are untouched
                 dropped.append(seq)
                 continue
-            if kind == 'consolidation':
+            if kind == 'usage':
+                graph = graph.with_usage(row['counts'])
+                identifier = None
+            elif kind == 'consolidation':
                 # a consolidation is re-derived under the current rules: its version id is a certificate
                 # like the pair id, so the row body (and fingerprint) are rewritten with the new one
                 graph = graph.consolidate(memory, seed=row['seed'], cycles=row['cycles'])
@@ -1066,7 +1097,8 @@ class Main:
         # could still move — a connection's strength is how many generations it stayed stable
         if len(graph.flat.src) == 0:
             return False
-        return stable is None or stable.edge_count != len(graph.flat.src) or stable.node_count != graph.flat.count
+        return (stable is None or stable.edge_count != len(graph.flat.src) or stable.node_count != graph.flat.count
+                or (getattr(stable, 'usage_digest', '') or '') != graph.usage_digest)   # usage changed since last refinement
 
     def consolidate_prepare(self):
         """Freeze the current generation (cheap; under the owner's lock)."""
@@ -1108,6 +1140,41 @@ class Main:
         self._set_generation(prepared.memory, graph, pair, operations)
         self._dirty += 1
         return dict(version.summary(), pair_snapshot_id=pair.snapshot_id, stale=self.consolidation_stale())
+
+    def usage_update(self, counts):
+        """Journal usage counts {source: [injected, opened]} (under the lock) and chain the graph through them.
+        Usage is association evidence for the next consolidation, never a promotion (see vrs_refine.USAGE_CAP)."""
+        self._check()
+        if not self.allow_ingest:
+            raise ValueError('observation_ingress_disabled')
+        counts = {str(k): [int(v[0]), int(v[1])] for k, v in dict(counts).items()}
+        # only sources the store knows (live records), and only when a count actually moves
+        live = {self.memory.episode(e).source_addresses[0] for e in self.memory.iter_episode_ids()
+                if e not in self.memory.superseded}
+        known = {source: pair for source, pair in counts.items()
+                 if source in live and self.graph.usage.get(source) != pair}
+        if not known:
+            return dict(status='unchanged', sources=0)
+        body = dict(kind='usage', counts=dict(sorted(known.items())))
+        fingerprint = digest(body)
+        request_id = 'usage:' + fingerprint[:40]
+        memory, graph = self.memory, self.graph.with_usage(known)
+        pair = FullCurrentMemoryVrsSnapshot(memory, graph.snapshot_id)
+        operations = self.operations.set(request_id, (fingerprint, None, pair.snapshot_id))
+        self.db.execute('BEGIN IMMEDIATE')
+        try:
+            self.db.execute('INSERT INTO observations(request_id,body,fingerprint,pair) VALUES (?,?,?,?)',
+                            (request_id, canonical(body), fingerprint, pair.snapshot_id))
+            self.db.execute('COMMIT')
+        except BaseException:
+            if self.db.in_transaction:
+                self.db.execute('ROLLBACK')
+            raise
+        self.owner.replace(self.pair.snapshot_id, pair)
+        self._set_generation(memory, graph, pair, operations)
+        self._dirty += 1
+        return dict(status='usage_recorded', sources=len(known), usage_sources=len(graph.usage),
+                    pair_snapshot_id=pair.snapshot_id, stale=self.consolidation_stale())
 
     def consolidate(self, **options):
         """Prepare + run + commit (tests, manual command). Returns the version summary or None if raced."""

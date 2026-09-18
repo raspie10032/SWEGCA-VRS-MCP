@@ -278,3 +278,30 @@ First live use: the 2026-09-15 verdict "region-wise consolidation … gives the 
 real recall signal" (made under the discarded kernel rule) now stands against recall-bench's
 refute and the session's refute (live stable: promoted 0): three source families, abstain,
 unresolved — exactly what revalidation should look like until a new verdict supersedes it.
+
+### Usage re-evidence (2026-09-18)
+
+The missing link between Replay and Re-evidence: whether a recalled record was actually opened never
+fed back into anything, so VRS strengths could not grow from use. Now:
+
+* the recall hook logs, per injected record, where it can be opened (`opens`: path/offset/limit of the
+  「열기」 line); the PostToolUse logger records each `Read` of a memory file with its offset; the Stop
+  hook's `usage_ledger.py` matches the two per session (opened = a Read of that file overlapping the
+  record's lines after the injection) and keeps `{source: [injected, opened]}`;
+* changed counts reach the daemon as a journal row (`kind: usage`, `usage:<digest>`), chained into the
+  graph snapshot id (`Graph.with_usage`) so replay and rebuild reproduce the same pair ids;
+  `consolidation_stale` also fires when usage changed;
+* `build_inputs` gives a *pending* record (no declared proposition) that was opened an association
+  base `min(USAGE_CAP .2, .05·(1+log2(1+opened)))` and direct `tanh(.1·log2(1+opened))`, unresolved
+  False. Records with a proposition are untouched (the evidence layer decides). The cap keeps
+  4 × base = .8 below PROMOTION 1.0: **use makes a record reachable, never verified**.
+* receipts show `[열림 opened/injected]`; `vrs_of(..., source)` carries the counts.
+
+Found while testing: the kernel never rewrites a record's state (records are only ever sources), so a
+record whose direct changed after its first consolidation kept its pending-time state forever;
+`consolidate` now re-seeds record states from their direct every generation.
+
+Backfill over the hooks' history (2026-09-11 → 18): 255 injected sources, 10 opened (doc-level match
+for receipts written before `opens` existed; session-log entries excluded there), 201 live sources
+journaled. After three generations an opened doc's edges moved .0125 → .0669 while unopened ones
+stayed at the floor.

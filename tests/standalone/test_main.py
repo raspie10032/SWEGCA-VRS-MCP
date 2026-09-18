@@ -359,3 +359,23 @@ def test_region_scope_restricts_candidates_only_when_asked_and_never_loses_addre
     # exact address access ignores scope: the verdict is found by id even under the strictest scope
     direct=main.recall(v['episode_id'],main.pair.snapshot_id,region_scope='regions')
     assert [c.episode_id for c in direct['receipt']['activation'].recall.candidates]==[v['episode_id']]
+
+
+def test_usage_reevidence_grows_association_but_never_promotes_and_replays(main):
+    # a pending record (no declared proposition) that sessions opened after recall: its edges grow from
+    # use, capped below the promotion threshold (use makes a record reachable, never verified)
+    used = record(main, 'used'); idle = record(main, 'idle')
+    main.consolidate()
+    before_used, before_idle = main.graph.strength(used['episode_id']), main.graph.strength(idle['episode_id'])
+    assert main.usage_update({'test:used': [5, 3], 'test:nobody': [1, 1]})['sources'] == 1   # unknown source ignored
+    assert main.consolidation_stale()                      # usage changed since the last refinement
+    for _ in range(12):
+        main.consolidate(cycles=160)
+    assert main.graph.strength(used['episode_id']) > before_used
+    assert main.graph.strength(idle['episode_id']) <= before_idle
+    assert main.graph.strength(used['episode_id']) < 1.0 and not main.graph.vrs_of(used['episode_id'], 'test:used')['promoted']
+    assert main.graph.vrs_of(used['episode_id'], 'test:used')['usage'] == [5, 3]
+    assert main.usage_update({'test:used': [5, 3]})['status'] == 'unchanged'   # same counts: no journal row
+    before = main.pair.snapshot_id; version = main.graph.stable.version_id
+    rows, _ = main.rebuild_from_journal()
+    assert main.pair.snapshot_id == before and main.graph.stable.version_id == version   # usage rows replay exactly

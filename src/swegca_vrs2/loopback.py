@@ -41,7 +41,7 @@ PORT_FILE = 'loopback.port'
 RESIDENT_COMMANDS = {'status', 'cognitive_dialogue_start', 'cognitive_dialogue_continue',
                      'cognitive_dialogue_evidence_open', 'cognitive_dialogue_evidence',
                      'cognitive_dialogue_release'}
-LOCAL_COMMANDS = {'hook_recall', 'ingest', 'checkpoint', 'compact', 'consolidate', 'refine', 'ping', 'shutdown'}
+LOCAL_COMMANDS = {'hook_recall', 'ingest', 'checkpoint', 'compact', 'consolidate', 'refine', 'ping', 'shutdown', 'usage'}
 
 
 # ── client ────────────────────────────────────────────────────────────
@@ -166,7 +166,7 @@ def hook_recall(main, arguments):
             # verdict records end with their asks line; hooks match query cues against it
             asks=_asks_of(obs.get('text', '')),
             # vrs-regions: refined strength, promotion, state/stability, pending (not yet consolidated)
-            vrs=main.graph.vrs_of(candidate.episode_id),
+            vrs=main.graph.vrs_of(candidate.episode_id, episode.source_addresses[0]),
             # G6: how this candidate was reached — local region, via a candidate portal, or unbridged
             region=root['region_navigation']['paths'].get(candidate.episode_id)))
     controls = activation.re_evidence
@@ -248,6 +248,9 @@ class Daemon:
                 return self.resident.request(command, **arguments)
             if command == 'ingest':
                 return self.main.ingest(arguments)
+            if command == 'usage':
+                # usage re-evidence (2026-09-18): the Stop hook's ledger {source: [injected, opened]}
+                return self.main.usage_update(arguments.get('counts') or {})
             if command == 'checkpoint':
                 return dict(status='ok', checkpoint=self.main.checkpoint())
             if command == 'compact':
