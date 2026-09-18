@@ -169,6 +169,24 @@ def hook_recall(main, arguments):
             vrs=main.graph.vrs_of(candidate.episode_id, episode.source_addresses[0]),
             # G6: how this candidate was reached — local region, via a candidate portal, or unbridged
             region=root['region_navigation']['paths'].get(candidate.episode_id)))
+    # repeat counter (2026-09-18): how often the sessions repeated a verdict's mistake — observations from
+    # producer 'gate' (a guard blocked the attempt) or a manual repeat note, one per session
+    repeats = {}
+    for row in rows:
+        pid = row.get('proposition')
+        if not pid or pid in repeats:
+            continue
+        sessions = set(); count = 0
+        for eid in main.memory.propositions.get(pid, ()):
+            if eid in main.memory.superseded:
+                continue
+            ep = main.memory.episode(eid); meta = ep.steps[0].observation.get('metadata') or {}
+            if meta.get('producer') == 'gate' or ep.source_addresses[0].startswith('gate:'):
+                count += 1; sessions.add(str(meta.get('project') or ep.source_addresses[0]))
+        repeats[pid] = dict(observations=count, sessions=len(sessions))
+    for row in rows:
+        if row.get('proposition') in repeats:
+            row['repeats'] = repeats[row['proposition']]
     controls = activation.re_evidence
     stable = main.graph.stable
     # current-vs-past collision (2026-09-17): for each proposition the re-evidence stage found in
