@@ -40,12 +40,16 @@ import sys
 import time
 from pathlib import Path
 
-sys.path.insert(0, r"C:\Users\asm\mcp\SWEGCA-VRS-MCP\src")
+import os
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _vrs2_env import V02_DB, V02_SRC, V02_KEYS, PY, TOOLS  # noqa: E402  (OS-neutral, 2026-09-18)
+if V02_SRC:
+    sys.path.insert(0, V02_SRC)
 from swegca_vrs_mcp.observations import Authenticator, Observation  # noqa: E402
 from swegca_vrs_mcp.stateful import CoreError, StatefulCore  # noqa: E402
 
-STORE = Path(r"C:\Users\asm\mcp\swegca-memory")
-KEYS = Path(r"C:\Users\asm\mcp\swegca-keys\producer-keys.json")
+STORE = Path(os.path.dirname(V02_DB)) if V02_DB else None
+KEYS = Path(V02_KEYS) if V02_KEYS else None
 PRODUCER = "asm-agent"
 MIN_ASKS = 2
 AXES = ("observational", "counterfactual", "intervention", "cross_context")   # SWEGCA accumulator required_axes
@@ -180,7 +184,7 @@ def mirror_to_vrs2():
     importer 가 v0.2 스토어의 살아 있는 판정을 읽어 없는 것만 데몬 ingest 로 넣는다(멱등).
     실패해도 판정 기록 자체는 끝난 뒤라 한 줄만 적고 넘어간다."""
     import subprocess
-    cmd = [r"C:/Users/asm/mcp/vrs2-venv/Scripts/python.exe", r"C:/Users/asm/mcp/vrs2-import.py",
+    cmd = [PY, os.path.join(TOOLS, "vrs2-import.py"),
            "--only", "verdicts", "--daemon"]
     try:
         out = subprocess.run(cmd, capture_output=True, timeout=180)

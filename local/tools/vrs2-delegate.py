@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """위임 패킷 — 서브에이전트에 붙일 기억 영수증을 과제문에서 만든다 (2026-09-14).
 
-    C:/Users/asm/mcp/vrs2-venv/Scripts/python.exe C:/Users/asm/mcp/vrs2-delegate.py "과제문" [옵션]
+    python vrs2-delegate.py "과제문" [옵션]
 
     --cwd PATH        과제가 속한 프로젝트 디렉터리(기본: 현재 디렉터리). 정션이면 실제 프로젝트로 푼다.
     --project SLUG    프로젝트 슬러그를 직접 지정(예: C--Users-asm-Desktop-SQLITE). --cwd 보다 우선.
@@ -40,7 +40,8 @@ HOME = os.path.expanduser("~")
 HOOK = os.path.join(HOME, ".claude", "hooks", "recall_context_v2.py")
 LOG = os.path.join(HOME, ".claude", "hooks", "delegate_packet.log")
 PROJECTS = os.path.join(HOME, ".claude", "projects")
-STATE = os.environ.get("VRS2_STATE") or r"C:\Users\asm\mcp\vrs2-memory"
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _vrs2_env import STATE  # noqa: E402  (OS-neutral, 2026-09-18)
 LIMIT = 12          # 데몬에서 받아 오는 후보 수(훅은 10)
 RECORDS = 4         # 위임 패킷은 프롬프트 훅(1건)보다 넉넉히 — A/B 에서 정답 포함 6/6·4/6 이던 값
 SNIPPET = 900
@@ -89,10 +90,9 @@ files_opened: <직접 연 파일 수(첨부는 세지 않는다)>
 
 
 def load_hook():
-    spec = importlib.util.spec_from_file_location("recall_context_v2", HOOK)
-    hook = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(hook)
-    return hook
+    """회수 훅의 몸통은 이제 패키지(swegca_vrs2.harness.recall)에 있다 — 껍데기 파일이 아니라 모듈을 쓴다(2026-09-18)."""
+    from swegca_vrs2.harness import recall
+    return recall
 
 
 def memory_dir(project):

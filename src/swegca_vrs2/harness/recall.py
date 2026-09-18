@@ -154,7 +154,9 @@ def choose(packet, project, stems=None):
             big = row.get("text_chars", 0) >= BIG_CHARS and len(rare_asked) < 2
             need = BIG_MIN_MATCH if big else RECORD_MIN_MATCH
             if len(informative) >= need:
-                row["_asked"] = len(asked)
+                # order by *rare* ask hits only: a form word ("어떻게") in a doc's asks put the wrong doc first
+                # (2026-09-18: ref_sqlite_google_drive above the IB-campaign doc the store ranked #1)
+                row["_asked"] = len(rare_asked)
                 records.append(row)
     # A memory doc carries the phrasings it will be asked with ("찾을 때 묻는 말"); a record
     # matched through those comes before one that merely mentions the words; among equals the

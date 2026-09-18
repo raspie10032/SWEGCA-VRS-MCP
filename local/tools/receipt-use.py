@@ -6,7 +6,8 @@ import re
 import sys
 
 sys.stdout.reconfigure(encoding="utf-8")
-ROOT = "C:/Users/asm/.claude/projects/"
+import os
+ROOT = os.path.join(os.path.expanduser("~"), ".claude", "projects") + os.sep
 S = {"이 세션 5e9f04f8": "C--Users-asm-Desktop-----/5e9f04f8-ba16-4daa-a148-2bac0eaf94e3.jsonl",
      "gws-cli 세션 12d81232": "C--Users-asm-Desktop-----/12d81232-d5fe-4938-bbad-0d3ec4267b1b.jsonl",
      "T2M 세션 91791fe5": "C--Users-asm-Desktop-T2M--------/91791fe5-cecf-48ea-a3b5-384655fd07a6.jsonl",

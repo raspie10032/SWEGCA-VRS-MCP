@@ -26,13 +26,13 @@ import sys
 import time
 from pathlib import Path
 
-sys.path.insert(0, r"C:\Users\asm\mcp\SWEGCA-VRS-MCP-v2\src")
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _vrs2_env import SRC, STATE, TOOLS, PY, V02_DB, V02_SRC, V02_KEYS, RECEIPTS  # noqa: E402  (OS-neutral, 2026-09-18)
 from swegca_vrs2.store import Main  # noqa: E402
 
-PROJECTS = Path(r"C:\Users\asm\.claude\projects")
-V02_STORE = Path(r"C:\Users\asm\mcp\swegca-memory")
-V02_SRC = r"C:\Users\asm\mcp\SWEGCA-VRS-MCP\src"
-DEFAULT_STATE = Path(r"C:\Users\asm\mcp\vrs2-memory")
+PROJECTS = Path(os.path.join(os.path.expanduser("~"), ".claude", "projects"))
+V02_STORE = Path(os.path.dirname(V02_DB)) if V02_DB else None
+DEFAULT_STATE = Path(STATE)
 DOC_SPLIT = 8000
 SKIP_DOCS = {"MEMORY.md", "session-log.md"}
 
@@ -116,7 +116,7 @@ def verdict_records():
     sys.path.insert(0, V02_SRC)
     from swegca_vrs_mcp.observations import Authenticator
     from swegca_vrs_mcp.stateful import StatefulCore
-    auth = Authenticator.load(Path(r"C:\Users\asm\mcp\swegca-keys\producer-keys.json"))
+    auth = Authenticator.load(Path(V02_KEYS))
     core = StatefulCore(V02_STORE, writable=False, authenticator=auth)
     try:
         rows = core._db.execute(

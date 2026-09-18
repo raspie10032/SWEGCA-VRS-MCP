@@ -4,7 +4,7 @@
 색인·그래프를 새 규칙으로 짓고 체크포인트·compact 한다. 행마다 저장된 pair id 를 재검증하므로 결과는 저널에
 비트 충실하다(스냅숏 사슬은 fingerprint 를 다이제스트하지 노드 집합을 다이제스트하지 않는다).
 
-    C:/Users/asm/mcp/vrs2-venv/Scripts/python.exe C:/Users/asm/mcp/vrs2-rebuild-graph.py --state <dir> [--restart-daemon]
+    python vrs2-rebuild-graph.py --state <dir> [--restart-daemon]
 
 데몬이 그 state 를 쥐고 있으면 먼저 내린다(--restart-daemon 이면 끝나고 다시 띄운다). 진행은 stdout 과
 `<state>/rebuild.log` 에 50행마다 한 줄."""
@@ -14,7 +14,9 @@ import os
 import sys
 import time
 
-sys.path.insert(0, r"C:/Users/asm/mcp/SWEGCA-VRS-MCP-v2/src")
+import os
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _vrs2_env import SRC, STATE, TOOLS, PY, V02_DB, V02_SRC, V02_KEYS, RECEIPTS  # noqa: E402  (OS-neutral, 2026-09-18)
 
 
 def main():

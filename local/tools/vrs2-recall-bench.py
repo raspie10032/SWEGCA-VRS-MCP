@@ -15,11 +15,12 @@ import shutil
 import sys
 import time
 
-sys.path.insert(0, r"C:/Users/asm/mcp/SWEGCA-VRS-MCP-v2/src")
-sys.path.insert(0, r"C:/Users/asm/mcp/ab-sonnet-main")
-LIVE = r"C:/Users/asm/mcp/vrs2-memory/memory.sqlite3"
-LAB = r"C:/Users/asm/mcp/vrs2-bench-lab"
-PRODUCE = r"C:/Users/asm/mcp/vrs2-produce.py"
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _vrs2_env import SRC, STATE, TOOLS, PY, V02_DB, V02_SRC, V02_KEYS, RECEIPTS  # noqa: E402  (OS-neutral, 2026-09-18)
+sys.path.insert(0, os.path.join(TOOLS, "ab-sonnet-main"))
+LIVE = os.path.join(STATE, "memory.sqlite3")
+LAB = os.path.join(os.path.dirname(STATE), "vrs2-bench-lab")
+PRODUCE = os.path.join(TOOLS, "vrs2-produce.py")
 EXCLUDE = ("fs_listing", "test")
 
 

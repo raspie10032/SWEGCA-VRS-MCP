@@ -7,19 +7,23 @@ v0.2 스토어는 append-only 라 살아 있는 판정마다 `obs:<slug>@axes` �
 낼 때 쓴 **증거의 종류**다(observational 재거나 셈 / intervention 바꾸고 잼 / counterfactual 대조군·
 기준선 / cross_context 다른 맥락에서 재현). 끝나면 importer 가 vrs2 에 같은 소스 revision 2 로 넣는다.
 
-    C:/Users/asm/mcp/vrs2-venv/Scripts/python.exe C:/Users/asm/mcp/swegca-verdict-axes.py [--dry-run]
+    python swegca-verdict-axes.py [--dry-run]
 """
 import json
 import sys
 import time
 from pathlib import Path
 
-sys.path.insert(0, r"C:/Users/asm/mcp/SWEGCA-VRS-MCP/src")
+import os
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _vrs2_env import V02_DB, V02_SRC, V02_KEYS  # noqa: E402  (OS-neutral, 2026-09-18)
+if V02_SRC:
+    sys.path.insert(0, V02_SRC)
 from swegca_vrs_mcp.observations import Authenticator, Observation  # noqa: E402
 from swegca_vrs_mcp.stateful import StatefulCore, CoreError  # noqa: E402
 
-KEYS = Path(r"C:/Users/asm/mcp/swegca-keys/producer-keys.json")
-STORE = Path(r"C:/Users/asm/mcp/swegca-memory")
+KEYS = Path(V02_KEYS) if V02_KEYS else None
+STORE = Path(os.path.dirname(V02_DB)) if V02_DB else None
 PRODUCER = "asm-agent"        # the registered producer (swegca-verdict.py)
 OBS, INT, CF, CROSS = "observational", "intervention", "counterfactual", "cross_context"
 
