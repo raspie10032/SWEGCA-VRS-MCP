@@ -305,3 +305,16 @@ Backfill over the hooks' history (2026-09-11 → 18): 255 injected sources, 10 o
 for receipts written before `opens` existed; session-log entries excluded there), 201 live sources
 journaled. After three generations an opened doc's edges moved .0125 → .0669 while unopened ones
 stayed at the floor.
+
+### Hypothesis registry (2026-09-18)
+
+The accumulator keys hypotheses by the exact proposition string, so two producers stating the same
+claim in different words never share evidence. A binding `{canonical, aliases}` is journaled
+(`kind: alias`, chained into the graph snapshot id, replayed and rebuilt like usage rows);
+`vrs_evidence.build` folds an alias's observations into the canonical hypothesis and `build_inputs`
+raises one virtual node per canonical proposition with the merged members. A binding is a
+declaration, not evidence: no record is superseded or removed, and the accumulator decides as
+before over the merged sources, contexts and axes. Tool: `mcp/vrs2-alias.py --canonical … --alias …`
+(`--list` shows live propositions with observation counts and producers). Unknown propositions are
+refused. Live registry on 2026-09-18: empty — no two live propositions are the same claim yet; the
+first candidates will come from `settlement-batch` versus a verdict about the same batch.

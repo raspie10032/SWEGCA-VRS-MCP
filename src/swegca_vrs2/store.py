@@ -187,6 +187,11 @@ def asks_and_description(text):
 def journal_entry(request_id, body, fingerprint):
     """Validate one journal row: ('observation', row) or ('consolidation', spec). Both are fingerprinted."""
     entry = json.loads(body)
+    if isinstance(entry, dict) and entry.get('kind') == 'alias':
+        # hypothesis registry (2026-09-18): {canonical, aliases} — one hypothesis for several phrasings
+        if digest(entry) != fingerprint or not request_id.startswith('alias:'):
+            raise ValueError('stored_observation_integrity_failed')
+        return 'alias', entry
     if isinstance(entry, dict) and entry.get('kind') == 'usage':
         # usage re-evidence (2026-09-18): {source: [injected, opened]} counts from the hooks' ledger
         if digest(entry) != fingerprint or not request_id.startswith('usage:'):
@@ -367,14 +372,16 @@ class Graph:
     # '_csr' caches the level-0 regions adjacency of the whole-graph component (csr_cache);
     # it is memory-only: not pickled, rebuilt once through the engine's _csr after a restart.
     __slots__ = ('snapshot_id', 'flat', 'nodes', 'components', 'regions', 'last_receipt', '_names', '_csr', 'stable', '_labels', '_row_labels',
-                 'usage')
+                 'usage', 'aliases')
 
-    def __init__(self, snapshot_id, flat, nodes, components, regions, last_receipt, csr=None, stable=None, usage=None):
+    def __init__(self, snapshot_id, flat, nodes, components, regions, last_receipt, csr=None, stable=None, usage=None,
+                 aliases=None):
         self.snapshot_id, self.flat, self.nodes = snapshot_id, flat, nodes
         self.components, self.regions, self.last_receipt = components, regions, last_receipt
         self._csr = csr
         self.stable = stable                 # vrs_refine.VRSVersion of the last consolidation, or None
         self.usage = dict(usage or {})       # usage re-evidence: record source -> [injected, opened] (journaled)
+        self.aliases = dict(aliases or {})   # hypothesis registry: alias proposition -> canonical (journaled)
         self._labels = None                  # memory-only: core region label per node (see labels())
         self._row_labels = None              # memory-only: region label per memory row (see row_labels())
 
@@ -388,6 +395,8 @@ class Graph:
             setattr(self, k, state.get(k))
         if self.usage is None:               # checkpoints written before usage existed
             self.usage = {}
+        if self.aliases is None:
+            self.aliases = {}
 
     @classmethod
     def empty(cls, identity, vocab=None):
@@ -397,6 +406,26 @@ class Graph:
     @property
     def edge_count(self):
         return len(self.flat.src)
+
+    @property
+    def alias_digest(self):
+        return digest(sorted(self.aliases.items())) if self.aliases else ''
+
+    def with_aliases(self, canonical, aliases):
+        """Successor generation with alias propositions bound to a canonical one (chained into the snapshot id)."""
+        merged = dict(self.aliases)
+        canonical = merged.get(canonical, canonical)             # an alias of an alias lands on the root
+        for a in aliases:
+            if a != canonical:
+                merged[str(a)] = str(canonical)
+        for a, c in list(merged.items()):                        # keep the map flat
+            while c in merged and merged[c] != c:
+                c = merged[c]
+            merged[a] = c
+        snapshot_id = digest((self.snapshot_id, 'alias', digest(sorted(merged.items()))))
+        receipt = dict(self.last_receipt, status='alias', parent_snapshot_id=self.snapshot_id, aliases=len(merged))
+        return Graph(snapshot_id, self.flat, self.nodes, self.components, self.regions, freeze_view(receipt), self._csr,
+                     self.stable, self.usage, merged)
 
     @property
     def usage_digest(self):
@@ -411,7 +440,7 @@ class Graph:
         snapshot_id = digest((self.snapshot_id, 'usage', digest(sorted((k, v) for k, v in merged.items()))))
         receipt = dict(self.last_receipt, status='usage', parent_snapshot_id=self.snapshot_id, usage_sources=len(merged))
         return Graph(snapshot_id, self.flat, self.nodes, self.components, self.regions, freeze_view(receipt), self._csr,
-                     self.stable, merged)
+                     self.stable, merged, self.aliases)
 
     @property
     def inputs(self):
@@ -647,7 +676,8 @@ class Graph:
         receipt = dict(self.last_receipt, status='consolidated', stable_version_id=version.version_id,
                        consolidation=version.summary(), parent_snapshot_id=self.snapshot_id)
         # the level-0 adjacency cache weighs edges by strength: rebuilt at the next append
-        return Graph(snapshot_id, flat, self.nodes, self.components, self.regions, freeze_view(receipt), None, version, self.usage)
+        return Graph(snapshot_id, flat, self.nodes, self.components, self.regions, freeze_view(receipt), None, version, self.usage,
+                     self.aliases)
 
     def summary(self):
         return {k: plain(v) for k, v in self.last_receipt.items() if k != 're_evidence_updates'}
@@ -779,7 +809,10 @@ class Main:
             replayed = 0
             for _, req, body, fingerprint, expected in self._journal_rows(after, None):
                 kind, row = journal_entry(req, body, fingerprint)
-                if kind == 'usage':
+                if kind == 'alias':
+                    memory, identifier = self.memory, None
+                    graph = self.graph.with_aliases(row['canonical'], row['aliases'])
+                elif kind == 'usage':
                     memory, identifier = self.memory, None
                     graph = self.graph.with_usage(row['counts'])
                 elif kind == 'consolidation':
@@ -883,7 +916,10 @@ class Main:
                 # daemon consolidates afresh — observations, the source of truth, are untouched
                 dropped.append(seq)
                 continue
-            if kind == 'usage':
+            if kind == 'alias':
+                graph = graph.with_aliases(row['canonical'], row['aliases'])
+                identifier = None
+            elif kind == 'usage':
                 graph = graph.with_usage(row['counts'])
                 identifier = None
             elif kind == 'consolidation':
@@ -1098,7 +1134,8 @@ class Main:
         if len(graph.flat.src) == 0:
             return False
         return (stable is None or stable.edge_count != len(graph.flat.src) or stable.node_count != graph.flat.count
-                or (getattr(stable, 'usage_digest', '') or '') != graph.usage_digest)   # usage changed since last refinement
+                or (getattr(stable, 'usage_digest', '') or '') != graph.usage_digest    # usage changed since last refinement
+                or (getattr(stable, 'alias_digest', '') or '') != graph.alias_digest)   # registry changed
 
     def consolidate_prepare(self):
         """Freeze the current generation (cheap; under the owner's lock)."""
@@ -1174,6 +1211,45 @@ class Main:
         self._set_generation(memory, graph, pair, operations)
         self._dirty += 1
         return dict(status='usage_recorded', sources=len(known), usage_sources=len(graph.usage),
+                    pair_snapshot_id=pair.snapshot_id, stale=self.consolidation_stale())
+
+    def alias_update(self, canonical, aliases):
+        _canonical_json = globals()['canonical']
+        """Journal a hypothesis-registry binding: the alias propositions' evidence folds into the canonical one.
+        Bindings are declarations (journaled, replayed, rebuilt), not evidence — they change which observations
+        share a hypothesis, and the accumulator decides as before."""
+        self._check()
+        if not self.allow_ingest:
+            raise ValueError('observation_ingress_disabled')
+        canonical = str(canonical).strip()
+        aliases = sorted({str(a).strip() for a in aliases if str(a).strip() and str(a).strip() != canonical})
+        if not canonical or not aliases:
+            raise ValueError('alias_binding_empty')
+        known = set(self.memory.propositions)
+        unknown = [a for a in [canonical, *aliases] if a not in known and a not in self.graph.aliases]
+        if unknown:
+            raise ValueError('unknown_proposition: ' + '; '.join(unknown)[:300])
+        if all(self.graph.aliases.get(a) == self.graph.aliases.get(canonical, canonical) for a in aliases):
+            return dict(status='unchanged')
+        body = dict(kind='alias', canonical=canonical, aliases=aliases)
+        fingerprint = digest(body)
+        request_id = 'alias:' + fingerprint[:40]
+        memory, graph = self.memory, self.graph.with_aliases(canonical, aliases)
+        pair = FullCurrentMemoryVrsSnapshot(memory, graph.snapshot_id)
+        operations = self.operations.set(request_id, (fingerprint, None, pair.snapshot_id))
+        self.db.execute('BEGIN IMMEDIATE')
+        try:
+            self.db.execute('INSERT INTO observations(request_id,body,fingerprint,pair) VALUES (?,?,?,?)',
+                            (request_id, _canonical_json(body), fingerprint, pair.snapshot_id))
+            self.db.execute('COMMIT')
+        except BaseException:
+            if self.db.in_transaction:
+                self.db.execute('ROLLBACK')
+            raise
+        self.owner.replace(self.pair.snapshot_id, pair)
+        self._set_generation(memory, graph, pair, operations)
+        self._dirty += 1
+        return dict(status='alias_recorded', canonical=canonical, aliases=aliases, registry=len(graph.aliases),
                     pair_snapshot_id=pair.snapshot_id, stale=self.consolidation_stale())
 
     def consolidate(self, **options):

@@ -379,3 +379,31 @@ def test_usage_reevidence_grows_association_but_never_promotes_and_replays(main)
     before = main.pair.snapshot_id; version = main.graph.stable.version_id
     rows, _ = main.rebuild_from_journal()
     assert main.pair.snapshot_id == before and main.graph.stable.version_id == version   # usage rows replay exactly
+
+
+def test_hypothesis_registry_folds_alias_propositions_into_one_and_replays(main):
+    # two producers state the same claim in different words: without a binding they are two hypotheses
+    # with one observation each; bound, they are one hypothesis with two source families
+    a = main.ingest(dict(request_id='a', text='같은 말 첫 문장', source='verdict:a', revision='1',
+                         proposition='the batch completes without failure', polarity='support',
+                         metadata=dict(producer='asm-agent', project='P1')))
+    b = main.ingest(dict(request_id='b', text='같은 말 둘째 문장', source='batch:daily#1', revision='1',
+                         proposition='the daily audit batch finishes cleanly', polarity='support',
+                         metadata=dict(producer='settlement-batch', project='P2')))
+    main.consolidate()
+    before = main.graph.stable.decisions
+    assert len(before) == 2 and all(d['source_diversity'] == 1 for d in before.values())
+    with pytest.raises(ValueError):
+        main.alias_update('the batch completes without failure', ['no such proposition'])
+    r = main.alias_update('the batch completes without failure', ['the daily audit batch finishes cleanly'])
+    assert r['status'] == 'alias_recorded' and main.consolidation_stale()
+    main.consolidate()
+    after = main.graph.stable.decisions
+    assert list(after) == ['the batch completes without failure']
+    assert after['the batch completes without failure']['source_diversity'] == 2
+    assert main.alias_update('the batch completes without failure', ['the daily audit batch finishes cleanly'])['status'] == 'unchanged'
+    snapshot = main.pair.snapshot_id; version = main.graph.stable.version_id
+    main.rebuild_from_journal()
+    assert main.pair.snapshot_id == snapshot and main.graph.stable.version_id == version
+    # both records still resolve and neither is superseded: a binding declares sameness, it deletes nothing
+    assert a['episode_id'] not in main.memory.superseded and b['episode_id'] not in main.memory.superseded

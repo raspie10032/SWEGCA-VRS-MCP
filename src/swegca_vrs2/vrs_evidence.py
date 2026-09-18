@@ -161,6 +161,7 @@ def build(graph, memory):
     ids = store['ids']
     superseded = memory.superseded
     ev = Evidence()
+    aliases = getattr(graph, 'aliases', None) or {}     # hypothesis registry: alias proposition -> canonical
     touched = {}                      # episode id -> [hypothesis ids] for the weight pass
     for row in range(memory.count):
         eid = ids[row]
@@ -186,7 +187,7 @@ def build(graph, memory):
         if not proposition:
             ev.record_weight[eid] = 0.0
             continue
-        hid = 'proposition:' + proposition
+        hid = 'proposition:' + aliases.get(proposition, proposition)
         ev.hypothesis(hid).observe(source, family, context, axes, outcome, producer, confidence, row)
         ev.observation_count += 1
         touched[eid] = (hid, confidence, pol)

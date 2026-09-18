@@ -132,7 +132,7 @@ class VRSVersion:
                  'prop_state', 'prop_pid', 'region_delta', 'delta', 'converged', 'promoted', 'reinforced', 'evaluations',
                  'resolved_count', 'seconds', 'regions', 'connector_edges', 'direct', 'unresolved', 'prop_direct', 'prop_unresolved',
                  'portals', 'portal_events', 'coarse_labels', 'fine_seconds', 'decisions', 'record_weight', 'evidence_counts',
-                 'usage_digest', 'usage_records')
+                 'usage_digest', 'usage_records', 'alias_digest')
 
     def __init__(self, **k):
         for name in self.__slots__:
@@ -342,13 +342,17 @@ def build_inputs(graph, memory, labels):
     f_src, f_dst = src[forward], dst[forward]
     base = np.maximum(np.maximum(weight[f_src], usage_base[f_src]), BASE_FLOOR).astype(np.float32)
     sign = np.ones(len(forward), np.int8)                      # association edges carry no polarity
-    prop_ids = sorted(memory.propositions)
+    aliases = getattr(graph, 'aliases', None) or {}
+    members = {}                                                # canonical pid -> episode ids (aliases merged)
+    for pid, eids in memory.propositions.items():
+        members.setdefault(aliases.get(pid, pid), set()).update(eids)
+    prop_ids = sorted(members)
     p_direct, p_unresolved, p_src, p_dst, p_sign, p_base, p_label = [], [], [], [], [], [], []
     decisions = {}
     for k, pid in enumerate(prop_ids):
         pnode = n + k; first = None
         h = evidence.hypotheses.get('proposition:' + pid)
-        for eid in sorted(memory.propositions[pid]):
+        for eid in sorted(members[pid]):
             rnode = nodes.episode_node.get(eid)
             if rnode is None:
                 continue
@@ -372,7 +376,7 @@ def build_inputs(graph, memory, labels):
                 base=np.concatenate([base, np.asarray(p_base, np.float32)]),
                 proposition_ids=prop_ids, prop_edges=len(p_src), resolved_count=resolved_count,
                 decisions=decisions, record_weight=weight, usage_records=usage_records,
-                usage_digest=getattr(graph, 'usage_digest', ''),
+                usage_digest=getattr(graph, 'usage_digest', ''), alias_digest=getattr(graph, 'alias_digest', ''),
                 evidence_counts=dict(hypotheses=len(evidence.hypotheses), observations=evidence.observation_count,
                                      accepted=sum(1 for h in evidence.hypotheses.values() if h.decision.status == 'accept'),
                                      rejected=sum(1 for h in evidence.hypotheses.values() if h.decision.status == 'reject'),
@@ -515,6 +519,7 @@ def consolidate(graph, memory, previous, *, seed=SEED, cycles=CYCLES, labels=Non
                          promoted=promoted, reinforced=reinforced, evaluations=evaluations,
                          resolved_count=inp['resolved_count'], seconds=round(time.perf_counter() - started, 3),
                          usage_digest=inp.get('usage_digest', ''), usage_records=inp.get('usage_records', 0),
+                         alias_digest=inp.get('alias_digest', ''),
                          regions=len(region_ids), connector_edges=int((~same).sum()),
                          direct=inp['direct'][:n_real].astype(np.float32), unresolved=inp['unresolved'][:n_real].copy(),
                          prop_direct=inp['direct'][n_real:].astype(np.float32), prop_unresolved=inp['unresolved'][n_real:].copy(),
