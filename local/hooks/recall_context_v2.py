@@ -290,14 +290,13 @@ def render(packet, verdicts, records):
     return "\n".join(lines)
 
 
-def main():
+def context_for(prompt, cwd, session):
+    """Adapter entry (2026-09-18): the recall packet for one prompt as text, or None when nothing is injected.
+    Same rules and receipts as the hook; the hook's main() is a thin wrapper around this."""
     started = time.perf_counter()
-    try:
-        data = json.loads(sys.stdin.read() or "{}")
-    except ValueError:
-        return
-    prompt = str(data.get("prompt") or data.get("user_prompt") or "")
-    session = str(data.get("session_id") or "")[:8]
+    prompt = str(prompt or "")
+    session = str(session or "")[:8]
+    data = {"cwd": cwd}
     # a background-task notification arrives as a prompt too (2026-09-14: ~20 recalls nobody asked for)
     if "<task-notification>" in prompt or prompt.lstrip().startswith("[SYSTEM NOTIFICATION"):
         note(skip="notification", session=session)
@@ -320,7 +319,7 @@ def main():
     if not verdicts and not records:
         note(skip="weak", words=words, session=session,
              top=[(r["source"][:60], r["matched"]) for r in packet["memories"][:3]])
-        return
+        return None
     context = render(packet, verdicts, records)
     elapsed = round((time.perf_counter() - started) * 1000)
     note(injected=[r["source"] for r in verdicts + records], words=words, chars=len(context),
@@ -328,6 +327,17 @@ def main():
          # usage re-evidence (2026-09-18): where each injected record can be opened, so the Stop hook's
          # ledger can tell an opened receipt from an ignored one
          opens={r["source"]: r["_open"] for r in verdicts + records if r.get("_open")})
+    return context
+
+
+def main():
+    try:
+        data = json.loads(sys.stdin.read() or "{}")
+    except ValueError:
+        return
+    context = context_for(data.get("prompt") or data.get("user_prompt") or "", data.get("cwd") or os.getcwd(), data.get("session_id"))
+    if not context:
+        return
     out = {"hookSpecificOutput": {"hookEventName": "UserPromptSubmit", "additionalContext": context}}
     sys.stdout.buffer.write(json.dumps(out, ensure_ascii=False).encode("utf-8"))
 

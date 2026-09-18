@@ -44,12 +44,21 @@ def main():
         data = json.loads(sys.stdin.read() or "{}")
     except ValueError:
         return
+    reason = decide(data.get("tool_name"), data.get("tool_input") or {}, data.get("session_id"))
+    if reason:
+        print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
+                                                 "permissionDecisionReason": reason}}, ensure_ascii=False))
+
+
+def decide(tool_name, tool_input, session_id=None):
+    """Adapter entry (2026-09-18): the deny reason for this action, or None."""
+    data = {"tool_name": tool_name, "tool_input": tool_input or {}, "session_id": session_id}
     docs = [d for d in targets(data) if not norm(d).endswith("/session-log.md")]
     if not docs:
-        return
+        return None
     session = str(data.get("session_id") or "")[:8]
     if not session or not os.path.isfile(RECALL_LOG):
-        return
+        return None
     injected = {}          # norm path -> (ts, open dict) of the latest injection in this session
     reads = []             # (ts, norm path)
     for raw in io.open(RECALL_LOG, encoding="utf-8", errors="replace"):
@@ -75,7 +84,7 @@ def main():
             continue
         blocked.append((doc, where))
     if not blocked:
-        return
+        return None
     calls = "; ".join(f'Read file_path="{w["path"]}" offset={w["offset"]} limit={w["limit"]}' for _, w in blocked)
     reason = ("이 세션에 영수증으로 주입됐는데 한 번도 안 연 memory 문서를 고치려 한다: "
               + ", ".join(os.path.basename(d) for d, _ in blocked)
@@ -86,8 +95,7 @@ def main():
         note_repeat("receipt-path-line-is-rarely-opened-before-use", session, ", ".join(os.path.basename(d) for d, _ in blocked))
     except Exception:
         pass
-    print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
-                                             "permissionDecisionReason": reason}}, ensure_ascii=False))
+    return reason
 
 
 if __name__ == "__main__":

@@ -101,18 +101,25 @@ def push(delta, dry):
         client.close()
 
 
+def flush_session(session_id):
+    """Adapter entry (2026-09-18): reconcile one session's injected/opened counts and push the delta."""
+    return main(["--session", str(session_id)[:8]])
+
+
 def main(argv):
     dry = "--dry-run" in argv
     session = None
-    if "--all" not in argv:
+    if "--session" in argv:
+        session = argv[argv.index("--session") + 1][:8] or None
+    elif "--all" not in argv:
         try:
             data = json.loads(sys.stdin.read() or "{}")
         except ValueError:
             data = {}
         session = str(data.get("session_id") or "")[:8] or None
-        if not session:
-            receipt(skip="no_session")
-            return
+    if "--all" not in argv and not session:
+        receipt(skip="no_session")
+        return
     try:
         ledger = json.load(io.open(LEDGER, encoding="utf-8")) if os.path.exists(LEDGER) else {}
     except ValueError:

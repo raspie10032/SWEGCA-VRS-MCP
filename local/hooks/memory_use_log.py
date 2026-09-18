@@ -42,6 +42,15 @@ def memory_doc(path):
     return "/.claude/projects/" in flat and "/memory/" in flat and flat.endswith(".md")
 
 
+def note_read(path, offset, limit, session_id):
+    """Adapter entry (2026-09-18): record a memory-file read (what the PostToolUse hook does for Read)."""
+    if not memory_doc(path):
+        return False
+    note(use="read", what=os.path.basename(str(path)), path=str(path).replace(chr(92), "/"), offset=offset,
+         limit=limit, session=str(session_id or "")[:8])
+    return True
+
+
 def main():
     try:
         data = json.loads(sys.stdin.read() or "{}")

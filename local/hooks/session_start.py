@@ -60,13 +60,10 @@ def tail_entries(lines, entries, max_chars):
     return tail, len(blocks)
 
 
-def main():
-    try:
-        data = json.loads(sys.stdin.read() or "{}")
-    except ValueError:
-        data = {}
-    cwd = str(data.get("cwd") or os.getcwd())
-    source = str(data.get("source") or "")
+def context_for(cwd, source, session_id=None):
+    """Adapter entry (2026-09-18): the session-log tail as text for startup/resume/compact, or None."""
+    cwd = str(cwd or os.getcwd())
+    source = str(source or "")
     compact = source == "compact"
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     from project_dir import resolve          # 하위 폴더 cwd 면 로그가 있는 조상 프로젝트로(2026-09-17)
@@ -74,7 +71,7 @@ def main():
     log = os.path.join(memory_dir, "session-log.md")
     if not os.path.isfile(log):
         receipt(source=source, log="missing", slug=slug)
-        return
+        return None
     with open(log, encoding="utf-8") as handle:
         lines = handle.read().splitlines()
     if compact:
@@ -88,9 +85,20 @@ def main():
                 "그것이 이어서 할 일이다. 사용자가 다른 것을 시키면 그쪽이 먼저다.\n")
     if not tail:
         receipt(source=source, log="no_entries")
-        return
+        return None
     context = head + f"=== {os.path.basename(log)} 마지막 {count}항목 ===\n" + tail
-    receipt(source=source, entries=count, chars=len(context))
+    receipt(source=source, entries=count, chars=len(context), session=str(session_id or "")[:8])
+    return context
+
+
+def main():
+    try:
+        data = json.loads(sys.stdin.read() or "{}")
+    except ValueError:
+        data = {}
+    context = context_for(data.get("cwd") or os.getcwd(), data.get("source"), data.get("session_id"))
+    if not context:
+        return
     out = {"hookSpecificOutput": {"hookEventName": "SessionStart",
                                   "additionalContext": context}}
     sys.stdout.buffer.write(json.dumps(out, ensure_ascii=False).encode("utf-8"))

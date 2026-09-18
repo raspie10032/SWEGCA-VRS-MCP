@@ -95,7 +95,12 @@ def main():
         data = json.loads(sys.stdin.read() or "{}")
     except ValueError:
         data = {}
-    cwd = str(data.get("cwd") or os.getcwd())
+    run(str(data.get("cwd") or os.getcwd()), str(data.get("session_id") or ""))
+
+
+def run(cwd, session_id=""):
+    """Adapter entry (2026-09-18): index this project's changed memory docs (the Stop hook's body)."""
+    data = {"cwd": cwd, "session_id": session_id}
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     from project_dir import resolve          # 하위 폴더 cwd 면 로그가 있는 조상 프로젝트로(2026-09-17)
     slug, memory = resolve(cwd)

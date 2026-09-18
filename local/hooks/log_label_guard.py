@@ -25,11 +25,20 @@ def main():
         data = json.loads(sys.stdin.read() or "{}")
     except ValueError:
         return
-    if data.get("tool_name") not in ("Bash", "PowerShell"):
-        return
-    command = str((data.get("tool_input") or {}).get("command") or "")
+    reason = decide(data.get("tool_name"), (data.get("tool_input") or {}).get("command"), data.get("session_id"))
+    if reason:
+        print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
+                                                 "permissionDecisionReason": reason}}, ensure_ascii=False))
+
+
+def decide(tool_name, command, session_id=None):
+    """Adapter entry (2026-09-18): the deny reason for this command, or None."""
+    data = {"session_id": session_id}
+    if tool_name not in ("Bash", "PowerShell"):
+        return None
+    command = str(command or "")
     if "session-log.md" not in command or ">>" not in command or MARK in command:
-        return
+        return None
     now = time.localtime()
     now_min = now.tm_hour * 60 + now.tm_min
     today = (now.tm_year, now.tm_mon, now.tm_mday)
@@ -43,7 +52,7 @@ def main():
         if abs(delta) > TOLERANCE_MIN:
             bad.append((label, f"지금과 {delta:+d}분 차이"))
     if not bad:
-        return
+        return None
     try:                                   # 반복 계수기: 막은 시도 = 판정 session-log-time-labels-drift 의 반복
         import os
         sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -55,8 +64,7 @@ def main():
     reason = ("세션 로그 시각 라벨이 실제와 어긋난다: " + "; ".join(f"{l} ({why})" for l, why in bad)
               + f". 지금 맞는 라벨은 `{right}` — 기억으로 적지 말고 `date` 출력을 그대로 쓴다. "
               + f"옛 일을 뒤늦게 적는 것이면 명령에 `{MARK}` 를 붙인다.")
-    print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
-                                             "permissionDecisionReason": reason}}, ensure_ascii=False))
+    return reason
 
 
 if __name__ == "__main__":

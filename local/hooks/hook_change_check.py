@@ -69,6 +69,13 @@ def last_receipt_ts(log_name):
 
 
 def main():
+    warnings = check()
+    if warnings:
+        print(json.dumps({"systemMessage": "[훅 검증] " + " | ".join(warnings)}, ensure_ascii=False))
+
+
+def check():
+    """Adapter entry (2026-09-18): warnings for hooks changed without a receipt since."""
     scripts = hook_scripts()
     try:
         snap = json.load(io.open(SNAPSHOT, encoding="utf-8")) if os.path.exists(SNAPSHOT) else {}
@@ -99,8 +106,7 @@ def main():
         io.open(SNAPSHOT, "w", encoding="utf-8").write(json.dumps(snap, ensure_ascii=False, indent=0))
     except OSError:
         pass
-    if warnings:
-        print(json.dumps({"systemMessage": "[훅 검증] " + " | ".join(warnings)}, ensure_ascii=False))
+    return warnings
 
 
 if __name__ == "__main__":

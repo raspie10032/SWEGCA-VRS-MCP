@@ -25,26 +25,32 @@ REASON = ("Bash 도구는 백슬래시 쌍(\\\\)을 하나로 접는다 — 실�
           "도구로 쓴다. 접힘을 알고 일부러 겹친 것이면 명령에 `" + MARK + "` 를 붙인다.")
 
 
+def decide(tool_name, command, session_id=None):
+    """Adapter entry (2026-09-18): the deny reason for this command, or None."""
+    command = str(command or "")
+    if tool_name != "Bash" or "\\\\" not in command or MARK in command:
+        return None
+    try:                                   # 반복 계수기(2026-09-18): 막은 시도는 판정의 반복 관측이 된다
+        import os
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        from repeat_ledger import note_repeat
+        note_repeat("bash-tool-collapses-doubled-backslashes", session_id, command[:120])
+    except Exception:
+        pass
+    return REASON
+
+
 def main():
     try:
         data = json.loads(sys.stdin.read() or "{}")
     except ValueError:
         return
-    if data.get("tool_name") != "Bash":
+    reason = decide(data.get("tool_name"), (data.get("tool_input") or {}).get("command"), data.get("session_id"))
+    if not reason:
         return
-    command = str((data.get("tool_input") or {}).get("command") or "")
-    if "\\\\" not in command or MARK in command:
-        return
-    try:                                   # 반복 계수기(2026-09-18): 막은 시도는 판정의 반복 관측이 된다
-        import os
-        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-        from repeat_ledger import note_repeat
-        note_repeat("bash-tool-collapses-doubled-backslashes", data.get("session_id"), command[:120])
-    except Exception:
-        pass
     out = {"hookSpecificOutput": {"hookEventName": "PreToolUse",
                                   "permissionDecision": "deny",
-                                  "permissionDecisionReason": REASON}}
+                                  "permissionDecisionReason": reason}}
     sys.stdout.buffer.write(json.dumps(out, ensure_ascii=False).encode("utf-8"))
 
 
