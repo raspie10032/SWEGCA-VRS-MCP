@@ -67,3 +67,32 @@ backslash gate is on only where its cause was measured (the Windows Bash tool) u
 `VRS2_BACKSLASH_GUARD=1`. Claude Code's project slug rule (every non-alphanumeric → `-`) is the same on
 all three OSes. **Not yet run on Linux or macOS** — this machine has neither; the OS-neutral paths are
 covered by unit tests only.
+
+### Installing on Linux or macOS (first real run planned 2026-09-19)
+
+Python 3.11+. The repo carries everything the harness needs under `local/` (shims, tools, bench);
+`torch` is an optional `core` extra and is not required for the harness or the store.
+
+```bash
+git clone -b vrs-regions https://github.com/raspie10032/SWEGCA-VRS-MCP.git && cd SWEGCA-VRS-MCP
+python3 -m venv ~/vrs2-venv && ~/vrs2-venv/bin/python -m pip install -e ".[test]"
+~/vrs2-venv/bin/python local/tools/vrs2-install.py      # finds --src from <repo>/local/tools; the interpreter that runs it becomes the hooks' interpreter
+~/vrs2-venv/bin/python -m pytest tests/standalone -q     # 46 on Windows
+~/vrs2-venv/bin/python local/tools/vrs2-harness-demo.py  # one turn without Claude Code: conformance 6/6 on a temp store
+```
+
+Then one real turn in Claude Code from any project. Three receipts say the loop is alive:
+`~/.claude/hooks/recall_context.log` gets a row per prompt, `~/.claude/hooks/stop_reindex_v2.log` a
+row per stop, and `<state>/loopback.port` exists (the daemon spawned). The store starts empty, so
+injections appear only after a few session-log entries have been indexed by the Stop hook.
+
+Where a first POSIX run is most likely to break (all untested guesses, in order of suspicion):
+
+1. the daemon's detached start (`start_new_session`) finishing inside the hook's 30 s budget;
+2. the project slug — Claude Code's POSIX slug (`/home/u/proj` → `-home-u-proj`) has never been
+   seen on a real machine here, only assumed in `project_dir.slug_of`;
+3. quoting of the hook commands `vrs2-install.py` writes into `settings.json` under `sh`;
+4. `swegca-verdict.py` / `swegca-verdict-axes.py` need the v0.2 store paths (`--v02-*` at install);
+   without them the verdict tools do not run — everything else does.
+
+Bring back the receipt files and the traceback; nothing else is needed to diagnose.
