@@ -92,7 +92,8 @@ def main():
         print(f"{name:18s} claim holds={holds} -> {outcome} | {detail}")
         if produce is not None:
             r = produce(producer="recall-bench", hypothesis=hypothesis, outcome=outcome, axes=axes, context=context,
-                        source=f"bench:{name}#{context}", text=f"recall-bench {name}: {detail}", evidence=[__file__])
+                        source=f"bench:{name}#{context}", text=f"recall-bench {name}: {detail}", evidence=[__file__],
+                        supersede_same_source=True)   # a re-run under the same label replaces today's earlier row (2026-09-18)
             print("   ", r.get("status"), r.get("episode_id", "")[:20])
 
 

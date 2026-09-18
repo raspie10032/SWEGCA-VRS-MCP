@@ -26,7 +26,10 @@ AXES = ("observational", "counterfactual", "intervention", "cross_context")
 LOG = os.path.join(RECEIPTS, "vrs2_produce.log")
 
 
-def produce(*, producer, hypothesis, outcome, axes, context, source, text="", evidence=(), confidence=1.0, state=STATE):
+def produce(*, producer, hypothesis, outcome, axes, context, source, text="", evidence=(), confidence=1.0, state=STATE,
+            supersede_same_source=False):
+    """``supersede_same_source`` (2026-09-18): a re-measurement replaces this producer's earlier live row at the same
+    source for the same hypothesis (the bench re-run after a ranking fix) — the old row is superseded, not contradicted."""
     if outcome not in ("success", "failure"):
         raise ValueError("outcome: success 또는 failure")
     if not re.fullmatch(r"[a-z][a-z0-9 ,'()/-]+", hypothesis) or " " not in hypothesis:
@@ -42,16 +45,28 @@ def produce(*, producer, hypothesis, outcome, axes, context, source, text="", ev
     request_id = "evidence:" + hashlib.sha256(f"{producer}|{source}|{hypothesis}|{outcome}|{stamp}".encode()).hexdigest()[:40]
     client = ensure_daemon(state, allow_ingest=True, python=PY)
     try:
-        result = client.request("ingest", request_id=request_id, text=body[:60000], source=source[:1024],
-                                revision=stamp.replace(" ", "T"), outcome=outcome, cues=[],
-                                proposition=hypothesis[:512], polarity="support" if outcome == "success" else "refute",
-                                metadata=dict(kind="evidence", producer=producer, axes=axes, project=context,
-                                              evidence=list(evidence)[:8], confidence=float(confidence)))
+        args = dict(request_id=request_id, text=body[:60000], source=source[:1024],
+                    revision=stamp.replace(" ", "T"), outcome=outcome, cues=[],
+                    proposition=hypothesis[:512], polarity="support" if outcome == "success" else "refute",
+                    metadata=dict(kind="evidence", producer=producer, axes=axes, project=context,
+                                  evidence=list(evidence)[:8], confidence=float(confidence)))
+        if supersede_same_source:
+            live = client.request("evidence_of", proposition=hypothesis[:512], source=source[:1024]).get("rows") or []
+            live = [r for r in live if r.get("producer") == producer]
+            if live:
+                args["supersedes"] = live[-1]["episode_id"]
+        try:
+            result = client.request("ingest", **args)
+        except Exception:
+            if "supersedes" not in args:
+                raise
+            args.pop("supersedes")                      # the old row is gone or not ours: record without replacing
+            result = client.request("ingest", **args)
     finally:
         client.close()
     try:
         with open(LOG, "a", encoding="utf-8") as out:
-            out.write(f"{stamp} {producer} {outcome} {hypothesis[:60]} -> {result.get('status')} {result.get('episode_id', '')[:20]}{'' if state == STATE else ' [state ' + str(state) + ']'}\n")
+            out.write(f"{stamp} {producer} {outcome} {hypothesis[:60]} -> {result.get('status')} {result.get('episode_id', '')[:20]}{' supersedes ' + args['supersedes'][:20] if args.get('supersedes') else ''}{'' if state == STATE else ' [state ' + str(state) + ']'}\n")
     except OSError:
         pass
     return result

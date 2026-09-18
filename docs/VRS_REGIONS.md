@@ -380,3 +380,17 @@ Measured at 10k records (the old-code lab store): auto 3.4 s → **0.33 s**, all
 per query. Live store (5.6k, warm daemon): hook recall 186 → 69 ms. Ranking unchanged: the
 14 fresh questions give MRR .778 before and after (and, as of this store, the promotion gate
 moves no rank at all — `promotion-signal` now has a refuting observation of its own).
+
+### Re-measurement supersedes, contradiction stays (2026-09-18, later)
+
+The first collision to close itself: the morning's `promotion-signal` bench row (gate moved ranks
+at MRR .747/.759) sat in support against three refuting sources, and the recall hook printed
+「※ 재검증 필요」 on every prompt. After the ask-gate fix the same bench measures "the gate moves
+no rank" (.778 = .778). That is not new opposing evidence — it is the same measurement taken
+again — so the bench's re-run **supersedes** its own earlier row instead of adding a contradicting
+one: `vrs2-produce.py` takes `supersede_same_source=True`, asks the daemon's new lock-free
+`evidence_of(proposition, source)` for this producer's live row at that source, and ingests with
+`supersedes`. A bench label carries the date, so one live point per bench per day; a run on
+another day is a new point. Rows from *other* producers are never touched — a genuine
+contradiction still has to be closed by a verdict. After the re-run: four live rows, all refuting,
+conflicts 0.

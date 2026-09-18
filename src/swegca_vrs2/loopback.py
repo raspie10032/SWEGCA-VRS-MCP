@@ -41,7 +41,7 @@ PORT_FILE = 'loopback.port'
 RESIDENT_COMMANDS = {'status', 'cognitive_dialogue_start', 'cognitive_dialogue_continue',
                      'cognitive_dialogue_evidence_open', 'cognitive_dialogue_evidence',
                      'cognitive_dialogue_release'}
-LOCAL_COMMANDS = {'hook_recall', 'ingest', 'ingest_many', 'checkpoint', 'compact', 'consolidate', 'refine', 'ping', 'shutdown', 'usage', 'alias'}
+LOCAL_COMMANDS = {'hook_recall', 'evidence_of', 'ingest', 'ingest_many', 'checkpoint', 'compact', 'consolidate', 'refine', 'ping', 'shutdown', 'usage', 'alias'}
 
 
 # ── client ────────────────────────────────────────────────────────────
@@ -137,6 +137,27 @@ def _asks_of(text):
     """The record's own "찾을 때 묻는 말" (verdict tail line, memory-doc section, log-entry tail), else ''."""
     from .store import asks_of
     return asks_of(text)
+
+
+def evidence_of(main, arguments):
+    """Live evidence rows of one proposition, optionally at one source (lock-free read, 2026-09-18).
+    A producer re-measuring the same bench at the same source supersedes its earlier row with this."""
+    memory = main.memory
+    proposition = str(arguments.get('proposition') or '')
+    source = arguments.get('source')
+    rows = []
+    for identifier in memory.propositions.get(proposition, ()):
+        if identifier in memory.superseded:
+            continue
+        episode = memory.episode_light(identifier) if hasattr(memory, 'episode_light') else memory.episode(identifier)
+        obs = episode.steps[0].observation
+        if source and episode.source_addresses[0] != str(source):
+            continue
+        rows.append(dict(episode_id=identifier, source=episode.source_addresses[0], revision=episode.revision,
+                         outcome=episode.steps[0].outcome, polarity=obs.get('evidence_polarity'),
+                         producer=(obs.get('metadata') or {}).get('producer')))
+    rows.sort(key=lambda r: r['revision'])
+    return dict(status='ok', proposition=proposition, rows=rows)
 
 
 def hook_recall(main, arguments):
@@ -254,6 +275,8 @@ class Daemon:
                         writes_enabled=self.main.allow_ingest)
         if command == 'hook_recall':
             return hook_recall(self.main, arguments)
+        if command == 'evidence_of':
+            return evidence_of(self.main, arguments)
         if command in ('consolidate', 'refine'):
             # manual consolidation: the refinement is lock-free (frozen generation); prepare/commit lock briefly
             with self.lock:
