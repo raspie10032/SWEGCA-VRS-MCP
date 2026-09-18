@@ -66,6 +66,28 @@ entry (date/tick), commit, or verdict slug in the v0.2 store.
 | Sonnet 5 subagent context | 748k and 871k tokens reached with 0 compactions (1M-class window); 1.3 MB of logs read sequentially = 27 min, 874k tokens | 09-16 15:4x–15:5x |
 | usage backfill (hook receipts 09-11 → 18) | 255 injected sources, 10 opened; 201 live sources journaled; opened doc edges .0125 → .0669 after 3 generations | 09-18 09:2x |
 
+## 6b. Scale curve — one synthetic store, one process (2026-09-18 → 19)
+
+`mcp/vrs2-scale-curve.py` (`local/bench/`): records mixed from live text, batch generations of 500,
+consolidation 16 cycles per step, recall = 20 five-word queries per scope. Same PC (16 GB RAM;
+RSS cap 7 GB never reached — peak 5.7 GB seen between checkpoints at 170k).
+
+| N | ingest ms/rec | consolidation | regions | edges | recall auto med/max | recall all med/max | RSS after step | disk |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 10k (old path, 1 rec = 1 gen) | 651 | 17.5 s | 439 | 2.95 M | 2.2 / 4.8 s (old recall) | 11.4 / 15.9 s | 586 MB | 115 MB |
+| 10k | 17 | 12.5 s | 454 | 2.96 M | 0.33 s (re-measured, new recall) | 0.73 s | 587 MB | 114 MB |
+| 20k | 39 | 19.2 s | 388 | 5.92 M | (old recall: 5.2 / 10.8 s) | (18.1 / 26.6 s) | 875 MB | 222 MB |
+| 50k | 72 | 42.6 s | 343 | 14.8 M | 0.84 / 1.6 s | 4.5 / 6.3 s | 1.83 GB | 545 MB |
+| 100k | 145 | 94 s | 330 | 29.5 M | 1.39 / 3.1 s | 9.3 / 12.8 s | 3.2 GB | 1.08 GB |
+| 200k | 279 | 187 s | 305 | 58.9 M | 3.2 / 9.5 s | 17.7 / 24.1 s | 2.2 GB (peak ~5.7) | 2.13 GB |
+
+Reading: ~300 edges per record; ingest, consolidation, disk and the `all` recall are linear in N
+(each doubling doubles them); `auto` recall is sub-linear (region scope, 1/5 of `all`) but still
+grows, and crosses the per-prompt 1 s line between 50k and 100k for this synthetic corpus (which
+shares cues far more than the live one: live 5.6k = 69 ms hook recall). No memory wall inside 200k.
+The two fixes the curve forced are in `VRS_REGIONS.md` ("Batch generations", "Recall columns"):
+before them the same store cost 651 ms per ingest and 2–11 s per recall at 10k.
+
 ## 7. Open items the numbers point at
 
 * accept-tier promotion needs ≥ 4 effective samples per axis, ≥ 2 source families, ≥ 4 contexts on the
