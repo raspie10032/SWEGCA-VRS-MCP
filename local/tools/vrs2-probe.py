@@ -17,7 +17,8 @@ import socketserver
 import sys
 import time
 
-PRODUCE = r"C:\Users\asm\mcp\vrs2-produce.py"
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _vrs2_env import PRODUCE, SRC  # noqa: E402  (OS-neutral, 2026-09-18)
 
 
 def load_produce():
@@ -37,7 +38,7 @@ def probe_native_bridge():
 
 def probe_one_producer_abstain():
     """feed the vendored accumulator 12 observations from ONE producer across all four axes and see if it leaves abstain"""
-    sys.path.insert(0, r"C:\Users\asm\mcp\SWEGCA-VRS-MCP-v2\src")
+    sys.path.insert(0, SRC)
     from swegca_vrs2.engine import mosaic_evidence_accumulator as acc
     cfg = acc.EvidenceAccumulatorConfig()
     st = acc.EvidenceAccumulatorState.empty("probe", cfg)

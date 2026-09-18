@@ -18,7 +18,7 @@ import sys
 from .paths import RECEIPTS as HOOKS
 RECALL_LOG = os.environ.get("UNOPENED_GUARD_LOG") or os.path.join(HOOKS, "recall_context.log")   # env: 시험용 로그
 MARK = "# unopened-ok"
-MEMORY_DOC = re.compile(r"[A-Za-z]:[\\/](?:[^\s\"'<>|]+[\\/])*\.claude[\\/]projects[\\/][^\s\"'<>|]+[\\/]memory[\\/][^\s\"'<>|/\\]+\.md")
+MEMORY_DOC = re.compile(r"(?:[A-Za-z]:|~)?[\\/](?:[^\s\"'<>|]+[\\/])*\.claude[\\/]projects[\\/][^\s\"'<>|]+[\\/]memory[\\/][^\s\"'<>|/\\]+\.md")   # Windows or POSIX absolute path
 
 
 def norm(path):

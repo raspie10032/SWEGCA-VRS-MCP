@@ -20,11 +20,10 @@ import re
 import sys
 import time
 
-SRC = r"C:\Users\asm\mcp\SWEGCA-VRS-MCP-v2\src"
-STATE = os.environ.get("VRS2_STATE") or r"C:\Users\asm\mcp\vrs2-memory"
-PY = r"C:\Users\asm\mcp\vrs2-venv\Scripts\python.exe"   # 데몬이 안 떠 있으면 이 파이썬으로 띄운다(배치는 스토어 파이썬으로 돈다)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _vrs2_env import SRC, STATE, PY, RECEIPTS  # noqa: E402  (OS-neutral, 2026-09-18)
 AXES = ("observational", "counterfactual", "intervention", "cross_context")
-LOG = os.path.join(os.path.expanduser("~"), ".claude", "hooks", "vrs2_produce.log")
+LOG = os.path.join(RECEIPTS, "vrs2_produce.log")
 
 
 def produce(*, producer, hypothesis, outcome, axes, context, source, text="", evidence=(), confidence=1.0, state=STATE):

@@ -111,11 +111,12 @@ def ensure_daemon(state_dir, *, allow_ingest=True, python=None, wait_seconds=30)
     command = [python or sys.executable, '-m', 'swegca_vrs2.loopback', '--state-dir', str(state_dir)]
     if allow_ingest:
         command.append('--allow-ingest')
-    flags = 0
+    popen = dict(stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, close_fds=True)
     if os.name == 'nt':
-        flags = subprocess.CREATE_NEW_PROCESS_GROUP | getattr(subprocess, 'DETACHED_PROCESS', 0)
-    subprocess.Popen(command, creationflags=flags, stdin=subprocess.DEVNULL,
-                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, close_fds=True)
+        popen['creationflags'] = subprocess.CREATE_NEW_PROCESS_GROUP | getattr(subprocess, 'DETACHED_PROCESS', 0)
+    else:
+        popen['start_new_session'] = True      # POSIX: a new session so the daemon outlives the hook that spawned it
+    subprocess.Popen(command, **popen)
     deadline = time.time() + wait_seconds
     while time.time() < deadline:
         time.sleep(0.2)

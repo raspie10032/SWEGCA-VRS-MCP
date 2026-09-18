@@ -54,3 +54,16 @@ A harness that lacks a moment does not "not support" the point; it degrades in a
 conforms to a point when it leaves that receipt; zero means the point is not wired. The demo harness
 scores 6/6; Claude Code scores 6/6 once a compaction has happened (`before_context_loss` fires only
 then). This count is the first column of any cross-harness comparison table.
+
+## Portability (2026-09-18)
+
+Nothing in the store is OS-specific (TCP loopback, numpy, sqlite). The harness resolves every path
+through `swegca_vrs2.harness.paths` — environment `VRS2_*` → `~/.claude/vrs2.json` → defaults — and the
+tools through `_vrs2_env.py` with the same order; `vrs2-install.py` writes the json, the shims and the
+settings.json hook entries for the current machine (the interpreter path is the one thing that differs
+per OS: `venv\Scripts\python.exe` vs `venv/bin/python`). The daemon is spawned detached on Windows and in
+a new session on POSIX. The memory-doc regex accepts Windows and POSIX absolute paths. The doubled-
+backslash gate is on only where its cause was measured (the Windows Bash tool) unless
+`VRS2_BACKSLASH_GUARD=1`. Claude Code's project slug rule (every non-alphanumeric → `-`) is the same on
+all three OSes. **Not yet run on Linux or macOS** — this machine has neither; the OS-neutral paths are
+covered by unit tests only.

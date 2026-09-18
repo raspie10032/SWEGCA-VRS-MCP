@@ -22,8 +22,7 @@ from .paths import RECEIPTS as HOOKS
 RECALL_LOG = os.path.join(HOOKS, "recall_context.log")
 LEDGER = os.path.join(HOOKS, "usage_ledger.json")
 RECEIPT = os.path.join(HOOKS, "usage_ledger.log")
-SRC = r"C:/Users/asm/mcp/SWEGCA-VRS-MCP-v2/src"
-STATE = r"C:/Users/asm/mcp/vrs2-memory"
+from .paths import SRC, STATE, PYTHON  # noqa: E402  (OS-neutral, 2026-09-18)
 
 
 def receipt(**fields):
@@ -94,7 +93,7 @@ def push(delta, dry):
         return dict(status="dry", sources=len(delta))
     sys.path.insert(0, SRC)
     from swegca_vrs2.loopback import ensure_daemon
-    client = ensure_daemon(STATE, allow_ingest=True, python=r"C:/Users/asm/mcp/vrs2-venv/Scripts/python.exe")
+    client = ensure_daemon(STATE, allow_ingest=True, python=PYTHON)
     try:
         return client.request("usage", counts=delta)
     finally:

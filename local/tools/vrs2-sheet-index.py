@@ -28,8 +28,9 @@ import time
 SKIP_DIRS = {".git", "__pycache__", "node_modules", "archive", "backups", "backup", ".venv", "venv"}
 SKIP_PREFIX = ("_deleted_backup", "~$")
 EXTS = (".xlsx", ".xlsm", ".csv")
-MANIFEST = r"C:/Users/asm/mcp/vrs2-sheet-manifest.json"
-PRODUCE = r"C:/Users/asm/mcp/vrs2-produce.py"      # 데몬 접속 헬퍼만 빌린다(ensure_daemon + PY)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _vrs2_env import PRODUCE, RECEIPTS, SRC  # noqa: E402  (OS-neutral, 2026-09-18)
+MANIFEST = os.path.join(RECEIPTS, "vrs2-sheet-manifest.json")
 SAMPLE_ROWS = 30
 MAX_ROWS = 2000            # 행 수는 힌트다: 이 너머는 세지 않고 '2000+' (큰 파일에서 read_only 순회가 분 단위)
 
@@ -185,8 +186,7 @@ def main():
     ap.add_argument("--max-files", type=int, default=12)
     a = ap.parse_args()
     sys.stdout.reconfigure(encoding="utf-8")
-    sys.path.insert(0, os.path.join(os.path.expanduser("~"), ".claude", "hooks"))
-    from project_dir import resolve
+    from swegca_vrs2.harness.project_dir import resolve
     label = a.label or os.path.basename(os.path.normpath(a.root))
     if a.project is None:
         _slug, memory = resolve(a.root)

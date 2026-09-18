@@ -21,8 +21,7 @@ from .paths import RECEIPTS as HOOKS
 LEDGER = os.path.join(HOOKS, "repeat_ledger.log")
 FLUSHED = os.path.join(HOOKS, "repeat_flushed.json")
 RECEIPT = os.path.join(HOOKS, "repeat_ledger.receipts.log")
-V02_DB = r"C:/Users/asm/mcp/swegca-memory/core.sqlite3"
-PRODUCE = r"C:/Users/asm/mcp/vrs2-produce.py"
+from .paths import V02_DB, PRODUCE  # noqa: E402  (OS-neutral, 2026-09-18)
 
 
 def note_repeat(slug, session, detail=""):
@@ -46,6 +45,8 @@ def receipt(**fields):
 
 def verdict_of(slug):
     """살아 있는 판정의 (명제, outcome)."""
+    if not V02_DB or not os.path.isfile(V02_DB):
+        return None
     db = sqlite3.connect(V02_DB)
     rows = db.execute(
         "SELECT o.body FROM observations o JOIN record_meta m ON m.event_id = o.event_id "

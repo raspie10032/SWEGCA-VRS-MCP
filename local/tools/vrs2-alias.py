@@ -14,11 +14,11 @@ supersedes 하거나 rebuild --drop-… 가 아니라, 묶음 자체가 저널�
 """
 import argparse
 import io
+import os
 import sys
 
-SRC = r"C:/Users/asm/mcp/SWEGCA-VRS-MCP-v2/src"
-STATE = r"C:/Users/asm/mcp/vrs2-memory"
-PY = r"C:/Users/asm/mcp/vrs2-venv/Scripts/python.exe"
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _vrs2_env import SRC, STATE, PY  # noqa: E402  (OS-neutral, 2026-09-18)
 
 
 def main():
@@ -28,7 +28,6 @@ def main():
     ap.add_argument("--list", action="store_true")
     a = ap.parse_args()
     sys.stdout.reconfigure(encoding="utf-8")
-    sys.path.insert(0, SRC)
     from swegca_vrs2.loopback import ensure_daemon
     client = ensure_daemon(STATE, allow_ingest=True, python=PY)
     try:
@@ -37,7 +36,7 @@ def main():
             print("stable:", (p.get("vrs_stable") or {}).get("version_id", "")[:12])
             import shutil, os, tempfile
             from swegca_vrs2.store import Main
-            d = tempfile.mkdtemp(prefix="vrs2-alias-"); shutil.copy(STATE + "/memory.sqlite3", d)
+            d = tempfile.mkdtemp(prefix="vrs2-alias-"); shutil.copy(os.path.join(STATE, "memory.sqlite3"), d)
             m = Main(d, allow_ingest=False)
             try:
                 reg = m.graph.aliases

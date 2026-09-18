@@ -22,7 +22,9 @@ import time
 
 import yaml
 
-PRODUCE = r"C:/Users/asm/mcp/vrs2-produce.py"
+import os
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _vrs2_env import PRODUCE  # noqa: E402  (OS-neutral, 2026-09-18)
 H_TASK = "a delegated coding task with the recall receipt attached returns success with its tests passing"
 H_RECEIPT = "the attached recall receipt matches the code it describes"
 

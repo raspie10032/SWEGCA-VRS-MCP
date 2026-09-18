@@ -53,3 +53,32 @@ def test_conformance_counts_receipts_per_point(tmp_path, monkeypatch):
     (tmp_path / "repeat_ledger.log").write_text(json.dumps({"slug": "x", "session": "s1"}) + "\n", encoding="utf-8")
     c = adapter.conformance("s1")
     assert c["before_prompt"] == 1 and c["on_read"] == 1 and c["before_action"] == 1 and c["on_stop"] == 0
+
+
+def test_memory_doc_regex_accepts_posix_and_windows_paths():
+    from swegca_vrs2.harness import guard_unopened as g
+    assert g.MEMORY_DOC.fullmatch("/home/u/.claude/projects/-home-u-proj/memory/notes.md")
+    assert g.MEMORY_DOC.fullmatch("/Users/u/.claude/projects/-Users-u-proj/memory/session-log.md")
+    assert g.MEMORY_DOC.fullmatch("C:/Users/u/.claude/projects/C--Users-u-proj/memory/notes.md")
+    assert not g.MEMORY_DOC.fullmatch("/home/u/proj/notes.md")
+
+
+def test_backslash_gate_is_windows_only_unless_forced(monkeypatch):
+    from swegca_vrs2.harness import guard_backslash as g
+    doubled = "printf 'a" + "\\" + "\\" + "b'"          # two backslash characters in the command
+    monkeypatch.setattr(os, "name", "posix")
+    monkeypatch.delenv("VRS2_BACKSLASH_GUARD", raising=False)
+    assert g.decide("Bash", doubled, "t") is None
+    monkeypatch.setenv("VRS2_BACKSLASH_GUARD", "1")
+    assert g.decide("Bash", doubled, "t")
+
+
+def test_paths_resolve_env_over_config_over_default(tmp_path, monkeypatch):
+    from swegca_vrs2.harness import paths
+    monkeypatch.setattr(paths, "CONFIG", str(tmp_path / "vrs2.json"))
+    (tmp_path / "vrs2.json").write_text(json.dumps({"state": "/from/config"}), encoding="utf-8")
+    monkeypatch.delenv("VRS2_STATE", raising=False)
+    assert paths._get("state", "/default") == "/from/config"
+    monkeypatch.setenv("VRS2_STATE", "/from/env")
+    assert paths._get("state", "/default") == "/from/env"
+    assert paths._get("nothing", "/default") == "/default"

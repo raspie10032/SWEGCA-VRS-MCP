@@ -29,11 +29,11 @@ from pathlib import Path
 from .paths import RECEIPTS as HOOKS
 STATE_FILE = os.path.join(HOOKS, "stop_reindex_v2_state.json")
 RECEIPT = os.path.join(HOOKS, "stop_reindex_v2.log")
-SRC = r"C:\Users\asm\mcp\SWEGCA-VRS-MCP-v2\src"
-IMPORTER = r"C:\Users\asm\mcp\vrs2-import.py"
-STATE = Path(os.environ.get("VRS2_STATE") or r"C:\Users\asm\mcp\vrs2-memory")
+from .paths import SRC, IMPORTER  # noqa: E402  (OS-neutral, 2026-09-18)
+from .paths import STATE as _STATE  # noqa: E402
+STATE = Path(_STATE)
 SKIP = {"MEMORY.md"}
-LEDGER = os.path.join(HOOKS, "code_ledger.py")
+LEDGER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "code_ledger.py")   # in the package now
 
 
 def receipt(**fields):

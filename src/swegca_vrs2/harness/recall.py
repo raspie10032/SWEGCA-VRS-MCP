@@ -35,8 +35,7 @@ import time
 
 HOME = os.path.expanduser("~")
 LOG = os.path.join(__import__("swegca_vrs2.harness.paths", fromlist=["RECEIPTS"]).RECEIPTS, "recall_context.log")
-SRC = r"C:\Users\asm\mcp\SWEGCA-VRS-MCP-v2\src"
-STATE = os.environ.get("VRS2_STATE") or r"C:\Users\asm\mcp\vrs2-memory"
+from .paths import SRC, STATE, CONFIRM_CMD  # noqa: E402  (OS-neutral, 2026-09-18)
 MIN_WORDS = 2
 LIMIT = 10
 VERDICT_MIN_MATCH = 2
@@ -218,7 +217,7 @@ def open_hint(row):
     return f"   (토막이 전문이다 · 앞뒤 맥락: {call})" if whole else f"   열기: {call}  (토막 {SNIPPET}/{chars}자 — 쓰기 전에 연다)"
 
 
-CONFIRM = r"C:\Users\asm\mcp\vrs2-venv\Scripts\python.exe C:\Users\asm\mcp\vrs2-confirm.py"
+CONFIRM = CONFIRM_CMD
 
 
 def _side(items):

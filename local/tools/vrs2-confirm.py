@@ -21,9 +21,8 @@ import sqlite3
 import sys
 import time
 
-V02_DB = r"C:/Users/asm/mcp/swegca-memory/core.sqlite3"
-PRODUCE = r"C:/Users/asm/mcp/vrs2-produce.py"
-HOOKS = os.path.join(os.path.expanduser("~"), ".claude", "hooks")
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _vrs2_env import V02_DB, PRODUCE, SRC  # noqa: E402  (OS-neutral, 2026-09-18)
 
 
 def load(path, name):
@@ -35,6 +34,8 @@ def load(path, name):
 
 def hypothesis_of_slug(slug):
     """v0.2 스토어의 살아 있는 판정에서 명제 문장을 찾는다(slug 접두 일치, 최신 순)."""
+    if not V02_DB or not os.path.isfile(V02_DB):
+        raise SystemExit("v0.2 스토어 없음(VRS2_V02_DB) — --hypothesis 로 명제를 그대로 적어라")
     db = sqlite3.connect(V02_DB)
     rows = db.execute(
         "SELECT o.event_id, o.body FROM observations o JOIN record_meta m ON m.event_id = o.event_id "
@@ -75,8 +76,7 @@ def main():
         raise SystemExit(f"증거 파일이 없다: {path} — 지금 본 것만 출처가 된다")
     source = f"{path}#{line or 'file'}"
     if a.context is None:
-        sys.path.insert(0, HOOKS)
-        from project_dir import resolve
+        from swegca_vrs2.harness.project_dir import resolve
         slug, _memory = resolve(a.cwd)
         a.context = f"{slug}-{time.strftime('%Y-%m-%d')}"
     outcome = "success" if a.holds else "failure"

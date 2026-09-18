@@ -26,7 +26,11 @@ REASON = ("Bash 도구는 백슬래시 쌍(\\\\)을 하나로 접는다 — 실�
 
 
 def decide(tool_name, command, session_id=None):
-    """Adapter entry (2026-09-18): the deny reason for this command, or None."""
+    """Adapter entry (2026-09-18): the deny reason for this command, or None.
+    The collapse was measured on the Windows Bash tool; elsewhere the gate stays off unless VRS2_BACKSLASH_GUARD=1."""
+    import os
+    if os.name != "nt" and os.environ.get("VRS2_BACKSLASH_GUARD") != "1":
+        return None
     command = str(command or "")
     if tool_name != "Bash" or "\\\\" not in command or MARK in command:
         return None
