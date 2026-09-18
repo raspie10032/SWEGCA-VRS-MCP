@@ -6,6 +6,8 @@ loop, not only the engine. Logs, ledgers (`*.log`, `*.json` state) and company d
 
 ## hooks/ (`~/.claude/hooks`, wired in `~/.claude/settings.json`)
 
+Since 2026-09-18 these are six-line shims; the bodies are `src/swegca_vrs2/harness/*.py` (see `docs/ADAPTER_SPEC.md`).
+
 | event | script | what it does |
 | --- | --- | --- |
 | UserPromptSubmit | `recall_context_v2.py` | recall receipts per prompt: verdicts (asks-gated) + one record, 「열기」 line per item, 「※ 재검증 필요」 with both sides, `[열림 m/n]`, `⚠ 반복 n회` |

@@ -4,8 +4,9 @@ The store (`swegca_vrs2`) is one contract: journal, evidence accumulator, kernel
 daemon. The *loop* around it — what a harness must do at which moment — was scattered across Claude Code
 hook scripts. This spec names that loop as six interception points so that any harness (Claude Code
 hooks, an API driver for another model, another CLI) implements the same behaviour and the harness stops
-being a variable when models are compared. `swegca_vrs2.adapter` is the reference API; `local/hooks` is the
-Claude Code implementation; `local/tools/vrs2-harness-demo.py` runs one full turn with no Claude Code.
+being a variable when models are compared. `swegca_vrs2.adapter` is the API; the bodies live in `swegca_vrs2.harness.*` (one module per point or gate,
+receipts under `~/.claude/hooks` or `$VRS2_RECEIPTS`); `local/hooks` are the Claude Code shims (six lines each,
+`from swegca_vrs2.harness.<module> import main`); `local/tools/vrs2-harness-demo.py` runs one full turn with no Claude Code.
 
 ## Interception points
 

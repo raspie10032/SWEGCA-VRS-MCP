@@ -33,35 +33,25 @@ import os
 import sys
 import time
 
-HOME = os.path.expanduser("~")
-HOOK_DIRS = [os.path.join(HOME, ".claude", "hooks"),
-             os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "local", "hooks")]
-TOOL_DIRS = [os.path.join("C:", os.sep, "Users", "asm", "mcp"),
-             os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "local", "tools")]
+from .harness import (recall as _recall, read_log as _read_log, guard_backslash as _gb, guard_label as _gl,
+                      guard_unopened as _gu, precompact as _precompact, session_start as _session_start,
+                      reindex as _reindex, usage as _usage, repeats as _repeats, hook_check as _hook_check,
+                      project_dir as _project_dir)
+from .harness.paths import RECEIPTS as RECEIPTS_DIR, TOOLS, STATE, SRC
+
 _cache = {}
 
 
-def _load(name, dirs):
+def tool(name):
+    """A script from the tools directory (vrs2-produce.py etc.), loaded once."""
     if name in _cache:
         return _cache[name]
-    for d in dirs:
-        path = os.path.join(d, name)
-        if os.path.isfile(path):
-            spec = importlib.util.spec_from_file_location(name.replace("-", "_").replace(".py", ""), path)
-            module = importlib.util.module_from_spec(spec)
-            sys.path.insert(0, d)
-            spec.loader.exec_module(module)
-            _cache[name] = module
-            return module
-    raise FileNotFoundError(f"{name} not found in {dirs}")
-
-
-def hook(name):
-    return _load(name, HOOK_DIRS)
-
-
-def tool(name):
-    return _load(name, TOOL_DIRS)
+    path = os.path.join(TOOLS, name)
+    spec = importlib.util.spec_from_file_location(name.replace("-", "_").replace(".py", ""), path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    _cache[name] = module
+    return module
 
 
 # ── the six points ────────────────────────────────────────────────────────
@@ -69,22 +59,20 @@ def tool(name):
 def before_prompt(prompt, cwd, session_id):
     """Recall receipts for this prompt as text (verdicts with asks, one record, 「열기」 lines, 「※ 재검증 필요」
     with both sides, [열림 m/n], ⚠ 반복). None when the store has nothing worth injecting."""
-    return hook("recall_context_v2.py").context_for(prompt, cwd, session_id)
+    return _recall.context_for(prompt, cwd, session_id)
 
 
 def on_read(path, offset, limit, session_id):
     """The model opened a memory file (usage re-evidence). True when it was a memory doc."""
-    return hook("memory_use_log.py").note_read(path, offset, limit, session_id)
+    return _read_log.note_read(path, offset, limit, session_id)
 
 
 def before_action(tool_name, tool_input, session_id):
     """Gates. Returns None (allow) or the reason to deny. A denial is also a repeat observation."""
     inp = tool_input or {}
     command = inp.get("command")
-    for module, call in (("bash_backslash_guard.py", lambda m: m.decide(tool_name, command, session_id)),
-                         ("log_label_guard.py", lambda m: m.decide(tool_name, command, session_id)),
-                         ("unopened_edit_guard.py", lambda m: m.decide(tool_name, inp, session_id))):
-        reason = call(hook(module))
+    for reason in (_gb.decide(tool_name, command, session_id), _gl.decide(tool_name, command, session_id),
+                   _gu.decide(tool_name, inp, session_id)):
         if reason:
             return reason
     return None
@@ -92,12 +80,12 @@ def before_action(tool_name, tool_input, session_id):
 
 def before_context_loss(transcript_path, cwd, session_id, trigger="harness"):
     """Write the 「압축 직전 자동」 entry from the transcript tail into the project's session log."""
-    m = hook("precompact_snapshot.py")
+    m = _precompact
     records = m.tail_records(transcript_path)
     entry = m.build_entry(records, trigger, session_id)
     if not entry:
         return None
-    slug, memory = hook("project_dir.py").resolve(cwd)
+    slug, memory = _project_dir.resolve(cwd)
     log_path = os.path.join(memory, "session-log.md")
     if not os.path.isfile(log_path) or m.already_there(log_path, entry):
         return None
@@ -109,17 +97,17 @@ def before_context_loss(transcript_path, cwd, session_id, trigger="harness"):
 
 def after_context_loss(cwd, source="compact", session_id=None):
     """The session-log tail to re-inject after compaction/resume/startup."""
-    return hook("session_start.py").context_for(cwd, source, session_id)
+    return _session_start.context_for(cwd, source, session_id)
 
 
 def on_stop(cwd, session_id):
     """Everything that keeps the store current between turns: index changed docs, usage ledger, repeat flush,
     hook verification. Returns what each step reported."""
     out = {}
-    for key, call in (("reindex", lambda: hook("stop_reindex_v2.py").run(cwd, session_id)),
-                      ("usage", lambda: hook("usage_ledger.py").flush_session(session_id)),
-                      ("repeats", lambda: hook("repeat_ledger.py").flush(str(session_id)[:8])),
-                      ("hooks", lambda: hook("hook_change_check.py").check())):
+    for key, call in (("reindex", lambda: _reindex.run(cwd, session_id)),
+                      ("usage", lambda: _usage.flush_session(session_id)),
+                      ("repeats", lambda: _repeats.flush(str(session_id)[:8])),
+                      ("hooks", lambda: _hook_check.check())):
         try:
             out[key] = call()
         except Exception as failure:
@@ -146,8 +134,7 @@ def confirm(hypothesis, holds, evidence_path, session_id, text="", context=None)
 def alias(canonical, aliases):
     """Bind alias propositions to a canonical one (hypothesis registry)."""
     m = tool("vrs2-produce.py")
-    sys.path.insert(0, m.SRC)
-    from swegca_vrs2.loopback import ensure_daemon
+    from .loopback import ensure_daemon
     client = ensure_daemon(m.STATE, allow_ingest=True, python=m.PY)
     try:
         return client.request("alias", canonical=canonical, aliases=list(aliases))
@@ -170,7 +157,7 @@ RECEIPTS = {
 def conformance(session_id=None, since=None):
     """How many receipts each interception point left (optionally for one session / since a timestamp).
     A harness conforms to a point when it leaves that receipt; zero means the point is not wired."""
-    hooks_dir = next((d for d in HOOK_DIRS if os.path.isdir(d)), HOOK_DIRS[0])
+    hooks_dir = RECEIPTS_DIR
     out = {}
     for point, (log_name, match) in RECEIPTS.items():
         path = os.path.join(hooks_dir, log_name)
