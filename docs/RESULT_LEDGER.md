@@ -87,6 +87,7 @@ grows, and crosses the per-prompt 1 s line between 50k and 100k for this synthet
 shares cues far more than the live one: live 5.6k = 69 ms hook recall). No memory wall inside 200k.
 The two fixes the curve forced are in `VRS_REGIONS.md` ("Batch generations", "Recall columns"):
 before them the same store cost 651 ms per ingest and 2–11 s per recall at 10k.
+The sizing rule the curve settled (60k records per bundle on this class of machine) is `docs/SIZING.md`.
 
 ## 7. Open items the numbers point at
 

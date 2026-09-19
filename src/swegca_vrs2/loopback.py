@@ -97,7 +97,7 @@ class LoopbackClient:
         return result
 
 
-def ensure_daemon(state_dir, *, allow_ingest=True, python=None, wait_seconds=30):
+def ensure_daemon(state_dir, *, allow_ingest=True, python=None, wait_seconds=30, bundle_limit=None):
     """Return a client for the daemon owning ``state_dir``, starting it if needed."""
     state_dir = Path(state_dir)
     port = port_of(state_dir)
@@ -111,6 +111,8 @@ def ensure_daemon(state_dir, *, allow_ingest=True, python=None, wait_seconds=30)
     command = [python or sys.executable, '-m', 'swegca_vrs2.loopback', '--state-dir', str(state_dir)]
     if allow_ingest:
         command.append('--allow-ingest')
+    if bundle_limit:
+        command += ['--bundle-limit', str(int(bundle_limit))]
     popen = dict(stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, close_fds=True)
     if os.name == 'nt':
         popen['creationflags'] = subprocess.CREATE_NEW_PROCESS_GROUP | getattr(subprocess, 'DETACHED_PROCESS', 0)
@@ -252,11 +254,11 @@ def hook_recall(main, arguments):
 
 
 class Daemon:
-    def __init__(self, state_dir, *, allow_ingest, idle_seconds):
+    def __init__(self, state_dir, *, allow_ingest, idle_seconds, bundle_limit=None):
         from .server import LocalResident
         from .store import Main
         self.state_dir = Path(state_dir)
-        self.main = Main(self.state_dir, allow_ingest=allow_ingest)
+        self.main = Main(self.state_dir, allow_ingest=allow_ingest, bundle_limit=bundle_limit)
         self.resident = LocalResident(self.main)
         self.lock = threading.Lock()
         self.idle_seconds = idle_seconds
@@ -324,10 +326,10 @@ class Daemon:
                 pass
 
 
-def serve(state_dir, *, port=0, allow_ingest=False, idle_hours=8.0):
+def serve(state_dir, *, port=0, allow_ingest=False, idle_hours=8.0, bundle_limit=None):
     from .store import CHECKPOINT_IDLE
     from .vrs_refine import IDLE_CYCLES
-    daemon = Daemon(state_dir, allow_ingest=allow_ingest, idle_seconds=idle_hours * 3600)
+    daemon = Daemon(state_dir, allow_ingest=allow_ingest, bundle_limit=bundle_limit, idle_seconds=idle_hours * 3600)
 
     class Handler(socketserver.StreamRequestHandler):
         def handle(self):
@@ -403,10 +405,11 @@ def main():
     parser.add_argument('--port', type=int, default=0)
     parser.add_argument('--allow-ingest', action='store_true')
     parser.add_argument('--idle-hours', type=float, default=8.0)
+    parser.add_argument('--bundle-limit', type=int, default=0, help='recommended records per bundle (soft; docs/SIZING.md)')
     options = parser.parse_args()
     try:
         return serve(options.state_dir, port=options.port, allow_ingest=options.allow_ingest,
-                     idle_hours=options.idle_hours)
+                     idle_hours=options.idle_hours, bundle_limit=options.bundle_limit or None)
     except (ValueError, OSError) as error:
         print('VRS2 loopback daemon error: ' + str(error), file=sys.stderr)
         return 1

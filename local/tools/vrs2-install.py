@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """vrs2 하니스 설치기 — 어느 OS 든 같은 절차 (2026-09-18).
 
-1. `~/.claude/vrs2.json` 을 쓴다(src·state·tools·python·receipts·v02_*): 하니스 모듈과 도구가 전부 여기서 경로를 읽는다.
+1. `~/.claude/vrs2.json` 을 쓴다(src·state·tools·python·receipts·v02_*·bundle_limit): 하니스 모듈과 도구가 전부 여기서 경로를 읽는다.
 2. `~/.claude/hooks/` 에 껍데기 훅을 쓴다(json 에서 src 를 읽어 패키지를 import 하는 여섯 줄).
 3. `~/.claude/settings.json` 의 hooks 에 이 OS 의 파이썬 경로로 항목을 넣는다(있으면 갱신, 다른 훅은 보존).
 4. 스토어 디렉터리·영수증 디렉터리를 만든다.
@@ -88,13 +88,14 @@ def main():
     ap.add_argument("--python", default=sys.executable)
     ap.add_argument("--receipts", default=os.path.join(CLAUDE, "hooks"))
     ap.add_argument("--v02-db"); ap.add_argument("--v02-src"); ap.add_argument("--v02-keys")
+    ap.add_argument("--bundle-limit", type=int, default=60000, help="권고 뭉치 크기(건) — docs/SIZING.md; 소프트 상한(거절 없음, 90%% 부터 Stop 훅이 알림)")
     ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args()
     sys.stdout.reconfigure(encoding="utf-8")
     if not a.src:
         ap.error("--src <repo>/src 가 필요하다(도구 폴더가 <repo>/local/tools 가 아니면 자동으로 못 찾는다)")
     cfg = dict(src=os.path.abspath(a.src), state=os.path.abspath(a.state), tools=os.path.abspath(a.tools),
-               python=os.path.abspath(a.python), receipts=os.path.abspath(a.receipts))
+               python=os.path.abspath(a.python), receipts=os.path.abspath(a.receipts), bundle_limit=int(a.bundle_limit))
     for k in ("v02_db", "v02_src", "v02_keys"):
         v = getattr(a, k)
         if v:

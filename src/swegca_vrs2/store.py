@@ -718,6 +718,7 @@ REGION_SCOPE_TOP_ROWS = 100            # ('rows') how many strongest rows activa
 REGION_SCOPE_TOP = 8                   # ('mass') the top regions by mass are active ...
 REGION_SCOPE_MASS_SHARE = 0.25         # ... plus every region with at least this share of the top region's mass
 PORTAL_SCORE_FLOOR = 0.05              # portal partners join the scope only at or above this promoted share
+BUNDLE_LIMIT = 60_000     # recommended records per bundle (one store, one process): docs/SIZING.md (2026-09-19)
 CHECKPOINT_EVERY = 64     # in-ingest safety bound on crash replay; the daemon checkpoints after a
                           # quiet spell instead (CHECKPOINT_IDLE), close() always checkpoints
 CHECKPOINT_IDLE = 5.0     # seconds without requests before a resident main writes its checkpoint
@@ -779,7 +780,7 @@ class Main:
         m, g, p, o = self._generation
         self._generation = (m, g, p, value)
 
-    def __init__(self, state_dir, *, allow_ingest=False):
+    def __init__(self, state_dir, *, allow_ingest=False, bundle_limit=None):
         self.directory = Path(state_dir).expanduser().resolve()
         self.directory.mkdir(parents=True, exist_ok=True)
         self.lock = FileLock(self.directory / 'owner.lock')
@@ -788,6 +789,7 @@ class Main:
         except Timeout:
             raise ValueError('state_directory_already_owned') from None
         self.closed, self.allow_ingest = False, allow_ingest
+        self.bundle_limit = int(bundle_limit) if bundle_limit else BUNDLE_LIMIT
         self.db = None
         self._dirty = 0
         self.restore = {}
@@ -1317,7 +1319,13 @@ class Main:
             writes_enabled=self.allow_ingest, authority=dict(AUTHORITY), numerical_version=VERSION,
             vrs_node_count=len(self.graph.nodes), vrs_edge_count=self.graph.edge_count,
             last_vrs_event=self.graph.summary(), restore=dict(self.restore),
-            checkpoint_pending_ingests=self._dirty)
+            checkpoint_pending_ingests=self._dirty, bundle=self.bundle())
+
+    def bundle(self):
+        """Fill of this bundle against the recommended size (soft: nothing is refused; see docs/SIZING.md)."""
+        count = self.memory.episode_count
+        return dict(records=count, limit=self.bundle_limit, fill=round(count / self.bundle_limit, 3),
+                    over=count > self.bundle_limit)
 
     def ingest(self, arguments):
         """One observation = one generation (unchanged chain); see ``ingest_many``."""
@@ -1400,7 +1408,8 @@ class Main:
                 vrs_event=summary if added else {'status': 'unchanged_duplicate_observation'},
                 elapsed_ns=perf_counter_ns() - began))
         return dict(status='observations_recorded', count=len(rows), journaled=len(fresh), added=len(episodes),
-                    pair_snapshot_id=pair.snapshot_id, results=results, elapsed_ns=perf_counter_ns() - began)
+                    pair_snapshot_id=pair.snapshot_id, results=results, bundle=self.bundle(),
+                    elapsed_ns=perf_counter_ns() - began)
 
     def recall(self, query, expected_snapshot, exclude_kinds=(), region_scope='all'):
         """``expected_snapshot`` None = whatever generation is current (lock-free hook path).

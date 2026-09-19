@@ -121,7 +121,8 @@ def run(cwd, session_id=""):
     manifest = load_json(manifest_path, {})
     sys.path.insert(0, SRC)
     from swegca_vrs2.loopback import ensure_daemon
-    client = ensure_daemon(STATE, allow_ingest=True)
+    from .paths import BUNDLE_LIMIT
+    client = ensure_daemon(STATE, allow_ingest=True, bundle_limit=BUNDLE_LIMIT)
     added = updated = skipped = 0
     errors = []
     try:
@@ -211,8 +212,16 @@ def run(cwd, session_id=""):
         save_json(STATE_FILE, state)
         if remembered:
             save_json(cues_file, remembered)
+        try:
+            bundle = client.request("status").get("bundle") or {}
+        except Exception:
+            bundle = {}
     finally:
         client.close()
+    if bundle.get("fill", 0) >= 0.9:
+        # sizing rule (docs/SIZING.md): from 90 % of the recommended bundle size, say so at every stop
+        print(json.dumps({"systemMessage": f"[기억] 뭉치 {bundle['records']:,}/{bundle['limit']:,} 건 ({bundle['fill']:.0%})"
+                          + (" — 권고 크기 초과: 프로젝트별 분할 검토" if bundle.get("over") else " — 권고 크기에 가까움")}, ensure_ascii=False))
     receipt(files=[os.path.basename(p) for p in changed], added=added, updated=updated, skipped=skipped,
             errors=errors[:5], ms=int((time.time() - started) * 1000),
             code=dict(files=code_count, changed=len(code_lines), cues=len(code_cues), attached=attached[:5], ms=code_ms))
