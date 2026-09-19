@@ -394,3 +394,16 @@ one: `vrs2-produce.py` takes `supersede_same_source=True`, asks the daemon's new
 another day is a new point. Rows from *other* producers are never touched — a genuine
 contradiction still has to be closed by a verdict. After the re-run: four live rows, all refuting,
 conflicts 0.
+
+### Live candidates fill the hook packet (2026-09-19)
+
+Found while checking the compaction chain, not by a failing test. `hook_recall` cut the candidate
+list at `limit` *before* marking `superseded_by`, and the hook drops superseded rows — so a document
+revised many times spent the packet's slots on revisions the hook would never show. Measured on this
+session's last 8 prompts (limit 10): 63/80 rows live; on 「압축 지나왔는데 영속성 체크」 2/10 (one
+memory document had 7 revisions in the top 8; 26 superseded candidates sat above the tenth live one).
+The store still recalls old revisions (the contract: superseded records stay recallable, only the
+current one grounds a judgment); the packet now walks the ranked candidates and takes the first
+`limit` live ones, reporting `superseded_skipped`. After the fix the same 8 prompts: 80/80 live,
+21–176 ms. The recall bench was never affected — it ranked among non-superseded candidates from
+the start — so its MRR does not move; only the hook and the delegation packet see more.

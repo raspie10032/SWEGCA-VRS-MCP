@@ -118,7 +118,7 @@ def choose(packet, project, stems=None):
     verdicts, records = [], []
     for rank, row in enumerate(packet["memories"], 1):
         if row.get("superseded_by"):
-            continue          # an older revision of a source that is also in the packet
+            continue          # older revision (the daemon fills the packet with live rows since 2026-09-19; an old daemon may not)
         informative = evidence_cues(row, fanout, total)
         kind = (row.get("metadata") or {}).get("kind")
         if kind == "fs_listing" and not any(t.startswith(w) for w in LOCATION_WORDS for t in stems):

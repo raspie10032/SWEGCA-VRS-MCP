@@ -174,7 +174,16 @@ def hook_recall(main, arguments):
     activation = root['receipt']['activation']
     judgments = {j.episode_id: j for j in activation.re_evidence.judgments}
     rows = []
-    for candidate in activation.recall.candidates[:limit]:
+    superseded_skipped = 0
+    for candidate in activation.recall.candidates:
+        if len(rows) >= limit:
+            break
+        # live candidates fill the packet (2026-09-19): an older revision of a source stays recallable in the
+        # store, but the hook never shows it, so it must not take a slot — measured on 8 prompts: 63/80 live,
+        # one prompt 2/10 (a doc with 7 revisions took 6 slots). `superseded_by` stays in the row schema.
+        if candidate.episode_id in main.memory.superseded:
+            superseded_skipped += 1
+            continue
         episode = main.memory.episode(candidate.episode_id)
         obs = episode.steps[0].observation
         judgment = judgments.get(candidate.episode_id)
@@ -239,6 +248,7 @@ def hook_recall(main, arguments):
                               decision=None if decision is None else {k: decision.get(k) for k in ('status', 'reason', 'unresolved', 'source_diversity')}))
     return dict(status='ok', query=query, pair_snapshot_id=status['pair_snapshot_id'], conflicts=conflicts,
                 candidate_count=len(activation.recall.candidates), returned=len(rows), memories=rows,
+                superseded_skipped=superseded_skipped,
                 should_abstain=controls.should_abstain, unresolved_conflict=controls.unresolved_conflict,
                 conflicting_propositions=list(controls.conflicting_propositions),
                 insufficient_evidence=controls.insufficient_evidence,
