@@ -37,10 +37,16 @@ which is why it is the default rather than either number alone.
 
 ## When a bundle reaches the limit
 
-1. Split by project/system: a second state directory (`VRS2_STATE`, or another `vrs2.json`), its own
-   daemon; records keep their ids and sources.
-2. Cross-bundle recall is the open design item (the G7 resident layer in the roadmap): an active bundle
-   for the current project plus the others addressable by name. Until then a split bundle is a separate
-   memory.
+1. Split by project/system: register a second bundle in `~/.claude/vrs2.json` and route the project's
+   Stop hook to it (`vrs2-install.py --bundle <id>=<dir> --bundle-of <project slug>=<id>`, or edit
+   `bundles` / `bundle_of` by hand); records keep their ids and sources. No second daemon: the primary
+   daemon answers for every registered bundle (the G7 resident layer, `docs/VRS_REGIONS.md`
+   「Resident layer」) — the primary hot, the others warm (index only, refreshed from their journals),
+   hot while a Stop hook writes into them, `hot_bundles` at once (default 1).
+2. A warm bundle costs its index, not its graph: on the live store (5.7k records) a warm view is 189 MB
+   against 293 MB hot and loads in 0.4 s against 1.2 s; its rows come back in index order (BM25 without
+   VRS strengths or regions) and are tagged 「뭉치 <id>·warm」 in the hook. The primary keeps the engine's
+   full recall. Cross-bundle addressing: `lookup <episode_id>` names the bundle; the hook packet carries
+   `bundle` on every row.
 3. Before splitting, two software levers can move the line without a design change: the candidate loop
    in `recall_candidates` (still Python per candidate, ~0.2 ms each) and per-region candidate caps.

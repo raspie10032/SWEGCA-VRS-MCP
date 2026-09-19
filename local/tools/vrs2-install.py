@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """vrs2 하니스 설치기 — 어느 OS 든 같은 절차 (2026-09-18).
 
-1. `~/.claude/vrs2.json` 을 쓴다(src·state·tools·python·receipts·v02_*·bundle_limit): 하니스 모듈과 도구가 전부 여기서 경로를 읽는다.
+1. `~/.claude/vrs2.json` 을 쓴다(src·state·tools·python·receipts·v02_*·bundle_limit·bundles·bundle_of·hot_bundles): 하니스 모듈과 도구가 전부 여기서 경로를 읽는다.
 2. `~/.claude/hooks/` 에 껍데기 훅을 쓴다(json 에서 src 를 읽어 패키지를 import 하는 여섯 줄).
 3. `~/.claude/settings.json` 의 hooks 에 이 OS 의 파이썬 경로로 항목을 넣는다(있으면 갱신, 다른 훅은 보존).
 4. 스토어 디렉터리·영수증 디렉터리를 만든다.
@@ -89,6 +89,9 @@ def main():
     ap.add_argument("--receipts", default=os.path.join(CLAUDE, "hooks"))
     ap.add_argument("--v02-db"); ap.add_argument("--v02-src"); ap.add_argument("--v02-keys")
     ap.add_argument("--bundle-limit", type=int, default=60000, help="권고 뭉치 크기(건) — docs/SIZING.md; 소프트 상한(거절 없음, 90%% 부터 Stop 훅이 알림)")
+    ap.add_argument("--bundle", action="append", default=[], metavar="ID=DIR", help="주 뭉치 밖의 뭉치(G7): 데몬이 온(warm)으로 같이 답한다; 여러 번")
+    ap.add_argument("--bundle-of", action="append", default=[], metavar="SLUG=ID", help="프로젝트 슬러그의 Stop 훅이 쓰는 뭉치; 없으면 주 뭉치")
+    ap.add_argument("--hot-bundles", type=int, default=None, help="주 뭉치 밖에서 동시에 열어 둘(hot) 뭉치 수(기본 1)")
     ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args()
     sys.stdout.reconfigure(encoding="utf-8")
@@ -100,6 +103,21 @@ def main():
         v = getattr(a, k)
         if v:
             cfg[k] = os.path.abspath(v)
+    # G7 (2026-09-19): bundle registry — flags override, else what vrs2.json already has stays
+    existing = {}
+    try:
+        existing = json.load(io.open(os.path.join(CLAUDE, "vrs2.json"), encoding="utf-8"))
+    except (OSError, ValueError):
+        pass
+    bundles = dict(item.split("=", 1) for item in a.bundle if "=" in item) or existing.get("bundles") or {}
+    bundle_of = dict(item.split("=", 1) for item in a.bundle_of if "=" in item) or existing.get("bundle_of") or {}
+    if bundles:
+        cfg["bundles"] = {k: os.path.abspath(v) for k, v in bundles.items()}
+    if bundle_of:
+        cfg["bundle_of"] = dict(bundle_of)
+    hot = a.hot_bundles if a.hot_bundles is not None else existing.get("hot_bundles")
+    if hot is not None:
+        cfg["hot_bundles"] = int(hot)
     print("config:", json.dumps(cfg, ensure_ascii=False, indent=1))
     if a.dry_run:
         return

@@ -41,7 +41,7 @@ PORT_FILE = 'loopback.port'
 RESIDENT_COMMANDS = {'status', 'cognitive_dialogue_start', 'cognitive_dialogue_continue',
                      'cognitive_dialogue_evidence_open', 'cognitive_dialogue_evidence',
                      'cognitive_dialogue_release'}
-LOCAL_COMMANDS = {'hook_recall', 'evidence_of', 'origins', 'ingest', 'ingest_many', 'checkpoint', 'compact', 'consolidate', 'refine', 'ping', 'shutdown', 'usage', 'alias'}
+LOCAL_COMMANDS = {'hook_recall', 'evidence_of', 'origins', 'bundles', 'lookup', 'evict', 'ingest', 'ingest_many', 'checkpoint', 'compact', 'consolidate', 'refine', 'ping', 'shutdown', 'usage', 'alias'}
 
 
 # ── client ────────────────────────────────────────────────────────────
@@ -97,7 +97,8 @@ class LoopbackClient:
         return result
 
 
-def ensure_daemon(state_dir, *, allow_ingest=True, python=None, wait_seconds=30, bundle_limit=None):
+def ensure_daemon(state_dir, *, allow_ingest=True, python=None, wait_seconds=30, bundle_limit=None,
+                  bundles=None, hot_bundles=None):
     """Return a client for the daemon owning ``state_dir``, starting it if needed."""
     state_dir = Path(state_dir)
     port = port_of(state_dir)
@@ -113,6 +114,11 @@ def ensure_daemon(state_dir, *, allow_ingest=True, python=None, wait_seconds=30,
         command.append('--allow-ingest')
     if bundle_limit:
         command += ['--bundle-limit', str(int(bundle_limit))]
+    for bundle_id, directory in (bundles or {}).items():      # G7 resident layer (2026-09-19): other bundles, warm
+        if directory:
+            command += ['--bundle', f'{bundle_id}={directory}']
+    if hot_bundles is not None:
+        command += ['--hot-bundles', str(int(hot_bundles))]
     popen = dict(stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, close_fds=True)
     if os.name == 'nt':
         popen['creationflags'] = subprocess.CREATE_NEW_PROCESS_GROUP | getattr(subprocess, 'DETACHED_PROCESS', 0)
@@ -167,6 +173,11 @@ def _record_digest(text):
     return record_digest(text)
 
 
+def _plain(value):
+    from .store import plain
+    return plain(value)
+
+
 FILE_KINDS = ('log_entry', 'doc', 'doc_section')
 
 
@@ -199,12 +210,14 @@ def origins(main, arguments):
         rows.append(dict(episode_id=identifier, source=episode.source_addresses[0], revision=episode.revision,
                          kind=meta.get('kind'), path=meta.get('path'), section=meta.get('section') or '', index=meta.get('index'),
                          project=meta.get('project'), head=text.split('\n', 1)[0][:120],
-                         origin=meta.get('origin'), text_sha256=None if meta.get('origin') else _record_digest(text)))
+                         origin=_plain(meta.get('origin')), text_sha256=None if meta.get('origin') else _record_digest(text)))
     return dict(status='ok', count=len(rows), rows=rows, next=next_row, total=count)
 
 
-def hook_recall(main, arguments):
-    """Short packet for hooks: top candidates with provenance and a snippet."""
+def hook_recall(main, arguments, resident=None):
+    """Short packet for hooks: top candidates with provenance and a snippet. With a resident (G7, 2026-09-19)
+    the primary's rows come first (VRS, regions, re-evidence), then every other bundle's rows in its own
+    index order, each tagged ``bundle``/``bundle_state`` — the hook says which bundle a memory came from."""
     query = str(arguments.get('query') or '')
     limit = max(1, min(int(arguments.get('limit', 5)), 50))
     snippet = max(80, min(int(arguments.get('snippet', 400)), 4000))
@@ -235,7 +248,7 @@ def hook_recall(main, arguments):
             proposition=obs.get('proposition_id'), polarity=obs.get('evidence_polarity'),
             verdict=judgment.verdict if judgment else None,
             superseded_by=main.memory.superseded.get(candidate.episode_id),
-            metadata=dict(obs.get('metadata') or {}),
+            metadata=_plain(obs.get('metadata') or {}),      # nested maps (origin) are frozen in the store: plain for JSON
             text=obs.get('text', '')[:snippet], text_chars=len(obs.get('text', '')),
             # G3 origin binding (2026-09-19): rows ingested before it carry no origin; the hook verifies the
             # source against the full text's digest instead (hashing here is outside main.recall's hot path)
@@ -264,6 +277,12 @@ def hook_recall(main, arguments):
     for row in rows:
         if row.get('proposition') in repeats:
             row['repeats'] = repeats[row['proposition']]
+        row['bundle'] = 'main'
+    others = []
+    if resident is not None and resident.ids():
+        others = resident.recall_others(query, exclude, limit, snippet)
+        for bundle in others:
+            rows.extend(bundle.get('rows') or [])
     controls = activation.re_evidence
     stable = main.graph.stable
     # current-vs-past collision (2026-09-17): for each proposition the re-evidence stage found in
@@ -293,6 +312,7 @@ def hook_recall(main, arguments):
     return dict(status='ok', query=query, pair_snapshot_id=status['pair_snapshot_id'], conflicts=conflicts,
                 candidate_count=len(activation.recall.candidates), returned=len(rows), memories=rows,
                 superseded_skipped=superseded_skipped,
+                bundles=[{k: v for k, v in b.items() if k != 'rows'} for b in others],
                 should_abstain=controls.should_abstain, unresolved_conflict=controls.unresolved_conflict,
                 conflicting_propositions=list(controls.conflicting_propositions),
                 insufficient_evidence=controls.insufficient_evidence,
@@ -308,12 +328,16 @@ def hook_recall(main, arguments):
 
 
 class Daemon:
-    def __init__(self, state_dir, *, allow_ingest, idle_seconds, bundle_limit=None):
+    def __init__(self, state_dir, *, allow_ingest, idle_seconds, bundle_limit=None, bundles=None, hot_bundles=1):
         from .server import LocalResident
         from .store import Main
+        from .resident import Resident
         self.state_dir = Path(state_dir)
         self.main = Main(self.state_dir, allow_ingest=allow_ingest, bundle_limit=bundle_limit)
         self.resident = LocalResident(self.main)
+        # G7 resident layer (2026-09-19): the primary bundle hot, other registered bundles warm (index only)
+        # or hot by use; an ingest names its bundle, a recall reaches all of them
+        self.bundles = Resident(self.main, bundles or {}, hot_limit=hot_bundles, bundle_limit=bundle_limit)
         self.lock = threading.Lock()
         self.idle_seconds = idle_seconds
         self.last = time.time()
@@ -328,9 +352,13 @@ class Daemon:
         # never a mix, and a Stop hook's ingest burst no longer stalls another session's prompt hook.
         if command == 'ping':
             return dict(status='ok', pid=os.getpid(), state_dir=str(self.state_dir),
-                        writes_enabled=self.main.allow_ingest)
+                        writes_enabled=self.main.allow_ingest, bundles=self.bundles.ids())
         if command == 'hook_recall':
-            return hook_recall(self.main, arguments)
+            return hook_recall(self.main, arguments, self.bundles)
+        if command == 'bundles':
+            return dict(status='ok', bundles=self.bundles.status(), hot_limit=self.bundles.hot_limit)
+        if command == 'lookup':
+            return dict(status='ok', episode_id=arguments.get('episode_id'), bundle=self.bundles.lookup(str(arguments.get('episode_id') or '')))
         if command == 'origins':
             return origins(self.main, arguments)
         if command == 'evidence_of':
@@ -345,12 +373,19 @@ class Daemon:
             return dict(status='ok', consolidate=result, raced=result is None)
         with self.lock:
             if command in RESIDENT_COMMANDS:
-                return self.resident.request(command, **arguments)
+                result = self.resident.request(command, **arguments)
+                if command == 'status':
+                    result['bundles'] = self.bundles.status()
+                return result
             if command == 'ingest':
-                return self.main.ingest(arguments)
+                target = self.bundles.main_for(arguments.pop('bundle', None))     # G7: routed by bundle id
+                return target.ingest(arguments)
             if command == 'ingest_many':
                 # batch generations (2026-09-18): K observations -> one generation; all-or-nothing
-                return self.main.ingest_many(list(arguments.get('rows') or []))
+                target = self.bundles.main_for(arguments.get('bundle'))
+                return target.ingest_many(list(arguments.get('rows') or []))
+            if command == 'evict':
+                return dict(status='ok', evicted=self.bundles.evict(str(arguments.get('bundle') or '')))
             if command == 'alias':
                 # hypothesis registry (2026-09-18): bind alias propositions to a canonical one
                 return self.main.alias_update(arguments.get('canonical'), arguments.get('aliases') or [])
@@ -374,6 +409,10 @@ class Daemon:
 
     def close(self):
         try:
+            self.bundles.close()       # other hot bundles: checkpoint + close; warm views dropped
+        except Exception:
+            pass
+        try:
             self.main.close()          # checkpoints when dirty
         finally:
             try:
@@ -382,10 +421,10 @@ class Daemon:
                 pass
 
 
-def serve(state_dir, *, port=0, allow_ingest=False, idle_hours=8.0, bundle_limit=None):
+def serve(state_dir, *, port=0, allow_ingest=False, idle_hours=8.0, bundle_limit=None, bundles=None, hot_bundles=1):
     from .store import CHECKPOINT_IDLE
     from .vrs_refine import IDLE_CYCLES
-    daemon = Daemon(state_dir, allow_ingest=allow_ingest, bundle_limit=bundle_limit, idle_seconds=idle_hours * 3600)
+    daemon = Daemon(state_dir, allow_ingest=allow_ingest, bundle_limit=bundle_limit, bundles=bundles, hot_bundles=hot_bundles, idle_seconds=idle_hours * 3600)
 
     class Handler(socketserver.StreamRequestHandler):
         def handle(self):
@@ -433,6 +472,18 @@ def serve(state_dir, *, port=0, allow_ingest=False, idle_hours=8.0, bundle_limit
                     serialized = daemon.main.checkpoint_serialize(prepared)
                     with daemon.lock:
                         daemon.main.checkpoint_commit(prepared, serialized)
+            # G7 (2026-09-19): other hot bundles checkpoint after the same quiet spell — their warm blob is what a
+            # warm view (this or another process) reads; consolidation of a secondary bundle waits for its own turn
+            # as primary (it is not run here)
+            if quiet >= CHECKPOINT_IDLE:
+                for bundle_id, other in list(daemon.bundles.hot.items()):
+                    if other.dirty:
+                        with daemon.lock:
+                            prepared = other.checkpoint_prepare() if other.dirty else None
+                        if prepared is not None:
+                            serialized = other.checkpoint_serialize(prepared)
+                            with daemon.lock:
+                                other.checkpoint_commit(prepared, serialized)
             # VRS consolidation (vrs-regions): once the daemon is quiet and the graph has edges the stable
             # version has not refined (or it has not converged), refine one chunk region by region — outside
             # the lock but for prepare/commit — and come back for the next chunk until converged.
@@ -462,10 +513,14 @@ def main():
     parser.add_argument('--allow-ingest', action='store_true')
     parser.add_argument('--idle-hours', type=float, default=8.0)
     parser.add_argument('--bundle-limit', type=int, default=0, help='recommended records per bundle (soft; docs/SIZING.md)')
+    parser.add_argument('--bundle', action='append', default=[], metavar='ID=DIR', help='another bundle this daemon answers for (warm; hot when ingested into)')
+    parser.add_argument('--hot-bundles', type=int, default=1, help='how many other bundles may stay hot (owned) at once')
     options = parser.parse_args()
+    bundles = dict(item.split('=', 1) for item in options.bundle if '=' in item)
     try:
         return serve(options.state_dir, port=options.port, allow_ingest=options.allow_ingest,
-                     idle_hours=options.idle_hours, bundle_limit=options.bundle_limit or None)
+                     idle_hours=options.idle_hours, bundle_limit=options.bundle_limit or None,
+                     bundles=bundles, hot_bundles=options.hot_bundles)
     except (ValueError, OSError) as error:
         print('VRS2 loopback daemon error: ' + str(error), file=sys.stderr)
         return 1

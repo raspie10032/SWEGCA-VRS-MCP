@@ -121,8 +121,9 @@ def run(cwd, session_id=""):
     manifest = load_json(manifest_path, {})
     sys.path.insert(0, SRC)
     from swegca_vrs2.loopback import ensure_daemon
-    from .paths import BUNDLE_LIMIT
-    client = ensure_daemon(STATE, allow_ingest=True, bundle_limit=BUNDLE_LIMIT)
+    from .paths import BUNDLE_LIMIT, BUNDLES, BUNDLE_OF, HOT_BUNDLES
+    client = ensure_daemon(STATE, allow_ingest=True, bundle_limit=BUNDLE_LIMIT, bundles=BUNDLES, hot_bundles=HOT_BUNDLES)
+    bundle = BUNDLE_OF.get(slug)                    # G7 (2026-09-19): this project's bundle, or the primary when unset
     added = updated = skipped = 0
     errors = []
     try:
@@ -152,6 +153,8 @@ def run(cwd, session_id=""):
                             cues=list(dict.fromkeys(cues))[:128], metadata=r["metadata"])
                 if prev:
                     args["supersedes"] = prev["episode"]
+                if bundle:
+                    args["bundle"] = bundle
                 pending.append((r, args, prev))
 
             def settle(r, prev, out):
@@ -183,7 +186,8 @@ def run(cwd, session_id=""):
                 # whole graph (500 ms each at 5.6k records) happens once. All-or-nothing on the daemon; any
                 # refusal (older daemon, a bad supersedes) falls back to the per-row path with its own retries.
                 try:
-                    out = client.request("ingest_many", rows=[a for _, a, _ in pending])
+                    out = client.request("ingest_many", rows=[{k: v for k, v in a.items() if k != "bundle"} for _, a, _ in pending],
+                                         **({"bundle": bundle} if bundle else {}))
                     for (r, _, prev), res in zip(pending, out["results"]):
                         settle(r, prev, res)
                 except Exception:
@@ -200,7 +204,8 @@ def run(cwd, session_id=""):
             args = dict(request_id=f"code_change:{source}"[:128], text=body[:60000], source=source,
                         revision=mod.sha(body), outcome="pending", cues=code_cues,
                         metadata=dict(kind="code_change", project=project, path=cwd,
-                                      date=when[:10], files=[l.split(" ")[0] for l in code_lines[:40]]))
+                                      date=when[:10], files=[l.split(" ")[0] for l in code_lines[:40]]),
+                        **({"bundle": bundle} if bundle else {}))
             try:
                 out = client.request("ingest", **args)
                 manifest[source] = dict(revision=args["revision"], episode=out["episode_id"])

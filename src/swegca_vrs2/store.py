@@ -803,6 +803,8 @@ class Main:
             self.db.execute('CREATE TABLE IF NOT EXISTS identity (id INTEGER PRIMARY KEY CHECK(id=1), value TEXT NOT NULL)')
             self.db.execute('CREATE TABLE IF NOT EXISTS observations (seq INTEGER PRIMARY KEY, request_id TEXT UNIQUE NOT NULL, body TEXT NOT NULL, fingerprint TEXT NOT NULL, pair TEXT NOT NULL)')
             self.db.execute('CREATE TABLE IF NOT EXISTS checkpoint (id INTEGER PRIMARY KEY CHECK(id=1), seq INTEGER NOT NULL, pair TEXT NOT NULL, blob BLOB NOT NULL)')
+            # G7 resident layer (2026-09-19): the index alone, for a warm view in another process (resident.py)
+            self.db.execute('CREATE TABLE IF NOT EXISTS checkpoint_warm (id INTEGER PRIMARY KEY CHECK(id=1), seq INTEGER NOT NULL, pair TEXT NOT NULL, blob BLOB NOT NULL)')
             # Lossless hard compression (2026-09-14): journal rows older than the checkpoint
             # move into compressed segments. archive + observations is still the whole journal.
             self.db.execute('CREATE TABLE IF NOT EXISTS journal_archive (segment INTEGER PRIMARY KEY, first_seq INTEGER NOT NULL, last_seq INTEGER NOT NULL, last_pair TEXT NOT NULL, rows INTEGER NOT NULL, blob BLOB NOT NULL)')
@@ -1046,7 +1048,10 @@ class Main:
         so any live array keeps the whole blob resident (measured: 2x the data)."""
         raw = pickle.dumps(dict(identity=prepared['identity'], pair=prepared['pair'], memory=prepared['memory'],
                                 graph=prepared['graph'], operations=prepared['operations']), protocol=4)
-        return len(raw), CHECKPOINT_MAGIC + zlib.compress(raw, 6)
+        # G7 (2026-09-19): the warm blob — the memory index alone — beside the full one; a resident in another
+        # process loads this to hold the bundle warm (measured on the live store: see docs/VRS_REGIONS.md)
+        warm = CHECKPOINT_MAGIC + zlib.compress(pickle.dumps(prepared['memory'], protocol=4), 6)
+        return len(raw), CHECKPOINT_MAGIC + zlib.compress(raw, 6), warm
 
     def checkpoint_commit(self, prepared, serialized):
         """Write a serialized generation if it is still the current one (under the lock)."""
@@ -1062,10 +1067,12 @@ class Main:
         return self._checkpoint_write(prepared['seq'], prepared['pair'], self.checkpoint_serialize(prepared), prepared['started'])
 
     def _checkpoint_write(self, seq, pair, serialized, started):
-        raw_len, blob = serialized
+        raw_len, blob, warm = (*serialized, None)[:3]
         self.db.execute('BEGIN IMMEDIATE')
         try:
             self.db.execute('INSERT OR REPLACE INTO checkpoint(id, seq, pair, blob) VALUES (1,?,?,?)', (seq, pair, blob))
+            if warm is not None:
+                self.db.execute('INSERT OR REPLACE INTO checkpoint_warm(id, seq, pair, blob) VALUES (1,?,?,?)', (seq, pair, warm))
             self.db.execute('COMMIT')
         except BaseException:
             if self.db.in_transaction:

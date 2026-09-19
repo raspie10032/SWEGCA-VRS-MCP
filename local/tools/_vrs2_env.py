@@ -31,6 +31,11 @@ TOOLS = _get("tools", HERE)
 PY = _get("python", sys.executable)
 RECEIPTS = _get("receipts", os.path.join(HOME, ".claude", "hooks"))
 BUNDLE_LIMIT = int(_get("bundle_limit", 60000) or 60000)   # recommended records per bundle (docs/SIZING.md, 2026-09-19)
+# G7 resident layer (2026-09-19): other bundles this machine's daemon answers for (id -> state dir; "main" is STATE),
+# which bundle each project's Stop hook writes to (slug -> id; absent = main), how many others may stay hot
+BUNDLES = {str(k): v for k, v in (_cfg().get("bundles") or {}).items() if k != "main" and v}
+BUNDLE_OF = {str(k): str(v) for k, v in (_cfg().get("bundle_of") or {}).items() if v}
+HOT_BUNDLES = int(_get("hot_bundles", 1) or 1)
 V02_DB = _get("v02_db", None)
 V02_SRC = _get("v02_src", None)
 V02_KEYS = _get("v02_keys", None)

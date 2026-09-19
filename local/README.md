@@ -22,6 +22,7 @@ Since 2026-09-18 these are six-line shims; the bodies are `src/swegca_vrs2/harne
 ## tools/ (`C:\Users\asm\mcp`)
 
 * `vrs2-import.py` — memory docs / session logs / verdicts into the store (supersedes by revision; binds `metadata.origin` = byte/line span + sha256, G3)
+* `vrs2-install.py` — `~/.claude/vrs2.json` + hook shims; `--bundle-limit`, `--bundle ID=DIR`, `--bundle-of SLUG=ID`, `--hot-bundles` (G7 bundles)
 * `vrs2-verify-origin.py` — every live file-backed record against its file: intact / moved / changed / missing; `--retire` closes orphans with a superseding retirement row
 * `swegca-verdict.py`, `swegca-verdict-axes.py` — verdicts (signed v0.2 + vrs2 mirror), axes, `supersedes`
 * `vrs2-produce.py` — generic evidence producer; `vrs2-probe.py`, `vrs2-recall-bench.py`, `vrs2-delegate-record.py` — producers

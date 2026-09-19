@@ -120,7 +120,8 @@ def choose(packet, project, stems=None):
     for rank, row in enumerate(packet["memories"], 1):
         if row.get("superseded_by"):
             continue          # older revision (the daemon fills the packet with live rows since 2026-09-19; an old daemon may not)
-        informative = evidence_cues(row, fanout, total)
+        # G7 (2026-09-19): a row from another bundle carries that bundle's fanout and size
+        informative = evidence_cues(row, row.get("fanout") or fanout, int(row.get("record_count") or total))
         kind = (row.get("metadata") or {}).get("kind")
         if kind == "fs_listing" and not any(t.startswith(w) for w in LOCATION_WORDS for t in stems):
             continue
@@ -305,6 +306,7 @@ def render(packet, verdicts, records):
         where = meta.get("path") or row["source"]
         usage = (row.get("vrs") or {}).get("usage")
         lines.append(f"{number}. 기록 — {where}" + (f" ({meta.get('date')})" if meta.get("date") else "")
+                     + (f" [뭉치 {row['bundle']}·{row.get('bundle_state', 'warm')}]" if row.get("bundle") not in (None, "main") else "")
                      + (" [VRS 승격]" if (row.get("vrs") or {}).get("promoted") else "")
                      + (f" [열림 {usage[1]}/{usage[0]}]" if usage else ""))   # usage re-evidence: opened/injected so far
         lines.append("   " + row["text"][:SNIPPET].replace("\n", "\n   "))
@@ -360,7 +362,13 @@ def main():
         data = json.loads(sys.stdin.read() or "{}")
     except ValueError:
         return
-    context = context_for(data.get("prompt") or data.get("user_prompt") or "", data.get("cwd") or os.getcwd(), data.get("session_id"))
+    try:
+        context = context_for(data.get("prompt") or data.get("user_prompt") or "", data.get("cwd") or os.getcwd(), data.get("session_id"))
+    except Exception as failure:
+        # a failure is a receipt, not silence (2026-09-19: the shim swallows exceptions, and a daemon reply that
+        # could not be encoded left no trace for 35 minutes) — the prompt is never blocked
+        note(error=repr(failure)[:300], session=str(data.get("session_id") or "")[:8])
+        return
     if not context:
         return
     out = {"hookSpecificOutput": {"hookEventName": "UserPromptSubmit", "additionalContext": context}}

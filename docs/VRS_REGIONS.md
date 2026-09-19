@@ -443,3 +443,45 @@ the 「열기」 line silently pointed at line 1. Now:
   0 missing.
 
 Memory ≠ truth still holds: `intact` certifies the source, not the record.
+
+### Resident layer — the minimal G7 (2026-09-19)
+
+The 60k bundle rule needs a way to keep more than one bundle without more than one process. Now one
+daemon answers for several bundles (`resident.py`):
+
+* **Bundles** are registered in `~/.claude/vrs2.json` (`bundles: {id: dir}`, `bundle_of: {project slug:
+  id}`, `hot_bundles`; `vrs2-install.py --bundle/--bundle-of/--hot-bundles`). The daemon's own store is
+  the primary — HOT: index + VRS graph, the engine's recall with regions, promotion and re-evidence.
+* **Warm** = the index alone. A checkpoint now writes a second blob, `checkpoint_warm` (the memory index,
+  16.4 MB on the live store against 25.8 MB for the full checkpoint); a `WarmView` loads it read-only
+  from the bundle's own sqlite and follows the bundle's journal (rows after the checkpoint; a newer
+  checkpoint by the owner reloads). Measured on a copy of the live store, 5,702 records: warm 189 MB /
+  0.39 s against hot 293 MB / 1.17 s. The index dominates at this size; the graph's share grows with N
+  (~300 edges per record).
+* **Hot by use**: an ingest that names another bundle (`ingest`/`ingest_many` with `bundle=<id>`, the Stop
+  hook passes its project's) opens it owned; beyond `hot_bundles` the least recently used one is evicted —
+  checkpoint + close in a background thread (a close is seconds; the hook client times out at 5 s, and a
+  retried eviction ran twice before this) — and is warm again at the next read. Hot secondary bundles
+  checkpoint after the same quiet spell as the primary; consolidation of a secondary bundle is not run
+  here (it refines when it is someone's primary).
+* **Recall across bundles**: `hook_recall` returns the primary's rows first (VRS, regions, verdicts), then
+  every other bundle's rows in its own index order — BM25 over the informative cues, every matched cue
+  admitting a candidate as the engine does, no strengths — each tagged `bundle`/`bundle_state` and carrying
+  its bundle's fanout and size so the hook's evidence gate judges it against the right store. The hook
+  prints 「뭉치 <id>·warm」. Measured with one warm copy of the live store beside the primary, 8 prompts:
+  156 ms median with the second bundle against 160 ms without (max 224 ms) — the warm candidate pass is a
+  few milliseconds at 5.7k records.
+* **Directory**: `lookup <episode_id>` names the bundle that holds a record (primary first, then each
+  bundle's index); `bundles` and `status.bundles` list every bundle with its state (hot / warm / closing /
+  cold), records and fill. `evict <id>` returns a bundle to warm.
+
+Residency is a rank, not a strength: where a bundle sits says nothing about its VRS, and a record is
+addressable in every state (G7: `residency rank != VRS strength`). Not built: prefetch, hysteresis beyond
+LRU, cross-bundle re-evidence (a proposition's evidence in two bundles is two separate judgments), and the
+cache-miss scheduler (G8) — a warm view is loaded inside the request that first needs it (0.4 s once).
+
+Found while wiring it, live: the origin binding was the first nested map in a record's metadata; the
+store freezes metadata (`mappingproxy`), the daemon's JSON reply could not encode it, and the connection
+closed without a reply — the hook printed nothing for any prompt whose packet held a fresh row, from
+10:58 to 11:35, with no receipt (the shim swallows exceptions). Every packet row now carries `plain()`
+metadata (regression test), and the hook writes an `error` receipt for its own failures.
