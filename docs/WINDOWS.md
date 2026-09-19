@@ -52,3 +52,29 @@ These setup steps follow the [official MCP SDK real-host guide](https://py.sdk.m
 and [Claude local MCP guide](https://support.claude.com/en/articles/10949351-getting-started-with-local-mcp-servers-on-claude-desktop).
 The release's actual Windows runner tests and Claude UI tests are reported
 separately; passing stdio tests does not claim a Claude account/UI was exercised.
+
+## Unreleased 2.2 development branch: shared resident mode
+
+This section applies only when a wheel built from the 2.2 development branch
+is installed. The published v2.1.0 wheel does not have `--loopback`.
+Add `--loopback` to the MCP `args` shown above. A prompt hook, stop hook and
+Claude's stdio MCP may then use the same state directory: the first bridge
+starts one main bound to `127.0.0.1`, and later bridges attach to it. The
+endpoint uses an owner-local random secret; no public listener or model is
+started. All bridges must use the same `--state-dir`. Start the first bridge
+with `--allow-ingest` if explicit observation writes are required. A later
+write-enabled bridge cannot silently upgrade a running read-only main.
+
+For explicit offline `checkpoint`, `compact` or `consolidate` maintenance,
+close clients and stop the resident cleanly first:
+
+```powershell
+& "$env:LOCALAPPDATA\SWEGCA\VRS2-venv\Scripts\python.exe" -m swegca_vrs2.loopback --shutdown --state-dir "$env:LOCALAPPDATA\SWEGCA\VRS2"
+```
+
+Then run `python -m swegca_vrs2.maintenance --state-dir <store> --help` to
+inspect explicit maintenance commands. Consolidation needs exact original
+`memory:...` parent IDs and the current pair ID. It creates a source-bound
+navigation object, never a factual summary or independent experience. Original
+records and conflicting revisions remain accessible. A later MCP bridge will
+start the resident again; do not delete or reset the state directory.

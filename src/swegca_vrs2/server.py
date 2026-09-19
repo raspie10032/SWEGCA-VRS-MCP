@@ -90,13 +90,16 @@ class LocalResident:
 class StandaloneMCP(MemoryMCPServer):
     server_name = 'swegca-vrs2-memory'
 
-    def __init__(self, main):
+    def __init__(self, main, *, allow_ingest=None):
         super().__init__(LocalResident(main))
         self.main = main
-        self.tool_definitions = [*MEMORY_TOOLS, *([INGEST] if main.allow_ingest else [])]
+        self.allow_ingest = main.allow_ingest if allow_ingest is None else bool(allow_ingest and main.allow_ingest)
+        self.tool_definitions = [*MEMORY_TOOLS, *([INGEST] if self.allow_ingest else [])]
 
     def call_tool(self, name, arguments):
         if name == 'memory_store':
+            if not self.allow_ingest:
+                raise InterfaceError('ingest_disabled')
             try:
                 return self.main.ingest(arguments)
             except (ValueError, KeyError, TypeError) as error:
@@ -105,7 +108,7 @@ class StandaloneMCP(MemoryMCPServer):
             if arguments != {}:
                 raise InterfaceError('invalid_tool_arguments')
             return dict(self.main.status(), memory_only=True, model_tools_exported=False,
-                write_tools_exported=self.main.allow_ingest, receipt_transport='paged_main_evidence')
+                write_tools_exported=self.allow_ingest, receipt_transport='paged_main_evidence')
         result = super().call_tool(name, arguments)
         if name == 'memory_context' and result.get('status') == 'memory_context_ready':
             result['usage'] = dict(result['usage'], ingress='Use memory_store with explicit --allow-ingest permission. '
@@ -135,7 +138,16 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--state-dir', type=Path, default=default_state_dir())
     parser.add_argument('--allow-ingest', action='store_true', help='Permit explicit external observation recording; grants no action or belief authority.')
+    parser.add_argument('--loopback', action='store_true', help='Bridge stdio to one local resident main shared by Windows clients.')
     options = parser.parse_args()
+    if options.loopback:
+        from .loopback import bridge
+        try:
+            bridge(options.state_dir, allow_ingest=options.allow_ingest)
+            return 0
+        except (ValueError, OSError) as error:
+            print('VRS2 loopback error: ' + str(error), file=sys.stderr)
+            return 1
     owner = server = None
     try:
         owner = Main(options.state_dir, allow_ingest=options.allow_ingest)

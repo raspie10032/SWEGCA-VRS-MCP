@@ -11,6 +11,8 @@ import hashlib
 import json
 import re
 import sqlite3
+import sys
+import zlib
 from pathlib import Path
 from time import perf_counter_ns
 from types import MappingProxyType, SimpleNamespace
@@ -33,6 +35,7 @@ from .engine.mosaic_vrs_dependency_index import EndpointDependencyIndex
 from .engine.mosaic_vrs_connectivity_regions import ConnectivityRegions
 from .engine.mosaic_vrs_state_update import VRSConnectionStateUpdate, VRSStateUpdateReceipt
 from .engine.mosaic_memory_promotion import assess_vrs_experience_promotion
+from .numeric import settle, local_moves
 
 AUTHORITY = MappingProxyType({k: False for k in ('world', 'action', 'persistent_write', 'model_update', 'distribution', 'p3')})
 EDGE = np.dtype([('source', '<u4'), ('target', '<u4'), ('sign', 'i1'), ('vrs_strength', '<f4')])
@@ -78,6 +81,31 @@ def keys(text):
             for size in range(2, min(4, len(word)) + 1):
                 result.update(dict.fromkeys(word[i:i+size] for i in range(len(word)-size+1)))
     return tuple(result)
+
+
+def retrieval_keys(text):
+    # Preserve original graph construction/IDs while expanding the retrieval
+    # index for mixed-script identifiers, including pre-existing journal rows.
+    result = dict.fromkeys(keys(text))
+    for token in re.findall(r'\w+', text.casefold()):
+        for run in re.findall(r'[가-힣]+|[a-z]+|[0-9]+', token):
+            result.update(dict.fromkeys(keys(run)))
+    return tuple(result)
+
+
+def pack_body(text):
+    return b'VRSZ1' + zlib.compress(text.encode('utf-8'))
+
+
+def unpack_body(body):
+    if isinstance(body,str):
+        return body
+    if not isinstance(body,bytes) or not body.startswith(b'VRSZ1'):
+        raise ValueError('stored_observation_encoding_integrity_failed')
+    try:
+        return zlib.decompress(body[5:]).decode('utf-8')
+    except (zlib.error,UnicodeError) as exc:
+        raise ValueError('stored_observation_compression_integrity_failed') from exc
 
 
 def text_field(value, name, maximum):
@@ -159,7 +187,7 @@ class HotIndex:
             cues = ('source:' + row['source'],)
         # Every returned original address can be retrieved directly through the
         # same four-stage API, independently of lexical similarity.
-        cues = (*cues, identifier)
+        cues = tuple(sys.intern(c) for c in (*cues, identifier))
         episode = MemoryEpisode(identifier, cues,
             (MemoryStep('external_observation', {'text': row['text'], 'metadata': row['metadata'],
                 'proposition_id': row['proposition'], 'evidence_polarity': row['polarity'],
@@ -167,8 +195,8 @@ class HotIndex:
                 'Recorded external observation; truth and action authority not granted.',
                 row['outcome'], (row['source'],)),), (row['source'],), row['revision'], 'unverified')
         postings = self.postings
-        for cue in cues:
-            postings = postings.set(cue, postings.get(cue, frozenset()) | {identifier})
+        for cue in dict.fromkeys((*episode.cues, *retrieval_keys(row['text']))):
+            postings = postings.set(cue, postings.get(cue, Map()).set(identifier, True))
         propositions = self.propositions
         if row['proposition']:
             p = row['proposition']
@@ -251,7 +279,7 @@ class Graph:
                     snapshot_id=snapshot,connection_id=u.connection_id,
                     previous_strength=u.previous_strength,current_strength=u.previous_strength)) for u in updates]
         strength_receipt = VRSStateUpdateReceipt(snapshot, tuple(updates))
-        proposal = settle_event_signal(inputs, changed_nodes=(center, *endpoints),
+        proposal = settle(inputs, changed_nodes=(center, *endpoints),
             strength_updates=strength_receipt, maximum_rounds=512)
         if proposal.pending_nodes:
             raise ValueError('vrs_signal_pending_no_publication')
@@ -283,7 +311,7 @@ class Graph:
             edge_target=np.array([local[int(settled.edges['target'][e])] for e in edges], dtype=np.int64),
             edge_sign=np.array([int(settled.edges['sign'][e]) for e in edges], dtype=np.int8),
             vrs_strength=np.array([float(settled.strength[e]) for e in edges]))
-        regions = ConnectivityRegions.build(source, vrs_snapshot_id=settled.snapshot_id)
+        regions = ConnectivityRegions.build(source, vrs_snapshot_id=settled.snapshot_id, local_move_backend=local_moves)
         if not regions.converged:
             raise ValueError('region_topology_pending_no_publication')
         component_id = min(ordered)
@@ -293,7 +321,7 @@ class Graph:
         for n in ordered:
             components = components.set(n, component_id)
         directory = directory.set(component_id, (regions, Map(local)))
-        receipt = proposal.receipt() | dict(changed_component_nodes=len(ordered), changed_component_edges=len(edges),
+        receipt = proposal.receipt() | dict(numeric_backend='affected_numpy_f32_guarded_v1', region_backend='reference_sequential_unboxed_v1', changed_component_nodes=len(ordered), changed_component_edges=len(edges),
             global_recomputation_reason='Only affected connected component: modularity equivalence cannot be guaranteed by local moves alone.',
             source_episode_count_added=1, historical_outcome=episode.steps[0].outcome,
             re_evidence_updates=plain(strength_receipt),
@@ -316,7 +344,8 @@ class Graph:
 
 class Main:
     """Sole owner for one state directory; transaction commit precedes publication."""
-    def __init__(self, state_dir, *, allow_ingest=False):
+    def __init__(self, state_dir, *, allow_ingest=False, allow_maintenance=False,
+                 rebuild_checkpoint=False, threaded=False):
         self.directory = Path(state_dir).expanduser().resolve()
         self.directory.mkdir(parents=True, exist_ok=True)
         self.lock = FileLock(self.directory / 'owner.lock')
@@ -325,13 +354,20 @@ class Main:
         except Timeout:
             raise ValueError('state_directory_already_owned') from None
         self.closed, self.allow_ingest = False, allow_ingest
+        self.allow_maintenance = allow_maintenance
+        self.sequence = self.checkpoint_sequence = 0
+        self.checkpoint_error = None
+        self.ready = False
         self.db = None
         try:
-            self.db = sqlite3.connect(self.directory / 'memory.sqlite3', isolation_level=None)
+            self.db = sqlite3.connect(self.directory / 'memory.sqlite3', isolation_level=None,
+                                      check_same_thread=not threaded)
             self.db.execute('PRAGMA journal_mode=WAL')
             self.db.execute('PRAGMA synchronous=FULL')
             self.db.execute('CREATE TABLE IF NOT EXISTS identity (id INTEGER PRIMARY KEY CHECK(id=1), value TEXT NOT NULL)')
             self.db.execute('CREATE TABLE IF NOT EXISTS observations (seq INTEGER PRIMARY KEY, request_id TEXT UNIQUE NOT NULL, body TEXT NOT NULL, fingerprint TEXT NOT NULL, pair TEXT NOT NULL)')
+            self.db.execute('CREATE TABLE IF NOT EXISTS checkpoint (id INTEGER PRIMARY KEY CHECK(id=1), seq INTEGER NOT NULL, pair TEXT NOT NULL, checksum TEXT NOT NULL, body BLOB NOT NULL)')
+            self.db.execute('CREATE TABLE IF NOT EXISTS consolidations (id TEXT PRIMARY KEY, body TEXT NOT NULL, checksum TEXT NOT NULL)')
             identity = self.db.execute('SELECT value FROM identity WHERE id=1').fetchone()
             if identity is None:
                 identity = (str(uuid.uuid4()),)
@@ -341,10 +377,27 @@ class Main:
             self.graph = Graph.empty(self.identity)
             self.operations = Map()
             self.pair = FullCurrentMemoryVrsSnapshot(self.memory, self.graph.inputs.snapshot_id)
-            for req, body, fingerprint, expected in self.db.execute('SELECT request_id,body,fingerprint,pair FROM observations ORDER BY seq'):
-                row = observation(json.loads(body))
-                if digest(row) != fingerprint or row['request_id'] != req:
+            from .checkpoint import decode, checksum
+            checkpoint = self.db.execute('SELECT seq,pair,checksum,body FROM checkpoint WHERE id=1').fetchone()
+            if checkpoint is not None and not rebuild_checkpoint:
+                seq, pair, expected_hash, body = checkpoint
+                if checksum(body) != expected_hash:
+                    raise ValueError('checkpoint_checksum_integrity_failed')
+                self.memory,self.graph,self.pair,self.operations = decode(body, identity=self.identity,seq=seq,pair=pair)
+                self.checkpoint_sequence = seq
+            seen_prefix = set()
+            for seq, req, body, fingerprint, expected in self.db.execute('SELECT seq,request_id,body,fingerprint,pair FROM observations ORDER BY seq'):
+                row = observation(json.loads(unpack_body(body)))
+                if digest(row) != fingerprint or row['request_id'] != req or seq != self.sequence+1:
                     raise ValueError('stored_observation_integrity_failed')
+                self.sequence = seq
+                if seq <= self.checkpoint_sequence:
+                    op = self.operations.get(req)
+                    identifier = 'memory:' + digest({k:v for k,v in row.items() if k != 'request_id'})
+                    if op != (fingerprint,identifier,expected) or identifier not in self.memory.records:
+                        raise ValueError('checkpoint_journal_integrity_failed')
+                    seen_prefix.add(req)
+                    continue
                 memory, identifier = self.memory.append(row)
                 graph = self.graph if memory is self.memory else self.graph.append(memory.episode(identifier), digest((self.graph.inputs.snapshot_id, fingerprint)), memory)
                 pair = FullCurrentMemoryVrsSnapshot(memory, graph.inputs.snapshot_id)
@@ -352,7 +405,13 @@ class Main:
                     raise ValueError('stored_generation_integrity_failed')
                 self.memory, self.graph, self.pair = memory, graph, pair
                 self.operations = self.operations.set(req, (fingerprint, identifier, pair.snapshot_id))
+            if self.sequence < self.checkpoint_sequence or len(seen_prefix) != self.checkpoint_sequence:
+                raise ValueError('checkpoint_journal_prefix_integrity_failed')
+            self.consolidations, self.parent_groups = Map(), Map()
+            from .consolidation import restore_groups
+            restore_groups(self)
             self.owner = AtomicFullCurrentMemoryVrsOwner(self.pair)
+            self.ready = True
         except BaseException:
             self.close()
             raise
@@ -370,7 +429,10 @@ class Main:
             backend='standalone_native_vrs2', native_engine_bundled=True, scheduled_dialogue_available=True,
             writes_enabled=self.allow_ingest, authority=dict(AUTHORITY), numerical_version=VERSION,
             vrs_node_count=len(self.graph.nodes), vrs_edge_count=len(self.graph.inputs.edges),
-            last_vrs_event=self.graph.summary())
+            last_vrs_event=self.graph.summary(), maintenance_enabled=self.allow_maintenance,
+            checkpoint_sequence=self.checkpoint_sequence, journal_sequence=self.sequence,
+            checkpoint_error=self.checkpoint_error,
+            consolidated_experience_count=len(self.consolidations))
 
     def ingest(self, arguments):
         self._check()
@@ -393,7 +455,7 @@ class Main:
         self.db.execute('BEGIN IMMEDIATE')
         try:
             self.db.execute('INSERT INTO observations(request_id,body,fingerprint,pair) VALUES (?,?,?,?)',
-                (row['request_id'], canonical(row), fingerprint, pair.snapshot_id))
+                (row['request_id'], pack_body(canonical(row)), fingerprint, pair.snapshot_id))
             self.db.execute('COMMIT')
         except BaseException:
             if self.db.in_transaction:
@@ -401,6 +463,7 @@ class Main:
             raise
         self.owner.replace(self.pair.snapshot_id, pair)
         self.memory, self.graph, self.pair, self.operations = memory, graph, pair, operations
+        self.sequence += 1
         return dict(status='observation_recorded', episode_id=identifier, pair_snapshot_id=pair.snapshot_id,
             revision=row['revision'], source=row['source'], outcome=row['outcome'],
             idempotent_replay=False, observation_only=True, grants_authority=False,
@@ -413,8 +476,11 @@ class Main:
             raise ValueError('snapshot_mismatch')
         query = text_field(query, 'query', 4096)
         memory, graph, pair = self.memory, self.graph, self.pair
-        candidates = keys(query)
+        candidates = retrieval_keys(query)
         selected = tuple(c for c in candidates if memory.episode_ids_for_cue(c))
+        if query in self.consolidations:
+            selected = tuple(dict.fromkeys((*selected,
+                *self.consolidations[query]['parent_episode_ids'])))
         # Complete explicit same-proposition evidence closure, including opponents
         # whose text has no query overlap. Historical outcomes alone never conflict.
         propositions = {memory.episode(i).steps[0].observation.get('proposition_id')
@@ -435,12 +501,16 @@ class Main:
                 vrs_snapshot_id=graph.inputs.snapshot_id, current_strength=graph.strength(episode.episode_id),
                 proposition=p or 'experience:' + episode.episode_id)
         receipt = activate_memory(memory, query=query, current_cues=cues, judge=judge)
+        from .ranking import rank
+        receipt, ranking = rank(memory, receipt, query)
         ids = [c.episode_id for c in receipt.recall.candidates]
         selection = dict(candidate_counts={c: len(memory.episode_ids_for_cue(c)) for c in candidates},
             selected_cues=cues, rejected_cues=tuple(c for c in candidates if c not in selected),
             selection_method='all_matching_lexical_keys_and_explicit_proposition_closure',
-            semantic_acceptance_claimed=False)
+            semantic_acceptance_claimed=False, **ranking)
+        from .consolidation import navigation
         return dict(receipt={'activation': receipt}, memory_selection=selection,
+            consolidated_experiences=navigation(self, ids),
             vrs_selection=dict(selection_method='native_event_signal_and_connectivity_regions',
                 numerical_version=VERSION, logical_implication_claimed=False, grants_authority=False),
             current_strengths={i: graph.strength(i) for i in ids}, current_promotions={i: graph.strength(i) >= 1.0 for i in ids},
@@ -450,10 +520,82 @@ class Main:
             superseded_by={i: memory.superseded.get(i) for i in ids},
             pair_snapshot_id=pair.snapshot_id, grants_authority=False)
 
+    def checkpoint(self):
+        """Explicit maintenance or clean shutdown, never per-judgment work."""
+        self._check()
+        from .checkpoint import encode
+        view = self.checkpoint_view()
+        return self.publish_checkpoint(view.sequence, view.pair.snapshot_id, encode(view))
+
+    def checkpoint_view(self):
+        """Capture immutable references while the caller holds the main lock."""
+        self._check()
+        return SimpleNamespace(identity=self.identity, sequence=self.sequence,
+            memory=self.memory, graph=self.graph, pair=self.pair,
+            operations=self.operations)
+
+    def publish_checkpoint(self, sequence, pair, body):
+        """Commit an encoded snapshot; newer journal rows remain a replayable tail."""
+        self._check()
+        from .checkpoint import checksum
+        if sequence <= self.checkpoint_sequence:
+            return dict(status='checkpoint_current', journal_sequence=self.sequence,
+                checkpoint_sequence=self.checkpoint_sequence, grants_authority=False)
+        if sequence > self.sequence:
+            raise ValueError('checkpoint_sequence_ahead_of_journal')
+        self.db.execute('BEGIN IMMEDIATE')
+        try:
+            self.db.execute('INSERT OR REPLACE INTO checkpoint VALUES (1,?,?,?,?)',
+                (sequence,pair,checksum(body),body))
+            self.db.execute('COMMIT')
+        except BaseException:
+            if self.db.in_transaction:
+                self.db.execute('ROLLBACK')
+            raise
+        self.checkpoint_sequence = sequence
+        return dict(status='checkpoint_saved', journal_sequence=self.sequence,
+            checkpoint_sequence=sequence, checkpoint_bytes=len(body),
+            pair_snapshot_id=pair, grants_authority=False)
+
+    def compact(self):
+        self._check()
+        if not self.allow_maintenance:
+            raise ValueError('maintenance_disabled')
+        self.checkpoint()
+        self.db.execute('BEGIN IMMEDIATE')
+        changed = 0
+        try:
+            for seq,body in self.db.execute("SELECT seq,body FROM observations WHERE typeof(body)='text'"):
+                self.db.execute('UPDATE observations SET body=? WHERE seq=?',(pack_body(body),seq))
+                changed += 1
+            self.db.execute('COMMIT')
+        except BaseException:
+            if self.db.in_transaction:
+                self.db.execute('ROLLBACK')
+            raise
+        self.db.execute('PRAGMA wal_checkpoint(TRUNCATE)')
+        self.db.execute('VACUUM')
+        return dict(status='lossless_compaction_complete', converted_rows=changed,
+            retained_journal_rows=self.sequence, original_episodes_deleted=0,
+            pair_snapshot_id=self.pair.snapshot_id, grants_authority=False)
+
+    def consolidate(self, arguments):
+        self._check()
+        if not self.allow_maintenance:
+            raise ValueError('maintenance_disabled')
+        from .consolidation import consolidate
+        return consolidate(self, arguments)
+
     def close(self):
         if self.closed:
             return
-        self.closed = True
-        if self.db is not None:
-            self.db.close()
-        self.lock.release()
+        try:
+            if self.ready and self.sequence != self.checkpoint_sequence:
+                self.checkpoint()
+        finally:
+            self.closed = True
+            try:
+                if self.db is not None:
+                    self.db.close()
+            finally:
+                self.lock.release()

@@ -214,6 +214,39 @@ def test_exact_original_address_access_without_matching_source_text(main):
     assert [r.episode_id for r in result['receipt']['activation'].recall.candidates]==[first['episode_id']]
 
 
+def test_checkpoint_restores_mixed_script_retrieval_cues(main):
+    first=main.ingest(dict(request_id='mixed',text='big_chunk270인지 기록',source='test:mixed',revision='r1'))
+    pair=main.pair.snapshot_id
+    before=main.recall('270',pair)
+    assert [r.episode_id for r in before['receipt']['activation'].recall.candidates]==[first['episode_id']]
+    main.close()
+    restored=Main(main.directory)
+    try:
+        assert restored.status()['checkpoint_sequence']==1
+        after=restored.recall('270',pair)
+        assert [r.episode_id for r in after['receipt']['activation'].recall.candidates]==[first['episode_id']]
+        assert restored.memory.episode(first['episode_id']).steps[0].observation['text']=='big_chunk270인지 기록'
+    finally:
+        restored.close()
+
+
+def test_korean_mixed_script_ranking_preserves_conflict_closure(main):
+    main.ingest(dict(request_id='short',text='270',source='test:short',revision='1'))
+    rich=main.ingest(dict(request_id='rich',text='big_chunk270인지 단계 실행 결과 기록',
+        source='test:rich',revision='1',proposition='P:result',polarity='support'))
+    opponent=main.ingest(dict(request_id='opponent',text='별개 반대 근거',
+        source='test:opponent',revision='1',proposition='P:result',polarity='refute'))
+    root=main.recall('big_chunk 270인지 결과',main.pair.snapshot_id)
+    ordered=[row.episode_id for row in root['receipt']['activation'].recall.candidates]
+    assert ordered[0]==rich['episode_id']
+    assert opponent['episode_id'] in ordered and len(ordered)==3
+    activation=root['receipt']['activation']
+    assert activation.re_evidence.unresolved_conflict
+    assert [row.episode_id for row in activation.replay.episodes]==ordered
+    assert [row.episode_id for row in activation.re_evidence.judgments]==ordered
+    assert root['memory_selection']['semantic_acceptance_claimed'] is False
+
+
 def test_duplicate_source_is_not_new_experience_or_reinforcement(main):
     row=dict(request_id='a',text='동일한 원문',source='test:same',revision='1')
     first=main.ingest(row)

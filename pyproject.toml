@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "swegca-vrs-mcp"
-version = "2.1.0"
+version = "2.2.0.dev0"
 description = "Persistent experience, recall and SWEGCA/VRS tools for MCP agents"
 requires-python = ">=3.11"
 license = "MIT AND MPL-2.0"

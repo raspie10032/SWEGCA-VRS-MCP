@@ -105,6 +105,25 @@ No internal or final wording LLM is invoked. No agent identity or memory is stor
 in model weights. The current client's model is external to the memory server.
 These are software functionality checks, not a demonstrated cognitive growth run.
 
+## Active incremental VRS path
+
+`memory_store` calls `Main.ingest`, then `Graph.append`. The first
+`prepare_event_delta` shares the previous immutable numeric state while adding
+the new observation's nodes, edges and direct signal. The native
+`settle_event_signal` rule starts at the affected nodes and follows numerical
+dependencies (`Graph.append` on the unreleased issues branch calls its guarded
+`numeric.settle` adapter). A second
+`prepare_event_delta` publishes only changed settled scores and strengths.
+This path is active in the standalone runtime; it is not a dormant helper.
+
+Connectivity regions have a different boundary. `Graph.append` rebuilds the
+**affected connected component** after numeric settlement and shares unrelated
+component objects unchanged. If shared cue nodes join nearly all observations
+into one component, that region rebuild can be effectively global even though
+the numeric successor remains sparse. `last_vrs_event.changed_component_nodes`
+and `changed_component_edges` show the scope for an actual ingest. The
+unrelated-component sharing assertion is in `tests/standalone/test_main.py`.
+
 ## Data and upgrades
 
 Default Windows store: `%LOCALAPPDATA%\SWEGCA\VRS2`.
