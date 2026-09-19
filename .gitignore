@@ -11,3 +11,4 @@ local-data/
 *.sqlite3-wal
 *.sqlite3-shm
 *producer-keys*.json
+*.pre-*
