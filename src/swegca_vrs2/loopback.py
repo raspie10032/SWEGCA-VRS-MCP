@@ -411,7 +411,8 @@ def hook_recall(main, arguments, resident=None):
                 vrs_stable=None if stable is None else dict(version_id=stable.version_id, created=stable.created,
                                                             promoted=stable.promoted, converged=stable.converged,
                                                             stale=main.consolidation_stale()),
-                region_navigation={k: root['region_navigation'][k] for k in ('active_regions', 'portals', 'unbridged_factor', 'scope')},
+                region_navigation={k: root['region_navigation'].get(k) for k in ('active_regions', 'portals', 'unbridged_factor', 'scope',
+                                                                             'path_counts', 'crossings_keyed', 'shared')},   # G5: paths by kind, crossings through a shared experience
                 rejected_paths=root['region_navigation']['rejected'][:20],
                 grants_authority=False)
 

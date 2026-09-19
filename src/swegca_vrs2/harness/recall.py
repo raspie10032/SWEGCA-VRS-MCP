@@ -371,6 +371,10 @@ def context_for(prompt, cwd, session):
          ms=elapsed, session=session,
          # G8: the judgment's own time and what it had to decode or could not reach — hit and miss, both on record
          timing=packet.get("timing"), misses=packet.get("misses") or [], blob_hits=packet.get("blob_hits"),
+         # G5: how the candidates were reached (local / member / portal / unbridged) and how many crossings went
+         # through a shared experience — the receipt of R4's key, per prompt
+         paths=(packet.get("region_navigation") or {}).get("path_counts"),
+         crossings_keyed=(packet.get("region_navigation") or {}).get("crossings_keyed"),
          # usage re-evidence (2026-09-18): where each injected record can be opened, so the Stop hook's
          # ledger can tell an opened receipt from an ignored one
          opens={r["source"]: r["_open"] for r in verdicts + records if r.get("_open")})

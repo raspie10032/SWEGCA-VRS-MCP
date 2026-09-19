@@ -666,6 +666,44 @@ class Graph:
         node = self.nodes.episode_node.get(identifier)
         return None if node is None else int(self.labels()[node])
 
+    # ── G5 (2026-09-19, R3/R4): soft multi-membership from the stable version ──
+    def memberships_of(self, identifier):
+        """(region, weight) fine-region memberships of a record from the last consolidation, strongest first;
+        () for a record appended since or before any consolidation."""
+        node = self.nodes.episode_node.get(identifier)
+        if node is None or self.stable is None:
+            return ()
+        return self.stable.members_of(int(node))
+
+    def membership_in(self, identifier, regions):
+        """The strongest membership of the record in any of ``regions`` at SHARED_FLOOR or above, or None."""
+        best = None
+        for region, weight in self.memberships_of(identifier):
+            if region in regions and weight >= vrs_refine.SHARED_FLOOR and (best is None or weight > best[1]):
+                best = (region, weight)
+        return best
+
+    def member_rows(self, memory, regions):
+        """Memory rows whose record is a member (>= SHARED_FLOOR) of one of ``regions`` while labelled elsewhere —
+        the rows region scope admits beyond their own label. Empty before any consolidation."""
+        stable = self.stable
+        if stable is None or getattr(stable, 'member_ptr', None) is None or not regions:
+            return np.zeros(0, np.int64)
+        labels = self.labels()
+        node_episode = self.nodes.node_episode
+        row_of = memory._store['row_of']
+        rows = []
+        for region in regions:
+            for node in stable.region_members(region):
+                node = int(node)
+                if node < len(labels) and int(labels[node]) in regions:
+                    continue                              # already in scope by its own label
+                identifier = node_episode.get(node)             # Map: node -> record id (records only)
+                row = row_of.get(identifier) if identifier is not None else None
+                if row is not None:
+                    rows.append(int(row))
+        return np.unique(np.asarray(rows, np.int64)) if rows else np.zeros(0, np.int64)
+
     def vrs_of(self, identifier, source=None):
         """Per-record VRS view for receipts: refined strength, kernel promotion (>= 1), the record's evidence
         weight w, its proposition's accumulator decision (SWEGCA), state/stability, pending (not consolidated)."""
@@ -718,6 +756,11 @@ REGION_SCOPE_TOP_ROWS = 100            # ('rows') how many strongest rows activa
 REGION_SCOPE_TOP = 8                   # ('mass') the top regions by mass are active ...
 REGION_SCOPE_MASS_SHARE = 0.25         # ... plus every region with at least this share of the top region's mass
 PORTAL_SCORE_FLOOR = 0.05              # portal partners join the scope only at or above this promoted share
+# G5 (2026-09-19, R4): a region pair keyed by a shared experience is a partner in scope whatever its edge score.
+# Measured on the live copy (5.7k, scope forced, 20 prompts): excluded rows median 436 -> 145, top-10 vs the
+# whole store unchanged (9.8/10), ms unchanged; 45 % of crossings then go through a named shared experience.
+# The wider scope costs nothing at this size; at 60k+ (where 'auto' scope applies) it is to be re-measured.
+KEYED_PARTNERS_IN_SCOPE = True
 BUNDLE_LIMIT = 60_000     # recommended records per bundle (one store, one process): docs/SIZING.md (2026-09-19)
 CHECKPOINT_EVERY = 64     # in-ingest safety bound on crash replay; the daemon checkpoints after a
                           # quiet spell instead (CHECKPOINT_IDLE), close() always checkpoints
@@ -1534,11 +1577,25 @@ class Main:
                         r0 = int(graph.labels()[node]); hits[r0] = hits.get(r0, 0) + 1
                 active0 = {r0 for r0, n in hits.items() if n >= REGION_SCOPE_MIN_HITS} or set(hits)
             allowed = set(active0)
+            keyed_partners = 0
             for (a, b_), portal in (getattr(graph.stable, 'portals', None) or {}).items():
-                if portal['status'] == 'candidate' and portal['score'] >= PORTAL_SCORE_FLOOR and (a in active0 or b_ in active0):
+                if a not in active0 and b_ not in active0:
+                    continue
+                # G6: a pair with a promoted connector edge; G5/R4: a pair keyed by a shared experience — the
+                # experience that belongs to both regions is the key, whatever its edges' promotion state
+                keyed = bool(portal.get('keys')) and KEYED_PARTNERS_IN_SCOPE
+                if (portal['status'] == 'candidate' and portal['score'] >= PORTAL_SCORE_FLOOR) or keyed:
                     allowed.update((a, b_))
+                    keyed_partners += keyed
+            scope['keyed_partners'] = keyed_partners
             if allowed:
                 mask = np.isin(row_labels, list(allowed)) | (row_labels < 0)     # pending rows stay visible
+                # G5 (R3): a record belongs to every region it is a member of — the members of the active
+                # regions are in scope whatever their own label (measured live: +1.25 regions per record at .2)
+                member_rows = graph.member_rows(full_memory, set(active0))
+                if len(member_rows):
+                    mask[member_rows] = True
+                scope['member_rows'] = int(len(member_rows))
                 scoped = full_memory.masked_rows(mask)
                 matched_rows = set()
                 for c in selected:
@@ -1573,6 +1630,7 @@ class Main:
                 if node >= 0 and labels[node] >= 0:
                     cue_region[c] = int(labels[node]); active_regions.add(int(labels[node]))
             stable = graph.stable
+            node_episode = graph.nodes.node_episode
             for candidate in recalled.candidates:
                 region = graph.region_of(candidate.episode_id)
                 if region is None or region < 0:
@@ -1580,19 +1638,43 @@ class Main:
                 elif region in active_regions:
                     navigation[candidate.episode_id] = dict(region=region, path='local')
                 else:
+                    # G5 (R3): the record is itself a member of an active region — reached as a member, no crossing
+                    member = graph.membership_in(candidate.episode_id, active_regions)
+                    if member is not None:
+                        navigation[candidate.episode_id] = dict(region=region, path='member', in_region=member[0], weight=round(member[1], 4))
+                        continue
                     best = None
                     for c in candidate.matched_cues:
                         r = cue_region.get(c)
                         if r is None or r == region:
                             continue
                         portal = stable.portal(r, region)
-                        if portal is not None and portal['status'] == 'candidate' and (best is None or portal['score'] > best[1]['score']):
-                            best = ((min(r, region), max(r, region)), portal)
+                        if portal is None or not (portal['status'] == 'candidate' or portal.get('keys')):
+                            continue
+                        # G5 (R4): a pair keyed by a shared experience is a crossing in its own right and is
+                        # preferred over an edge-only candidate pair
+                        rank = (bool(portal.get('keys')), portal['score'])
+                        if best is None or rank > best[2]:
+                            best = ((min(r, region), max(r, region)), portal, rank)
                     if best is not None:
-                        navigation[candidate.episode_id] = dict(region=region, path='portal', portal=best[0], score=best[1]['score'])
+                        entry = dict(region=region, path='portal', portal=best[0], score=best[1]['score'])
+                        pair_keys = best[1].get('keys') or ()
+                        if pair_keys:
+                            # the shared experience the crossing goes through: one original address, its revision
+                            # and outcome — replayable against this version (R4), never a synthetic link
+                            key = pair_keys[0]
+                            via_id = node_episode.get(key['node'])
+                            if via_id is not None:
+                                via = full_memory.episode_light(via_id) if hasattr(full_memory, 'episode_light') else full_memory.episode(via_id)
+                                entry['via'] = dict(episode_id=via_id, revision=via.revision, weights=list(key['weights']),
+                                                    strength=key['strength'], outcome=via.steps[0].outcome, shared=best[1].get('shared'))
+                        else:
+                            entry['via'] = None
+                            entry['bridge'] = 'edges only (no shared experience at the floor)'
+                        navigation[candidate.episode_id] = entry
                     else:
                         navigation[candidate.episode_id] = dict(region=region, path='unbridged',
-                            reason='no candidate portal from an active region (bridges not promoted)')
+                            reason='no shared experience and no promoted bridge from an active region')
         def words(matched):
             # a matched cue that is a substring of another matched cue is the same word
             # (Hangul 2-4-gram cues): score each word once, by its longest matched form
@@ -1665,6 +1747,10 @@ class Main:
             current_propositions={i: memory.proposition_of(i) for i in ids},
             region_memberships={i: graph.memberships(i) for i in ids},
             region_navigation=dict(active_regions=sorted(active_regions), paths={i: navigation.get(i) for i in ids},
+                shared=(graph.stable.shared_counts() if graph.stable is not None and hasattr(graph.stable, 'shared_counts') else None),
+                path_counts={k: sum(1 for i in ids if (navigation.get(i) or {}).get('path') == k)
+                             for k in ('local', 'member', 'portal', 'unbridged', 'pending')},
+                crossings_keyed=sum(1 for i in ids if (navigation.get(i) or {}).get('via')),
                 rejected=[dict(episode_id=i, **navigation[i]) for i in ids if navigation.get(i, {}).get('path') == 'unbridged'],
                 portals={f'{a}:{b}': dict(score=p['score'], promoted=p['promoted'], bridges=p['bridges'])
                          for (a, b), p in ((getattr(graph.stable, 'portals', None) or {}).items() if graph.stable is not None else ())

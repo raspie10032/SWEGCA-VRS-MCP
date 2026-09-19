@@ -65,6 +65,16 @@ TOLERANCE = 1e-3          # v0.2 converge_graph: consolidate until the largest m
 CONNECTOR_LABEL = -1
 FINE_REGIONS = True       # split each connectivity region again with the same modularity rule (finer units)
 FINE_MIN_NODES = 400      # regions below this many nodes are not split further
+# G5 (2026-09-19, R3/R4): a record's membership in a fine region = the share of its forward-edge strength mass
+# whose cue endpoint sits in that region (the engine's membership rule applied to the navigation regions).
+# Memberships at or above MEMBER_FLOOR are kept; a record is *a member* of a region at SHARED_FLOOR or above,
+# and a record that is a member of two regions is a shared experience — the key between those regions.
+# Measured on the live store (5,757 records, 347 fine regions): mass spreads over 19 regions per record on
+# average (own label the strongest 94.5 %); at .2 a quarter of the records are shared (mostly listings), at
+# .3 13 %, at .4 4 %; .2 keeps 1.25 regions per record on average and gives 114 keyed pairs.
+MEMBER_FLOOR = 0.05
+SHARED_FLOOR = 0.2
+PORTAL_KEYS = 8           # shared experiences kept per portal, strongest first
 VERSION = 'vrs-regions-consolidation-v1'
 
 
@@ -132,11 +142,23 @@ class VRSVersion:
                  'prop_state', 'prop_pid', 'region_delta', 'delta', 'converged', 'promoted', 'reinforced', 'evaluations',
                  'resolved_count', 'seconds', 'regions', 'connector_edges', 'direct', 'unresolved', 'prop_direct', 'prop_unresolved',
                  'portals', 'portal_events', 'coarse_labels', 'fine_seconds', 'decisions', 'record_weight', 'evidence_counts',
-                 'usage_digest', 'usage_records', 'alias_digest')
+                 'usage_digest', 'usage_records', 'alias_digest',
+                 'member_ptr', 'member_region', 'member_weight', 'shared_count', 'memberships_digest', '_by_region')
 
     def __init__(self, **k):
         for name in self.__slots__:
             setattr(self, name, k.get(name))
+
+    def __getstate__(self):
+        # the reverse membership index is memory-only (rebuilt on first use); versions pickled before a slot
+        # existed unpickle with that slot None
+        return {k: getattr(self, k, None) for k in self.__slots__ if k != '_by_region'}
+
+    def __setstate__(self, state):
+        if isinstance(state, tuple):          # default slot pickling of earlier versions: (None, {slot: value})
+            state = state[1] or {}
+        for k in self.__slots__:
+            setattr(self, k, state.get(k))
 
     def summary(self):
         return dict(version=VERSION, version_id=self.version_id, parent_id=self.parent_id, created=self.created,
@@ -144,7 +166,7 @@ class VRSVersion:
                     regions=self.regions, connector_edges=self.connector_edges, promoted=self.promoted,
                     reinforced=self.reinforced, resolved_records=self.resolved_count, delta=self.delta,
                     converged=self.converged, seconds=self.seconds, evaluations=self.evaluations,
-                    portals=self.portal_counts(), fine_seconds=getattr(self, 'fine_seconds', None),
+                    portals=self.portal_counts(), shared=self.shared_counts(), fine_seconds=getattr(self, 'fine_seconds', None),
                     usage_records=getattr(self, 'usage_records', None),
                     evidence=getattr(self, 'evidence_counts', None))
 
@@ -155,6 +177,44 @@ class VRSVersion:
     def portal(self, a, b):
         """The portal between two regions (order-free), or None when they share no connector edge."""
         return (getattr(self, 'portals', None) or {}).get((min(a, b), max(a, b)))
+
+    # ── G5 memberships (versions pickled before G5 have none: every accessor answers empty) ──
+    def members_of(self, node):
+        """(region, weight) memberships of a real node at or above MEMBER_FLOOR, strongest first."""
+        ptr = getattr(self, 'member_ptr', None)
+        if ptr is None or node < 0 or node + 1 >= len(ptr):
+            return ()
+        lo, hi = int(ptr[node]), int(ptr[node + 1])
+        return tuple((int(r), float(w)) for r, w in zip(self.member_region[lo:hi], self.member_weight[lo:hi]))
+
+    def member_regions(self, node, floor=None):
+        """Regions the node is a member of (weight >= SHARED_FLOOR unless ``floor`` is given)."""
+        floor = SHARED_FLOOR if floor is None else floor
+        return tuple(r for r, w in self.members_of(node) if w >= floor)
+
+    def region_members(self, region, floor=None):
+        """Nodes that are members of ``region`` at ``floor`` (default SHARED_FLOOR) — the reverse index,
+        built once per version on first use (sorted by region, then by weight descending)."""
+        floor = SHARED_FLOOR if floor is None else floor
+        ptr = getattr(self, 'member_ptr', None)
+        if ptr is None:
+            return np.zeros(0, np.int64)
+        index = getattr(self, '_by_region', None)
+        if index is None:
+            n = len(ptr) - 1
+            node_of = np.repeat(np.arange(n, dtype=np.int64), np.diff(ptr))
+            order = np.lexsort((-np.asarray(self.member_weight, np.float64), np.asarray(self.member_region, np.int64)))
+            index = (np.asarray(self.member_region, np.int64)[order], node_of[order], np.asarray(self.member_weight, np.float64)[order])
+            self._by_region = index
+        regions, nodes, weights = index
+        lo, hi = np.searchsorted(regions, region, 'left'), np.searchsorted(regions, region, 'right')
+        block_nodes, block_w = nodes[lo:hi], weights[lo:hi]
+        return block_nodes[block_w >= floor]
+
+    def shared_counts(self):
+        return dict(records=int(getattr(self, 'shared_count', 0) or 0),
+                    keyed_pairs=sum(1 for v in (getattr(self, 'portals', None) or {}).values() if v.get('keys')),
+                    floor=SHARED_FLOOR, digest=(getattr(self, 'memberships_digest', None) or '')[:12])
 
     def portal_counts(self):
         portals = getattr(self, 'portals', None) or {}          # versions pickled before portals existed
@@ -177,6 +237,82 @@ def region_labels(graph):
         labels[members] = base + core[local[members]]
         base += int(core.max()) + 1 if len(core) else 1
     return labels
+
+
+def build_memberships(inp, strength, labels_of_nodes):
+    """G5 (R3/R4): soft multi-membership of every record over the fine regions — the share of its forward-edge
+    strength mass whose cue endpoint lies in each region — kept at or above MEMBER_FLOOR as CSR arrays over
+    the real nodes (cues and propositions have no memberships). Deterministic from (edges, strengths, labels):
+    the same generation gives the same arrays (``memberships_digest``). Membership is association: it grants
+    nothing and restricts nothing — a record stays addressable by id whatever its regions."""
+    k = len(inp['forward'])
+    n = inp['real_nodes']
+    src, dst = inp['src'][:k].astype(np.int64), inp['dst'][:k].astype(np.int64)
+    st = np.asarray(strength[:k], np.float64)
+    lab = labels_of_nodes[dst]
+    keep = lab >= 0
+    src, lab, st = src[keep], lab[keep], st[keep]
+    empty = (np.zeros(n + 1, np.int64), np.zeros(0, np.int32), np.zeros(0, np.float32))
+    if not len(src):
+        return empty, 0, hashlib.sha256(b'').hexdigest()
+    span = int(labels_of_nodes.max()) + 2
+    key = src * span + lab
+    uniq, inverse = np.unique(key, return_inverse=True)
+    mass = np.bincount(inverse, weights=st)
+    rec, reg = uniq // span, uniq % span
+    total = np.bincount(rec, weights=mass, minlength=n)
+    coef = mass / np.maximum(total[rec], 1e-12)
+    keep = coef >= MEMBER_FLOOR
+    rec, reg, coef = rec[keep], reg[keep], coef[keep]
+    order = np.lexsort((-coef, rec))                      # by record, strongest membership first
+    rec, reg, coef = rec[order], reg[order], coef[order]
+    ptr = np.zeros(n + 1, np.int64)
+    np.add.at(ptr, rec + 1, 1)
+    ptr = np.cumsum(ptr)
+    shared = np.bincount(rec[coef >= SHARED_FLOOR], minlength=n)
+    shared_count = int((shared >= 2).sum())
+    digest = hashlib.sha256(b'|'.join([np.ascontiguousarray(rec).tobytes(), np.ascontiguousarray(reg).tobytes(),
+                                       np.ascontiguousarray(coef.astype(np.float32)).tobytes()])).hexdigest()
+    return (ptr, reg.astype(np.int32), coef.astype(np.float32)), shared_count, digest
+
+
+def key_portals(portals, memberships, strength, inp):
+    """G5 (R4): the shared experiences of each region pair are the pair's keys — the record node, its two
+    membership weights and its strength (max forward edge), strongest ``min(weight) x strength`` first, at
+    most PORTAL_KEYS. A pair with keys is 'keyed'; the edge-based score and status of G6 stay as they are.
+    Every keyed pair already has connector edges (a membership *is* edge mass across the pair), so no pair
+    is created here — nothing links regions that no experience links."""
+    ptr, reg, coef = memberships
+    n = len(ptr) - 1
+    k = len(inp['forward'])
+    rec_strength = np.zeros(n, np.float64)
+    if k:
+        np.maximum.at(rec_strength, inp['src'][:k].astype(np.int64), np.asarray(strength[:k], np.float64))
+    counts = np.diff(ptr)
+    candidates = np.flatnonzero(counts >= 2)
+    keys = {}
+    for node in candidates:
+        lo, hi = int(ptr[node]), int(ptr[node + 1])
+        regs, ws = reg[lo:hi], coef[lo:hi]
+        strong = ws >= SHARED_FLOOR
+        if strong.sum() < 2:
+            continue
+        regs, ws = regs[strong], ws[strong]
+        for i in range(len(regs)):
+            for j in range(i + 1, len(regs)):
+                a, b = (int(regs[i]), int(regs[j])) if regs[i] < regs[j] else (int(regs[j]), int(regs[i]))
+                wa, wb = (float(ws[i]), float(ws[j])) if regs[i] < regs[j] else (float(ws[j]), float(ws[i]))
+                keys.setdefault((a, b), []).append((round(min(wa, wb) * rec_strength[node], 6), int(node), round(wa, 4), round(wb, 4), round(float(rec_strength[node]), 4)))
+    keyed = 0
+    for pair, lst in keys.items():
+        lst.sort(key=lambda t: (-t[0], t[1]))
+        portal = portals.get(pair)
+        if portal is None:
+            continue                                      # cannot happen (see docstring); never invent a pair
+        portal['keys'] = [dict(node=t[1], weights=(t[2], t[3]), strength=t[4]) for t in lst[:PORTAL_KEYS]]
+        portal['shared'] = len(lst)
+        keyed += 1
+    return keyed
 
 
 def build_portals(inp, strength, labels_of_nodes, previous):
@@ -504,6 +640,8 @@ def consolidate(graph, memory, previous, *, seed=SEED, cycles=CYCLES, labels=Non
     prop_pid = [inp['proposition_ids'][int(d) - n_real] for d in inp['dst'][n_flat_fwd:]]
     labels_digest = hashlib.sha256(np.ascontiguousarray(labels, np.int64).tobytes()).hexdigest()
     portals, portal_events = build_portals(inp, strength, inp['labels'], previous)
+    memberships, shared_count, memberships_digest = build_memberships(inp, strength, inp['labels'])
+    key_portals(portals, memberships, strength, inp)
     promoted = int((strength >= PROMOTION).sum())
     version_id = hashlib.sha256(b'|'.join([
         (previous.version_id if previous is not None else 'none').encode(), str(seed).encode(), str(cycles).encode(),
@@ -525,6 +663,8 @@ def consolidate(graph, memory, previous, *, seed=SEED, cycles=CYCLES, labels=Non
                          prop_direct=inp['direct'][n_real:].astype(np.float32), prop_unresolved=inp['unresolved'][n_real:].copy(),
                          portals=portals, portal_events=portal_events, coarse_labels=coarse.astype(np.int32),
                          fine_seconds=fine_seconds, decisions=inp['decisions'], record_weight=inp['record_weight'],
-                         evidence_counts=inp['evidence_counts'])
+                         evidence_counts=inp['evidence_counts'],
+                         member_ptr=memberships[0], member_region=memberships[1], member_weight=memberships[2],
+                         shared_count=shared_count, memberships_digest=memberships_digest)
     version.prop_pid = prop_pid
     return version, flat_strength, flat_score

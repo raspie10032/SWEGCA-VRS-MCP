@@ -577,3 +577,50 @@ Not built: automatic pairing of before/after runs (the runner records tree diges
 same-tree pair; it does not run both sides for you), a pytest plugin (the wrapper runs the command),
 batch schedulers (the contract is there; registering a task is the user's), and any change to the
 accumulator's minimums.
+
+### Shared experiences are the keys — the minimal G5 (2026-09-19, R3/R4)
+
+The goal's G5 asks for soft multi-membership and overlap; the user's correction R4 says what the
+overlap is *for*: "여러 그룹을 잇는 경험은 다중 소속 — 이게 바로 그룹과 그룹을 이어주는 키다". One
+original experience that belongs to two regions is the key between them — no copies per region, no
+link that no experience carries, and a crossing must be replayable: which shared experience, which
+revision, against which version. Until now the regions were exclusive labels and the G6 portals were
+aggregates of connector *edges* (record → cue across the pair) scored by promoted share; a crossing named
+a pair and a score, never an experience.
+
+* **Membership** (`vrs_refine.build_memberships`, at consolidation): a record's membership in a fine
+  region is the share of its forward-edge strength mass whose cue endpoint sits in that region — the
+  engine's own membership rule (`_memberships` in `mosaic_vrs_connectivity_regions`) applied to the
+  navigation regions. Kept at or above `MEMBER_FLOOR = .05` as CSR arrays in the stable version
+  (`member_ptr/region/weight`, ~20k entries live, 233 KB), deterministic from (edges, strengths,
+  labels) — `memberships_digest`. A record is *a member* of a region at `SHARED_FLOOR = .2` and
+  a member of two regions is a **shared experience**. Cues and propositions have no memberships.
+  Measured on the live store (5,757 records, 347 fine regions): a record's mass spreads over 19 regions
+  on average, its own label is the strongest 94.5 % of the time; shared records at .2 are 25 % (mostly
+  listings), at .3 13 %, at .4 4 %; .2 keeps 1.25 regions per record.
+* **Keys** (`key_portals`): every portal whose pair has shared experiences carries them —
+  `keys = [{node, weights (w_a, w_b), strength}]`, strongest `min(weight) × strength` first, at most 8,
+  and `shared` = their count. No pair is created: a membership *is* connector-edge mass, so a keyed
+  pair always already has a portal (live: 117 keyed pairs, all among the 6,028 edge pairs — but only
+  6 of them among the 228 pairs a promoted edge had made 'candidate'; the two rules see different
+  bridges).
+* **Navigation** (`Main.recall`): a candidate outside the active regions is `member` when it is
+  itself a member of one (`in_region`, `weight`); otherwise a crossing prefers a keyed pair over an
+  edge-only candidate pair and names the key — `via = {episode_id, revision, outcome, weights,
+  strength, shared}`; an edge-only crossing says `bridge: edges only`. Region scope admits the members
+  of the active regions (`member_rows`) and, with `KEYED_PARTNERS_IN_SCOPE`, keyed pairs as partners
+  (`keyed_partners`). The receipt counts paths by kind and `crossings_keyed`; the hook's receipt line
+  keeps both per prompt.
+
+Measured on a live copy (scope forced, 20 recent prompts): member rows admitted median 114 per prompt;
+excluded rows median 436 → 145 once keyed pairs are partners; top-10 against whole-store recall unchanged
+(9.8/10 before and after); 151 → 157 ms median. Paths over the 20 prompts: local 19,766 · member 1,464
+(4 %) · portal 6,651, of which **2,988 (45 %) cross through a named shared experience** · unbridged
+7,534. Nothing is dropped and nothing certified: membership and keys are association (the goal's
+"membership_is_truth=False"); a listing record that is a member of many regions is a poor key by its
+strength, not by rule.
+
+Not built: cross-bundle shared experiences (a joint graph would be needed; R4's key stays within one
+bundle for now), the association components R4 lists beyond connectivity (co-activation, entity, time,
+action-outcome, usefulness, agenda — usage re-evidence exists but does not enter membership), and the
+scale re-measurement of the wider scope at 60k+ (the 5.7k numbers cost nothing).
