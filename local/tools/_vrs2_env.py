@@ -38,6 +38,14 @@ BUNDLE_OF = {str(k): str(v) for k, v in (_cfg().get("bundle_of") or {}).items() 
 HOT_BUNDLES = int(_get("hot_bundles", 1) or 1)
 V02_DB = _get("v02_db", None)
 V02_SRC = _get("v02_src", None)
+# signed producers (2026-09-19): registry of public keys, this machine's private keys, the user identity
+PRODUCERS = _get("producers", os.path.join(HOME, ".claude", "vrs2-producers.json"))
+KEYS = _get("keys", os.path.join(HOME, ".claude", "vrs2-keys"))
+try:
+    import getpass as _gp
+    USER = str(_get("user", _gp.getuser()))
+except Exception:
+    USER = str(_get("user", "unknown"))
 V02_KEYS = _get("v02_keys", None)
 PRODUCE = os.path.join(TOOLS, "vrs2-produce.py")
 if SRC not in sys.path:

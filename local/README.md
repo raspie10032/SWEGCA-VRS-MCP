@@ -26,6 +26,7 @@ Since 2026-09-18 these are six-line shims; the bodies are `src/swegca_vrs2/harne
 * `vrs2-verify-origin.py` — every live file-backed record against its file: intact / moved / changed / missing; `--retire` closes orphans with a superseding retirement row
 * `swegca-verdict.py`, `swegca-verdict-axes.py` — verdicts (signed v0.2 + vrs2 mirror), axes, `supersedes`
 * `vrs2-produce.py` — generic evidence producer; `vrs2-probe.py`, `vrs2-recall-bench.py`, `vrs2-delegate-record.py` — producers
+* `vrs2-identity.py` — signed producers: `keygen` (Ed25519 pair; public key into `~/.claude/vrs2-producers.json`, private key in `~/.claude/vrs2-keys`), `list`, `audit` (live evidence rows per producer: verified / unverified / legacy / proxy)
 * `vrs2-run.py` — a command as a machine result for a hypothesis (G11): axis intervention / counterfactual / observational, `--expect`, tree digest in `metadata.run`, run ledger + `--flush`; body in `harness/results.py`
 * `vrs2-confirm.py` — the session's current evidence against a recalled proposition (`--holds/--fails`)
 * `vrs2-alias.py` — hypothesis registry (alias propositions → canonical)

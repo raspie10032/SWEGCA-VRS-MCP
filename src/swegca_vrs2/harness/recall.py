@@ -35,7 +35,7 @@ import time
 
 HOME = os.path.expanduser("~")
 LOG = os.path.join(__import__("swegca_vrs2.harness.paths", fromlist=["RECEIPTS"]).RECEIPTS, "recall_context.log")
-from .paths import SRC, STATE, CONFIRM_CMD  # noqa: E402  (OS-neutral, 2026-09-18)
+from .paths import SRC, STATE, CONFIRM_CMD, USER  # noqa: E402  (OS-neutral, 2026-09-18)
 from . import origin as origin_mod  # noqa: E402  (G3 origin binding, 2026-09-19)
 MIN_WORDS = 2
 LIMIT = 10
@@ -71,6 +71,7 @@ ASK_FORM_WORDS = frozenset("왜 어떻게 하나 되나 안 있나 없나 않나
 def note(**fields):
     fields["ts"] = time.strftime("%Y-%m-%d %H:%M:%S")
     fields["backend"] = "vrs2"
+    fields["user"] = USER                      # signed producers (2026-09-19): whose session this receipt belongs to
     if os.environ.get("RECALL_CONTEXT_REPLAY"):
         fields["replay"] = True
     try:
@@ -305,6 +306,12 @@ def render(packet, verdicts, records):
         standing = (row.get("decision") or {}).get("text")
         if standing:
             head += f" [증거 {standing}]"
+        # signed producers (2026-09-19): a registered producer's row says whether its signature held
+        verified = (row.get("metadata") or {}).get("verified")
+        if verified is True:
+            head += " [서명 확인]"
+        elif verified is False:
+            head += f" [⚠ 서명 불일치 — {(row.get('metadata') or {}).get('producer')} 를 사칭한 행일 수 있다]"
         lines.append(head[:480])
         lines.append("   " + row["text"][:SNIPPET].replace("\n", "\n   "))
         hint = open_hint(row)
@@ -318,6 +325,7 @@ def render(packet, verdicts, records):
         lines.append(f"{number}. 기록 — {where}" + (f" ({meta.get('date')})" if meta.get("date") else "")
                      + (f" [뭉치 {row['bundle']}·{row.get('bundle_state', 'warm')}]" if row.get("bundle") not in (None, "main") else "")
                      + (" [VRS 승격]" if (row.get("vrs") or {}).get("promoted") else "")
+                     + (" [서명 확인]" if meta.get("verified") is True else f" [⚠ 서명 불일치 — {meta.get('producer')} 사칭 가능]" if meta.get("verified") is False else "")
                      + (f" [열림 {usage[1]}/{usage[0]}]" if usage else ""))   # usage re-evidence: opened/injected so far
         lines.append("   " + row["text"][:SNIPPET].replace("\n", "\n   "))
         hint = open_hint(row)

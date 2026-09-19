@@ -12,6 +12,7 @@ Resolution order for every path: environment variable → ``~/.claude/vrs2.json`
 
 ``vrs2-install.py`` writes the json for a machine; nothing here is Windows-specific.
 """
+import getpass
 import io
 import json
 import os
@@ -50,6 +51,15 @@ BUNDLES = {str(k): v for k, v in (_config().get("bundles") or {}).items() if k !
 BUNDLE_OF = {str(k): str(v) for k, v in (_config().get("bundle_of") or {}).items() if v}
 HOT_BUNDLES = int(_get("hot_bundles", 1) or 1)
 V02_DB = _get("v02_db", None)
+# signed producers (2026-09-19, 3.0 step 6): the registry of producer public keys (shareable), the directory of
+# this machine's private keys, and the user identity carried as provenance on produced rows
+PRODUCERS = _get("producers", os.path.join(HOME, ".claude", "vrs2-producers.json"))
+KEYS = _get("keys", os.path.join(HOME, ".claude", "vrs2-keys"))
+try:
+    _LOGIN = getpass.getuser()
+except Exception:
+    _LOGIN = "unknown"
+USER = str(_get("user", _LOGIN))
 PRODUCE = os.path.join(TOOLS, "vrs2-produce.py")
 IMPORTER = os.path.join(TOOLS, "vrs2-import.py")
 CONFIRM_CMD = f'"{PYTHON}" "{os.path.join(TOOLS, "vrs2-confirm.py")}"'
@@ -57,4 +67,4 @@ CONFIRM_CMD = f'"{PYTHON}" "{os.path.join(TOOLS, "vrs2-confirm.py")}"'
 
 def describe():
     return dict(config=CONFIG if os.path.isfile(CONFIG) else None, src=SRC, state=STATE, tools=TOOLS, python=PYTHON,
-                receipts=RECEIPTS, v02_db=V02_DB, os=os.name, platform=sys.platform)
+                receipts=RECEIPTS, v02_db=V02_DB, producers=PRODUCERS, keys=KEYS, user=USER, os=os.name, platform=sys.platform)

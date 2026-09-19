@@ -21,7 +21,7 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from _vrs2_env import SRC, STATE, PY, RECEIPTS  # noqa: E402  (OS-neutral, 2026-09-18)
+from _vrs2_env import SRC, STATE, PY, RECEIPTS, USER  # noqa: E402  (OS-neutral, 2026-09-18)
 AXES = ("observational", "counterfactual", "intervention", "cross_context")
 LOG = os.path.join(RECEIPTS, "vrs2_produce.log")
 
@@ -50,13 +50,24 @@ def produce(*, producer, hypothesis, outcome, axes, context, source, text="", ev
         client = ensure_daemon(state, allow_ingest=True, python=PY)
     try:
         metadata = dict(kind="evidence", producer=producer, axes=axes, project=context,
-                        evidence=list(evidence)[:8], confidence=float(confidence))
+                        evidence=list(evidence)[:8], confidence=float(confidence), user=USER)
         for key, value in (extra or {}).items():
             metadata.setdefault(str(key), value)
         args = dict(request_id=request_id, text=body[:60000], source=source[:1024],
                     revision=stamp.replace(" ", "T"), outcome=outcome, cues=[],
                     proposition=hypothesis[:512], polarity="support" if outcome == "success" else "refute",
                     metadata=metadata)
+        # signed producers (2026-09-19): when this machine holds the producer's private key the row is signed over
+        # (producer, hypothesis, outcome, axes, context, source, revision, text digest); the daemon verifies
+        try:
+            from swegca_vrs2.harness import identity
+            fields = identity.signature_fields(args)
+            signature = identity.sign(fields, producer)
+            metadata["text_sha256"] = fields["text_sha256"]
+            if signature:
+                metadata["signature"] = signature
+        except Exception:
+            pass
         if supersede_same_source:
             live = client.request("evidence_of", proposition=hypothesis[:512], source=source[:1024]).get("rows") or []
             live = [r for r in live if r.get("producer") == producer]

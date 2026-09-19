@@ -237,6 +237,11 @@ def build(graph, memory):
         source = episode.source_addresses[0]
         family = _source_family(source)
         context = str(metadata.get('project') or metadata.get('scope') or 'global')
+        # signed producers (2026-09-19): a registered producer's row whose signature did not hold is not
+        # evidence — it says nothing about *who* observed, so it feeds no hypothesis (recallable, weight 0)
+        if metadata.get('verified') is False:
+            ev.record_weight[eid] = 0.0
+            continue
         producer = str(metadata.get('producer') or 'main')
         axes = _axes_of(metadata)
         proposition = obs.get('proposition_id')

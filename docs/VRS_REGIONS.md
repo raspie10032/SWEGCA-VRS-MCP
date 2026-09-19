@@ -628,3 +628,42 @@ Not built: cross-bundle shared experiences (a joint graph would be needed; R4's 
 bundle for now), the association components R4 lists beyond connectivity (co-activation, entity, time,
 action-outcome, usefulness, agenda — usage re-evidence exists but does not enter membership), and the
 scale re-measurement of the wider scope at 60k+ (the 5.7k numbers cost nothing).
+
+### Signed producers and users — the sixth step toward 3.0 (2026-09-19)
+
+3.0 is the same contract beyond one bundle, one producer, one user. The accumulator counts producers as the
+paper's "distinct source" proxy, and in vrs2 a producer was a string in `metadata.producer` — anything could
+claim `asm-agent` or `pytest-runner`. That is harmless while one person's tools feed one store; it is worth
+nothing once several users or machines do.
+
+* **Identity** — `harness/identity.py`, CLI `vrs2-identity.py`. A producer id is bound to an Ed25519 key pair
+  (`cryptography`, optional): the private seed stays with the producer (`~/.claude/vrs2-keys/<id>.key`),
+  the registry holds public keys only (`~/.claude/vrs2-producers.json`: `key_id`, `user`, `since`) and can
+  be shared between machines. `produce()` and the importer sign a row when the machine holds its producer's
+  key — over (producer, hypothesis, outcome, axes, context, source, revision, text digest), canonical JSON —
+  and the daemon verifies on ingest (`ingest`, `ingest_many`): a registered producer's row gets
+  `metadata.verified = True | False` (+ `key_id`); an unregistered producer's row is left as it is.
+* **What verification changes.** A `verified: False` row (a registered id without its key, a borrowed key, a
+  tampered field) is folded into no hypothesis — recallable, weight 0 — because it says nothing about *who*
+  observed; it is not counted as a producer of its own either. Rows from before this step carry no
+  `verified` key and count as they always did; unregistered ids stay proxies. Signing is identity binding,
+  not truth: a verified row is that producer's claim and the accumulator decides as before.
+* **User** — `~/.claude/vrs2.json` `user` (default the OS login) rides on every produced row
+  (`metadata.user`), in the registry entry of each producer, and in every hook receipt. It is provenance:
+  no per-user scope, no authority.
+* **Surfaces.** The hook prints `[서명 확인]` on a verified row and `[⚠ 서명 불일치 — <id> 사칭 가능]` on a
+  failed one; `origins` pages evidence rows too (`kinds=["evidence","verdict"]`, with producer / verified /
+  key_id) and `vrs2-identity.py audit` counts them per producer: verified · unverified · registered-legacy ·
+  proxy.
+
+Live: nine producers of this machine registered (`asm-agent`, `session-main`, `pytest-runner`, `stop-hook`,
+`gate`, `sonnet-subagent`, `origin-check`, `recall-bench`, `probe-runner`); the first signed row — the suite run
+through `vrs2-run.py` — verified True with its key id; the 65 earlier rows of registered producers count as
+legacy. Tests: `test_signed_producers.py` (3): keygen / sign / verify with tampering, an impostor without the
+key and one with another producer's key, the evidence fold counting three producers and not the impostor,
+the daemon stamping rows on ingest and the audit page reading them.
+
+Not built: key rotation and revocation (`keygen --replace` re-registers, old rows stay verified by their
+stored `key_id` only nominally — a revoked key is not re-checked), a registry carried inside the store (it is
+a file beside it), signatures on imported file-backed records (origin binding covers those), and any per-user
+recall or write policy — several users share one store as several producers, nothing more.

@@ -235,6 +235,16 @@ def _record_digest(text):
     return record_digest(text)
 
 
+def _verify_producer(row):
+    """Signed producers (2026-09-19): a row from a registered producer is stamped ``metadata.verified`` by its
+    signature; an unregistered producer's row is left as it is. Never blocks an ingest."""
+    try:
+        from .harness.identity import verify_row
+        return verify_row(row)
+    except Exception:
+        return None
+
+
 def _light(memory, identifier):
     return memory.episode_light(identifier) if hasattr(memory, 'episode_light') else memory.episode(identifier)
 
@@ -270,12 +280,13 @@ def origins(main, arguments):
         episode = memory.episode_light(identifier)
         obs = episode.steps[0].observation
         meta = obs.get('metadata') or {}
-        if meta.get('kind') not in kinds or not meta.get('path'):
-            continue
+        if meta.get('kind') not in kinds or (meta.get('kind') in FILE_KINDS and not meta.get('path')):
+            continue                                       # evidence rows (signed-producer audit) have no path
         text = obs.get('text', '')
         rows.append(dict(episode_id=identifier, source=episode.source_addresses[0], revision=episode.revision,
                          kind=meta.get('kind'), path=meta.get('path'), section=meta.get('section') or '', index=meta.get('index'),
                          project=meta.get('project'), head=text.split('\n', 1)[0][:120],
+                         producer=meta.get('producer'), verified=meta.get('verified'), key_id=meta.get('key_id'),   # signed producers
                          origin=_plain(meta.get('origin')), text_sha256=None if meta.get('origin') else _record_digest(text)))
     return dict(status='ok', count=len(rows), rows=rows, next=next_row, total=count)
 
@@ -472,11 +483,15 @@ class Daemon:
                 return result
             if command == 'ingest':
                 target = self.bundles.main_for(arguments.pop('bundle', None))     # G7: routed by bundle id
+                _verify_producer(arguments)                                        # signed producers: verified True/False
                 return target.ingest(arguments)
             if command == 'ingest_many':
                 # batch generations (2026-09-18): K observations -> one generation; all-or-nothing
                 target = self.bundles.main_for(arguments.get('bundle'))
-                return target.ingest_many(list(arguments.get('rows') or []))
+                rows = list(arguments.get('rows') or [])
+                for row in rows:
+                    _verify_producer(row)
+                return target.ingest_many(rows)
             if command == 'evict':
                 return dict(status='ok', evicted=self.bundles.evict(str(arguments.get('bundle') or '')))
             if command == 'alias':

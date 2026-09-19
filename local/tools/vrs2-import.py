@@ -163,6 +163,24 @@ def verdict_records():
                                  producer=event.get("producer_id") or "main"))
 
 
+def sign_args(args):
+    """Signed producers: when this machine holds the private key of the row's producer, sign the row over its
+    (producer, hypothesis, outcome, axes, context, source, revision, text digest); otherwise leave it unsigned
+    (the daemon then marks a registered producer's row verified=False — the importer never fakes a signature)."""
+    meta = args.get("metadata") or {}
+    if not meta.get("producer"):
+        return
+    try:
+        from swegca_vrs2.harness import identity
+        fields = identity.signature_fields(args)
+        meta["text_sha256"] = fields["text_sha256"]
+        signature = identity.sign(fields, meta["producer"])
+        if signature:
+            meta["signature"] = signature
+    except Exception:
+        pass
+
+
 class DaemonMain:
     """Main 과 같은 세 메서드(ingest/status/close)를 상주 데몬에 흘린다. 거절은 ValueError 로."""
 
@@ -299,6 +317,7 @@ def main():
                         cues=[c for c in dict.fromkeys(r["cues"])][:128], metadata=r["metadata"])
             if r.get("proposition"):
                 args.update(proposition=r["proposition"], polarity=r["polarity"])
+            sign_args(args)                       # signed producers (2026-09-19): verdict rows carry asm-agent's signature
             if prev and prev["revision"] != r["revision"]:
                 args["supersedes"] = prev["episode"]
             if a.batch <= 0:
