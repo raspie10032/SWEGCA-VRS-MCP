@@ -1,6 +1,6 @@
 # VRS2 issues 1–3 — execution ledger, 2026-09-14
 
-Status: implementation in progress, not evaluated or released.
+Status: cross-platform candidate verified; #3 real-store scale remains open.
 Base: 7395deb300e54bbea85237924eed64de5359c7ca (v2.1.0).
 User authorized addressing all three issues. No issue comments or messages to
 other people are authorized. Work in the existing public repository only.
@@ -181,3 +181,33 @@ it was not, so `uv build` was used and actual archives verified. A first
 installed-wheel run preceded the final security and rollback regressions;
 the wheel was rebuilt and the full 52-test suite repeated from that final
 artifact. No earlier test count was added to the final count.
+
+### Cross-platform installed-artifact CI — candidate commit 7ccff95
+
+Workflow run [35455043726](https://github.com/raspie10032/SWEGCA-VRS-MCP/actions/runs/35455043726)
+completed successfully on the exact pushed commit
+`7ccff95a7a4092f1c012ff776c6dc749b19d8fec`: Windows/Python 3.11
+52 passed in 7.51 s, Windows/Python 3.12 52 passed in 9.28 s, and
+Ubuntu/Python 3.12 52 passed in 7.76 s. Each job built and validated archives,
+installed its built wheel, and ran the standalone suite from that installation.
+Both Windows jobs also ran the installer and checked the generated Claude
+executable path. This supersedes the earlier checkpoint's pending Windows-CI
+status; it does not verify a real Claude UI session or the issue author's
+2,620-record Windows store.
+
+The candidate remains `2.2.0.dev0` on `codex/vrs2-issues-1-3`. #1's active
+path and topology/numeric distinction are documented; #2's derived group is
+implemented and covered by installed-artifact tests. #3's resident owner,
+checkpoint, compaction, and retrieval corrections pass bounded tests, but its
+real-store latency, memory footprint, and large overlapping Korean retrieval
+remain unmeasured. Keep #3 open; do not infer a production-scale pass from the
+52-test matrix or synthetic 60-record diagnostic. No stable release or private
+main change was made.
+
+### Codex 작업 실수 및 교정 — CI checkpoint
+
+Audited scope, assumptions, interventions, evidence, authority, and completion
+claims for this checkpoint. The preceding paragraph previously said Windows CI
+was pending; the run now supersedes that dated statement. No new Codex error
+or corrective code mutation occurred during CI observation. The remaining
+real-store evidence gap is stated explicitly rather than described as a pass.
