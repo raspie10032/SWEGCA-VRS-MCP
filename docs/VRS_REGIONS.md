@@ -485,3 +485,39 @@ store freezes metadata (`mappingproxy`), the daemon's JSON reply could not encod
 closed without a reply — the hook printed nothing for any prompt whose packet held a fresh row, from
 10:58 to about 11:15, with no receipt (the shim swallows exceptions). Every packet row now carries `plain()`
 metadata (regression test), and the hook writes an `error` receipt for its own failures.
+
+### Prepare outside the judgment — the minimal G8 (2026-09-19)
+
+G8 says: storage access, decoding and loading belong to a preparer, not to the live judgment; a judgment
+runs on a pinned immutable view; what it could not reach is a **named miss**, answered on the next
+judgment; hit and miss latencies are measured apart, never folded into one number. Where the misses
+were, and what changed:
+
+* **Blob decodes.** A record's body is a zlib+json blob; the judgment reads columns, but replay,
+  re-evidence and the packet rows read episodes, and after a checkpoint load the caches are empty.
+  Now the index counts `hits` (answered from a resident episode) and `decodes`; every packet reports
+  its delta (`blob_hits`, `blob_decodes`, a `blob_decodes` miss) and the hook's receipt keeps it.
+  The packet rows use light episodes (no cue strings). The **preparer** thread prefetches the light
+  cache newest-first at start-up (live: 2,130 rows in 84 ms after a load that already carried 3.6k;
+  a copy with empty caches: 5,743 rows in 302 ms) so the first judgments run from RAM.
+* **Warm bundles.** A judgment never loads or refreshes a bundle any more: `Resident.ready()` pins what
+  the preparer has, and a bundle that is not loaded (or is closing) is a `bundle_not_ready` miss —
+  the packet says so, the hook prints one line 「뭉치 … 는 아직 준비 중 — 다음 프롬프트부터」, the
+  preparer loads it (`wanted`) and refreshes every warm bundle whose journal moved, every 5 s. Measured
+  on a live copy: the first judgment with a 5.7k bundle not ready answered in 124 ms with the miss
+  named (before: +378 ms of loading inside the request); after the preparer's 378 ms the next judgment
+  carried the bundle's rows in 6 ms.
+* **A starting daemon.** The first prompt after a cold start used to block until the store was loaded
+  (1.2 s at 5.7k, tens of seconds at 60k), and two prompts arriving together spawned two daemons (the
+  second died on the owner lock after loading). Now the spawner leaves a start marker
+  (`loopback.starting`, cleared once the daemon serves, ignored after 5 min), a second caller waits
+  instead of spawning, and the hook waits 2.5 s at most: past it the prompt goes without memory and
+  says so (`DaemonStarting`, receipt `miss: daemon_starting`). Measured live: 1st prompt 416 ms with
+  the notice, 2nd 402 ms (no second spawn), 3rd after 3 s 151 ms with memory.
+* **Timing apart.** Every packet carries `timing = {judgment_ms, rows_ms, bundles_ms}`; the receipt
+  line of every prompt has it beside the end-to-end `ms`. On the live store the judgment is ~130 ms
+  of the ~150 ms hook (rows 2 ms, other bundles 0–6 ms).
+
+Not built: a residency budget (the preparer prefetches up to the light-cache size, 16k rows, newest
+first — beyond that the cache is LRU and the miss counter shows what that costs), thrashing detection,
+and full-result equivalence checks between a judgment with and without a warm bundle.

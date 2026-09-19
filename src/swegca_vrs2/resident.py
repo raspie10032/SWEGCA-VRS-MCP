@@ -90,7 +90,7 @@ class WarmView:
     def __init__(self, bundle_id, directory):
         self.id, self.directory = bundle_id, Path(directory)
         self.memory, self.seq, self.checkpoint_seq = None, 0, None
-        self.loaded_at, self.load_ns = None, 0
+        self.loaded_at, self.load_ns, self.refreshed_at = None, 0, None
         self.db = None
         self.lock = threading.Lock()
 
@@ -99,9 +99,18 @@ class WarmView:
             self.db = _connect(self.directory)
         return self.db
 
+    def moved(self):
+        """True when the bundle's journal or checkpoint is past what this view covers (one cheap query)."""
+        with self.lock:
+            if self.memory is None:
+                return True
+            db = self._db()
+            head = db.execute('SELECT MAX(seq) FROM observations').fetchone() if _table_exists(db, 'observations') else None
+            return bool(head and head[0] and int(head[0]) > self.seq)
+
     def refresh(self):
         """Load once; afterwards follow the journal tail, or reload when the owner wrote a newer checkpoint
-        (its warm blob is the cheaper base)."""
+        (its warm blob is the cheaper base). Called by the preparer, never inside a judgment (G8)."""
         with self.lock:
             db = self._db()
             head = db.execute('SELECT seq FROM checkpoint WHERE id=1').fetchone() if _table_exists(db, 'checkpoint') else None
@@ -113,6 +122,7 @@ class WarmView:
                 self.loaded_at, self.load_ns = time.time(), time.perf_counter_ns() - started
             else:
                 self.memory, self.seq = replay_tail(db, self.memory, self.seq)
+            self.refreshed_at = time.time()
             return self.memory
 
     def close(self):
@@ -124,7 +134,8 @@ class WarmView:
 
     def status(self):
         return dict(id=self.id, state='warm', records=self.memory.episode_count if self.memory is not None else None,
-                    seq=self.seq, load_ms=self.load_ns // 1_000_000)
+                    seq=self.seq, load_ms=self.load_ns // 1_000_000,
+                    age_s=None if self.refreshed_at is None else round(time.time() - self.refreshed_at, 1))
 
 
 # ── index-only recall ────────────────────────────────────────────────────────
@@ -184,6 +195,8 @@ class Resident:
         self.hot = OrderedDict()                          # bundle id -> Main (owned), LRU order
         self.warm = {}                                    # bundle id -> WarmView
         self.closing = {}                                 # bundle id -> thread checkpointing + closing it
+        self.wanted = set()                               # bundles a judgment missed: the preparer loads them next
+        self.prepared = {}                                # bundle id -> receipt of the last prepare (ms, seq, when)
         self.lock = threading.Lock()
 
     def _close_later(self, bundle_id, main):
@@ -215,8 +228,57 @@ class Resident:
     def ids(self):
         return list(self.bundles)
 
+    def ready(self, bundle_id):
+        """(memory, state) pinned for one judgment without any loading: the hot Main's memory, or a warm view that
+        the preparer has loaded; ``(None, 'preparing')`` is a miss the packet names (G8)."""
+        with self.lock:
+            main = self.hot.get(bundle_id)
+            if main is not None:
+                return main.memory, 'hot'
+            if bundle_id in self.closing:
+                self.wanted.add(bundle_id)
+                return None, 'closing'
+            view = self.warm.get(bundle_id)
+            if view is not None and view.memory is not None:
+                return view.memory, 'warm'
+            self.wanted.add(bundle_id)
+            return None, 'preparing'
+
+    def prepare(self, bundle_id, force=False):
+        """Load or refresh one warm bundle off the request path (the preparer's call). Returns a receipt or None
+        when there was nothing to do."""
+        with self.lock:
+            if bundle_id in self.hot or bundle_id in self.closing:
+                self.wanted.discard(bundle_id)
+                return None
+            view = self.warm.get(bundle_id)
+            if view is None:
+                view = self.warm[bundle_id] = WarmView(bundle_id, self.bundles[bundle_id])
+            wanted = bundle_id in self.wanted
+        if not (force or wanted or view.moved()):
+            return None
+        started = time.perf_counter_ns()
+        memory = view.refresh()
+        receipt = dict(bundle=bundle_id, ms=(time.perf_counter_ns() - started) // 1_000_000, seq=view.seq,
+                       records=memory.episode_count, when=time.time())
+        with self.lock:
+            self.wanted.discard(bundle_id)
+            self.prepared[bundle_id] = receipt
+        return receipt
+
+    def prepare_all(self, force=False):
+        """One preparer pass over every registered bundle; the receipts of what was loaded or refreshed."""
+        return [receipt for bundle_id in list(self.bundles) for receipt in [self._safe_prepare(bundle_id, force)] if receipt]
+
+    def _safe_prepare(self, bundle_id, force):
+        try:
+            return self.prepare(bundle_id, force)
+        except Exception as error:                        # a bundle that cannot be read is reported, not fatal
+            return dict(bundle=bundle_id, error=type(error).__name__, when=time.time())
+
     def view(self, bundle_id):
-        """The bundle's current index: the hot Main's memory, else the warm view (refreshed)."""
+        """The bundle's current index: the hot Main's memory, else the warm view (refreshed). Loads inside the
+        caller — for tools and tests; a judgment uses ``ready`` and lets the preparer load (G8)."""
         with self.lock:                                   # the dicts only; a refresh (seconds) runs outside
             main = self.hot.get(bundle_id)
             if main is not None:
@@ -261,20 +323,23 @@ class Resident:
 
     # recall across bundles
     def recall_others(self, query, exclude_kinds=(), limit=10, snippet=400):
-        """Rows from every non-primary bundle, tagged with their bundle and its state."""
+        """Rows from every non-primary bundle that is ready, tagged with their bundle and its state; a bundle that
+        is not ready is a named miss (``state`` preparing/closing, no rows) — this judgment does not wait, the
+        preparer loads it, the next judgment sees it (G8)."""
         out = []
         for bundle_id in self.bundles:
-            try:
-                memory = self.view(bundle_id)
-            except Exception as error:                    # a bundle that cannot be read is reported, not fatal
-                out.append(dict(bundle=bundle_id, error=type(error).__name__))
+            memory, state = self.ready(bundle_id)
+            if memory is None:
+                out.append(dict(bundle=bundle_id, state=state, miss=True, rows=[]))
                 continue
-            state = 'hot' if bundle_id in self.hot else 'warm'
             result = warm_recall(memory, query, exclude_kinds, limit, snippet)
             for row in result['rows']:
                 row.update(bundle=bundle_id, bundle_state=state, fanout={c: result['fanout'].get(c, 0) for c in row['matched_cues']},
                            record_count=result['record_count'])
+            view = self.warm.get(bundle_id)
             out.append(dict(bundle=bundle_id, state=state, records=memory.episode_count, candidate_count=result['candidate_count'],
+                            seq=None if view is None else view.seq,
+                            age_s=None if view is None or view.refreshed_at is None else round(time.time() - view.refreshed_at, 1),
                             rows=result['rows']))
         return out
 

@@ -30,6 +30,7 @@ import json
 import re
 import sys
 import threading
+from time import perf_counter_ns
 import zlib
 from collections import OrderedDict
 
@@ -256,11 +257,14 @@ class CompactIndex:
             raise KeyError(identifier)
         cache = store['cache']
         lock = store.setdefault('cache_lock', threading.Lock())
+        stats = store.setdefault('stats', {'hits': 0, 'decodes': 0})     # G8 (2026-09-19): hot hits vs blob decodes
         with lock:
             episode = cache.get(row)
             if episode is not None:
                 cache.move_to_end(row)
+                stats['hits'] += 1
                 return episode
+        stats['decodes'] += 1
         episode = self._build(row)
         with lock:
             cache[row] = episode
@@ -494,15 +498,19 @@ class CompactIndex:
             raise KeyError(identifier)
         cache = store.setdefault('light_cache', OrderedDict())
         lock = store.setdefault('cache_lock', threading.Lock())
+        stats = store.setdefault('stats', {'hits': 0, 'decodes': 0})
         with lock:
             episode = cache.get(row)
             if episode is not None:
                 cache.move_to_end(row)
+                stats['hits'] += 1
                 return episode
             full = store['cache'].get(row)          # a resident full episode: no blob decode at all
         if full is not None:
+            stats['hits'] += 1
             steps, source, revision = full.steps, full.source_addresses[0], full.revision
         else:
+            stats['decodes'] += 1
             payload = json.loads(zlib.decompress(store['blobs'][row]).decode('utf-8'))
             steps = (MemoryStep('external_observation', {'text': payload['text'], 'metadata': payload['metadata'],
                 'proposition_id': payload['proposition'], 'evidence_polarity': payload['polarity'],
@@ -520,6 +528,33 @@ class CompactIndex:
             if len(cache) > LIGHT_CACHE:
                 cache.popitem(last=False)
         return episode
+
+    def stats(self):
+        """Blob accounting since load (G8, 2026-09-19): ``hits`` answered from a resident episode, ``decodes``
+        paid a zlib+json decode. Shared by every generation of this store; a request reads the delta."""
+        return dict(self._store.setdefault('stats', {'hits': 0, 'decodes': 0}))
+
+    def prefetch_light(self, limit=None, budget_ns=None):
+        """Decode light episodes newest-first into the resident cache — the preparer's job at start-up so the
+        first judgments run from RAM (G8). Stops at the cache size, ``limit`` rows or ``budget_ns``."""
+        store = self._store
+        cache = store.setdefault('light_cache', OrderedDict())
+        room = LIGHT_CACHE - len(cache)
+        if limit is not None:
+            room = min(room, int(limit))
+        started = perf_counter_ns() if budget_ns else None
+        done = 0
+        ids = store['ids']
+        for row in range(self.count - 1, -1, -1):
+            if done >= room:
+                break
+            if budget_ns and perf_counter_ns() - started > budget_ns:
+                break
+            if row in cache:
+                continue
+            self.episode_light(ids[row])
+            done += 1
+        return done
 
     def rows_for_cue(self, cue):
         """Visible row numbers carrying ``cue`` (the id-free form of ``episode_ids_for_cue``)."""

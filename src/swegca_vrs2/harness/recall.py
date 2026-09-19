@@ -39,6 +39,7 @@ from .paths import SRC, STATE, CONFIRM_CMD  # noqa: E402  (OS-neutral, 2026-09-1
 from . import origin as origin_mod  # noqa: E402  (G3 origin binding, 2026-09-19)
 MIN_WORDS = 2
 LIMIT = 10
+START_WAIT = 2.5     # G8 (2026-09-19): seconds a prompt waits for a starting daemon; past it the miss is named, not hidden
 VERDICT_MIN_MATCH = 2
 RECORD_MIN_MATCH = 2
 BIG_CHARS = 1500
@@ -280,6 +281,9 @@ def conflict_lines(packet):
 
 def render(packet, verdicts, records):
     lines = ["[기억] 이 요청과 맞닿는 것이 스토어에 있다. 판단은 네가 하되 먼저 읽어라 — 「열기」 줄이 있으면 그 호출을 그대로 불러 전문을 본 뒤 쓴다."]
+    not_ready = [m["bundle"] for m in (packet.get("misses") or []) if m.get("kind") == "bundle_not_ready"]
+    if not_ready:
+        lines.append(f"   (뭉치 {', '.join(not_ready)} 는 아직 준비 중 — 이번 답엔 없고 다음 프롬프트부터.)")   # G8: a named miss
     if packet.get("unresolved_conflict"):
         lines.extend(conflict_lines(packet))
     number = 0
@@ -333,8 +337,15 @@ def context_for(prompt, cwd, session):
         note(skip="short", words=words, session=session)
         return
     sys.path.insert(0, SRC)
-    from swegca_vrs2.loopback import ensure_daemon
-    client = ensure_daemon(STATE, allow_ingest=True)
+    from swegca_vrs2.loopback import ensure_daemon, DaemonStarting
+    try:
+        client = ensure_daemon(STATE, allow_ingest=True, wait_seconds=START_WAIT)
+    except DaemonStarting:
+        # G8: the daemon is loading its store (seconds; tens at 60k records) — this prompt goes without memory
+        # and says so; the next prompt attaches. Blocking a prompt for a cold start hid the miss and cost the
+        # full load every first prompt of a day.
+        note(miss="daemon_starting", words=words, session=session)
+        return "[기억] 기억 데몬을 띄우는 중이라 이번 프롬프트는 기억 없이 간다 — 다음 프롬프트부터 붙는다."
     stems = prompt_stems(prompt)
     # folder-listing records (desktop-fs-ingest.py) are filtered out at the store unless the prompt is
     # about a location: with them in, ordinary prompts saw 2x the candidates and 1.6 s recalls
@@ -345,12 +356,15 @@ def context_for(prompt, cwd, session):
     verdicts, records = choose(packet, project, stems)
     if not verdicts and not records:
         note(skip="weak", words=words, session=session,
-             top=[(r["source"][:60], r["matched"]) for r in packet["memories"][:3]])
+             top=[(r["source"][:60], r["matched"]) for r in packet["memories"][:3]],
+             timing=packet.get("timing"), misses=packet.get("misses") or [])
         return None
     context = render(packet, verdicts, records)
     elapsed = round((time.perf_counter() - started) * 1000)
     note(injected=[r["source"] for r in verdicts + records], words=words, chars=len(context),
          ms=elapsed, session=session,
+         # G8: the judgment's own time and what it had to decode or could not reach — hit and miss, both on record
+         timing=packet.get("timing"), misses=packet.get("misses") or [], blob_hits=packet.get("blob_hits"),
          # usage re-evidence (2026-09-18): where each injected record can be opened, so the Stop hook's
          # ledger can tell an opened receipt from an ignored one
          opens={r["source"]: r["_open"] for r in verdicts + records if r.get("_open")})

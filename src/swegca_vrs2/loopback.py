@@ -38,6 +38,8 @@ from .native_transport import InterfaceError, encode, decode, MAX_BYTES
 
 HOST = '127.0.0.1'
 PORT_FILE = 'loopback.port'
+START_FILE = 'loopback.starting'   # G8 (2026-09-19): written by the spawner, removed by the daemon once it serves
+START_STALE = 300                    # seconds after which a start marker is ignored (a spawn that died)
 RESIDENT_COMMANDS = {'status', 'cognitive_dialogue_start', 'cognitive_dialogue_continue',
                      'cognitive_dialogue_evidence_open', 'cognitive_dialogue_evidence',
                      'cognitive_dialogue_release'}
@@ -97,9 +99,36 @@ class LoopbackClient:
         return result
 
 
+class DaemonStarting(InterfaceError):
+    """The daemon is loading (spawned by this or an earlier caller) and was not ready within the wait:
+    the caller answers without memory now and names the miss; the next call attaches (G8)."""
+
+
+def starting_since(state_dir):
+    """Seconds since a live start marker was written, or None (no marker, stale, or the daemon is up)."""
+    try:
+        text = (Path(state_dir) / START_FILE).read_text(encoding='ascii').strip()
+        pid, stamp = text.split()
+        age = time.time() - float(stamp)
+    except (OSError, ValueError):
+        return None
+    if age > START_STALE:
+        return None
+    return age
+
+
+def _clear_start_marker(state_dir):
+    try:
+        (Path(state_dir) / START_FILE).unlink()
+    except OSError:
+        pass
+
+
 def ensure_daemon(state_dir, *, allow_ingest=True, python=None, wait_seconds=30, bundle_limit=None,
                   bundles=None, hot_bundles=None):
-    """Return a client for the daemon owning ``state_dir``, starting it if needed."""
+    """Return a client for the daemon owning ``state_dir``, starting it if needed. A daemon that another
+    caller already spawned is not spawned again (start marker); when it is not up within ``wait_seconds``
+    ``DaemonStarting`` is raised — a miss the caller can name instead of a blocked prompt (G8)."""
     state_dir = Path(state_dir)
     port = port_of(state_dir)
     if port is not None:
@@ -109,6 +138,8 @@ def ensure_daemon(state_dir, *, allow_ingest=True, python=None, wait_seconds=30,
             return client
         except InterfaceError:
             pass
+    if starting_since(state_dir) is not None:
+        return _wait_for_daemon(state_dir, wait_seconds)
     command = [python or sys.executable, '-m', 'swegca_vrs2.loopback', '--state-dir', str(state_dir)]
     if allow_ingest:
         command.append('--allow-ingest')
@@ -124,7 +155,15 @@ def ensure_daemon(state_dir, *, allow_ingest=True, python=None, wait_seconds=30,
         popen['creationflags'] = subprocess.CREATE_NEW_PROCESS_GROUP | getattr(subprocess, 'DETACHED_PROCESS', 0)
     else:
         popen['start_new_session'] = True      # POSIX: a new session so the daemon outlives the hook that spawned it
-    subprocess.Popen(command, **popen)
+    process = subprocess.Popen(command, **popen)
+    try:
+        (state_dir / START_FILE).write_text(f'{process.pid} {time.time():.3f}', encoding='ascii')
+    except OSError:
+        pass
+    return _wait_for_daemon(state_dir, wait_seconds)
+
+
+def _wait_for_daemon(state_dir, wait_seconds):
     deadline = time.time() + wait_seconds
     while time.time() < deadline:
         time.sleep(0.2)
@@ -136,6 +175,8 @@ def ensure_daemon(state_dir, *, allow_ingest=True, python=None, wait_seconds=30,
                 return client
             except InterfaceError:
                 continue
+    if starting_since(state_dir) is not None:
+        raise DaemonStarting('resident_daemon_starting')
     raise InterfaceError('resident_daemon_did_not_start')
 
 
@@ -171,6 +212,10 @@ def evidence_of(main, arguments):
 def _record_digest(text):
     from .harness.origin import record_digest
     return record_digest(text)
+
+
+def _light(memory, identifier):
+    return memory.episode_light(identifier) if hasattr(memory, 'episode_light') else memory.episode(identifier)
 
 
 def _plain(value):
@@ -223,7 +268,12 @@ def hook_recall(main, arguments, resident=None):
     snippet = max(80, min(int(arguments.get('snippet', 400)), 4000))
     exclude = tuple(str(k) for k in (arguments.get('exclude_kinds') or ()) if k)[:8]
     scope = arguments.get('region_scope') if arguments.get('region_scope') in ('all', 'regions', 'auto') else 'all'
+    # G8 (2026-09-19): the judgment is timed apart from what follows it, and what it had to decode is counted —
+    # a hot hit and a miss are not the same number
+    began = time.perf_counter_ns()
+    stats0 = main.memory.stats() if hasattr(main.memory, 'stats') else {}
     root = main.recall(query, None, exclude_kinds=exclude, region_scope=scope)      # current generation, no lock
+    judged = time.perf_counter_ns()
     status = {'pair_snapshot_id': root['pair_snapshot_id']}
     activation = root['receipt']['activation']
     judgments = {j.episode_id: j for j in activation.re_evidence.judgments}
@@ -238,7 +288,7 @@ def hook_recall(main, arguments, resident=None):
         if candidate.episode_id in main.memory.superseded:
             superseded_skipped += 1
             continue
-        episode = main.memory.episode(candidate.episode_id)
+        episode = _light(main.memory, candidate.episode_id)      # G8: the packet needs no cue strings — light, prefetched
         obs = episode.steps[0].observation
         judgment = judgments.get(candidate.episode_id)
         rows.append(dict(
@@ -270,7 +320,7 @@ def hook_recall(main, arguments, resident=None):
         for eid in main.memory.propositions.get(pid, ()):
             if eid in main.memory.superseded:
                 continue
-            ep = main.memory.episode(eid); meta = ep.steps[0].observation.get('metadata') or {}
+            ep = _light(main.memory, eid); meta = ep.steps[0].observation.get('metadata') or {}
             if meta.get('producer') == 'gate' or ep.source_addresses[0].startswith('gate:'):
                 count += 1; sessions.add(str(meta.get('project') or ep.source_addresses[0]))
         repeats[pid] = dict(observations=count, sessions=len(sessions))
@@ -278,11 +328,20 @@ def hook_recall(main, arguments, resident=None):
         if row.get('proposition') in repeats:
             row['repeats'] = repeats[row['proposition']]
         row['bundle'] = 'main'
+    rowed = time.perf_counter_ns()
     others = []
     if resident is not None and resident.ids():
         others = resident.recall_others(query, exclude, limit, snippet)
         for bundle in others:
             rows.extend(bundle.get('rows') or [])
+    stats1 = main.memory.stats() if hasattr(main.memory, 'stats') else {}
+    decodes = stats1.get('decodes', 0) - stats0.get('decodes', 0)
+    hits = stats1.get('hits', 0) - stats0.get('hits', 0)
+    misses = [dict(kind='bundle_not_ready', bundle=b['bundle'], state=b['state']) for b in others if b.get('miss')]
+    if decodes:
+        misses.append(dict(kind='blob_decodes', count=decodes))
+    timing = dict(judgment_ms=(judged - began) // 1_000_000, rows_ms=(rowed - judged) // 1_000_000,
+                  bundles_ms=(time.perf_counter_ns() - rowed) // 1_000_000)
     controls = activation.re_evidence
     stable = main.graph.stable
     # current-vs-past collision (2026-09-17): for each proposition the re-evidence stage found in
@@ -295,7 +354,7 @@ def hook_recall(main, arguments, resident=None):
         for candidate in activation.recall.candidates:
             if candidate.episode_id in main.memory.superseded:
                 continue
-            episode = main.memory.episode(candidate.episode_id)
+            episode = _light(main.memory, candidate.episode_id)
             obs = episode.steps[0].observation
             if obs.get('proposition_id') != proposition:
                 continue
@@ -313,6 +372,7 @@ def hook_recall(main, arguments, resident=None):
                 candidate_count=len(activation.recall.candidates), returned=len(rows), memories=rows,
                 superseded_skipped=superseded_skipped,
                 bundles=[{k: v for k, v in b.items() if k != 'rows'} for b in others],
+                misses=misses, timing=timing, blob_hits=hits, blob_decodes=decodes,   # G8: hit and miss, named
                 should_abstain=controls.should_abstain, unresolved_conflict=controls.unresolved_conflict,
                 conflicting_propositions=list(controls.conflicting_propositions),
                 insufficient_evidence=controls.insufficient_evidence,
@@ -338,6 +398,7 @@ class Daemon:
         # G7 resident layer (2026-09-19): the primary bundle hot, other registered bundles warm (index only)
         # or hot by use; an ingest names its bundle, a recall reaches all of them
         self.bundles = Resident(self.main, bundles or {}, hot_limit=hot_bundles, bundle_limit=bundle_limit)
+        self.prepared = []                                # G8: the preparer's receipts (prefetch, bundle loads)
         self.lock = threading.Lock()
         self.idle_seconds = idle_seconds
         self.last = time.time()
@@ -356,7 +417,9 @@ class Daemon:
         if command == 'hook_recall':
             return hook_recall(self.main, arguments, self.bundles)
         if command == 'bundles':
-            return dict(status='ok', bundles=self.bundles.status(), hot_limit=self.bundles.hot_limit)
+            return dict(status='ok', bundles=self.bundles.status(), hot_limit=self.bundles.hot_limit,
+                        prepared=list(self.prepared[-16:]), wanted=sorted(self.bundles.wanted),
+                        blob=self.main.memory.stats() if hasattr(self.main.memory, 'stats') else None)
         if command == 'lookup':
             return dict(status='ok', episode_id=arguments.get('episode_id'), bundle=self.bundles.lookup(str(arguments.get('episode_id') or '')))
         if command == 'origins':
@@ -421,6 +484,31 @@ class Daemon:
                 pass
 
 
+PREPARE_EVERY = 5.0      # seconds between preparer passes over the warm bundles (a view is at most this stale)
+
+
+def _preparer(daemon):
+    """G8: storage access, decoding and warm loads happen here, never inside a judgment. At start-up the primary's
+    light cache is prefetched newest-first (the first judgments then run from RAM); afterwards every warm bundle
+    is loaded once and refreshed when its journal moved or a judgment missed it. Receipts in ``daemon.prepared``."""
+    started = time.perf_counter_ns()
+    try:
+        memory = daemon.main.memory
+        done = memory.prefetch_light(budget_ns=20_000_000_000) if hasattr(memory, 'prefetch_light') else 0
+        daemon.prepared.append(dict(kind='prefetch_light', rows=done, ms=(time.perf_counter_ns() - started) // 1_000_000, when=time.time()))
+    except Exception as error:
+        daemon.prepared.append(dict(kind='prefetch_light', error=type(error).__name__, when=time.time()))
+    last_pass = 0.0
+    while not daemon.stop.is_set():
+        if daemon.bundles.wanted or time.time() - last_pass >= PREPARE_EVERY:
+            for receipt in daemon.bundles.prepare_all(force=False):
+                receipt['kind'] = 'bundle'
+                daemon.prepared.append(receipt)
+                del daemon.prepared[:-64]
+            last_pass = time.time()
+        time.sleep(0.25)
+
+
 def serve(state_dir, *, port=0, allow_ingest=False, idle_hours=8.0, bundle_limit=None, bundles=None, hot_bundles=1):
     from .store import CHECKPOINT_IDLE
     from .vrs_refine import IDLE_CYCLES
@@ -453,8 +541,11 @@ def serve(state_dir, *, port=0, allow_ingest=False, idle_hours=8.0, bundle_limit
     server = Server((HOST, port), Handler)
     actual = server.server_address[1]
     (daemon.state_dir / PORT_FILE).write_text(str(actual), encoding='ascii')
+    _clear_start_marker(daemon.state_dir)
     thread = threading.Thread(target=server.serve_forever, kwargs={'poll_interval': 0.5}, daemon=True)
     thread.start()
+    preparer = threading.Thread(target=_preparer, args=(daemon,), name='vrs2-preparer', daemon=True)
+    preparer.start()
     try:
         while not daemon.stop.is_set():
             time.sleep(1.0)

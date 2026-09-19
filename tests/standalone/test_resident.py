@@ -47,7 +47,16 @@ def test_resident_recalls_across_bundles_and_evicts_to_warm(tmp_path):
         assert list(resident.hot) == ["sq"]                                     # t2m evicted: checkpoint + close in the background
         resident.settle()
         assert not resident.closing
+        # G8: a judgment never loads a bundle — the evicted t2m is a named miss until the preparer has it
         packet = hook_recall(primary, dict(query="정산 기록", limit=10, snippet=80), resident)
+        assert [b["bundle"] for b in packet["bundles"]] == ["t2m", "sq"]
+        assert packet["bundles"][0] == dict(bundle="t2m", state="preparing", miss=True) and packet["misses"]
+        assert not [r for r in packet["memories"] if r["bundle"] == "t2m"] and resident.wanted == {"t2m"}
+        prepared = resident.prepare_all()                                          # the preparer's pass
+        assert [p["bundle"] for p in prepared] == ["t2m"] and prepared[0]["records"] == 4 and not resident.wanted
+        assert resident.prepare_all() == []                                        # nothing moved: nothing to do
+        packet = hook_recall(primary, dict(query="정산 기록", limit=10, snippet=80), resident)
+        assert not packet["misses"]
         by_bundle = {}
         for r in packet["memories"]:
             by_bundle.setdefault(r["bundle"], []).append(r)
