@@ -614,7 +614,11 @@ a pair and a score, never an experience.
 
 Measured on a live copy (scope forced, 20 recent prompts): member rows admitted median 114 per prompt;
 excluded rows median 436 → 145 once keyed pairs are partners; top-10 against whole-store recall unchanged
-(9.8/10 before and after); 151 → 157 ms median. Paths over the 20 prompts: local 19,766 · member 1,464
+(9.8/10 before and after). The wider scope is not free: an A/B of `KEYED_PARTNERS_IN_SCOPE` on four
+scoped prompts (5 runs each, two rounds) costs +15–30 ms per judgment (165 → 186, 139 → 176, 158 → 201,
+145 → 170 ms; allowed regions 38–79 → 73–95) — the extra rows scored. At 5.7k that is a fifth of the hook;
+at 60k+ it is to be re-measured against the 1 s line before the constant stays on. Paths over the 20
+prompts: local 19,766 · member 1,464
 (4 %) · portal 6,651, of which **2,988 (45 %) cross through a named shared experience** · unbridged
 7,534. Nothing is dropped and nothing certified: membership and keys are association (the goal's
 "membership_is_truth=False"); a listing record that is a member of many regions is a poor key by its

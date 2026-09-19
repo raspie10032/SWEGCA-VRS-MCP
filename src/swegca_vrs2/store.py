@@ -758,8 +758,9 @@ REGION_SCOPE_MASS_SHARE = 0.25         # ... plus every region with at least thi
 PORTAL_SCORE_FLOOR = 0.05              # portal partners join the scope only at or above this promoted share
 # G5 (2026-09-19, R4): a region pair keyed by a shared experience is a partner in scope whatever its edge score.
 # Measured on the live copy (5.7k, scope forced, 20 prompts): excluded rows median 436 -> 145, top-10 vs the
-# whole store unchanged (9.8/10), ms unchanged; 45 % of crossings then go through a named shared experience.
-# The wider scope costs nothing at this size; at 60k+ (where 'auto' scope applies) it is to be re-measured.
+# whole store unchanged (9.8/10); 45 % of crossings then go through a named shared experience. A/B on four
+# scoped prompts: +15-30 ms per judgment (165->186, 139->176, 158->201, 145->170) for the extra rows scored.
+# At 60k+ (where 'auto' scope applies to most prompts) this is to be re-measured against the 1 s line.
 KEYED_PARTNERS_IN_SCOPE = True
 BUNDLE_LIMIT = 60_000     # recommended records per bundle (one store, one process): docs/SIZING.md (2026-09-19)
 CHECKPOINT_EVERY = 64     # in-ingest safety bound on crash replay; the daemon checkpoints after a
