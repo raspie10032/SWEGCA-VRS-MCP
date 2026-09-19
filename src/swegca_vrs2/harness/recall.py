@@ -366,7 +366,7 @@ def main():
         context = context_for(data.get("prompt") or data.get("user_prompt") or "", data.get("cwd") or os.getcwd(), data.get("session_id"))
     except Exception as failure:
         # a failure is a receipt, not silence (2026-09-19: the shim swallows exceptions, and a daemon reply that
-        # could not be encoded left no trace for 35 minutes) — the prompt is never blocked
+        # could not be encoded left no trace for a quarter of an hour) — the prompt is never blocked
         note(error=repr(failure)[:300], session=str(data.get("session_id") or "")[:8])
         return
     if not context:
