@@ -483,5 +483,5 @@ cache-miss scheduler (G8) — a warm view is loaded inside the request that firs
 Found while wiring it, live: the origin binding was the first nested map in a record's metadata; the
 store freezes metadata (`mappingproxy`), the daemon's JSON reply could not encode it, and the connection
 closed without a reply — the hook printed nothing for any prompt whose packet held a fresh row, from
-10:58 to 11:35, with no receipt (the shim swallows exceptions). Every packet row now carries `plain()`
+10:58 to about 11:15, with no receipt (the shim swallows exceptions). Every packet row now carries `plain()`
 metadata (regression test), and the hook writes an `error` receipt for its own failures.
