@@ -41,7 +41,7 @@ PORT_FILE = 'loopback.port'
 RESIDENT_COMMANDS = {'status', 'cognitive_dialogue_start', 'cognitive_dialogue_continue',
                      'cognitive_dialogue_evidence_open', 'cognitive_dialogue_evidence',
                      'cognitive_dialogue_release'}
-LOCAL_COMMANDS = {'hook_recall', 'evidence_of', 'ingest', 'ingest_many', 'checkpoint', 'compact', 'consolidate', 'refine', 'ping', 'shutdown', 'usage', 'alias'}
+LOCAL_COMMANDS = {'hook_recall', 'evidence_of', 'origins', 'ingest', 'ingest_many', 'checkpoint', 'compact', 'consolidate', 'refine', 'ping', 'shutdown', 'usage', 'alias'}
 
 
 # ── client ────────────────────────────────────────────────────────────
@@ -162,6 +162,47 @@ def evidence_of(main, arguments):
     return dict(status='ok', proposition=proposition, rows=rows)
 
 
+def _record_digest(text):
+    from .harness.origin import record_digest
+    return record_digest(text)
+
+
+FILE_KINDS = ('log_entry', 'doc', 'doc_section')
+
+
+def origins(main, arguments):
+    """Origin facts of every live file-backed record (G3, 2026-09-19; lock-free read): what the verifier
+    needs to check each source without the text — path, kind, recorded origin (or the full text's
+    digest for rows from before the binding), the head line and section title for re-locating."""
+    memory = main.memory
+    kinds = tuple(str(k) for k in (arguments.get('kinds') or FILE_KINDS))
+    store = memory._store
+    ids, kind_column = store['ids'], store.get('kinds') or []
+    offset = max(0, int(arguments.get('offset') or 0))
+    limit = max(1, min(int(arguments.get('limit') or 1000), 2000))      # a page stays under the transport's 1 MB line
+    rows, count, next_row = [], memory.count, None
+    for row in range(offset, count):
+        if len(rows) >= limit:
+            next_row = row
+            break
+        if row < len(kind_column) and kind_column[row] not in kinds:
+            continue
+        identifier = ids[row]
+        if identifier in memory.superseded:
+            continue
+        episode = memory.episode_light(identifier)
+        obs = episode.steps[0].observation
+        meta = obs.get('metadata') or {}
+        if meta.get('kind') not in kinds or not meta.get('path'):
+            continue
+        text = obs.get('text', '')
+        rows.append(dict(episode_id=identifier, source=episode.source_addresses[0], revision=episode.revision,
+                         kind=meta.get('kind'), path=meta.get('path'), section=meta.get('section') or '', index=meta.get('index'),
+                         project=meta.get('project'), head=text.split('\n', 1)[0][:120],
+                         origin=meta.get('origin'), text_sha256=None if meta.get('origin') else _record_digest(text)))
+    return dict(status='ok', count=len(rows), rows=rows, next=next_row, total=count)
+
+
 def hook_recall(main, arguments):
     """Short packet for hooks: top candidates with provenance and a snippet."""
     query = str(arguments.get('query') or '')
@@ -196,6 +237,9 @@ def hook_recall(main, arguments):
             superseded_by=main.memory.superseded.get(candidate.episode_id),
             metadata=dict(obs.get('metadata') or {}),
             text=obs.get('text', '')[:snippet], text_chars=len(obs.get('text', '')),
+            # G3 origin binding (2026-09-19): rows ingested before it carry no origin; the hook verifies the
+            # source against the full text's digest instead (hashing here is outside main.recall's hot path)
+            text_sha256=None if (obs.get('metadata') or {}).get('origin') else _record_digest(obs.get('text', '')),
             # verdict records end with their asks line; hooks match query cues against it
             asks=_asks_of(obs.get('text', '')),
             # vrs-regions: refined strength, promotion, state/stability, pending (not yet consolidated)
@@ -287,6 +331,8 @@ class Daemon:
                         writes_enabled=self.main.allow_ingest)
         if command == 'hook_recall':
             return hook_recall(self.main, arguments)
+        if command == 'origins':
+            return origins(self.main, arguments)
         if command == 'evidence_of':
             return evidence_of(self.main, arguments)
         if command in ('consolidate', 'refine'):

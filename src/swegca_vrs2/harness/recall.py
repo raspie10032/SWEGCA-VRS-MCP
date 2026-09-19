@@ -36,6 +36,7 @@ import time
 HOME = os.path.expanduser("~")
 LOG = os.path.join(__import__("swegca_vrs2.harness.paths", fromlist=["RECEIPTS"]).RECEIPTS, "recall_context.log")
 from .paths import SRC, STATE, CONFIRM_CMD  # noqa: E402  (OS-neutral, 2026-09-18)
+from . import origin as origin_mod  # noqa: E402  (G3 origin binding, 2026-09-19)
 MIN_WORDS = 2
 LIMIT = 10
 VERDICT_MIN_MATCH = 2
@@ -208,15 +209,39 @@ def open_hint(row):
     if kind == "verdict":
         return "   (토막이 판정 전문이다)" if whole else f"   전문: swegca-vrs2 memory_read {row.get('episode_id')}  ({SNIPPET}/{chars}자)"
     path = meta.get("path")
-    if not path or not os.path.isfile(path):
+    if not path:
         return ""
-    where = locate(path, kind, row.get("text") or "", meta)
-    if where is None:
-        return ""
-    offset, limit = where
+    # G3 origin binding (2026-09-19): check the source at its recorded span before telling the main to open it.
+    # A row from before the binding carries no origin; its text digest is checked the same way.
+    text = row.get("text") or ""
+    state = origin_state(path, kind, meta, text, chars, row.get("text_sha256"))
+    if state["state"] == "missing":
+        return f"   ※ 원본 없음: {path} — 이 기록은 색인 때 판본이다(revision {str(row.get('revision'))[:12]})."
+    offset, limit = state["lines"][0], max(1, min(OPEN_MAX_LINES, state["lines"][1] - state["lines"][0] + 1))
     row["_open"] = dict(path=path.replace(chr(92), "/"), offset=int(offset), limit=int(limit))   # for the usage ledger
     call = f'Read file_path="{path}" offset={offset} limit={limit}'
-    return f"   (토막이 전문이다 · 앞뒤 맥락: {call})" if whole else f"   열기: {call}  (토막 {SNIPPET}/{chars}자 — 쓰기 전에 연다)"
+    if state["state"] == "changed":
+        return f"   ※ 원본 바뀜 — 토막은 색인 때 판본(revision {str(row.get('revision'))[:12]}); 지금 파일을 읽는다: {call}"
+    moved = "  (원본 자리 이동)" if state["state"] == "moved" else ""
+    return (f"   (토막이 전문이다 · 앞뒤 맥락: {call}){moved}" if whole
+            else f"   열기: {call}  (토막 {SNIPPET}/{chars}자 — 쓰기 전에 연다){moved}")
+
+
+def origin_state(path, kind, meta, text, chars, text_sha256=None):
+    """``{state, lines}`` for the 「열기」 line. The digest is the recorded origin's, else the daemon's
+    ``text_sha256`` of the full stored text (rows from before the binding), else — the packet carried the
+    whole text — computed here. Without any digest (an old daemon, a cut row) the head line is located
+    as before the binding."""
+    origin = meta.get("origin") or {}
+    want = origin.get("sha256") or text_sha256 or (origin_mod.record_digest(text) if chars <= len(text) else None)
+    if want:
+        head = text.split("\n", 1)[0]
+        return origin_mod.verify(path, kind if kind in ("doc", "doc_section") else "log_entry", origin, want,
+                                 head=head, section=meta.get("section") or "", index=meta.get("index"))
+    where = locate(path, kind, text, meta)
+    if where is None:
+        return dict(state="missing", lines=None)
+    return dict(state="intact", lines=[where[0], where[0] + where[1] - 1])
 
 
 CONFIRM = CONFIRM_CMD
@@ -311,7 +336,7 @@ def context_for(prompt, cwd, session):
     stems = prompt_stems(prompt)
     # folder-listing records (desktop-fs-ingest.py) are filtered out at the store unless the prompt is
     # about a location: with them in, ordinary prompts saw 2x the candidates and 1.6 s recalls
-    exclude = ["test"] if any(t.startswith(w) for w in LOCATION_WORDS for t in stems) else ["test", "fs_listing"]
+    exclude = ["test", "retirement"] if any(t.startswith(w) for w in LOCATION_WORDS for t in stems) else ["test", "fs_listing", "retirement"]   # retirement: G3 origin closes (2026-09-19)
     packet = client.request("hook_recall", query=prompt[:4000], limit=LIMIT, snippet=SNIPPET, exclude_kinds=exclude, region_scope="auto")   # G6: region scope only above 5,000 whole-store candidates (vrs-regions)
     client.close()
     project = project_of(str(data.get("cwd") or os.getcwd()))

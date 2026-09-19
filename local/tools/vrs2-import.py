@@ -29,6 +29,7 @@ from pathlib import Path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _vrs2_env import SRC, STATE, TOOLS, PY, V02_DB, V02_SRC, V02_KEYS, RECEIPTS  # noqa: E402  (OS-neutral, 2026-09-18)
 from swegca_vrs2.store import Main  # noqa: E402
+from swegca_vrs2.harness import origin as origin_mod  # noqa: E402  (G3 origin binding, 2026-09-19)
 
 PROJECTS = Path(os.path.join(os.path.expanduser("~"), ".claude", "projects"))
 V02_STORE = Path(os.path.dirname(V02_DB)) if V02_DB else None
@@ -62,12 +63,15 @@ def cue_lines(text):
 
 
 def log_records(project, path):
-    text = io.open(path, encoding="utf-8", errors="replace").read()
-    parts = [p.strip() for p in re.split(r"\n(?=- 20\d\d-|## 20\d\d-)", text)]
+    raw, _ = origin_mod.read_raw(path)                                    # G3 (2026-09-19): spans on the file's bytes
+    stat = os.stat(path)
+    spans = origin_mod.parts_with_spans(raw, origin_mod.LOG_SPLIT)        # the same parts text mode + split gave before
+    parts = [part for part, *_ in spans]
     seen_heads = {}
     for order, part in enumerate(parts):
         if len(part) < 80:
             continue
+        _, byte_start, byte_end, first, last = spans[order]
         # source key from the first line without its time label — fixing '15:2x' -> '14:4x' must
         # be a new revision of the same record, not a new record (2026-09-14: 7 label edits doubled)
         # label = date + time (HH:MM or HH:Mx) + optional (n) + separator; the earlier rule cut at the
@@ -82,7 +86,8 @@ def log_records(project, path):
         yield dict(kind="log_entry", project=project, source=f"{project}/session-log.md#{key}",
                    text=part[:60000], revision=sha(part), cues=[],
                    metadata=dict(kind="log_entry", project=project, path=str(path),
-                                 date=date.group(1) if date else None, order=order))
+                                 date=date.group(1) if date else None, order=order,
+                                 origin=origin_mod.origin_of(path, part[:60000], byte_start, byte_end, first, last, stat)))
 
 
 def doc_scope(text):
@@ -93,23 +98,26 @@ def doc_scope(text):
 
 
 def doc_records(project, path):
-    text = io.open(path, encoding="utf-8", errors="replace").read()
+    raw, _ = origin_mod.read_raw(path)                                    # G3 (2026-09-19)
+    text = origin_mod.normalize(raw)                                      # == text-mode read
     cues = cue_lines(text)
     name = path.name
     extra = {"scope": doc_scope(text)} if doc_scope(text) else {}
+    stat = os.stat(path)
     if len(text) <= DOC_SPLIT:
         yield dict(kind="doc", project=project, source=f"{project}/{name}", text=text, revision=sha(text),
-                   cues=cues, metadata=dict(kind="doc", project=project, path=str(path), **extra))
+                   cues=cues, metadata=dict(kind="doc", project=project, path=str(path), **extra,
+                                            origin=origin_mod.origin_of(path, text, 0, stat.st_size, 1, text.count("\n") + 1, stat)))
         return
-    sections = re.split(r"\n(?=## )", text)
-    for i, sec in enumerate(sections):
-        sec = sec.strip()
+    spans = origin_mod.parts_with_spans(raw, origin_mod.SECTION_SPLIT)    # G3 (2026-09-19)
+    for i, (sec, byte_start, byte_end, first, last) in enumerate(spans):
         if len(sec) < 40:
             continue
         title = sec.splitlines()[0].lstrip("# ").strip()[:60]
         yield dict(kind="doc", project=project, source=f"{project}/{name}#{i}:{sha(title, 8)}",
                    text=sec[:60000], revision=sha(sec), cues=cues if i == 0 else [],
-                   metadata=dict(kind="doc_section", project=project, path=str(path), section=title, index=i, **extra))
+                   metadata=dict(kind="doc_section", project=project, path=str(path), section=title, index=i, **extra,
+                                 origin=origin_mod.origin_of(path, sec[:60000], byte_start, byte_end, first, last, stat)))
 
 
 def verdict_records():

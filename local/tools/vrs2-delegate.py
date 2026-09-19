@@ -118,7 +118,7 @@ def build(task, project, records, snippet, packet_only, tail, code=False):
     client = ensure_daemon(STATE, allow_ingest=True)
     try:
         stems = hook.prompt_stems(task)
-        exclude = ["test"] if any(t.startswith(w) for w in hook.LOCATION_WORDS for t in stems) else ["test", "fs_listing"]   # test: 시험 기록은 언제나 제외(훅과 같은 규칙, 2026-09-15)
+        exclude = ["test", "retirement"] if any(t.startswith(w) for w in hook.LOCATION_WORDS for t in stems) else ["test", "fs_listing", "retirement"]   # test: 시험 기록은 언제나 제외(훅과 같은 규칙, 2026-09-15)
         packet = client.request("hook_recall", query=task[:4000], limit=LIMIT, snippet=snippet, exclude_kinds=exclude, region_scope="auto")
     finally:
         client.close()

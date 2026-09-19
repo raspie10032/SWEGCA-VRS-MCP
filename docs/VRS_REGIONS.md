@@ -407,3 +407,39 @@ current one grounds a judgment); the packet now walks the ranked candidates and 
 `limit` live ones, reporting `superseded_skipped`. After the fix the same 8 prompts: 80/80 live,
 21–176 ms. The recall bench was never affected — it ranked among non-superseded candidates from
 the start — so its MRR does not move; only the hook and the delegation packet see more.
+
+### Origin binding — G3 (2026-09-19)
+
+The goal document's G3 asks that a record be bound to its source's address and digest and that the store
+be able to verify byte-exact preservation. Until today a record carried `metadata.path`, a `revision`
+(12 hex of its text) and a head line the hook re-found at open time — and when the head was not found
+the 「열기」 line silently pointed at line 1. Now:
+
+* **Binding at ingest** (`vrs2-import.py`, `harness/origin.py`): every log entry, document and document
+  section carries `metadata.origin = {bytes: [start, end), lines: [first, last], sha256, size, mtime_ns}` —
+  the byte span of the raw part in the file, the line span of the stored text, the full SHA-256 of the
+  stored text. `revision` is `sha256[:12]`, so no record's identity changed: checked over every memory file
+  of every project, 2,990 revisions equal to the manifest, 3,676 spans slicing back to the stored text
+  (CRLF files included — text is what text mode reads, spans are on the file's bytes).
+* **`origin.verify`** re-reads the file and answers `intact` (bytes at the span still hash to the record),
+  `moved` (same digest elsewhere in the file), `changed` (no such digest, but the record's source key —
+  the head line, or `#index:title` for a section — still names a part: the record is an older revision)
+  or `missing` (file gone, or the key gone: a relabeled entry, a shifted section index, a deleted document).
+  Rows ingested before the binding verify by the digest of their stored text (the daemon sends
+  `text_sha256` in the hook packet for them); a row's absence of an origin is not a failure.
+* **The hook's 「열기」 line** carries the state: a moved record opens at its current lines and says so, a
+  changed one is marked 「※ 원본 바뀜 — 토막은 색인 때 판본」 and opens the current version, a missing one
+  says 「※ 원본 없음」 instead of pointing at line 1.
+* **`vrs2-verify-origin.py`** runs it over the live store (daemon command `origins`, paged under the
+  transport's 1 MB line; parts and files cached per stat — 3,032 records in 0.35 s). First live run:
+  3,004 intact, 0 moved, 10 changed, 18 missing. The 18 were the leftovers of the 2026-09-14 label edits
+  (the same body live twice under an old and a new key) plus three deleted document sections and one
+  deleted document; four of the 10 "changed" were sections whose index had shifted (their key was gone, so
+  the rule above now calls them missing). **Retirement** (`--retire`, `--dry-run` first): a missing row is
+  superseded by one small journal row of `kind=retirement` that says where the body lives on (`continues`
+  = the current source key, found by the label-stripped head) or that the source is gone. Nothing is
+  deleted; the hook and the delegation packet exclude the kind. After retiring 22 rows: 3,004 intact,
+  6 changed (edits in other projects' memory files that their own Stop hook supersedes at its next run),
+  0 missing.
+
+Memory ≠ truth still holds: `intact` certifies the source, not the record.
