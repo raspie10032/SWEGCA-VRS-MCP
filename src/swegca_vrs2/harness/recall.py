@@ -299,7 +299,13 @@ def render(packet, verdicts, records):
             # repeat counter: the mistake this verdict settled was repeated (guard-blocked or noted) n times, m sessions
             gated = any(g in (row.get("source") or "") for g in GATED_VERDICTS)
             head += f" ⚠ 반복 {rep['observations']}회·세션 {rep['sessions']}개" + (" — 관문 후보" if rep["sessions"] >= 3 and not gated else "")
-        lines.append(head[:400])
+        # G11 (2026-09-19): the accumulator's standing decision with its gaps named — which axis (개입/반사실 =
+        # a run on the changed / unchanged tree, vrs2-run.py) and how many producers/contexts the claim still
+        # lacks. An abstain with its reason is the loop's state, not a verdict on the claim.
+        standing = (row.get("decision") or {}).get("text")
+        if standing:
+            head += f" [증거 {standing}]"
+        lines.append(head[:480])
         lines.append("   " + row["text"][:SNIPPET].replace("\n", "\n   "))
         hint = open_hint(row)
         if hint:

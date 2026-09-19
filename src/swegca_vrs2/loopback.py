@@ -188,9 +188,28 @@ def _asks_of(text):
     return asks_of(text)
 
 
+def _decision_of(main, proposition):
+    """G11 (2026-09-19): the accumulator's standing decision for a proposition from the stable generation (the
+    aliases fold into the canonical id), with what it still lacks named. None before the first consolidation."""
+    stable = getattr(main.graph, 'stable', None)
+    decisions = getattr(stable, 'decisions', None) if stable is not None else None
+    if not decisions:
+        return None
+    aliases = getattr(main.graph, 'aliases', None) or {}
+    summary = decisions.get(aliases.get(proposition, proposition))
+    if summary is None:
+        return None
+    from .vrs_evidence import gaps, gaps_text
+    return dict(status=summary.get('status'), reason=summary.get('reason'), unresolved=summary.get('unresolved'),
+                source_diversity=summary.get('source_diversity'), context_diversity=summary.get('context_diversity'),
+                axes=summary.get('axes'), producers=summary.get('producers'), contexts=summary.get('contexts'),
+                families=summary.get('families'), gaps=gaps(summary), text=gaps_text(summary))
+
+
 def evidence_of(main, arguments):
     """Live evidence rows of one proposition, optionally at one source (lock-free read, 2026-09-18).
-    A producer re-measuring the same bench at the same source supersedes its earlier row with this."""
+    A producer re-measuring the same bench at the same source supersedes its earlier row with this.
+    G11: the reply also carries the accumulator's standing decision with its gaps (``decision``)."""
     memory = main.memory
     proposition = str(arguments.get('proposition') or '')
     source = arguments.get('source')
@@ -202,11 +221,13 @@ def evidence_of(main, arguments):
         obs = episode.steps[0].observation
         if source and episode.source_addresses[0] != str(source):
             continue
+        meta = obs.get('metadata') or {}
         rows.append(dict(episode_id=identifier, source=episode.source_addresses[0], revision=episode.revision,
                          outcome=episode.steps[0].outcome, polarity=obs.get('evidence_polarity'),
-                         producer=(obs.get('metadata') or {}).get('producer')))
+                         producer=meta.get('producer'), axes=list(meta.get('axes') or ()),
+                         context=meta.get('project'), run=_plain(meta.get('run')) if meta.get('run') else None))
     rows.sort(key=lambda r: r['revision'])
-    return dict(status='ok', proposition=proposition, rows=rows)
+    return dict(status='ok', proposition=proposition, rows=rows, decision=_decision_of(main, proposition))
 
 
 def _record_digest(text):
@@ -324,10 +345,18 @@ def hook_recall(main, arguments, resident=None):
             if meta.get('producer') == 'gate' or ep.source_addresses[0].startswith('gate:'):
                 count += 1; sessions.add(str(meta.get('project') or ep.source_addresses[0]))
         repeats[pid] = dict(observations=count, sessions=len(sessions))
+    decisions = {}
     for row in rows:
         if row.get('proposition') in repeats:
             row['repeats'] = repeats[row['proposition']]
         row['bundle'] = 'main'
+        pid = row.get('proposition')
+        if pid:
+            # G11: the accumulator's standing decision and its named gaps, so the hook can say what the claim
+            # still lacks (which axis, how many producers/contexts) instead of a bare abstain
+            if pid not in decisions:
+                decisions[pid] = _decision_of(main, pid)
+            row['decision'] = decisions[pid]
     rowed = time.perf_counter_ns()
     others = []
     if resident is not None and resident.ids():

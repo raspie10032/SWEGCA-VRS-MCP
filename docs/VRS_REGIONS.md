@@ -521,3 +521,59 @@ were, and what changed:
 Not built: a residency budget (the preparer prefetches up to the light-cache size, 16k rows, newest
 first — beyond that the cache is LRU and the miss counter shows what that costs), thrashing detection,
 and full-result equivalence checks between a judgment with and without a warm bundle.
+
+### Machine results close the loop — the minimal G11 (2026-09-19)
+
+G11 asks for the whole loop: intent → action → *actual outcome* → experience → VRS → later cognition.
+Before this step the store's evidence came from claims (verdicts, confirmations, bench notes, the gates'
+repeat counts); the only thing that ran and wrote back was a guard. A survey of the live store (5,746
+records, 42 hypotheses, 66 observations) showed every hypothesis abstaining at the accumulator's first
+check, `minimum_effective_samples`, and **not one observation on the `intervention` or
+`counterfactual` axis** — nothing a claim can supply; only a run on the changed tree and the same run on
+the tree without the change can. The diversity checks that the paper is about were never reached.
+
+* **One contract for a machine result** — `harness/results.py`, CLI `vrs2-run.py`. A command is run as
+  the experiment for a hypothesis: `--axis intervention` (on the changed tree) or `counterfactual`
+  (on the unchanged tree, usually `--expect failure`: without the fix the test must fail) or
+  `observational`. The row's `outcome` is the experiment's (the prediction held or not); the raw exit
+  code, command, duration, cwd and a **tree digest** (git HEAD + a digest of the dirty state, or the
+  digest of `--watch` files for a copy under test) are bound in `metadata.run`. The producer is the
+  runner (`pytest-runner`, `<script>-runner`, `stop-hook`) — a distinct source from the agent's own
+  claims; the source family is the command digest, so re-running the same command is one group for the
+  accumulator (repetition is not new evidence — a settled verdict). A counterfactual on the same tree
+  digest as its intervention run is refused. Every run is a line of `vrs2_run.log` before anything is
+  sent; a line the daemon could not take waits there (`pending`) and `flush()` — the Stop hook calls
+  it — sends it later, so a result is never lost to a daemon that was down.
+* **The hook's own run is a result.** `reindex.py` records its failure every time and its success once
+  a day per project (producer `stop-hook`, claim "the stop hook indexes the changed memory files of the
+  current project"), and flushes pending run-ledger lines on the same client.
+* **The standing named.** `Hypothesis.summary()` now carries per-axis effective samples and the counts
+  of producers / contexts / source families; `vrs_evidence.gaps()` turns that into what the accumulator
+  still needs before its next check. Packet rows with a proposition carry `decision` (status, reason,
+  gaps, one tag), `evidence_of` returns it with the rows, and the hook prints it on every verdict line:
+  `[증거 abstain: 반사실 0/4·개입 1/4·프로듀서 2/4]`. An abstain with its gaps is the loop's state, not a
+  verdict on the claim — and it tells the agent which run would move it.
+
+**A defect the new test exposed** (not found by suspicion: the contract test failed on `intervention 0`):
+`vrs_evidence._axes_of` tested `isinstance(metadata, dict)`, but the store hands metadata back frozen
+(`mappingproxy`), so **every declared axis since 2026-09-15 was read as observational** — the verdict
+axes tool, the bench, the probe and the delegate returns all declared `intervention` / `counterfactual`
+and none of it reached the accumulator. With the `Mapping` check the live survey shows those axes
+populated (e.g. the consolidation-threshold claim: intervention 3, counterfactual 3); all 43
+hypotheses still abstain on `minimum_effective_samples`, but now for a gap that is real and named. The
+record weights (`sufficiency` counts samples over the required axes) shift with it at the next
+consolidation; ranking never used them.
+
+Measured live: the contract test on the pre-fix module (a copy tree, `--watch` digest) failed as
+predicted → counterfactual row, exit 1, experiment success; the same test on the fixed tree →
+intervention row, exit 0; the full suite (65 tests then, 17.9 s) → an intervention row for the suite claim.
+After one consolidation the hook shows `[증거 abstain: 관측 0/4·반사실 1/4·개입 1/4·교차맥락 0/4·프로듀서
+1/4·맥락 1/4]` on the new claim. `test_g11_results.py` proves the escape is reachable through the
+runner alone: 96 real subprocess runs — 2 commands × 4 contexts × 4 producers × 3 declared axes —
+take a hypothesis to `accept` with the accumulator unchanged (its bar is the paper's: four groups per
+axis, four producers, four contexts; nothing here relaxes it).
+
+Not built: automatic pairing of before/after runs (the runner records tree digests and refuses the
+same-tree pair; it does not run both sides for you), a pytest plugin (the wrapper runs the command),
+batch schedulers (the contract is there; registering a task is the user's), and any change to the
+accumulator's minimums.

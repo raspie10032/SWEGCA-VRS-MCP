@@ -221,6 +221,9 @@ def run(cwd, session_id=""):
             bundle = client.request("status").get("bundle") or {}
         except Exception:
             bundle = {}
+        # G11 (2026-09-19): this run is a machine result of its own hypothesis — a failure every time, a success
+        # once a day per project (heartbeat) — and results other runs could not send wait in the run ledger
+        machine_result(project, added + updated, errors, client)
     finally:
         client.close()
     if bundle.get("fill", 0) >= 0.9:
@@ -232,8 +235,29 @@ def run(cwd, session_id=""):
             code=dict(files=code_count, changed=len(code_lines), cues=len(code_cues), attached=attached[:5], ms=code_ms))
 
 
+REINDEX_CLAIM = "the stop hook indexes the changed memory files of the current project"
+
+
+def machine_result(project, rows, errors, client=None, detail=""):
+    """G11: the reindex as evidence (producer ``stop-hook``, source ``stop_reindex:<project>``) and a flush of
+    pending run-ledger lines. Never raises — a result that cannot be sent stays in the ledger, named."""
+    try:
+        from . import results
+        if errors:
+            results.note_result(REINDEX_CLAIM, project, f"stop_reindex:{project}", "failure", producer="stop-hook",
+                                detail=(detail + "\n" + "\n".join(str(e) for e in errors[:5])).strip(), client=client)
+        elif rows:
+            results.note_result(REINDEX_CLAIM, project, f"stop_reindex:{project}", "success", producer="stop-hook",
+                                detail=f"{rows} rows", client=client)
+        if client is not None:
+            results.flush(client=client)
+    except Exception as error:
+        receipt(machine_result_error=repr(error)[:160])
+
+
 if __name__ == "__main__":
     try:
         main()
     except Exception as failure:  # 정지를 막지 않는다
         receipt(error=repr(failure)[:200])
+        machine_result("unknown", 0, [repr(failure)[:200]])

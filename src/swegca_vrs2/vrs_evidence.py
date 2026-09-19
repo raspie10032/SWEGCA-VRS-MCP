@@ -37,6 +37,7 @@ From that the numerical kernel gets continuous inputs:
 from __future__ import annotations
 
 import math
+from collections.abc import Mapping
 
 import numpy as np
 
@@ -62,7 +63,9 @@ def record_polarity(episode, superseded):
 
 
 def _axes_of(metadata):
-    declared = metadata.get('axes') if isinstance(metadata, dict) else None
+    # G11 (2026-09-19): the store hands metadata back frozen (mappingproxy); the old ``isinstance(dict)`` test
+    # made every declared axis observational — no live hypothesis had an intervention or counterfactual sample
+    declared = metadata.get('axes') if isinstance(metadata, Mapping) else None
     if isinstance(declared, (list, tuple)):
         axes = [a for a in declared if a in AXES]
         if axes:
@@ -125,11 +128,69 @@ class Hypothesis:
     def summary(self):
         d = self.decision
         support, refute, samples = self.counts()
+        axes = {a.name: a for a in self.state.axes}
         return dict(status=d.status, reason=d.reason, posterior_mean=round(d.posterior_mean, 4),
                     causal_lower_bound=round(d.causal_lower_bound, 4), overall_upper_bound=round(d.overall_upper_bound, 4),
                     effective_samples=round(samples, 3), source_diversity=d.source_diversity,
                     context_diversity=d.context_diversity, regime_change_score=round(d.regime_change_score, 4),
-                    support=round(support, 3), refute=round(refute, 3), unresolved=self.unresolved())
+                    support=round(support, 3), refute=round(refute, 3), unresolved=self.unresolved(),
+                    # G11 (2026-09-19): what the accumulator has per axis and how many distinct producers,
+                    # contexts and source families fed it — so a caller can name what is still missing
+                    axes={n: round(axes[n].effective_samples, 3) for n in AXES},
+                    producers=len(self.state.producer_ids), contexts=len(self.state.context_hashes),
+                    families=len(self.state.source_families))
+
+
+def gaps(summary):
+    """G11: what a hypothesis still lacks before the accumulator's checks pass, from its ``summary()`` dict —
+    per axis the effective samples short of the minimum (each distinct (source family, context) group counts
+    once, whatever the number of runs), then producers / contexts / source families short of the diversity
+    minimums. Empty when nothing is short (the decision is then accept, reject or 'uncertain' on the bounds).
+    A summary from before G11 (no ``axes``) yields only what its diversity counts allow."""
+    if not summary:
+        return {}
+    out = {}
+    axes = summary.get('axes')
+    if axes:
+        short = {n: round(CONFIG.minimum_effective_samples_per_axis - axes.get(n, 0.0), 2) for n in AXES}
+        short = {n: v for n, v in short.items() if v > 0}
+        if short:
+            out['axes'] = short
+    producers = summary.get('producers')
+    need_producers = max(CONFIG.minimum_source_diversity, CONFIG.minimum_context_diversity)
+    if producers is not None and producers < need_producers:
+        out['producers'] = need_producers - producers
+    contexts = summary.get('contexts')
+    if contexts is not None and contexts < CONFIG.minimum_context_diversity:
+        out['contexts'] = CONFIG.minimum_context_diversity - contexts
+    families = summary.get('families')
+    if families is not None and families < CONFIG.minimum_source_diversity:
+        out['families'] = CONFIG.minimum_source_diversity - families
+    return out
+
+
+AXIS_KO = {'observational': '관측', 'counterfactual': '반사실', 'intervention': '개입', 'cross_context': '교차맥락'}
+
+
+def gaps_text(summary):
+    """One short Korean tag for a hook line: ``abstain: 개입 0/4·반사실 0/4·프로듀서 2/4`` (``accept(causal_lower_bound)`` once nothing is short)."""
+    if not summary:
+        return ''
+    g = gaps(summary)
+    parts = []
+    axes = summary.get('axes') or {}
+    for n, short in (g.get('axes') or {}).items():
+        parts.append(f"{AXIS_KO.get(n, n)} {axes.get(n, 0):g}/{CONFIG.minimum_effective_samples_per_axis}")
+    if 'producers' in g:
+        parts.append(f"프로듀서 {summary.get('producers')}/{summary.get('producers') + g['producers']}")
+    if 'contexts' in g:
+        parts.append(f"맥락 {summary.get('contexts')}/{CONFIG.minimum_context_diversity}")
+    if 'families' in g:
+        parts.append(f"출처 {summary.get('families')}/{CONFIG.minimum_source_diversity}")
+    # the named gaps *are* the reason while any are open; the accumulator's own reason is shown once none is
+    if parts:
+        return f"{summary.get('status')}: " + '·'.join(parts)
+    return f"{summary.get('status')}({summary.get('reason')})"
 
 
 class Evidence:
