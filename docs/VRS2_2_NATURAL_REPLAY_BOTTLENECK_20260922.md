@@ -51,6 +51,41 @@ Raw cgroup receipts:
 
 The benchmark tool's SHA-256 is
 `834071aed9a61c5e6337dd70adb0f708c13de9e7c6386c9ce8daa4afcb85014d`.
+
+## First-query cue-directory page fault
+
+A separate six-process check measured the *first* single-match natural query
+after opening the same native copy. Each process requested
+`POSIX_FADV_DONTNEED` for the 83,890,176-byte first-level cue table before
+the read. Three processes queried immediately; three read that table into the
+page cache first. All six ran under the same 4 GiB and 625 MB/s cgroup limits.
+
+| Process | First Replay without table read | Cue slot probe | First Replay after table read | Cue slot probe |
+| ---: | ---: | ---: | ---: | ---: |
+| 1 | 8.707 ms | 5.959 ms | 1.720 ms | 0.0085 ms |
+| 2 | 3.231 ms | 1.274 ms | 1.800 ms | 0.0077 ms |
+| 3 | 3.396 ms | 1.567 ms | 1.758 ms | 0.0081 ms |
+
+The selected cue required one hash-table slot probe. Cold processes recorded
+1–3 major page faults during the query; table-read processes recorded zero.
+This identifies page faults in the cue directory as a first-query bottleneck.
+Reading the table took 0.021–0.048 seconds outside the timed query, but even
+then first Replay remained above 1 ms. Table warming alone is insufficient and
+its page-cache residency is not a hard guarantee under a 4 GiB cap. The
+previously measured 100- and 1,008-match costs remain a separate unbounded
+candidate-materialization problem.
+
+The reproducible probe is `tools/profile_vrs22_natural_first.py` (SHA-256
+`b6bd3d083ac9bcf909552444bb716d65ecedc7d1a238bf23d74eb4ae64cdc3d4`).
+Raw files are `evals/vrs22_context/results/natural_first_{cold,warm}{1,2,3}_20260922.json`.
+Their SHA-256 values, in cold 1–3 then warm 1–3 order, are
+`d6dc2f99501143055a9956b97bd2d5c92488e344133b921dd4c8f0d4972d85a7`,
+`d446fa3ecf5c6cdb38bb8a0626686060558480d8c8fd2a5cbccef9999924f584`,
+`f542d17e56914843614e0e991466ef9a26d21dcc67f79c79cd981b6818762b70`,
+`1ac08b8fbb95a8b8a3dacf599adf0a09fbc19edebc41bb8d327fb8d0c64fac60`,
+`8d58d0c4ab75c12b1245cccf190af511346e932334752e81dbf6294ecdc7607f`,
+and `04654700bcc765eeeb61ffad9cf678d9e609fdab2c1940da65deefc22ed117a1`.
+
 The first full-suite attempt had 125 passes and two test-environment failures:
 the separate offline test venv lacked `pytest-asyncio`. After installing that
 plugin offline, the same source candidate passed the complete standalone suite
