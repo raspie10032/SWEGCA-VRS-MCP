@@ -12,6 +12,7 @@ LOG = "memory/session-log.md"
 
 def test_gates_decide_without_a_harness(tmp_path, monkeypatch):
     monkeypatch.setenv("VRS2_RECEIPTS", str(tmp_path))          # ledgers land in a scratch dir
+    monkeypatch.setenv("VRS2_BACKSLASH_GUARD", "1")            # exercise the measured Windows gate on this host
     assert guard_backslash.decide("Bash", "echo hi", "t") is None
     assert guard_backslash.decide("Bash", "python -c \"print('a\\\\b')\"", "t")   # doubled backslash -> reason
     assert guard_backslash.decide("Bash", "x \\\\ y # backslash-ok", "t") is None
