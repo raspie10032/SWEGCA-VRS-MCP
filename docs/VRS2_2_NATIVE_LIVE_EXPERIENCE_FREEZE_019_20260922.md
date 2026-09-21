@@ -44,8 +44,8 @@ session lifecycle.
   scores were 4/20 for five and 20/20 for Terra 100k plain. The sanitized
   receipt is `evals/vrs22_context/results/plain_restored_validation_005.json`,
   SHA-256 `13d20ec66941fc2ef4eb15ba1c5461b8a91473d649c1952d8fc56ee7005eb274`.
-- Runtime source provenance: `97065d3`; frozen candidate wheel SHA-256:
-  `5955caf16f340ca9cd3c723eca29771e24a8984ccfdda8d1d70c962328d84e8a`.
+- Runtime source provenance: `0db5817`; frozen candidate wheel SHA-256:
+  `b99c1cbd4f8f51f3ff57836706db92ae2838554a90fb03c9d2844f29bcfed7c2`.
   Preflight verified all 48 installed package files against that wheel and
   found zero forbidden source references or dependencies. Installed files also
   match the product source, with no extra installed modules. A subprocess import
@@ -69,11 +69,11 @@ The static inputs for `python tools/run_vrs22_compaction_stress_v019.py
 --output-dir /var/tmp/vrs22-v019-reserved --preflight-only` passed, while its
 current status is `PENDING_LIVE_HANDOFF` because the actual task has not ended.
 The one-shot SessionEnd watcher is
-`swegca-vrs22-sessionend-handoff-97065d3-20260922.service`, pointing to the
+`swegca-vrs22-sessionend-handoff-0db5817-20260922.service`, pointing to the
 new installed candidate; it does not merge while this task is active.
 The same gate rejects a full run before creating an output directory or making
 model calls. The current software self-test receipt is
-`/var/tmp/vrs22-whole-path-selftest-isolated-final-20260922/receipt.json`.
+`/var/tmp/vrs22-whole-path-selftest-fine-dict-20260922/receipt.json`.
 It covers two simultaneous sessions (main 0 before SessionEnd; all six session
 records linked after), installed hook injection/cursor/SessionEnd, a generation
 lease across a 6.5-second idle boundary with 81 records and four-stage

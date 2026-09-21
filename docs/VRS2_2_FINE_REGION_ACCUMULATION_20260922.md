@@ -44,3 +44,14 @@ difference is a measured indication rather than a universal speedup bound.
 Neither this corpus nor the test suite establishes the all-size <1 ms Replay
 guarantee or the one-billion VRS-parameter seconds requirement. A VRS
 parameter must not be replaced with a record, node, edge, token, or byte.
+
+The candidate source commit is `0db5817`. Its separately installed wheel is
+SHA-256 `b99c1cbd4f8f51f3ff57836706db92ae2838554a90fb03c9d2844f29bcfed7c2`.
+Preflight verified all 48 source, wheel and installed package files match, no
+extra package file exists, and no SQLite or retired dependency is loaded. The
+full isolated evaluation-path self-test passed with this wheel at
+`/var/tmp/vrs22-whole-path-selftest-fine-dict-20260922/receipt.json` (SHA-256
+`a6134f2b8c0805a6d32521247854f5a0742941c1aaa0c3557f4a33920ea9b050`).
+The only active one-shot watcher now points to this candidate and waits for the
+actual current SessionEnd. The resident main is still legacy, with no handoff
+receipt, so the three VRS model cells remain gated.
