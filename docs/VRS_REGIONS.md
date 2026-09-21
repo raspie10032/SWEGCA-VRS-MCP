@@ -906,3 +906,29 @@ receipts, the line). Not done here: making the company batches call `produce()` 
 Tests: `tests/standalone/test_audit_items.py` (8); standalone suite 92 passed. The daemon needs a restart for
 `operation` and the `turns` snapshot field; hooks and the bridge pick the new code up on their next start.
 
+#### A third-party agent, live: Antigravity (2026-09-21 14:3x → 14:5x)
+
+The premise check had one honest hole: nothing but Claude Code was flowing. The user installed Google
+Antigravity to test the third-party path. Its conversations are **SQLite databases**, one per conversation
+(`~/.gemini/antigravity/conversations/<cascade>.db`; two older `.pb` dumps are not read), whose `steps`
+rows carry protobuf payloads: the user's words in step type 14 (field 19.2), the model's answer and reasoning
+in type 15 (20.8 / 20.1, 20.3), tool calls in the other types (5.4.2 name, 5.4.3 JSON args), a created
+timestamp at 5.1.1, the workspace in `trajectory_metadata_blob`. `harness/transcripts.py` decodes the
+protobuf wire format without a schema (`pb_decode`, `pb_get`) and turns each step into the role/content
+message the generic adapter already reads (now with `thinking` / `reasoning`); the format is `antigravity`,
+positions are step indices (`INDEXED`, like messages-json), the span digest is over the steps' canonical JSON
+and `origin.verify_span` re-reads them from the database (`origin.format`). The database is read in place,
+read-only; a locked moment is retried. The hint opens a turn with `vrs2-tail.py --show <db> FIRST LAST` (a
+`Read` cannot), and `read_log` counts that as an open with the step range.
+
+Real time without a hook, for real: `vrs2-tail.py --register "<glob>" --agent antigravity --format
+antigravity --idle 15` — a registration carries its own idle, and the daemon's sweep period follows the
+shortest registered idle (15 s, never below 5, never above 60). Live test: the user's message at 14:46:37, the
+answer at 14:46:41, the row in the store at 14:46:50 with `verify_span intact` and the reasoning — **9 s**
+after the answer (with a foreground `--watch --interval 5`; the sweep alone is bounded by idle + period).
+Two things the live test exposed: a WAL-mode database takes its writes in `<db>-wal` while the `.db` mtime
+stays at the last checkpoint (the answer sat in the WAL with the .db 4 s older) — `last_write` now takes the
+newer of the two for `quiet` and the sweep's idle; and the sweep at a fixed 60 s would have missed the
+30 s line. Backfill of the nine existing conversations: 102 turns, 0 errors; recall put four Antigravity
+turns in the top 10 for a question about the staging database, verified and signed.
+
