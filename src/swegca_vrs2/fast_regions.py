@@ -135,12 +135,18 @@ def _sequential(nodes, offsets, neighbors, weights, labels, degree, mass, tolera
     moved = []
     for node in nodes:
         lo, hi = offsets[node:node + 2]
-        other = neighbors[lo:hi] != node
-        if not other.any():
+        # Keep the CSR edge order while accumulating each neighbour group.
+        # Small per-node groups otherwise trigger two NumPy allocations and a
+        # sort on every node visit in the sequential tail.
+        into = {}
+        for edge in range(lo, hi):
+            neighbor = int(neighbors[edge])
+            if neighbor == node:
+                continue
+            group = int(labels[neighbor])
+            into[group] = into.get(group, 0.0) + float(weights[edge])
+        if not into:
             continue
-        groups, inverse = np.unique(labels[neighbors[lo:hi][other]], return_inverse=True)
-        values = np.bincount(inverse, weights=weights[lo:hi][other], minlength=len(groups))
-        into = dict(zip(map(int, groups), map(float, values)))
         old = int(labels[node])
         totals[old] -= degree[node]
         score = lambda group: into.get(group, 0.0) - degree[node] * totals[group] / mass
