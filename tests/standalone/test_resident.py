@@ -13,6 +13,8 @@ from swegca_vrs2.resident import (
 )
 from swegca_vrs2.store import Main
 from swegca_vrs2.native_journal import NativeJournal
+from swegca_vrs2.read_lease import (begin_engine_recall, end_engine_recall,
+                                     engine_recall_active)
 
 
 def row(n, text, project, kind="conversation_turn"):
@@ -138,6 +140,72 @@ def test_idle_consolidation_covers_main_and_every_hot_shard_with_one_cpu_budget(
         assert all(owner.graph.stable is not None and not owner.consolidation_stale()
                    for owner in owners)
     finally:
+        for owner in owners:
+            owner.close()
+
+
+def test_recall_lease_defers_consolidation_selected_before_or_during_read(tmp_path,
+                                                                          monkeypatch):
+    owner = Main(tmp_path / 'main', allow_ingest=True, defer_checkpoints=True)
+    identifier = 'a' * 32
+    try:
+        owner.ingest_many([row(i, f'읽기 스냅샷 고정 경험 {i}', 'lease')
+                           for i in range(8)])
+        refreshed = []
+        daemon = SimpleNamespace(main=owner, lock=threading.Lock(),
+            bundles=SimpleNamespace(hot=OrderedDict(),
+                                    refresh_pair=lambda shard, current: refreshed.append(shard)))
+        before = owner.pair.snapshot_id
+
+        begin_engine_recall(owner.directory, identifier)
+        assert engine_recall_active(owner.directory)
+        assert _consolidate_stale_shards(daemon, cycles=4) == []
+        assert owner.pair.snapshot_id == before and refreshed == []
+        end_engine_recall(owner.directory, identifier)
+
+        original_run = owner.consolidate_run
+        def lease_after_refinement(*args, **kwargs):
+            graph = original_run(*args, **kwargs)
+            begin_engine_recall(owner.directory, identifier)
+            return graph
+        monkeypatch.setattr(owner, 'consolidate_run', lease_after_refinement)
+        receipts = _consolidate_stale_shards(daemon, cycles=4)
+        assert receipts[0]['committed'] is False
+        assert owner.pair.snapshot_id == before and refreshed == []
+
+        end_engine_recall(owner.directory, identifier)
+        monkeypatch.setattr(owner, 'consolidate_run', original_run)
+        receipts = _consolidate_stale_shards(daemon, cycles=4)
+        assert receipts[0]['committed'] is True
+        assert owner.pair.snapshot_id != before and refreshed == ['main']
+    finally:
+        end_engine_recall(owner.directory, identifier)
+        owner.close()
+
+
+def test_primary_recall_lease_pins_every_hot_shard_in_logical_main(tmp_path):
+    owners = [Main(tmp_path / name, allow_ingest=True, defer_checkpoints=True)
+              for name in ('main', 'child')]
+    identifier = 'b' * 32
+    try:
+        for number, owner in enumerate(owners):
+            owner.ingest_many([row(i, f'전체 논리 메인 고정 {number} {i}', f'lease-{number}')
+                               for i in range(4)])
+        refreshed = []
+        daemon = SimpleNamespace(main=owners[0], lock=threading.Lock(),
+            bundles=SimpleNamespace(hot=OrderedDict((('child', owners[1]),)),
+                                    refresh_pair=lambda shard, current: refreshed.append(shard)))
+        before = [owner.pair.snapshot_id for owner in owners]
+        begin_engine_recall(owners[0].directory, identifier)
+        assert _consolidate_stale_shards(daemon, cycles=4) == []
+        assert [owner.pair.snapshot_id for owner in owners] == before
+        end_engine_recall(owners[0].directory, identifier)
+        receipts = _consolidate_stale_shards(daemon, cycles=4)
+        assert [receipt['shard'] for receipt in receipts] == ['main', 'child']
+        assert all(receipt['committed'] for receipt in receipts)
+        assert refreshed == ['main', 'child']
+    finally:
+        end_engine_recall(owners[0].directory, identifier)
         for owner in owners:
             owner.close()
 

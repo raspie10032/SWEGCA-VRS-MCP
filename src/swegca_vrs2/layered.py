@@ -17,6 +17,7 @@ import sys
 from .loopback import ensure_daemon
 from .native_memory import MEMORY_TOOLS
 from .native_transport import InterfaceError, MCPServer
+from .read_lease import begin_engine_recall, end_engine_recall, renew_engine_recall
 from .server import LoopbackMCP
 from .session_capture import SessionCapture
 
@@ -65,6 +66,7 @@ class LayeredMCP(MCPServer):
         self.capture = SessionCapture(self.main_state)
         self.pending_leases = {}
         self.request_leases = {}
+        self.main_leases = set()
 
     @staticmethod
     def _session_id(arguments):
@@ -111,6 +113,13 @@ class LayeredMCP(MCPServer):
 
     def _fallback_context(self, session_id, arguments, query, local_snapshot,
                           local_count):
+        key = (session_id, arguments['request_id'])
+        lease = self.request_leases[key]
+        if key not in self.main_leases:
+            begin_engine_recall(self.main_state, lease)
+            self.main_leases.add(key)
+        else:
+            renew_engine_recall(self.main_state, lease)
         main = self._main()
         status = main.call('memory_status', {})
         request_id = arguments['request_id']
@@ -147,6 +156,8 @@ class LayeredMCP(MCPServer):
             lease = self.request_leases.get(key)
             if lease is not None:
                 self.capture.renew_recall('codex', session_id, lease)
+                if key in self.main_leases:
+                    renew_engine_recall(self.main_state, lease)
             layer = self.routes.get((session_id, request_id, view_id))
             if layer is None:
                 raise InterfaceError('memory_handle_not_owned')
@@ -186,6 +197,9 @@ class LayeredMCP(MCPServer):
             self.queries.pop(key, None)
             self.request_leases.pop(key, None)
             self.capture.end_recall('codex', session_id, lease)
+            if key in self.main_leases:
+                self.main_leases.discard(key)
+                end_engine_recall(self.main_state, lease)
             raise
 
     def _continue(self, session_id, arguments):
@@ -193,6 +207,8 @@ class LayeredMCP(MCPServer):
         lease = self.request_leases.get((session_id, request_id))
         if lease is not None:
             self.capture.renew_recall('codex', session_id, lease)
+            if (session_id, request_id) in self.main_leases:
+                renew_engine_recall(self.main_state, lease)
         layer = self.routes.get((session_id, request_id, view_id))
         if layer is None:
             raise InterfaceError('memory_handle_not_owned')
@@ -235,6 +251,8 @@ class LayeredMCP(MCPServer):
         lease = self.request_leases.get(key)
         if lease is not None and name != 'memory_release':
             self.capture.renew_recall('codex', session_id, lease)
+            if key in self.main_leases:
+                renew_engine_recall(self.main_state, lease)
         layer = self.routes.get((session_id, request_id, view_id))
         if layer is None:
             raise InterfaceError('memory_handle_not_owned')
@@ -250,15 +268,23 @@ class LayeredMCP(MCPServer):
             self.queries.pop(key, None)
             self.request_leases.pop(key, None)
             self.capture.end_recall('codex', session_id, lease)
+            if key in self.main_leases:
+                self.main_leases.discard(key)
+                end_engine_recall(self.main_state, lease)
 
     def close(self):
         for (session_id, _), lease in list(self.request_leases.items()):
             self.capture.end_recall('codex', session_id, lease)
+        for key in list(self.main_leases):
+            lease = self.request_leases.get(key)
+            if lease is not None:
+                end_engine_recall(self.main_state, lease)
         for session_id, leases in list(self.pending_leases.items()):
             for lease in leases:
                 self.capture.end_recall('codex', session_id, lease)
         self.request_leases.clear()
         self.pending_leases.clear()
+        self.main_leases.clear()
         if self.main is not None:
             self.main.close()
         for remote in self.sessions.values():

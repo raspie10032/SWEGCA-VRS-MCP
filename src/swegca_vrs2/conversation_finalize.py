@@ -15,31 +15,34 @@ def finalize(state_dir, host, session, transcript):
     """Capture a stable final tail before publishing the durable end marker."""
     capture = SessionCapture(state_dir)
     path = Path(transcript).expanduser().resolve()
-    # SessionEnd is authoritative. Clear abandoned read transactions and admit
-    # their complete transcript tail before publishing the end marker.
-    capture.end_all_recalls(host, session)
-    stable = 0
-    result = None
-    for _ in range(20):
-        result = capture.scan_transcript(host, session, path, force=True)
-        size = path.stat().st_size
-        if result['offset'] == size:
-            time.sleep(0.1)
-            if path.stat().st_size == size:
-                stable += 1
-                if stable >= 2:
-                    break
+    # Publish the authoritative end intent first. The tailer observes it and
+    # releases this same lock; holding the lock then proves no late scan can
+    # append between the stable final cursor and linked-shard attachment.
+    capture.mark_ending(host, session)
+    with capture.watcher_lock(host, session):
+        capture.end_all_recalls(host, session)
+        stable = 0
+        result = None
+        for _ in range(50):
+            result = capture.scan_transcript(host, session, path, force=True)
+            size = path.stat().st_size
+            if result['offset'] == size:
+                time.sleep(0.1)
+                if path.stat().st_size == size:
+                    stable += 1
+                    if stable >= 10:
+                        break
+                else:
+                    stable = 0
             else:
                 stable = 0
-        else:
-            stable = 0
-            time.sleep(0.1)
-    if result is None or result['offset'] != path.stat().st_size:
-        raise ValueError('session_transcript_not_stable')
-    capture.mark_ended(host, session)
-    from .conversation_merge import run
-    run(state_dir)
-    return result
+                time.sleep(0.1)
+        if result is None or result['offset'] != path.stat().st_size:
+            raise ValueError('session_transcript_not_stable')
+        capture.mark_ended(host, session)
+        from .conversation_merge import run
+        run(state_dir)
+        return result
 
 
 def schedule(state_dir, host, session, transcript):

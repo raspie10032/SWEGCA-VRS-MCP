@@ -782,10 +782,13 @@ def _consolidate_stale_shards(daemon, *, cycles):
     backoff = getattr(daemon, 'consolidation_backoff', {})
     if not isinstance(backoff, dict):
         backoff = {}
+    from .read_lease import engine_recall_active
     owners = [('main', daemon.main), *list(daemon.bundles.hot.items())]
-    selected = [(name, owner) for name, owner in owners
-                if owner.allow_ingest and owner.consolidation_stale()
-                and now >= backoff.get(name, 0.0)]
+    selected = [] if engine_recall_active(daemon.main.directory) else [
+        (name, owner) for name, owner in owners
+        if owner.allow_ingest and owner.consolidation_stale()
+        and not engine_recall_active(owner.directory)
+        and now >= backoff.get(name, 0.0)]
     if not selected:
         daemon.consolidation_backoff = backoff
         return []
@@ -853,7 +856,12 @@ def _consolidate_stale_shards(daemon, *, cycles):
                 receipts.append(dict(shard=name, error=type(error).__name__))
                 continue
             with daemon.lock:
-                receipt = owner.consolidate_commit(generation, graph)
+                # A read lease may have appeared while the immutable candidate
+                # graph was refined. Discard that candidate so status through
+                # release observes one unchanged pair generation.
+                receipt = None if (engine_recall_active(daemon.main.directory)
+                                   or engine_recall_active(owner.directory)) \
+                    else owner.consolidate_commit(generation, graph)
                 if receipt is not None:
                     daemon.bundles.refresh_pair(name, owner)
             receipts.append(dict(shard=name, committed=receipt is not None,

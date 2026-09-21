@@ -112,12 +112,15 @@ also perform cursor-safe scans as delivery boundaries. Reads
 query that session VRS first and open durable main only after a complete miss.
 From `memory_status` through `memory_release`, a short session recall lease
 defers newly appended transcript records so the pinned pair snapshot cannot be
-changed by the memory tool's own transcript entries. Release, failure, timeout,
-server close, or `SessionEnd` removes the lease; the unchanged cursor then
-admits every deferred complete record into the session VRS.
+changed by the memory tool's own transcript entries. The same lease defers idle
+VRS consolidation for the complete logical session generation, including its
+hot shards. Release, failure, timeout, server close, or `SessionEnd` removes the
+lease; the unchanged cursor then admits every deferred complete record into the
+session VRS.
 `SessionEnd` starts a detached finalizer within the host's three-second hook
-deadline; the finalizer captures the stable transcript tail and then adopts the
-complete session VRS as main-owned linked shards. No transcript outbox, log
+deadline. An end-intent marker stops and joins the tailer through its lock;
+the finalizer then captures the stable transcript tail and adopts the complete
+session VRS as main-owned linked shards. No transcript outbox, log
 recall, observation export or re-ingest merge is used. Other clients can still
 record explicitly through `memory_store`.
 

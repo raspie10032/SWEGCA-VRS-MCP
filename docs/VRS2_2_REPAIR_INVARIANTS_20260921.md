@@ -75,11 +75,14 @@ lease before returning its session pair snapshot. Until the matching read is
 released, transcript admission leaves the byte cursor in place so memory tool
 records cannot invalidate that pinned snapshot. Release, read failure, lease
 expiry, server close, and SessionEnd all unblock admission without excluding or
-discarding a host-visible record.
+discarding a host-visible record. The resident also defers publication of idle
+consolidation for the complete logical VRS while the lease is live, including
+all hot shards that contribute to its pair snapshot.
 
 `SessionEnd` returns within the host's three-second command-hook ceiling after
-spawning a detached finalizer. The finalizer captures a stable final transcript
-tail, publishes the end marker, stops the tailer, validates the session primary and all automatic
+spawning a detached finalizer. The finalizer publishes end intent, acquires the
+tailer's lifetime lock, captures a stable final transcript tail, publishes the
+end marker, validates the session primary and all automatic
 child VRS shards, and atomically attaches them to main. Main reads the original
 experience stores through its exact directory and complete VRS projections.
 There is no export/re-ingest merge, transcript outbox, proposal journal or

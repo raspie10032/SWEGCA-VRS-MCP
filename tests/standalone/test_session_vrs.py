@@ -19,6 +19,7 @@ from swegca_vrs2.sharded import ShardedMain
 from swegca_vrs2.store import Main
 from swegca_vrs2.native_journal import NativeJournal, is_native_store
 from swegca_vrs2.native_transport import InterfaceError
+from swegca_vrs2.read_lease import engine_recall_active
 from swegca_vrs2.codex_hooks import config as codex_hook_config
 from swegca_vrs2.conversation_watch import watch
 
@@ -215,6 +216,55 @@ def test_detached_finalizer_captures_last_tail_before_attaching(tmp_path):
         stop(session_state, state)
 
 
+def test_finalizer_stops_active_watcher_and_attaches_delayed_final_tail(tmp_path):
+    state, transcript = tmp_path / 'state', tmp_path / 'rollout.jsonl'
+    session = 'finalizer-watcher-race'
+    write_transcript(transcript, session, [])
+    capture = SessionCapture(state)
+    session_state = capture.session_root('codex', session)
+    watcher = threading.Thread(target=watch,
+        args=(state, 'codex', session, transcript), kwargs={'poll_seconds': 0.01})
+    watcher.start()
+    deadline = time.time() + 5
+    while time.time() < deadline and not list((capture.meta / 'cursors').rglob('*.json')):
+        time.sleep(0.01)
+
+    def delayed_tail():
+        time.sleep(0.25)
+        append_message(transcript, 'delayed_session_end_tail_7373')
+
+    writer = threading.Thread(target=delayed_tail)
+    writer.start()
+    try:
+        result = finalize(state, 'codex', session, transcript)
+        writer.join(timeout=2)
+        watcher.join(timeout=2)
+        assert not writer.is_alive() and not watcher.is_alive()
+        assert result['offset'] == transcript.stat().st_size
+        assert not capture.ending_path('codex', session).exists()
+        marker = json.loads(capture.end_path('codex', session).read_text(encoding='utf-8'))
+        registry = json.loads((state / 'linked-shards.json').read_text(encoding='utf-8'))
+        journal = NativeJournal(session_state, create=False, writable=False)
+        try:
+            session_count = sum(1 for _ in journal.rows())
+        finally:
+            journal.close()
+        with VRSClient(state, writes=False) as main:
+            main_rows = main.export(0)['rows']
+        assert marker['merged'] is True
+        assert marker['experiences'] == session_count
+        assert sum(row['records'] for row in registry['shards']) == session_count
+        assert len(main_rows) == session_count
+        assert 'delayed_session_end_tail_7373' in {
+            row['observation']['text'] for row in main_rows}
+    finally:
+        if watcher.is_alive():
+            capture.mark_ending('codex', session)
+            watcher.join(timeout=2)
+        writer.join(timeout=2)
+        stop(session_state, state)
+
+
 def test_session_end_live_reloads_main_and_is_immediately_recallable(tmp_path):
     state, transcript = tmp_path / 'state', tmp_path / 'rollout.jsonl'
     session = 'live-reload-session'
@@ -353,11 +403,13 @@ def test_exact_main_address_is_forwarded_after_complete_session_miss(tmp_path):
         assert packet['lookup_receipt']['session_candidate_count'] == 0
         assert packet['lookup_receipt']['main_opened'] is True
         assert [row['episode_id'] for row in packet['memories']] == [address]
+        assert engine_recall_active(state)
         assert activation['invariant'] == 'validated_deja_vu_recall_replay_re_evidence'
         assert activation['admission_query_verified'] is True
         assert all(row['data'] == address for row in activation['stage_queries'].values())
         server.call_tool('memory_release', {'session_id': session,
             'request_id': 'main-exact-query', 'view_id': packet['view_id']})
+        assert not engine_recall_active(state)
     finally:
         server.close()
         stop(session_state, state)
@@ -384,6 +436,11 @@ def test_live_capture_waits_for_exact_recall_then_admits_every_deferred_record(t
         assert deferred['status'] == 'capture_deferred_for_memory_read'
         assert deferred['admitted'] == 0
         assert deferred['offset'] < transcript.stat().st_size
+        assert engine_recall_active(session_state)
+        # The resident normally starts idle consolidation after five seconds.
+        # Keep the exact read open across that boundary: consolidation must be
+        # deferred instead of replacing the pair returned by memory_status.
+        time.sleep(6.5)
 
         packet = finish(server, session, server.call_tool('memory_context', {
             'session_id': session, 'request_id': 'barrier-exact-query',
@@ -406,6 +463,7 @@ def test_live_capture_waits_for_exact_recall_then_admits_every_deferred_record(t
         assert 'deferred_tool_record_unique_4141' in {
             row['observation']['text'] for row in after}
         assert not list(capture.recall_root('codex', session).glob('*.json'))
+        assert not engine_recall_active(session_state)
         assert not (state / 'memory.sqlite3').exists()
     finally:
         server.close()

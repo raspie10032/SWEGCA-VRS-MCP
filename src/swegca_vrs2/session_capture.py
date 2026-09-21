@@ -26,12 +26,13 @@ from .linked_shards import (attach_complete_shards, drop_derived_read_directory,
                             reload_running_main, shutdown_and_release)
 from .native_journal import is_native_store
 from .resident import WarmView
+from .read_lease import (RECALL_LEASE_NS, begin_engine_recall, end_all_engine_recalls,
+                         end_engine_recall, renew_engine_recall)
 
 
 CHUNK = 60000
 INPUT_LIMIT = 16 * 1024 * 1024
 FRAME_BUDGET = MAX_BYTES - 128 * 1024
-RECALL_LEASE_NS = 120 * 1_000_000_000
 
 
 def digest(value):
@@ -191,6 +192,13 @@ class SessionCapture:
     def end_path(self, host, session):
         return self.meta / 'ended' / host / (self.session_key(session) + '.json')
 
+    def ending_path(self, host, session):
+        return self.meta / 'ending' / host / (self.session_key(session) + '.json')
+
+    def watcher_lock(self, host, session):
+        root = private_directory(self.meta / 'watchers' / host)
+        return FileLock(str(root / (self.session_key(session) + '.lock')), thread_local=False)
+
     def recall_root(self, host, session):
         return self.meta / 'recall-leases' / host / self.session_key(session)
 
@@ -217,13 +225,20 @@ class SessionCapture:
         """Pause transcript admission after every scan already in flight finishes."""
         root = private_directory(self.recall_root(host, session))
         identifier = os.urandom(16).hex()
-        atomic_json(root / (identifier + '.json'), dict(
+        capture_path = root / (identifier + '.json')
+        atomic_json(capture_path, dict(
             schema='swegca-vrs2-session-recall-lease-v1',
             created_ns=time.time_ns(), expires_ns=time.time_ns() + RECALL_LEASE_NS))
-        # The lease is visible before this barrier wait. A scan that already
-        # crossed the barrier finishes first; later scans observe the lease.
-        with self.recall_barrier(host, session):
-            pass
+        try:
+            begin_engine_recall(self.session_root(host, session), identifier)
+            # The lease is visible before this barrier wait. A scan that already
+            # crossed the barrier finishes first; later scans observe the lease.
+            with self.recall_barrier(host, session):
+                pass
+        except Exception:
+            capture_path.unlink(missing_ok=True)
+            end_engine_recall(self.session_root(host, session), identifier)
+            raise
         return identifier
 
     def renew_recall(self, host, session, identifier):
@@ -235,16 +250,19 @@ class SessionCapture:
         lease = read_json(path, {})
         lease['expires_ns'] = time.time_ns() + RECALL_LEASE_NS
         atomic_json(path, lease)
+        renew_engine_recall(self.session_root(host, session), identifier)
 
     def end_recall(self, host, session, identifier):
         if isinstance(identifier, str) and len(identifier) == 32:
             (self.recall_root(host, session) / (identifier + '.json')).unlink(missing_ok=True)
+            end_engine_recall(self.session_root(host, session), identifier)
 
     def end_all_recalls(self, host, session):
         root = self.recall_root(host, session)
         if root.exists():
             for path in root.glob('*.json'):
                 path.unlink(missing_ok=True)
+        end_all_engine_recalls(self.session_root(host, session))
 
     @staticmethod
     def payloads(host, session_key, source_key, role, value, kind, line_number):
@@ -373,9 +391,17 @@ class SessionCapture:
         previous = read_json(path, {})
         if previous.get('host') == host and previous.get('session') == key \
                 and isinstance(previous.get('ended_ns'), int):
+            self.ending_path(host, session).unlink(missing_ok=True)
             return key
         atomic_json(path, dict(host=host, session=key,
             ended_ns=time.time_ns(), merged=False))
+        self.ending_path(host, session).unlink(missing_ok=True)
+        return key
+
+    def mark_ending(self, host, session):
+        key = self.session_key(session)
+        path = self.ending_path(host, session)
+        atomic_json(path, dict(host=host, session=key, ending_ns=time.time_ns()))
         return key
 
     def ended(self):

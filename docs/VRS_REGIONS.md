@@ -43,13 +43,16 @@ is opened only after the session Recall completes with zero candidates. A
 session hit never opens main. A recall lease starts before the session snapshot
 is returned and ends on release or every failure and shutdown path. While it is
 live, capture keeps its byte cursor unchanged rather than mutating the pinned
-snapshot. The tailer admits all deferred complete records immediately after the
-lease ends; `SessionEnd` clears abandoned leases and forces the stable final
-tail through the same native session VRS.
+snapshot, and idle consolidation cannot publish another generation for the
+primary or any hot shard in that logical VRS. The tailer admits all deferred
+complete records immediately after the lease ends. `SessionEnd` first publishes
+end intent and acquires the tailer's lock, then clears abandoned leases and
+forces the stable final tail through the same native session VRS.
 
 Only a real `SessionEnd` schedules final attachment. Interrupt captures the
 latest tail but does not end or attach the session. Silence and elapsed time do
-not imply an end. The detached finalizer waits for a stable complete transcript,
+not imply an end. The detached finalizer stops and joins the tailer, waits for a
+stable complete transcript,
 publishes the end marker, releases session residents, validates the primary and
 every automatic child shard, and atomically adds those original native stores to
 main's linked shard registry. No observation is exported and reingested.

@@ -8,23 +8,22 @@ import subprocess
 import sys
 import time
 
-from filelock import FileLock, Timeout
+from filelock import Timeout
 
-from .session_capture import SessionCapture, private_directory
+from .session_capture import SessionCapture
 
 
 def watch(state_dir, host, session, transcript, *, poll_seconds=1.0):
     """Tail until SessionEnd publishes its durable marker; never infer an end."""
     capture = SessionCapture(state_dir)
-    key = capture.session_key(session)
-    lock_root = private_directory(capture.meta / 'watchers' / host)
-    lock = FileLock(str(lock_root / (key + '.lock')), thread_local=False)
+    lock = capture.watcher_lock(host, session)
     try:
         lock.acquire(timeout=0)
     except Timeout:
         return False
     try:
-        while not capture.end_path(host, session).exists():
+        while (not capture.end_path(host, session).exists()
+               and not capture.ending_path(host, session).exists()):
             try:
                 capture.scan_transcript(host, session, transcript)
             except OSError:
