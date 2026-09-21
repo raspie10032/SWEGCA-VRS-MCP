@@ -43,7 +43,10 @@ def test_six_outcomes_real_native_vrs_and_original_receipts(main):
     assert {e.steps[0].outcome for e in activation.replay.episodes} == OUTCOMES
     assert all(j.verdict == 'available' for j in activation.re_evidence.judgments)
     assert not activation.re_evidence.should_abstain
-    assert all(root['region_memberships'].values())
+    assert not any(root['region_memberships'].values())
+    main.consolidate()
+    settled = main.recall('한국어 기억', main.pair.snapshot_id)
+    assert all(settled['region_memberships'].values())
     assert not any(root['current_promotions'].values())
     assert not any(main.status()['authority'].values())
 
@@ -101,6 +104,29 @@ def test_hot_cognition_no_disk_json_hash_network_or_model(main, monkeypatch):
                    (hashlib,'sha256'),(socket,'socket'),(sqlite3,'connect')):
         monkeypatch.setattr(*target, forbidden)
     assert main.recall('한국어', pair)['receipt']['activation'].recall.candidates
+
+
+def test_exact_address_recall_does_not_scan_every_records_cues(main):
+    first = record(main, 'one')['episode_id']
+    record(main, 'two')
+    original = main.memory._store['cues']
+
+    class RandomAccessOnly:
+        def __len__(self):
+            return len(original)
+
+        def __getitem__(self, index):
+            return original[index]
+
+        def __iter__(self):
+            raise AssertionError('recall scanned every record cue array')
+
+    main.memory._store['cues'] = RandomAccessOnly()
+    try:
+        recalled = main.recall(first, main.pair.snapshot_id)
+        assert [row.episode_id for row in recalled['receipt']['activation'].recall.candidates] == [first]
+    finally:
+        main.memory._store['cues'] = original
 
 
 def test_single_owner_readonly_forged_grants_and_stale_snapshot(main):
@@ -200,11 +226,17 @@ def test_native_promotion_threshold_preserves_separate_authority(old,new,action,
 
 def test_unrelated_component_is_shared_and_all_sources_remain_addressable(main):
     a=main.ingest(dict(request_id='a',text='alpha',source='test:a',revision='r1'))
+    main.consolidate()
     before=main.graph.regions
-    main.ingest(dict(request_id='b',text='beta',source='test:b',revision='r1'))
+    b=main.ingest(dict(request_id='b',text='beta',source='test:b',revision='r1'))
     component=main.graph.components[main.graph.nodes[a['episode_id']]]
     assert main.graph.regions[component] is before[component]
+    assert main.graph.nodes[b['episode_id']] not in main.graph.components
     assert main.graph.last_receipt['changed_component_nodes']==3
+    assert main.recall(b['episode_id'],main.pair.snapshot_id)['receipt']['activation'].replay.episodes
+    main.consolidate()
+    assert main.graph.regions[component] is before[component]
+    assert main.graph.nodes[b['episode_id']] in main.graph.components
     assert len(main.memory.records)==2
 
 

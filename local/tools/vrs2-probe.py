@@ -54,7 +54,7 @@ def probe_one_producer_abstain():
 
 
 PROBES = [
-    ("upstream swegca-vrs-mcp v2 (native vrs2 bridge and hermes service) can be applied to this windows claude code setup",
+    ("upstream swegca-vrs-mcp v2 native bridge can be applied to this windows claude code setup",
      ["observational", "intervention"], "native-bridge-af-unix", probe_native_bridge),
     ("repeating an observation eventually moves the evidence accumulator off abstain",
      ["intervention", "counterfactual"], "one-producer-accumulator", probe_one_producer_abstain),

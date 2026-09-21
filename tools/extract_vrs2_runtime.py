@@ -93,7 +93,7 @@ def extract(source):
     manifest = dict(schema='native-vrs2-first-party-port-v1', source_base_revision='3bddcb7adc8c07e21a57d8c921d312aed83270e5',
                     source_state='2026-09-14 working source; per-file hashes authoritative',
                     license='MIT', records=records,
-                    scope='Memory activation, event-local VRS2 numeric settlement, overlapping connectivity regions, exact evidence pages. No model, Hermes or private experiences.',
+                    scope='Memory activation, event-local VRS2 numeric settlement, overlapping connectivity regions, exact evidence pages. No model or private experiences.',
                     modifications='Selected definitions with explicit dependency headers; absolute imports made relative. Standalone persistent main and ingestion are separate composition code.')
     (ROOT / 'NATIVE_VRS2_PORT.json').write_text(json.dumps(manifest, indent=2)+'\n', encoding='utf-8')
 

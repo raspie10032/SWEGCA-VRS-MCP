@@ -213,18 +213,19 @@ class CompactIndex:
     lookup_requires_io = False
     semantic_families = ()
 
-    def __init__(self, store, count, snapshot_id, outcome_counts, propositions, superseded):
+    def __init__(self, store, count, snapshot_id, outcome_counts, propositions, superseded, cue_total):
         self._store = store            # shared: vocab, ids, row_of, cues, postings, blobs, cache
         self.count = count
         self.snapshot_id = snapshot_id
         self.outcome_counts = outcome_counts
         self.propositions = propositions
         self.superseded = superseded
+        self.cue_total = int(cue_total)
 
     @classmethod
     def empty(cls, identity):
         store = dict(vocab=Vocab(), ids=[], row_of={}, cues=[], postings={}, blobs=[], cache=OrderedDict(), kinds=[])
-        return cls(store, 0, _digest(['memory', identity]), Map({o: 0 for o in OUTCOMES}), Map(), Map())
+        return cls(store, 0, _digest(['memory', identity]), Map({o: 0 for o in OUTCOMES}), Map(), Map(), 0)
 
     # ── HotMemoryIndex contract ─────────────────────────────────────────
     @property
@@ -346,7 +347,8 @@ class CompactIndex:
         successor = CompactIndex(store, new_row + 1, _digest([self.snapshot_id, identifier]),
                                  self.outcome_counts.set(row['outcome'], self.outcome_counts[row['outcome']] + 1),
                                  propositions,
-                                 self.superseded if previous is None else self.superseded.set(previous, identifier))
+                                 self.superseded if previous is None else self.superseded.set(previous, identifier),
+                                 self.cue_total + len(cue_ids))
         return successor, identifier
 
     def truncate_to(self, count):
@@ -423,7 +425,8 @@ class CompactIndex:
             postings = store['postings']
             for lo, hi in zip(bounds[:-1], bounds[1:]):
                 postings[int(cue_col[lo])] = row_col[lo:hi].copy()
-        return cls(store, len(rows), hot.snapshot_id, hot.outcome_counts, hot.propositions, hot.superseded)
+        return cls(store, len(rows), hot.snapshot_id, hot.outcome_counts, hot.propositions, hot.superseded,
+                   sum(len(cues) for cues in per_record))
 
     def __getstate__(self):
         state = dict(self.__dict__)
@@ -435,6 +438,10 @@ class CompactIndex:
         return state
 
     def __setstate__(self, state):
+        if 'cue_total' not in state:
+            # The journal is canonical. Reject an older derived checkpoint so Main
+            # rebuilds it under the current format; do not retain a migration path.
+            raise ValueError('checkpoint_missing_cue_total_rebuild_from_journal')
         self.__dict__.update(state)
         if self._store.get('cache') is None:
             self._store['cache'] = OrderedDict()

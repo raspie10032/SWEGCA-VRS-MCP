@@ -3,7 +3,7 @@
 Status: implementation and Windows validation completed; evidence ledger, not a whole-Rozephine completion claim.
 Base: public main 2eeee70cc9faea25d05ec4c9745be4f6f2195a98 (v2.0.0).
 The user requires VRS2 MCP on one Windows machine, independently of Linux main,
-and without Hermes in the distributed artifact. This supersedes the bridge-only
+and without retired external-agent adapters in the distributed artifact. This supersedes the bridge-only
 release scope; it is a repair of omitted product requirements, not an optional
 feature request. Preserve prior releases, local stores and private dirty work.
 
@@ -78,7 +78,7 @@ AGENTS preflight: PASS
 | Required VRS2 engine included | Dependency-closed first-party runtime, source lineage and meaningful native equivalence checks | Verified by installed-artifact CI 34804114244 |
 | New memory works | MCP observation ingress, atomic successor and recall with original text/provenance | Verified by installed-artifact CI 34804114244 |
 | Persistence works | Process exit/restart, same store identity and restored memory/VRS retrieval | Verified by installed-artifact CI 34804114244 |
-| Hermes absent | Inspect both wheel and source archive; imports, entrypoints, dependencies and integrations excluded | Verified by installed-artifact CI 34804114244 |
+| Retired adapters absent | Inspect both wheel and source archive; imports, entrypoints, dependencies and integrations excluded | Verified by installed-artifact CI 34804114244 |
 | Memory use structure retained | Four-stage receipt, actual conflicts, all outcomes, same snapshot, complete paged access | Standalone four-stage/conflict/source tests passed in CI 34804114244 |
 | No hidden cognition LLM | Runtime dependency and normal/error-path blocking tests | Verified by standalone CI 34804114244 |
 | Ownership and permissions | Duplicate owner, failed transaction, stale generation, forged grants and restart checks | Verified by standalone CI 34804114244 |
@@ -100,8 +100,8 @@ boundary must be verified from the distributed artifact in a fresh environment.
 ## Codex 작업 실수 및 교정
 
 During v2.0.0 extraction I narrowed the release to transport and treated Linux
-connection tests as sufficient delivery evidence. I checked that Hermes was not
-called by the entrypoint but left Hermes in package discovery and source archives.
+connection tests as sufficient delivery evidence. I checked that the retired adapter was not
+called by the entrypoint but left it in package discovery and source archives.
 The user's separation and Windows reports exposed the missing backend and wrong
 artifact boundary. Impact: the user received an artifact unable to meet standalone
 Windows use, requiring another correction. The old release and its limited test
@@ -136,7 +136,7 @@ Native first-party source port: twelve modules/selected definitions with exact
 source hashes in NATIVE_VRS2_PORT.json. New local main owns SQLite observation
 journal, persistent immutable maps, native event signal/re-evidence strengths and
 affected-component overlapping topology. UTF-8 original receipts are transported
-in process; no Unix socket or remote main. Models/Hermes are not dependencies.
+in process; no Unix socket or remote main. Models and external-agent adapters are not dependencies.
 New standalone tests: first 13 passed/0.21 s; actual SDK stdio/restart extension
 18 passed/1.16 s; ingress strength/correction checks 20 passed/1.15 s. These are
 overlapping runs, not 51 independent tests. Windows execution still pending.
@@ -149,13 +149,13 @@ The first extraction script assumed the wrong symbol name extend_event_inputs;
 the actual native function is prepare_event_delta. Corrected before integration.
 Initial direct page integration passed mutable root mappings; native pager
 rejected them. Bound immutable root views and matched cursor-release signatures.
-First archive verification rejected legacy Hermes docs/tools retained by source
+First archive verification rejected legacy external-agent docs/tools retained by source
 manifest inputs. Preserve that failed build in /var/tmp/vrs2-standalone-dist;
 explicitly prune old docs/tools/tests/integrations then include only standalone
 release inputs. No bad archive has been published. Earlier stopped turns and
 bridge-only scope error remain unresolved until actual verified delivery.
 
-Archive correction verified: wheel and sdist now have zero Hermes/agent-service/
+Archive correction verified: wheel and sdist now have zero retired-adapter/
 legacy-package files; required native engine/main/store present. Fresh wheel-only
 environment ran all 20 standalone checks (1.76 s), including actual SDK stdio
 with auto and legacy modes and restart persistence. A subsequent immutable-view

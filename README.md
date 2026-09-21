@@ -5,9 +5,8 @@ local main owner, persistent observation store, hot memory activation, native
 VRS2 event arithmetic and overlapping connectivity regions. No Linux server,
 Unix socket, WSL, GPU, model download or API key is required.
 
-Hermes is **not included** in the v2.1 wheel or source archive. Historical Hermes
-and v0.3 code remains in repository history/source for existing users; it is not
-imported, installed or automatically migrated by this version.
+Retired external-agent adapters and v0.3 compatibility code are not included.
+This repository provides the VRS2 main, memory MCP and their native runtime.
 
 ## Windows installation
 

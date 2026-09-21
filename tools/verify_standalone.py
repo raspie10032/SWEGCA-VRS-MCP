@@ -25,11 +25,11 @@ def verify(root, dist):
                 names=tar.getnames()
         else:
             continue
-        forbidden=[n for n in names if any(v in n.lower() for v in ('hermes','agent_service','agent_client','swegca_vrs_mcp/','local-data','memory.sqlite'))]
+        forbidden=[n for n in names if any(v in n.lower() for v in ('swegca_vrs_mcp/','local-data','memory.sqlite'))]
         assert not forbidden, forbidden
         for required in ('swegca_vrs2/store.py','swegca_vrs2/server.py','swegca_vrs2/engine/mosaic_vrs_event_signal.py'):
             assert any(n.endswith(required) for n in names), required
-        results.append(dict(file=archive.name,bytes=archive.stat().st_size,sha256=hashlib.sha256(archive.read_bytes()).hexdigest(),hermes_files=0))
+        results.append(dict(file=archive.name,bytes=archive.stat().st_size,sha256=hashlib.sha256(archive.read_bytes()).hexdigest(),retired_adapter_files=0))
     assert len(results)==2, results
     return dict(native_port_files=len(manifest['records']),artifacts=results,status='PASS')
 

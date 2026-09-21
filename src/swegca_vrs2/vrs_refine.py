@@ -227,7 +227,7 @@ class VRSVersion:
 def region_labels(graph):
     """Core region label per node from the graph's connectivity regions (components offset apart)."""
     n = graph.flat.count
-    labels = np.zeros(n, np.int64)
+    labels = np.full(n, -1, np.int64)
     base = 0
     for component, entry in sorted(graph.regions.items()):
         regions, local = entry

@@ -1,7 +1,7 @@
 """One durable main owner with immutable hot generations and observation ingress.
 
 SQLite is an ingress/restart boundary only. Recall reads immutable resident maps.
-No model, HTTP client, subprocess, Hermes store or action executor is used here.
+No model, HTTP client, subprocess, external-agent store or action executor is used here.
 """
 from __future__ import annotations
 
@@ -100,8 +100,15 @@ def freeze_view(value):
 
 def keys(text):
     """Lexical address keys; Hangul substrings are retrieval cues, never claims."""
-    result = dict.fromkeys(re.findall(r'\w+', text.casefold()))
-    result.update(dict.fromkeys(re.findall(r'memory:[0-9a-f]{64}', text.casefold())))
+    folded = text.casefold()
+    exact = re.fullmatch(r'\s*(memory:[0-9a-f]{64})\s*', folded)
+    if exact:
+        # An explicit original address is already the complete lookup key. Do
+        # not also admit the generic token ``memory`` and the hexadecimal tail;
+        # doing so turns one exact read into a whole-store lexical fanout.
+        return (exact.group(1),)
+    result = dict.fromkeys(re.findall(r'\w+', folded))
+    result.update(dict.fromkeys(re.findall(r'memory:[0-9a-f]{64}', folded)))
     # Local adapter (2026-09-14): a mixed-script token (270인지, 폴더블8, 8월) also addresses
     # its script runs. Upstream gives such a token neither a whole-token match against the
     # separately written form ("big_chunk 270") nor the Hangul substrings below.
@@ -453,7 +460,7 @@ class Graph:
         src, dst, sign = [], [], []
         direct, unresolved = [], []          # per new node, in directory order (record, then its fresh cues)
         node_updates, late_updates = [], {}  # existing nodes / nodes created earlier in this batch
-        centers, endpoints_all, polarities = [], [], []
+        polarities = []
         for episode in episodes:
             row = memory._store['row_of'][episode.episode_id]
             cue_ids = graph_cue_ids(memory, row)
@@ -478,12 +485,11 @@ class Graph:
             src.extend(x for n in endpoints for x in (center, n))
             dst.extend(x for n in endpoints for x in (n, center))
             sign.extend([polarity or 1] * (2 * len(endpoints)))
-            centers.append(center); endpoints_all.extend(endpoints); polarities.append(bool(polarity))
+            polarities.append(bool(polarity))
         direct = np.asarray(direct, dtype=np.float32)
         new_unresolved = np.asarray(unresolved, dtype=bool)
         for offset in late_updates:
             direct[offset] = 0.0; new_unresolved[offset] = True
-        edits = []
         grown = flat.extend(new_direct=direct, new_src=src, new_dst=dst, new_sign=sign,
                             new_strength=[float(vrs_refine.BASE)] * len(src), new_unresolved=new_unresolved,
                             node_updates=node_updates)
@@ -492,64 +498,13 @@ class Graph:
         payload = json.dumps([snapshot, 'append', ids, len(grown.src), stable_id],
                              ensure_ascii=False, sort_keys=True, separators=(',', ':'), allow_nan=False)
         settled_id = hashlib.sha256(payload.encode('utf-8')).hexdigest()
-        # Recompute only the changed connected component. Modularity within that
-        # component is global; unchanged disconnected components stay shared.
-        # A merge can only happen through the new records' own edges, so the previous
-        # component ids are exactly those of their endpoints that already existed.
-        previous_ids = {self.components[n] for n in endpoints_all if n in self.components}
-        previous = self.regions[next(iter(previous_ids))] if len(previous_ids) == 1 else None
-        # Common case at scale: the previous component already spanned the whole graph, so the
-        # new component is every node in id order (local == global), its edges are all edges,
-        # and the level-0 adjacency extends the cached one instead of being re-sorted.
-        whole = (previous is not None and len(previous[0].terms) == old_count)
-        csr_in = None
-        if whole and self._csr is not None and self._csr[0] == next(iter(previous_ids)) \
-                and self._csr[1] == old_count and self._csr[2] == len(self.flat.src):
-            csr_in = csr_cache.extended(self._csr, grown, len(self.flat.src), edits)
-            if csr_cache.VERIFY:
-                csr_cache.verify(*csr_in, grown, _engine_csr)
-        if whole:
-            members = np.arange(len(nodes), dtype=np.int64)
-            edges = np.arange(len(grown.src), dtype=np.int64)
-            local = members
-            # regions are navigation topology: unit weights, so trust (refined strengths, near zero for
-            # pending records) does not reshape them (vrs-regions, SWEGCA: selection grants no authority)
-            source = SimpleNamespace(terms=LazyTerms(nodes, frozen(members, np.int64)),
-                edge_source=grown.src.astype(np.int64), edge_target=grown.dst.astype(np.int64),
-                edge_sign=grown.sign.astype(np.int8), vrs_strength=np.ones(len(grown.src), np.float64))
-        else:
-            members = self._component_members(grown, centers)
-            edge_mask = np.isin(grown.src, members)
-            edges = np.flatnonzero(edge_mask)
-            local = np.full(len(nodes), -1, dtype=np.int64)
-            local[members] = np.arange(len(members))
-            source = SimpleNamespace(terms=LazyTerms(nodes, frozen(members, np.int64)),
-                edge_source=local[grown.src[edges].astype(np.int64)],
-                edge_target=local[grown.dst[edges].astype(np.int64)],
-                edge_sign=grown.sign[edges].astype(np.int8),
-                vrs_strength=np.ones(len(edges), np.float64))
-        csr_out = {}
-        regions, backend = build_regions(source, vrs_snapshot_id=settled_id, previous=previous,
-                                         csr=csr_in, csr_out=csr_out)
-        if csr_in is not None:
-            backend += '_incremental_csr'
-        if not regions.converged:
-            raise ValueError('region_topology_pending_no_publication')
-        component_id = int(members[0])
-        components, directory = self.components, self.regions
-        for old in previous_ids:
-            directory = directory.delete(old)
-        # every existing member already carries this id when the component kept its id: only new nodes
-        first = old_count if (whole and previous_ids == {component_id}) else 0
-        for n in members[first:] if whole else members:
-            n = int(n)
-            if components.get(n) != component_id:
-                components = components.set(n, component_id)
-        directory = directory.set(component_id, (regions, frozen(local, np.int32)))   # node -> local position
-        # cache the whole-graph level-0 adjacency for the next append (memory only)
-        csr = None
-        if len(members) == len(nodes) and csr_out.get('csr') is not None:
-            csr = (component_id, len(nodes), len(grown.src), *csr_out['csr'])
+        # Region topology, memberships and portals are derived consolidation state.
+        # Building them for every pending ingress batch rebuilt the same whole graph
+        # hundreds of times. Keep the last stable directory for existing nodes and
+        # leave new nodes explicitly pending; the idle consolidation rebuilds the
+        # complete topology once before numerical refinement.
+        components, directory, csr = self.components, self.regions, None
+        backend, region_sweeps = 'deferred_until_idle_consolidation', []
         receipt = dict(version=vrs_refine.VERSION, parent_snapshot_id=self.snapshot_id,
             status='appended_pending_consolidation', pending_node_count=0,
             pending_edges=len(grown.src) - (self.stable.edge_count if self.stable is not None else 0),
@@ -559,8 +514,8 @@ class Graph:
             logical_implication_claimed=False, cognitive_completion=False,
             persistent_state_mutated=False, authority_granted=False,
             arithmetic_vehicle='region_consolidation_at_idle',
-            changed_component_nodes=len(members), changed_component_edges=len(edges),
-            region_backend=backend, region_sweeps=list(regions.sweeps),
+            changed_component_nodes=len(nodes) - old_count, changed_component_edges=len(src),
+            region_backend=backend, region_sweeps=region_sweeps,
             source_episode_count_added=len(episodes), historical_outcome=episodes[-1].steps[0].outcome,
             recorded_agreement_is_not_independent_factual_corroboration=True,
             logical_implication_claimed_by_regions=False, grants_authority=False)
@@ -569,28 +524,40 @@ class Graph:
                      self.usage, self.aliases)
 
     def rebuild_regions(self):
-        """Rebuild every component's regions in the shared-array layout (one-time after conversion)."""
+        """Build regions for components touched by nodes appended since consolidation.
+
+        Unrelated component entries remain structurally shared. A pending node may
+        join several older components; its graph traversal yields their full merged
+        component, whose old directory entries are replaced together.
+        """
         flat, nodes = self.flat, self.nodes
+        pending = [node for node in range(flat.count) if node not in self.components]
+        if not pending:
+            return self
         seen = np.zeros(flat.count, dtype=bool)
-        components, directory = Map(), Map()
-        for start in range(flat.count):
+        components, directory = self.components, self.regions
+        for start in pending:
             if seen[start]:
                 continue
             members = self._component_members(flat, [start])
             seen[members] = True
+            previous_ids = {components[node] for node in members if node in components}
+            previous = directory.get(next(iter(previous_ids))) if len(previous_ids) == 1 else None
             edges = np.flatnonzero(np.isin(flat.src, members))
             local = np.full(flat.count, -1, dtype=np.int64)
             local[members] = np.arange(len(members))
             source = SimpleNamespace(terms=LazyTerms(nodes, frozen(members, np.int64)),
                 edge_source=local[flat.src[edges].astype(np.int64)], edge_target=local[flat.dst[edges].astype(np.int64)],
                 edge_sign=flat.sign[edges].astype(np.int8), vrs_strength=flat.strength[edges].astype(np.float64))
-            previous = self.regions.get(int(members[0]))
             regions, _ = build_regions(source, vrs_snapshot_id=self.snapshot_id, previous=previous)
             if not regions.converged:
                 raise ValueError('region_topology_pending_no_publication')
+            for old in previous_ids:
+                directory = directory.delete(old)
+            component_id = int(members[0])
             for n in members:
-                components = components.set(int(n), int(members[0]))
-            directory = directory.set(int(members[0]), (regions, frozen(local, np.int32)))
+                components = components.set(int(n), component_id)
+            directory = directory.set(component_id, (regions, frozen(local, np.int32)))
         return Graph(self.snapshot_id, flat, nodes, components, directory, self.last_receipt, None, self.stable,
                      self.usage, self.aliases)
 
@@ -615,6 +582,8 @@ class Graph:
 
     def memberships(self, identifier):
         node = self.nodes[identifier]
+        if node not in self.components:
+            return ()
         region, positions = self.regions[self.components[node]]
         return tuple((region.topology_id, n, w) for n, w in region.memberships_for_term(positions[node]))
 
@@ -722,13 +691,14 @@ class Graph:
     def consolidate(self, memory, *, seed=vrs_refine.SEED, cycles=vrs_refine.CYCLES):
         """One consolidation chunk: refine strengths region by region from the current stable version.
         Returns the successor generation (same topology and regions; refined strengths, node states)."""
-        version, strength, score = vrs_refine.consolidate(self, memory, self.stable, seed=seed, cycles=cycles)
-        flat = self.flat.with_arrays(strength=strength, score=score)
+        topology = self if len(self.components) == self.flat.count else self.rebuild_regions()
+        version, strength, score = vrs_refine.consolidate(topology, memory, self.stable, seed=seed, cycles=cycles)
+        flat = topology.flat.with_arrays(strength=strength, score=score)
         snapshot_id = digest((self.snapshot_id, 'consolidation', version.version_id))
         receipt = dict(self.last_receipt, status='consolidated', stable_version_id=version.version_id,
                        consolidation=version.summary(), parent_snapshot_id=self.snapshot_id)
         # the level-0 adjacency cache weighs edges by strength: rebuilt at the next append
-        return Graph(snapshot_id, flat, self.nodes, self.components, self.regions, freeze_view(receipt), None, version, self.usage,
+        return Graph(snapshot_id, flat, topology.nodes, topology.components, topology.regions, freeze_view(receipt), None, version, self.usage,
                      self.aliases)
 
     def summary(self):
@@ -993,8 +963,39 @@ class Main:
         rows = 0
         bodies = {}
         dropped = []
-        for seq, req, body, fingerprint, _ in self._journal_rows(0, None):
+        pending = []
+
+        def flush():
+            nonlocal memory, graph, operations, pair, rows
+            if not pending:
+                return
+            graph_snapshot, episodes, recorded = graph.snapshot_id, [], []
+            for seq, req, row, fingerprint, _ in pending:
+                memory2, identifier = memory.append(row)
+                if memory2 is not memory:
+                    episodes.append(memory2.episode(identifier))
+                    graph_snapshot = digest((graph_snapshot, fingerprint))
+                memory = memory2
+                recorded.append((seq, req, fingerprint, identifier))
+            if episodes:
+                graph = graph.append_many(episodes, graph_snapshot, memory)
+            pair = FullCurrentMemoryVrsSnapshot(memory, graph.snapshot_id)
+            for seq, req, fingerprint, identifier in recorded:
+                pairs[seq] = pair.snapshot_id
+                operations = operations.set(req, (fingerprint, identifier, pair.snapshot_id))
+            rows += len(pending)
+            if progress and rows % 50 == 0:
+                progress(rows, pending[-1][0], graph)
+            pending.clear()
+
+        for seq, req, body, fingerprint, expected in self._journal_rows(0, None):
             kind, row = journal_entry(req, body, fingerprint)
+            if kind not in ('alias', 'usage', 'consolidation'):
+                if pending and pending[0][4] != expected:
+                    flush()
+                pending.append((seq, req, row, fingerprint, expected))
+                continue
+            flush()
             if kind == 'consolidation' and drop_consolidations:
                 # a consolidation row certifies a derived computation under the rules of its day; when the
                 # rules change (vrs-regions -> SWEGCA evidence, 2026-09-15) the rows are dropped and the
@@ -1017,16 +1018,13 @@ class Main:
                 fingerprint = digest(row)
                 bodies[seq] = (canonical(row), fingerprint)
                 identifier = None
-            else:
-                memory2, identifier = memory.append(row)
-                graph = graph if memory2 is memory else graph.append(memory2.episode(identifier), digest((graph.snapshot_id, fingerprint)), memory2)
-                memory = memory2
             pair = FullCurrentMemoryVrsSnapshot(memory, graph.snapshot_id)
             pairs[seq] = pair.snapshot_id
             operations = operations.set(req, (fingerprint, identifier, pair.snapshot_id))
             rows += 1
             if progress and rows % 50 == 0:
                 progress(rows, seq, graph)
+        flush()
         self.db.execute('BEGIN IMMEDIATE')
         try:
             for seq, value in pairs.items():
@@ -1164,6 +1162,43 @@ class Main:
             return tuple(row)
         row = self.db.execute('SELECT last_seq, last_pair FROM journal_archive ORDER BY segment DESC LIMIT 1').fetchone()
         return tuple(row) if row is not None else None
+
+    def export_observations(self, after_sequence=0, *, max_records=512,
+                            max_bytes=768 * 1024):
+        """Return exact original observation envelopes from the VRS journal.
+
+        Session assimilation consumes this main-owned export instead of a
+        second transcript/outbox database. Consolidation, usage and alias rows
+        remain in the session VRS; only external observations enter another
+        main. ``next_sequence`` advances over every journal kind, so retries are
+        idempotent and a caller never needs to inspect SQLite directly.
+        """
+        self._check()
+        after_sequence = max(0, int(after_sequence))
+        max_records = max(1, min(int(max_records), 4096))
+        max_bytes = max(4096, min(int(max_bytes), 896 * 1024))
+        head = self._journal_head()
+        head_sequence = 0 if head is None else int(head[0])
+        rows, used, next_sequence = [], 64, after_sequence
+        for seq, request_id, body, fingerprint, _ in self._journal_rows(after_sequence, None):
+            kind, value = journal_entry(request_id, body, fingerprint)
+            encoded = canonical(value).encode('utf-8') if kind == 'observation' else b''
+            if kind == 'observation' and rows and (len(rows) >= max_records
+                                                    or used + len(encoded) + 64 > max_bytes):
+                break
+            next_sequence = int(seq)
+            if kind != 'observation':
+                continue
+            rows.append(dict(sequence=int(seq), episode_id='memory:' + digest(
+                {key: item for key, item in value.items() if key != 'request_id'}),
+                observation=value))
+            used += len(encoded) + 64
+            if len(rows) >= max_records:
+                break
+        return dict(status='experience_export', rows=rows,
+            after_sequence=after_sequence, next_sequence=next_sequence,
+            head_sequence=head_sequence, complete=next_sequence >= head_sequence,
+            grants_authority=False)
 
     def compact(self, *, keep_live=KEEP_LIVE_ROWS, vacuum=True):
         """Lossless hard compression: checkpoint, archive covered journal rows, vacuum.
@@ -1503,7 +1538,11 @@ class Main:
         idf = {c: math.log(1.0 + (total - fanout[c] + 0.5) / (fanout[c] + 0.5)) for c in informative}
         cue_counts = memory._store['cues'] if hasattr(memory, '_store') else None
         rows_of = memory._store['row_of'] if cue_counts is not None else None
-        average = (sum(len(a) for a in cue_counts) / max(1, len(cue_counts))) if cue_counts else 1.0
+        # The index generation carries its exact cue total. Graph deliberately
+        # excludes redundant Hangul fragment endpoints, so its edge count cannot
+        # stand in for this value. Keeping the scalar on the immutable generation
+        # makes the BM25 length normalization exact and O(1), including pinned views.
+        average = (memory.cue_total / max(1, memory.episode_count)) if cue_counts else 1.0
         k1, b = 1.2, 0.3   # b measured over 15 known-answer queries: .75 MRR .63, .5 .69, .3 .69 (top3 12/15), .15 .65, 0 .38
         opponents = {}
         for p in propositions:

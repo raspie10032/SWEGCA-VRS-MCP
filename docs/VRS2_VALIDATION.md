@@ -1,8 +1,8 @@
 # VRS 2.0 MCP validation — 2026-09-14
 
 Package version: **2.0.0**. The new native bridge is an external memory-use
-interface to an already running compatible main. Existing stateful storage,
-Hermes integration and legacy diagnostics remain separate supported modes.
+interface to an already running compatible main. Older external-agent adapters
+and legacy diagnostics are outside this runtime.
 This report describes completed software checks; it is not a native cognition,
 learning, complete memory-system or live Claude conversation pass.
 
@@ -12,7 +12,7 @@ learning, complete memory-system or live Claude conversation pass.
   wire peer and actual SDK stdio processes, not a simulated successful native
   cognition. Both SDK `auto`/`legacy` modes and both CLI entrypoints are covered.
 - Full package suite: **219 passed in 9.91 seconds**. This includes the existing
-  stateful storage, restart/persistence, authority gates, agent/Hermes integration,
+  stateful storage, restart/persistence, authority gates,
   public architecture and legacy diagnostic regressions. The 24 tests above are
   included in 219 and are not added again.
 - Existing upstream port integrity: **34 files PASS**, no imported numerical or

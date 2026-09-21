@@ -34,7 +34,7 @@ identical to that tested commit.
   Opposing claims prevent reinforcement; same-source explicit retraction weakens
   the old connection while retaining its original. VRS promotion is derived from
   current strength, never supplied as client authority.
-- Wheel and source archive contain zero Hermes, agent-service, agent-client or
+- Wheel and source archive contain zero retired external-agent adapters or
   historical swegca_vrs_mcp package files. Historical code/data remains preserved
   in the repository and earlier releases, without automatic migration.
 
@@ -122,7 +122,7 @@ outside this demonstrated acceptance; they are not inferred from test counts.
 ## Codex 작업 실수 및 교정
 
 1. The v2.0 extraction narrowed the user's standalone intent to a bridge and
-   checked Hermes execution, not archive exclusion. The user's repeated questions
+   checked external-agent execution, not archive exclusion. The user's repeated questions
    exposed the omission. I also ended turns after explanation/status rather than
    implementing the authorized correction, making the user repeat the request.
    This correction adds the local runtime and explicit requirement-to-evidence
@@ -130,7 +130,7 @@ outside this demonstrated acceptance; they are not inferred from test counts.
 2. The first extraction named the wrong native delta function; corrected to
    prepare_event_delta. Initial page integration supplied a mutable root and
    mismatched cursor-release arguments; corrected before the passing tests.
-3. Initial source packaging retained historical Hermes docs/tools. Archive
+3. Initial source packaging retained historical external-agent docs/tools. Archive
    inspection failed; explicit pruning and selected release inputs corrected it.
    The failed artifacts were retained locally and were never released.
 4. First actual Windows run 34804004050 built archives but failed native source

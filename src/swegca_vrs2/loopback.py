@@ -2,7 +2,7 @@
 """Resident standalone main on a loopback TCP port — one owner, many short-lived clients.
 
 Local Windows adapter (2026-09-14). v2.1's ``Main`` holds the state directory's owner
-lock for the life of its process. On Linux the Hermes service shares one main across
+lock for the life of its process. On Linux a resident service shares one main across
 CLI sessions over a Unix socket; Windows Python has no ``AF_UNIX``, so this module does
 the same over ``127.0.0.1``. The wire format is the resident protocol used by
 ``native_transport.ResidentClient``: one JSON line per request on a fresh connection,
@@ -43,7 +43,9 @@ START_STALE = 300                    # seconds after which a start marker is ign
 RESIDENT_COMMANDS = {'status', 'cognitive_dialogue_start', 'cognitive_dialogue_continue',
                      'cognitive_dialogue_evidence_open', 'cognitive_dialogue_evidence',
                      'cognitive_dialogue_release'}
-LOCAL_COMMANDS = {'hook_recall', 'evidence_of', 'origins', 'bundles', 'lookup', 'evict', 'ingest', 'ingest_many', 'checkpoint', 'compact', 'consolidate', 'refine', 'ping', 'shutdown', 'usage', 'alias'}
+LOCAL_COMMANDS = {'hook_recall', 'evidence_of', 'origins', 'bundles', 'lookup', 'evict',
+                  'ingest', 'ingest_many', 'export_experiences', 'checkpoint', 'compact',
+                  'consolidate', 'refine', 'ping', 'shutdown', 'usage', 'alias'}
 
 
 # ── client ────────────────────────────────────────────────────────────
@@ -467,6 +469,14 @@ class Daemon:
             return origins(self.main, arguments)
         if command == 'evidence_of':
             return evidence_of(self.main, arguments)
+        if command == 'export_experiences':
+            # Session-end transfer reads the VRS journal through main. It never
+            # opens a transcript or a parallel outbox database.
+            with self.lock:
+                return self.main.export_observations(
+                    arguments.get('after_sequence', 0),
+                    max_records=arguments.get('max_records', 512),
+                    max_bytes=arguments.get('max_bytes', 768 * 1024))
         if command in ('consolidate', 'refine'):
             # manual consolidation: the refinement is lock-free (frozen generation); prepare/commit lock briefly
             with self.lock:

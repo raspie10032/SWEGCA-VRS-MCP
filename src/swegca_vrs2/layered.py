@@ -1,0 +1,235 @@
+"""Session-first memory MCP with exact Codex-session routing.
+
+Codex lifecycle hooks add their authoritative ``session_id`` to every SWEGCA
+memory tool call. This server uses that value to select the small session VRS,
+and opens durable main only after Recall has completed with zero candidates.
+The injected routing value is transport metadata; it is removed before the
+native four-stage memory tools are called.
+"""
+from __future__ import annotations
+
+from copy import deepcopy
+import hashlib
+from pathlib import Path
+import sys
+
+from .loopback import ensure_daemon
+from .native_memory import MEMORY_TOOLS
+from .native_transport import InterfaceError, MCPServer
+from .server import LoopbackMCP
+
+
+def _tools():
+    result = deepcopy(MEMORY_TOOLS)
+    for item in result:
+        item['inputSchema']['properties']['session_id'] = {
+            'type': 'string', 'minLength': 1, 'maxLength': 512,
+            'description': 'Injected by the Codex lifecycle hook for exact session routing.'}
+    return result
+
+
+LAYERED_MEMORY_TOOLS = _tools()
+
+
+class _Remote:
+    def __init__(self, state_dir):
+        reservation = ensure_daemon(state_dir, allow_ingest=True)
+        writes = bool(reservation.request('ping').get('writes_enabled'))
+        if not writes:
+            reservation.close()
+            raise InterfaceError('layer_resident_write_disabled')
+        self.server = LoopbackMCP(reservation, writes_enabled=False)
+
+    def call(self, tool, arguments):
+        return self.server.call_tool(tool, arguments)
+
+    def close(self):
+        self.server.close()
+
+
+class LayeredMCP(MCPServer):
+    """Route each request to its session VRS, then main on a complete miss."""
+    tool_definitions = LAYERED_MEMORY_TOOLS
+    server_name = 'swegca-vrs2-session-first-memory'
+    _names = {tool['name'] for tool in tool_definitions}
+
+    def __init__(self, main_state):
+        super().__init__(None)
+        self.main_state = Path(main_state).expanduser().resolve()
+        self.sessions = {}
+        self.main = None
+        self.routes = {}
+        self.queries = {}
+
+    @staticmethod
+    def _session_id(arguments):
+        value = arguments.get('session_id')
+        if not isinstance(value, str) or not value or len(value) > 512:
+            raise InterfaceError('codex_session_id_not_injected')
+        return value
+
+    @staticmethod
+    def _native(arguments):
+        return {key: value for key, value in arguments.items() if key != 'session_id'}
+
+    def _session(self, session_id):
+        remote = self.sessions.get(session_id)
+        if remote is None:
+            key = hashlib.sha256(session_id.encode('utf-8')).hexdigest()
+            state = self.main_state / 'session-vrs' / 'codex' / key
+            remote = self.sessions[session_id] = _Remote(state)
+        return remote
+
+    def _main(self):
+        if self.main is None:
+            self.main = _Remote(self.main_state)
+        return self.main
+
+    @staticmethod
+    def _handle(arguments):
+        return arguments.get('request_id'), arguments.get('view_id')
+
+    @staticmethod
+    def _annotate(packet, *, layer, fallback_used, query, local_snapshot,
+                  local_candidate_count=None, main_snapshot=None):
+        result = dict(packet)
+        result.update(memory_layer=layer, fallback_used=fallback_used,
+            lookup_receipt=dict(
+                invariant='session_first_main_only_after_complete_miss',
+                lookup_order=['session', 'main'], query=query,
+                session_snapshot_id=local_snapshot,
+                session_candidate_count=local_candidate_count,
+                main_opened=fallback_used, main_snapshot_id=main_snapshot,
+                selected_layer=layer, action_authorized=False,
+                persistent_write_authorized=False))
+        return result
+
+    def _fallback_context(self, session_id, arguments, query, local_snapshot,
+                          local_count):
+        main = self._main()
+        status = main.call('memory_status', {})
+        request_id = arguments['request_id']
+        packet = main.call('memory_context', dict(
+            request_id=request_id, query=query,
+            expected_pair_snapshot_id=status['pair_snapshot_id'],
+            **{key: arguments[key] for key in ('page_size', 'wait_turns')
+               if key in arguments}))
+        if isinstance(packet.get('view_id'), str):
+            self.routes[(session_id, request_id, packet['view_id'])] = 'main'
+        return self._annotate(packet, layer='main', fallback_used=True,
+            query=query, local_snapshot=local_snapshot,
+            local_candidate_count=local_count,
+            main_snapshot=status['pair_snapshot_id'])
+
+    def _local_complete(self, session_id, arguments, packet):
+        request_id, view_id = self._handle(arguments)
+        if (packet.get('status') != 'memory_context_ready'
+                or packet.get('candidate_count') != 0):
+            return None
+        release_view = view_id if isinstance(view_id, str) else packet.get('view_id')
+        if isinstance(release_view, str):
+            self._session(session_id).call('memory_release', {
+                'request_id': request_id, 'view_id': release_view})
+            self.routes.pop((session_id, request_id, release_view), None)
+        query, local_snapshot = self.queries[(session_id, request_id)]
+        return self._fallback_context(session_id, arguments, query,
+                                      local_snapshot, 0)
+
+    def _context(self, session_id, arguments):
+        request_id, view_id = self._handle(arguments)
+        key = (session_id, request_id)
+        if view_id is not None:
+            layer = self.routes.get((session_id, request_id, view_id))
+            if layer is None:
+                raise InterfaceError('memory_handle_not_owned')
+            remote = self._session(session_id) if layer == 'session' else self._main()
+            packet = remote.call('memory_context', arguments)
+            fallback = self._local_complete(session_id, arguments, packet) \
+                if layer == 'session' else None
+            if fallback is not None:
+                return fallback
+            query, local_snapshot = self.queries[key]
+            return self._annotate(packet, layer=layer,
+                fallback_used=layer == 'main', query=query,
+                local_snapshot=local_snapshot,
+                local_candidate_count=(packet.get('candidate_count')
+                                       if layer == 'session' else 0),
+                main_snapshot=(packet.get('pair_snapshot_id')
+                               if layer == 'main' else None))
+
+        query = arguments.get('query')
+        local_snapshot = arguments.get('expected_pair_snapshot_id')
+        self.queries[key] = (query, local_snapshot)
+        packet = self._session(session_id).call('memory_context', arguments)
+        fallback = self._local_complete(session_id, arguments, packet)
+        if fallback is not None:
+            return fallback
+        if isinstance(packet.get('view_id'), str):
+            self.routes[(session_id, request_id, packet['view_id'])] = 'session'
+        return self._annotate(packet, layer='session', fallback_used=False,
+            query=query, local_snapshot=local_snapshot,
+            local_candidate_count=packet.get('candidate_count'))
+
+    def _continue(self, session_id, arguments):
+        request_id, view_id = self._handle(arguments)
+        layer = self.routes.get((session_id, request_id, view_id))
+        if layer is None:
+            raise InterfaceError('memory_handle_not_owned')
+        remote = self._session(session_id) if layer == 'session' else self._main()
+        packet = remote.call('memory_continue', arguments)
+        fallback = self._local_complete(session_id, arguments, packet) \
+            if layer == 'session' else None
+        if fallback is not None:
+            return fallback
+        query, local_snapshot = self.queries[(session_id, request_id)]
+        return self._annotate(packet, layer=layer,
+            fallback_used=layer == 'main', query=query,
+            local_snapshot=local_snapshot,
+            local_candidate_count=(packet.get('candidate_count')
+                                   if layer == 'session' else 0),
+            main_snapshot=(packet.get('pair_snapshot_id')
+                           if layer == 'main' else None))
+
+    def call_tool(self, name, arguments):
+        if name not in self._names or not isinstance(arguments, dict):
+            raise InterfaceError('unknown_tool')
+        session_id = self._session_id(arguments)
+        native = self._native(arguments)
+        if name == 'memory_status':
+            status = self._session(session_id).call(name, native)
+            return dict(status, memory_layer='session', fallback_configured=True,
+                lookup_order=['session', 'main'], main_opened=False)
+        if name == 'memory_context':
+            return self._context(session_id, native)
+        if name == 'memory_continue':
+            return self._continue(session_id, native)
+        request_id, view_id = self._handle(native)
+        layer = self.routes.get((session_id, request_id, view_id))
+        if layer is None:
+            raise InterfaceError('memory_handle_not_owned')
+        remote = self._session(session_id) if layer == 'session' else self._main()
+        result = remote.call(name, native)
+        if name == 'memory_release':
+            self.routes.pop((session_id, request_id, view_id), None)
+            self.queries.pop((session_id, request_id), None)
+        return result
+
+    def close(self):
+        if self.main is not None:
+            self.main.close()
+        for remote in self.sessions.values():
+            remote.close()
+
+
+def serve(main_state):
+    server = None
+    try:
+        server = LayeredMCP(main_state)
+        server.serve(sys.stdin.buffer, sys.stdout.buffer)
+        return 0
+    except (InterfaceError, OSError, ValueError) as error:
+        print('VRS2 layered error: ' + str(error), file=sys.stderr)
+        return 1
+    finally:
+        if server is not None:
+            server.close()

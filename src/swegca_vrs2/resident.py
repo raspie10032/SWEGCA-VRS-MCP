@@ -154,7 +154,7 @@ def warm_recall(memory, query, exclude_kinds=(), limit=10, snippet=400):
     idf = {c: math.log(1.0 + (total - fanout[c] + 0.5) / (fanout[c] + 0.5)) for c in informative}
     store = memory._store
     cue_rows, ids = store['cues'], store['ids']
-    average = (sum(len(a) for a in cue_rows) / max(1, len(cue_rows))) if len(cue_rows) else 1.0
+    average = (memory.cue_total / max(1, memory.episode_count)) if len(cue_rows) else 1.0
     scores, matched = {}, {}
     for c in selected:                                   # every matched cue admits a candidate (nothing dropped) …
         weight = idf.get(c, 0.0)                         # … a function-word cue (half the store or more) weighs nothing
