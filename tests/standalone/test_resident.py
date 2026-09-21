@@ -134,12 +134,29 @@ def test_idle_consolidation_covers_main_and_every_hot_shard_with_one_cpu_budget(
         receipts = _consolidate_stale_shards(daemon, cycles=4)
         assert [r["shard"] for r in receipts] == ["main", "s1", "s2"]
         assert all(r["committed"] and r["parallel_shards"] == 3 for r in receipts)
+        assert all(r["scheduled_shards"] == 3 and r["wave"] == 0 for r in receipts)
         assert all(r["workers_per_shard"] >= 1 for r in receipts)
         assert all(owner.graph.stable is not None and not owner.consolidation_stale()
                    for owner in owners)
     finally:
         for owner in owners:
             owner.close()
+
+
+def test_consolidation_fails_closed_when_transient_wave_exceeds_ram_cap(tmp_path):
+    owner = Main(tmp_path / "main", allow_ingest=True, defer_checkpoints=True)
+    try:
+        owner.ingest_many([row(i, f"메모리 상한 정산 {i}", "bounded") for i in range(8)])
+        bundles = SimpleNamespace(hot=OrderedDict(), refresh_pair=lambda shard, current: None,
+            _rss_bytes=lambda: MAX_RSS_BYTES - 32 * 1024 ** 2)
+        daemon = SimpleNamespace(main=owner, lock=threading.Lock(), bundles=bundles)
+        receipts = _consolidate_stale_shards(daemon, cycles=4)
+        assert receipts == [dict(shard="main", error="vrs_memory_budget_exceeded",
+            estimated_transient_bytes=receipts[0]["estimated_transient_bytes"],
+            available_transient_bytes=0)]
+        assert owner.graph.stable is None
+    finally:
+        owner.close()
 
 
 def test_resource_budget_is_reported_and_admission_is_fail_closed(tmp_path, monkeypatch):

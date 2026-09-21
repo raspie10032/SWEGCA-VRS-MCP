@@ -751,9 +751,39 @@ def _consolidate_stale_shards(daemon, *, cycles):
     if not selected:
         daemon.consolidation_backoff = backoff
         return []
-    workers = max(1, CONSOLIDATION_WORKERS // len(selected))
     with daemon.lock:
         prepared = [(name, owner, owner.consolidate_prepare()) for name, owner in selected]
+
+    # ``build_inputs`` and fine-region refinement hold several int64/float64
+    # edge arrays at once.  This deliberately overestimates their peak, then
+    # schedules independent shards in bounded waves.  It changes scheduling,
+    # never the VRS graph or its 16-thread region kernel.
+    from .resident import MAX_RSS_BYTES
+    reserve = 128 * 1024 ** 2
+    rss_reader = getattr(daemon.bundles, '_rss_bytes', None)
+    rss = rss_reader() if callable(rss_reader) else None
+    rss = 0 if rss is None else int(rss)
+    available = max(0, MAX_RSS_BYTES - rss - reserve)
+
+    def estimate(item):
+        graph, memory = item[2].graph, item[2].memory
+        flat_edges = len(graph.flat.src)
+        nodes = graph.flat.count
+        cue_total = int(getattr(memory, 'cue_total', 0))
+        return 64 * 1024 ** 2 + flat_edges * 512 + nodes * 768 + cue_total * 16
+
+    estimates = {item[0]: estimate(item) for item in prepared}
+    rejected, waves, wave, used = [], [], [], 0
+    for item in prepared:
+        required = estimates[item[0]]
+        if required > available:
+            rejected.append((item, required))
+            continue
+        if wave and used + required > available:
+            waves.append(wave); wave, used = [], 0
+        wave.append(item); used += required
+    if wave:
+        waves.append(wave)
 
     def run(item):
         name, owner, generation = item
@@ -763,26 +793,38 @@ def _consolidate_stale_shards(daemon, *, cycles):
         except Exception as error:
             return name, owner, generation, None, error
 
-    if len(prepared) > 1:
-        with ThreadPoolExecutor(max_workers=min(CONSOLIDATION_WORKERS, len(prepared)),
-                                thread_name_prefix='vrs2-shard') as pool:
-            results = list(pool.map(run, prepared))
-    else:
-        results = [run(prepared[0])]
     receipts = []
-    for name, owner, generation, graph, error in results:
-        if error is not None:
-            owner.restore['consolidation'] = type(error).__name__ + ': ' + str(error)[:200]
-            backoff[name] = time.time() + 600
-            receipts.append(dict(shard=name, error=type(error).__name__))
-            continue
-        with daemon.lock:
-            receipt = owner.consolidate_commit(generation, graph)
-            if receipt is not None:
-                daemon.bundles.refresh_pair(name, owner)
-        receipts.append(dict(shard=name, committed=receipt is not None,
-                             parallel_shards=len(prepared), workers_per_shard=workers,
-                             version_id=None if receipt is None else receipt.get('version_id')))
+    for (name, owner, _), required in rejected:
+        owner.restore['consolidation'] = 'vrs_memory_budget_exceeded'
+        backoff[name] = time.time() + 600
+        receipts.append(dict(shard=name, error='vrs_memory_budget_exceeded',
+                             estimated_transient_bytes=required,
+                             available_transient_bytes=available))
+    for wave_index, current_wave in enumerate(waves):
+        workers = max(1, CONSOLIDATION_WORKERS // len(current_wave))
+        if len(current_wave) > 1:
+            with ThreadPoolExecutor(max_workers=min(CONSOLIDATION_WORKERS, len(current_wave)),
+                                    thread_name_prefix='vrs2-shard') as pool:
+                results = list(pool.map(run, current_wave))
+        else:
+            results = [run(current_wave[0])]
+        for name, owner, generation, graph, error in results:
+            if error is not None:
+                owner.restore['consolidation'] = type(error).__name__ + ': ' + str(error)[:200]
+                backoff[name] = time.time() + 600
+                receipts.append(dict(shard=name, error=type(error).__name__))
+                continue
+            with daemon.lock:
+                receipt = owner.consolidate_commit(generation, graph)
+                if receipt is not None:
+                    daemon.bundles.refresh_pair(name, owner)
+            receipts.append(dict(shard=name, committed=receipt is not None,
+                scheduled_shards=len(prepared), parallel_shards=len(current_wave),
+                wave=wave_index, workers_per_shard=workers,
+                estimated_transient_bytes=estimates[name],
+                available_transient_bytes=available,
+                version_id=None if receipt is None else receipt.get('version_id')))
+        del results
     daemon.consolidation_backoff = backoff
     return receipts
 
