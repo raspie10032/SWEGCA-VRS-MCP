@@ -77,7 +77,10 @@ class ProjectedRecall:
     def _current(self, identifier):
         if identifier not in self.current:
             exact = self._exact(identifier)
-            current = self.resident.current_vrs(exact)
+            # Natural ranking and local navigation need current VRS facts, but
+            # per-cue strengths are used only to build cross-shard portals.
+            # Keep that larger expansion for the actual cross-shard case.
+            current = self.resident.current_vrs(exact, include_cue_strengths=False)
             if current is None:
                 raise ValueError('read_projection_not_ready:' + exact['shard'])
             if current['pair_snapshot_id'] != self.resident.pair_ids.get(exact['shard']):
@@ -282,6 +285,8 @@ class ProjectedRecall:
         return kept
 
     def _cross_shard_portals(self, candidates, shards):
+        if len(shards) < 2:
+            return []
         portals = {}
         for candidate in candidates:
             identifier = candidate.episode_id
@@ -289,7 +294,11 @@ class ProjectedRecall:
             source_shard, source_region = exact['shard'], current['region']
             if source_region is None or source_region < 0:
                 continue
-            cue_strengths = current.get('cue_strengths') or ()
+            full_current = self.resident.current_vrs(exact)
+            if (full_current is None or full_current['pair_snapshot_id']
+                    != current['pair_snapshot_id']):
+                raise ValueError('read_projection_pair_mismatch')
+            cue_strengths = full_current.get('cue_strengths') or ()
             if len(cue_strengths) != len(exact['cues']):
                 raise ValueError('read_projection_cue_strength_alignment_changed')
             weighted = [(cue, strength) for cue, strength in zip(exact['cues'], cue_strengths)

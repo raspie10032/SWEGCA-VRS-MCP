@@ -840,7 +840,7 @@ class Resident:
         return bool(expected and ReadProjectionStore(
             self.bundles[bundle_id], bundle_id).ready(expected))
 
-    def current_vrs(self, exact):
+    def current_vrs(self, exact, *, include_cue_strengths=True):
         """Current VRS facts for an exact capsule without opening a cold checkpoint."""
         shard, identifier, row = exact['shard'], exact['replay'].episode_id, exact['shard_row']
         if shard == 'main':
@@ -853,16 +853,16 @@ class Resident:
             pending = stable is None or node is None or node >= stable.node_count
             weights = getattr(stable, 'record_weight', None) if stable is not None else None
             source = exact['replay'].source_addresses[0]
-            center = owner.graph.nodes.episode_node.get(identifier)
-            edge_strength = {}
-            if center is not None:
-                lo, hi = int(owner.graph.flat.out_ptr[center]), int(owner.graph.flat.out_ptr[center + 1])
-                edge_strength = {int(owner.graph.flat.dst[edge]): float(owner.graph.flat.strength[edge])
-                                 for edge in owner.graph.flat.out_edge[lo:hi]}
-            cue_strengths = []
-            for cue_id in owner.memory._store['cues'][row]:
-                node = owner.graph.nodes.cue(int(cue_id))
-                cue_strengths.append(edge_strength.get(node, 0.0) if node >= 0 else 0.0)
+            cue_strengths = ()
+            if include_cue_strengths:
+                center = owner.graph.nodes.episode_node.get(identifier)
+                edge_strength = {}
+                if center is not None:
+                    lo, hi = int(owner.graph.flat.out_ptr[center]), int(owner.graph.flat.out_ptr[center + 1])
+                    edge_strength = {int(owner.graph.flat.dst[edge]): float(owner.graph.flat.strength[edge])
+                                     for edge in owner.graph.flat.out_edge[lo:hi]}
+                cue_strengths = tuple(edge_strength.get(owner.graph.nodes.cue(int(cue_id)), 0.0)
+                                      for cue_id in owner.memory._store['cues'][row])
             memberships = owner.graph.memberships_of(identifier)
             region = owner.graph.region_of(identifier)
             shared_regions = tuple(sorted(int(item[0]) for item in memberships
@@ -887,11 +887,12 @@ class Resident:
                 stability=None if pending else float(stable.stability[node]), pending=pending,
                 usage=owner.graph.usage.get(source),
                 memberships=memberships,
-                cue_strengths=tuple(cue_strengths),
+                cue_strengths=cue_strengths,
                 superseded_by=owner.memory.superseded.get(identifier), portals=tuple(portals))
         with self.projection_lock:
             projection = self._projection_unlocked(shard)
-            return None if projection is None else projection.current(identifier, row)
+            return None if projection is None else projection.current(
+                identifier, row, include_cue_strengths=include_cue_strengths)
 
     def region_for_cue(self, shard, cue):
         if shard == 'main':

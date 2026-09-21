@@ -144,7 +144,7 @@ class ProjectionView:
             raise ValueError('read_projection_experience_mismatch')
         return row
 
-    def current(self, identifier, row):
+    def current(self, identifier, row, *, include_cue_strengths=True):
         row = self._row(identifier, row)
         start, stop = int(self.member_ptr[row]), int(self.member_ptr[row + 1])
         superseded = self.superseded[row].tobytes()
@@ -161,8 +161,9 @@ class ProjectionView:
                 [int(self.usage[row][0]), int(self.usage[row][1])],
             memberships=tuple((int(region), float(weight)) for region, weight in
                               zip(self.member_region[start:stop], self.member_weight[start:stop])),
-            cue_strengths=tuple(float(value) for value in
-                                self.cue_strength[int(self.cue_ptr[row]):int(self.cue_ptr[row + 1])]),
+            cue_strengths=(tuple(float(value) for value in
+                self.cue_strength[int(self.cue_ptr[row]):int(self.cue_ptr[row + 1])])
+                if include_cue_strengths else ()),
             superseded_by=None if superseded == b'\0' * 32 else 'memory:' + superseded.hex())
 
     def region_for_cue(self, cue):

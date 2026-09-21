@@ -12,6 +12,7 @@ from swegca_vrs2.resident import (
     MAX_RSS_BYTES, MAX_STORAGE_BYTES, Resident, WarmView, load_recall_generation,
 )
 from swegca_vrs2.store import Main
+from swegca_vrs2.sharded import ShardedMain
 from swegca_vrs2.native_journal import NativeJournal
 from swegca_vrs2.read_lease import (begin_engine_recall, end_engine_recall,
                                      engine_recall_active)
@@ -341,8 +342,32 @@ def test_projection_backfill_rebuilds_one_existing_cold_vrs_shard(tmp_path):
         assert result["projections"][0]["status"] == "projected"
         exact = resident.exact_replay(identifier)
         current = resident.current_vrs(exact)
+        lean = resident.current_vrs(exact, include_cue_strengths=False)
         assert current["pair_snapshot_id"] == resident.pair_ids["cold"]
+        assert len(current["cue_strengths"]) == len(exact["cues"])
+        assert lean == dict(current, cue_strengths=())
         assert not resident.hot and not resident.warm
+    finally:
+        resident.close()
+        primary.close()
+
+
+def test_hot_main_natural_read_defers_only_cross_shard_cue_strengths(tmp_path):
+    primary = Main(tmp_path / "main", allow_ingest=True)
+    resident = Resident(primary, hot_limit=1)
+    try:
+        identifier = resident.ingest(row(1, "hot main original experience", "main-source"))[
+            "episode_id"]
+        exact = resident.exact_replay(identifier)
+        full = resident.current_vrs(exact)
+        lean = resident.current_vrs(exact, include_cue_strengths=False)
+        assert len(full["cue_strengths"]) == len(exact["cues"])
+        assert lean == dict(full, cue_strengths=())
+        activation = ShardedMain(primary, resident).recall(
+            "hot main original experience", resident.logical_snapshot())[
+                "receipt"]["activation"]
+        assert [episode.episode_id for episode in activation.replay.episodes] == [identifier]
+        assert activation.re_evidence.judgments[0].episode_id == identifier
     finally:
         resident.close()
         primary.close()
