@@ -24,7 +24,9 @@ from .native_journal import NativeJournal, is_native_store
 from .vrs_refine import SHARED_FLOOR
 
 AUTO_SHARD_RECORDS = 8_192
-MAX_STORAGE_BYTES = 500 * 1024 ** 3
+# SSD manufacturers and the user's ceiling use decimal GB.  Keep this exact:
+# 500 GB = 500,000,000,000 allocated bytes, not 500 GiB.
+MAX_STORAGE_BYTES = 500_000_000_000
 MAX_RSS_BYTES = 4 * 1024 ** 3
 STORAGE_SCAN_TTL_SECONDS = 1.0
 AUTO_SHARD_PREFIX = 'shard-'

@@ -10,7 +10,7 @@ creates storage shards automatically and keeps every shard as a complete VRS mai
 | --- | ---: |
 | resident process RSS | 4 GiB |
 | SSD transfer assumption | at most 5 Gbit/s (625 MB/s) |
-| physically allocated state storage | 500 GB |
+| physically allocated state storage | 500 GB (500,000,000,000 bytes) |
 | consolidation workers | 16 |
 | default records before opening the next automatic shard | 8,192 |
 

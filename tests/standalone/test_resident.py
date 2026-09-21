@@ -232,7 +232,7 @@ def test_resource_budget_is_reported_and_admission_is_fail_closed(tmp_path, monk
     try:
         budget = resident.budget(force_storage=True)
         assert budget["rss_limit_bytes"] == 4 * 1024 ** 3
-        assert budget["storage_limit_bytes"] == 500 * 1024 ** 3
+        assert budget["storage_limit_bytes"] == 500_000_000_000
         assert budget["storage_bytes"] < budget["storage_limit_bytes"]
 
         monkeypatch.setattr(resident, "_rss_bytes", lambda: MAX_RSS_BYTES + 1)

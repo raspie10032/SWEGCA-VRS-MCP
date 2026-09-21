@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.2.0 storage-cap follow-up
+
+- Enforce the 500 GB storage ceiling as exactly 500,000,000,000 allocated
+  bytes instead of the larger 500 GiB value.
+
 ## 2.2.0 — 2026-09-21
 
 - Replace the prior store with one native checksummed frame journal and atomic

@@ -137,7 +137,8 @@ The local release must prove:
   SessionEnd linked attachment through an installed stdio MCP;
 - exact original retrieval after restart and all four receipt stages;
 - full tests, source lineage hashes, wheel and sdist contents;
-- resident RSS at or below 4 GiB and allocated storage at or below 500 GB;
+- resident RSS at or below 4 GiB and allocated storage at or below exactly
+  500,000,000,000 bytes (500 GB);
 - wall clock lookup through Replay below 1 ms on the named current experience
   benchmark, with Re-evidence reported separately;
 - the 5 Gbit/s device assumption identified honestly until an actual kernel
