@@ -730,3 +730,39 @@ rows (they go to the project's bundle like everything else; the sizing rule warn
 secrets a user pasted into a turn (the text is stored as said — the log already holds it), and a service
 wrapper for `--watch` (a foreground loop the user starts; system settings are the user's).
 
+#### The premise as a gate, and what a turn carries (2026-09-21, later the same day)
+
+The user's audit question — "is one thing missing, or thirty?" — was thirty-two (session log 12:4x). The
+ones that broke the premise outright were fixed first:
+
+* **A test that ignores the premise is discarded, not scored.** `local/bench/compaction/GRADING.md` §0: a run
+  is scorable for continuity only with `vrs2_tail.log` receipts that reach every compaction boundary before
+  it, a recall receipt after the boundary, and transcript rows of that session in the store; anything else
+  is labelled 「VRS 없음」 and its ② is not computed. The 09-16/09-18 A/B runs (A2·B2) were such runs — a
+  subagent restricted to Read/Write/Edit, no hooks, 0 compactions — and are marked so wherever their
+  numbers were cited (§10, the purpose memory). Their only remaining use is as anchors for the ① scorer.
+* **The absence is no longer written as a principle.** The MCP server's instructions, `VRS2_STANDALONE_VALIDATION`,
+  `VRS2_VALIDATION`, `AGENT_MEMORY_VALIDATION` and the importer's docstring said "no automatic transcript
+  capture"; each now says where capture happens (the hooks and `vrs2-tail.py`, not the server).
+* **After a compaction the cut turns come from the store.** Daemon command `turns` (session → the last K
+  transcript rows, optionally only those starting before a log line); the SessionStart hook on
+  `source == compact` appends a 「압축 직전 대화 — 스토어의 마지막 3턴」 block under the session-log tail, each turn
+  with its part (`[압축 전 미완 — 여기서 잘렸다]`) and its exact `Read` call. The log is not re-read; a daemon
+  that is down is a named miss in the receipt, never a blocked start.
+* **A turn carries more of what happened.** Tool errors (`[도구 오류: Bash · Exit code 1 …]`), the user's
+  rejection of a tool call (`[사용자 거부: Bash]` — the strongest correction there is), a command's first line
+  of output (`결과: Bash → …`), slash commands (`[명령 /compact]`), the host's own compaction summary
+  (`[압축 요약(호스트)] …` head and tail, bounded) and the turn's token usage (`토큰: 문맥 최대 512,345 · 출력 1,200`;
+  `metadata.tokens`, `errors`, `rejected`). Tool payloads themselves are still never copied.
+* The first machine-wide backfill (`~/.claude/projects/**/*.jsonl`, 1.3 GB) exposed two defects: a 4 KB
+  format probe truncated a long first record and misread workflow subagent transcripts as generic logs (now
+  whole first lines are read, and `agentId`/`parentUuid` count); workflow `journal.jsonl` files are event
+  logs, not conversations, and are skipped. 115 rows ingested before the fix carry the agent label `wf_…`
+  instead of `claude-code`; they are real turns at real positions and were left as they are.
+
+Measured (40 real prompts of this session, self-hits — the turn the prompt itself opened — excluded): a
+transcript row is in the top 10 of every packet (first one at rank 1 in 18/40, ≤3 in 30/40); `choose` admits
+one in 32/40 under the big-row bar and 35/40 with a lenient bar — the bar is not the problem, so it stays.
+`hook_recall` ran at a median 508 ms while the backfill was ingesting (130–150 ms before it at 6.1k rows);
+re-measured after the backfill in the session log.
+

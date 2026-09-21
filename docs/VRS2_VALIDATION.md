@@ -73,8 +73,9 @@ files and archive inventories, not an impossible guarantee of all secret forms.
   against the official Claude Code MCP documentation. The user will test Claude.
 - Native mode requires an existing same-user compatible Unix socket. Linux is
   verified; this is not a network-hosted connector or standalone native engine.
-- Free-text ingestion/automatic chat capture and native successor publication
-  are not exposed by this bridge. Existing stateful writes have their original,
+- Free-text ingestion and native successor publication are not exposed by this
+  bridge. Chat capture is real time since 2026-09-21, but it is the host hooks'
+  work (`harness/transcripts.py`), not the bridge's. Existing stateful writes have their original,
   separate store/authority semantics and do not migrate data into native main.
 - Generic semantic relevance, all-query latency, automatic recovery of a view
   never received after lost admission, and hard-kill cleanup are not established.

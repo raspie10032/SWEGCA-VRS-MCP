@@ -39,7 +39,8 @@ Since 2026-09-18 these are six-line shims; the bodies are `src/swegca_vrs2/harne
 ## bench/compaction/
 
 Task cards and scorer for the goal-consistency-under-compaction test (needs a logged-in CLI to
-run with `--autocompact 100000`; inputs are not included).
+run with `--autocompact 100000`; inputs are not included). `GRADING.md` is the grading spec; its §0 is the
+premise gate — a run without real-time VRS receipts is 「VRS 없음」 and is not scored for continuity.
 
 ## bench/vrs2-scale-curve.py
 

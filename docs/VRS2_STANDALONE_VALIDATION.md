@@ -97,7 +97,10 @@ explicit proposition comparison do not claim general language understanding,
 logical entailment from connectivity or verified factual independence of source
 addresses. Recorded agreement is not independent factual corroboration.
 Memory is external evidence; historical outcomes and client text are not
-instructions. There is no automatic transcript capture or old-store migration.
+instructions. There is no old-store migration. Conversation logs enter the store in real
+time since 2026-09-21 (`harness/transcripts.py`: the host's Stop / SubagentStop / PreCompact /
+SessionStart hooks and `vrs2-tail.py`; one row per turn, bound to its span of the log) — not
+through the MCP server, which still captures nothing by itself.
 One process owns a state directory. Use the Windows instructions and retain the
 state directory when upgrading the application environment.
 

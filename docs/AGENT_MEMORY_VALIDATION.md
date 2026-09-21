@@ -92,7 +92,9 @@ that profile's model/login setup before claiming live deployment acceptance.
 - Hermes best-effort callbacks are not a host-level fail-closed reasoning gate.
 - User/assistant text only; no interrupted/tool-payload/multimodal capture claim.
 - Outbox durability starts when the provider callback returns, not when the
-  host merely schedules it. Raw host transcript remains a separate subsystem.
+  host merely schedules it. The raw host transcript is tailed into the store in
+  real time since 2026-09-21 (one row per turn, span-bound; `harness/transcripts.py`);
+  the log itself stays the origin, never a copy.
 - Lexical retrieval and existing event-to-hypothesis graph, not semantic
   cross-turn learning. A pending chat turn is not a verified real-world outcome.
 - Current VRS is coalesced global arithmetic, not incrementally equivalent

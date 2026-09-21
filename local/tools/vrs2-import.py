@@ -12,7 +12,8 @@ v0.2 스토어의 색인(FTS5·cue 접기·BM25)은 그쪽 검색 방식에 맞�
   메모리 문서 파일 하나가 기록 하나, 8,000자를 넘으면 `## ` 절 단위. 「찾을 때 묻는 말」 절의 문장이 명시 cue.
   판정      v0.2 스토어의 obs:* 를 읽어(읽기 전용) claim → proposition, success/failure → support/refute,
             asks → 명시 cue, 관측 본문 → text. source = verdict:<slug>.
-  트랜스크립트(.jsonl)는 넣지 않는다 — 원문은 위치로만 참조한다는 규칙.
+  트랜스크립트(.jsonl)는 이 도구가 아니라 `harness/transcripts.py`(훅 transcript_tail.py · vrs2-tail.py)가 실시간으로
+  넣는다(2026-09-21 대전제: 모든 대화 로그는 턴마다 경험이 되고 원문 위치에 결속된다). 여기서는 다루지 않는다.
 
 멱등: request_id 가 고정이라 다시 돌려도 이미 든 것은 건너뛴다(main 이 idempotent_replay 로 답한다).
 """

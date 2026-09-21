@@ -41,6 +41,7 @@ import re
 import sys
 import time
 from datetime import datetime, timezone
+from typing import NamedTuple
 
 from .paths import RECEIPTS, STATE, PYTHON, BUNDLE_LIMIT, BUNDLES, BUNDLE_OF, HOT_BUNDLES, USER
 from . import origin as origin_mod
@@ -61,6 +62,27 @@ TEXT_CHARS = 6000
 TAIL_CLAIM = "the transcript tail ingests every turn of the conversation log in real time"
 
 FORMATS = ("claude-code", "messages-jsonl", "messages-json", "text")
+RESULT_CHARS = 200       # a command's output / a tool error, as one line
+SUMMARY_HEAD, SUMMARY_TAIL = 900, 500   # the host's compaction summary: what it kept (head) and its next step (tail)
+
+
+class Ev(NamedTuple):
+    """One log record as the tail reads it. ``role`` None = nothing for the turn; ``ids`` = (tool_use_id, name)
+    pairs of the record's tool calls; ``results`` = (tool_use_id, is_error, head) of its tool results;
+    ``usage`` = token counts of an assistant record."""
+    role: object
+    text: str = ""
+    tools: tuple = ()
+    event: str = ""
+    when: str = ""
+    model: object = None
+    opener: bool = False
+    ids: tuple = ()
+    results: tuple = ()
+    usage: object = None
+
+
+NOTHING = Ev(None)
 _USER_LINE = re.compile(r"^\s*(user|human|you|사용자|질문)\s*[:>]\s*(.*)$", re.I)
 _ASSISTANT_LINE = re.compile(r"^\s*(assistant|ai|claude|gemini|codex|model|bot|어시스턴트|답변)\s*[:>]\s*(.*)$", re.I)
 _NOISE_PREFIXES = ("<", "[기억]", "Stop hook feedback", "UserPromptSubmit hook", "SessionStart hook")
@@ -118,27 +140,46 @@ def states():
 
 # ----------------------------------------------------------------------------------------------- formats
 
+CC_TYPES = ("user", "assistant", "system", "summary", "progress", "queue-operation", "file-history-snapshot")
+
+
 def detect_format(path):
+    """The log's format from its first records. Whole lines are read (a 4 KB head once truncated a long first
+    record and misread a workflow subagent transcript as a generic log — backfill, 2026-09-21)."""
     name = os.path.basename(path).lower()
     try:
         with open(path, "rb") as handle:
-            head = handle.read(4096).decode("utf-8", "replace").lstrip()
+            lines = []
+            for _ in range(5):
+                line = handle.readline(4_000_000)
+                if not line:
+                    break
+                lines.append(line.decode("utf-8", "replace").strip())
     except OSError:
         return "text"
-    if not head:
+    lines = [l for l in lines if l]
+    if not lines:
         return "claude-code" if name.endswith(".jsonl") else "text"
+    head = lines[0]
     if head.startswith("{") or head.startswith("["):
         if not name.endswith(".jsonl") and (head.startswith("[") or '"messages"' in head[:2000]):
             return "messages-json"
-        first = head.split("\n", 1)[0]
-        try:
-            record = json.loads(first)
-        except ValueError:
-            record = {}
-        if isinstance(record, dict) and ("sessionId" in record or record.get("type") in ("user", "assistant", "system", "summary", "progress")):
-            return "claude-code"
+        for line in lines:
+            try:
+                record = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(record, dict) and (any(k in record for k in ("sessionId", "parentUuid", "agentId", "isSidechain"))
+                                             or record.get("type") in CC_TYPES):
+                return "claude-code"
         return "messages-jsonl"
     return "text"
+
+
+def is_conversation_log(path):
+    """Not every jsonl under an agent's directory is a conversation: a workflow journal is an event log."""
+    parts = os.path.abspath(path).replace("\\", "/").split("/")
+    return not (os.path.basename(path) == "journal.jsonl" and "workflows" in parts)
 
 
 def _text_of(content):
@@ -195,9 +236,11 @@ def _when(value):
 
 
 def events_claude(record, own_sidechain=False):
-    """(role, text, tools, event, when, model, opener) of one claude-code transcript record; role None = nothing.
-    ``isSidechain`` records inside a main transcript are a delegate's exchange (part of the current turn); in a
-    subagent's own transcript (``own_sidechain``) every record is sidechain and they are its user/assistant."""
+    """One claude-code transcript record as an ``Ev``. ``isSidechain`` records inside a main transcript are a
+    delegate's exchange (part of the current turn); in a subagent's own transcript (``own_sidechain``) every
+    record is sidechain and they are its user/assistant. Tool results are never copied — but an error, a
+    user's rejection, a command's first line of output and the host's compaction summary are the turn's
+    experience and become event / result lines (2026-09-21, items 1·2·3·5)."""
     kind = record.get("type")
     when = _when(record.get("timestamp"))
     message = record.get("message") or {}
@@ -208,32 +251,45 @@ def events_claude(record, own_sidechain=False):
         meta = record.get("compactMetadata") or {}
         pre, post = meta.get("preTokens"), meta.get("postTokens")
         event = f"[압축 경계 {meta.get('trigger') or '?'}" + (f" · 전 {pre:,} → 후 {post:,} 토큰" if isinstance(pre, int) and isinstance(post, int) else "") + "]"
-        return "event", "", [], event, when, None, False
+        return Ev("event", event=event, when=when)
     if kind == "user" and not record.get("isMeta"):
+        if record.get("isCompactSummary"):
+            # the host's own summary after a compaction: what the model was left with — an experience of the loss
+            body = _text_of(content)
+            excerpt = body if len(body) <= SUMMARY_HEAD + SUMMARY_TAIL else body[:SUMMARY_HEAD] + " … " + body[-SUMMARY_TAIL:]
+            return Ev("event", event="[압축 요약(호스트)] " + oneline(excerpt, SUMMARY_HEAD + SUMMARY_TAIL + 8), when=when)
         texts = [b.get("text", "") for b in blocks if isinstance(b, dict) and b.get("type") == "text" and isinstance(b.get("text"), str)]
+        results = tuple((str(b.get("tool_use_id") or ""), bool(b.get("is_error")), oneline(b["content"] if isinstance(b.get("content"), str) else _text_of(b.get("content")), RESULT_CHARS))
+                        for b in blocks if isinstance(b, dict) and b.get("type") == "tool_result")
+        commands = [m.group(1).strip() for t in texts for m in [re.search(r"<command-name>(.*?)</command-name>", t, re.S)] if m]
         texts = [t for t in texts if not _noise(t)]
+        if commands:
+            return Ev("event", event="[명령 " + " · ".join(c[:40] for c in commands[:3]) + "]", when=when, results=results)
         if not texts:
-            return None, "", [], "", when, None, False
-        return ("delegate" if side else "user"), "\n".join(texts), [], "", when, None, not side
+            return Ev("results", when=when, results=results) if results else NOTHING
+        return Ev("delegate" if side else "user", "\n".join(texts), when=when, opener=not side, results=results)
     if kind == "assistant":
-        texts, tools = [], []
+        texts, tools, ids = [], [], []
         for b in blocks:
             if not isinstance(b, dict):
                 continue
             if b.get("type") == "text" and isinstance(b.get("text"), str) and b["text"].strip():
                 texts.append(b["text"].strip())
             elif b.get("type") == "tool_use":
-                tools.append(_tool_line(str(b.get("name") or "?"), b.get("input")))
-        if not texts and not tools:
-            return None, "", [], "", when, None, False
-        return ("delegate_answer" if side else "assistant"), "\n".join(texts), tools, "", when, message.get("model"), False
-    return None, "", [], "", when, None, False
+                name = str(b.get("name") or "?")
+                tools.append(_tool_line(name, b.get("input")))
+                ids.append((str(b.get("id") or ""), name))
+        usage = message.get("usage") if isinstance(message.get("usage"), dict) else None
+        if not texts and not tools and not usage:
+            return NOTHING
+        return Ev("delegate_answer" if side else "assistant", "\n".join(texts), tuple(tools), when=when, model=message.get("model"), ids=tuple(ids), usage=usage)
+    return NOTHING
 
 
 def events_messages(obj):
     """(role, text, tools, event, when, model, opener) of one role/content message (top level, ``message`` or ``payload``)."""
     if not isinstance(obj, dict):
-        return None, "", [], "", "", None, False
+        return NOTHING
     inner = obj
     for key in ("message", "payload"):
         if isinstance(obj.get(key), dict) and any(k in obj[key] for k in ("role", "content", "type", "name")):
@@ -257,13 +313,13 @@ def events_messages(obj):
         tools.append(_tool_line(str(inner["name"]), inner.get("arguments")))
     if role in ("user", "human"):
         if not text.strip() or _noise(text):
-            return None, "", [], "", when, None, False
-        return "user", text, [], "", when, None, True
+            return NOTHING
+        return Ev("user", text, when=when, opener=True)
     if role in ("assistant", "model", "ai") or (not role and (text.strip() or tools)):
         if not text.strip() and not tools:
-            return None, "", [], "", when, None, False
-        return "assistant", text, tools, "", when, model, False
-    return None, "", [], "", when, None, False
+            return NOTHING
+        return Ev("assistant", text, tuple(tools), when=when, model=model)
+    return NOTHING
 
 
 # ----------------------------------------------------------------------------------------------- reading a window
@@ -296,56 +352,79 @@ def read_window(path, offset):
 def segments_of(items, first_line, fmt, carry_turn, own_sidechain=False):
     """Group parsed lines into segments: one per turn (opened by a user message), plus a leading continuation
     of ``carry_turn`` for lines before the first opener. Each segment: dict(turn, part, lines, bytes, user,
-    assistant, tools, events, when, model, delegate)."""
+    assistant, tools, results, events, when, model, delegate, usage, records)."""
     parse = (lambda r: events_claude(r, own_sidechain)) if fmt == "claude-code" else events_messages
     segs = []
     current = None
     line_no = first_line - 1
+    names = {}                                          # tool_use_id -> tool name, across the window
 
     def new_segment(turn, part, start, end, line):
-        return dict(turn=turn, part=part, lines=[line, line], bytes=[start, end], user=[], assistant=[], tools=[],
-                    events=[], when="", model=None, delegate=[], records=0)
+        return dict(turn=turn, part=part, lines=[line, line], bytes=[start, end], user=[], assistant=[], tools=[], results=[],
+                    events=[], when="", model=None, delegate=[], usage=dict(input=0, output=0, context_peak=0), records=0)
+
+    def take_results(seg, results):
+        for tool_id, is_error, head in results:
+            name = names.get(tool_id, "?")
+            if is_error and "doesn't want to proceed" in head:
+                seg["events"].append(f"[사용자 거부: {name}]")             # the strongest correction there is
+            elif is_error:
+                seg["events"].append(f"[도구 오류: {name} · {head}]")
+            elif name in ("Bash", "PowerShell", "shell", "exec") and head:
+                seg["results"].append(f"{name} → {head}")
 
     for start, end, raw in items:
         line_no += 1
         if fmt == "text":
-            role, text, tools, event, when, model, opener = events_text(raw)
+            ev = events_text(raw)
         else:
             try:
                 obj = json.loads(raw)
             except ValueError:
                 continue
-            role, text, tools, event, when, model, opener = parse(obj)
-        if role is None:
+            ev = parse(obj)
+        if ev.role is None:
             continue
-        if opener:
+        if ev.opener:
             if current is not None and not (current["assistant"] or current["tools"] or current["events"] or current["delegate"]) and current["user"]:
-                current["user"].append(text)            # two user messages in a row (an interruption): one turn
+                current["user"].append(ev.text)          # two user messages in a row (an interruption): one turn
                 current["lines"][1], current["bytes"][1] = line_no, end
                 current["records"] += 1
+                take_results(current, ev.results)
                 continue
+            if current is not None and ev.results:
+                take_results(current, ev.results)        # a user message beside a tool result: the result closes the old turn
             turn = (segs[-1]["turn"] if segs else carry_turn) + 1
             current = new_segment(turn, "whole", start, end, line_no)
-            current["user"].append(text)
-            current["when"] = when
+            current["user"].append(ev.text)
+            current["when"] = ev.when
             segs.append(current)
         else:
             if current is None:
                 current = new_segment(carry_turn, "tail", start, end, line_no)
                 segs.append(current)
             current["lines"][1], current["bytes"][1] = line_no, end
-            if role == "assistant":
-                current["assistant"].append(text)
-                current["model"] = model or current["model"]
-            elif role == "delegate":
-                current["delegate"].append("위임 과제: " + text)
-            elif role == "delegate_answer":
-                current["delegate"].append("위임 결과: " + text)
-            elif role == "event":
-                current["events"].append(event)
-            current["tools"].extend(tools)
+            if ev.role == "assistant":
+                if ev.text:
+                    current["assistant"].append(ev.text)
+                current["model"] = ev.model or current["model"]
+            elif ev.role == "delegate":
+                current["delegate"].append("위임 과제: " + ev.text)
+            elif ev.role == "delegate_answer":
+                current["delegate"].append("위임 결과: " + ev.text)
+            elif ev.role == "event":
+                current["events"].append(ev.event)
+            current["tools"].extend(ev.tools)
+            names.update(ev.ids)
+            take_results(current, ev.results)
+            if ev.usage:
+                u = current["usage"]
+                context = int(ev.usage.get("input_tokens") or 0) + int(ev.usage.get("cache_creation_input_tokens") or 0) + int(ev.usage.get("cache_read_input_tokens") or 0)
+                u["input"] += context
+                u["output"] += int(ev.usage.get("output_tokens") or 0)
+                u["context_peak"] = max(u["context_peak"], context)
             if not current["when"]:
-                current["when"] = when
+                current["when"] = ev.when
         current["records"] += 1
     return segs
 
@@ -353,11 +432,11 @@ def segments_of(items, first_line, fmt, carry_turn, own_sidechain=False):
 def events_text(line):
     m = _USER_LINE.match(line)
     if m:
-        return ("user", m.group(2), [], "", "", None, True) if m.group(2).strip() else (None, "", [], "", "", None, False)
+        return Ev("user", m.group(2), opener=True) if m.group(2).strip() else NOTHING
     m = _ASSISTANT_LINE.match(line)
     if m:
-        return "assistant", m.group(2), [], "", "", None, False
-    return ("assistant", line, [], "", "", None, False) if line.strip() else (None, "", [], "", "", None, False)
+        return Ev("assistant", m.group(2))
+    return Ev("assistant", line) if line.strip() else NOTHING
 
 
 def messages_json_items(path, index):
@@ -380,6 +459,11 @@ def messages_json_items(path, index):
 
 # ----------------------------------------------------------------------------------------------- rows
 
+def oneline(text, limit):
+    text = re.sub(r"\s+", " ", str(text or "")).strip()
+    return text if len(text) <= limit else text[:limit - 1] + "…"
+
+
 def squash(text, limit):
     text = re.sub(r"[ \t]+", " ", text).strip()
     text = re.sub(r"\n{3,}", "\n\n", text)
@@ -394,7 +478,7 @@ def compose(seg, agent, session, project):
     lines = [head]
     if seg["user"]:
         lines.append("사용자: " + squash("\n".join(seg["user"]), USER_CHARS))
-    for line in seg["events"][:8]:
+    for line in seg["events"][:12]:
         lines.append(line)
     if seg["assistant"]:
         lines.append("어시스턴트: " + squash("\n".join(seg["assistant"]), ASSISTANT_CHARS))
@@ -408,6 +492,11 @@ def compose(seg, agent, session, project):
             last = t
         shown = tools[:TOOL_LINES]
         lines.append("도구: " + " · ".join(shown) + (f" · (+{len(tools) - len(shown)})" if len(tools) > len(shown) else ""))
+    for line in seg.get("results", [])[:8]:
+        lines.append("결과: " + line)
+    u = seg.get("usage") or {}
+    if u.get("context_peak"):
+        lines.append(f"토큰: 문맥 최대 {u['context_peak']:,} · 출력 {u.get('output', 0):,}")
     return "\n".join(lines)[:TEXT_CHARS]
 
 
@@ -435,6 +524,8 @@ def row_of(seg, path, fmt, agent, session, project, stat):
     metadata = dict(kind=KIND, project=project, agent=agent, session=str(session or ""), turn=int(seg["turn"]), part=seg["part"],
                     path=os.path.abspath(path).replace("\\", "/"), lines=list(seg["lines"]), date=(seg["when"] or "")[:10] or time.strftime("%Y-%m-%d"),
                     model=seg["model"], tools=sorted({t.split(" ", 1)[0] for t in seg["tools"]})[:12], records=seg["records"],
+                    tokens=dict(seg.get("usage") or {}), errors=sum(1 for e in seg["events"] if e.startswith("[도구 오류")),
+                    rejected=sum(1 for e in seg["events"] if e.startswith("[사용자 거부")),
                     producer=PRODUCER, user=USER, origin=origin)
     args = dict(request_id=f"transcript:{sha12(metadata['path'])}:{seg['lines'][0]}-{seg['lines'][1]}"[:128], text=text,
                 source=source[:1024], revision=span_digest[:12], outcome="pending", cues=[], metadata=metadata)
@@ -451,7 +542,7 @@ def row_of(seg, path, fmt, agent, session, project, stat):
 
 
 def has_content(seg):
-    return bool(seg["user"] or seg["assistant"] or seg["tools"] or seg["events"] or seg["delegate"])
+    return bool(seg["user"] or seg["assistant"] or seg["tools"] or seg["events"] or seg["delegate"] or seg.get("results"))
 
 
 # ----------------------------------------------------------------------------------------------- one run
@@ -725,12 +816,14 @@ def cli(argv):
     if a.watch or a.backfill:
         pattern = a.watch or a.backfill
         while True:
-            paths = sorted(glob.glob(pattern, recursive=True))
+            paths = [p for p in sorted(glob.glob(pattern, recursive=True)) if is_conversation_log(p)]
             for path in paths:
-                agent = a.agent or ("claude-code" if (a.format or detect_format(path)) == "claude-code" else os.path.basename(os.path.dirname(path)) or "agent")
+                fmt = a.format or detect_format(path)
+                agent = a.agent or ("claude-code" if fmt == "claude-code" else os.path.basename(os.path.dirname(path)) or "agent")
+                session = a.session or (os.path.basename(path).rsplit(".", 1)[0] if fmt == "claude-code" and is_subagent_log(path) else None)
                 while True:
-                    rec = run(path, trigger="backfill" if a.backfill else "watch", agent=agent, session=a.session, cwd=a.cwd, project=a.project,
-                              fmt=a.format, force_cut=a.cut)
+                    rec = run(path, trigger="backfill" if a.backfill else "watch", agent=agent, session=session, cwd=a.cwd, project=a.project,
+                              fmt=fmt, force_cut=a.cut)
                     print(json.dumps(rec, ensure_ascii=False))
                     if not (a.backfill and rec.get("backlog") and rec.get("rows")):
                         break

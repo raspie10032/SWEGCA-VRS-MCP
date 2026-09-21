@@ -214,3 +214,42 @@ def test_hook_entry_routes_events_and_sweeps_a_dead_session(sandbox, monkeypatch
                                                         "transcript:claude-code/dead#1-2", "transcript:claude-code/dead#3-3"}
     finally:
         d.close()
+
+
+def test_after_compaction_the_cut_turn_comes_from_the_store(sandbox, monkeypatch):
+    """Item 15 (2026-09-21): what SessionStart injects after a compaction is the store's experience of the cut
+    turns — with their place in the log — not the log re-read and not only the hand-written session log."""
+    from swegca_vrs2.harness import session_start
+    log = str(sandbox / "s5.jsonl")
+    write(log, [rec("user", "표를 만들어 줘 열 셋"), rec("assistant", "만들었다 열 셋"),
+                rec("user", "이제 정렬해 줘 날짜순"), rec("assistant", "정렬하는 중 날짜순", tools=[("Edit", dict(file_path="C:/work/proj/table.py"))])])
+    d = Daemon(sandbox / "store", allow_ingest=True, idle_seconds=3600)
+    try:
+        t.run(log, trigger="precompact", project="proj", force_cut=True, client=Via(d))
+        write(log, [boundary(), rec("assistant", "정렬했다 날짜순 완료")], mode="a")
+        page = d.handle(dict(command="turns", session="s1", limit=3))
+        assert [r["turn"] for r in page["rows"]] == [1, 2] and page["rows"][-1]["part"] == "partial" and page["rows"][-1]["lines"] == [3, 4]
+        assert "정렬하는 중 날짜순" in page["rows"][-1]["text"] and page["rows"][-1]["path"] == log.replace(chr(92), "/")
+        # rows the tail sent after the boundary are not the cut turn: before_line keeps the store honest
+        t.run(log, trigger="stop", project="proj", client=Via(d))
+        after = d.handle(dict(command="turns", session="s1", limit=5))
+        assert [(r["turn"], r["part"]) for r in after["rows"]] == [(1, "whole"), (2, "partial"), (2, "tail")]
+        only_before = d.handle(dict(command="turns", session="s1", limit=5, before_line=5))
+        assert [(r["turn"], r["part"]) for r in only_before["rows"]] == [(1, "whole"), (2, "partial")]
+        # the SessionStart hook's block: from the daemon, each turn with the exact Read call
+        import swegca_vrs2.loopback as loopback
+        monkeypatch.setattr(loopback, "ensure_daemon", lambda *a, **k: Via(d))
+        block, count = session_start.cut_turns("s1")
+        assert count == 3 and "압축 직전 대화 — 스토어의 마지막 3턴" in block
+        assert "[압축 전 미완 — 여기서 잘렸다]" in block and f'원문 위치: Read file_path="{log.replace(chr(92), "/")}" offset=3 limit=2' in block
+        assert "정렬하는 중 날짜순" in block
+        # no session, or no daemon: a named miss, never a blocked start
+        assert session_start.cut_turns("") == ("", 0)
+
+        def down(*a, **k):
+            raise RuntimeError("down")
+        monkeypatch.setattr(loopback, "ensure_daemon", down)
+        assert session_start.cut_turns("s1") == ("", 0)
+    finally:
+        d.close()
+

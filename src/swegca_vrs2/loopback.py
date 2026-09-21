@@ -43,7 +43,7 @@ START_STALE = 300                    # seconds after which a start marker is ign
 RESIDENT_COMMANDS = {'status', 'cognitive_dialogue_start', 'cognitive_dialogue_continue',
                      'cognitive_dialogue_evidence_open', 'cognitive_dialogue_evidence',
                      'cognitive_dialogue_release'}
-LOCAL_COMMANDS = {'hook_recall', 'evidence_of', 'origins', 'bundles', 'lookup', 'evict', 'ingest', 'ingest_many', 'checkpoint', 'compact', 'consolidate', 'refine', 'ping', 'shutdown', 'usage', 'alias'}
+LOCAL_COMMANDS = {'hook_recall', 'evidence_of', 'origins', 'turns', 'bundles', 'lookup', 'evict', 'ingest', 'ingest_many', 'checkpoint', 'compact', 'consolidate', 'refine', 'ping', 'shutdown', 'usage', 'alias'}
 
 
 # ── client ────────────────────────────────────────────────────────────
@@ -291,6 +291,44 @@ def origins(main, arguments):
     return dict(status='ok', count=len(rows), rows=rows, next=next_row, total=count)
 
 
+def turns(main, arguments):
+    """The last ``limit`` conversation turns of one session as the store holds them (real-time transcript rows,
+    2026-09-21; lock-free read): what the SessionStart hook injects after a compaction — the experience of the
+    cut turn with its place in the log, from the store, not from the log. ``before_line`` keeps only rows whose
+    span starts before that log line (the boundary), so a row the tail sent after the compaction is not
+    mistaken for what was lost."""
+    memory = main.memory
+    session = str(arguments.get('session') or '')
+    limit = max(1, min(int(arguments.get('limit') or 3), 20))
+    snippet = max(200, min(int(arguments.get('snippet') or 1200), 6000))
+    before = arguments.get('before_line')
+    store = memory._store
+    ids, kind_column = store['ids'], store.get('kinds') or []
+    found = []
+    for row in range(memory.count):
+        if row < len(kind_column) and kind_column[row] != 'transcript':
+            continue
+        identifier = ids[row]
+        if identifier in memory.superseded:
+            continue
+        episode = memory.episode_light(identifier)
+        obs = episode.steps[0].observation
+        meta = obs.get('metadata') or {}
+        if meta.get('kind') != 'transcript' or (session and str(meta.get('session') or '') != session):
+            continue
+        lines = list((meta.get('origin') or {}).get('lines') or meta.get('lines') or [0, 0])
+        if before is not None and lines and int(lines[0]) >= int(before):
+            continue
+        found.append((int(meta.get('turn') or 0), int(lines[0] or 0), identifier, meta, obs.get('text', '')))
+    found.sort(key=lambda f: (f[0], f[1]))
+    rows = []
+    for turn, first, identifier, meta, text in found[-limit:]:
+        rows.append(dict(episode_id=identifier, turn=turn, part=meta.get('part'), lines=list((meta.get('origin') or {}).get('lines') or meta.get('lines') or []),
+                         path=meta.get('path'), date=meta.get('date'), agent=meta.get('agent'), session=meta.get('session'),
+                         text=text[:snippet], text_chars=len(text), origin=_plain(meta.get('origin'))))
+    return dict(status='ok', session=session, count=len(rows), rows=rows, total=len(found))
+
+
 def hook_recall(main, arguments, resident=None):
     """Short packet for hooks: top candidates with provenance and a snippet. With a resident (G7, 2026-09-19)
     the primary's rows come first (VRS, regions, re-evidence), then every other bundle's rows in its own
@@ -465,6 +503,8 @@ class Daemon:
             return dict(status='ok', episode_id=arguments.get('episode_id'), bundle=self.bundles.lookup(str(arguments.get('episode_id') or '')))
         if command == 'origins':
             return origins(self.main, arguments)
+        if command == 'turns':
+            return turns(self.main, arguments)
         if command == 'evidence_of':
             return evidence_of(self.main, arguments)
         if command in ('consolidate', 'refine'):

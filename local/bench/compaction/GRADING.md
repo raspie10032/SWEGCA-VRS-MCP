@@ -11,8 +11,28 @@
 **압축이 0회인 실행은 ②를 말할 수 없다.** 그 실행의 ① 수치를 ②의 근거로 쓰지 않는다(우리 1·2라운드가 그랬다:
 A2 911k·B2 809k 토큰, 둘 다 압축 0 → 장부의 이점은 「긴 무압축 실행에서 위치를 안 잃는다」 쪽 관측이지 ②가 아니다).
 
-조건 = **모델 × 장부(A: 없음 / B: `progress.txt`) × 압축 문턱(`--autocompact N` 또는 `autoCompactWindow`)**.
+조건 = **모델 × 장부(A: 없음 / B: `progress.txt`) × 압축 문턱(`--autocompact N` 또는 `autoCompactWindow`) × VRS(있음/없음)**.
 같은 과제 카드·같은 입력(해시 동일)·같은 truth 로만 비교한다.
+
+## 0. 대전제 관문 — 이것을 못 지키는 실행은 채점하지 않는다 (2026-09-21)
+
+사용자 대전제: **모든 경험은 swegca-vrs 를 통해 경험으로 들어가고, 불러오는 것도 단순 로그가 아니라 경험을 통해
+정확한 위치를 불러온다. 실시간이 아니면 연속성은 「유지 못 함」이 아니라 「없음」이다. 대전제를 무시한 테스트는 즉시 파기한다.**
+
+채점기는 실행마다 먼저 이것을 판정하고, 통과한 실행만 ②를 계산한다:
+
+| 검사 | 근거 | 통과 조건 |
+| --- | --- | --- |
+| `vrs_tail` | `~/.claude/hooks/vrs2_tail.log` — 그 실행의 전사(`path`)에 대한 영수증 | 경계 `b_i` 마다, `ts` 가 경계 시각보다 **앞**이고 `lines[1]` 이 경계 직전 레코드 줄 이상인 영수증(`trigger` = `precompact` 또는 `stop`/`subagent_stop`)이 있다. 마지막 경계 뒤에도 `stop` 영수증이 하나 이상 |
+| `vrs_recall` | `~/.claude/hooks/recall_context.log` — 그 세션의 영수증 | 경계 뒤 첫 프롬프트에 회수 훅이 돌았다(`injected` 또는 `skip` 어느 쪽이든 **영수증이 있다**; 없으면 훅이 안 물린 실행) |
+| `vrs_rows` | 데몬 `origins kinds=["transcript"]` | 그 세션 id 의 대화 행이 있고, 경계 직전 턴의 행(`part` = `partial` 또는 `whole`)이 있다 |
+
+셋 다 통과 → `vrs = 1`. 하나라도 아니면 그 실행은 **「VRS 없음」** 으로 표기하고 ②(§5)는 계산하지 않는다 — ① 수치는 보고하되
+「연속성」이라는 말을 그 실행에 붙이지 않는다. **회수 훅·유입 훅이 물리지 않는 실행 방식(도구를 Read/Write/Edit 로 제한한
+서브에이전트, 훅 없는 헤드리스 실행)은 처음부터 「VRS 없음」 조건이다** — 그런 실행의 ② 는 층이 아니라 모델의 습관을 잰
+것이고, 그것을 층의 결과로 적으면 대전제 위반이다. 우리 1·2라운드(A2·B2)가 그랬다(§10).
+
+이 절은 §5 보다 먼저 구현한다. 관문 없이 ② 를 계산하는 채점기는 파기한다.
 
 ---
 
@@ -120,12 +140,16 @@ text30 정규화(비교에만 씀): NFC → `**`·백틱 제거 → 앞의 공�
 | `items_lost` | 정수 + 구간 | truth 의 missing 가운데 **경계에 걸친 청크**(직전에 Read 하고 그 뒤에야 Write 했거나 끝내 안 쓴 청크) 구간에 속한 것. 다른 곳의 missing 은 ①에만 센다 |
 | `goal_restated` | 0/1 | 경계 뒤 첫 어시스턴트 본문이 과제(항목 뽑기·CSV·청크·제외 날짜)를 언급하나 — **참고만** |
 | `pre_tokens`, `post_tokens`, `trigger` | 그대로 | 경계 메타데이터 |
+| `vrs_tail_before` | 0/1 | §0 `vrs_tail` — 이 경계 앞까지의 턴이 경계 **전에** 스토어에 들어갔나(영수증 `ts` < 경계 시각, `lines[1]` ≥ 경계 직전 줄) |
+| `vrs_recall_after` | 정수 | 경계 뒤 창에서 회수 훅이 주입한 횟수(`recall_context.log` `injected`), 그중 대화 행(`대화 —`)이 든 횟수를 괄호로 |
+| `vrs_turn_opened` | 0/1 | 경계 뒤 창에서 주입된 대화 행의 「원문 위치」 Read 를 실제로 불렀나(`memory_use_log`) — 참고 |
 
 관측 한 줄(`observations.jsonl`):
 ```
 {"run": "...", "model": "...", "ledger": "A|B", "boundary": i, "trigger": "auto", "pre_tokens": 512345,
  "expected_next": ["SQLITE", 1401], "first_read": ["SQLITE", 1201], "resume": "reread", "steps_to_resume": 3,
- "constraint_kept": 1, "reasked": 0, "scope_drift": 0, "items_lost": 0, "lost_ranges": [], "goal_restated": 1}
+ "constraint_kept": 1, "reasked": 0, "scope_drift": 0, "items_lost": 0, "lost_ranges": [], "goal_restated": 1,
+ "vrs": 1, "vrs_tail_before": 1, "vrs_recall_after": 2, "vrs_turn_opened": 1}
 ```
 
 ### 5-3. 집계
@@ -153,9 +177,11 @@ text30 정규화(비교에만 씀): NFC → `**`·백틱 제거 → 앞의 공�
 ## 8. 실행 하나의 최종 표
 
 ```
-run  model  ledger  autocompact | recall  missing  gaps  spurious(off1)  excl_viol  dup  fmt  chunks | scan_tools  outside_writes  reasked
-     | compactions  resume_correct/n  steps  constraint_kept/n  items_lost | tokens_total  context_peak  duration
+run  model  ledger  autocompact  vrs | recall  missing  gaps  spurious(off1)  excl_viol  dup  fmt  chunks | scan_tools  outside_writes  reasked
+     | compactions  resume_correct/n  steps  constraint_kept/n  items_lost  vrs_tail_before/n  vrs_recall_after | tokens_total  context_peak  duration
 ```
+
+`vrs` 열이 0 이면 ② 열은 비워 두고 「VRS 없음」이라 적는다(§0).
 
 같은 셀(조건)에 실행이 하나뿐이면 「1회」라고 적고 결론을 내리지 않는다. recall 차이 **1 % 미만(≈7 항목)은 소음**이다.
 A 대 B 비교는 같은 모델·같은 문턱에서만.
@@ -183,6 +209,10 @@ A 대 B 비교는 같은 모델·같은 문턱에서만.
 | B2 (장부, 소넷) | **0.9986** (737/738) | 1 / `ME:644` | 1 (ME:643 — 644 와 off-by-one 1쌍) | 0 | 0 | 0 | 15/15 | 736/737 | 403/737 | 747 | 0 |
 
 (2026-09-21 에 기존 `score.py` 로 다시 돌려 확인한 값. text30 열이 낮은 것이 §9-2 의 이유다.)
+
+**A2·B2 는 둘 다 「VRS 없음」 실행이다** — `sonnet-medium` 서브에이전트에 Read/Write/Edit 만 주어 회수 훅도 유입 훅도 물리지
+않았고, 압축도 0회였다. 앵커로 쓰는 것은 ① 채점기의 정확성뿐이다. 이 두 실행에서 연속성·압축 유지력에 대해 말할 수 있는
+것은 없다(§0). 로그·메모리에 남은 A2/B2 수치를 층의 결과로 읽지 않는다.
 
 앵커가 안 맞으면 채점기부터 고친다. 그 다음에야 새 모델·새 조건을 돌린다.
 

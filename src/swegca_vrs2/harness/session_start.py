@@ -82,12 +82,54 @@ def context_for(cwd, source, session_id=None):
         tail, count = tail_entries(lines, ENTRIES, MAX_CHARS)
         head = ("[기억] 이 프로젝트 세션 로그의 마지막 항목이다. 「다음」이 적혀 있으면 "
                 "그것이 이어서 할 일이다. 사용자가 다른 것을 시키면 그쪽이 먼저다.\n")
-    if not tail:
+    if not tail and not compact:
         receipt(source=source, log="no_entries")
         return None
-    context = head + f"=== {os.path.basename(log)} 마지막 {count}항목 ===\n" + tail
-    receipt(source=source, entries=count, chars=len(context), session=str(session_id or "")[:8])
+    context = head + (f"=== {os.path.basename(log)} 마지막 {count}항목 ===\n" + tail if tail else "")
+    turns_block, turns_count = ("", 0)
+    if compact:
+        # 2026-09-21 (대전제): the turns the compaction cut, as the STORE holds them — the experience with its
+        # place in the log — not the log re-read, not only what the main chose to write about them
+        turns_block, turns_count = cut_turns(session_id)
+        if turns_block:
+            context = context.rstrip("\n") + "\n" + turns_block
+    receipt(source=source, entries=count, turns=turns_count, chars=len(context), session=str(session_id or "")[:8])
     return context
+
+
+TURNS = 3            # cut turns injected after a compaction
+TURN_CHARS = 1400    # per turn; the row keeps up to 6,000, the 「원문 위치」 line opens the rest
+
+
+def cut_turns(session_id):
+    """(text block, count): the last turns of this session from the store, each with its exact place in the log.
+    Never raises; a daemon that is not up is a named miss in the receipt, not a blocked start."""
+    if not session_id:
+        return "", 0
+    try:
+        from .paths import STATE, PYTHON, BUNDLE_LIMIT, BUNDLES, HOT_BUNDLES
+        from swegca_vrs2.loopback import ensure_daemon
+        client = ensure_daemon(STATE, allow_ingest=False, python=PYTHON, wait_seconds=6, bundle_limit=BUNDLE_LIMIT, bundles=BUNDLES, hot_bundles=HOT_BUNDLES)
+        try:
+            page = client.request("turns", session=str(session_id), limit=TURNS, snippet=TURN_CHARS)
+        finally:
+            client.close()
+    except Exception as error:
+        receipt(source="compact", turns_miss=repr(error)[:120])
+        return "", 0
+    rows = page.get("rows") or []
+    if not rows:
+        return "", 0
+    lines = [f"=== 압축 직전 대화 — 스토어의 마지막 {len(rows)}턴 (세션 {str(session_id)[:8]}; 「원문 위치」로 그 자리를 연다) ==="]
+    for r in rows:
+        part = {"partial": " [압축 전 미완 — 여기서 잘렸다]", "tail": " [이어짐]"}.get(r.get("part"), "")
+        lines.append(f"- 턴 {r.get('turn')}{part}")
+        lines.append("  " + str(r.get("text") or "")[:TURN_CHARS].replace("\n", "\n  "))
+        span = r.get("lines") or []
+        if r.get("path") and len(span) == 2:
+            lines.append(f'  원문 위치: Read file_path="{r["path"]}" offset={span[0]} limit={max(1, min(60, int(span[1]) - int(span[0]) + 1))}'
+                         + (f"  (전문 {r.get('text_chars')}자: swegca-vrs2 memory_read {r.get('episode_id')})" if int(r.get("text_chars") or 0) > TURN_CHARS else ""))
+    return "\n".join(lines) + "\n", len(rows)
 
 
 def main():
