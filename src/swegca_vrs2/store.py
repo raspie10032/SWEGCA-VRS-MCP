@@ -798,7 +798,12 @@ class Main:
     def __init__(self, state_dir, *, allow_ingest=False, bundle_limit=None, defer_checkpoints=False):
         self.directory = Path(state_dir).expanduser().resolve()
         self.directory.mkdir(parents=True, exist_ok=True)
-        self.lock = FileLock(self.directory / 'owner.lock')
+        # Resident eviction checkpoints and closes an owner on a background
+        # thread.  FileLock's default thread-local context cannot release a lock
+        # acquired by the request thread from that closer thread, leaving the
+        # shard permanently owned.  The owner itself is process-global and all
+        # mutations are serialized by the daemon, so use a shared lock context.
+        self.lock = FileLock(self.directory / 'owner.lock', thread_local=False)
         try:
             self.lock.acquire(timeout=0)
         except Timeout:

@@ -436,13 +436,15 @@ class Daemon:
         from .server import LocalResident
         from .store import Main
         from .resident import Resident
+        from .sharded import ShardedMain
         self.state_dir = Path(state_dir)
         self.main = Main(self.state_dir, allow_ingest=allow_ingest, bundle_limit=bundle_limit,
                          defer_checkpoints=True)
-        self.resident = LocalResident(self.main)
-        # G7 resident layer (2026-09-19): the primary bundle hot, other registered bundles warm (index only)
-        # or hot by use; an ingest names its bundle, a recall reaches all of them
+        # Storage may be split, but the native MCP receives one combined main
+        # generation with global Déjà vu/Recall/Replay/Re-evidence.
         self.bundles = Resident(self.main, bundles or {}, hot_limit=hot_bundles, bundle_limit=bundle_limit)
+        self.sharded = ShardedMain(self.main, self.bundles)
+        self.resident = LocalResident(self.sharded)
         self.prepared = []                                # G8: the preparer's receipts (prefetch, bundle loads)
         self.lock = threading.Lock()
         self.idle_seconds = idle_seconds
@@ -476,7 +478,7 @@ class Daemon:
             # Session-end transfer reads the VRS journal through main. It never
             # opens a transcript or a parallel outbox database.
             with self.lock:
-                return self.main.export_observations(
+                return self.bundles.export_observations(
                     arguments.get('after_sequence', 0),
                     max_records=arguments.get('max_records', 512),
                     max_bytes=arguments.get('max_bytes', 768 * 1024))
@@ -495,16 +497,16 @@ class Daemon:
                     result['bundles'] = self.bundles.status()
                 return result
             if command == 'ingest':
-                target = self.bundles.main_for(arguments.pop('bundle', None))     # G7: routed by bundle id
+                requested = arguments.pop('bundle', None)
                 _verify_producer(arguments)                                        # signed producers: verified True/False
-                return target.ingest(arguments)
+                return self.bundles.ingest(arguments, requested)
             if command == 'ingest_many':
                 # batch generations (2026-09-18): K observations -> one generation; all-or-nothing
-                target = self.bundles.main_for(arguments.get('bundle'))
+                requested = arguments.get('bundle')
                 rows = list(arguments.get('rows') or [])
                 for row in rows:
                     _verify_producer(row)
-                return target.ingest_many(rows)
+                return self.bundles.ingest_many(rows, requested)
             if command == 'evict':
                 return dict(status='ok', evicted=self.bundles.evict(str(arguments.get('bundle') or '')))
             if command == 'alias':

@@ -9,6 +9,8 @@ generation.  Loading remains outside the judgment path; an unavailable shard is
 reported as a named miss rather than answered by a weaker algorithm.
 """
 import pickle
+import os
+import json
 import sqlite3
 import threading
 import time
@@ -17,6 +19,10 @@ from collections import OrderedDict
 from pathlib import Path
 
 from .store import CHECKPOINT_MAGIC
+
+AUTO_SHARD_RECORDS = 8_192
+MAX_STORAGE_BYTES = 500 * 1024 ** 3
+AUTO_SHARD_PREFIX = 'shard-'
 
 
 # ── immutable complete recall generation ─────────────────────────────────────
@@ -165,13 +171,184 @@ class Resident:
         self.primary = primary                            # the daemon's own Main (always hot)
         self.bundles = {str(k): Path(v) for k, v in (bundles or {}).items() if v}
         self.hot_limit = max(0, int(hot_limit))
-        self.bundle_limit = bundle_limit
+        self.bundle_limit = min(int(bundle_limit or AUTO_SHARD_RECORDS), AUTO_SHARD_RECORDS)
+        self.primary.bundle_limit = self.bundle_limit
+        self.auto_root = self.primary.directory / 'shards'
+        self.auto_root.mkdir(mode=0o700, parents=True, exist_ok=True)
+        discovered = sorted(path for path in self.auto_root.glob(AUTO_SHARD_PREFIX + '*')
+                            if (path / 'memory.sqlite3').is_file())
+        for path in discovered:
+            self.bundles.setdefault(path.name, path)
+        self.auto_ids = sorted(identifier for identifier in self.bundles
+                               if identifier.startswith(AUTO_SHARD_PREFIX)
+                               and self.bundles[identifier].parent == self.auto_root)
         self.hot = OrderedDict()                          # bundle id -> Main (owned), LRU order
         self.warm = {}                                    # bundle id -> WarmView
         self.closing = {}                                 # bundle id -> thread checkpointing + closing it
         self.wanted = set()                               # bundles a judgment missed: the preparer loads them next
         self.prepared = {}                                # bundle id -> receipt of the last prepare (ms, seq, when)
         self.lock = threading.Lock()
+
+    def _storage_bytes(self):
+        total = 0
+        for root, _, files in os.walk(self.primary.directory):
+            for name in files:
+                try:
+                    total += os.stat(Path(root) / name).st_size
+                except OSError:
+                    continue
+        return total
+
+    def _new_auto_shard(self):
+        if self._storage_bytes() >= MAX_STORAGE_BYTES:
+            raise ValueError('vrs_storage_budget_exceeded')
+        number = max((int(identifier[len(AUTO_SHARD_PREFIX):]) for identifier in self.auto_ids),
+                     default=0) + 1
+        identifier = f'{AUTO_SHARD_PREFIX}{number:06d}'
+        directory = self.auto_root / identifier
+        directory.mkdir(mode=0o700, parents=True, exist_ok=False)
+        self.bundles[identifier] = directory
+        self.auto_ids.append(identifier)
+        return identifier
+
+    def _owner_with_episode(self, identifier):
+        if not identifier:
+            return None
+        if identifier in self.primary.memory.records:
+            return self.primary
+        for shard in self.bundles:
+            owner = self.hot.get(shard)
+            if owner is not None and identifier in owner.memory.records:
+                return owner
+            view = self.warm.get(shard)
+            if view is not None and view.memory is not None and identifier in view.memory.records:
+                return self.main_for(shard)
+        return None
+
+    def _owner_with_source(self, source):
+        cue = 'source:' + str(source)
+        if self.primary.memory.episode_ids_for_cue(cue):
+            return self.primary
+        for shard in self.bundles:
+            owner = self.hot.get(shard)
+            memory = owner.memory if owner is not None else (
+                self.warm[shard].memory if shard in self.warm else None)
+            if memory is not None and memory.episode_ids_for_cue(cue):
+                return owner if owner is not None else self.main_for(shard)
+        return None
+
+    def main_for_ingest(self, row, requested=None):
+        """Route one observation without breaking original-address lineage.
+
+        Explicit routing wins.  A superseding revision follows the original
+        episode; another revision of an existing source follows that source.
+        Only a previously unseen source uses the current append shard.
+        """
+        if requested not in (None, '', 'main'):
+            return self.main_for(requested)
+        owner = self._owner_with_episode(row.get('supersedes'))
+        if owner is None:
+            owner = self._owner_with_source(row.get('source'))
+        if owner is not None:
+            return owner
+        if not self.auto_ids and self.primary.memory.episode_count < self.bundle_limit:
+            return self.primary
+        if not self.auto_ids:
+            self._new_auto_shard()
+        active = self.main_for(self.auto_ids[-1])
+        if active.memory.episode_count >= self.bundle_limit:
+            active = self.main_for(self._new_auto_shard())
+        return active
+
+    def ingest(self, row, requested=None):
+        return self.main_for_ingest(row, requested).ingest(row)
+
+    def ingest_many(self, rows, requested=None):
+        """Batch ingest with automatic capacity boundaries and stable source routing."""
+        rows = list(rows)
+        if requested not in (None, '', 'main'):
+            return self.main_for(requested).ingest_many(rows)
+        results, groups, journaled = [], [], 0
+        index = 0
+        while index < len(rows):
+            owner = self.main_for_ingest(rows[index])
+            capacity = max(1, self.bundle_limit - owner.memory.episode_count)
+            chunk = [rows[index]]
+            index += 1
+            while index < len(rows) and len(chunk) < capacity:
+                existing = (self._owner_with_episode(rows[index].get('supersedes'))
+                            or self._owner_with_source(rows[index].get('source')))
+                if existing is not None and existing is not owner:
+                    break
+                chunk.append(rows[index]); index += 1
+            receipt = owner.ingest_many(chunk)
+            results.extend(receipt['results'])
+            journaled += receipt['journaled']
+            groups.append(dict(shard='main' if owner is self.primary else
+                               next(key for key, value in self.hot.items() if value is owner),
+                               count=len(chunk), pair_snapshot_id=receipt['pair_snapshot_id']))
+        last = groups[-1]['pair_snapshot_id'] if groups else self.primary.pair.snapshot_id
+        return dict(status='observations_recorded', count=len(rows), journaled=journaled,
+                    added=sum(int(result.get('distinct_source_episode_added', 0)) for result in results),
+                    pair_snapshot_id=last, results=results, shards=groups,
+                    bundle=self.primary.bundle())
+
+    _SEQUENCE_BITS = 48
+    _SEQUENCE_MASK = (1 << _SEQUENCE_BITS) - 1
+
+    @classmethod
+    def _sequence(cls, shard_index, local_sequence):
+        return (int(shard_index) << cls._SEQUENCE_BITS) | int(local_sequence)
+
+    def export_observations(self, after_sequence=0, *, max_records=512,
+                            max_bytes=768 * 1024):
+        """Session-end export across the main and every automatic shard.
+
+        The cursor encodes ``(shard index, shard journal sequence)``.  Each row
+        still comes from that shard's VRS journal through ``Main`` and retains
+        its exact original envelope and episode address.  This path is used only
+        for ended-session assimilation, never for recall.
+        """
+        after_sequence = max(0, int(after_sequence))
+        max_records = max(1, min(int(max_records), 4096))
+        max_bytes = max(4096, min(int(max_bytes), 896 * 1024))
+        shard_index = after_sequence >> self._SEQUENCE_BITS
+        local_after = after_sequence & self._SEQUENCE_MASK
+        shard_ids = ['main', *self.auto_ids]
+        if shard_index >= len(shard_ids):
+            return dict(status='experience_export', rows=[], after_sequence=after_sequence,
+                        next_sequence=after_sequence, head_sequence=after_sequence,
+                        complete=True, grants_authority=False)
+        rows, used, next_sequence = [], 64, after_sequence
+        complete = False
+        while shard_index < len(shard_ids):
+            if rows and max_bytes - used < 4096:
+                break
+            identifier = shard_ids[shard_index]
+            owner = self.primary if identifier == 'main' else self.main_for(identifier)
+            page = owner.export_observations(local_after,
+                max_records=max_records - len(rows), max_bytes=max_bytes - used)
+            for item in page['rows']:
+                size = len(json.dumps(item['observation'], ensure_ascii=False,
+                                      separators=(',', ':')).encode('utf-8')) + 64
+                item = dict(item)
+                item['sequence'] = self._sequence(shard_index, item['sequence'])
+                rows.append(item); used += size
+            next_sequence = self._sequence(shard_index, page['next_sequence'])
+            if len(rows) >= max_records or used >= max_bytes or not page['complete']:
+                break
+            shard_index += 1
+            local_after = 0
+            if shard_index < len(shard_ids):
+                next_sequence = self._sequence(shard_index, 0)
+            else:
+                complete = True
+        head_sequence = next_sequence if complete else self._sequence(
+            len(shard_ids) - 1, self._SEQUENCE_MASK)
+        return dict(status='experience_export', rows=rows,
+                    after_sequence=after_sequence, next_sequence=next_sequence,
+                    head_sequence=head_sequence, complete=complete,
+                    grants_authority=False)
 
     def _close_later(self, bundle_id, main):
         """Checkpoint + close off the request thread (seconds at 5k records; the hook client times out at 5 s).
@@ -278,6 +455,9 @@ class Resident:
             return self.primary
         if bundle_id not in self.bundles:
             raise ValueError('unknown_bundle')
+        # A close thread removes itself while holding ``self.lock``.  Join it
+        # before entering that lock or an immediate reopen deadlocks.
+        self._wait_closed(bundle_id)
         with self.lock:
             main = self.hot.get(bundle_id)
             if main is not None:
@@ -286,7 +466,6 @@ class Resident:
             view = self.warm.pop(bundle_id, None)
             if view is not None:
                 view.close()
-            self._wait_closed(bundle_id)                  # a previous eviction of this bundle still checkpointing
             main = Main(self.bundles[bundle_id], allow_ingest=True, bundle_limit=self.bundle_limit,
                         defer_checkpoints=True)
             self.hot[bundle_id] = main
