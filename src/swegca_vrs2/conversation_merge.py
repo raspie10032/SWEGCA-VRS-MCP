@@ -20,7 +20,10 @@ def run(state_dir):
     except Timeout:
         return 0
     try:
-        SessionCapture(root).merge_ended()
+        capture = SessionCapture(root)
+        capture.merge_ended()
+        from .runtime_upgrade import activate_if_ready
+        activate_if_ready(capture)
     finally:
         lock.release()
     return 0

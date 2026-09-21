@@ -3,6 +3,8 @@ from pathlib import Path
 
 from swegca_vrs2.layered import LayeredMCP
 from swegca_vrs2.loopback import ensure_daemon
+from swegca_vrs2.conversation_merge import run as merge_run
+from swegca_vrs2.runtime_upgrade import arm as arm_upgrade
 from swegca_vrs2.session_capture import SessionCapture, VRSClient, handle
 
 
@@ -126,5 +128,42 @@ def test_merge_requires_end_and_preserves_original_address(tmp_path):
         with VRSClient(state, writes=False) as main:
             exported = main.export(0)
         assert [row['episode_id'] for row in exported['rows']] == addresses
+    finally:
+        stop(session_state, state)
+
+
+def test_armed_runtime_upgrade_waits_for_end_then_preserves_vrs_databases(tmp_path):
+    state, transcript = tmp_path / 'state', tmp_path / 'rollout.jsonl'
+    session = 'upgrade-session'
+    write_transcript(transcript, session, [
+        {'type': 'response_item', 'payload': {'type': 'message', 'role': 'user',
+            'content': [{'type': 'input_text', 'text': 'upgrade_unique_6262'}]}}])
+    capture = SessionCapture(state)
+    session_state = capture.session_root('codex', session)
+    try:
+        capture.scan_transcript('codex', session, transcript)
+        main_db = state / 'memory.sqlite3'
+        session_db = session_state / 'memory.sqlite3'
+        assert session_db.is_file() and not main_db.exists()
+        arm_upgrade(state)
+        assert merge_run(state) == 0
+        assert not main_db.exists()
+
+        capture.mark_ended('codex', session)
+        assert merge_run(state) == 0
+        assert main_db.is_file() and session_db.is_file()
+        assert not (state / 'exact-replay').exists()
+        assert not (session_state / 'exact-replay').exists()
+        assert not (state / 'session-capture' / 'runtime-upgrade.json').exists()
+        receipts = list((state / 'session-capture' / 'runtime-upgrades').glob('*.json'))
+        assert len(receipts) == 1
+
+        # Both old residents released ownership; the current runtime can open
+        # the preserved experiences and recreate its derived V5 directory.
+        with VRSClient(state, writes=False) as main:
+            exported = main.export(0)
+        assert 'upgrade_unique_6262' in {
+            row['observation']['text'] for row in exported['rows']}
+        assert (state / 'exact-replay' / 'capsules.vrs').is_file()
     finally:
         stop(session_state, state)
