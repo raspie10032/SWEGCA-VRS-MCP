@@ -204,3 +204,45 @@ def test_exact_replay_opens_only_target_and_same_proposition_shards(tmp_path):
     finally:
         resident.close()
         primary.close()
+
+
+def test_natural_recall_prepares_only_cue_and_proposition_shards(tmp_path):
+    primary = Main(tmp_path / "main", allow_ingest=True)
+    resident = Resident(primary, {
+        "support": tmp_path / "support",
+        "refute": tmp_path / "refute",
+        "unrelated": tmp_path / "unrelated",
+    }, hot_limit=3)
+    try:
+        support = resident.ingest(dict(request_id="support", text="희귀앵커알파 관측",
+            source="support-source", revision="1", proposition="route-claim",
+            polarity="support", outcome="success"), "support")["episode_id"]
+        refute = resident.ingest(dict(request_id="refute", text="겹치지않는 반대 관측",
+            source="refute-source", revision="1", proposition="route-claim",
+            polarity="refute", outcome="failure"), "refute")["episode_id"]
+        resident.ingest(dict(request_id="other", text="무관샤드오메가",
+            source="other-source", revision="1"), "unrelated")
+        for shard in tuple(resident.hot):
+            resident.evict(shard)
+        resident.settle()
+        sharded = ShardedMain(primary, resident)
+
+        import pytest
+        with pytest.raises(ValueError, match="complete_vrs_shards_not_ready"):
+            sharded.recall("희귀앵커알파", resident.logical_snapshot())
+        assert resident.wanted == {"support"}
+        assert "unrelated" not in resident.wanted
+        resident.prepare_all()
+        with pytest.raises(ValueError, match="complete_vrs_shards_not_ready"):
+            sharded.recall("희귀앵커알파", resident.logical_snapshot())
+        assert resident.wanted == {"refute"}
+        resident.prepare_all()
+
+        root = sharded.recall("희귀앵커알파", resident.logical_snapshot())
+        activation = root["receipt"]["activation"]
+        assert {row.episode_id for row in activation.replay.episodes} == {support, refute}
+        assert activation.re_evidence.unresolved_conflict
+        assert "unrelated" not in resident.warm and "unrelated" not in resident.hot
+    finally:
+        resident.close()
+        primary.close()

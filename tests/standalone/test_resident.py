@@ -218,6 +218,7 @@ def test_exact_backfill_progress_persists_and_covers_one_cold_shard_at_a_time(tm
         assert all(resident.exact_replay(identifier) is not None for identifier in identifiers)
         saved = json.loads((tmp_path / "main" / "exact-replay" / "backfill.json")
                            .read_text(encoding="utf-8"))
+        assert saved["schema"] == "swegca-vrs2-read-index-backfill-v2"
         assert set(saved["shards"]) == {"main", "shard-000001", "shard-000002"}
     finally:
         resident.close()

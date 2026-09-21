@@ -79,10 +79,13 @@ class ShardedMain:
     def __init__(self, primary, resident):
         self.primary, self.resident = primary, resident
 
-    def _owners(self):
+    def _owners(self, shards=None):
         owners = [('main', self.primary)]
         missing = []
+        selected = set(self.resident.ids()) if shards is None else set(shards)
         for shard in self.resident.ids():
+            if shard not in selected:
+                continue
             owner, state = self.resident.ready(shard)
             if owner is None:
                 missing.append((shard, state))
@@ -245,36 +248,51 @@ class ShardedMain:
             return self._finish_exact(query, pair_snapshot, signal, recalled, replayed,
                                       exact['shard'], through_replay_ns,
                                       exclude_kinds, region_scope)
-        owners = self._owners()
-        # Kind masks are immutable shard views.  Pair each view with the shard's
-        # complete graph; original addresses and ids do not change.
-        views = []
-        for shard, owner in owners:
-            memory = owner.memory.masked(exclude_kinds) if exclude_kinds else owner.memory
-            views.append((shard, owner, memory))
-        index = CompositeIndex([(shard, _OwnerView(owner, memory))
-                                for shard, owner, memory in views], pair_snapshot)
-
         query_cues = keys(query)
-        fanout = {cue: len(index.episode_ids_for_cue(cue)) for cue in query_cues}
-        selected = tuple(cue for cue in query_cues if fanout[cue])
-        total = max(1, index.episode_count)
-        informative = tuple(cue for cue in selected if fanout[cue] * 2 <= total)
-        propositions = set()
-        for cue in informative:
-            for identifier in index.episode_ids_for_cue(cue):
-                _, owner = index.owner_of(identifier)
-                proposition = owner.memory.proposition_of(identifier)
-                if proposition is not None:
-                    propositions.add(proposition)
-        cues = (*selected, *('proposition:' + p for p in sorted(propositions)))
-        signal0 = detect_deja_vu(index, query=query, current_cues=cues)
-        signal = DejaVuSignal(snapshot_id=pair_snapshot, query=signal0.query,
-                             current_cues=signal0.current_cues,
-                             matched_cues=signal0.matched_cues,
-                             recognition_strength=signal0.recognition_strength,
-                             candidate_count=signal0.candidate_count)
-        recalled = recall_memory(index, signal)
+        routed = self.resident.shards_for_cues(query_cues)
+
+        def activate(shard_ids):
+            owner_rows = self._owners(shard_ids)
+            # Kind masks are immutable shard views. Pair each view with the
+            # shard's complete graph; original addresses and ids do not change.
+            view_rows = []
+            for shard, owner in owner_rows:
+                memory = owner.memory.masked(exclude_kinds) if exclude_kinds else owner.memory
+                view_rows.append((shard, owner, memory))
+            composite = CompositeIndex([(shard, _OwnerView(owner, memory))
+                                        for shard, owner, memory in view_rows], pair_snapshot)
+            cue_fanout = {cue: len(composite.episode_ids_for_cue(cue)) for cue in query_cues}
+            cue_selected = tuple(cue for cue in query_cues if cue_fanout[cue])
+            global_total = max(1, self.resident.logical_record_count())
+            cue_informative = tuple(cue for cue in cue_selected
+                                    if cue_fanout[cue] * 2 <= global_total)
+            activated = set()
+            for cue in cue_informative:
+                for identifier in composite.episode_ids_for_cue(cue):
+                    _, candidate_owner = composite.owner_of(identifier)
+                    proposition = candidate_owner.memory.proposition_of(identifier)
+                    if proposition is not None:
+                        activated.add(proposition)
+            activation_cues = (*cue_selected,
+                               *('proposition:' + p for p in sorted(activated)))
+            signal0 = detect_deja_vu(composite, query=query, current_cues=activation_cues)
+            deja_vu = DejaVuSignal(snapshot_id=pair_snapshot, query=signal0.query,
+                current_cues=signal0.current_cues, matched_cues=signal0.matched_cues,
+                recognition_strength=signal0.recognition_strength,
+                candidate_count=signal0.candidate_count)
+            return (owner_rows, view_rows, composite, cue_fanout, cue_selected,
+                    cue_informative, activated, activation_cues, deja_vu,
+                    recall_memory(composite, deja_vu), global_total)
+
+        (owners, views, index, fanout, selected, informative, propositions,
+         cues, signal, recalled, total) = activate(routed)
+        closure_shards = set(routed)
+        for proposition in propositions:
+            closure_shards.update(self.resident.exact.proposition_shards(proposition))
+        closure_shards.discard('main')
+        if closure_shards != (set(routed) - {'main'}):
+            (owners, views, index, fanout, selected, informative, propositions,
+             cues, signal, recalled, total) = activate(closure_shards)
         # Re-evidence always compares explicit propositions carried by the
         # activated records, including tiny stores where every lexical cue is a
         # high-fanout function word and therefore opens no additional closure.
@@ -287,7 +305,7 @@ class ShardedMain:
 
         idf = {cue: math.log(1.0 + (total - fanout[cue] + 0.5) / (fanout[cue] + 0.5))
                for cue in informative}
-        cue_total = sum(memory.cue_total for _, _, memory in views)
+        cue_total = self.resident.logical_cue_total()
         average = cue_total / total if total else 1.0
         query_tokens = [token.casefold() for token in re.findall(r'\w+', query)]
         local_roots = {shard: owner.recall(query, None, exclude_kinds=exclude_kinds,
@@ -381,7 +399,7 @@ class ShardedMain:
                     path.update(path='cross_shard_portal', portal=portal['regions'],
                                 via=portal['keys'][0])
                     break
-        return dict(record_count=index.episode_count, receipt={'activation': receipt},
+        return dict(record_count=self.resident.logical_record_count(), receipt={'activation': receipt},
             memory_selection=dict(candidate_counts=fanout, selected_cues=cues,
                 rejected_cues=tuple(cue for cue in query_cues if cue not in selected),
                 function_word_cues=tuple(cue for cue in selected if cue not in informative),

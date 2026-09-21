@@ -20,6 +20,7 @@ from pathlib import Path
 
 from .store import CHECKPOINT_MAGIC, digest
 from .exact_replay import ExactReplayStore
+from .cue_shards import CueShardDirectory
 
 AUTO_SHARD_RECORDS = 8_192
 MAX_STORAGE_BYTES = 500 * 1024 ** 3
@@ -186,12 +187,15 @@ class Resident:
                                if identifier.startswith(AUTO_SHARD_PREFIX)
                                and self.bundles[identifier].parent == self.auto_root)
         self.exact = ExactReplayStore(self.primary.directory / 'exact-replay')
+        self.cue_shards = CueShardDirectory(self.exact.directory / 'cue-shards')
         self.exact_progress_path = self.exact.directory / 'backfill.json'
         self.exact_progress_lock = threading.Lock()
         self.exact_backfill = self._load_exact_progress()
-        self.exact_backfill.setdefault('main', dict(count=0, tail=None))
+        self.exact_backfill.setdefault('main', dict(count=0, tail=None,
+            cue_total=0, complete=(self.primary.memory.episode_count == 0)))
         self.pair_ids = {'main': self.primary.pair.snapshot_id}
         self.record_counts = {'main': self.primary.memory.episode_count}
+        self.cue_totals = {'main': self.primary.memory.cue_total}
         for identifier, directory in self.bundles.items():
             try:
                 db = _connect(directory)
@@ -203,6 +207,7 @@ class Resident:
                 progress = self.exact_backfill.get(identifier, {})
                 if progress.get('complete'):
                     self.record_counts[identifier] = int(progress.get('count', 0))
+                    self.cue_totals[identifier] = int(progress.get('cue_total', 0))
             except sqlite3.Error:
                 continue
         self._pair_lock = threading.Lock()
@@ -222,7 +227,7 @@ class Resident:
     def _load_exact_progress(self):
         try:
             body = json.loads(self.exact_progress_path.read_text(encoding='utf-8'))
-            if body.get('schema') != 'swegca-vrs2-exact-backfill-v1':
+            if body.get('schema') != 'swegca-vrs2-read-index-backfill-v2':
                 return {}
             progress = {}
             for shard, row in body.get('shards', {}).items():
@@ -230,13 +235,14 @@ class Resident:
                 tail = row.get('tail')
                 progress[str(shard)] = dict(count=count,
                     tail=tail if isinstance(tail, str) else None,
+                    cue_total=max(0, int(row.get('cue_total', 0))),
                     complete=bool(row.get('complete', False)))
             return progress
         except (OSError, ValueError, TypeError, json.JSONDecodeError):
             return {}
 
     def _save_exact_progress(self):
-        body = dict(schema='swegca-vrs2-exact-backfill-v1', shards=self.exact_backfill)
+        body = dict(schema='swegca-vrs2-read-index-backfill-v2', shards=self.exact_backfill)
         temporary = self.exact_progress_path.with_suffix('.tmp')
         temporary.write_text(json.dumps(body, ensure_ascii=False, sort_keys=True,
                                         separators=(',', ':')), encoding='utf-8')
@@ -258,6 +264,7 @@ class Resident:
         with self.exact_progress_lock:
             self.exact_backfill[shard] = dict(
                 count=count, tail=(ids[count - 1] if count else None),
+                cue_total=owner.memory.cue_total,
                 complete=(count >= owner.memory.episode_count))
             self._save_exact_progress()
 
@@ -324,6 +331,9 @@ class Resident:
         directory.mkdir(mode=0o700, parents=True, exist_ok=False)
         self.bundles[identifier] = directory
         self.auto_ids.append(identifier)
+        self.exact_backfill[identifier] = dict(count=0, tail=None, cue_total=0, complete=True)
+        self.record_counts[identifier] = 0
+        self.cue_totals[identifier] = 0
         return identifier
 
     def _xor_pair_component(self, shard, pair):
@@ -339,6 +349,7 @@ class Resident:
         shard, pair = str(shard), owner.pair.snapshot_id
         with self._pair_lock:
             self.record_counts[shard] = owner.memory.episode_count
+            self.cue_totals[shard] = owner.memory.cue_total
             previous = self.pair_ids.get(shard)
             if previous == pair:
                 return
@@ -355,6 +366,22 @@ class Resident:
 
     def logical_record_count(self):
         return sum(self.record_counts.values())
+
+    def logical_cue_total(self):
+        return sum(self.cue_totals.values())
+
+    def read_directory_complete(self):
+        return all(bool(self.exact_backfill.get(shard, {}).get('complete'))
+                   for shard in ('main', *self.ids())
+                   if shard == 'main' or (self.bundles[shard] / 'memory.sqlite3').is_file())
+
+    def shards_for_cues(self, cues):
+        if not self.read_directory_complete():
+            raise ValueError('cue_shard_directory_not_ready')
+        result = set()
+        for cue in cues:
+            result.update(self.cue_shards.shards_for(cue))
+        return result
 
     def _owner_with_episode(self, identifier):
         if not identifier:
@@ -491,6 +518,7 @@ class Resident:
         episode = memory.episode(identifier)
         shard = self._shard_of(owner)
         self.exact.put(identifier, shard, episode)
+        self.cue_shards.put_many(episode.cues, shard)
         for source in episode.source_addresses:
             self.exact.put_source(source, shard)
         proposition = episode.steps[0].observation.get('proposition_id')
@@ -532,6 +560,7 @@ class Resident:
                     identifier = ids[row]
                     episode = owner.memory.episode(identifier)
                     added += int(self.exact.put(identifier, shard, episode))
+                    self.cue_shards.put_many(episode.cues, shard)
                     for source in episode.source_addresses:
                         self.exact.put_source(source, shard)
                     proposition = episode.steps[0].observation.get('proposition_id')
@@ -738,8 +767,13 @@ class Resident:
             view = self.warm.pop(bundle_id, None)
             if view is not None:
                 view.close()
+            existed = (self.bundles[bundle_id] / 'memory.sqlite3').is_file()
             main = Main(self.bundles[bundle_id], allow_ingest=True, bundle_limit=self.bundle_limit,
                         defer_checkpoints=True)
+            if not existed:
+                self.exact_backfill[bundle_id] = dict(count=0, tail=None, cue_total=0, complete=True)
+                self.record_counts[bundle_id] = 0
+                self.cue_totals[bundle_id] = 0
             self.hot[bundle_id] = main
             self.wanted.discard(bundle_id)
             self.refresh_pair(bundle_id, main)
