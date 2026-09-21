@@ -932,3 +932,33 @@ newer of the two for `quiet` and the sweep's idle; and the sweep at a fixed 60 s
 30 s line. Backfill of the nine existing conversations: 102 turns, 0 errors; recall put four Antigravity
 turns in the top 10 for a question about the staging database, verified and signed.
 
+#### Driving Antigravity from the terminal, and what the continuity test showed (2026-09-21 15:0x → 15:3x)
+
+The language server has an `agentapi` (`language_server.exe agentapi new-conversation | send-message |
+get-conversation-metadata`) that takes the address, CSRF token and project id from the environment
+(`ANTIGRAVITY_LS_ADDRESS`, `ANTIGRAVITY_CSRF_TOKEN` — read from the running process, never printed —
+`ANTIGRAVITY_PROJECT_ID`); projects are plain JSON in `~/.gemini/config/projects/<id>.json` (name, folder, policies).
+`local/tools/agy.py` wraps it, `ag_run.py` sends a prompt and waits for the database to go quiet. The sealed card
+(`local/bench/continuity/antigravity-card-1.md`) ran through it: conversation A (goal + four constraints, two
+decisions, stop before running), then two new conversations asking the same four questions, B1 without VRS and
+B2 told to use the swegca-vrs2 MCP.
+
+Three things the run exposed (none found by suspicion):
+
+- `send-message` arrives as step type **101** — "Message from System", text at field 114.2.10.1, sender at
+  114.4.3 — not the type-14 user step the chat box writes. The adapter dropped it, so the second and third turns
+  entered as wordless answers. Type 101 now opens a turn (`[메시지·system] …`); its `task_notification` sub-kind
+  (114.3), a background command's result, stays a tool result.
+- After that fix the state was reset and every re-cut turn met `request_id_reused_with_different_content`; the
+  tail stayed at line 1 (the reindex's old trap). `reissue_row` gives the re-cut row an id and revision of its own
+  (`+sha8(text)`), re-signs it and supersedes the row the old id stands for; the receipt says `reissued`.
+- B1 was not "no memory": Antigravity writes `brain/<cid>/.system_generated/logs/transcript.jsonl` (one line
+  per step, plain `content`) and the agent — reciting constraint ④ in its answer — went outside the workspace
+  seven times to find and read the previous conversation's file. B2's condition was off too: `mcp_config.json`
+  is not hot-loaded (the tools were not registered in the session), so the agent found the config, spawned
+  the server itself through a client script, got conversation A's turns on the first page for three of four
+  queries, and still parsed `transcript.jsonl` with seven scripts (≈25 reads outside the workspace). Both scored
+  10/10 on the card; the scope column is where they differ, and the VRS-with-registered-tools condition (B2′)
+  is still to be measured. `transcript.jsonl` is a candidate simpler source for the tail (JSONL, line-addressable,
+  opened by Read) — not switched.
+

@@ -62,6 +62,18 @@ def tool_step(secs, kind, name, args):
     return kind, pb({1: kind, 4: 3, 5: meta(secs, (name, args))})
 
 
+def message_step(secs, text, sender="system"):
+    """agentapi send-message: type 101, 'Message from System' with the text at 114.2.10.1 / 114.4.4."""
+    return 101, pb({1: 101, 4: 3, 5: meta(secs), 114: {1: f"[Message] sender={sender} content={text}", 2: {1: "Message from System", 10: {1: text}},
+                                                        4: {1: "845c69fe", 3: sender, 4: text, 10: {1: "Message from System"}}}})
+
+
+def task_notification_step(secs, cid, task, text):
+    """type 101 too, sub-kind 114.3 = task_notification: a background command's result, sender '<cid>/task-N'."""
+    return 101, pb({1: 101, 4: 3, 5: meta(secs), 114: {1: f"[Message] sender={cid}/{task} content={text}", 2: {1: "finished", 10: {1: text}},
+                                                        3: "task_notification", 4: {1: "20239aed", 3: f"{cid}/{task}", 4: text}}})
+
+
 def checkpoint_step(secs):
     return 98, pb({1: 98, 4: 3, 5: meta(secs)})
 
@@ -188,3 +200,44 @@ def test_a_wal_file_being_written_keeps_the_turn_open(tmp_path):
     os.utime(path + "-wal", (time.time() - 30, time.time() - 30))
     assert t.run(path, trigger="cli", project="proj", dry_run=True)["rows"] == 1   # quiet now: taken whole
 
+
+def test_a_message_delivered_by_send_message_opens_a_turn_with_its_words(tmp_path):
+    """Continuity test 2026-09-21: the follow-ups sent through the language server's agentapi are step type 101
+    ('Message from System'), not the user step the chat box writes — they went in wordless until this."""
+    path = str(tmp_path / "msg.db")
+    make_db(path, [user_step(T0, "load.py 를 만들어"), tool_step(T0 + 1, 21, "run_command", {"CommandLine": "Get-ChildItem"}),
+                   task_notification_step(T0 + 2, "cid", "task-1", 'Task id "cid/task-1" finished with result: exit 0'), answer_step(T0 + 3, "만들었다"),
+                   message_step(T0 + 60, "결정: 인코딩은 전부 utf-8-sig 로 읽어"), answer_step(T0 + 62, "utf-8-sig 로 바꿨다"),
+                   message_step(T0 + 120, "load.py 까지만 쓰고 멈춰"), answer_step(T0 + 122, "실행하지 않고 멈춘다")])
+    os.utime(path, (time.time() - 30, time.time() - 30))
+    out = t.run(path, trigger="cli", project="proj", dry_run=True)
+    assert out["rows"] == 3 and out["turns"] == [1, 2, 3]            # the task notification is a result, not a fourth turn
+    assert "task-1" not in out["texts"][0] and "run_command Get-ChildItem" in out["texts"][0]
+    assert "사용자: [메시지·system] 결정: 인코딩은 전부 utf-8-sig 로 읽어" in out["texts"][1] and "utf-8-sig 로 바꿨다" in out["texts"][1]
+    assert "사용자: [메시지·system] load.py 까지만 쓰고 멈춰" in out["texts"][2]
+
+
+def test_a_recut_turn_supersedes_the_row_the_old_id_stands_for(tmp_path, monkeypatch):
+    """2026-09-21: after the type-101 fix the state of conversation A was reset and the re-cut turns hit
+    `request_id_reused_with_different_content` — the tail stayed at line 1 (the reindex's old trap). A re-cut
+    row now gets its own id and supersedes the old row; the state advances."""
+    monkeypatch.setattr(t, "STATE_DIR", str(tmp_path / "tail"))
+    path = str(tmp_path / "recut.db")
+    make_db(path, [user_step(T0, "질문 하나를 길게 적는다"), answer_step(T0 + 2, "답")])
+    os.utime(path, (time.time() - 30, time.time() - 30))
+    d = Daemon(tmp_path / "store", allow_ingest=True, idle_seconds=3600)
+    try:
+        first = t.run(path, trigger="cli", agent="antigravity", project="proj", client=Via(d))
+        assert first["rows"] == 1 and first["sent"] == 1 and first["lines"] == [1, 2] and not first["errors"]
+        os.remove(t.state_path(path))
+        same = t.run(path, trigger="cli", agent="antigravity", project="proj", client=Via(d))
+        assert same["sent"] == 1 and not same["errors"] and "reissued" not in same       # same content: idempotent replay
+        os.remove(t.state_path(path))
+        monkeypatch.setattr(t, "USER_CHARS", 4)               # the same span 1-2, other text (the words cut shorter)
+        recut = t.run(path, trigger="cli", agent="antigravity", project="proj", client=Via(d))
+        assert not recut["errors"] and recut["sent"] == 1 and recut["reissued"] == ["1-2"] and recut["state"]["line"] == 3
+        packet = d.handle(dict(command="hook_recall", query="질문 하나 답", limit=10, snippet=300))
+        rows = [m for m in packet["memories"] if (m.get("metadata") or {}).get("kind") == "transcript"]
+        assert rows, "the rows stay recallable"
+    finally:
+        d.close()

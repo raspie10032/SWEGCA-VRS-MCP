@@ -216,8 +216,13 @@ def is_conversation_log(path):
 # Google Antigravity keeps one SQLite database per conversation (`conversations/<cascade>.db`); `steps` rows hold
 # protobuf payloads. Read on a copy? No — a read-only connection; the writer is not blocked and a locked moment
 # is retried on the next run. Legacy `.pb` trajectory dumps (before the database) are not read.
-AG_USER, AG_ASSISTANT = 14, 15
-AG_TEXT_FIELDS = {"user": (19, 2), "answer": (20, 8), "answer_alt": (20, 1), "thinking": (20, 3)}
+AG_USER, AG_ASSISTANT, AG_MESSAGE = 14, 15, 101
+# type 101: a message delivered into the conversation from outside the chat box (the language server's agentapi
+# send-message — 'Message from System', priority high); the agent acts on it like the user's words, so it opens a
+# turn, marked with its sender (the continuity test of 2026-09-21 exposed the gap: the follow-ups went in wordless)
+AG_TEXT_FIELDS = {"user": (19, 2), "answer": (20, 8), "answer_alt": (20, 1), "thinking": (20, 3),
+                  "message": (114, 2, 10, 1), "message_alt": (114, 4, 4), "message_sender": (114, 4, 3), "message_kind": (114, 3)}
+AG_MESSAGE_RESULTS = ("task_notification",)     # a background command's result delivered as a message: a tool result, not a turn
 
 
 def _pb_varint(b, i):
@@ -295,6 +300,12 @@ def antigravity_step(step_type, payload):
     if step_type == AG_USER:
         text = _pb_text(tree, *AG_TEXT_FIELDS["user"])
         return dict(role="user", content=text, timestamp=when) if text.strip() else None
+    if step_type == AG_MESSAGE:
+        if _pb_text(tree, *AG_TEXT_FIELDS["message_kind"]) in AG_MESSAGE_RESULTS:
+            return None
+        text = _pb_text(tree, *AG_TEXT_FIELDS["message"]) or _pb_text(tree, *AG_TEXT_FIELDS["message_alt"])
+        sender = _pb_text(tree, *AG_TEXT_FIELDS["message_sender"]) or "?"
+        return dict(role="user", content=f"[메시지·{sender}] {text}", timestamp=when) if text.strip() else None
     if step_type == AG_ASSISTANT:
         text = _pb_text(tree, *AG_TEXT_FIELDS["answer"]) or _pb_text(tree, *AG_TEXT_FIELDS["answer_alt"])
         thinking = _pb_text(tree, *AG_TEXT_FIELDS["thinking"])
@@ -994,7 +1005,18 @@ def _run_locked(path, *, trigger, agent, session, cwd, project, fmt, force_cut, 
                         client.request("ingest", **r, **({"bundle": bundle} if bundle else {}))
                         sent += 1
                     except Exception as error2:
+                        if "request_id_reused_with_different_content" in str(error2):
+                            try:                            # a re-cut turn: its own id, superseding the old row
+                                client.request("ingest", **reissue_row(client, r), **({"bundle": bundle} if bundle else {}))
+                                sent += 1
+                                reissued = rec.setdefault("reissued", [])
+                                reissued.append(r["request_id"].rsplit(":", 1)[-1])
+                                continue
+                            except Exception as error3:
+                                error2 = error3
                         errors.append(f"{r['source'][-40:]}: {error2}"[:160])
+                if sent == len(rows):                       # every row went in one by one: the batch refusal is history
+                    rec["fallback"] = errors.pop(0)
         except Exception as error:
             errors.append(f"daemon: {error}"[:160])
         finally:
@@ -1014,6 +1036,32 @@ def _run_locked(path, *, trigger, agent, session, cwd, project, fmt, force_cut, 
     rec.update(sent=sent, errors=errors[:4], ms=int((time.time() - started) * 1000), state=dict(offset=state.get("offset"), line=state.get("line"), turn=state.get("turn")))
     receipt(**rec)
     return rec
+
+
+def reissue_row(client, row):
+    """The daemon holds this request id with other content (a turn re-cut after an adapter fix, 2026-09-21): the
+    row gets an id and revision of its own (``+sha8(text)``), is re-signed, and supersedes what the old id stands
+    for — the old row stays recallable, the new one is the current version."""
+    out = dict(row, metadata=dict(row.get("metadata") or {}))
+    tag = hashlib.sha256(row["text"].encode("utf-8")).hexdigest()[:8]
+    out["request_id"] = f"{row['request_id']}+{tag}"[:128]
+    out["revision"] = f"{row['revision']}+{tag}"
+    try:
+        known = client.request("operation", request_id=row["request_id"])
+        if known.get("episode_id"):
+            out["supersedes"] = known["episode_id"]
+    except Exception:
+        out.pop("supersedes", None)
+    try:
+        from . import identity
+        signature = identity.sign(identity.signature_fields(out), PRODUCER)
+        if signature:
+            out["metadata"]["signature"] = signature
+        else:
+            out["metadata"].pop("signature", None)
+    except Exception:
+        out["metadata"].pop("signature", None)
+    return out
 
 
 def snapshot_marker(path):
