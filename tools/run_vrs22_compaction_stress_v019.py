@@ -36,6 +36,8 @@ LIVE_STATE = Path("/home/raspie/.local/share/swegca-vrs2-codex")
 # The cache carries an account-bound identity; keep its exact frozen bytes private.
 FROZEN_MODELS_CACHE = Path("/home/raspie/.local/share/vrs22-eval-runtime-v019/private/models_cache_20260922.json")
 FROZEN_MODELS_CACHE_SHA256 = "2ccbfbf460b6411b9c273ffae9db3d750313b9ef43725d6ce732324adfc9f5f1"
+PLAIN_ARCHIVE = Path("/home/raspie/.local/share/vrs22-eval-runtime-v019/private/plain-v005-control-evidence.tar.zst")
+PLAIN_ARCHIVE_SHA256 = "e817623972c8161d3f9985811465d4f084977d3c781d0bb79088560f315ae9bb"
 CODEX_BINARY = Path("/var/home/raspie/.codex/packages/standalone/releases/0.153.4-x86_64-unknown-linux-musl/bin/codex")
 CODE_MODE_HOST = CODEX_BINARY.with_name("codex-code-mode-host")
 RG_BINARY = Path("/usr/lib/chatgpt/resources/rg")
@@ -1288,6 +1290,7 @@ def main():
         "test_python": TEST_VENV / "bin/python",
         "auth": REAL_CODEX_HOME / "auth.json",
         "models_cache": FROZEN_MODELS_CACHE,
+        "plain_archive": PLAIN_ARCHIVE,
         "target": SOURCE_ROOT / TARGET,
         "existing_test": SOURCE_ROOT / "tests/standalone/test_checkpoint.py",
         "hidden_test": ROOT / "evals/vrs22_context/hidden/test_checkpoint_duplicate.py",
@@ -1305,6 +1308,7 @@ def main():
         "code_mode_host": CODE_MODE_HOST_SHA256,
         "rg": RG_BINARY_SHA256,
         "models_cache": FROZEN_MODELS_CACHE_SHA256,
+        "plain_archive": PLAIN_ARCHIVE_SHA256,
         "hidden_test": "47ae830eb1fe6a715028ad703c3eabef19d3fdd7f9ea9608eae649c2a9701d15",
         "hidden_array_test": "8d600a7e0dbb0d316af9ebe47f42d38a028e7e8ed113f7764d612c470aecebef",
         "grading_rubric": "ea03176616c8c981a654ab17e150d31c040d48e48e1aea8a662e35ebe0a9e1bd",

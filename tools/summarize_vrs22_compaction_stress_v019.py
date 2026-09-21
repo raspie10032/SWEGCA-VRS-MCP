@@ -9,7 +9,9 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
+import tempfile
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -27,6 +29,39 @@ FIELDS = ("input_tokens", "cached_input_tokens", "cache_write_input_tokens",
 RUNTIME_PRODUCT_COMMIT = "65ec52d"
 RUNTIME_REPOSITORY_COMMIT = "65ec52d"
 RUNTIME_WHEEL_SHA256 = "e0144305a8fa863f52679b7a4aa1e01901fa23942314e364d36c40c302a656c9"
+PRIVATE_PLAIN_ROOT = Path("/home/raspie/.local/share/vrs22-eval-runtime-v019/private")
+PLAIN_ARCHIVE = PRIVATE_PLAIN_ROOT / "plain-v005-control-evidence.tar.zst"
+PLAIN_EXTRACTED = PRIVATE_PLAIN_ROOT / "plain-v005-control-evidence"
+PLAIN_ARCHIVE_SHA256 = "e817623972c8161d3f9985811465d4f084977d3c781d0bb79088560f315ae9bb"
+PLAIN_RESULTS_SHA256 = "8ca3a90c50fa86202464efcf434e4c6ec33a11951c9f464ad2a2b2121d9f4f29"
+
+
+def ensure_plain_controls(path):
+    """Restore frozen private plain evidence if the old /var/tmp tree is gone."""
+    if path == PLAIN_EXTRACTED and not (path / "results.json").is_file():
+        if hashlib.sha256(PLAIN_ARCHIVE.read_bytes()).hexdigest() != PLAIN_ARCHIVE_SHA256:
+            raise ValueError("frozen_plain_archive_changed")
+        listing = subprocess.check_output(["tar", "--zstd", "-tf", str(PLAIN_ARCHIVE)],
+                                          text=True).splitlines()
+        if (not listing or any(name.startswith("/") or ".." in Path(name).parts
+                or "__short_vrs" in name or name.endswith((".sqlite", ".sqlite3", ".db"))
+                or name.endswith("/auth.json") for name in listing)
+                or sum("-codex-home/sessions/" in name and name.endswith(".jsonl")
+                       for name in listing) != 72):
+            raise ValueError("frozen_plain_archive_members_invalid")
+        with tempfile.TemporaryDirectory(prefix="plain-v005-restore-",
+                                         dir=PRIVATE_PLAIN_ROOT) as temporary:
+            extracted = Path(temporary) / "data"
+            extracted.mkdir(mode=0o700)
+            subprocess.run(["tar", "--zstd", "-xf", str(PLAIN_ARCHIVE),
+                            "-C", str(extracted)], check=True)
+            if hashlib.sha256((extracted / "results.json").read_bytes()).hexdigest() \
+                    != PLAIN_RESULTS_SHA256:
+                raise ValueError("frozen_plain_results_changed")
+            os.replace(extracted, path)
+    if hashlib.sha256((path / "results.json").read_bytes()).hexdigest() != PLAIN_RESULTS_SHA256:
+        raise ValueError("frozen_plain_results_changed")
+    return path
 
 
 def usage_total(records):
@@ -571,14 +606,22 @@ def grade_cell(model, arm, rows, run_dir, output):
     workspace = run_dir / (stem + "-workspace")
     original = (BASELINE / TARGET).read_text(encoding="utf-8")
     final = (workspace / TARGET).read_text(encoding="utf-8")
+    grade_workspace = workspace
+    if arm != "short_vrs":
+        # Historical plain workspaces include the retired substrate. Grade the
+        # unchanged model output on the same clean substrate as new VRS cells.
+        grade_workspace = output / (stem + "-grade-workspace")
+        shutil.copytree(BASELINE, grade_workspace,
+                        ignore=shutil.ignore_patterns("__pycache__", ".pytest_cache", "*.pyc"))
+        shutil.copy2(workspace / TARGET, grade_workspace / TARGET)
     diff = "".join(difflib.unified_diff(original.splitlines(keepends=True),
                                         final.splitlines(keepends=True),
                                         fromfile="a/" + TARGET, tofile="b/" + TARGET))
     (output / (stem + ".diff")).write_text(diff, encoding="utf-8")
-    paths = changed_paths(workspace)
-    hidden = run_test(workspace, HIDDEN)
-    hidden_array = run_test(workspace, HIDDEN_ARRAY)
-    regression = run_test(workspace, REGRESSION)
+    paths = changed_paths(grade_workspace)
+    hidden = run_test(grade_workspace, HIDDEN)
+    hidden_array = run_test(grade_workspace, HIDDEN_ARRAY)
+    regression = run_test(grade_workspace, REGRESSION)
     (output / (stem + ".grade.log")).write_text(
         "hidden metadata:\n" + hidden.stdout + hidden.stderr +
         "\nhidden array:\n" + hidden_array.stdout + hidden_array.stderr + "\nregression:\n" +
@@ -684,11 +727,14 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--runs", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
-    parser.add_argument("--plain-runs", type=Path,
-                        default=Path("/var/tmp/vrs22-auto-compaction-confirmation-005"))
+    parser.add_argument("--plain-runs", type=Path, default=PLAIN_EXTRACTED)
     args = parser.parse_args()
     if args.output_dir.exists():
         parser.error("output directory already exists")
+    try:
+        args.plain_runs = ensure_plain_controls(args.plain_runs)
+    except (OSError, ValueError, subprocess.SubprocessError) as error:
+        parser.error(f"frozen plain evidence unavailable: {type(error).__name__}: {error}")
     data = json.loads((args.runs / "results.json").read_text(encoding="utf-8"))
     if (data.get("schema_version") !=
             "vrs22-auto-compaction-stress-v12-final-observation-accounting"

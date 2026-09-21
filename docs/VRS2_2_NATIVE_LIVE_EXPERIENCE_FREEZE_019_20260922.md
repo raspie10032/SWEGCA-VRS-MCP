@@ -27,6 +27,23 @@ session lifecycle.
   Plain output was separately revalidated against this clean fixture:
   `evals/vrs22_context/results/plain_clean_validation_005.json`, SHA-256
   `9d1e39bbc7ba7d10bfe3970f17bf5ddc28660e3f2cc21f9477dc785bed1c7b36`.
+- The six historical plain controls are also archived privately at
+  `/home/raspie/.local/share/vrs22-eval-runtime-v019/private/plain-v005-control-evidence.tar.zst`.
+  SHA-256: `e817623972c8161d3f9985811465d4f084977d3c781d0bb79088560f315ae9bb`;
+  size: 5,532,766 bytes. The archive retains result events, messages, exact
+  model-edited code, and 72 session JSONL files. It excludes old VRS arm
+  directories, authentication, and Codex internal database state. Independent
+  reads of those session files found 10 or more ordered real `compacted`
+  events in every plain cell. The summarizer restores and hash-checks this
+  archive automatically if the old `/var/tmp` tree disappears.
+- Historical plain workspaces contain the retired storage substrate. The
+  summarizer copies only each model's unchanged `checkpoint.py` output onto
+  the clean v019 fixture for executable grading. This prevents old substrate
+  files from being counted as model edits or imported during grading. All six
+  restored plain cells passed measurement validation; clean executable code
+  scores were 4/20 for five and 20/20 for Terra 100k plain. The sanitized
+  receipt is `evals/vrs22_context/results/plain_restored_validation_005.json`,
+  SHA-256 `13d20ec66941fc2ef4eb15ba1c5461b8a91473d649c1952d8fc56ee7005eb274`.
 - Runtime source provenance: `65ec52d`; frozen installed wheel SHA-256:
   `e0144305a8fa863f52679b7a4aa1e01901fa23942314e364d36c40c302a656c9`.
   Preflight verified all 48 installed package files against that wheel and
@@ -79,7 +96,6 @@ python tools/run_vrs22_compaction_stress_v019.py \
   --output-dir /var/tmp/vrs22-auto-compaction-confirmation-019
 python tools/summarize_vrs22_compaction_stress_v019.py \
   --runs /var/tmp/vrs22-auto-compaction-confirmation-019 \
-  --plain-runs /var/tmp/vrs22-auto-compaction-confirmation-005 \
   --output-dir /var/tmp/vrs22-auto-compaction-graded-019
 ```
 
