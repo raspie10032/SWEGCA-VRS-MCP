@@ -248,7 +248,7 @@ def test_natural_recall_reads_cold_cue_and_proposition_shards_without_checkpoint
         primary.close()
 
 
-def test_cold_projected_recall_preserves_local_shared_experience_portal(tmp_path):
+def test_cold_projected_recall_preserves_local_shared_experience_portal(tmp_path, monkeypatch):
     topic_a = "루프백 데몬 체크포인트 저널 재생 락"
     topic_b = "정산 배치 엑셀 헤더 스프레드시트 매핑"
     primary = Main(tmp_path / "main", allow_ingest=True)
@@ -268,9 +268,14 @@ def test_cold_projected_recall_preserves_local_shared_experience_portal(tmp_path
         resident.refresh_pair("cold", owner)
         sharded = ShardedMain(primary, resident)
         loaded = sharded.recall(topic_a, resident.logical_snapshot(), region_scope="loaded-all")
+        locally_scoped = owner.recall(topic_a, owner.pair.snapshot_id, region_scope="regions")
         resident.evict("cold"); resident.settle()
 
         projected = sharded.recall(topic_a, resident.logical_snapshot())
+        projected_scoped = sharded.recall(topic_a, resident.logical_snapshot(),
+                                          region_scope="regions")
+        monkeypatch.setattr("swegca_vrs2.projected_recall.REGION_SCOPE_AUTO_CANDIDATES", 1)
+        projected_auto = sharded.recall(topic_a, resident.logical_snapshot(), region_scope="auto")
         loaded_activation = loaded["receipt"]["activation"]
         projected_activation = projected["receipt"]["activation"]
         assert [row.episode_id for row in projected_activation.recall.candidates] == [
@@ -279,6 +284,16 @@ def test_cold_projected_recall_preserves_local_shared_experience_portal(tmp_path
                      if path["path"] == "portal" and path.get("via")]
         assert crossings and crossings[0]["via"]["episode_id"] == bridge
         assert crossings[0]["via"]["revision"] == "r7"
+        assert [row.episode_id for row in
+                projected_scoped["receipt"]["activation"].recall.candidates] == [
+                    row.episode_id for row in
+                    locally_scoped["receipt"]["activation"].recall.candidates]
+        assert projected_scoped["region_navigation"]["shard_roots"]["cold"]["scope"][
+            "requested"] == "regions"
+        assert [row.episode_id for row in
+                projected_auto["receipt"]["activation"].recall.candidates] == [
+                    row.episode_id for row in
+                    projected_scoped["receipt"]["activation"].recall.candidates]
         assert not resident.hot and not resident.warm and not resident.wanted
     finally:
         resident.close()

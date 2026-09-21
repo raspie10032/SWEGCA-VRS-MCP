@@ -20,7 +20,10 @@ from .engine.mosaic_memory_activation import (
 from .store import (
     ASK_GATE, ASK_GATE_MAX_HITS, ASK_GATE_RARE_SHARE, DESCRIPTION_GATE,
     PROMOTION_GATE, UNBRIDGED_FACTOR, digest, keys,
-    REGION_SCOPE_AUTO_CANDIDATES,
+    KEYED_PARTNERS_IN_SCOPE, PORTAL_SCORE_FLOOR, REGION_ACTIVATION,
+    REGION_SCOPE_AUTO_CANDIDATES, REGION_SCOPE_FLOOR,
+    REGION_SCOPE_INFORMATIVE_ONLY, REGION_SCOPE_MASS_SHARE,
+    REGION_SCOPE_MIN_HITS, REGION_SCOPE_TOP, REGION_SCOPE_TOP_ROWS,
 )
 
 
@@ -111,8 +114,11 @@ class ProjectedRecall:
             sample = next((self._current(row.episode_id) for row in candidates
                            if self._exact(row.episode_id)['shard'] == shard), None)
             portal_rows = tuple(sample.get('portals', ())) if sample is not None else ()
+            shard_scope = (scope.get('by_shard') or {}).get(shard, scope)
             roots[shard] = dict(active_regions=sorted(active), portals=portal_rows,
-                                membership_is_truth=False, scope=dict(scope))
+                                membership_is_truth=False,
+                                scope={key: value for key, value in shard_scope.items()
+                                       if key != 'by_shard'})
             portal_map = self._portal_map(sample or {})
             for candidate in candidates:
                 identifier = candidate.episode_id
@@ -168,6 +174,103 @@ class ProjectedRecall:
                             bridge='edges only (no shared experience at the floor)')
                     paths[identifier] = entry
         return roots, paths
+
+    def _scope_candidates(self, candidates, selected, informative, idf, lexical_count):
+        requested = self.region_scope
+        scope = dict(requested=requested, applied='all', allowed_regions=[],
+                     excluded_rows=0, fallback=None)
+        if requested == 'auto':
+            scope.update(auto_candidates=lexical_count,
+                         auto_threshold=REGION_SCOPE_AUTO_CANDIDATES)
+            if lexical_count < REGION_SCOPE_AUTO_CANDIDATES:
+                return candidates, scope
+        elif requested != 'regions':
+            return candidates, scope
+
+        by_shard, allowed_all, kept = {}, [], []
+        for shard in sorted({self._exact(row.episode_id)['shard'] for row in candidates}):
+            rows = [row for row in candidates if self._exact(row.episode_id)['shard'] == shard]
+            active = set()
+            detail = dict(requested=requested, applied='all', allowed_regions=[],
+                          excluded_rows=0, fallback=None)
+            if REGION_ACTIVATION == 'rows':
+                scored = []
+                for row in rows:
+                    value = sum(idf.get(cue, 0.0) for cue in row.matched_cues)
+                    if value:
+                        scored.append((value, row.episode_id))
+                scored.sort(key=lambda item: (-item[0], item[1]))
+                strongest = scored[:REGION_SCOPE_TOP_ROWS]
+                active = {self._current(identifier)['region'] for _, identifier in strongest}
+                active.discard(None); active.discard(-1)
+                detail['top_rows'] = len(strongest)
+            elif REGION_ACTIVATION == 'mass':
+                mass = {}
+                for cue in informative:
+                    for identifier in self.matches(cue):
+                        if self._exact(identifier)['shard'] != shard:
+                            continue
+                        region = self._current(identifier)['region']
+                        if region is not None and region >= 0:
+                            mass[region] = mass.get(region, 0.0) + idf[cue]
+                ranked = sorted(mass.items(), key=lambda item: (-item[1], item[0]))
+                floor = ranked[0][1] * REGION_SCOPE_MASS_SHARE if ranked else 0.0
+                active = {region for region, _ in ranked[:REGION_SCOPE_TOP]}
+                active.update(region for region, value in ranked if value >= floor)
+                detail['region_mass'] = [(region, round(value, 2))
+                                         for region, value in ranked[:12]]
+            else:
+                hits = {}
+                source = informative if REGION_SCOPE_INFORMATIVE_ONLY else selected
+                for cue in source:
+                    region = self.resident.region_for_cue(shard, cue)
+                    if region is not None:
+                        hits[region] = hits.get(region, 0) + 1
+                active = {region for region, count in hits.items()
+                          if count >= REGION_SCOPE_MIN_HITS} or set(hits)
+
+            allowed = set(active)
+            sample = next((self._current(row.episode_id) for row in rows), None)
+            keyed_partners = 0
+            for portal in (() if sample is None else sample.get('portals', ())):
+                pair = tuple(int(value) for value in portal['pair'])
+                if not active.intersection(pair):
+                    continue
+                value = portal.get('value') or {}
+                keyed = bool(value.get('keys')) and KEYED_PARTNERS_IN_SCOPE
+                if ((value.get('status') == 'candidate'
+                     and float(value.get('score', 0.0)) >= PORTAL_SCORE_FLOOR) or keyed):
+                    allowed.update(pair)
+                    keyed_partners += int(keyed)
+            detail['keyed_partners'] = keyed_partners
+            shard_kept = []
+            if allowed:
+                for row in rows:
+                    current = self._current(row.episode_id)
+                    region = current['region']
+                    member = any(member_region in active and weight >= vrs_refine.SHARED_FLOOR
+                                 for member_region, weight in current['memberships'])
+                    if region is None or region < 0 or region in allowed or member:
+                        shard_kept.append(row)
+            else:
+                shard_kept = list(rows)
+                detail['fallback'] = 'no_active_regions'
+            kept.extend(shard_kept)
+            detail['allowed_regions'] = sorted(allowed)
+            detail['excluded_rows'] = len(rows) - len(shard_kept)
+            detail['applied'] = 'regions' if allowed else 'all'
+            by_shard[shard] = detail
+            allowed_all.extend([shard, region] for region in sorted(allowed))
+
+        if len(kept) < REGION_SCOPE_FLOOR:
+            scope.update(fallback='fewer_than_floor',
+                         would_exclude=len(candidates) - len(kept), by_shard=by_shard)
+            return candidates, scope
+        kept_ids = {row.episode_id for row in kept}
+        ordered = [row for row in candidates if row.episode_id in kept_ids]
+        scope.update(applied='regions', allowed_regions=allowed_all,
+                     excluded_rows=len(candidates) - len(ordered), by_shard=by_shard)
+        return ordered, scope
 
     @staticmethod
     def _words(matched, idf):
@@ -240,19 +343,9 @@ class ProjectedRecall:
         propositions = {self._proposition(self._exact(identifier))
                         for cue in informative for identifier in self.matches(cue)} - {None}
         activation_cues = (*selected, *('proposition:' + value for value in sorted(propositions)))
-        matched = tuple(cue for cue in activation_cues if self.matches(cue))
-        identifiers = {identifier for cue in matched for identifier in self.matches(cue)}
-        scope = dict(requested=self.region_scope, applied='all', allowed_regions=[],
-                     excluded_rows=0, fallback=None)
-        if self.region_scope == 'auto':
-            scope.update(auto_candidates=len(identifiers),
-                         auto_threshold=REGION_SCOPE_AUTO_CANDIDATES)
-            if len(identifiers) >= REGION_SCOPE_AUTO_CANDIDATES:
-                raise ValueError('projected_region_scope_not_ready:auto')
-        elif self.region_scope == 'regions':
-            raise ValueError('projected_region_scope_not_ready:regions')
-        signal = DejaVuSignal(self.pair_snapshot, self.query, tuple(activation_cues), matched,
-            len(matched) / max(1, len(activation_cues)), len(identifiers))
+        matched_all = tuple(cue for cue in activation_cues if self.matches(cue))
+        identifiers = {identifier for cue in matched_all for identifier in self.matches(cue)}
+        lexical_ids = {identifier for cue in selected for identifier in self.matches(cue)}
 
         candidates = []
         current_cues = set(activation_cues)
@@ -265,10 +358,17 @@ class ProjectedRecall:
                 exact['replay'].verification_state,
                 tuple(step.outcome for step in exact['replay'].steps)))
         candidates.sort(key=lambda row: (-row.cue_overlap, row.episode_id))
-        roots, paths = self._navigation(candidates, selected, scope)
 
         idf = {cue: math.log(1.0 + (total - fanout[cue] + 0.5) / (fanout[cue] + 0.5))
                for cue in informative}
+        candidates, scope = self._scope_candidates(
+            candidates, selected, informative, idf, len(lexical_ids))
+        scoped_ids = {row.episode_id for row in candidates}
+        matched = tuple(cue for cue in activation_cues
+                        if any(identifier in scoped_ids for identifier in self.matches(cue)))
+        signal = DejaVuSignal(self.pair_snapshot, self.query, tuple(activation_cues), matched,
+            len(matched) / max(1, len(activation_cues)), len(scoped_ids))
+        roots, paths = self._navigation(candidates, selected, scope)
         average = self.resident.logical_cue_total() / total if total else 1.0
         query_tokens = [token.casefold() for token in re.findall(r'\w+', self.query)]
 
@@ -313,7 +413,7 @@ class ProjectedRecall:
                 opponents[proposition] = tuple(sorted(active))
         graph_snapshot = digest(('sharded-vrs-projection-v1', sorted(
             {(self._exact(identifier)['shard'], self._current(identifier)['graph_snapshot_id'])
-             for identifier in identifiers})))
+             for identifier in scoped_ids})))
 
         def judge(episode):
             proposition = episode.steps[0].observation.get('proposition_id')
