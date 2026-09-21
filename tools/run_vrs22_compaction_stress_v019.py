@@ -73,6 +73,7 @@ ZIP members to disk. Do not edit code yet. At this checkpoint reply only OK.
 Later I will ask you to implement the original decision without repeating it.
 Use whatever evidence is available then, and do not guess missing details.
 """
+INITIAL_SHA256 = "a9249ca6fed86315b83cb96f89cc5d0936b2775468c3e450c3258b32abb49523"
 FILLER_PREFIX = """The following archive is irrelevant to the coding objective.
 Read the local ping.txt file using a shell tool, then reply only OK.
 Do not edit code or restate earlier requirements.
@@ -98,6 +99,48 @@ your final message, briefly identify the purpose, constraint and outcome.
 
 def sha(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
+
+
+def objective_replay_matches(packet: dict, episode_id: str, session_id: str) -> bool:
+    """Bind a model-visible Replay to the original session VRS observation."""
+    if (not isinstance(session_id, str) or not session_id
+            or not isinstance(packet, dict) or packet.get("status") != "memory_context_ready"
+            or packet.get("candidate_count") != 1):
+        return False
+    memories = packet.get("memories")
+    if not isinstance(memories, list) or len(memories) != 1:
+        return False
+    row = memories[0]
+    replay_section = row.get("replay") if isinstance(row, dict) else None
+    if not isinstance(replay_section, dict) or replay_section.get("complete") is not True:
+        return False
+    replay = replay_section.get("data")
+    if not isinstance(replay, dict) or replay.get("episode_id") != episode_id:
+        return False
+    sources, steps = replay.get("source_addresses"), replay.get("steps")
+    if (not isinstance(sources, list) or len(sources) != 1
+            or not isinstance(sources[0], str)
+            or not sources[0].startswith(
+                "transcript:codex:" + sha(session_id.encode("utf-8")) + ":")
+            or not sources[0].endswith(":part:1")
+            or not isinstance(steps, list) or len(steps) != 1
+            or replay.get("historical_truth_authorized") is not False):
+        return False
+    step = steps[0]
+    observation = step.get("observation") if isinstance(step, dict) else None
+    if not isinstance(observation, dict):
+        return False
+    metadata = observation.get("metadata")
+    return bool(isinstance(metadata, dict)
+        and metadata.get("origin") == "session_transcript"
+        and metadata.get("host") == "codex"
+        and metadata.get("role") == "user"
+        and metadata.get("record_type") == "message"
+        and metadata.get("part") == metadata.get("parts") == 1
+        and metadata.get("epistemic_status") == "unverified_transcript"
+        and observation.get("current_truth_claimed") is False
+        and isinstance(observation.get("text"), str)
+        and sha(observation["text"].encode("utf-8")) == INITIAL_SHA256)
 
 
 def tree_sha(root: Path) -> str:
@@ -328,6 +371,65 @@ def scan_experience(state: Path, codex_home: Path):
 from swegca_vrs2.session_capture import SessionCapture,scan
 print(json.dumps(scan(SessionCapture(sys.argv[1]),codex_home=sys.argv[2],since=0)))
 """, state, codex_home)
+
+
+def session_content_integrity(state: Path, codex_home: Path):
+    """Audit every admitted original envelope against its public ingress row."""
+    return runtime_json("""import hashlib,json,sys
+from pathlib import Path
+from swegca_vrs2.native_journal import NativeJournal,is_native_store
+from swegca_vrs2.session_capture import SessionCapture,codex_session,digest,transcript_record
+from swegca_vrs2.store import canonical,journal_entry,observation
+state=Path(sys.argv[1]).resolve();home=Path(sys.argv[2]).resolve()
+capture=SessionCapture(state);expected={};actual={};sessions=0;excluded=0
+def add(target,row):
+ key=row['request_id']
+ if key in target:raise ValueError('duplicate_session_observation:'+key)
+ target[key]=row
+for path in sorted((home/'sessions').rglob('*.jsonl')):
+ session=codex_session(path)
+ if not session:continue
+ sessions+=1;path=path.resolve();session_key=capture.session_key(session)
+ offset=0
+ with path.open('rb') as stream:
+  for line_number,raw in enumerate(stream,1):
+   if not raw.endswith(b'\\n'):raise ValueError('transcript_line_incomplete')
+   row=json.loads(raw);normalized=transcript_record('codex',row)
+   if normalized is None:excluded+=1
+   else:
+    role,value,kind=normalized
+    source_key=f'{digest(str(path))}:{offset}:{digest(raw.decode("utf-8"))}'
+    for payload in capture.payloads('codex',session_key,source_key,role,value,kind,line_number):
+     add(expected,observation(payload))
+   offset+=len(raw)
+ session_root=state/'session-vrs'/'codex'/session_key
+ stores=[session_root]
+ if (session_root/'shards').exists():
+  stores.extend(sorted((session_root/'shards').glob('shard-*')))
+ for directory in stores:
+  if not is_native_store(directory):continue
+  journal=NativeJournal(directory,create=False,writable=False)
+  try:
+   for row in journal.rows():
+    kind,value=journal_entry(row[1],row[2],row[3])
+    if kind=='observation':add(actual,value)
+  finally:journal.close()
+def fingerprint(rows):
+ hash=hashlib.sha256()
+ for key in sorted(rows):
+  hash.update(key.encode());hash.update(b'\\0')
+  hash.update(canonical(rows[key]).encode());hash.update(b'\\0')
+ return hash.hexdigest()
+expected_hash=fingerprint(expected);actual_hash=fingerprint(actual)
+print(json.dumps({'status':'PASS' if expected==actual else 'FAIL',
+ 'sessions':sessions,'explicitly_excluded_private_records':excluded,
+ 'expected_original_observations':len(expected),
+ 'actual_original_observations':len(actual),
+ 'expected_sha256':expected_hash,'actual_sha256':actual_hash,
+ 'missing_requests':len(expected.keys()-actual.keys()),
+ 'unexpected_requests':len(actual.keys()-expected.keys()),
+ 'changed_requests':sum(expected[key]!=actual[key] for key in expected.keys()&actual.keys())}))
+""", state, codex_home, timeout=180)
 
 
 def native_experience_snapshot(state: Path, original_linked_paths=()):
@@ -785,6 +887,9 @@ print(json.dumps({'finalizers':'conversation_finalize.finalize',
     telemetry = json.loads(result.stdout)
     telemetry["live_experience"] = wait_live_experience(
         state, codex_home, ended=True, baseline=baseline)
+    telemetry["content_integrity"] = session_content_integrity(state, codex_home)
+    if telemetry["content_integrity"]["status"] != "PASS":
+        raise RuntimeError("session VRS original content differs from host ingress")
     telemetry["coverage"] = telemetry["live_experience"]
     return telemetry
 
@@ -928,6 +1033,8 @@ def call(model, arm, workspace, codex_home, output, label, prompt, mode, thread_
         ready_call = ready_contexts[0] if len(ready_contexts) == 1 else {}
         start_arguments = start.get("arguments") or {}
         ready_context = structured(ready_call)
+        vrs_original_replay_observed = objective_replay_matches(
+            ready_context, required_episode_id, routing_session_id)
         status_packet = structured(status_calls[0]) if len(status_calls) == 1 else {}
         release_packet = structured(releases[0]) if len(releases) == 1 else {}
         request_id = start_arguments.get("request_id")
@@ -999,7 +1106,7 @@ def call(model, arm, workspace, codex_home, output, label, prompt, mode, thread_
             and all(x.get("arguments", {}).get("session_id") == routing_session_id
                     for x in vrs_calls))
         valid = valid and vrs_recall_observed and exact_context and vrs_four_stage_observed \
-            and vrs_session_first_observed \
+            and vrs_session_first_observed and vrs_original_replay_observed \
             and ordered and routing_exact \
             and all(x.get("status") == "completed" for x in status_calls + contexts + releases) \
             and all(structured(x).get("fallback_used") is not True
@@ -1030,6 +1137,8 @@ def call(model, arm, workspace, codex_home, output, label, prompt, mode, thread_
            "required_vrs_exact_address_observed": vrs_exact_observed,
            "required_vrs_four_stage_observed": vrs_four_stage_observed,
            "required_vrs_session_first_observed": vrs_session_first_observed,
+           "required_vrs_original_replay_observed": (
+               not requires_vrs_recall or vrs_original_replay_observed),
            "message_sha256": sha((messages[-1] if messages else "").encode()),
            "target_sha256": sha((workspace / TARGET).read_bytes()),
            "valid": valid}
@@ -1124,6 +1233,7 @@ def supervisor_selftest(root: Path):
                 "final_linked_rows": final["linked_records"],
                 "explicitly_excluded_private_records":
                     evidence[-1]["live"]["explicitly_excluded_records"],
+                "original_content_integrity": merged["content_integrity"],
                 "database_artifacts": final["database_artifacts"],
                 "watcher_counts": [row["watchers"]["healthy_watchers"] for row in evidence]}
     finally:
@@ -1177,6 +1287,7 @@ print(json.dumps({'created':True}))
         return {"status": "PASS", "original_main_parts": 1,
                 "active_session_parts": 2, "active_main_untouched": True,
                 "ended_new_linked_parts": 2, "main_fallback": True,
+                "original_content_integrity": ended["content_integrity"],
                 "database_artifacts": coverage["database_artifacts"]}
     finally:
         if watcher is not None:
@@ -1600,6 +1711,8 @@ def main():
     parser.add_argument("--preflight-only", action="store_true")
     parser.add_argument("--selftest-only", action="store_true")
     args = parser.parse_args()
+    if sha(INITIAL.encode("utf-8")) != INITIAL_SHA256:
+        parser.error("original objective changed")
     if tree_sha(SOURCE_ROOT) != SOURCE_COMMIT:
         parser.error("clean coding fixture changed")
     wheel = RUNTIME_WHEEL

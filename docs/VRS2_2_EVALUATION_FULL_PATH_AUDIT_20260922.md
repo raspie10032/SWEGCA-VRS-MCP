@@ -116,3 +116,54 @@ still `PENDING_LIVE_HANDOFF`; its SessionEnd receipt is absent, and the active
 legacy state has not been migrated. A single one-shot watcher now points at
 the new wheel and will act only after that actual SessionEnd. No VRS model
 comparison is available yet.
+
+## Third pass: original content across the entire test path
+
+The installed product wheel is now the `0db5817` source candidate, SHA-256
+`b99c1cbd4f8f51f3ff57836706db92ae2838554a90fb03c9d2844f29bcfed7c2`.
+The test code was checked from ingress through scoring, including the frozen
+fixture, hidden tests, Codex process/mounts, installed MCP/hook, transcript
+watcher, session VRS journal, layered read, Replay packet, SessionEnd attach,
+compaction events, token records, isolated executable grader and plain controls.
+
+Two additional false-pass paths were closed:
+
+1. A model-visible VRS packet could have the right address and four-stage
+   receipt while its original Replay content was absent, deferred or different.
+   The runner and the independently parsing grader now require one complete
+   Replay whose original text hashes to the frozen first instruction, whose
+   source is the current Codex session transcript, whose role is user, and
+   whose historical content has no truth or action authority. This is checked
+   at every boundary, recovery and coding VRS use. A real installed-wheel
+   session-first four-stage Replay of the full 837-character instruction passed
+   this content check. Wrong text, wrong source and deferred Replay fail the
+   regression test.
+2. The former session coverage check counted original observations but did
+   not compare their content. After actual SessionEnd in each evaluation cell,
+   the runner now reconstructs every complete host-visible ingress record,
+   including chunk identity and provenance, and compares its normalized
+   observation envelope with every original VRS journal observation by stable
+   request ID. This is an audit only; model recall still uses VRS experience.
+   The grader requires equal counts and SHA-256 digests, with zero missing,
+   unexpected or changed requests. Deliberately altering the transcript after
+   VRS admission makes the audit fail.
+
+The full isolated self-test passed with two concurrent sessions: 6 expected
+original observations equaled 6 session VRS originals after normalization,
+with 2 private reasoning records explicitly excluded. The populated-main test
+likewise matched 2 of 2 session observations and preserved its original main.
+The complete receipt is
+`/var/tmp/vrs22-whole-path-selftest-complete-20260922/receipt.json`, SHA-256
+`88da95e8eb34f56d8e6322018b4848e56e3d79492e3fadcec719b24bd43ec2be`.
+All 16 evaluation-grader regressions passed. The six frozen plain cells were
+regraded in the current isolated grader: each remains valid with ten actual
+compactions; five still score 4/20 code quality and Terra 100k plain still
+scores 20/20. No new model call was made.
+
+The current live preflight remains `PENDING_LIVE_HANDOFF`: the armed SessionEnd
+receipt and native resident main do not yet exist, and the old installed
+config/hook/database are still active. The one-shot post-SessionEnd watcher is
+running. The three new VRS model cells must remain unrun until that handoff,
+then the same full-path gates and manual answer/diff review must pass. This
+source and isolated evaluation evidence does not establish the unconditional
+all-size <1 ms Replay or one-billion-parameter seconds goals.

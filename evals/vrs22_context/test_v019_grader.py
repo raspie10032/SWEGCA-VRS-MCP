@@ -1,5 +1,8 @@
 """Self checks for the frozen v019 scoring rules."""
 import importlib.util
+import copy
+import hashlib
+import json
 from pathlib import Path
 import shutil
 
@@ -132,7 +135,7 @@ def exact_protocol_calls():
         request_id=request, query=address, exact_episode_id=address,
         expected_pair_snapshot_id="snapshot-1", packet_request_id=request,
         packet_view_id=view, pair_snapshot_id="snapshot-1", memory_layer="session",
-        fallback_used=False, four_stage_valid=True,
+        fallback_used=False, four_stage_valid=True, original_replay_valid=True,
         stage_query_values={stage: address for stage in
             ("deja_vu", "recall", "replay", "re_evidence")},
         episode_ids=[address], lookup_receipt={
@@ -171,6 +174,81 @@ def test_vrs_protocol_rejects_main_fallback_and_duplicate_status_calls():
     assert not GRADER.vrs_protocol(fallback, address, session)
     duplicate_status = [calls[0], dict(calls[0]), *calls[1:]]
     assert not GRADER.vrs_protocol(duplicate_status, address, session)
+
+
+def test_vrs_protocol_requires_complete_original_replay():
+    address, session, calls = exact_protocol_calls()
+    missing = [dict(call) for call in calls]
+    missing[1]["original_replay_valid"] = False
+    assert not GRADER.vrs_protocol(missing, address, session)
+    packet = {"status": "memory_context_ready", "candidate_count": 1,
+              "memories": [{"episode_id": address, "replay": {"complete": True,
+                  "data": {"episode_id": address,
+                           "historical_truth_authorized": False,
+                           "source_addresses": ["transcript:codex:"
+                               + hashlib.sha256(session.encode()).hexdigest()
+                               + ":source:part:1"],
+                           "steps": [{"observation": {
+                               "text": RUNNER.INITIAL,
+                               "current_truth_claimed": False,
+                               "metadata": {"origin": "session_transcript",
+                                            "host": "codex", "role": "user",
+                                            "record_type": "message", "part": 1,
+                                            "parts": 1,
+                                            "epistemic_status": "unverified_transcript"}}}]}}}]}
+    assert RUNNER.objective_replay_matches(packet, address, session)
+    assert GRADER.objective_replay_matches(packet, address, session)
+    assert not RUNNER.objective_replay_matches(packet, address, "other-session")
+    assert not GRADER.objective_replay_matches(packet, address, "other-session")
+    for change in (lambda p: p["memories"][0]["replay"].update(complete=False),
+                   lambda p: p["memories"][0]["replay"]["data"]["steps"][0]
+                       ["observation"].update(text="a different objective"),
+                   lambda p: p["memories"][0]["replay"]["data"].update(
+                       source_addresses=["plain-log:1"])):
+        corrupted = copy.deepcopy(packet)
+        change(corrupted)
+        assert not RUNNER.objective_replay_matches(corrupted, address, session)
+        assert not GRADER.objective_replay_matches(corrupted, address, session)
+
+
+def test_session_content_audit_detects_changed_ingress(tmp_path):
+    state = tmp_path / "state"
+    home = tmp_path / "codex-home"
+    transcript = home / "sessions" / "rollout.jsonl"
+    transcript.parent.mkdir(parents=True)
+    session = "content-audit-session"
+    transcript.write_text("".join(json.dumps(row) + "\n" for row in (
+        {"type": "session_meta", "payload": {"id": session}},
+        {"type": "response_item", "payload": {"type": "message", "role": "user",
+            "content": [{"type": "input_text", "text": RUNNER.INITIAL}]}},
+        {"type": "response_item", "payload": {"type": "reasoning",
+            "encrypted_content": "private"}},
+    )), encoding="utf-8")
+    RUNNER.runtime_json("""import json,sys
+from swegca_vrs2.session_capture import SessionCapture
+capture=SessionCapture(sys.argv[1])
+print(json.dumps(capture.scan_transcript('codex',sys.argv[2],sys.argv[3])))
+""", state, session, transcript)
+    try:
+        good = RUNNER.session_content_integrity(state, home)
+        assert good["status"] == "PASS"
+        assert good["expected_original_observations"] == 2
+        assert good["explicitly_excluded_private_records"] == 1
+        transcript.write_text(transcript.read_text(encoding="utf-8").replace(
+            "duplicate ZIP", "different ZIP"), encoding="utf-8")
+        bad = RUNNER.session_content_integrity(state, home)
+        assert bad["status"] == "FAIL"
+        assert bad["missing_requests"] == bad["unexpected_requests"] == 1
+    finally:
+        RUNNER.runtime_json("""import json,sys
+from pathlib import Path
+from swegca_vrs2.linked_shards import shutdown_and_release
+from swegca_vrs2.session_capture import SessionCapture
+root=Path(sys.argv[1]);session=sys.argv[2]
+shutdown_and_release(root)
+shutdown_and_release(root/'session-vrs'/'codex'/SessionCapture.session_key(session))
+print(json.dumps({'stopped':True}))
+""", state, session)
 
 
 def test_live_experience_counts_observations_separately_from_state_transitions():

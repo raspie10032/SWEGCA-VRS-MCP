@@ -41,6 +41,7 @@ FIELDS = ("input_tokens", "cached_input_tokens", "cache_write_input_tokens",
 RUNTIME_PRODUCT_COMMIT = "0db5817"
 RUNTIME_REPOSITORY_COMMIT = "0db5817"
 RUNTIME_WHEEL_SHA256 = "b99c1cbd4f8f51f3ff57836706db92ae2838554a90fb03c9d2844f29bcfed7c2"
+INITIAL_SHA256 = "a9249ca6fed86315b83cb96f89cc5d0936b2775468c3e450c3258b32abb49523"
 PRIVATE_PLAIN_ROOT = Path("/home/raspie/.local/share/vrs22-eval-runtime-v019/private")
 PLAIN_ARCHIVE = PRIVATE_PLAIN_ROOT / "plain-v005-control-evidence.tar.zst"
 PLAIN_EXTRACTED = PRIVATE_PLAIN_ROOT / "plain-v005-control-evidence"
@@ -222,6 +223,8 @@ def mcp_calls(run_dir, rows):
             if event.get("type") != "item.completed" or item.get("type") != "mcp_tool_call" or item.get("server") != "vrs22":
                 continue
             packet = (item.get("result") or {}).get("structured_content")
+            expected_episode = row.get("required_episode_id")
+            expected_session = row.get("required_routing_session_id")
             activation = packet.get("activation_receipt", {}) if isinstance(packet, dict) else {}
             order = activation.get("stage_order", {}).get("data")
             queries = activation.get("stage_queries", {})
@@ -272,11 +275,54 @@ def mcp_calls(run_dir, rows):
                           "experience_deleted": (packet.get("experience_deleted")
                                                  if isinstance(packet, dict) else None),
                           "four_stage_valid": four_stage_valid,
+                          "original_replay_valid": objective_replay_matches(
+                              packet, expected_episode, expected_session),
                           "stage_query_values":
                               {name: section.get("data") for name, section in queries.items()},
                           "episode_ids": ([memory.get("episode_id") for memory in packet.get("memories", [])]
                                           if isinstance(packet, dict) else [])})
     return calls
+
+
+def objective_replay_matches(packet, episode_id, session_id):
+    """Independently verify the complete original objective in the MCP Replay."""
+    if (not isinstance(packet, dict) or packet.get("status") != "memory_context_ready"
+            or packet.get("candidate_count") != 1
+            or not isinstance(episode_id, str)
+            or not isinstance(session_id, str) or not session_id):
+        return False
+    memories = packet.get("memories")
+    if not isinstance(memories, list) or len(memories) != 1:
+        return False
+    row = memories[0]
+    section = row.get("replay") if isinstance(row, dict) else None
+    if not isinstance(section, dict) or section.get("complete") is not True:
+        return False
+    replay = section.get("data")
+    if not isinstance(replay, dict) or replay.get("episode_id") != episode_id \
+            or replay.get("historical_truth_authorized") is not False:
+        return False
+    sources, steps = replay.get("source_addresses"), replay.get("steps")
+    if (not isinstance(sources, list) or len(sources) != 1
+            or not isinstance(sources[0], str)
+            or not sources[0].startswith("transcript:codex:"
+                + hashlib.sha256(session_id.encode("utf-8")).hexdigest() + ":")
+            or not sources[0].endswith(":part:1")
+            or not isinstance(steps, list) or len(steps) != 1):
+        return False
+    observation = steps[0].get("observation") if isinstance(steps[0], dict) else None
+    metadata = observation.get("metadata") if isinstance(observation, dict) else None
+    return bool(isinstance(metadata, dict)
+        and metadata.get("origin") == "session_transcript"
+        and metadata.get("host") == "codex"
+        and metadata.get("role") == "user"
+        and metadata.get("record_type") == "message"
+        and metadata.get("part") == metadata.get("parts") == 1
+        and metadata.get("epistemic_status") == "unverified_transcript"
+        and observation.get("current_truth_claimed") is False
+        and isinstance(observation.get("text"), str)
+        and hashlib.sha256(observation["text"].encode("utf-8")).hexdigest()
+            == INITIAL_SHA256)
 
 
 def vrs_protocol(calls, expected_episode_id=None, expected_session_id=None):
@@ -326,7 +372,8 @@ def vrs_protocol(calls, expected_episode_id=None, expected_session_id=None):
                 and not (isinstance(call["lookup_receipt"], dict)
                          and call["lookup_receipt"].get("main_opened") is True)
                 for call in contexts))
-    return bool(exact and routing and order and release_matches and clean)
+    return bool(exact and routing and order and release_matches and clean
+                and (expected_episode_id is None or packet["original_replay_valid"]))
 
 
 def live_experience_complete(rows):
@@ -654,6 +701,19 @@ def grade_cell(model, arm, rows, run_dir, output):
     final_merge = all_rows[-1].get("final_session_end_merge", {})
     supervisor_stop = all_rows[-1].get("live_supervisor_stop", {})
     merge_coverage = final_merge.get("coverage", {}) if isinstance(final_merge, dict) else {}
+    content_integrity = final_merge.get("content_integrity", {}) if isinstance(final_merge, dict) else {}
+    content_integrity_ok = (arm != "short_vrs" or (
+        content_integrity.get("status") == "PASS"
+        and type(content_integrity.get("expected_original_observations")) is int
+        and content_integrity.get("expected_original_observations")
+            == content_integrity.get("actual_original_observations")
+        and content_integrity.get("expected_original_observations")
+            == merge_coverage.get("stored_parts")
+        and content_integrity.get("expected_sha256")
+            == content_integrity.get("actual_sha256")
+        and content_integrity.get("missing_requests") == 0
+        and content_integrity.get("unexpected_requests") == 0
+        and content_integrity.get("changed_requests") == 0))
     final_merge_ok = (arm != "short_vrs" or (
         merge_coverage.get("queued_parts") == 0
         and merge_coverage.get("session_experience_parts") == merge_coverage.get("stored_parts")
@@ -696,6 +756,7 @@ def grade_cell(model, arm, rows, run_dir, output):
                         for r in all_rows)
                 and all(r["tool_types"] == [] for r in initial)
                 and retained_main_ok and live_ok and watchers_ok and final_merge_ok
+                and content_integrity_ok
                 and watcher_shutdown_ok
                 and all(r["tool_types"] and all(t == "command_execution" for t in r["tool_types"])
                         for r in fillers)
@@ -711,6 +772,8 @@ def grade_cell(model, arm, rows, run_dir, output):
                       and all(r.get("required_vrs_exact_address_observed", True) for r in all_rows)
                       and all(r.get("required_vrs_four_stage_observed", True) for r in all_rows)
                       and all(r.get("required_vrs_session_first_observed", True) for r in all_rows)
+                      and all(r.get("required_vrs_original_replay_observed", True)
+                              for r in all_rows)
                       and boundary_tools_ok and outcome_tools_ok)
     workspace = run_dir / (stem + "-workspace")
     original = (BASELINE / TARGET).read_text(encoding="utf-8")
@@ -801,6 +864,7 @@ def grade_cell(model, arm, rows, run_dir, output):
             "wall_seconds": sum(r["elapsed_ns"] for r in all_rows) / 1e9,
             "live_experience_complete": live_ok,
             "live_watchers_complete": watchers_ok,
+            "session_content_integrity_complete": content_integrity_ok,
             "retained_main_complete": retained_main_ok,
             "retained_main_seed": seed if arm == "short_vrs" else None,
             "live_experience_final": all_rows[-1].get("live_experience"),
