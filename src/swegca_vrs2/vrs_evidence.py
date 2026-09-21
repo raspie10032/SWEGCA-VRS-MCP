@@ -224,9 +224,12 @@ def build(graph, memory):
     ev = Evidence()
     aliases = getattr(graph, 'aliases', None) or {}     # hypothesis registry: alias proposition -> canonical
     touched = {}                      # episode id -> [hypothesis ids] for the weight pass
+    # Evidence reads steps and source addresses, never cue strings. The light
+    # episode carries those same original fields without expanding every cue.
+    fetch = getattr(memory, 'episode_light', memory.episode)
     for row in range(memory.count):
         eid = ids[row]
-        episode = memory.episode(eid)
+        episode = fetch(eid)
         pol = record_polarity(episode, superseded)
         ev.record_polarity[eid] = pol
         if not pol:

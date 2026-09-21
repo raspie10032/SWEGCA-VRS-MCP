@@ -476,6 +476,7 @@ def build_inputs(graph, memory, labels):
     weight = np.zeros(n, np.float32)
     usage_base = np.zeros(n, np.float32)
     usage = getattr(graph, 'usage', None) or {}
+    fetch = getattr(memory, 'episode_light', memory.episode)
     usage_records = 0
     resolved_count = 0
     for node in np.flatnonzero(record_mask):
@@ -491,7 +492,7 @@ def build_inputs(graph, memory, labels):
         unresolved[node] = (not pol) or (h is not None and h.unresolved())
         if not pol and usage and eid not in memory.superseded:
             # pending record that sessions opened after recall: association from use (never truth)
-            counts = usage.get(memory.episode(eid).source_addresses[0])
+            counts = usage.get(fetch(eid).source_addresses[0])
             opened = int(counts[1]) if counts else 0
             if opened > 0:
                 grow = np.log2(1.0 + opened)

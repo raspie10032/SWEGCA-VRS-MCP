@@ -15,12 +15,56 @@ from swegca_vrs2.engine.mosaic_vrs_event_kernel import EventVrsInputs
 from swegca_vrs2.engine.mosaic_vrs_event_signal import settle_event_signal
 from swegca_vrs2.engine.mosaic_vrs_dependency_index import EndpointDependencyIndex
 from swegca_vrs2.engine.mosaic_memory_promotion import assess_vrs_experience_promotion
-from swegca_vrs2 import vrs_refine
+from swegca_vrs2 import vrs_evidence, vrs_refine
 
 
 def record(main, i='one', **kwargs):
     return main.ingest(dict(request_id=i, text='한국어 기억 원문 ' + i,
         source='test:' + i, revision='r1', **kwargs))
+
+
+def test_light_evidence_inputs_equal_full_original_episodes(main):
+    """A faster episode view must preserve evidence, revisions and usage semantics."""
+    original = main.ingest(dict(request_id='original', text='원 주장', source='case:one',
+        revision='1', outcome='success', proposition='P', polarity='support',
+        metadata={'axes': ['intervention'], 'project': 'one'}))
+    main.ingest(dict(request_id='opponent', text='반대 주장', source='case:two',
+        revision='1', outcome='failure', proposition='P', polarity='refute',
+        metadata={'axes': ['counterfactual'], 'project': 'two'}))
+    main.ingest(dict(request_id='pending-claim', text='미결 주장', source='case:three',
+        revision='1', outcome='pending', proposition='P', polarity='support'))
+    main.ingest(dict(request_id='revision', text='정정 주장', source='case:one',
+        revision='2', outcome='pending', proposition='P', polarity='refute',
+        supersedes=original['episode_id']))
+    main.ingest(dict(request_id='usage', text='미결 참고', source='case:usage',
+        revision='1', outcome='pending'))
+
+    class FullEpisodes:
+        def __init__(self, memory):
+            self.memory = memory
+
+        def __getattr__(self, name):
+            if name == 'episode_light':
+                raise AttributeError(name)
+            return getattr(self.memory, name)
+
+    memory = main.memory
+    full = FullEpisodes(memory)
+    graph = main.graph.with_usage({'case:usage': (1, 2)})
+    light_evidence = vrs_evidence.build(graph, memory)
+    full_evidence = vrs_evidence.build(graph, full)
+    for name in ('record_weight', 'record_primary', 'record_polarity',
+                 'resolved_count', 'observation_count'):
+        assert getattr(light_evidence, name) == getattr(full_evidence, name)
+    assert {key: value.summary() for key, value in light_evidence.hypotheses.items()} == {
+        key: value.summary() for key, value in full_evidence.hypotheses.items()}
+
+    labels = np.zeros(graph.flat.count, dtype=np.int64)
+    light_inputs = vrs_refine.build_inputs(graph, memory, labels)
+    full_inputs = vrs_refine.build_inputs(graph, full, labels)
+    for name in light_inputs:
+        first, second = light_inputs[name], full_inputs[name]
+        assert np.array_equal(first, second) if isinstance(first, np.ndarray) else first == second
 
 
 @pytest.fixture
