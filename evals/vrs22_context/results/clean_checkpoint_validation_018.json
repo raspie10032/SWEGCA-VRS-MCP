@@ -1,0 +1,40 @@
+{
+  "schema": "vrs22-clean-checkpoint-output-validation-v1",
+  "fixture": "in-memory data-only checkpoint boundary",
+  "baseline_detected": true,
+  "baseline": {
+    "path": "/var/tmp/vrs22-coding-fixture-7c67f30/src/swegca_vrs2/checkpoint.py",
+    "sha256": "b98fa8c64d00b64e70b47a8dcd2f0813813c408ecc05c11bfce0826159ddbb59",
+    "valid_archive_with_unrelated_extra": true,
+    "duplicate_metadata_rejected_before_read": false,
+    "duplicate_array_rejected_before_read": false,
+    "pass": false
+  },
+  "candidates": {
+    "luna": {
+      "path": "/var/tmp/vrs22-native-confirmation-018/gpt-5.6-luna__short_vrs-workspace/src/swegca_vrs2/checkpoint.py",
+      "sha256": "ef6be9cc0a8f009dda28ec900d83cdc7031bce430a13ad387afc6bc38b2df43e",
+      "valid_archive_with_unrelated_extra": true,
+      "duplicate_metadata_rejected_before_read": true,
+      "duplicate_array_rejected_before_read": true,
+      "pass": true
+    },
+    "terra": {
+      "path": "/var/tmp/vrs22-native-confirmation-018/gpt-5.6-terra__short_vrs-workspace/src/swegca_vrs2/checkpoint.py",
+      "sha256": "ef6be9cc0a8f009dda28ec900d83cdc7031bce430a13ad387afc6bc38b2df43e",
+      "valid_archive_with_unrelated_extra": true,
+      "duplicate_metadata_rejected_before_read": true,
+      "duplicate_array_rejected_before_read": true,
+      "pass": true
+    },
+    "sol": {
+      "path": "/var/tmp/vrs22-native-confirmation-018/gpt-5.6-sol__short_vrs-workspace/src/swegca_vrs2/checkpoint.py",
+      "sha256": "368726a182ab96ce779bb56c41c7c145677ed00d168897d636cf8c5c7d841c5e",
+      "valid_archive_with_unrelated_extra": true,
+      "duplicate_metadata_rejected_before_read": true,
+      "duplicate_array_rejected_before_read": true,
+      "pass": true
+    }
+  },
+  "all_candidates_pass": true
+}
