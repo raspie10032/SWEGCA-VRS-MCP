@@ -188,5 +188,7 @@ The new installed wheel's natural first-ranked Replay receipt is
 Under the same 4 GiB, no-swap and 625 MB/s state-device limits, first calls
 took 0.775 ms for one match, 19.425 ms for 100 and 120.410 ms for 1,008.
 The latency gate remains false. The one-shot post-SessionEnd watcher now uses
-this new wheel as `swegca-vrs22-sessionend-handoff-c0de7f1-20260922.service`.
+this new wheel as `swegca-vrs22-sessionend-handoff-c0de7f1-r1-20260922.service`.
+After the actual SessionEnd marker, it also stops only the isolated native
+shadow tailer so that copy does not keep polling after the live handoff.
 No SessionEnd marker exists and the active Codex hook/MCP has not switched.
