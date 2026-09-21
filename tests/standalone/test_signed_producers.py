@@ -100,3 +100,23 @@ def test_daemon_verifies_on_ingest_and_the_audit_sees_it(tmp_path, monkeypatch):
     finally:
         d.close()
 
+
+def test_a_second_machine_adds_its_key_and_both_verify(tmp_path):
+    """Item 26 (2026-09-21): one producer id, one key per machine — the second machine adds, the first keeps signing."""
+    reg = str(tmp_path / "producers.json")
+    keys1, keys2 = str(tmp_path / "k1"), str(tmp_path / "k2")
+    first = identity.keygen("transcript-tail", registry_path=reg, keys=keys1)
+    with pytest.raises(ValueError):
+        identity.keygen("transcript-tail", registry_path=reg, keys=keys2)          # a plain keygen still refuses
+    second = identity.keygen("transcript-tail", registry_path=reg, keys=keys2, add=True)
+    registry = identity.load_registry(reg)
+    assert {k[1] for k in identity.public_keys_of(registry["producers"]["transcript-tail"])} == {first["key_id"], second["key_id"]}
+    for keys, made in ((keys1, first), (keys2, second)):
+        args = row("transcript-tail", "transcript:x/" + keys[-2:], "턴 본문")
+        args["metadata"]["signature"] = identity.sign(identity.signature_fields(args), "transcript-tail", keys)
+        assert identity.verify_row(args, registry) is True and args["metadata"]["key_id"] == made["key_id"]
+    borrowed = row("transcript-tail", "transcript:y", "다른 열쇠")
+    identity.keygen("other", registry_path=reg, keys=keys1)
+    borrowed["metadata"]["signature"] = identity.sign(identity.signature_fields(borrowed), "other", keys1)
+    assert identity.verify_row(borrowed, registry) is False
+

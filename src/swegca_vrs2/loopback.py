@@ -594,7 +594,38 @@ def _preparer(daemon):
         time.sleep(0.25)
 
 
-def serve(state_dir, *, port=0, allow_ingest=False, idle_hours=8.0, bundle_limit=None, bundles=None, hot_bundles=1):
+TAIL_SWEEP_EVERY = 60.0   # seconds between the daemon's sweeps of tailed / registered conversation logs
+
+
+def _tail_sweeper(daemon, port, every):
+    """Real time without a hook (2026-09-21, items 9·20): every ``every`` seconds the quiet logs that grew since
+    their tail state — a session that died mid-turn, an agent without hooks whose log glob was registered with
+    ``vrs2-tail.py --register`` — are tailed into the store through this daemon's own port, the path a hook
+    takes. A client is opened only when a log has something to send, so an idle daemon still idles out. Only
+    the daemon that owns the configured live store sweeps (a test daemon on a temporary store never touches
+    this machine's tail states)."""
+    try:
+        from .harness import transcripts
+        from .harness.paths import STATE as LIVE_STATE
+        if Path(daemon.state_dir).resolve() != Path(LIVE_STATE).resolve():
+            return
+    except Exception:
+        return
+    while not daemon.stop.is_set():
+        for _ in range(max(1, int(every))):
+            if daemon.stop.is_set():
+                return
+            time.sleep(1.0)
+        try:
+            transcripts.sweep_all(trigger='daemon', client_factory=lambda: LoopbackClient(port, 120))
+        except Exception as error:
+            try:
+                transcripts.receipt(trigger='daemon:sweep', error=repr(error)[:160])
+            except Exception:
+                pass
+
+
+def serve(state_dir, *, port=0, allow_ingest=False, idle_hours=8.0, bundle_limit=None, bundles=None, hot_bundles=1, tail_sweep=TAIL_SWEEP_EVERY):
     from .store import CHECKPOINT_IDLE
     from .vrs_refine import IDLE_CYCLES
     daemon = Daemon(state_dir, allow_ingest=allow_ingest, bundle_limit=bundle_limit, bundles=bundles, hot_bundles=hot_bundles, idle_seconds=idle_hours * 3600)
@@ -631,6 +662,9 @@ def serve(state_dir, *, port=0, allow_ingest=False, idle_hours=8.0, bundle_limit
     thread.start()
     preparer = threading.Thread(target=_preparer, args=(daemon,), name='vrs2-preparer', daemon=True)
     preparer.start()
+    if tail_sweep and allow_ingest:
+        sweeper = threading.Thread(target=_tail_sweeper, args=(daemon, actual, float(tail_sweep)), name='vrs2-tail-sweeper', daemon=True)
+        sweeper.start()
     try:
         while not daemon.stop.is_set():
             time.sleep(1.0)
@@ -691,12 +725,13 @@ def main():
     parser.add_argument('--bundle-limit', type=int, default=0, help='recommended records per bundle (soft; docs/SIZING.md)')
     parser.add_argument('--bundle', action='append', default=[], metavar='ID=DIR', help='another bundle this daemon answers for (warm; hot when ingested into)')
     parser.add_argument('--hot-bundles', type=int, default=1, help='how many other bundles may stay hot (owned) at once')
+    parser.add_argument('--tail-sweep', type=float, default=TAIL_SWEEP_EVERY, help='seconds between sweeps of tailed/registered conversation logs (0 = off)')
     options = parser.parse_args()
     bundles = dict(item.split('=', 1) for item in options.bundle if '=' in item)
     try:
         return serve(options.state_dir, port=options.port, allow_ingest=options.allow_ingest,
                      idle_hours=options.idle_hours, bundle_limit=options.bundle_limit or None,
-                     bundles=bundles, hot_bundles=options.hot_bundles)
+                     bundles=bundles, hot_bundles=options.hot_bundles, tail_sweep=options.tail_sweep)
     except (ValueError, OSError) as error:
         print('VRS2 loopback daemon error: ' + str(error), file=sys.stderr)
         return 1

@@ -60,6 +60,21 @@ ASSISTANT_CHARS = 2500
 TOOL_LINES = 24
 TEXT_CHARS = 6000
 TAIL_CLAIM = "the transcript tail ingests every turn of the conversation log in real time"
+WATCH_FILE = os.path.join(STATE_DIR, "watch.json")     # registered log globs of agents without hooks (daemon sweep)
+READ_DIGESTS = 12          # Read calls per turn whose file digest (at Stop) is recorded
+# secrets a user or a tool pasted into a turn are masked before the text is stored (item 25, 2026-09-21);
+# the log itself still holds them — the store must not multiply them
+_SECRET_PATTERNS = [
+    ("private-key", re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----", re.S)),
+    ("anthropic", re.compile(r"sk-ant-[A-Za-z0-9_\-]{16,}")),
+    ("openai", re.compile(r"sk-[A-Za-z0-9_\-]{20,}")),
+    ("aws", re.compile(r"AKIA[0-9A-Z]{16}")),
+    ("github", re.compile(r"(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{20,}")),
+    ("slack", re.compile(r"xox[baprs]-[A-Za-z0-9\-]{10,}")),
+    ("google", re.compile(r"AIza[0-9A-Za-z_\-]{30,}")),
+    ("jwt", re.compile(r"eyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}")),
+    ("assignment", re.compile(r"(?i)\b(api[_\-]?key|secret|token|password|passwd|pwd|authorization|bearer)\b(\s*[=:]\s*|\s+)([\"']?)([A-Za-z0-9_\-./+=]{8,})")),
+]
 
 FORMATS = ("claude-code", "messages-jsonl", "messages-json", "text")
 RESULT_CHARS = 200       # a command's output / a tool error, as one line
@@ -131,10 +146,14 @@ def states():
     """Every log this machine has tailed, by state file."""
     out = []
     for f in sorted(glob.glob(os.path.join(STATE_DIR, "*.json"))):
+        if os.path.basename(f) == "watch.json":
+            continue                                     # the registry of globs, not a log's state
         try:
-            out.append(json.load(io.open(f, encoding="utf-8")))
+            data = json.load(io.open(f, encoding="utf-8"))
         except (OSError, ValueError):
             continue
+        if isinstance(data, dict) and data.get("path"):
+            out.append(data)
     return out
 
 
@@ -252,6 +271,14 @@ def events_claude(record, own_sidechain=False):
         pre, post = meta.get("preTokens"), meta.get("postTokens")
         event = f"[압축 경계 {meta.get('trigger') or '?'}" + (f" · 전 {pre:,} → 후 {post:,} 토큰" if isinstance(pre, int) and isinstance(post, int) else "") + "]"
         return Ev("event", event=event, when=when)
+    if kind == "attachment":
+        att = record.get("attachment") if isinstance(record.get("attachment"), dict) else {}
+        if att.get("type") == "queued_command" and att.get("prompt"):
+            # the user spoke while the turn was running; the message itself arrives later as a user record
+            return Ev("event", event=f"[사용자 끼어듦 {when[-5:]}: {oneline(att['prompt'], 80)}]", when=when)
+        if att.get("type") == "task_status":
+            return Ev("event", event=f"[배경 작업 {att.get('status') or '?'}: {oneline(att.get('description') or att.get('taskId') or '', 80)}]", when=when)
+        return NOTHING
     if kind == "user" and not record.get("isMeta"):
         if record.get("isCompactSummary"):
             # the host's own summary after a compaction: what the model was left with — an experience of the loss
@@ -277,8 +304,11 @@ def events_claude(record, own_sidechain=False):
                 texts.append(b["text"].strip())
             elif b.get("type") == "tool_use":
                 name = str(b.get("name") or "?")
-                tools.append(_tool_line(name, b.get("input")))
+                line = _tool_line(name, b.get("input"))
+                tools.append(line)
                 ids.append((str(b.get("id") or ""), name))
+                if name == "Read" and isinstance(b.get("input"), dict) and b["input"].get("file_path"):
+                    ids.append(("read:" + line[5:].strip(), str(b["input"]["file_path"])))
         usage = message.get("usage") if isinstance(message.get("usage"), dict) else None
         if not texts and not tools and not usage:
             return NOTHING
@@ -415,7 +445,11 @@ def segments_of(items, first_line, fmt, carry_turn, own_sidechain=False):
             elif ev.role == "event":
                 current["events"].append(ev.event)
             current["tools"].extend(ev.tools)
-            names.update(ev.ids)
+            for key, value in ev.ids:
+                if key.startswith("read:"):
+                    current.setdefault("_read_paths", {})[key[5:]] = value
+                else:
+                    names[key] = value
             take_results(current, ev.results)
             if ev.usage:
                 u = current["usage"]
@@ -459,6 +493,22 @@ def messages_json_items(path, index):
 
 # ----------------------------------------------------------------------------------------------- rows
 
+def redact(text):
+    """(text with secrets masked, count). Masks by kind — ``[가림:github]`` — so the turn still says what happened."""
+    count = 0
+    for kind, pattern in _SECRET_PATTERNS:
+        if kind == "assignment":
+            def sub(m):
+                nonlocal count
+                count += 1
+                return f"{m.group(1)}{m.group(2)}{m.group(3)}[가림:{kind}]"
+            text, n = pattern.subn(sub, text)
+        else:
+            text, n = pattern.subn(f"[가림:{kind}]", text)
+            count += n
+    return text, count
+
+
 def oneline(text, limit):
     text = re.sub(r"\s+", " ", str(text or "")).strip()
     return text if len(text) <= limit else text[:limit - 1] + "…"
@@ -492,12 +542,39 @@ def compose(seg, agent, session, project):
             last = t
         shown = tools[:TOOL_LINES]
         lines.append("도구: " + " · ".join(shown) + (f" · (+{len(tools) - len(shown)})" if len(tools) > len(shown) else ""))
+        digests = read_digests(seg)
+        if digests:
+            lines.append("읽음: " + " · ".join(f"{name}@{d}" for name, d in digests))
     for line in seg.get("results", [])[:8]:
         lines.append("결과: " + line)
     u = seg.get("usage") or {}
     if u.get("context_peak"):
         lines.append(f"토큰: 문맥 최대 {u['context_peak']:,} · 출력 {u.get('output', 0):,}")
-    return "\n".join(lines)[:TEXT_CHARS]
+    text, masked = redact("\n".join(lines))
+    seg["redacted"] = masked
+    return text[:TEXT_CHARS]
+
+
+def read_digests(seg):
+    """(short name, sha12) of the files the turn read — their digest now (at the tail's run), which is the version
+    the next reader will see; the exact version at read time is the log's tool result (never copied)."""
+    out, seen = [], set()
+    for t in seg["tools"]:
+        if not t.startswith("Read "):
+            continue
+        short = t[5:].strip()
+        if short in seen or len(out) >= READ_DIGESTS:
+            continue
+        seen.add(short)
+        path = seg.get("_read_paths", {}).get(short)
+        if not path or not os.path.isfile(path):
+            continue
+        try:
+            with open(path, "rb") as handle:
+                out.append((short, hashlib.sha256(handle.read()).hexdigest()[:12]))
+        except OSError:
+            continue
+    return out
 
 
 def raw_span_digest(path, start, end, fmt):
@@ -525,7 +602,7 @@ def row_of(seg, path, fmt, agent, session, project, stat):
                     path=os.path.abspath(path).replace("\\", "/"), lines=list(seg["lines"]), date=(seg["when"] or "")[:10] or time.strftime("%Y-%m-%d"),
                     model=seg["model"], tools=sorted({t.split(" ", 1)[0] for t in seg["tools"]})[:12], records=seg["records"],
                     tokens=dict(seg.get("usage") or {}), errors=sum(1 for e in seg["events"] if e.startswith("[도구 오류")),
-                    rejected=sum(1 for e in seg["events"] if e.startswith("[사용자 거부")),
+                    rejected=sum(1 for e in seg["events"] if e.startswith("[사용자 거부")), redacted=int(seg.get("redacted") or 0),
                     producer=PRODUCER, user=USER, origin=origin)
     args = dict(request_id=f"transcript:{sha12(metadata['path'])}:{seg['lines'][0]}-{seg['lines'][1]}"[:128], text=text,
                 source=source[:1024], revision=span_digest[:12], outcome="pending", cues=[], metadata=metadata)
@@ -724,6 +801,65 @@ def _cwd_of(path, fmt):
     return None
 
 
+def load_watch():
+    try:
+        data = json.load(io.open(WATCH_FILE, encoding="utf-8"))
+        return data if isinstance(data, list) else []
+    except (OSError, ValueError):
+        return []
+
+
+def register(pattern, *, agent, project=None, fmt=None, cwd=None):
+    """An agent without hooks: its log glob, tailed by the daemon's sweep (and by ``--watch``). Idempotent."""
+    entries = load_watch()
+    entry = dict(glob=pattern, agent=agent, project=project, format=fmt, cwd=cwd, since=time.strftime("%Y-%m-%d %H:%M"))
+    entries = [e for e in entries if e.get("glob") != pattern] + [entry]
+    os.makedirs(STATE_DIR, exist_ok=True)
+    io.open(WATCH_FILE, "w", encoding="utf-8").write(json.dumps(entries, ensure_ascii=False, indent=1))
+    return entry
+
+
+def sweep_all(*, trigger="daemon", client_factory=None, idle_seconds=None):
+    """Real time without a hook (items 9·20, 2026-09-21): every log this machine has tailed, plus every file of a
+    registered glob, that grew since its state and has been quiet ``idle_seconds`` — a session that died
+    mid-turn, an agent without hooks — is tailed now. A client is made only when a log has something to send,
+    so an idle daemon still idles out. Returns the receipts of the runs that sent or failed."""
+    idle = SWEEP_IDLE_S if idle_seconds is None else float(idle_seconds)
+    now = time.time()
+    todo = {}
+    for st in states():
+        todo[st["path"].lower()] = dict(path=st["path"], agent=st.get("agent") or "claude-code", session=st.get("session"),
+                                        cwd=st.get("cwd"), project=st.get("project"), fmt=st.get("fmt"), offset=int(st.get("offset", 0)))
+    for entry in load_watch():
+        for path in sorted(glob.glob(entry.get("glob") or "", recursive=True)):
+            if not is_conversation_log(path):
+                continue
+            key = os.path.abspath(path).replace("\\", "/").lower()
+            if key not in todo:
+                todo[key] = dict(path=os.path.abspath(path).replace("\\", "/"), agent=entry.get("agent") or "agent", session=None,
+                                 cwd=entry.get("cwd"), project=entry.get("project"), fmt=entry.get("format"), offset=0)
+    out, client = [], None
+    try:
+        for item in todo.values():
+            try:
+                stat = os.stat(item["path"])
+            except OSError:
+                continue
+            if stat.st_size <= item["offset"] or now - stat.st_mtime < idle:
+                continue
+            if client is None and client_factory is not None:
+                client = client_factory()
+            out.append(run(item["path"], trigger=trigger + ":sweep", agent=item["agent"], session=item["session"], cwd=item["cwd"],
+                           project=item["project"], fmt=item["fmt"], client=client))
+    finally:
+        if client is not None:
+            try:
+                client.close()
+            except Exception:
+                pass
+    return out
+
+
 def sweep(project_dir, *, trigger, cwd=None, exclude=(), client=None):
     """Quiet sibling logs of a project that were tailed before and have grown since: a session that ended
     without its last Stop (a crash, a kill) is drained by the next SessionStart or Stop of the project."""
@@ -759,6 +895,10 @@ def hook(data):
     trigger = {"Stop": "stop", "SubagentStop": "subagent_stop", "PreCompact": "precompact", "SessionStart": "session_start"}.get(event, event.lower() or "hook")
     force_cut = trigger == "precompact"
     results = []
+    if trigger == "subagent_stop":
+        # item 23: the payload's field names were assumed from memory — the first real one is written down
+        receipt(trigger=trigger, payload_keys=sorted(k for k in data if k not in ("transcript_path", "cwd"))[:16],
+                agent_transcript=bool(data.get("agent_transcript_path")))
     if path and os.path.isfile(path):
         if trigger == "subagent_stop" and data.get("agent_transcript_path"):
             session = str(data.get("agent_id") or os.path.basename(path).rsplit(".", 1)[0])
@@ -770,6 +910,14 @@ def hook(data):
             results.extend(sweep(os.path.dirname(os.path.abspath(path)), trigger=trigger, cwd=cwd, exclude=(path,)))
         except Exception as error:
             receipt(trigger=trigger, sweep_error=repr(error)[:160])
+    failed = [r for r in results if r.get("errors")]
+    if failed and trigger in ("stop", "precompact"):
+        # item 21: a turn that did not reach the store is said out loud, not only in a receipt
+        try:
+            sys.stdout.write(json.dumps({"systemMessage": f"[기억] 대화 유입 실패 {len(failed)}건 — {failed[0]['errors'][0][:100]} (다음 정지에 다시 보냄)"}, ensure_ascii=False))
+            sys.stdout.flush()
+        except Exception:
+            pass
     return results
 
 
@@ -803,11 +951,46 @@ def cli(argv):
     ap.add_argument("--interval", type=float, default=10.0)
     ap.add_argument("--backfill", default=None, metavar="GLOB", help="drain every log matching GLOB to its end, then stop")
     ap.add_argument("--status", action="store_true", help="the logs tailed on this machine and where each stands")
+    ap.add_argument("--register", default=None, metavar="GLOB", help="an agent without hooks: register its log glob for the daemon's sweep (with --agent, optional --project/--format)")
+    ap.add_argument("--registered", action="store_true", help="the registered log globs")
+    ap.add_argument("--sweep", action="store_true", help="one sweep now: every tailed or registered log that grew and is quiet")
+    ap.add_argument("--show", nargs=3, metavar=("LOG", "FIRST", "LAST"), help="print the turn(s) in LOG lines FIRST..LAST as text (what a row was made from)")
     a = ap.parse_args(argv)
     try:
         sys.stdout.reconfigure(encoding="utf-8")
     except (AttributeError, ValueError):
         pass
+    if a.register:
+        if not a.agent:
+            ap.error("--register needs --agent NAME")
+        entry = register(a.register, agent=a.agent, project=a.project, fmt=a.format, cwd=a.cwd)
+        print(json.dumps(entry, ensure_ascii=False))
+        return 0
+    if a.registered:
+        for e in load_watch():
+            print(json.dumps(e, ensure_ascii=False))
+        return 0
+    if a.sweep:
+        from swegca_vrs2.loopback import ensure_daemon
+        for rec in sweep_all(trigger="cli", client_factory=lambda: ensure_daemon(STATE, allow_ingest=True, python=PYTHON, bundle_limit=BUNDLE_LIMIT, bundles=BUNDLES, hot_bundles=HOT_BUNDLES)):
+            print(json.dumps(rec, ensure_ascii=False))
+        return 0
+    if a.show:
+        log, first, last = a.show[0], int(a.show[1]), int(a.show[2])
+        fmt = a.format or detect_format(log)
+        with open(log, "rb") as handle:
+            items, pos, line_no = [], 0, 0
+            for raw in handle:
+                line_no += 1
+                if first <= line_no <= last:
+                    items.append((pos, pos + len(raw), raw.decode("utf-8", "replace").rstrip("\n")))
+                pos += len(raw)
+                if line_no > last:
+                    break
+        for seg in segments_of(items, first, fmt, 0, own_sidechain=is_subagent_log(log)):
+            print(compose(seg, a.agent or "claude-code", a.session or _session_of(log, fmt), a.project or ""))
+            print("---")
+        return 0
     if a.status:
         for s in states():
             print(f"{s.get('agent', '?'):<12} {str(s.get('session', ''))[:8]:<8} turn {s.get('turn', 0):<5} line {s.get('line', 1):<7} rows {s.get('rows', 0):<6} "

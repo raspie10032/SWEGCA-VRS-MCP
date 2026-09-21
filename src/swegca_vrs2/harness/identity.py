@@ -73,9 +73,30 @@ def key_path(producer, keys=None):
     return os.path.join(keys, safe + ".key")
 
 
-def keygen(producer, *, user=None, note="", registry_path=None, keys=None, replace=False):
+def machine_name():
+    import socket
+    try:
+        return socket.gethostname()
+    except Exception:
+        return "unknown"
+
+
+def public_keys_of(entry):
+    """Every public key a producer may sign with: the entry's own and those under ``keys`` (one per machine,
+    2026-09-21) — ``[(public_key_hex, key_id, machine)]``."""
+    out = []
+    if entry.get("public_key"):
+        out.append((entry["public_key"], entry.get("key_id"), entry.get("machine")))
+    for k in entry.get("keys") or []:
+        if isinstance(k, dict) and k.get("public_key"):
+            out.append((k["public_key"], k.get("key_id"), k.get("machine")))
+    return out
+
+
+def keygen(producer, *, user=None, note="", registry_path=None, keys=None, replace=False, add=False):
     """A new Ed25519 pair for ``producer``: private seed to ``<keys>/<producer>.key`` (hex), public key into the
-    registry with the user and time. Refuses to replace an existing registration unless ``replace``."""
+    registry with the user and time. Refuses to replace an existing registration unless ``replace``; with
+    ``add`` (2026-09-21) a second machine adds its key beside the first machine's instead — both verify."""
     crypto = _crypto()
     if crypto is None:
         raise RuntimeError("cryptography is not installed: cannot generate keys here")
@@ -83,8 +104,8 @@ def keygen(producer, *, user=None, note="", registry_path=None, keys=None, repla
     registry_path = registry_path or PRODUCERS
     keys = keys or KEYS
     registry = load_registry(registry_path)
-    if producer in registry["producers"] and not replace:
-        raise ValueError(f"producer {producer!r} is already registered (use replace)")
+    if producer in registry["producers"] and not replace and not add:
+        raise ValueError(f"producer {producer!r} is already registered (use replace, or add for another machine's key)")
     private = Ed25519PrivateKey.generate()
     seed = private.private_bytes(serialization.Encoding.Raw, serialization.PrivateFormat.Raw, serialization.NoEncryption())
     public = private.public_key().public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
@@ -96,11 +117,17 @@ def keygen(producer, *, user=None, note="", registry_path=None, keys=None, repla
         os.chmod(path, 0o600)
     except OSError:
         pass
-    entry = dict(public_key=public.hex(), key_id=hashlib.sha256(public).hexdigest()[:12], user=user or USER,
-                 since=time.strftime("%Y-%m-%dT%H:%M:%S"), note=note)
-    registry["producers"][producer] = entry
+    key_id = hashlib.sha256(public).hexdigest()[:12]
+    if add and producer in registry["producers"]:
+        entry = registry["producers"][producer]
+        entry.setdefault("keys", []).append(dict(public_key=public.hex(), key_id=key_id, machine=machine_name(), user=user or USER,
+                                                  since=time.strftime("%Y-%m-%dT%H:%M:%S"), note=note))
+    else:
+        entry = dict(public_key=public.hex(), key_id=key_id, user=user or USER, machine=machine_name(),
+                     since=time.strftime("%Y-%m-%dT%H:%M:%S"), note=note)
+        registry["producers"][producer] = entry
     save_registry(registry, registry_path)
-    return dict(producer=producer, key_id=entry["key_id"], public_key=entry["public_key"], private_key_path=path, user=entry["user"])
+    return dict(producer=producer, key_id=key_id, public_key=public.hex(), private_key_path=path, user=user or USER, machine=machine_name())
 
 
 def private_key_for(producer, keys=None):
@@ -146,20 +173,26 @@ def signature_fields(args):
 
 
 def verify(producer, fields, signature, registry):
-    """True / False for a registered producer, None when the producer is not registered (or no crypto here)."""
+    """True / False for a registered producer, None when the producer is not registered (or no crypto here).
+    Any of the producer's keys (one per machine) may have signed."""
+    return verifying_key(producer, fields, signature, registry) is not None if registry["producers"].get(producer) is not None else None
+
+
+def verifying_key(producer, fields, signature, registry):
+    """The key_id of the producer's key that signed ``fields``, or None."""
     entry = registry["producers"].get(producer)
-    if entry is None:
-        return None
     crypto = _crypto()
-    if crypto is None or not signature:
-        return False
+    if entry is None or crypto is None or not signature:
+        return None
     _, Ed25519PublicKey, _, InvalidSignature = crypto
-    try:
-        public = Ed25519PublicKey.from_public_bytes(bytes.fromhex(entry["public_key"]))
-        public.verify(bytes.fromhex(signature), canonical(fields))
-        return True
-    except (ValueError, InvalidSignature):
-        return False
+    body = canonical(fields)
+    for public_hex, key_id, _machine in public_keys_of(entry):
+        try:
+            Ed25519PublicKey.from_public_bytes(bytes.fromhex(public_hex)).verify(bytes.fromhex(signature), body)
+            return key_id or "?"
+        except (ValueError, InvalidSignature):
+            continue
+    return None
 
 
 def verify_row(args, registry=None):
@@ -171,14 +204,14 @@ def verify_row(args, registry=None):
         if not isinstance(meta, dict) or not meta.get("producer"):
             return None
         fields = signature_fields(args)
-        result = verify(meta["producer"], fields, meta.get("signature"), registry)
-        if result is None:
+        if registry["producers"].get(meta["producer"]) is None:
             return None
-        meta["verified"] = bool(result)
+        key_id = verifying_key(meta["producer"], fields, meta.get("signature"), registry)
+        meta["verified"] = key_id is not None
         meta.setdefault("text_sha256", fields["text_sha256"])
-        if result:
-            meta["key_id"] = registry["producers"][meta["producer"]].get("key_id")
-        return result
+        if key_id is not None:
+            meta["key_id"] = key_id
+        return key_id is not None
     except Exception:
         return None
 
@@ -198,6 +231,7 @@ def main(argv):
     kg = sub.add_parser("keygen", help="register a producer with a new key pair (private key stays on this machine)")
     kg.add_argument("--producer", required=True); kg.add_argument("--user", default=None); kg.add_argument("--note", default="")
     kg.add_argument("--replace", action="store_true")
+    kg.add_argument("--add", action="store_true", help="this machine's key beside the producer's existing key(s) — for a second machine")
     sub.add_parser("list", help="registered producers")
     au = sub.add_parser("audit", help="live evidence rows: signed / verified / unverified per producer (via the daemon)")
     au.add_argument("--state", default=None)
@@ -208,14 +242,15 @@ def main(argv):
     except (AttributeError, ValueError):
         pass
     if a.cmd == "keygen":
-        r = keygen(a.producer, user=a.user, note=a.note, replace=a.replace)
-        print(f"registered {r['producer']} key_id {r['key_id']} user {r['user']} | private key {r['private_key_path']} | registry {PRODUCERS}")
+        r = keygen(a.producer, user=a.user, note=a.note, replace=a.replace, add=a.add)
+        print(f"registered {r['producer']} key_id {r['key_id']} user {r['user']} machine {r['machine']} | private key {r['private_key_path']} | registry {PRODUCERS}")
         return 0
     registry = load_registry()
     if a.cmd == "list":
         print(f"registry {registry['path']} digest {registry_digest(registry)} | user here: {USER}")
         for pid, e in sorted(registry["producers"].items()):
-            print(f"  {pid:<24} key_id {e.get('key_id')} user {e.get('user')} since {e.get('since')} {'(private key here)' if private_key_for(pid) else ''}")
+            keys_ = " + ".join(f"{k[1]}@{k[2] or '?'}" for k in public_keys_of(e))
+            print(f"  {pid:<24} keys {keys_} user {e.get('user')} since {e.get('since')} {'(private key here)' if private_key_for(pid) else ''}")
         return 0
     if a.cmd == "audit":
         from .paths import STATE, PYTHON

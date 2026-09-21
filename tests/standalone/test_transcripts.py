@@ -253,3 +253,61 @@ def test_after_compaction_the_cut_turn_comes_from_the_store(sandbox, monkeypatch
     finally:
         d.close()
 
+
+def test_registered_logs_are_swept_without_a_hook_and_secrets_are_masked(sandbox, monkeypatch):
+    """Items 9·20·25 (2026-09-21): an agent without hooks registers its log glob; the daemon's sweep tails every
+    quiet grown log — including a session that died mid-turn — through the store; a pasted key is masked in
+    the stored text (the log keeps it)."""
+    monkeypatch.setattr(t, "WATCH_FILE", str(sandbox / "tail" / "watch.json"))
+    d = Daemon(sandbox / "store", allow_ingest=True, idle_seconds=3600)
+    try:
+        other = sandbox / "gemini"
+        other.mkdir()
+        entry = t.register(str(other / "*.jsonl"), agent="gemini", project="proj")
+        assert entry["agent"] == "gemini" and t.load_watch()[0]["glob"] == str(other / "*.jsonl")
+        write(str(other / "chat.jsonl"), [json.dumps(dict(role="user", content="배포 키를 저장해 줘 sk-ant-api03-" + "x" * 40 + " 그리고 password=Tr0ub4dor&3xx")),
+                                          json.dumps(dict(role="assistant", content="저장했다 열쇠는 가렸다"))])
+        old = time.time() - 2 * t.SWEEP_IDLE_S
+        os.utime(str(other / "chat.jsonl"), (old, old))
+        # a Claude Code session tailed once, then dead mid-turn
+        dead = str(sandbox / "dead.jsonl")
+        write(dead, [rec("user", "죽기 전 첫 요청", session="dead"), rec("assistant", "답했다", session="dead")])
+        t.run(dead, trigger="stop", project="proj", client=Via(d))
+        write(dead, [rec("user", "죽기 직전 요청 표를 세어 줘", session="dead")], mode="a")
+        os.utime(dead, (old, old))
+        made = []
+        results = t.sweep_all(trigger="daemon", client_factory=lambda: (made.append(1), Via(d))[1])
+        assert len(made) == 1                                  # one client for the whole sweep, made only because something had to go
+        sent = {r["path"]: r["sent"] for r in results}
+        assert sent == {"chat.jsonl": 1, "dead.jsonl": 1}
+        page = d.handle(dict(command="origins", kinds=["transcript"], limit=100))
+        gem = next(r for r in page["rows"] if r["source"].startswith("transcript:gemini/"))
+        obs = d.main.memory.episode(gem["episode_id"]).steps[0].observation
+        assert "[가림:anthropic]" in obs["text"] and "password=[가림:assignment]" in obs["text"] and "sk-ant-api03" not in obs["text"]
+        assert obs["metadata"]["redacted"] == 2 and obs["metadata"]["agent"] == "gemini" and obs["metadata"]["project"] == "proj"
+        # nothing grew: the next sweep makes no client and sends nothing
+        made.clear()
+        assert t.sweep_all(trigger="daemon", client_factory=lambda: (made.append(1), Via(d))[1]) == [] and not made
+    finally:
+        d.close()
+
+
+def test_attachments_and_read_digests_are_part_of_the_turn(sandbox, tmp_path):
+    """Items 6·8 (2026-09-21): a user's mid-turn message and a background task's status are events of the turn;
+    the files a turn read carry their digest at the tail's run."""
+    read_me = tmp_path / "notes.txt"
+    read_me.write_text("hello", encoding="utf-8")
+    import hashlib
+    digest = hashlib.sha256(b"hello").hexdigest()[:12]
+    log = str(sandbox / "s6.jsonl")
+    write(log, [rec("user", "메모를 읽고 요약해 줘"),
+                rec("assistant", "읽는다", tools=[("Read", dict(file_path=str(read_me)))]),
+                json.dumps(dict(type="attachment", attachment=dict(type="queued_command", prompt="아 그리고 표도 하나 만들어 줘"), timestamp="2026-09-21T03:05:00.000Z", sessionId="s1")),
+                json.dumps(dict(type="attachment", attachment=dict(type="task_status", status="completed", description="백필 전체"), timestamp="2026-09-21T03:06:00.000Z", sessionId="s1")),
+                rec("assistant", "요약했다 다섯 글자")])
+    rec_ = t.run(log, trigger="stop", project="proj", dry_run=True)
+    text = rec_["texts"][0]
+    assert "[사용자 끼어듦 03:05: 아 그리고 표도 하나 만들어 줘]" in text or "[사용자 끼어듦" in text
+    assert "[배경 작업 completed: 백필 전체]" in text
+    assert f"읽음: {'/'.join(str(read_me).replace(chr(92), '/').split('/')[-2:])}@{digest}" in text
+
