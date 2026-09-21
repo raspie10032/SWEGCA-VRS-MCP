@@ -78,7 +78,8 @@ _SECRET_PATTERNS = [
     ("assignment", re.compile(r"(?i)\b(api[_\-]?key|secret|token|password|passwd|pwd|authorization|bearer)\b(\s*[=:]\s*|\s+)([\"']?)([A-Za-z0-9_\-./+=]{8,})")),
 ]
 
-FORMATS = ("claude-code", "messages-jsonl", "messages-json", "text")
+FORMATS = ("claude-code", "messages-jsonl", "messages-json", "text", "antigravity")
+INDEXED = ("messages-json", "antigravity")     # positions are item indices, not bytes; the source is re-read from the index
 RESULT_CHARS = 200       # a command's output / a tool error, as one line
 SUMMARY_HEAD, SUMMARY_TAIL = 900, 500   # the host's compaction summary: what it kept (head) and its next step (tail)
 
@@ -171,6 +172,9 @@ def detect_format(path):
     name = os.path.basename(path).lower()
     try:
         with open(path, "rb") as handle:
+            if handle.read(16) == b"SQLite format 3\x00":
+                return "antigravity" if antigravity_db(path) else "text"
+            handle.seek(0)
             lines = []
             for _ in range(5):
                 line = handle.readline(4_000_000)
@@ -199,9 +203,180 @@ def detect_format(path):
 
 
 def is_conversation_log(path):
-    """Not every jsonl under an agent's directory is a conversation: a workflow journal is an event log."""
+    """Not every jsonl under an agent's directory is a conversation: a workflow journal is an event log; a SQLite
+    database's -wal / -shm / -journal side files are not the database."""
     parts = os.path.abspath(path).replace("\\", "/").split("/")
-    return not (os.path.basename(path) == "journal.jsonl" and "workflows" in parts)
+    name = os.path.basename(path).lower()
+    if name.endswith(("-wal", "-shm", "-journal")):
+        return False
+    return not (name == "journal.jsonl" and "workflows" in parts)
+
+
+# ----------------------------------------------------------------------------------------------- antigravity
+# Google Antigravity keeps one SQLite database per conversation (`conversations/<cascade>.db`); `steps` rows hold
+# protobuf payloads. Read on a copy? No — a read-only connection; the writer is not blocked and a locked moment
+# is retried on the next run. Legacy `.pb` trajectory dumps (before the database) are not read.
+AG_USER, AG_ASSISTANT = 14, 15
+AG_TEXT_FIELDS = {"user": (19, 2), "answer": (20, 8), "answer_alt": (20, 1), "thinking": (20, 3)}
+
+
+def _pb_varint(b, i):
+    shift = n = 0
+    while True:
+        c = b[i]; i += 1
+        n |= (c & 0x7F) << shift
+        if not c & 0x80:
+            return n, i
+        shift += 7
+
+
+def pb_decode(b, depth=0, max_depth=6):
+    """Generic protobuf wire decoding without a schema: [(field, value)] — a length-delimited value is a nested
+    list when it decodes cleanly, a str when it is UTF-8 text, else bytes. None when the bytes are not a message."""
+    out, i = [], 0
+    try:
+        while i < len(b):
+            key, i = _pb_varint(b, i)
+            field, wire = key >> 3, key & 7
+            if wire == 0:
+                v, i = _pb_varint(b, i); out.append((field, v))
+            elif wire == 1:
+                out.append((field, b[i:i + 8])); i += 8
+            elif wire == 5:
+                out.append((field, b[i:i + 4])); i += 4
+            elif wire == 2:
+                n, i = _pb_varint(b, i); chunk = b[i:i + n]; i += n
+                if len(chunk) != n:
+                    raise ValueError("short")
+                nested = pb_decode(chunk, depth + 1, max_depth) if depth < max_depth and chunk else None
+                if nested is not None:
+                    out.append((field, nested))
+                else:
+                    try:
+                        out.append((field, chunk.decode("utf-8")))
+                    except UnicodeDecodeError:
+                        out.append((field, chunk))
+            else:
+                raise ValueError("wire")
+    except (ValueError, IndexError):
+        return None
+    return out
+
+
+def pb_get(tree, *path):
+    """The first value at a field path (a nested message decoded as a list is followed; a str/int/bytes ends it)."""
+    node = tree
+    for field in path:
+        if not isinstance(node, list):
+            return None
+        node = next((v for f, v in node if f == field), None)
+        if node is None:
+            return None
+    return node
+
+
+def _pb_text(tree, *path):
+    v = pb_get(tree, *path)
+    if isinstance(v, str):
+        return v
+    if isinstance(v, list):                                  # a text that happened to decode as a message: take its bytes back? no — treat as absent
+        return ""
+    return ""
+
+
+def antigravity_step(step_type, payload):
+    """One `steps` row as a role/content message for the generic adapter, or None when the step is not part of
+    the conversation as said (checkpoints, metadata)."""
+    tree = pb_decode(payload or b"")
+    if tree is None:
+        return None
+    created = pb_get(tree, 5, 1, 1)
+    when = float(created) if isinstance(created, int) and created > 1_000_000_000 else None
+    if step_type == AG_USER:
+        text = _pb_text(tree, *AG_TEXT_FIELDS["user"])
+        return dict(role="user", content=text, timestamp=when) if text.strip() else None
+    if step_type == AG_ASSISTANT:
+        text = _pb_text(tree, *AG_TEXT_FIELDS["answer"]) or _pb_text(tree, *AG_TEXT_FIELDS["answer_alt"])
+        thinking = _pb_text(tree, *AG_TEXT_FIELDS["thinking"])
+        if not text.strip() and not thinking.strip():
+            return None
+        return dict(role="assistant", content=text, thinking=thinking, timestamp=when)
+    name = pb_get(tree, 5, 4, 2)
+    if isinstance(name, str) and name:
+        args = pb_get(tree, 5, 4, 3)
+        try:
+            args = json.loads(args) if isinstance(args, str) else {}
+        except ValueError:
+            args = {}
+        if isinstance(args, dict):
+            # the generic tool line looks for file_path / command / description / query: map Antigravity's names
+            args = dict(args, **{k: v for k, v in (("file_path", args.get("AbsolutePath") or args.get("TargetFile") or args.get("DirectoryPath")),
+                                                    ("command", args.get("CommandLine")), ("query", args.get("Query") or args.get("SearchQuery"))) if v})
+        return dict(role="assistant", content="", tool_calls=[dict(name=name, arguments=args)], timestamp=when)
+    return None
+
+
+def antigravity_db(path):
+    try:
+        import sqlite3
+        db = sqlite3.connect(f"file:{os.path.abspath(path).replace(chr(92), '/')}?mode=ro", uri=True, timeout=1.0)
+        try:
+            return bool(db.execute("select 1 from sqlite_master where type='table' and name='steps'").fetchone())
+        finally:
+            db.close()
+    except Exception:
+        return False
+
+
+def antigravity_items(path, index):
+    """(items, next_index, at_end) — steps from ``index`` as (idx, idx + 1, canonical json); a step that is not part
+    of the conversation is an empty item (kept so indices stay the database's). A locked database is retried."""
+    import sqlite3
+    try:
+        db = sqlite3.connect(f"file:{os.path.abspath(path).replace(chr(92), '/')}?mode=ro", uri=True, timeout=1.0)
+    except sqlite3.Error:
+        return [], index, False
+    try:
+        rows = db.execute("select idx, step_type, step_payload from steps where idx >= ? order by idx", (int(index),)).fetchall()
+    except sqlite3.Error:
+        return [], index, False
+    finally:
+        db.close()
+    items = []
+    last = index
+    for idx, step_type, payload in rows:
+        message = antigravity_step(int(step_type or 0), payload)
+        items.append((int(idx), int(idx) + 1, json.dumps(message, ensure_ascii=False, sort_keys=True) if message else ""))
+        last = int(idx) + 1
+    return items, last, True
+
+
+def antigravity_cwd(path):
+    """The workspace of the conversation from ``trajectory_metadata_blob`` (its first `file:///…` string)."""
+    import sqlite3
+    try:
+        db = sqlite3.connect(f"file:{os.path.abspath(path).replace(chr(92), '/')}?mode=ro", uri=True, timeout=1.0)
+        try:
+            row = db.execute("select data from trajectory_metadata_blob limit 1").fetchone()
+        finally:
+            db.close()
+    except Exception:
+        return None
+    tree = pb_decode(row[0] if row else b"") or []
+    stack = [tree]
+    while stack:
+        node = stack.pop()
+        for _, v in node:
+            if isinstance(v, list):
+                stack.append(v)
+            elif isinstance(v, str) and v.startswith("file:///"):
+                from urllib.parse import unquote
+                return unquote(v[8:]).replace("/", os.sep) if os.name == "nt" else unquote(v[7:])
+    return None
+
+
+def indexed_items(path, index, fmt):
+    return antigravity_items(path, index) if fmt == "antigravity" else messages_json_items(path, index)
 
 
 def _text_of(content):
@@ -352,10 +527,12 @@ def events_messages(obj):
         if not text.strip() or _noise(text):
             return NOTHING
         return Ev("user", text, when=when, opener=True)
+    thinking = inner.get("thinking") or inner.get("reasoning") or ""
+    thinking = thinking if isinstance(thinking, str) else _text_of(thinking)
     if role in ("assistant", "model", "ai") or (not role and (text.strip() or tools)):
-        if not text.strip() and not tools:
+        if not text.strip() and not tools and not thinking.strip():
             return NOTHING
-        return Ev("assistant", text, tuple(tools), when=when, model=model)
+        return Ev("assistant", text, tuple(tools), when=when, model=model, thinking=thinking.strip())
     return NOTHING
 
 
@@ -414,6 +591,8 @@ def segments_of(items, first_line, fmt, carry_turn, own_sidechain=False):
         line_no += 1
         if fmt == "text":
             ev = events_text(raw)
+        elif not raw:
+            continue                                     # an indexed step that is not conversation (antigravity)
         else:
             try:
                 obj = json.loads(raw)
@@ -589,8 +768,8 @@ def read_digests(seg):
 
 
 def raw_span_digest(path, start, end, fmt):
-    if fmt == "messages-json":
-        items, _, _ = messages_json_items(path, start)
+    if fmt in INDEXED:
+        items, _, _ = indexed_items(path, start, fmt)
         raw = "\n".join(text for i, _, text in items if i < end)
         return origin_mod.digest(raw.strip())
     with open(path, "rb") as handle:
@@ -609,6 +788,8 @@ def row_of(seg, path, fmt, agent, session, project, stat):
                   size=int(stat.st_size), mtime_ns=int(stat.st_mtime_ns), span=True)
     if fmt == "messages-json":
         origin["messages"] = True
+    elif fmt in INDEXED:
+        origin["format"] = fmt                           # verify_span re-reads the steps of the span from the database
     metadata = dict(kind=KIND, project=project, agent=agent, session=str(session or ""), turn=int(seg["turn"]), part=seg["part"],
                     path=os.path.abspath(path).replace("\\", "/"), lines=list(seg["lines"]), date=(seg["when"] or "")[:10] or time.strftime("%Y-%m-%d"),
                     model=seg["model"], tools=sorted({t.split(" ", 1)[0] for t in seg["tools"]})[:12], records=seg["records"],
@@ -639,8 +820,8 @@ def plan(path, state, fmt, trigger, force_cut=False):
     """What this run would send: (rows_as_segments, new_state_fields, at_end, quiet). Pure — no ingest."""
     stat = os.stat(path)
     quiet = time.time() - stat.st_mtime >= QUIET_S
-    if fmt == "messages-json":
-        items, next_pos, at_end = messages_json_items(path, int(state.get("index", 0)))
+    if fmt in INDEXED:
+        items, next_pos, at_end = indexed_items(path, int(state.get("index", 0)), fmt)
         first_line = int(state.get("index", 0)) + 1
         pos_key = "index"
     else:
@@ -692,17 +873,18 @@ def project_of(cwd):
     return slug, os.path.basename(os.path.dirname(real))
 
 
-def run(path, *, trigger="cli", agent="claude-code", session=None, cwd=None, project=None, fmt=None, force_cut=False,
+def run(path, *, trigger="cli", agent=None, session=None, cwd=None, project=None, fmt=None, force_cut=False,
         client=None, dry_run=False):
     """Tail one log: parse from the stored position, send the closed turns (and the open one when the trigger
     closes or cuts it), advance the state. Returns the receipt dict. Never raises past the receipt."""
     started = time.time()
     path = os.path.abspath(path)
     if not os.path.isfile(path):
-        rec = dict(trigger=trigger, agent=agent, path=os.path.basename(path), skip="no_file")
+        rec = dict(trigger=trigger, agent=agent or "?", path=os.path.basename(path), skip="no_file")
         receipt(**rec)
         return rec
     fmt = fmt if fmt in FORMATS else detect_format(path)
+    agent = agent or ("antigravity" if fmt == "antigravity" else "claude-code")
     lock = acquire_lock(path)
     if lock is None:
         # item 27: another run (the Stop hook, the daemon sweeper, a backfill) holds this log — it will take the
@@ -905,6 +1087,8 @@ def premise(settings_path=None):
 
 
 def _session_of(path, fmt):
+    if fmt == "antigravity":
+        return os.path.basename(path).rsplit(".", 1)[0]     # the cascade (conversation) id
     if fmt == "claude-code":
         try:
             with open(path, "rb") as handle:
@@ -925,6 +1109,8 @@ def _session_of(path, fmt):
 
 
 def _cwd_of(path, fmt):
+    if fmt == "antigravity":
+        return antigravity_cwd(path)
     if fmt == "claude-code":
         try:
             with open(path, "rb") as handle:
@@ -951,10 +1137,13 @@ def load_watch():
         return []
 
 
-def register(pattern, *, agent, project=None, fmt=None, cwd=None):
-    """An agent without hooks: its log glob, tailed by the daemon's sweep (and by ``--watch``). Idempotent."""
+def register(pattern, *, agent, project=None, fmt=None, cwd=None, idle=None):
+    """An agent without hooks: its log glob, tailed by the daemon's sweep (and by ``--watch``). Idempotent.
+    ``idle``: seconds a matching log must have been quiet before the sweep takes it (default SWEEP_IDLE_S — for a
+    live agent such as Antigravity a short idle, 15 s, makes the minute sweep the real-time path)."""
     entries = load_watch()
-    entry = dict(glob=pattern, agent=agent, project=project, format=fmt, cwd=cwd, since=time.strftime("%Y-%m-%d %H:%M"))
+    entry = dict(glob=pattern, agent=agent, project=project, format=fmt, cwd=cwd, since=time.strftime("%Y-%m-%d %H:%M"),
+                 idle=float(idle) if idle is not None else None)
     entries = [e for e in entries if e.get("glob") != pattern] + [entry]
     os.makedirs(STATE_DIR, exist_ok=True)
     io.open(WATCH_FILE, "w", encoding="utf-8").write(json.dumps(entries, ensure_ascii=False, indent=1))
@@ -973,6 +1162,7 @@ def sweep_all(*, trigger="daemon", client_factory=None, idle_seconds=None):
         todo[st["path"].lower()] = dict(path=st["path"], agent=st.get("agent") or "claude-code", session=st.get("session"),
                                         cwd=st.get("cwd"), project=st.get("project"), fmt=st.get("fmt"), offset=int(st.get("offset", 0)))
     for entry in load_watch():
+        entry_idle = float(entry.get("idle") or idle)
         for path in sorted(glob.glob(entry.get("glob") or "", recursive=True)):
             if not is_conversation_log(path):
                 continue
@@ -980,6 +1170,7 @@ def sweep_all(*, trigger="daemon", client_factory=None, idle_seconds=None):
             if key not in todo:
                 todo[key] = dict(path=os.path.abspath(path).replace("\\", "/"), agent=entry.get("agent") or "agent", session=None,
                                  cwd=entry.get("cwd"), project=entry.get("project"), fmt=entry.get("format"), offset=0)
+            todo[key]["idle"] = entry_idle                 # the registration's idle wins over the default, tailed before or not
     out, client = [], None
     try:
         for item in todo.values():
@@ -987,7 +1178,7 @@ def sweep_all(*, trigger="daemon", client_factory=None, idle_seconds=None):
                 stat = os.stat(item["path"])
             except OSError:
                 continue
-            if stat.st_size <= item["offset"] or now - stat.st_mtime < idle:
+            if stat.st_size <= item["offset"] or now - stat.st_mtime < item.get("idle", idle):
                 continue
             if client is None and client_factory is not None:
                 client = client_factory()
@@ -1093,7 +1284,8 @@ def cli(argv):
     ap.add_argument("--interval", type=float, default=10.0)
     ap.add_argument("--backfill", default=None, metavar="GLOB", help="drain every log matching GLOB to its end, then stop")
     ap.add_argument("--status", action="store_true", help="the logs tailed on this machine and where each stands")
-    ap.add_argument("--register", default=None, metavar="GLOB", help="an agent without hooks: register its log glob for the daemon's sweep (with --agent, optional --project/--format)")
+    ap.add_argument("--register", default=None, metavar="GLOB", help="an agent without hooks: register its log glob for the daemon's sweep (with --agent, optional --project/--format/--idle)")
+    ap.add_argument("--idle", type=float, default=None, help="with --register: seconds a log must be quiet before the sweep takes it (default 600; a live agent: 15)")
     ap.add_argument("--registered", action="store_true", help="the registered log globs")
     ap.add_argument("--sweep", action="store_true", help="one sweep now: every tailed or registered log that grew and is quiet")
     ap.add_argument("--show", nargs=3, metavar=("LOG", "FIRST", "LAST"), help="print the turn(s) in LOG lines FIRST..LAST as text (what a row was made from)")
@@ -1105,7 +1297,7 @@ def cli(argv):
     if a.register:
         if not a.agent:
             ap.error("--register needs --agent NAME")
-        entry = register(a.register, agent=a.agent, project=a.project, fmt=a.format, cwd=a.cwd)
+        entry = register(a.register, agent=a.agent, project=a.project, fmt=a.format, cwd=a.cwd, idle=a.idle)
         print(json.dumps(entry, ensure_ascii=False))
         return 0
     if a.registered:
@@ -1120,6 +1312,13 @@ def cli(argv):
     if a.show:
         log, first, last = a.show[0], int(a.show[1]), int(a.show[2])
         fmt = a.format or detect_format(log)
+        if fmt in INDEXED:
+            items, _, _ = indexed_items(log, first - 1, fmt)
+            items = [it for it in items if it[0] < last]
+            for seg in segments_of(items, first, fmt, 0):
+                print(compose(seg, a.agent or ("antigravity" if fmt == "antigravity" else "agent"), a.session or _session_of(log, fmt), a.project or ""))
+                print("---")
+            return 0
         with open(log, "rb") as handle:
             items, pos, line_no = [], 0, 0
             for raw in handle:
@@ -1147,7 +1346,7 @@ def cli(argv):
             paths = [p for p in sorted(glob.glob(pattern, recursive=True)) if is_conversation_log(p)]
             for path in paths:
                 fmt = a.format or detect_format(path)
-                agent = a.agent or ("claude-code" if fmt == "claude-code" else os.path.basename(os.path.dirname(path)) or "agent")
+                agent = a.agent or ("claude-code" if fmt == "claude-code" else "antigravity" if fmt == "antigravity" else os.path.basename(os.path.dirname(path)) or "agent")
                 session = a.session or (os.path.basename(path).rsplit(".", 1)[0] if fmt == "claude-code" and is_subagent_log(path) else None)
                 while True:
                     rec = run(path, trigger="backfill" if a.backfill else "watch", agent=agent, session=session, cwd=a.cwd, project=a.project,
@@ -1160,7 +1359,8 @@ def cli(argv):
             time.sleep(max(1.0, a.interval))
     if not a.log:
         ap.error("a log file, --watch GLOB, --backfill GLOB or --status")
-    agent = a.agent or ("claude-code" if (a.format or detect_format(a.log)) == "claude-code" else os.path.basename(os.path.dirname(os.path.abspath(a.log))) or "agent")
+    fmt = a.format or detect_format(a.log)
+    agent = a.agent or ("claude-code" if fmt == "claude-code" else "antigravity" if fmt == "antigravity" else os.path.basename(os.path.dirname(os.path.abspath(a.log))) or "agent")
     rec = run(a.log, trigger="cli", agent=agent, session=a.session, cwd=a.cwd, project=a.project, fmt=a.format, force_cut=a.cut, dry_run=a.dry_run)
     if a.dry_run:
         for text in rec.pop("texts", []):

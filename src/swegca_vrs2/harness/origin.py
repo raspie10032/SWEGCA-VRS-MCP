@@ -175,6 +175,14 @@ def verify_span(path, origin, want):
     if len(span) != 2:
         return dict(state="missing", lines=None)
     try:
+        if origin.get("format") == "antigravity":
+            from .transcripts import antigravity_items
+            items, _, _ = antigravity_items(path, span[0])
+            items = [it for it in items if it[0] < span[1]]
+            if not items or items[-1][1] < span[1]:
+                return dict(state="missing", lines=None)
+            raw = "\n".join(text for _, _, text in items)
+            return dict(state="intact" if digest(raw.strip()) == want else "changed", lines=lines)
         if origin.get("messages"):
             import json
             doc = json.load(io.open(path, encoding="utf-8"))

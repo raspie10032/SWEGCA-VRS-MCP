@@ -44,10 +44,11 @@ def memory_doc(path):
     return "/.claude/projects/" in flat and "/memory/" in flat and flat.endswith(".md")
 
 
-_READ_VERBS = re.compile(r"(?:^|[;&|(\s])(sed|cat|head|tail|grep|less|more|awk|Get-Content|gc|type|Select-String|python[0-9.]*\s+-c)\b", re.I)
+_READ_VERBS = re.compile(r"(?:^|[;&|(\s])(sed|cat|head|tail|grep|less|more|awk|Get-Content|gc|type|Select-String|python[0-9.]*\s+-c)\b|vrs2-tail(?:\.py)?\"?\s+--show\b", re.I)
+_SHOW_RANGE = re.compile(r"--show\s+\"?([^\s\"]+)\"?\s+(\d+)\s+(\d+)")     # vrs2-tail.py --show <db> FIRST LAST (antigravity)
 _SED_RANGE = re.compile(r"sed\s+-n\s+['\"]?(\d+),(\d+)p")
 _HEAD_N = re.compile(r"head\s+-n?\s*(\d+)|head\s+-c\s+\d+")
-_PATHS = re.compile(r"(?:[A-Za-z]:)?[/\\][^\s'\"`;|&<>()]+?\.(?:md|jsonl|json|txt|py|csv|log)\b")
+_PATHS = re.compile(r"(?:[A-Za-z]:)?[/\\][^\s'\"`;|&<>()]+?\.(?:md|jsonl|json|txt|py|csv|log|db)\b")
 
 
 def offered_paths(session, limit=400):
@@ -97,8 +98,11 @@ def reads_in_command(command, known):
             continue                                 # the path is written, not read
         seen.add(key)
         rng = _SED_RANGE.search(before + raw + after) or _SED_RANGE.search(command)
+        show = _SHOW_RANGE.search(command)
         head = _HEAD_N.search(command)
-        if rng:
+        if show and show.group(1).replace(chr(92), "/").casefold() == key:
+            offset, limit = int(show.group(2)), max(1, int(show.group(3)) - int(show.group(2)) + 1)
+        elif rng:
             offset, limit = int(rng.group(1)), max(1, int(rng.group(2)) - int(rng.group(1)) + 1)
         elif head and head.group(1):
             offset, limit = 1, int(head.group(1))

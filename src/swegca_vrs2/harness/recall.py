@@ -35,7 +35,7 @@ import time
 
 HOME = os.path.expanduser("~")
 LOG = os.path.join(__import__("swegca_vrs2.harness.paths", fromlist=["RECEIPTS"]).RECEIPTS, "recall_context.log")
-from .paths import SRC, STATE, CONFIRM_CMD, USER  # noqa: E402  (OS-neutral, 2026-09-18)
+from .paths import SRC, STATE, CONFIRM_CMD, USER, PYTHON, TOOLS  # noqa: E402  (OS-neutral, 2026-09-18)
 from . import origin as origin_mod  # noqa: E402  (G3 origin binding, 2026-09-19)
 MIN_WORDS = 2
 LIMIT = 10
@@ -276,7 +276,11 @@ def transcript_hint(row, meta, chars, whole):
     state = origin_mod.verify_span(path, origin, origin.get("sha256") or row.get("text_sha256"))
     offset, limit = int(lines[0]), max(1, min(OPEN_MAX_LINES, int(lines[1]) - int(lines[0]) + 1))
     row["_open"] = dict(path=path.replace(chr(92), "/"), offset=offset, limit=limit, whole=bool(whole))
-    call = f'Read file_path="{path}" offset={offset} limit={limit}'
+    if origin.get("format") == "antigravity":
+        # a SQLite conversation database (Antigravity, 2026-09-21): not a file Read opens — the tail prints the steps
+        call = f'{TAIL_CMD} --show "{path}" {lines[0]} {lines[1]}'
+    else:
+        call = f'Read file_path="{path}" offset={offset} limit={limit}'
     full = "" if whole else f" · 전문: swegca-vrs2 memory_read {row.get('episode_id')} ({SNIPPET}/{chars}자)"
     if state["state"] == "missing":
         return f"   ※ 원본 로그 없음: {path}#{lines[0]}-{lines[1]} — 이 기록은 색인 때 판본이다(revision {str(row.get('revision'))[:12]}).{full}"
@@ -302,6 +306,7 @@ def origin_state(path, kind, meta, text, chars, text_sha256=None):
 
 
 CONFIRM = CONFIRM_CMD
+TAIL_CMD = f'"{PYTHON}" "{os.path.join(TOOLS, "vrs2-tail.py")}"'
 
 
 def _side(items):
