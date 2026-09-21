@@ -133,6 +133,7 @@ class ExactReplayStore:
         body = dict(schema='swegca-vrs2-replay-capsule-v2', episode_id=identifier,
                     shard=str(shard), shard_row=int(row), matched_cues=[identifier],
                     cue_count=len(episode.cues),
+                    cues=list(episode.cues),
                     kind=str((step.observation.get('metadata') or {}).get('kind') or ''),
                     asks=asks.casefold(), description=description.casefold(),
                     steps=[dict(phase=step.phase, observation=plain(step.observation),
@@ -255,7 +256,7 @@ class ExactReplayStore:
                                  tuple(body['source_addresses']), body['verification_state'])
         return dict(shard=body['shard'], revision=body['revision'], replay=replay,
                     shard_row=int(body['shard_row']),
-                    cue_count=int(body['cue_count']), kind=body['kind'],
+                    cue_count=int(body['cue_count']), cues=tuple(body['cues']), kind=body['kind'],
                     asks=body['asks'], description=body['description'])
 
     def source_shard(self, source):

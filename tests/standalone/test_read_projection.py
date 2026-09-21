@@ -25,6 +25,13 @@ def test_projection_preserves_current_vrs_generation_without_loading_checkpoint(
             assert [item[0] for item in current["memberships"]] == [item[0] for item in expected]
             assert [item[1] for item in current["memberships"]] == pytest.approx(
                 [item[1] for item in expected])
+            assert len(current["cue_strengths"]) == len(main.memory.episode(identifier).cues)
+        for cue in main.memory.episode(first).cues:
+            cue_id = main.memory._store["vocab"].id_of(cue)
+            node = main.graph.nodes.cue(cue_id)
+            expected_region = None if node < 0 or main.graph.labels()[node] < 0 \
+                else int(main.graph.labels()[node])
+            assert view.region_for_cue(cue) == expected_region
         with pytest.raises(ValueError, match="pair_mismatch"):
             store.open("f" * 64)
         with pytest.raises(ValueError, match="experience_mismatch"):

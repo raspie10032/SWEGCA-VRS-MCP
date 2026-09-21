@@ -8,6 +8,7 @@ the shard's Python checkpoint. A mismatched pair is unusable.
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 from pathlib import Path
 import shutil
@@ -65,6 +66,14 @@ class ProjectionView:
         count = int(self.member_ptr[-1]) if self.record_count else 0
         self.member_region = self._mapped('member_region.i32', '<i4', (count,))
         self.member_weight = self._mapped('member_weight.f32', '<f4', (count,))
+        self.cue_ptr = self._mapped('cue_ptr.u64', '<u8', (self.record_count + 1,))
+        cue_edge_count = int(self.cue_ptr[-1]) if self.record_count else 0
+        self.cue_strength = self._mapped('cue_strength.f32', '<f4', (cue_edge_count,))
+        self.cue_hash = self._mapped('cue_hash.s64', 'S64', (int(manifest['cue_count']),))
+        self.cue_offset = self._mapped('cue_offset.u64', '<u8', (int(manifest['cue_count']),))
+        self.cue_length = self._mapped('cue_length.u16', '<u2', (int(manifest['cue_count']),))
+        self.cue_region = self._mapped('cue_region.i32', '<i4', (int(manifest['cue_count']),))
+        self.cue_blob = (self.root / 'cue_blob.bin').open('rb', buffering=0)
         self.portals = tuple(manifest.get('portals', ()))
 
     def _mapped(self, name, dtype, shape):
@@ -95,7 +104,22 @@ class ProjectionView:
             strength=float(self.strength[row]), region=int(self.region[row]),
             memberships=tuple((int(region), float(weight)) for region, weight in
                               zip(self.member_region[start:stop], self.member_weight[start:stop])),
+            cue_strengths=tuple(float(value) for value in
+                                self.cue_strength[int(self.cue_ptr[row]):int(self.cue_ptr[row + 1])]),
             superseded_by=None if superseded == b'\0' * 32 else 'memory:' + superseded.hex())
+
+    def region_for_cue(self, cue):
+        payload = cue.encode('utf-8')
+        key = hashlib.sha256(payload).hexdigest().encode('ascii')
+        position = int(np.searchsorted(self.cue_hash, np.bytes_(key)))
+        if position >= len(self.cue_hash) or bytes(self.cue_hash[position]) != key:
+            return None
+        offset, length = int(self.cue_offset[position]), int(self.cue_length[position])
+        self.cue_blob.seek(offset)
+        if self.cue_blob.read(length) != payload:
+            raise ValueError('read_projection_cue_hash_collision')
+        region = int(self.cue_region[position])
+        return None if region < 0 else region
 
 
 class ReadProjectionStore:
@@ -114,7 +138,11 @@ class ReadProjectionStore:
         ids = tuple(memory._store['ids'][:memory.episode_count])
         strengths, regions, superseded = [], [], []
         member_ptr, member_region, member_weight = [0], [], []
-        for identifier in ids:
+        cue_ptr, cue_strength = [0], []
+        cue_ids_used = set()
+        labels = graph.labels()
+        vocab = memory._store['vocab']
+        for row, identifier in enumerate(ids):
             strengths.append(graph.strength(identifier))
             region = graph.region_of(identifier)
             regions.append(-1 if region is None else int(region))
@@ -124,6 +152,33 @@ class ReadProjectionStore:
             member_region.extend(int(item[0]) for item in memberships)
             member_weight.extend(float(item[1]) for item in memberships)
             member_ptr.append(len(member_region))
+            center = graph.nodes.episode_node.get(identifier)
+            edge_strength = {}
+            if center is not None:
+                lo, hi = int(graph.flat.out_ptr[center]), int(graph.flat.out_ptr[center + 1])
+                edge_strength = {int(graph.flat.dst[edge]): float(graph.flat.strength[edge])
+                                 for edge in graph.flat.out_edge[lo:hi]}
+            for cue_id in memory._store['cues'][row]:
+                cue_id = int(cue_id)
+                cue_ids_used.add(cue_id)
+                node = graph.nodes.cue(cue_id)
+                cue_strength.append(edge_strength.get(node, 0.0) if node >= 0 else 0.0)
+            cue_ptr.append(len(cue_strength))
+        cue_rows, cue_blob = [], bytearray()
+        for cue_id in cue_ids_used:
+            cue = vocab.string_of(cue_id)
+            payload = cue.encode('utf-8')
+            node = graph.nodes.cue(cue_id)
+            region = int(labels[node]) if node >= 0 and node < len(labels) else -1
+            cue_rows.append((hashlib.sha256(payload).hexdigest().encode('ascii'),
+                             len(cue_blob), len(payload), region, payload))
+        cue_rows.sort(key=lambda item: item[0])
+        normalized, position = [], 0
+        for key, _, length, region, payload in cue_rows:
+            normalized.append((key, position, length, region, payload))
+            cue_blob.extend(payload)
+            position += length
+        cue_rows = normalized
         stable = graph.stable
         portals = []
         for (left, right), portal in ((getattr(stable, 'portals', None) or {}).items()
@@ -132,7 +187,8 @@ class ReadProjectionStore:
         manifest = dict(schema=SCHEMA, shard=self.shard,
             pair_snapshot_id=pair.snapshot_id, graph_snapshot_id=graph.snapshot_id,
             stable_version_id=(stable.version_id if stable is not None else None),
-            record_count=len(ids), cue_total=int(memory.cue_total), portals=portals)
+            record_count=len(ids), cue_total=int(memory.cue_total), cue_count=len(cue_rows),
+            portals=portals)
         generation = self.root / ('.building-' + uuid.uuid4().hex)
         final = self.root / pair.snapshot_id
         generation.mkdir(mode=0o700)
@@ -145,6 +201,13 @@ class ReadProjectionStore:
             _array(generation / 'member_ptr.u64', member_ptr, '<u8')
             _array(generation / 'member_region.i32', member_region, '<i4')
             _array(generation / 'member_weight.f32', member_weight, '<f4')
+            _array(generation / 'cue_ptr.u64', cue_ptr, '<u8')
+            _array(generation / 'cue_strength.f32', cue_strength, '<f4')
+            _array(generation / 'cue_hash.s64', [item[0] for item in cue_rows], 'S64')
+            _array(generation / 'cue_offset.u64', [item[1] for item in cue_rows], '<u8')
+            _array(generation / 'cue_length.u16', [item[2] for item in cue_rows], '<u2')
+            _array(generation / 'cue_region.i32', [item[3] for item in cue_rows], '<i4')
+            _write_bytes(generation / 'cue_blob.bin', cue_blob)
             _write_bytes(generation / 'manifest.json', _json_bytes(manifest))
             directory_fd = os.open(generation, os.O_RDONLY)
             try:

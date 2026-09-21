@@ -224,6 +224,7 @@ class Resident:
         self.wanted = set()                               # bundles a judgment missed: the preparer loads them next
         self.prepared = {}                                # bundle id -> receipt of the last prepare (ms, seq, when)
         self.projection_errors = {}
+        self.projection_views = {}
         self.lock = threading.Lock()
 
     def _load_exact_progress(self):
@@ -645,6 +646,7 @@ class Resident:
             try:
                 try:
                     ReadProjectionStore(self.bundles[bundle_id], bundle_id).write(main)
+                    self.projection_views.pop(bundle_id, None)
                     self.projection_errors.pop(bundle_id, None)
                 except Exception as error:
                     self.projection_errors[bundle_id] = type(error).__name__ + ': ' + str(error)[:160]
@@ -664,7 +666,13 @@ class Resident:
         if bundle_id in (None, '', 'main'):
             return None
         expected = self.pair_ids.get(bundle_id)
-        return ReadProjectionStore(self.bundles[bundle_id], bundle_id).open(expected)
+        cached = self.projection_views.get(bundle_id)
+        if cached is not None and cached.pair_snapshot_id == expected:
+            return cached
+        view = ReadProjectionStore(self.bundles[bundle_id], bundle_id).open(expected)
+        if view is not None:
+            self.projection_views[bundle_id] = view
+        return view
 
     def current_vrs(self, exact):
         """Current VRS facts for an exact capsule without opening a cold checkpoint."""
@@ -679,14 +687,40 @@ class Resident:
                        for (left, right), portal in
                        ((getattr(stable, 'portals', None) or {}).items()
                         if stable is not None else ())]
+            center = owner.graph.nodes.episode_node.get(identifier)
+            edge_strength = {}
+            if center is not None:
+                lo, hi = int(owner.graph.flat.out_ptr[center]), int(owner.graph.flat.out_ptr[center + 1])
+                edge_strength = {int(owner.graph.flat.dst[edge]): float(owner.graph.flat.strength[edge])
+                                 for edge in owner.graph.flat.out_edge[lo:hi]}
+            cue_strengths = []
+            for cue_id in owner.memory._store['cues'][row]:
+                node = owner.graph.nodes.cue(int(cue_id))
+                cue_strengths.append(edge_strength.get(node, 0.0) if node >= 0 else 0.0)
             return dict(shard=shard, pair_snapshot_id=owner.pair.snapshot_id,
                 graph_snapshot_id=owner.graph.snapshot_id,
                 stable_version_id=(stable.version_id if stable is not None else None),
                 strength=owner.graph.strength(identifier), region=owner.graph.region_of(identifier),
                 memberships=owner.graph.memberships_of(identifier),
+                cue_strengths=tuple(cue_strengths),
                 superseded_by=owner.memory.superseded.get(identifier), portals=tuple(portals))
         projection = self.projection(shard)
         return None if projection is None else projection.current(identifier, row)
+
+    def region_for_cue(self, shard, cue):
+        if shard == 'main':
+            owner = self.primary
+        else:
+            owner, _ = self.peek_ready(shard)
+        if owner is not None:
+            cue_id = owner.memory._store['vocab'].id_of(cue)
+            if cue_id is None:
+                return None
+            node = owner.graph.nodes.cue(cue_id)
+            labels = owner.graph.labels()
+            return None if node < 0 or node >= len(labels) or labels[node] < 0 else int(labels[node])
+        projection = self.projection(shard)
+        return None if projection is None else projection.region_for_cue(cue)
 
     def settle(self):
         """Wait for every background close (tests, shutdown)."""
