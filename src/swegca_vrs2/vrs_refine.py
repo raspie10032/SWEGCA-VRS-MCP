@@ -536,7 +536,7 @@ def _refine_subgraph(inp, strength, state, edge_mask, *, seed, cycles):
     return edges, local_nodes, mean, stability, new_strength, evals, reinforced
 
 
-def consolidate(graph, memory, previous, *, seed=SEED, cycles=CYCLES, labels=None):
+def consolidate(graph, memory, previous, *, seed=SEED, cycles=CYCLES, labels=None, workers=None):
     """One consolidation chunk. Returns (VRSVersion, flat_strength, flat_score).
 
     ``previous`` is the graph's current stable version (or None). Strengths warm-start from the
@@ -544,6 +544,7 @@ def consolidate(graph, memory, previous, *, seed=SEED, cycles=CYCLES, labels=Non
     states from the previous version; the virtual proposition edges warm-start by proposition id.
     """
     started = time.perf_counter()
+    workers = WORKERS if workers is None else max(1, min(int(workers), WORKERS))
     coarse = region_labels(graph) if labels is None else np.asarray(labels, np.int64)
     fine_seconds = 0.0
     if labels is None and FINE_REGIONS and len(coarse):
@@ -625,8 +626,8 @@ def consolidate(graph, memory, previous, *, seed=SEED, cycles=CYCLES, labels=Non
     def run_phase(connector):
         nonlocal evaluations, reinforced
         items = [(r, connector) for r in region_ids]
-        if WORKERS > 1 and len(items) > 1:
-            with ThreadPoolExecutor(max_workers=min(WORKERS, len(items)),
+        if workers > 1 and len(items) > 1:
+            with ThreadPoolExecutor(max_workers=min(workers, len(items)),
                                     thread_name_prefix='vrs2-region') as pool:
                 results = list(pool.map(compute, items))
         else:

@@ -688,11 +688,12 @@ class Graph:
                     stability=None if pending else round(float(stable.stability[node]), 4), pending=pending,
                     usage=self.usage.get(source) if source else None)   # [injected, opened] from the sessions' ledger
 
-    def consolidate(self, memory, *, seed=vrs_refine.SEED, cycles=vrs_refine.CYCLES):
+    def consolidate(self, memory, *, seed=vrs_refine.SEED, cycles=vrs_refine.CYCLES, workers=None):
         """One consolidation chunk: refine strengths region by region from the current stable version.
         Returns the successor generation (same topology and regions; refined strengths, node states)."""
         topology = self if len(self.components) == self.flat.count else self.rebuild_regions()
-        version, strength, score = vrs_refine.consolidate(topology, memory, self.stable, seed=seed, cycles=cycles)
+        version, strength, score = vrs_refine.consolidate(
+            topology, memory, self.stable, seed=seed, cycles=cycles, workers=workers)
         flat = topology.flat.with_arrays(strength=strength, score=score)
         snapshot_id = digest((self.snapshot_id, 'consolidation', version.version_id))
         receipt = dict(self.last_receipt, status='consolidated', stable_version_id=version.version_id,
@@ -818,8 +819,8 @@ class Main:
             self.db.execute('CREATE TABLE IF NOT EXISTS identity (id INTEGER PRIMARY KEY CHECK(id=1), value TEXT NOT NULL)')
             self.db.execute('CREATE TABLE IF NOT EXISTS observations (seq INTEGER PRIMARY KEY, request_id TEXT UNIQUE NOT NULL, body TEXT NOT NULL, fingerprint TEXT NOT NULL, pair TEXT NOT NULL)')
             self.db.execute('CREATE TABLE IF NOT EXISTS checkpoint (id INTEGER PRIMARY KEY CHECK(id=1), seq INTEGER NOT NULL, pair TEXT NOT NULL, blob BLOB NOT NULL)')
-            # G7 resident layer (2026-09-19): the index alone, for a warm view in another process (resident.py)
-            self.db.execute('CREATE TABLE IF NOT EXISTS checkpoint_warm (id INTEGER PRIMARY KEY CHECK(id=1), seq INTEGER NOT NULL, pair TEXT NOT NULL, blob BLOB NOT NULL)')
+            # Secondary shards read this same complete immutable checkpoint;
+            # no reduced lexical-only checkpoint is written.
             # Lossless hard compression (2026-09-14): journal rows older than the checkpoint
             # move into compressed segments. archive + observations is still the whole journal.
             self.db.execute('CREATE TABLE IF NOT EXISTS journal_archive (segment INTEGER PRIMARY KEY, first_seq INTEGER NOT NULL, last_seq INTEGER NOT NULL, last_pair TEXT NOT NULL, rows INTEGER NOT NULL, blob BLOB NOT NULL)')
@@ -1091,10 +1092,7 @@ class Main:
         so any live array keeps the whole blob resident (measured: 2x the data)."""
         raw = pickle.dumps(dict(identity=prepared['identity'], pair=prepared['pair'], memory=prepared['memory'],
                                 graph=prepared['graph'], operations=prepared['operations']), protocol=4)
-        # G7 (2026-09-19): the warm blob — the memory index alone — beside the full one; a resident in another
-        # process loads this to hold the bundle warm (measured on the live store: see docs/VRS_REGIONS.md)
-        warm = CHECKPOINT_MAGIC + zlib.compress(pickle.dumps(prepared['memory'], protocol=4), 6)
-        return len(raw), CHECKPOINT_MAGIC + zlib.compress(raw, 6), warm
+        return len(raw), CHECKPOINT_MAGIC + zlib.compress(raw, 6)
 
     def checkpoint_commit(self, prepared, serialized):
         """Write a serialized generation if it is still the current one (under the lock)."""
@@ -1110,12 +1108,10 @@ class Main:
         return self._checkpoint_write(prepared['seq'], prepared['pair'], self.checkpoint_serialize(prepared), prepared['started'])
 
     def _checkpoint_write(self, seq, pair, serialized, started):
-        raw_len, blob, warm = (*serialized, None)[:3]
+        raw_len, blob = serialized
         self.db.execute('BEGIN IMMEDIATE')
         try:
             self.db.execute('INSERT OR REPLACE INTO checkpoint(id, seq, pair, blob) VALUES (1,?,?,?)', (seq, pair, blob))
-            if warm is not None:
-                self.db.execute('INSERT OR REPLACE INTO checkpoint_warm(id, seq, pair, blob) VALUES (1,?,?,?)', (seq, pair, warm))
             self.db.execute('COMMIT')
         except BaseException:
             if self.db.in_transaction:
@@ -1270,9 +1266,9 @@ class Main:
         return SimpleNamespace(memory=memory, graph=graph, pair=pair)
 
     @staticmethod
-    def consolidate_run(prepared, *, seed=vrs_refine.SEED, cycles=vrs_refine.CYCLES):
+    def consolidate_run(prepared, *, seed=vrs_refine.SEED, cycles=vrs_refine.CYCLES, workers=None):
         """Refine outside the lock: generations are immutable, so this needs no lock at all."""
-        return prepared.graph.consolidate(prepared.memory, seed=seed, cycles=cycles)
+        return prepared.graph.consolidate(prepared.memory, seed=seed, cycles=cycles, workers=workers)
 
     def consolidate_commit(self, prepared, graph):
         """Publish a consolidated generation as a journal row (under the lock). If an ingest landed since

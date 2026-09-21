@@ -24,6 +24,7 @@ after ``idle-hours`` without requests (checkpointing first) or on ``shutdown``.
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 import os
 import socket
 import socketserver
@@ -542,6 +543,7 @@ class Daemon:
 
 
 PREPARE_EVERY = 5.0      # seconds between preparer passes over the warm bundles (a view is at most this stale)
+CONSOLIDATION_WORKERS = min(16, os.cpu_count() or 1)
 
 
 def _preparer(daemon):
@@ -564,6 +566,60 @@ def _preparer(daemon):
                 del daemon.prepared[:-64]
             last_pass = time.time()
         time.sleep(0.25)
+
+
+def _consolidate_stale_shards(daemon, *, cycles):
+    """Refine every stale owned shard with one global 16-worker CPU budget.
+
+    Shards are independent immutable generations, so their numerical runs can
+    proceed concurrently.  Publication remains main-owned: each verified result
+    is committed under the daemon lock and is discarded if ingest raced it.
+    With one stale shard the existing region refinement receives all workers;
+    with several shards the budget is divided to avoid nested oversubscription.
+    """
+    now = time.time()
+    backoff = getattr(daemon, 'consolidation_backoff', {})
+    if not isinstance(backoff, dict):
+        backoff = {}
+    owners = [('main', daemon.main), *list(daemon.bundles.hot.items())]
+    selected = [(name, owner) for name, owner in owners
+                if owner.allow_ingest and owner.consolidation_stale()
+                and now >= backoff.get(name, 0.0)]
+    if not selected:
+        daemon.consolidation_backoff = backoff
+        return []
+    workers = max(1, CONSOLIDATION_WORKERS // len(selected))
+    with daemon.lock:
+        prepared = [(name, owner, owner.consolidate_prepare()) for name, owner in selected]
+
+    def run(item):
+        name, owner, generation = item
+        try:
+            graph = owner.consolidate_run(generation, cycles=cycles, workers=workers)
+            return name, owner, generation, graph, None
+        except Exception as error:
+            return name, owner, generation, None, error
+
+    if len(prepared) > 1:
+        with ThreadPoolExecutor(max_workers=min(CONSOLIDATION_WORKERS, len(prepared)),
+                                thread_name_prefix='vrs2-shard') as pool:
+            results = list(pool.map(run, prepared))
+    else:
+        results = [run(prepared[0])]
+    receipts = []
+    for name, owner, generation, graph, error in results:
+        if error is not None:
+            owner.restore['consolidation'] = type(error).__name__ + ': ' + str(error)[:200]
+            backoff[name] = time.time() + 600
+            receipts.append(dict(shard=name, error=type(error).__name__))
+            continue
+        with daemon.lock:
+            receipt = owner.consolidate_commit(generation, graph)
+        receipts.append(dict(shard=name, committed=receipt is not None,
+                             parallel_shards=len(prepared), workers_per_shard=workers,
+                             version_id=None if receipt is None else receipt.get('version_id')))
+    daemon.consolidation_backoff = backoff
+    return receipts
 
 
 def serve(state_dir, *, port=0, allow_ingest=False, idle_hours=8.0, bundle_limit=None, bundles=None, hot_bundles=1):
@@ -620,9 +676,8 @@ def serve(state_dir, *, port=0, allow_ingest=False, idle_hours=8.0, bundle_limit
                     serialized = daemon.main.checkpoint_serialize(prepared)
                     with daemon.lock:
                         daemon.main.checkpoint_commit(prepared, serialized)
-            # G7 (2026-09-19): other hot bundles checkpoint after the same quiet spell — their warm blob is what a
-            # warm view (this or another process) reads; consolidation of a secondary bundle waits for its own turn
-            # as primary (it is not run here)
+            # Other owned shards checkpoint the same complete generation used by
+            # their read-only recall view.  No index-only checkpoint exists.
             if quiet >= CHECKPOINT_IDLE:
                 for bundle_id, other in list(daemon.bundles.hot.items()):
                     if other.dirty:
@@ -632,21 +687,15 @@ def serve(state_dir, *, port=0, allow_ingest=False, idle_hours=8.0, bundle_limit
                             serialized = other.checkpoint_serialize(prepared)
                             with daemon.lock:
                                 other.checkpoint_commit(prepared, serialized)
-            # VRS consolidation (vrs-regions): once the daemon is quiet and the graph has edges the stable
-            # version has not refined (or it has not converged), refine one chunk region by region — outside
-            # the lock but for prepare/commit — and come back for the next chunk until converged.
-            if (quiet >= CHECKPOINT_IDLE and daemon.main.allow_ingest and daemon.main.consolidation_stale()
-                    and time.time() >= getattr(daemon, 'consolidation_backoff', 0)):
-                with daemon.lock:
-                    prepared = daemon.main.consolidate_prepare()
-                try:
-                    graph = daemon.main.consolidate_run(prepared, cycles=IDLE_CYCLES)
-                    with daemon.lock:
-                        daemon.main.consolidate_commit(prepared, graph)
-                    time.sleep(0.5)                       # let a concurrent hook recall through between chunks
-                except Exception as error:               # never let a consolidation stop the daemon
-                    daemon.main.restore['consolidation'] = type(error).__name__ + ': ' + str(error)[:200]
-                    daemon.consolidation_backoff = time.time() + 600
+            # Main and every hot secondary shard refine together under one
+            # 16-worker CPU budget.  Each numerical run is lock-free and each
+            # publication is verified and committed serially by its owner.
+            if quiet >= CHECKPOINT_IDLE:
+                receipts = _consolidate_stale_shards(daemon, cycles=IDLE_CYCLES)
+                if receipts:
+                    daemon.prepared.extend(dict(kind='consolidation', **row) for row in receipts)
+                    del daemon.prepared[:-64]
+                    time.sleep(0.5)
     finally:
         server.shutdown()
         server.server_close()

@@ -1,23 +1,13 @@
 # -*- coding: utf-8 -*-
-"""Resident layer — the minimal G7 (2026-09-19): one daemon, several bundles.
+"""One main owner serving complete immutable VRS generations from several shards.
 
-A bundle is one store (journal + checkpoint; docs/SIZING.md says ~60k records each). The daemon owns its
-primary bundle as before — HOT: index and VRS graph resident, the engine's recall with regions and
-promotion. Every other registered bundle is answered from a WARM view: the index alone (cues, postings,
-recall columns, compressed records), loaded read-only from that bundle's own checkpoint (the warm blob a
-checkpoint now writes beside the full one) plus the journal rows written after it, refreshed whenever the
-bundle's journal moves. A warm bundle costs its index, not its graph. An ingest routed to another bundle
-opens it HOT (owned, its own journal and consolidation); beyond ``hot_limit`` the least recently used hot
-bundle is checkpointed and closed back to warm. Residency is a rank, not a strength: where a bundle sits
-says nothing about its VRS, and a record is addressable in every state. The directory (record id -> bundle)
-is main-owned and resident.
-
-What a warm bundle cannot do: consolidate, promote, scope by region, judge re-evidence — its rows come
-back in index order (BM25 over the informative cues, the primary's order without VRS) and say so
-(``vrs=None``, ``bundle=<id>``). What it can: every record, every revision, every proposition of that
-bundle is one request away without a second process.
+Every shard read follows the same Déjà vu -> Recall -> Replay -> Re-evidence path.
+The retired index-only warm view skipped VRS strength, regions, shared-experience
+portal navigation and Re-evidence, so it was not a valid experience read.  A
+closed shard is now reopened from its complete checkpoint as an immutable recall
+generation.  Loading remains outside the judgment path; an unavailable shard is
+reported as a named miss rather than answered by a weaker algorithm.
 """
-import math
 import pickle
 import sqlite3
 import threading
@@ -26,12 +16,10 @@ import zlib
 from collections import OrderedDict
 from pathlib import Path
 
-from .compact_index import CompactIndex
 from .store import CHECKPOINT_MAGIC
-BM25_K1, BM25_B = 1.2, 0.3            # the primary's candidate order (store.recall), measured 2026-09-14
 
 
-# ── warm view: a bundle's index without its graph ─────────────────────────────
+# ── immutable complete recall generation ─────────────────────────────────────
 
 def _connect(directory):
     return sqlite3.connect(str(Path(directory) / 'memory.sqlite3'), isolation_level=None,
@@ -42,54 +30,81 @@ def _table_exists(db, name):
     return db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)).fetchone() is not None
 
 
-def load_warm_memory(db):
-    """(memory, journal seq the memory covers). The warm blob when the checkpoint wrote one, else the memory
-    half of the full checkpoint (the graph is unpickled and dropped — a one-time cost for old checkpoints);
-    then the observation rows written after the checkpoint."""
-    from .store import HotIndex, journal_entry
-    identity = db.execute('SELECT value FROM identity WHERE id=1').fetchone() if _table_exists(db, 'identity') else None
-    memory, seq = CompactIndex.empty(identity[0] if identity else 'warm'), 0
-    head = db.execute('SELECT seq, pair FROM checkpoint WHERE id=1').fetchone() if _table_exists(db, 'checkpoint') else None
-    if head is not None:
-        blob = None
-        if _table_exists(db, 'checkpoint_warm'):
-            warm = db.execute('SELECT seq, pair, blob FROM checkpoint_warm WHERE id=1').fetchone()
-            if warm is not None and warm[0] == head[0] and warm[1] == head[1]:
-                blob = warm[2]
-        if blob is not None:
-            memory = pickle.loads(zlib.decompress(blob[2:]) if blob[:2] == CHECKPOINT_MAGIC else blob)
-        else:
-            full = db.execute('SELECT blob FROM checkpoint WHERE id=1').fetchone()[0]
-            state = pickle.loads(zlib.decompress(full[2:]) if full[:2] == CHECKPOINT_MAGIC else full)
-            memory = state['memory']
-        if isinstance(memory, HotIndex):
-            memory = CompactIndex.from_hot(memory)
-        seq = int(head[0])
-    memory, seq = replay_tail(db, memory, seq)
-    return memory, seq
+class RecallGeneration:
+    """Read-only Main-shaped owner for one verified checkpoint generation.
+
+    ``Main.recall`` is deliberately reused rather than approximated.  It reads
+    only the immutable generation tuple, so no database owner or write methods
+    are needed here.
+    """
+
+    def __init__(self, state):
+        from .engine.mosaic_memory_activation import FullCurrentMemoryVrsSnapshot
+        from .store import Main
+        memory, graph = state['memory'], state['graph']
+        pair = FullCurrentMemoryVrsSnapshot(memory, graph.snapshot_id)
+        if pair.snapshot_id != state['pair']:
+            raise ValueError('checkpoint_generation_integrity_failed')
+        self._generation = (memory, graph, pair, state.get('operations'))
+        self.recall = Main.recall.__get__(self, RecallGeneration)
+        self.consolidation_stale = Main.consolidation_stale.__get__(self, RecallGeneration)
+
+    @property
+    def memory(self):
+        return self._generation[0]
+
+    @property
+    def graph(self):
+        return self._generation[1]
+
+    @property
+    def pair(self):
+        return self._generation[2]
+
+    def _check(self):
+        return None
 
 
-def replay_tail(db, memory, after):
-    """Append the observation rows with seq > ``after`` (alias/usage/consolidation rows are graph-only)."""
-    from .store import journal_entry
-    if not _table_exists(db, 'observations'):
-        return memory, after
-    last = after
-    for seq, req, body, fingerprint, _ in db.execute(
-            'SELECT seq, request_id, body, fingerprint, pair FROM observations WHERE seq>? ORDER BY seq', (after,)):
-        kind, row = journal_entry(req, body, fingerprint)
-        if kind == 'observation':
-            memory, _ = memory.append(row)
-        last = int(seq)
-    return memory, last
+def _journal_head(db):
+    live = db.execute('SELECT seq, pair FROM observations ORDER BY seq DESC LIMIT 1').fetchone() \
+        if _table_exists(db, 'observations') else None
+    archived = db.execute('SELECT last_seq, last_pair FROM journal_archive ORDER BY segment DESC LIMIT 1').fetchone() \
+        if _table_exists(db, 'journal_archive') else None
+    rows = [row for row in (live, archived) if row is not None]
+    return max(rows, key=lambda row: int(row[0])) if rows else None
+
+
+def load_recall_generation(db):
+    """Load a complete checkpoint only when it covers the journal head.
+
+    Answering from an older checkpoint would silently omit experiences or VRS
+    events.  The shard owner checkpoints before eviction, so a mismatch is an
+    invariant failure and remains a named preparer miss until corrected.
+    """
+    if not _table_exists(db, 'checkpoint'):
+        raise ValueError('complete_checkpoint_missing')
+    head = db.execute('SELECT seq, pair, blob FROM checkpoint WHERE id=1').fetchone()
+    journal = _journal_head(db)
+    if head is None or journal is None:
+        raise ValueError('complete_checkpoint_missing')
+    seq, pair, blob = head
+    if (int(seq), pair) != (int(journal[0]), journal[1]):
+        raise ValueError('complete_checkpoint_not_at_journal_head')
+    if blob[:2] == CHECKPOINT_MAGIC:
+        blob = zlib.decompress(blob[2:])
+    state = pickle.loads(blob)
+    identity = db.execute('SELECT value FROM identity WHERE id=1').fetchone()
+    if state.get('identity') != (identity[0] if identity else None) or state.get('pair') != pair:
+        raise ValueError('checkpoint_identity_mismatch')
+    return RecallGeneration(state), int(seq)
 
 
 class WarmView:
-    """Read-only index view of a bundle another owner may be writing: refreshed from its journal on demand."""
+    """Read-only complete VRS view loaded by the preparer, never by a judgment."""
 
     def __init__(self, bundle_id, directory):
         self.id, self.directory = bundle_id, Path(directory)
-        self.memory, self.seq, self.checkpoint_seq = None, 0, None
+        self.generation, self.seq, self.checkpoint_seq = None, 0, None
         self.loaded_at, self.load_ns, self.refreshed_at = None, 0, None
         self.db = None
         self.lock = threading.Lock()
@@ -102,86 +117,45 @@ class WarmView:
     def moved(self):
         """True when the bundle's journal or checkpoint is past what this view covers (one cheap query)."""
         with self.lock:
-            if self.memory is None:
+            if self.generation is None:
                 return True
             db = self._db()
             head = db.execute('SELECT MAX(seq) FROM observations').fetchone() if _table_exists(db, 'observations') else None
             return bool(head and head[0] and int(head[0]) > self.seq)
 
     def refresh(self):
-        """Load once; afterwards follow the journal tail, or reload when the owner wrote a newer checkpoint
-        (its warm blob is the cheaper base). Called by the preparer, never inside a judgment (G8)."""
+        """Load or replace one complete checkpoint outside the judgment path."""
         with self.lock:
             db = self._db()
             head = db.execute('SELECT seq FROM checkpoint WHERE id=1').fetchone() if _table_exists(db, 'checkpoint') else None
             checkpoint_seq = int(head[0]) if head else 0
+            journal = _journal_head(db)
+            journal_seq = int(journal[0]) if journal else 0
             started = time.perf_counter_ns()
-            if self.memory is None or checkpoint_seq > self.seq:
-                self.memory, self.seq = load_warm_memory(db)
+            if journal_seq > checkpoint_seq:
+                raise ValueError('complete_checkpoint_not_at_journal_head')
+            if self.generation is None or checkpoint_seq > self.seq:
+                self.generation, self.seq = load_recall_generation(db)
                 self.checkpoint_seq = checkpoint_seq
                 self.loaded_at, self.load_ns = time.time(), time.perf_counter_ns() - started
-            else:
-                self.memory, self.seq = replay_tail(db, self.memory, self.seq)
             self.refreshed_at = time.time()
-            return self.memory
+            return self.generation
+
+    @property
+    def memory(self):
+        return None if self.generation is None else self.generation.memory
 
     def close(self):
         with self.lock:
             if self.db is not None:
                 self.db.close()
                 self.db = None
-            self.memory = None
+            self.generation = None
 
     def status(self):
         return dict(id=self.id, state='warm', records=self.memory.episode_count if self.memory is not None else None,
                     seq=self.seq, load_ms=self.load_ns // 1_000_000,
                     age_s=None if self.refreshed_at is None else round(time.time() - self.refreshed_at, 1))
-
-
-# ── index-only recall ────────────────────────────────────────────────────────
-
-def warm_recall(memory, query, exclude_kinds=(), limit=10, snippet=400):
-    """The engine's candidate set on this index (records carrying a matched cue) in the primary's order — BM25
-    over the informative cues — without VRS strengths, regions or re-evidence. Returns the hook's row shape."""
-    from .store import keys, asks_of, plain
-    if exclude_kinds:
-        memory = memory.masked(tuple(exclude_kinds))
-    cues = keys(query)
-    fanout = {c: len(memory.episode_ids_for_cue(c)) for c in cues}
-    selected = tuple(c for c in cues if fanout[c])
-    total = max(1, memory.episode_count)
-    informative = tuple(c for c in selected if fanout[c] * 2 <= total)
-    idf = {c: math.log(1.0 + (total - fanout[c] + 0.5) / (fanout[c] + 0.5)) for c in informative}
-    store = memory._store
-    cue_rows, ids = store['cues'], store['ids']
-    average = (memory.cue_total / max(1, memory.episode_count)) if len(cue_rows) else 1.0
-    scores, matched = {}, {}
-    for c in selected:                                   # every matched cue admits a candidate (nothing dropped) …
-        weight = idf.get(c, 0.0)                         # … a function-word cue (half the store or more) weighs nothing
-        for r in memory.rows_for_cue(c):
-            r = int(r)
-            n = len(cue_rows[r])
-            scores[r] = scores.get(r, 0.0) + weight * (BM25_K1 + 1) / (1 + BM25_K1 * (1 - BM25_B + BM25_B * n / average))
-            matched.setdefault(r, []).append(c)
-    rows = []
-    for r, score in sorted(scores.items(), key=lambda kv: (-kv[1], ids[kv[0]])):
-        identifier = ids[r]
-        if identifier in memory.superseded:
-            continue
-        episode = memory.episode_light(identifier)
-        obs = episode.steps[0].observation
-        text = obs.get('text', '')
-        hit = matched[r]
-        rows.append(dict(episode_id=identifier, source=episode.source_addresses[0], revision=episode.revision,
-                         outcome=episode.steps[0].outcome, matched=len(hit), matched_cues=hit[:64],
-                         cue_overlap=len(hit) / max(1, len(cue_rows[r]) + len(selected) - len(hit)),
-                         proposition=obs.get('proposition_id'), polarity=obs.get('evidence_polarity'),
-                         verdict=None, superseded_by=None, metadata=plain(obs.get('metadata') or {}),
-                         text=text[:snippet], text_chars=len(text), asks=asks_of(text),
-                         vrs=None, region=None, score=round(score, 4)))
-        if len(rows) >= limit:
-            break
-    return dict(rows=rows, fanout={c: fanout[c] for c in selected}, record_count=total, candidate_count=len(scores))
 
 
 # ── the resident: primary hot, others hot-by-use or warm ─────────────────────
@@ -229,18 +203,18 @@ class Resident:
         return list(self.bundles)
 
     def ready(self, bundle_id):
-        """(memory, state) pinned for one judgment without any loading: the hot Main's memory, or a warm view that
+        """(owner, state) pinned for one judgment without any loading: the hot Main, or a complete warm view that
         the preparer has loaded; ``(None, 'preparing')`` is a miss the packet names (G8)."""
         with self.lock:
             main = self.hot.get(bundle_id)
             if main is not None:
-                return main.memory, 'hot'
+                return main, 'hot'
             if bundle_id in self.closing:
                 self.wanted.add(bundle_id)
                 return None, 'closing'
             view = self.warm.get(bundle_id)
-            if view is not None and view.memory is not None:
-                return view.memory, 'warm'
+            if view is not None and view.generation is not None:
+                return view.generation, 'warm'
             self.wanted.add(bundle_id)
             return None, 'preparing'
 
@@ -258,17 +232,25 @@ class Resident:
         if not (force or wanted or view.moved()):
             return None
         started = time.perf_counter_ns()
-        memory = view.refresh()
+        generation = view.refresh()
         receipt = dict(bundle=bundle_id, ms=(time.perf_counter_ns() - started) // 1_000_000, seq=view.seq,
-                       records=memory.episode_count, when=time.time())
+                       records=generation.memory.episode_count, pair_snapshot_id=generation.pair.snapshot_id,
+                       complete_vrs=True, when=time.time())
         with self.lock:
             self.wanted.discard(bundle_id)
             self.prepared[bundle_id] = receipt
         return receipt
 
     def prepare_all(self, force=False):
-        """One preparer pass over every registered bundle; the receipts of what was loaded or refreshed."""
-        return [receipt for bundle_id in list(self.bundles) for receipt in [self._safe_prepare(bundle_id, force)] if receipt]
+        """Prepare requested shards only; ``force`` explicitly prepares every shard.
+
+        Complete VRS generations are larger than the retired index-only views, so
+        the periodic preparer must not load every registered shard merely because
+        time passed.
+        """
+        with self.lock:
+            ids = list(self.bundles) if force else list(self.wanted)
+        return [receipt for bundle_id in ids for receipt in [self._safe_prepare(bundle_id, force)] if receipt]
 
     def _safe_prepare(self, bundle_id, force):
         try:
@@ -277,12 +259,12 @@ class Resident:
             return dict(bundle=bundle_id, error=type(error).__name__, when=time.time())
 
     def view(self, bundle_id):
-        """The bundle's current index: the hot Main's memory, else the warm view (refreshed). Loads inside the
+        """The bundle's current complete generation. Loads inside the
         caller — for tools and tests; a judgment uses ``ready`` and lets the preparer load (G8)."""
         with self.lock:                                   # the dicts only; a refresh (seconds) runs outside
             main = self.hot.get(bundle_id)
             if main is not None:
-                return main.memory
+                return main
             view = self.warm.get(bundle_id)
             if view is None:
                 view = self.warm[bundle_id] = WarmView(bundle_id, self.bundles[bundle_id])
@@ -310,7 +292,7 @@ class Resident:
             self.hot[bundle_id] = main
             while len(self.hot) > self.hot_limit:
                 evicted_id, evicted = self.hot.popitem(last=False)
-                self._close_later(evicted_id, evicted)   # checkpoints when dirty (writes the warm blob too)
+                self._close_later(evicted_id, evicted)   # checkpoints the complete immutable generation
             return main
 
     def evict(self, bundle_id):
@@ -324,24 +306,33 @@ class Resident:
 
     # recall across bundles
     def recall_others(self, query, exclude_kinds=(), limit=10, snippet=400):
-        """Rows from every non-primary bundle that is ready, tagged with their bundle and its state; a bundle that
-        is not ready is a named miss (``state`` preparing/closing, no rows) — this judgment does not wait, the
-        preparer loads it, the next judgment sees it (G8)."""
+        """Full four-stage reads from every ready non-primary shard.
+
+        Rows are tagged with their shard and state; a shard that is not ready is
+        a named miss.  The exact primary hook renderer is reused so a warm shard
+        retains VRS, regions, portals, uncertainty, contradictions and
+        Re-evidence rather than falling back to lexical rows.
+        """
         out = []
         for bundle_id in self.bundles:
-            memory, state = self.ready(bundle_id)
-            if memory is None:
+            owner, state = self.ready(bundle_id)
+            if owner is None:
                 out.append(dict(bundle=bundle_id, state=state, miss=True, rows=[]))
                 continue
-            result = warm_recall(memory, query, exclude_kinds, limit, snippet)
-            for row in result['rows']:
-                row.update(bundle=bundle_id, bundle_state=state, fanout={c: result['fanout'].get(c, 0) for c in row['matched_cues']},
-                           record_count=result['record_count'])
+            from .loopback import hook_recall
+            packet = hook_recall(owner, dict(query=query, exclude_kinds=exclude_kinds,
+                                              limit=limit, snippet=snippet), None)
+            for row in packet['memories']:
+                row.update(bundle=bundle_id, bundle_state=state,
+                           record_count=packet['record_count'])
             view = self.warm.get(bundle_id)
-            out.append(dict(bundle=bundle_id, state=state, records=memory.episode_count, candidate_count=result['candidate_count'],
+            out.append(dict(bundle=bundle_id, state=state, records=owner.memory.episode_count,
+                            candidate_count=packet['candidate_count'], pair_snapshot_id=packet['pair_snapshot_id'],
+                            stage_order=['deja_vu', 'recall', 'replay', 're_evidence'], complete_vrs=True,
+                            should_abstain=packet['should_abstain'], conflicts=packet['conflicts'],
                             seq=None if view is None else view.seq,
                             age_s=None if view is None or view.refreshed_at is None else round(time.time() - view.refreshed_at, 1),
-                            rows=result['rows']))
+                            rows=packet['memories']))
         return out
 
     def lookup(self, episode_id):
@@ -350,7 +341,7 @@ class Resident:
             return 'main'
         for bundle_id in self.bundles:
             try:
-                if episode_id in self.view(bundle_id).records:
+                if episode_id in self.view(bundle_id).memory.records:
                     return bundle_id
             except Exception:
                 continue
@@ -366,7 +357,7 @@ class Resident:
                 rows.append(dict(id=bundle_id, state='closing', records=None, seq=None))
             else:
                 view = self.warm.get(bundle_id)
-                rows.append(view.status() if view is not None and view.memory is not None
+                rows.append(view.status() if view is not None and view.generation is not None
                             else dict(id=bundle_id, state='cold', records=None, seq=None))
         return rows
 
