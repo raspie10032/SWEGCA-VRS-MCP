@@ -347,6 +347,37 @@ def test_session_hit_then_complete_miss_falls_back_to_main(tmp_path):
         stop(session_state, state)
 
 
+def test_cached_layered_remote_reattaches_only_for_status(tmp_path):
+    state, session = tmp_path / 'state', 'stale-session-resident'
+    capture = SessionCapture(state)
+    session_state = capture.session_root('codex', session)
+    server = LayeredMCP(state)
+    try:
+        first = server.call_tool('memory_status', {'session_id': session})
+        assert first['status'] == 'ready'
+        stale = server.sessions[session].server.resident
+        stale.close()
+        stale.port = 1  # An unreachable retired daemon endpoint.
+        with pytest.raises(InterfaceError, match='resident_request_failed'):
+            server.call_tool('memory_context', {'session_id': session,
+                'request_id': 'stale-view', 'query': 'missing cue',
+                'expected_pair_snapshot_id': first['pair_snapshot_id']})
+        assert (session, 'stale-view') not in server.request_leases
+        recovered = server.call_tool('memory_status', {'session_id': session})
+        assert recovered['status'] == 'ready'
+        assert server.sessions[session].server.resident.port != 1
+        packet = finish(server, session, server.call_tool('memory_context', {
+            'session_id': session, 'request_id': 'recovered-view',
+            'query': 'missing cue',
+            'expected_pair_snapshot_id': recovered['pair_snapshot_id']}))
+        assert packet['candidate_count'] == 0
+        server.call_tool('memory_release', {'session_id': session,
+            'request_id': 'recovered-view', 'view_id': packet['view_id']})
+    finally:
+        server.close()
+        stop(session_state, state)
+
+
 def test_exact_session_address_is_fail_closed_and_exposes_four_stage_receipt(tmp_path):
     state, session = tmp_path / 'state', 'exact-session-layer'
     capture = SessionCapture(state)

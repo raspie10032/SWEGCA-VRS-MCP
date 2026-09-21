@@ -36,15 +36,30 @@ LAYERED_MEMORY_TOOLS = _tools()
 
 class _Remote:
     def __init__(self, state_dir):
-        reservation = ensure_daemon(state_dir, allow_ingest=True)
+        self.state_dir = Path(state_dir)
+        self.server = self._connect()
+
+    def _connect(self):
+        reservation = ensure_daemon(self.state_dir, allow_ingest=True)
         writes = bool(reservation.request('ping').get('writes_enabled'))
         if not writes:
             reservation.close()
             raise InterfaceError('layer_resident_write_disabled')
-        self.server = LoopbackMCP(reservation, writes_enabled=False)
+        return LoopbackMCP(reservation, writes_enabled=False)
 
     def call(self, tool, arguments):
-        return self.server.call_tool(tool, arguments)
+        try:
+            return self.server.call_tool(tool, arguments)
+        except InterfaceError as error:
+            # A long-lived stdio MCP can outlive a resident daemon. Its old
+            # loopback client retries the retired port, then reports this
+            # transport error. Reattach only for the idempotent status call;
+            # replay/page calls may own a view and must fail closed instead.
+            if tool != 'memory_status' or str(error) != 'resident_request_failed':
+                raise
+            self.server.close()
+            self.server = self._connect()
+            return self.server.call_tool(tool, arguments)
 
     def close(self):
         self.server.close()
