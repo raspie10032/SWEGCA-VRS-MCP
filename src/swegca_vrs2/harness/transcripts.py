@@ -1028,13 +1028,15 @@ def _run_locked(path, *, trigger, agent, session, cwd, project, fmt, force_cut, 
     if not errors or sent == len(rows):
         state.update(new)
         state.update(session=str(session or ""), agent=agent, fmt=fmt, project=project, cwd=cwd or state.get("cwd"),
-                     rows=int(state.get("rows", 0)) + sent, last_trigger=trigger)
+                     rows=int(state.get("rows", 0)) + sent, last_trigger=trigger,
+                     seen_write_ns=int(last_write(path, stat) * 1e9), seen_size=int(stat.st_size))   # the sweep's gate
         save_state(path, state)
     elif sent:
         # partial success: keep the position (the daemon replays request ids idempotently next time)
         pass
     rec.update(sent=sent, errors=errors[:4], ms=int((time.time() - started) * 1000), state=dict(offset=state.get("offset"), line=state.get("line"), turn=state.get("turn")))
-    receipt(**rec)
+    if not (trigger.endswith(":sweep") and not rows and not errors):
+        receipt(**rec)                                  # a sweep that found nothing leaves no line (2026-09-21)
     return rec
 
 
@@ -1219,7 +1221,8 @@ def sweep_all(*, trigger="daemon", client_factory=None, idle_seconds=None):
     todo = {}
     for st in states():
         todo[st["path"].lower()] = dict(path=st["path"], agent=st.get("agent") or "claude-code", session=st.get("session"),
-                                        cwd=st.get("cwd"), project=st.get("project"), fmt=st.get("fmt"), offset=int(st.get("offset", 0)))
+                                        cwd=st.get("cwd"), project=st.get("project"), fmt=st.get("fmt"), offset=int(st.get("offset", 0)),
+                                        seen=int(st.get("seen_write_ns") or 0), seen_size=int(st.get("seen_size") or -1))
     for entry in load_watch():
         entry_idle = float(entry.get("idle") or idle)
         for path in sorted(glob.glob(entry.get("glob") or "", recursive=True)):
@@ -1237,8 +1240,11 @@ def sweep_all(*, trigger="daemon", client_factory=None, idle_seconds=None):
                 stat = os.stat(item["path"])
             except OSError:
                 continue
-            if stat.st_size <= item["offset"] or now - last_write(item["path"], stat) < item.get("idle", idle):
+            written = last_write(item["path"], stat)
+            if stat.st_size <= item["offset"] or now - written < item.get("idle", idle):
                 continue
+            if item.get("seen") and int(written * 1e9) <= item["seen"] and stat.st_size == item.get("seen_size"):
+                continue                                    # same size, nothing written since the last run saw it (indexed formats keep offset 0)
             if client is None and client_factory is not None:
                 client = client_factory()
             out.append(run(item["path"], trigger=trigger + ":sweep", agent=item["agent"], session=item["session"], cwd=item["cwd"],

@@ -187,6 +187,13 @@ def test_registered_with_a_short_idle_the_sweep_takes_a_live_agent_within_its_id
     os.utime(path, (time.time() - 20, time.time() - 20))                     # 20 s quiet: taken (the default would wait 600 s)
     out = t.sweep_all(trigger="daemon", client_factory=Client)
     assert len(out) == 1 and out[0]["rows"] == 1 and out[0]["agent"] == "antigravity" and sent == [1]
+    # nothing written since: the next sweeps do not even run the log (4,186 empty receipts in a day before this)
+    assert t.sweep_all(trigger="daemon", client_factory=Client) == [] and sent == [1]
+    assert t.load_state(path)["seen_write_ns"] > 0
+    add_steps(path, 2, [user_step(T0 + 60, "둘"), answer_step(T0 + 61, "둘째 답")])
+    os.utime(path, (time.time() - 19, time.time() - 19))                     # written again (a later mtime than the seen one)
+    out = t.sweep_all(trigger="daemon", client_factory=Client)
+    assert len(out) == 1 and out[0]["rows"] == 1 and sent == [1, 1]
 
 
 def test_a_wal_file_being_written_keeps_the_turn_open(tmp_path):

@@ -156,6 +156,33 @@ def _sequential(nodes, offsets, neighbors, weights, labels, degree, mass, tolera
     return np.asarray(moved, np.int64)
 
 
+def _contracted_csr(rows, columns, weights, size):
+    """``_csr`` of a contracted level (few nodes) by dense bincount: the nonzero cells of the size x size matrix in
+    row-major order are exactly the (row, col) pairs ``_csr`` sorts to, and with integral positive weights the
+    cell sums equal ``_csr``'s reduceat sums bit for bit (integer arithmetic in float64). Anything else — many
+    nodes, fractional or non-positive weights, an empty level — goes through ``_csr`` (2026-09-21: 430 ms ->
+    30 ms per ingest at 7.6M entries)."""
+    if not len(rows) or size * size > max(4 * len(rows), 1 << 16) or size * size > (1 << 22):
+        return _csr(rows, columns, weights, size)
+    weights = np.asarray(weights, np.float64)
+    if not (np.all(weights > 0) and np.all(weights == np.floor(weights))):
+        return _csr(rows, columns, weights, size)
+    keys = np.asarray(rows, np.int64) * size + np.asarray(columns, np.int64)
+    dense = np.bincount(keys, weights=weights, minlength=size * size)
+    cells = np.flatnonzero(dense)
+    offsets = np.r_[0, np.cumsum(np.bincount(cells // size, minlength=size))].astype(np.int64)
+    return offsets, (cells % size).astype(np.int64), dense[cells]
+
+
+def _lexsort_rows(r, g, size):
+    """``np.lexsort((g, r))`` for a row key ``r`` that is already non-decreasing (CSR entries) and a small group
+    key ``g < size``: one stable argsort of the composite key gives the same order and rides the row-grouped
+    runs (2026-09-21: 985 ms -> 170 ms at 7.6M entries)."""
+    if not len(r):
+        return np.empty(0, dtype=np.int64)
+    return np.argsort(np.asarray(r, np.int64) * np.int64(size) + np.asarray(g, np.int64), kind='stable')
+
+
 def _memberships(offsets, neighbors, weights, core):
     """Vectorized form of the engine's per-node association masses (same definition)."""
     size = len(offsets) - 1
@@ -163,7 +190,7 @@ def _memberships(offsets, neighbors, weights, core):
     g = core[neighbors]
     sel = weights > 0
     r, g, w = rows[sel], g[sel], weights[sel]
-    order = np.lexsort((g, r))
+    order = _lexsort_rows(r, g, int(core.max()) + 1 if len(core) else 1)
     r, g, w = r[order], g[order], w[order]
     if len(r):
         start = np.r_[True, (r[1:] != r[:-1]) | (g[1:] != g[:-1])]
@@ -221,11 +248,18 @@ def build_regions(source, *, vrs_snapshot_id, previous=None, maximum_sweeps=100,
         old_members = getattr(old_regions.terms, 'members', None)
         new_members = getattr(terms, 'members', None)
         if old_members is not None and new_members is not None:
-            position = {int(n): i for i, n in enumerate(old_members)}
-            for i, n in enumerate(new_members):
-                j = position.get(int(n))
-                if j is not None:
-                    initial[i] = int(old_regions.core_labels[j])
+            old_members = np.asarray(old_members, np.int64); new_members = np.asarray(new_members, np.int64)
+            n_old = len(old_members)
+            if (n_old <= len(new_members) and np.array_equal(old_members, np.arange(n_old))
+                    and np.array_equal(new_members[:n_old], old_members)):
+                # the whole-graph case: members are 0..n-1 in both generations — the map is the identity
+                initial[:n_old] = np.asarray(old_regions.core_labels, np.int64)[:n_old]
+            else:
+                position = {int(n): i for i, n in enumerate(old_members)}
+                for i, n in enumerate(new_members):
+                    j = position.get(int(n))
+                    if j is not None:
+                        initial[i] = int(old_regions.core_labels[j])
         else:
             by_name = {t: i for i, t in enumerate(old_regions.terms)}
             for i, name in enumerate(terms):
@@ -248,7 +282,7 @@ def build_regions(source, *, vrs_snapshot_id, previous=None, maximum_sweeps=100,
         if size == len(local):
             break
         rows = np.repeat(np.arange(len(local)), np.diff(o))
-        o, n, w = _csr(local[rows], local[n], w, size)
+        o, n, w = _contracted_csr(local[rows], local[n], w, size)
     core = labels
     member_offsets, memberships, coefficients = _memberships(offsets, neighbors, weights, core)
     region_terms = reverse_memberships(member_offsets, memberships, int(core.max()) + 1 if len(core) else 0)

@@ -29,7 +29,8 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _vrs2_env import SRC, STATE, TOOLS, PY, V02_DB, V02_SRC, V02_KEYS, RECEIPTS  # noqa: E402  (OS-neutral, 2026-09-18)
-from swegca_vrs2.store import Main  # noqa: E402
+# swegca_vrs2.store (numpy, the graph) is imported only on the non-daemon path — the Stop hook imports this
+# module for its record builders and pays nothing for the store (2026-09-21: 0.65 s of a 0.79 s Stop)
 from swegca_vrs2.harness import origin as origin_mod  # noqa: E402  (G3 origin binding, 2026-09-19)
 
 PROJECTS = Path(os.path.join(os.path.expanduser("~"), ".claude", "projects"))
@@ -259,7 +260,11 @@ def main():
     if a.dry_run:
         return
     state.mkdir(parents=True, exist_ok=True)
-    main_ = DaemonMain(state) if a.daemon else Main(state, allow_ingest=True)
+    if a.daemon:
+        main_ = DaemonMain(state)
+    else:
+        from swegca_vrs2.store import Main
+        main_ = Main(state, allow_ingest=True)
     added = skipped = superseded = failed = 0
     started = time.time()
     def settle(r, prev, out):

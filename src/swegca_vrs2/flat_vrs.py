@@ -26,10 +26,19 @@ from __future__ import annotations
 
 import numpy as np
 
-try:
-    from scipy.sparse import csr_matrix
-except ImportError:  # pragma: no cover
-    csr_matrix = None
+csr_matrix = None       # scipy.sparse, imported on the first settle() — not at module load (hooks import this
+                        # module to parse and to talk to the daemon; the 0.3 s scipy import was theirs too, 2026-09-21)
+
+
+def _csr_matrix():
+    global csr_matrix
+    if csr_matrix is None:
+        try:
+            from scipy.sparse import csr_matrix as loaded
+        except ImportError:  # pragma: no cover
+            return None
+        csr_matrix = loaded
+    return csr_matrix
 
 VERSION = 'vrs-re-evidence-event-signal-f32-v2-experimental'   # same rule, flat vehicle
 
@@ -49,6 +58,19 @@ def frozen(values, dtype=None):
     return np.frombuffer(array.tobytes(), dtype=array.dtype).reshape(array.shape)
 
 
+def merged_order(keys, order, new_keys, base):
+    """Stable argsort of ``[keys; new_keys]`` from ``order``, the stable argsort of ``keys`` alone: each new
+    entry slots after every old entry with the same key (input order — old before new), new entries with equal
+    keys in their own input order. O(E) memmove instead of an O(E log E) sort (2026-09-21: 380 ms -> 40 ms at
+    3.8M edges); bit-identical to ``np.argsort(np.concatenate([keys, new_keys]), kind='stable')``."""
+    new_keys = np.asarray(new_keys)
+    if not len(new_keys):
+        return np.asarray(order, np.int64)
+    local = np.argsort(new_keys, kind='stable')
+    positions = np.searchsorted(np.asarray(keys)[order], new_keys[local], side='right')
+    return np.insert(np.asarray(order, np.int64), positions, np.int64(base) + local)
+
+
 class FlatGraph:
     """One immutable generation: node vectors, edge arrays and CSR views.
 
@@ -59,7 +81,7 @@ class FlatGraph:
     __slots__ = ('count', 'direct', 'score', 'unresolved', 'src', 'dst', 'sign', 'strength',
                  'in_ptr', 'in_edge', 'out_ptr', 'out_edge', 'den')
 
-    def __init__(self, direct, score, unresolved, src, dst, sign, strength):
+    def __init__(self, direct, score, unresolved, src, dst, sign, strength, orders=None):
         self.count = len(direct)
         self.direct = frozen(direct, np.float32)
         self.score = frozen(score, np.float32)
@@ -73,11 +95,15 @@ class FlatGraph:
             raise ValueError('flat graph node/edge counts disagree')
         if len(self.src) and max(int(self.src.max()), int(self.dst.max())) >= self.count:
             raise ValueError('flat graph endpoint outside node directory')
-        order = np.argsort(self.dst, kind='stable')
-        self.in_edge = frozen(order.astype(np.int64))
+        # ``orders`` = (in_edge, out_edge) already known to the caller (an extension merges the new edges into
+        # the previous stable orders; a re-strengthening keeps the topology): the same arrays argsort would give
+        if orders is not None and len(orders[0]) == len(self.dst) and len(orders[1]) == len(self.src):
+            in_order, out_order = orders
+        else:
+            in_order, out_order = np.argsort(self.dst, kind='stable'), np.argsort(self.src, kind='stable')
+        self.in_edge = frozen(np.asarray(in_order).astype(np.int64))
         self.in_ptr = frozen(np.r_[0, np.cumsum(np.bincount(self.dst, minlength=self.count))].astype(np.int64))
-        order = np.argsort(self.src, kind='stable')
-        self.out_edge = frozen(order.astype(np.int64))
+        self.out_edge = frozen(np.asarray(out_order).astype(np.int64))
         self.out_ptr = frozen(np.r_[0, np.cumsum(np.bincount(self.src, minlength=self.count))].astype(np.int64))
         # max(1, sum |strength| of incoming) per node — fixed for the event, as in the engine.
         mass = np.bincount(self.dst, weights=np.abs(self.strength.astype(np.float64)), minlength=self.count)
@@ -107,14 +133,17 @@ class FlatGraph:
             direct[node] = d; unresolved[node] = u
         if new_unresolved is None:
             new_unresolved = np.ones(len(new_direct), bool)
+        new_src, new_dst = np.asarray(new_src, np.uint32), np.asarray(new_dst, np.uint32)
+        orders = (merged_order(self.dst, self.in_edge, new_dst, len(self.dst)),
+                  merged_order(self.src, self.out_edge, new_src, len(self.src)))
         return FlatGraph(
             np.concatenate([direct, np.asarray(new_direct, np.float32)]),
             np.concatenate([self.score if score is None else score, np.zeros(len(new_direct), np.float32)]),
             np.concatenate([unresolved, np.asarray(new_unresolved, bool)]),
-            np.concatenate([self.src, np.asarray(new_src, np.uint32)]),
-            np.concatenate([self.dst, np.asarray(new_dst, np.uint32)]),
+            np.concatenate([self.src, new_src]),
+            np.concatenate([self.dst, new_dst]),
             np.concatenate([self.sign, np.asarray(new_sign, np.int8)]),
-            np.concatenate([strength, np.asarray(new_strength, np.float32)]))
+            np.concatenate([strength, np.asarray(new_strength, np.float32)]), orders=orders)
 
     def with_score(self, score):
         g = object.__new__(FlatGraph)
@@ -127,7 +156,8 @@ class FlatGraph:
         """Same topology with replaced strengths and/or scores (a consolidation); CSR layout is rebuilt
         because ``den`` depends on the strengths."""
         return FlatGraph(self.direct, self.score if score is None else score, self.unresolved, self.src, self.dst,
-                         self.sign, self.strength if strength is None else strength)
+                         self.sign, self.strength if strength is None else strength,
+                         orders=(self.in_edge, self.out_edge))          # same edges: the orders stand
 
     def outgoing_targets(self, node):
         lo, hi = self.out_ptr[node], self.out_ptr[node + 1]
@@ -170,9 +200,10 @@ def settle(graph, seeds, *, maximum_rounds=512, dense_threshold=0.0):
     src = graph.src.astype(np.int64)
     dst = graph.dst.astype(np.int64)
     matrix = adjacency = None
-    if csr_matrix is not None and len(src):
-        matrix = csr_matrix((weight, (dst, src)), shape=(count, count))   # row = target
-        adjacency = csr_matrix((np.ones(len(src)), (dst, src)), shape=(count, count))  # who feeds whom
+    sparse = _csr_matrix()
+    if sparse is not None and len(src):
+        matrix = sparse((weight, (dst, src)), shape=(count, count))   # row = target
+        adjacency = sparse((np.ones(len(src)), (dst, src)), shape=(count, count))  # who feeds whom
     pending = np.zeros(count, dtype=bool)
     pending[np.asarray(seeds, np.int64)] = True
     in_degree = np.diff(graph.in_ptr)

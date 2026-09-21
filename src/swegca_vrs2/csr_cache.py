@@ -16,7 +16,8 @@ two flat edges' strengths, which is the same two-operand sum ``_csr`` produces.
 The cache is a plain tuple ``(component_id, node_count, edge_count, offsets, neighbors,
 weights)``; ``extended()`` returns the arrays a fresh ``_csr`` would return, bit for bit
 (``VRS2_VERIFY_CSR=1`` asserts that on every ingest). It is never persisted: the first
-ingest after a restart rebuilds it once through ``_csr``.
+ingest after a restart rebuilds it once through ``_csr``. Weights are unit weights per flat edge, as the fresh
+build's (2026-09-21; before that the cache used the flat strengths and disagreed with the fresh build).
 """
 import os
 
@@ -60,7 +61,10 @@ def extended(cache, flat, new_edge_start, edits):
     total_nodes = flat.count
     src = flat.src[new_edge_start:].astype(np.int64)
     dst = flat.dst[new_edge_start:].astype(np.int64)
-    strength = flat.strength[new_edge_start:].astype(np.float64)
+    # unit weights: regions are navigation topology, built in append_many from ``np.ones`` per flat edge — the
+    # cache must extend with the same (until 2026-09-21 it used the flat strengths, BASE .5 per edge, so a pair
+    # weighed 1.0 when appended and 2.0 after the next restart's fresh build)
+    strength = np.ones(len(src), dtype=np.float64)
     if not len(src):                       # a record without cues: only empty rows are appended
         rows = cols = np.empty(0, dtype=np.int64); values = np.empty(0, dtype=np.float64)
     else:
@@ -87,20 +91,21 @@ def extended(cache, flat, new_edge_start, edits):
     # fresh cue id, both >= node_count > any column already present in that row
     if len(rows) and node_count and (cols[rows < node_count] < node_count).any():
         raise ValueError('csr_cache_order_invariant_violated')
-    for edge, _ in edits:
-        u, v = int(flat.src[edge]), int(flat.dst[edge])
-        for a, b in ((u, v), (v, u)):
-            lo, hi = int(new_offsets[a]), int(new_offsets[a + 1])
-            k = lo + int(np.searchsorted(out_neighbors[lo:hi], b))
-            if k >= hi or out_neighbors[k] != b:
-                raise ValueError('csr_cache_edit_target_missing')
-            out_weights[k] = _pair_weight(flat, a, b)
+    if edits:
+        # a strength edit does not touch unit weights; the pair must still exist (the invariant the edit assumes)
+        for edge, _ in edits:
+            u, v = int(flat.src[edge]), int(flat.dst[edge])
+            for a, b in ((u, v), (v, u)):
+                lo, hi = int(new_offsets[a]), int(new_offsets[a + 1])
+                k = lo + int(np.searchsorted(out_neighbors[lo:hi], b))
+                if k >= hi or out_neighbors[k] != b:
+                    raise ValueError('csr_cache_edit_target_missing')
     return new_offsets, out_neighbors, out_weights
 
 
 def verify(offsets, neighbors, weights, flat, csr):
     """Compare with a fresh engine _csr of the whole graph (debug aid, VRS2_VERIFY_CSR=1)."""
-    u = flat.src.astype(np.int64); v = flat.dst.astype(np.int64); s = flat.strength.astype(np.float64)
+    u = flat.src.astype(np.int64); v = flat.dst.astype(np.int64); s = np.ones(len(u), dtype=np.float64)
     o, n, w = csr(np.r_[u, v], np.r_[v, u], np.r_[s, s], flat.count)
     if not (np.array_equal(o, offsets) and np.array_equal(n, neighbors)
             and np.array_equal(w.view(np.uint64), weights.view(np.uint64))):
