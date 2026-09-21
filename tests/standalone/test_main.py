@@ -16,6 +16,7 @@ from swegca_vrs2.engine.mosaic_vrs_event_kernel import EventVrsInputs
 from swegca_vrs2.engine.mosaic_vrs_event_signal import settle_event_signal
 from swegca_vrs2.engine.mosaic_vrs_dependency_index import EndpointDependencyIndex
 from swegca_vrs2.engine.mosaic_memory_promotion import assess_vrs_experience_promotion
+from swegca_vrs2 import vrs_refine
 
 
 def record(main, i='one', **kwargs):
@@ -222,6 +223,22 @@ def test_native_promotion_threshold_preserves_separate_authority(old,new,action,
     decision=assess_vrs_experience_promotion(snapshot_id='a'*64,connection_id='vrs-edge:0',previous_strength=old,current_strength=new)
     assert decision.action==action and decision.promoted is promoted
     assert not decision.action_authorized and not decision.persistent_write_authorized
+
+
+def test_sixteen_worker_consolidation_is_bit_identical_to_serial(main, monkeypatch):
+    for i, text in enumerate(('alpha', 'bravo', 'charlie', 'delta', 'echo', 'foxtrot')):
+        main.ingest(dict(request_id=f'parallel-{i}', text=text,
+                         source=f'test:parallel:{i}', revision='1', outcome='success'))
+    prepared = main.consolidate_prepare()
+    monkeypatch.setattr(vrs_refine, 'WORKERS', 1)
+    serial = main.consolidate_run(prepared)
+    monkeypatch.setattr(vrs_refine, 'WORKERS', 16)
+    parallel = main.consolidate_run(prepared)
+    assert parallel.stable.version_id == serial.stable.version_id
+    np.testing.assert_array_equal(parallel.flat.strength, serial.flat.strength)
+    np.testing.assert_array_equal(parallel.flat.score, serial.flat.score)
+    np.testing.assert_array_equal(parallel.stable.state, serial.stable.state)
+    np.testing.assert_array_equal(parallel.stable.stability, serial.stable.stability)
 
 
 def test_unrelated_component_is_shared_and_all_sources_remain_addressable(main):

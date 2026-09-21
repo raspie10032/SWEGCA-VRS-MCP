@@ -35,9 +35,11 @@ no edge is skipped, so the steady-state cost is the regions a new record touched
 from __future__ import annotations
 
 import hashlib
+import os
 import pickle
 import time
 import zlib
+from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 
@@ -76,6 +78,7 @@ MEMBER_FLOOR = 0.05
 SHARED_FLOOR = 0.2
 PORTAL_KEYS = 8           # shared experiences kept per portal, strongest first
 VERSION = 'vrs-regions-consolidation-v1'
+WORKERS = min(16, os.cpu_count() or 1)
 
 
 # ── kernel (numpy port of v0.2 refine_vrs; same arithmetic order, float32) ────────────────────
@@ -608,28 +611,49 @@ def consolidate(graph, memory, previous, *, seed=SEED, cycles=CYCLES, labels=Non
     same = inp['labels'][inp['src']] == inp['labels'][inp['dst']]
     region_delta = {}
     src_label = inp['labels'][inp['src']]
-    passes = [(r, same & (src_label == r), _seed(seed, r)) for r in region_ids]
-    # connectors in bundles by the source record's region (with fine regions most edges cross, so one
-    # global connector pass would run every time; a bundle is skipped like a region when nothing in it
-    # is fresh and it converged last time)
-    passes.extend((('c', r), ~same & (src_label == r), _seed(seed, f'c{r}')) for r in region_ids)
-    for r, mask_r, region_seed in passes:
-        if not fresh[mask_r].any() and old_delta.get(r, 1.0) <= TOLERANCE:
-            region_delta[r] = old_delta[r]
-            continue
+    def compute(item):
+        r, connector = item
+        mask_r = ((~same) if connector else same) & (src_label == r)
+        key = ('c', r) if connector else r
+        if not fresh[mask_r].any() and old_delta.get(key, 1.0) <= TOLERANCE:
+            return key, True, old_delta[key], None
         before_s = strength[mask_r].copy()
-        result = _refine_subgraph(inp, strength, state, mask_r, seed=region_seed, cycles=cycles)
-        if result is None:
-            continue
-        edges, local_nodes, mean, stab, new_strength, evals, rf = result
-        strength[edges] = new_strength
-        evaluations += evals; reinforced += rf
-        if isinstance(r, tuple):
-            region_delta[r] = float(np.abs(new_strength - before_s).max())
+        result = _refine_subgraph(inp, strength, state, mask_r,
+                                  seed=_seed(seed, f'c{r}' if connector else r), cycles=cycles)
+        return key, False, before_s, result
+
+    def run_phase(connector):
+        nonlocal evaluations, reinforced
+        items = [(r, connector) for r in region_ids]
+        if WORKERS > 1 and len(items) > 1:
+            with ThreadPoolExecutor(max_workers=min(WORKERS, len(items)),
+                                    thread_name_prefix='vrs2-region') as pool:
+                results = list(pool.map(compute, items))
         else:
-            before_n = state[local_nodes].copy()
-            state[local_nodes] = mean; stability[local_nodes] = stab
-            region_delta[r] = float(max(np.abs(new_strength - before_s).max(), np.abs(mean - before_n).max()))
+            results = [compute(item) for item in items]
+        # Commit in region-id order. Normal-region node sets and both phases' edge
+        # sets are disjoint, so parallel evaluation sees the same frozen inputs as
+        # the former serial loop and publication order stays deterministic.
+        for key, skipped, before_s, result in results:
+            if result is None:
+                if skipped:
+                    region_delta[key] = before_s
+                continue
+            edges, local_nodes, mean, stab, new_strength, evals, rf = result
+            strength[edges] = new_strength
+            evaluations += evals; reinforced += rf
+            if isinstance(key, tuple):
+                region_delta[key] = float(np.abs(new_strength - before_s).max())
+            else:
+                before_n = state[local_nodes].copy()
+                state[local_nodes] = mean; stability[local_nodes] = stab
+                region_delta[key] = float(max(np.abs(new_strength - before_s).max(),
+                                              np.abs(mean - before_n).max()))
+
+    run_phase(False)
+    # Connector passes read the settled normal-region states, update only their
+    # own source-region edge block, and therefore form a second parallel barrier.
+    run_phase(True)
     delta = max(region_delta.values()) if region_delta else 0.0
     # flat arrays: forward edges refined, reverse edges mirrored; score = node state
     flat_strength = np.asarray(flat.strength, np.float32).copy()

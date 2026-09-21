@@ -116,7 +116,7 @@ def starting_since(state_dir):
         return None
     if age > START_STALE:
         return None
-    return age
+    return max(0.0, age)
 
 
 def _clear_start_marker(state_dir):
