@@ -24,6 +24,7 @@ from .native_transport import MAX_BYTES, decode
 from .server import LoopbackMCP, default_state_dir
 from .linked_shards import (attach_complete_shards, drop_derived_read_directory,
                             reload_running_main, shutdown_and_release)
+from .native_journal import is_native_store
 from .resident import WarmView
 
 
@@ -326,7 +327,7 @@ class SessionCapture:
             state = self.session_root(host, session)
             shutdown_and_release(state)
             directories = [state, *sorted(path for path in (state / 'shards').glob('shard-*')
-                                          if (path / 'memory.sqlite3').is_file())]
+                                          if is_native_store(path))]
             components = []
             for directory in directories:
                 suffix = 'main' if directory == state else directory.name
@@ -384,7 +385,7 @@ def scan(capture, codex_home=None, claude_home=None, *, since=0.0):
                 admitted=sum(result['admitted'] for result in results), errors=errors)
 
 
-def handle(host, state_dir, event):
+def handle(host, state_dir, event, *, tool_prefix='mcp__swegca_vrs__memory_'):
     if host not in ('codex', 'claude') or not isinstance(event, dict):
         raise ValueError('invalid_hook_event')
     capture = SessionCapture(state_dir)
@@ -392,8 +393,11 @@ def handle(host, state_dir, event):
     path = event.get('transcript_path') or event.get('agent_transcript_path')
     name = event.get('hook_event_name')
     tool_name = event.get('tool_name')
+    if not isinstance(tool_prefix, str) or not tool_prefix.startswith('mcp__') \
+            or not tool_prefix.endswith('__memory_'):
+        raise ValueError('invalid_vrs_tool_prefix')
     vrs_tool = host == 'codex' and isinstance(tool_name, str) \
-        and tool_name.startswith('mcp__swegca_vrs__memory_')
+        and tool_name.startswith(tool_prefix)
     # Keep status -> context -> read -> release on one pinned snapshot. The
     # status pre-hook captures the prompt first; release (or Stop) captures the
     # intermediate VRS tool records after the request is done.
@@ -431,12 +435,14 @@ def hook_main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--host', choices=('codex', 'claude'), required=True)
     parser.add_argument('--state-dir', type=Path, default=default_state_dir())
+    parser.add_argument('--tool-prefix', default='mcp__swegca_vrs__memory_')
     args = parser.parse_args()
     try:
         raw = sys.stdin.buffer.read(INPUT_LIMIT + 1)
         if len(raw) > INPUT_LIMIT:
             raise ValueError('hook_input_too_large')
-        result = handle(args.host, args.state_dir, decode(raw))
+        result = handle(args.host, args.state_dir, decode(raw),
+                        tool_prefix=args.tool_prefix)
         if result is not None:
             print(json.dumps(result, ensure_ascii=False, separators=(',', ':')))
         return 0

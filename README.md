@@ -1,12 +1,12 @@
 # SWEGCA VRS2 Memory MCP
 
-**v2.1.0 runs on one Windows or Linux machine.** The distribution includes its
+**v2.2.0 runs on one Windows or Linux machine.** The distribution includes its
 local main owner, persistent observation store, hot memory activation, native
 VRS2 event arithmetic and overlapping connectivity regions. No Linux server,
 Unix socket, WSL, GPU, model download or API key is required.
 
-Retired external-agent adapters and v0.3 compatibility code are not included.
-This repository provides the VRS2 main, memory MCP and their native runtime.
+The replaced external-agent and v0.3 code is absent. This repository provides
+the VRS2 main, memory MCP, live session layer, and their native runtime.
 
 ## Windows installation
 
@@ -14,7 +14,7 @@ Use Python 3.11 or newer. In **PowerShell 7**:
 
 ```powershell
 py -3.12 -m venv "$env:LOCALAPPDATA\SWEGCA\VRS2-venv"
-& "$env:LOCALAPPDATA\SWEGCA\VRS2-venv\Scripts\python.exe" -m pip install "https://github.com/raspie10032/SWEGCA-VRS-MCP/releases/download/v2.1.0/swegca_vrs_mcp-2.1.0-py3-none-any.whl"
+& "$env:LOCALAPPDATA\SWEGCA\VRS2-venv\Scripts\python.exe" -m pip install "git+https://github.com/raspie10032/SWEGCA-VRS-MCP.git@main"
 & "$env:LOCALAPPDATA\SWEGCA\VRS2-venv\Scripts\swegca-vrs2-mcp.exe" --help
 ```
 
@@ -30,12 +30,42 @@ the local memory directory. Use one running server per directory.
 
 ```bash
 python3 -m venv .venv
-.venv/bin/python -m pip install https://github.com/raspie10032/SWEGCA-VRS-MCP/releases/download/v2.1.0/swegca_vrs_mcp-2.1.0-py3-none-any.whl
+.venv/bin/python -m pip install git+https://github.com/raspie10032/SWEGCA-VRS-MCP.git@main
 .venv/bin/swegca-vrs2-mcp --state-dir "$HOME/.local/share/swegca-vrs2" --allow-ingest
 ```
 
 The process waits for MCP messages on stdin. It does not print an interactive
 prompt. Normal stdout is reserved for MCP JSON messages; diagnostics use stderr.
+
+The command above is the direct persistent-main MCP for clients that explicitly
+call `memory_store`. Codex live-session use must run the session-first executable
+and lifecycle hooks below.
+
+## Codex live-session installation
+
+Register the installed `swegca-vrs2-codex` executable as the MCP server named
+`swegca-vrs`. The package normalizes that name to `swegca_vrs` in tool call IDs.
+For example, add the actual executable and state paths to Codex configuration:
+
+```toml
+[mcp_servers.swegca-vrs]
+command = "/absolute/path/to/venv/bin/swegca-vrs2-codex"
+args = ["--state-dir", "/absolute/path/to/swegca-vrs2-codex"]
+```
+
+Generate the matching lifecycle hook file with the same installed Python:
+
+```bash
+/absolute/path/to/venv/bin/swegca-vrs2-codex-hooks \
+  --state-dir /absolute/path/to/swegca-vrs2-codex \
+  --server-name swegca_vrs \
+  --output "$HOME/.codex/hooks.json.new"
+```
+
+Review and place the generated `hooks` object in Codex's hook configuration.
+The generator refuses to overwrite an existing file. Every `SessionStart` and
+`SessionEnd` is registered without guessing the host's reason string. Tool
+input injection is limited to `mcp__swegca_vrs__memory_*`.
 
 ## Memory workflow
 
@@ -75,8 +105,8 @@ For an actual same-source correction, pass the old `episode_id` as `supersedes`
 with a new revision. The old original remains addressable. Metadata, including
 qualifications or emotion annotations, is preserved as data, not instructions.
 
-For Codex, `tools/generate_codex_hooks.py` generates lifecycle hooks that start
-one session-local tailer. The tailer sends every complete host-visible transcript
+For Codex, `swegca-vrs2-codex-hooks` generates lifecycle hooks that start one
+session-local tailer. The tailer sends every complete host-visible transcript
 record directly into a session-local VRS within its one-second poll. Event hooks
 also perform cursor-safe scans as delivery boundaries. Reads
 query that session VRS first and open durable main only after a complete miss.
@@ -118,9 +148,8 @@ These are software functionality checks, not a demonstrated cognitive growth run
 
 Default Windows store: `%LOCALAPPDATA%\SWEGCA\VRS2`.
 Default Linux store: `$XDG_DATA_HOME/swegca-vrs2` or `~/.local/share/swegca-vrs2`.
-Use `--state-dir` to choose another directory. Do not point this version at a
-legacy v0.3 store: there is no automatic legacy-store import. Existing data is
-preserved; use the earlier release/environment to access its original format.
+Use `--state-dir` to choose another directory. The runtime accepts only the
+native checksummed VRS journal and checkpoint format.
 
 Close the server before copying its entire state directory for backup. Never
 delete the state directory to upgrade the application environment. Restart loads
@@ -133,6 +162,8 @@ python -m pip install '.[test]' build
 python -m pytest -q tests/standalone
 python -m build
 python tools/verify_standalone.py
+python tools/smoke_mcp.py --server .venv/bin/swegca-vrs-mcp
+python tools/smoke_codex_mcp.py --server .venv/bin/swegca-vrs2-codex
 ```
 
 Repository GitHub Actions are disabled. Verification is run locally against the

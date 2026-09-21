@@ -7,7 +7,7 @@
   N, 적재 ms/건(단계 평균), consolidation 1세대 초(16사이클)·영역 수·간선 수, 회수 중앙값/최대 ms(20 질의, auto/all),
   RSS MB, 디스크 MB. RSS 가 상한을 넘거나 MemoryError 면 거기서 멈추고 그 사실을 적는다 — G7(상주 계층)이 필수가 되는 지점.
 
-    vrs2-venv python vrs2-scale-curve.py [--steps 10000,20000,50000,100000,200000] [--rss-cap-mb 12000] [--seed 7] [--batch 500]
+    vrs2-venv python vrs2-scale-curve.py [--steps 10000,20000,50000,100000,200000] [--rss-cap-mb 4096] [--seed 7] [--batch 500]
 결과: vrs2-scale-lab/curve.json + curve.log (단계마다 append — 중간에 죽어도 지금까지가 남는다)
 """
 import argparse
@@ -20,11 +20,12 @@ import statistics
 import sys
 import time
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from _vrs2_env import SRC, STATE  # noqa: E402
-sys.path.insert(0, SRC)
+from pathlib import Path
 
-LAB = os.path.join(os.path.dirname(STATE), "vrs2-scale-lab")
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / 'src'))
+STATE = os.environ.get('VRS2_STATE', str(Path.home() / '.local/share/swegca-vrs2-codex'))
+LAB = os.environ.get('VRS2_SCALE_LAB', str(Path(STATE).parent / 'vrs2-scale-lab'))
 CURVE = os.path.join(LAB, "curve.json")
 LOG = os.path.join(LAB, "curve.log")
 
@@ -57,25 +58,26 @@ def rss_mb():
 
 
 def sample_texts(limit=6000):
-    """라이브 사본에서 기록 본문 표본(문서·로그 항목만)."""
-    from swegca_vrs2.store import Main
-    d = os.path.join(LAB, "live-copy"); shutil.rmtree(d, ignore_errors=True); os.makedirs(d)
-    shutil.copy(os.path.join(STATE, "memory.sqlite3"), d)
-    m = Main(d, allow_ingest=False)
+    """Read samples through the VRS owner API; never copy or inspect storage."""
+    from swegca_vrs2.loopback import ensure_daemon
+    client = ensure_daemon(STATE, allow_ingest=False)
     texts = []
     try:
-        for eid in m.memory.iter_episode_ids():
-            if eid in m.memory.superseded:
-                continue
-            ep = m.memory.episode(eid); obs = ep.steps[0].observation
-            kind = (obs.get("metadata") or {}).get("kind")
-            t = obs.get("text") or ""
-            if kind in ("log_entry", "doc", "doc_section") and 80 <= len(t) <= 4000:
-                texts.append(t)
-            if len(texts) >= limit:
+        cursor = 0
+        while len(texts) < limit:
+            page = client.request('export_experiences', after_sequence=cursor,
+                                  max_records=min(512, limit - len(texts)))
+            for item in page.get('rows', []):
+                text = item['observation'].get('text') or ''
+                if 80 <= len(text) <= 4000:
+                    texts.append(text)
+            cursor = int(page.get('next_sequence', cursor))
+            if page.get('complete'):
                 break
     finally:
-        m.close(); shutil.rmtree(d, ignore_errors=True)
+        client.close()
+    if not texts:
+        raise ValueError('no_vrs_experience_samples')
     return texts
 
 
@@ -100,11 +102,13 @@ def queries_from(texts, rng, n=20):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--steps", default="10000,20000,50000,100000,200000")
-    ap.add_argument("--rss-cap-mb", type=float, default=12000)
+    ap.add_argument("--rss-cap-mb", type=float, default=4096)
     ap.add_argument("--seed", type=int, default=7)
     ap.add_argument("--batch", type=int, default=500, help="한 세대에 넣는 건수(묶음 세대, 2026-09-18); 1 = 옛 경로")
     ap.add_argument("--fresh", action="store_true", help="기존 랩 스토어를 지우고 처음부터")
     a = ap.parse_args()
+    if not 0 < a.rss_cap_mb <= 4096:
+        ap.error("--rss-cap-mb must be within the 4096 MB VRS limit")
     sys.stdout.reconfigure(encoding="utf-8")
     os.makedirs(LAB, exist_ok=True)
     steps = [int(x) for x in a.steps.split(",")]
@@ -128,7 +132,7 @@ def main():
             while n < target:
                 # 묶음 세대(2026-09-18): --batch 건을 한 세대로(그래프 재구성 한 번). 1 이면 옛 한 건 = 한 세대.
                 rows = [dict(request_id=f"synth:{k}", text=synth(texts, k, rng), source=f"synth:{k}", revision="1",
-                             metadata=dict(kind="log_entry", project="synthetic")) for k in range(n, min(target, n + a.batch))]
+                             metadata=dict(kind="synthetic_experience", project="synthetic")) for k in range(n, min(target, n + a.batch))]
                 m.ingest_many(rows) if a.batch > 1 else m.ingest(rows[0])
                 n += len(rows); made += len(rows)
                 if made % 2000 < len(rows):
@@ -144,7 +148,8 @@ def main():
                     t = time.perf_counter(); m.recall(q, None, exclude_kinds=("fs_listing", "test"), region_scope=scope); ms.append((time.perf_counter() - t) * 1000)
                 lat[scope] = dict(median=round(statistics.median(ms), 1), max=round(max(ms), 1))
             m.checkpoint()
-            disk = sum(os.path.getsize(os.path.join(store_dir, f)) for f in os.listdir(store_dir)) / 1048576
+            disk = sum(path.stat().st_size for path in Path(store_dir).rglob('*')
+                       if path.is_file()) / 1048576
             row = dict(records=n, batch=a.batch, ingest_ms_per_record=round(ingest_ms, 1), consolidation_s=round(cons_s, 1),
                        regions=(r or {}).get("regions"), edges=(r or {}).get("edges"), promoted=(r or {}).get("promoted"),
                        recall_ms=lat, rss_mb=round(rss_mb()), disk_mb=round(disk, 1), ts=time.strftime("%Y-%m-%d %H:%M:%S"))

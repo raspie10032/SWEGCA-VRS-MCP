@@ -76,6 +76,13 @@ zero-candidate completed recall.
 spawning a detached finalizer. The finalizer captures a stable final transcript
 tail, publishes the end marker, stops the tailer, validates the session primary and all automatic
 child VRS shards, and atomically attaches them to main. Main reads the original
-experience databases through its exact directory and complete VRS projections.
+experience stores through its exact directory and complete VRS projections.
 There is no export/re-ingest merge, transcript outbox, proposal journal or
 log-based recall.
+
+Each writable shard persists exact envelopes and pair generations in the native
+checksummed VRS frame journal (`vrs-store.json`, `journal/*.vrsj`,
+`checkpoint.vrsc`). SQLite, a compatibility reader and a transcript database are
+absent from the runtime package. A partial final frame is discarded at restart;
+checksum damage fails closed. Checkpoints remain derived caches and the complete
+native journal remains the source of truth.

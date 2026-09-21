@@ -1,30 +1,21 @@
 # Source and license boundaries
 
-v2.1 standalone distribution contains only first-party `swegca_vrs2` and its
-native VRS2 component port (MIT). NATIVE_VRS2_PORT.json records exact source
-lineage. The historical packages and integrations described below remain in
-the repository, but are excluded from the v2.1 wheel/source archive. New local
-main, persistence and text-ingress composition is not claimed byte-equivalent
-to the entire private Rozephine application. No experiences, weights or private
-runtime state are publication inputs.
+The v2.2 runtime and package under `src/swegca_vrs2` are first-party MIT code.
+`NATIVE_VRS2_PORT.json` records the exact first-party source lineage for the
+ported engine definitions. The new native journal, main composition, session
+capture, read directories, projections, and MCP integration are not claimed to
+be byte-equivalent to an entire private Rozephine application. No private
+experience, model weights, credentials, or runtime state are release inputs.
 
-- First-party MCP integration, persistence adapter, graph adapter and tests: MIT,
-  copyright 2026 Dongjun Park. See LICENSE.
-- `src/swegca_vrs_mcp/core/mosaic_*.py` and their original ported tests: MIT,
-  derived from the public SWEGCA-VRS-PoC revision in UPSTREAM.json.
-- `src/swegca_vrs_mcp/architecture/*.py` and `tests/architecture/*.py`: MPL-2.0,
-  derived from public SWEGCA-Architecture. Preserve their file-level notices and
-  LICENSES/MPL-2.0.txt; exact lineage appears in ARCHITECTURE_UPSTREAM.json.
-- `core/vrs_refinement.py`: MIT first-party numerical extraction; only two generic
-  numerical functions and their two constants were carried over. VRS_UPSTREAM.json
-  records origin and function-level equivalence. No private runtime, history,
-  experience, media or credentials are imported.
+The source snapshots under `reference/upstream_vrs/architecture` are MPL-2.0
+and originate from public SWEGCA-Architecture. Their exact paths and hashes are
+recorded in `ARCHITECTURE_UPSTREAM.json`; preserve their file notices and
+`LICENSES/MPL-2.0.txt`. They are lineage references only and are excluded from
+the Python package and release archives.
 
-The combined source distribution is not MIT-only. Third-party dependencies keep
-their respective licenses. The new graph construction and stopping adapter are
-not claimed byte-equivalent to an entire prior runtime or production system.
+The source snapshots under `reference/upstream_vrs/core` are MIT and derive
+from the public SWEGCA-VRS-PoC lineage recorded by the upstream manifests. They
+are also excluded from runtime and archives.
 
-The v2.0 native_memory/native_context/native_transport modules are first-party
-MIT transport and memory-use integration, published by explicit owner request.
-They contain no native cognition engine, private experience, model weights or
-private repository history. The existing upstream manifests remain unchanged.
+The combined source repository therefore carries MIT and MPL-2.0 material.
+Third-party dependencies retain their own licenses.

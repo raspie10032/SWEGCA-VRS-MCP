@@ -9,6 +9,7 @@ native four-stage memory tools are called.
 from __future__ import annotations
 
 from copy import deepcopy
+import argparse
 import hashlib
 from pathlib import Path
 import sys
@@ -233,3 +234,15 @@ def serve(main_state):
     finally:
         if server is not None:
             server.close()
+
+
+def main():
+    from .server import default_state_dir
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--state-dir', type=Path, default=default_state_dir())
+    args = parser.parse_args()
+    return serve(args.state_dir)
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())

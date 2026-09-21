@@ -15,6 +15,7 @@ from filelock import FileLock, Timeout
 
 from .loopback import LoopbackClient, port_of
 from .native_transport import InterfaceError
+from .native_journal import is_native_store
 
 
 SCHEMA = 'swegca-vrs2-linked-shards-v1'
@@ -64,7 +65,7 @@ def _validate(root, row):
         raise ValueError('linked_shard_path_invalid')
     directory = (root / relative).resolve()
     session_root = (root / 'session-vrs').resolve()
-    if not _inside(directory, session_root) or not (directory / 'memory.sqlite3').is_file():
+    if not _inside(directory, session_root) or not is_native_store(directory):
         raise ValueError('linked_shard_path_invalid')
     if os.name != 'nt' and directory.stat().st_uid != os.getuid():
         raise ValueError('linked_shard_not_owned')

@@ -6,7 +6,7 @@ rows from before the step are untouched."""
 import pytest
 
 from swegca_vrs2 import vrs_evidence as ve
-from swegca_vrs2.harness import identity
+from swegca_vrs2 import producer_identity as identity
 from swegca_vrs2.loopback import Daemon
 from swegca_vrs2.store import Main
 

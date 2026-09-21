@@ -235,7 +235,7 @@ def evidence_of(main, arguments):
 
 
 def _record_digest(text):
-    from .harness.origin import record_digest
+    from .provenance import record_digest
     return record_digest(text)
 
 
@@ -243,7 +243,7 @@ def _verify_producer(row):
     """Signed producers (2026-09-19): a row from a registered producer is stamped ``metadata.verified`` by its
     signature; an unregistered producer's row is left as it is. Never blocks an ingest."""
     try:
-        from .harness.identity import verify_row
+        from .producer_identity import verify_row
         return verify_row(row)
     except Exception:
         return None
@@ -868,7 +868,7 @@ def _consolidate_stale_shards(daemon, *, cycles):
 
 
 def serve(state_dir, *, port=0, allow_ingest=False, idle_hours=8.0, bundle_limit=None, bundles=None, hot_bundles=1):
-    from .store import CHECKPOINT_IDLE
+    from .store import CHECKPOINT_EVERY, CHECKPOINT_IDLE
     from .vrs_refine import IDLE_CYCLES
     daemon = Daemon(state_dir, allow_ingest=allow_ingest, bundle_limit=bundle_limit, bundles=bundles, hot_bundles=hot_bundles, idle_seconds=idle_hours * 3600)
 
@@ -910,11 +910,12 @@ def serve(state_dir, *, port=0, allow_ingest=False, idle_hours=8.0, bundle_limit
             quiet = time.time() - daemon.last
             if quiet > daemon.idle_seconds:
                 break
-            # checkpoint after a quiet spell, not inside an ingest: a Stop hook's burst of
-            # entries pays for one checkpoint, after it, instead of one per 8 ingests
-            if daemon.main.dirty and quiet >= CHECKPOINT_IDLE:
-                # serialize outside the lock (2-3 s at 5k records) so a concurrent hook recall does
-                # not wait; only the short DB write holds the lock
+            # A quiet spell coalesces small bursts. Continuous ingress still
+            # checkpoints each bounded prefix once the pending threshold is met.
+            if daemon.main.dirty and (quiet >= CHECKPOINT_IDLE
+                                      or daemon.main.dirty >= CHECKPOINT_EVERY):
+                # Serialize outside the lock so concurrent recall does not wait;
+                # only the short verified checkpoint publication holds the lock.
                 with daemon.lock:
                     prepared = daemon.main.checkpoint_prepare() if daemon.main.dirty else None
                 if prepared is not None:
@@ -923,9 +924,12 @@ def serve(state_dir, *, port=0, allow_ingest=False, idle_hours=8.0, bundle_limit
                         daemon.main.checkpoint_commit(prepared, serialized)
             # Other owned shards checkpoint the same complete generation used by
             # their read-only recall view.  No index-only checkpoint exists.
-            if quiet >= CHECKPOINT_IDLE:
+            if quiet >= CHECKPOINT_IDLE or any(
+                    other.dirty >= CHECKPOINT_EVERY
+                    for other in list(daemon.bundles.hot.values())):
                 for bundle_id, other in list(daemon.bundles.hot.items()):
-                    if other.dirty:
+                    if other.dirty and (quiet >= CHECKPOINT_IDLE
+                                        or other.dirty >= CHECKPOINT_EVERY):
                         with daemon.lock:
                             prepared = other.checkpoint_prepare() if other.dirty else None
                         if prepared is not None:

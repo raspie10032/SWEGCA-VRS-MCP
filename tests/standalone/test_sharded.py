@@ -215,6 +215,36 @@ def test_exact_replay_opens_only_target_and_same_proposition_shards(tmp_path):
         primary.close()
 
 
+def test_exact_replay_materializes_only_incident_portals_once_per_generation(tmp_path, monkeypatch):
+    primary = Main(tmp_path / "main", allow_ingest=True)
+    primary.ingest(dict(request_id="exact", text="포털 국소 직렬화 검증",
+                        source="portal:test", revision="1"))
+    resident = Resident(primary, {}, hot_limit=0)
+    try:
+        while not resident.backfill_exact(16)["complete"]:
+            pass
+        identifier = primary.memory._store["ids"][0]
+        calls = []
+        import swegca_vrs2.resident as module
+        original = module.projected_portals
+
+        def observed(owner, active_regions=None, portal_pairs=None):
+            calls.append(portal_pairs)
+            return original(owner, active_regions, portal_pairs)
+
+        monkeypatch.setattr(module, "projected_portals", observed)
+        logical = ShardedMain(primary, resident)
+        first = logical.recall(identifier, resident.logical_snapshot())
+        second = logical.recall(identifier, resident.logical_snapshot())
+        assert first["receipt"]["activation"].stage_order == (
+            "deja_vu", "recall", "replay", "re_evidence")
+        assert second["receipt"]["activation"].replay.episodes[0].episode_id == identifier
+        assert len(calls) == 1 and calls[0] is not None
+    finally:
+        resident.close()
+        primary.close()
+
+
 def test_natural_recall_reads_cold_cue_and_proposition_shards_without_checkpoints(tmp_path):
     primary = Main(tmp_path / "main", allow_ingest=True)
     resident = Resident(primary, {

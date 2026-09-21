@@ -1,22 +1,20 @@
 """One durable main owner with immutable hot generations and observation ingress.
 
-SQLite is an ingress/restart boundary only. Recall reads immutable resident maps.
+The native VRS journal is an ingress/restart boundary only. Recall reads immutable resident maps.
 No model, HTTP client, subprocess, external-agent store or action executor is used here.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, fields, is_dataclass, replace
+from dataclasses import fields, is_dataclass, replace
 import copyreg
 import hashlib
 import json
 import pickle
 import re
-import sqlite3
 from pathlib import Path
 from time import perf_counter_ns
 from types import MappingProxyType, SimpleNamespace
 import os
-import uuid
 import zlib
 
 from filelock import FileLock, Timeout
@@ -24,7 +22,7 @@ from immutables import Map
 import numpy as np
 
 from .engine.mosaic_memory_activation import (
-    OUTCOMES, MemoryEpisode, MemoryStep, FullCurrentMemoryVrsSnapshot,
+    OUTCOMES, FullCurrentMemoryVrsSnapshot,
     AtomicFullCurrentMemoryVrsOwner, current_experience_verdict,
     CurrentEvidenceVerdict, MemoryActivationReceipt, RecallResult,
     detect_deja_vu, recall_memory, replay_memory, re_evidence_memory,
@@ -39,6 +37,7 @@ from .fast_regions import build_regions
 from .compact_index import CompactIndex
 from . import csr_cache
 from . import vrs_refine
+from .native_journal import NativeJournal
 from .engine.mosaic_vrs_connectivity_regions import _csr as _engine_csr
 
 # Local adapter (2026-09-14): generated Hangul n-gram cues (2-4 chars, produced by keys() for every
@@ -194,72 +193,13 @@ def journal_entry(request_id, body, fingerprint):
     return 'observation', row
 
 
-@dataclass(frozen=True)
-class HotIndex:
-    snapshot_id: str
-    records: Map
-    postings: Map
-    outcome_counts: Map
-    propositions: Map
-    superseded: Map
-    semantic_families: tuple = ()
-    lookup_requires_io: bool = False
-
-    @property
-    def episode_count(self):
-        return len(self.records)
-
-    def episode(self, identifier):
-        return self.records[identifier]
-
-    def episode_ids_for_cue(self, cue):
-        return self.postings.get(cue, ())
-
-    def iter_episode_ids(self):
-        return iter(self.records)
-
-    def append(self, row):
-        identifier = 'memory:' + digest({k: v for k, v in row.items() if k != 'request_id'})
-        if identifier in self.records:
-            return self, identifier
-        previous = row['supersedes']
-        if previous is not None:
-            old = self.records[previous]
-            if old.source_addresses != (row['source'],) or old.revision == row['revision'] or previous in self.superseded:
-                raise ValueError('invalid_source_revision_successor')
-        cues = tuple(dict.fromkeys((*keys(row['text']), *(c.casefold() for c in row['cues']))))
-        if row['proposition'] is not None:
-            cues = (*cues, 'proposition:' + row['proposition'])
-        if not cues:
-            cues = ('source:' + row['source'],)
-        # Every returned original address can be retrieved directly through the
-        # same four-stage API, independently of lexical similarity.
-        cues = (*cues, identifier)
-        episode = MemoryEpisode(identifier, cues,
-            (MemoryStep('external_observation', {'text': row['text'], 'metadata': row['metadata'],
-                'proposition_id': row['proposition'], 'evidence_polarity': row['polarity'],
-                'supersedes': previous, 'current_truth_claimed': False}, (),
-                'Recorded external observation; truth and action authority not granted.',
-                row['outcome'], (row['source'],)),), (row['source'],), row['revision'], 'unverified')
-        postings = self.postings
-        for cue in cues:
-            postings = postings.set(cue, postings.get(cue, frozenset()) | {identifier})
-        propositions = self.propositions
-        if row['proposition']:
-            p = row['proposition']
-            propositions = propositions.set(p, propositions.get(p, frozenset()) | {identifier})
-        return HotIndex(digest((self.snapshot_id, identifier)), self.records.set(identifier, episode),
-            postings, self.outcome_counts.set(row['outcome'], self.outcome_counts[row['outcome']] + 1),
-            propositions, self.superseded if previous is None else self.superseded.set(previous, identifier)), identifier
-
-
 class NodeDirectory:
     """Node ids for records and cues without a resident string per node.
 
     ``episode_node``: record id -> node; ``cue_node[cue_id]``: node or -1; ``node_cue[node]``:
     cue id or -1; ``node_episode``: node -> record id (records only). Names are decoded
     from the shared vocabulary on demand (``name(node)``), so ``'cue:'+string`` keys are
-    never materialized for the whole graph. Supports the old ``graph.nodes[...]`` reads.
+    never materialized for the whole graph. Mapping-style reads remain available.
     """
     __slots__ = ('vocab', 'episode_node', 'node_episode', 'cue_node', 'node_cue', 'count')
 
@@ -355,10 +295,9 @@ class Graph:
     as the ported composition. Large components use ``fast_regions`` (same rule,
     vectorized, warm-started from the previous generation); see that module.
     """
-    # '_names' is kept only so checkpoints written by the earlier Graph layout still unpickle.
     # '_csr' caches the level-0 regions adjacency of the whole-graph component (csr_cache);
     # it is memory-only: not pickled, rebuilt once through the engine's _csr after a restart.
-    __slots__ = ('snapshot_id', 'flat', 'nodes', 'components', 'regions', 'last_receipt', '_names', '_csr', 'stable', '_labels', '_row_labels',
+    __slots__ = ('snapshot_id', 'flat', 'nodes', 'components', 'regions', 'last_receipt', '_csr', 'stable', '_labels', '_row_labels',
                  'usage', 'aliases')
 
     def __init__(self, snapshot_id, flat, nodes, components, regions, last_receipt, csr=None, stable=None, usage=None,
@@ -376,14 +315,12 @@ class Graph:
         return {k: getattr(self, k) for k in self.__slots__ if k not in ('_csr', '_labels', '_row_labels') and hasattr(self, k)}
 
     def __setstate__(self, state):
-        if isinstance(state, tuple):          # checkpoints written before __getstate__ existed
-            state = state[1] or {}
-        for k in self.__slots__:
-            setattr(self, k, state.get(k))
-        if self.usage is None:               # checkpoints written before usage existed
-            self.usage = {}
-        if self.aliases is None:
-            self.aliases = {}
+        persistent = set(self.__slots__) - {'_csr', '_labels', '_row_labels'}
+        if type(state) is not dict or set(state) != persistent:
+            raise ValueError('checkpoint_graph_schema_invalid')
+        for key in persistent:
+            setattr(self, key, state[key])
+        self._csr = self._labels = self._row_labels = None
 
     @classmethod
     def empty(cls, identity, vocab=None):
@@ -428,11 +365,6 @@ class Graph:
         receipt = dict(self.last_receipt, status='usage', parent_snapshot_id=self.snapshot_id, usage_sources=len(merged))
         return Graph(snapshot_id, self.flat, self.nodes, self.components, self.regions, freeze_view(receipt), self._csr,
                      self.stable, merged, self.aliases)
-
-    @property
-    def inputs(self):
-        """Compatibility shim for callers that only need ``.snapshot_id``."""
-        return SimpleNamespace(snapshot_id=self.snapshot_id)
 
     def append(self, episode, snapshot, memory):
         """One record = one generation (the pre-batch path); identical certificate chain as before."""
@@ -738,9 +670,8 @@ CHECKPOINT_EVERY = 64     # in-ingest safety bound on crash replay; the daemon c
                           # quiet spell instead (CHECKPOINT_IDLE), close() always checkpoints
 CHECKPOINT_IDLE = 5.0     # seconds without requests before a resident main writes its checkpoint
 KEEP_LIVE_ROWS = 8        # live journal rows kept by compact()
-CHECKPOINT_MAGIC = b'Z1'  # zlib-compressed checkpoint blob; a bare pickle is the older form
-ARCHIVE_MAGIC = b'A1'     # zlib-compressed journal segment: JSON lines of observation rows
-SEGMENT_ROWS = 64         # archive segment size — partial decompression granularity
+CHECKPOINT_MAGIC = b'VRS2CP1\0'
+CHECKPOINT_SCHEMA = 'swegca-vrs2-checkpoint-v1'
 
 
 class Main:
@@ -811,31 +742,12 @@ class Main:
         self.closed, self.allow_ingest = False, allow_ingest
         self.defer_checkpoints = bool(defer_checkpoints)
         self.bundle_limit = int(bundle_limit) if bundle_limit else BUNDLE_LIMIT
-        self.db = None
+        self.journal = None
         self._dirty = 0
         self.restore = {}
         try:
-            # check_same_thread=False: the loopback daemon serves requests from handler threads
-            # and serializes every main call under one lock (loopback.Daemon.handle).
-            self.db = sqlite3.connect(self.directory / 'memory.sqlite3', isolation_level=None,
-                                      check_same_thread=False)
-            self.db.execute('PRAGMA journal_mode=WAL')
-            self.db.execute('PRAGMA synchronous=FULL')
-            self.db.execute('CREATE TABLE IF NOT EXISTS identity (id INTEGER PRIMARY KEY CHECK(id=1), value TEXT NOT NULL)')
-            self.db.execute('CREATE TABLE IF NOT EXISTS observations (seq INTEGER PRIMARY KEY, request_id TEXT UNIQUE NOT NULL, body TEXT NOT NULL, fingerprint TEXT NOT NULL, pair TEXT NOT NULL)')
-            self.db.execute('CREATE TABLE IF NOT EXISTS checkpoint (id INTEGER PRIMARY KEY CHECK(id=1), seq INTEGER NOT NULL, pair TEXT NOT NULL, blob BLOB NOT NULL)')
-            # Secondary shards read this same complete immutable checkpoint;
-            # no reduced lexical-only checkpoint is written.
-            # Lossless hard compression (2026-09-14): journal rows older than the checkpoint
-            # move into compressed segments. archive + observations is still the whole journal.
-            self.db.execute('CREATE TABLE IF NOT EXISTS journal_archive (segment INTEGER PRIMARY KEY, first_seq INTEGER NOT NULL, last_seq INTEGER NOT NULL, last_pair TEXT NOT NULL, rows INTEGER NOT NULL, blob BLOB NOT NULL)')
-            self.db.execute('DROP TABLE IF EXISTS vrs_overlay')      # the interim overlay (pre vrs-regions)
-            identity = self.db.execute('SELECT value FROM identity WHERE id=1').fetchone()
-            if identity is None:
-                identity = (str(uuid.uuid4()),)
-                self.db.execute('INSERT INTO identity VALUES (1,?)', identity)
-            self.identity = identity[0]
-            # HotIndex (ported) stays importable for older checkpoints; the live index is compact.
+            self.journal = NativeJournal(self.directory, create=True, writable=True)
+            self.identity = self.journal.identity
             memory = CompactIndex.empty(self.identity)
             graph = Graph.empty(self.identity, memory._store['vocab'])
             self._set_generation(memory, graph, FullCurrentMemoryVrsSnapshot(memory, graph.snapshot_id), Map())
@@ -899,62 +811,44 @@ class Main:
 
     def _load_checkpoint(self):
         """Return the journal seq the loaded state corresponds to (0 = nothing loaded)."""
-        row = self.db.execute('SELECT seq, pair, blob FROM checkpoint WHERE id=1').fetchone()
-        if row is None:
+        checkpoint = self.journal.read_checkpoint()
+        if checkpoint is None:
             self.restore['checkpoint'] = 'none'
             return 0
-        seq, pair, blob = row
+        seq, pair, blob = checkpoint.seq, checkpoint.pair, checkpoint.blob
         journal = self._journal_pair(seq)
         if journal != pair:
             self.restore['checkpoint'] = 'stale_ignored'
             return 0
         try:
-            if blob[:2] == CHECKPOINT_MAGIC:
-                blob = zlib.decompress(blob[2:])
-            state = pickle.loads(blob)
-            if state['pair'] != pair or state['identity'] != self.identity:
-                raise ValueError('checkpoint identity mismatch')
+            state = self.checkpoint_deserialize(blob, self.identity, pair)
         except Exception as error:
             self.restore['checkpoint'] = 'unreadable_ignored: ' + type(error).__name__
             return 0
         self._set_generation(state['memory'], state['graph'], self.pair, state['operations'])
-        if isinstance(self.memory, HotIndex):        # older uncompressed checkpoint: convert once
-            self.memory = CompactIndex.from_hot(self.memory)
-            self._dirty += 1
-            self.restore['converted'] = 'hot_index_to_compact'
-        if isinstance(self.graph.nodes, Map):          # older Graph with string node keys
-            vocab = self.memory._store['vocab']
-            count = len(self.graph.nodes)
-            episode_node, node_episode = Map(), Map()
-            cue_node = np.full(vocab.count, -1, np.int32)
-            node_cue = np.full(count, -1, np.int32)
-            for name, node in self.graph.nodes.items():
-                if name.startswith('cue:'):
-                    cue_id = vocab.id_of(name[4:])
-                    if cue_id is None:
-                        raise ValueError('checkpoint_conversion_unknown_cue')
-                    cue_node[cue_id] = node
-                    node_cue[node] = cue_id
-                else:
-                    episode_node = episode_node.set(name, node)
-                    node_episode = node_episode.set(node, name)
-            self.graph.nodes = NodeDirectory(vocab, episode_node, node_episode, frozen(cue_node, np.int32),
-                                             frozen(node_cue, np.int32), count)
-            self._dirty += 1
-            self.restore['converted_graph'] = 'string_nodes_to_directory'
-        if getattr(self.graph, '_names', None) is not None:
-            self.graph._names = None                  # old layout kept every node name resident
-        if any(not isinstance(pos, np.ndarray) for _, pos in self.graph.regions.values()):
-            self.graph = self.graph.rebuild_regions()  # old layout: duplicated edge arrays, name tuples, position Maps
-            self._dirty += 1
-            self.restore['converted_regions'] = 'rebuilt_shared_layout'
         self._set_generation(self.memory, self.graph, FullCurrentMemoryVrsSnapshot(self.memory, self.graph.snapshot_id), self.operations)
         if self.pair.snapshot_id != pair:
             raise ValueError('checkpoint_generation_integrity_failed')
         self.restore['checkpoint'] = f'loaded seq {seq}'
         return seq
 
-    def rebuild_from_journal(self, progress=None, drop_consolidations=False):
+    @staticmethod
+    def checkpoint_deserialize(blob, identity, pair):
+        """Decode only the current native checkpoint envelope and object graph."""
+        if not isinstance(blob, bytes) or not blob.startswith(CHECKPOINT_MAGIC):
+            raise ValueError('checkpoint_schema_invalid')
+        state = pickle.loads(zlib.decompress(blob[len(CHECKPOINT_MAGIC):]))
+        if (type(state) is not dict
+                or set(state) != {'schema', 'identity', 'pair', 'memory', 'graph', 'operations'}
+                or state['schema'] != CHECKPOINT_SCHEMA
+                or state['pair'] != pair or state['identity'] != identity
+                or not isinstance(state['memory'], CompactIndex)
+                or not isinstance(state['graph'], Graph)
+                or not isinstance(state['operations'], Map)):
+            raise ValueError('checkpoint_schema_invalid')
+        return state
+
+    def rebuild_from_journal(self, progress=None):
         """Rebuild index and graph from the whole journal under the current rules (e.g. after
         changing the node set). Row contents and fingerprints are untouched; the per-row pair ids
         are re-derived and rewritten, because a VRS snapshot id digests the settled values and so
@@ -969,7 +863,6 @@ class Main:
         pairs = {}
         rows = 0
         bodies = {}
-        dropped = []
         pending = []
 
         def flush():
@@ -1003,12 +896,6 @@ class Main:
                 pending.append((seq, req, row, fingerprint, expected))
                 continue
             flush()
-            if kind == 'consolidation' and drop_consolidations:
-                # a consolidation row certifies a derived computation under the rules of its day; when the
-                # rules change (vrs-regions -> SWEGCA evidence, 2026-09-15) the rows are dropped and the
-                # daemon consolidates afresh — observations, the source of truth, are untouched
-                dropped.append(seq)
-                continue
             if kind == 'alias':
                 graph = graph.with_aliases(row['canonical'], row['aliases'])
                 identifier = None
@@ -1032,37 +919,13 @@ class Main:
             if progress and rows % 50 == 0:
                 progress(rows, seq, graph)
         flush()
-        self.db.execute('BEGIN IMMEDIATE')
-        try:
-            for seq, value in pairs.items():
-                self.db.execute('UPDATE observations SET pair=? WHERE seq=?', (value, seq))
-            for seq, (body, fingerprint) in bodies.items():
-                self.db.execute('UPDATE observations SET body=?, fingerprint=? WHERE seq=?', (body, fingerprint, seq))
-            for seq in dropped:
-                self.db.execute('DELETE FROM observations WHERE seq=?', (seq,))
-            for segment, blob in self.db.execute('SELECT segment, blob FROM journal_archive').fetchall():
-                if blob[:2] != ARCHIVE_MAGIC:
-                    raise ValueError('journal_archive_segment_corrupt')
-                lines = []
-                for line in zlib.decompress(blob[2:]).decode('utf-8').splitlines():
-                    seq, req, body, fingerprint, _ = json.loads(line)
-                    if seq in dropped:
-                        continue
-                    if seq in bodies:
-                        body, fingerprint = bodies[seq]
-                    lines.append(json.dumps([seq, req, body, fingerprint, pairs[seq]], ensure_ascii=False, separators=(',', ':')))
-                if not lines:
-                    self.db.execute('DELETE FROM journal_archive WHERE segment=?', (segment,))
-                    continue
-                last_seq = json.loads(lines[-1])[0]
-                self.db.execute('UPDATE journal_archive SET blob=?, last_pair=? WHERE segment=?',
-                                (ARCHIVE_MAGIC + zlib.compress('\n'.join(lines).encode('utf-8'), 6), pairs[last_seq], segment))
-            self.db.execute('DELETE FROM checkpoint')          # the old checkpoint certifies the old chain
-            self.db.execute('COMMIT')
-        except BaseException:
-            if self.db.in_transaction:
-                self.db.execute('ROLLBACK')
-            raise
+        rewritten = []
+        for old_seq, req, body, fingerprint, _ in self._journal_rows(0, None):
+            if old_seq in bodies:
+                body, fingerprint = bodies[old_seq]
+            rewritten.append([len(rewritten) + 1, req, body, fingerprint, pairs[old_seq]])
+        self.journal.rewrite(rewritten)
+        self.journal.remove_checkpoint()          # the old checkpoint certifies the old chain
         self.owner.replace(self.pair.snapshot_id, pair)
         self._set_generation(memory, graph, pair, operations)
         self._dirty += 1
@@ -1095,85 +958,68 @@ class Main:
         """Pickle + compress a prepared generation. Needs no lock: generations are immutable.
         protocol 4 on purpose: protocol 5 unpickles every array as a view on the one big blob,
         so any live array keeps the whole blob resident (measured: 2x the data)."""
-        raw = pickle.dumps(dict(identity=prepared['identity'], pair=prepared['pair'], memory=prepared['memory'],
-                                graph=prepared['graph'], operations=prepared['operations']), protocol=4)
+        raw = pickle.dumps(dict(schema=CHECKPOINT_SCHEMA, identity=prepared['identity'],
+            pair=prepared['pair'], memory=prepared['memory'], graph=prepared['graph'],
+            operations=prepared['operations']), protocol=4)
         return len(raw), CHECKPOINT_MAGIC + zlib.compress(raw, 6)
 
     def checkpoint_commit(self, prepared, serialized):
-        """Write a serialized generation if it is still the current one (under the lock)."""
-        if prepared['pair'] != self.pair.snapshot_id:
-            return None                                # a newer generation exists; its own checkpoint will follow
-        return self._checkpoint_write(prepared['seq'], prepared['pair'], serialized, prepared['started'])
+        """Publish a verified current or prefix checkpoint under the owner lock.
+
+        Serialization runs outside the lock.  A continuously active session can
+        advance while that work runs; the frozen generation remains a valid
+        journal prefix and sharply bounds crash/restart replay.  Refuse it only
+        if its exact sequence no longer has the certified pair, or an equal/newer
+        checkpoint already won the race.
+        """
+        current = prepared['pair'] == self.pair.snapshot_id
+        if not current and self.journal.pair(prepared['seq']) != prepared['pair']:
+            return None
+        existing = self.journal.read_checkpoint()
+        if existing is not None and existing.seq >= prepared['seq']:
+            return None
+        return self._checkpoint_write(prepared['seq'], prepared['pair'], serialized,
+                                      prepared['started'], current=current)
 
     def checkpoint(self):
         """Write the current verified state as a checkpoint for the latest journal row."""
         prepared = self.checkpoint_prepare()
         if prepared is None:
             return None
-        return self._checkpoint_write(prepared['seq'], prepared['pair'], self.checkpoint_serialize(prepared), prepared['started'])
+        return self._checkpoint_write(prepared['seq'], prepared['pair'],
+                                      self.checkpoint_serialize(prepared),
+                                      prepared['started'], current=True)
 
-    def _checkpoint_write(self, seq, pair, serialized, started):
+    def _checkpoint_write(self, seq, pair, serialized, started, *, current):
         raw_len, blob = serialized
-        self.db.execute('BEGIN IMMEDIATE')
-        try:
-            self.db.execute('INSERT OR REPLACE INTO checkpoint(id, seq, pair, blob) VALUES (1,?,?,?)', (seq, pair, blob))
-            self.db.execute('COMMIT')
-        except BaseException:
-            if self.db.in_transaction:
-                self.db.execute('ROLLBACK')
-            raise
-        self.db.execute('PRAGMA wal_checkpoint(TRUNCATE)')
-        self._dirty = 0
-        return dict(seq=seq, bytes=len(blob), raw_bytes=raw_len, elapsed_ns=perf_counter_ns() - started)
+        self.journal.write_checkpoint(seq, pair, blob)
+        head = self._journal_head()
+        tail = 0 if head is None else max(0, int(head[0]) - int(seq))
+        self._dirty = tail
+        return dict(seq=seq, bytes=len(blob), raw_bytes=raw_len,
+                    current=bool(current), replay_tail=tail,
+                    elapsed_ns=perf_counter_ns() - started)
 
     # ── journal access across archive segments and live rows ────────────
     def _journal_rows(self, after, upto):
         """Yield (seq, request_id, body, fingerprint, pair) for after < seq <= upto (None = all)."""
-        for first, last, blob in self.db.execute(
-                'SELECT first_seq, last_seq, blob FROM journal_archive WHERE last_seq>? ORDER BY segment', (after,)):
-            if upto is not None and first > upto:
-                break
-            if blob[:2] != ARCHIVE_MAGIC:
-                raise ValueError('journal_archive_segment_corrupt')
-            for line in zlib.decompress(blob[2:]).decode('utf-8').splitlines():
-                seq, req, body, fingerprint, pair = json.loads(line)
-                if seq <= after:
-                    continue
-                if upto is not None and seq > upto:
-                    return
-                yield seq, req, body, fingerprint, pair
-        query = 'SELECT seq,request_id,body,fingerprint,pair FROM observations WHERE seq>?'
-        params = [after]
-        if upto is not None:
-            query += ' AND seq<=?'
-            params.append(upto)
-        yield from self.db.execute(query + ' ORDER BY seq', params)
+        yield from self.journal.rows(after, upto)
 
     def _journal_pair(self, seq):
-        row = self.db.execute('SELECT pair FROM observations WHERE seq=?', (seq,)).fetchone()
-        if row is not None:
-            return row[0]
-        for found, *_ , pair in self._journal_rows(seq - 1, seq):
-            if found == seq:
-                return pair
-        return None
+        return self.journal.pair(seq)
 
     def _journal_head(self):
-        row = self.db.execute('SELECT seq, pair FROM observations ORDER BY seq DESC LIMIT 1').fetchone()
-        if row is not None:
-            return tuple(row)
-        row = self.db.execute('SELECT last_seq, last_pair FROM journal_archive ORDER BY segment DESC LIMIT 1').fetchone()
-        return tuple(row) if row is not None else None
+        return self.journal.head()
 
     def export_observations(self, after_sequence=0, *, max_records=512,
                             max_bytes=768 * 1024):
         """Return exact original observation envelopes from the VRS journal.
 
         Session assimilation consumes this main-owned export instead of a
-        second transcript/outbox database. Consolidation, usage and alias rows
+        second transcript/outbox store. Consolidation, usage and alias rows
         remain in the session VRS; only external observations enter another
         main. ``next_sequence`` advances over every journal kind, so retries are
-        idempotent and a caller never needs to inspect SQLite directly.
+        idempotent and a caller never needs to inspect storage internals.
         """
         self._check()
         after_sequence = max(0, int(after_sequence))
@@ -1203,48 +1049,21 @@ class Main:
             grants_authority=False)
 
     def compact(self, *, keep_live=KEEP_LIVE_ROWS, vacuum=True):
-        """Lossless hard compression: checkpoint, archive covered journal rows, vacuum.
+        """Checkpoint and rotate the lossless native journal.
 
-        Rows at or below the checkpoint seq (minus ``keep_live`` recent rows) are
-        written as one zlib segment of JSON lines and deleted from ``observations``.
-        ``archive + observations`` remains the complete journal: restart re-validates
-        every archived row's fingerprint and a stale checkpoint replays through the
-        archive, so nothing is lost and the same pair ids are reproduced.
+        Immutable compressed frames remain the complete source journal.  A
+        rotation changes only file placement; no experience or pair id is
+        deleted and no database vacuum is involved.
         """
         self._check()
         started = perf_counter_ns()
         checkpoint = self.checkpoint() if self._dirty or self._journal_head() else None
-        row = self.db.execute('SELECT seq FROM checkpoint WHERE id=1').fetchone()
-        archived = 0
-        if row is not None:
-            cutoff = int(row[0]) - int(keep_live)
-            rows = self.db.execute('SELECT seq,request_id,body,fingerprint,pair FROM observations '
-                                   'WHERE seq<=? ORDER BY seq', (cutoff,)).fetchall()
-            if rows:
-                self.db.execute('BEGIN IMMEDIATE')
-                try:
-                    # segments of SEGMENT_ROWS rows: reading one row decompresses one small block
-                    for at in range(0, len(rows), SEGMENT_ROWS):
-                        part = rows[at:at + SEGMENT_ROWS]
-                        lines = '\n'.join(json.dumps(list(r), ensure_ascii=False, separators=(',', ':')) for r in part)
-                        blob = ARCHIVE_MAGIC + zlib.compress(lines.encode('utf-8'), 6)
-                        self.db.execute('INSERT INTO journal_archive(first_seq,last_seq,last_pair,rows,blob) VALUES (?,?,?,?,?)',
-                                        (part[0][0], part[-1][0], part[-1][4], len(part), blob))
-                    self.db.execute('DELETE FROM observations WHERE seq<=?', (cutoff,))
-                    self.db.execute('COMMIT')
-                except BaseException:
-                    if self.db.in_transaction:
-                        self.db.execute('ROLLBACK')
-                    raise
-                archived = len(rows)
-        if vacuum:
-            self.db.execute('VACUUM')
-        self.db.execute('PRAGMA wal_checkpoint(TRUNCATE)')
-        size = sum(f.stat().st_size for f in self.directory.glob('memory.sqlite3*'))
-        return dict(status='compacted', archived_rows=archived, checkpoint=checkpoint,
-                    segments=self.db.execute('SELECT COUNT(*) FROM journal_archive').fetchone()[0],
-                    live_rows=self.db.execute('SELECT COUNT(*) FROM observations').fetchone()[0],
-                    disk_bytes=size, elapsed_ns=perf_counter_ns() - started)
+        rotated = self.journal.rotate()
+        stats = self.journal.stats()
+        return dict(status='compacted', rotated=rotated, archived_rows=0,
+                    checkpoint=checkpoint, segments=stats['segments'],
+                    live_rows=stats['rows'], disk_bytes=stats['disk_bytes'],
+                    elapsed_ns=perf_counter_ns() - started)
 
     def _check(self):
         if self.closed:
@@ -1291,15 +1110,7 @@ class Main:
         request_id = 'consolidation:' + version.version_id[:40]
         pair = FullCurrentMemoryVrsSnapshot(prepared.memory, graph.snapshot_id)
         operations = self.operations.set(request_id, (fingerprint, None, pair.snapshot_id))
-        self.db.execute('BEGIN IMMEDIATE')
-        try:
-            self.db.execute('INSERT INTO observations(request_id,body,fingerprint,pair) VALUES (?,?,?,?)',
-                            (request_id, canonical(body), fingerprint, pair.snapshot_id))
-            self.db.execute('COMMIT')
-        except BaseException:
-            if self.db.in_transaction:
-                self.db.execute('ROLLBACK')
-            raise
+        self.journal.append([(request_id, canonical(body), fingerprint, pair.snapshot_id)])
         self.owner.replace(self.pair.snapshot_id, pair)
         self._set_generation(prepared.memory, graph, pair, operations)
         self._dirty += 1
@@ -1325,15 +1136,7 @@ class Main:
         memory, graph = self.memory, self.graph.with_usage(known)
         pair = FullCurrentMemoryVrsSnapshot(memory, graph.snapshot_id)
         operations = self.operations.set(request_id, (fingerprint, None, pair.snapshot_id))
-        self.db.execute('BEGIN IMMEDIATE')
-        try:
-            self.db.execute('INSERT INTO observations(request_id,body,fingerprint,pair) VALUES (?,?,?,?)',
-                            (request_id, canonical(body), fingerprint, pair.snapshot_id))
-            self.db.execute('COMMIT')
-        except BaseException:
-            if self.db.in_transaction:
-                self.db.execute('ROLLBACK')
-            raise
+        self.journal.append([(request_id, canonical(body), fingerprint, pair.snapshot_id)])
         self.owner.replace(self.pair.snapshot_id, pair)
         self._set_generation(memory, graph, pair, operations)
         self._dirty += 1
@@ -1364,15 +1167,7 @@ class Main:
         memory, graph = self.memory, self.graph.with_aliases(canonical, aliases)
         pair = FullCurrentMemoryVrsSnapshot(memory, graph.snapshot_id)
         operations = self.operations.set(request_id, (fingerprint, None, pair.snapshot_id))
-        self.db.execute('BEGIN IMMEDIATE')
-        try:
-            self.db.execute('INSERT INTO observations(request_id,body,fingerprint,pair) VALUES (?,?,?,?)',
-                            (request_id, _canonical_json(body), fingerprint, pair.snapshot_id))
-            self.db.execute('COMMIT')
-        except BaseException:
-            if self.db.in_transaction:
-                self.db.execute('ROLLBACK')
-            raise
+        self.journal.append([(request_id, _canonical_json(body), fingerprint, pair.snapshot_id)])
         self.owner.replace(self.pair.snapshot_id, pair)
         self._set_generation(memory, graph, pair, operations)
         self._dirty += 1
@@ -1385,7 +1180,7 @@ class Main:
         return self.consolidate_commit(prepared, self.consolidate_run(prepared, **options))
 
     def consolidate_until_converged(self, limit=64, **options):
-        """Run consolidation chunks until the stable version converges (tests, migration)."""
+        """Run bounded consolidation chunks until the stable version converges."""
         last = None
         for _ in range(limit):
             if not self.consolidation_stale():
@@ -1463,14 +1258,10 @@ class Main:
         for row, fingerprint, identifier in fresh:
             operations = operations.set(row['request_id'], (fingerprint, identifier, pair.snapshot_id))
         if fresh:
-            self.db.execute('BEGIN IMMEDIATE')
             try:
-                self.db.executemany('INSERT INTO observations(request_id,body,fingerprint,pair) VALUES (?,?,?,?)',
-                    [(row['request_id'], canonical(row), fingerprint, pair.snapshot_id) for row, fingerprint, _ in fresh])
-                self.db.execute('COMMIT')
+                self.journal.append((row['request_id'], canonical(row), fingerprint,
+                                     pair.snapshot_id) for row, fingerprint, _ in fresh)
             except BaseException:
-                if self.db.in_transaction:
-                    self.db.execute('ROLLBACK')
                 if memory is not self.memory:
                     self.memory.truncate_to(self.memory.count)   # the successor never became durable
                 raise
@@ -1808,11 +1599,11 @@ class Main:
         if self.closed:
             return
         try:
-            if self.db is not None and self._dirty and self.allow_ingest and hasattr(self, 'owner'):
+            if self.journal is not None and self._dirty and self.allow_ingest and hasattr(self, 'owner'):
                 self.checkpoint()
         except Exception:
             pass                        # 체크포인트는 캐시다 — 닫기를 막지 않는다
         self.closed = True
-        if self.db is not None:
-            self.db.close()
+        if self.journal is not None:
+            self.journal.close()
         self.lock.release()

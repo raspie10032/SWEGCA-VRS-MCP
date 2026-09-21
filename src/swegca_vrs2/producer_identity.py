@@ -30,7 +30,19 @@ import json
 import os
 import time
 
-from .paths import PRODUCERS, KEYS, USER
+import getpass
+
+def _setting(name, default):
+    return os.environ.get("VRS2_" + name, default)
+
+_HOME = os.path.expanduser("~")
+PRODUCERS = _setting("PRODUCERS", os.path.join(_HOME, ".config", "swegca-vrs2", "producers.json"))
+KEYS = _setting("KEYS", os.path.join(_HOME, ".local", "share", "swegca-vrs2", "producer-keys"))
+try:
+    _LOGIN = getpass.getuser()
+except Exception:
+    _LOGIN = "unknown"
+USER = _setting("USER", _LOGIN)
 
 SIGNED_FIELDS = ("producer", "hypothesis", "outcome", "axes", "context", "source", "revision", "text_sha256")
 
@@ -189,56 +201,3 @@ def producer_for_evidence(metadata):
     if metadata is not None and metadata.get("verified") is False:
         return None
     return str(metadata.get("producer") or "main") if metadata else "main"
-
-
-def main(argv):
-    import argparse
-    ap = argparse.ArgumentParser(prog="vrs2-identity.py", description="signed producers for the vrs2 store")
-    sub = ap.add_subparsers(dest="cmd", required=True)
-    kg = sub.add_parser("keygen", help="register a producer with a new key pair (private key stays on this machine)")
-    kg.add_argument("--producer", required=True); kg.add_argument("--user", default=None); kg.add_argument("--note", default="")
-    kg.add_argument("--replace", action="store_true")
-    sub.add_parser("list", help="registered producers")
-    au = sub.add_parser("audit", help="live evidence rows: signed / verified / unverified per producer (via the daemon)")
-    au.add_argument("--state", default=None)
-    a = ap.parse_args(argv)
-    try:
-        import sys
-        sys.stdout.reconfigure(encoding="utf-8")
-    except (AttributeError, ValueError):
-        pass
-    if a.cmd == "keygen":
-        r = keygen(a.producer, user=a.user, note=a.note, replace=a.replace)
-        print(f"registered {r['producer']} key_id {r['key_id']} user {r['user']} | private key {r['private_key_path']} | registry {PRODUCERS}")
-        return 0
-    registry = load_registry()
-    if a.cmd == "list":
-        print(f"registry {registry['path']} digest {registry_digest(registry)} | user here: {USER}")
-        for pid, e in sorted(registry["producers"].items()):
-            print(f"  {pid:<24} key_id {e.get('key_id')} user {e.get('user')} since {e.get('since')} {'(private key here)' if private_key_for(pid) else ''}")
-        return 0
-    if a.cmd == "audit":
-        from .paths import STATE, PYTHON
-        import sys
-        from swegca_vrs2.loopback import ensure_daemon
-        client = ensure_daemon(a.state or STATE, allow_ingest=False, python=PYTHON)
-        counts = {}
-        offset = 0
-        try:
-            while True:
-                page = client.request("origins", offset=offset, limit=1000, kinds=["evidence", "verdict"])
-                for row in page.get("rows") or []:
-                    pid = row.get("producer") or "?"
-                    state = "verified" if row.get("verified") is True else "unverified" if row.get("verified") is False else \
-                        ("registered-legacy" if pid in registry["producers"] else "proxy")
-                    counts.setdefault(pid, {}).setdefault(state, 0)
-                    counts[pid][state] += 1
-                if page.get("next") is None:
-                    break
-                offset = page["next"]
-        finally:
-            client.close()
-        for pid, states in sorted(counts.items()):
-            print(f"  {pid:<24} " + " ".join(f"{k} {v}" for k, v in sorted(states.items())))
-        return 0
-    return 1

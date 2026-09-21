@@ -87,7 +87,7 @@ class ProjectedRecall:
 
     @staticmethod
     def _proposition(exact):
-        return exact['replay'].steps[0].observation.get('proposition_id')
+        return exact['proposition']
 
     def _proposition_ids(self, proposition):
         result = []
@@ -407,7 +407,7 @@ class ProjectedRecall:
         for proposition in active_propositions:
             active = [identifier for identifier in self._proposition_ids(proposition)
                       if self._current(identifier)['superseded_by'] is None]
-            polarities = {self._exact(identifier)['replay'].steps[0].observation.get('evidence_polarity')
+            polarities = {self._exact(identifier)['polarity']
                           for identifier in active}
             if polarities == {'support', 'refute'}:
                 opponents[proposition] = tuple(sorted(active))

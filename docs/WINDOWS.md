@@ -1,12 +1,12 @@
 # Windows / Claude Desktop
 
-v2.1 includes the local backend. A Linux socket, SSH, WSL or remote main is not
+v2.2 includes the local backend. A Linux socket, SSH, WSL or remote main is not
 needed. Install the Windows **desktop application** of Claude; local stdio MCP
 configuration belongs to the desktop client, not a remote website connector URL.
 
 Install Python 3.11+ and use PowerShell 7. Run the commands in the repository
 README, or run `pwsh -File tools/install_windows.ps1 -PythonVersion 3.12` after
-downloading this repository. The script installs v2.1.0 and prints a configuration
+downloading this repository. The script installs v2.2.0 and prints a configuration
 snippet. It does not edit existing Claude settings.
 
 In Claude Desktop open Settings → Developer → Edit Config. Windows configuration
@@ -46,7 +46,7 @@ If startup fails, check `%APPDATA%\Claude\logs`. Confirm the exact executable
 exists, and run it once with `--help`. A manually started stdio server waiting
 silently is normal; it is waiting for a client. A duplicate-owner error means
 another process is using that state directory; close that process normally.
-Never delete the memory directory or its database to fix an installation path.
+Never delete the native memory directory to fix an installation path.
 
 These setup steps follow the [official MCP SDK real-host guide](https://py.sdk.modelcontextprotocol.io/get-started/real-host/)
 and [Claude local MCP guide](https://support.claude.com/en/articles/10949351-getting-started-with-local-mcp-servers-on-claude-desktop).

@@ -1,5 +1,5 @@
 #requires -Version 7.0
-param([string]$PythonVersion = '3.12', [string]$PythonExecutable = '', [string]$Wheel = 'https://github.com/raspie10032/SWEGCA-VRS-MCP/releases/download/v2.1.0/swegca_vrs_mcp-2.1.0-py3-none-any.whl')
+param([string]$PythonVersion = '3.12', [string]$PythonExecutable = '', [string]$Wheel = 'git+https://github.com/raspie10032/SWEGCA-VRS-MCP.git@main')
 $ErrorActionPreference = 'Stop'
 if (-not $IsWindows) { throw 'This installer is for Windows. Use the README Linux commands on Linux.' }
 $vrsBase = Join-Path $env:LOCALAPPDATA 'SWEGCA'

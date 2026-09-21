@@ -23,7 +23,7 @@ from .store import plain
 SCHEMA = 'swegca-vrs2-read-projection-v3'
 
 
-def projected_portals(owner):
+def projected_portals(owner, active_regions=None, portal_pairs=None):
     """Serialize local portals with their original replayable experience keys.
 
     Stable portals store compact graph node numbers.  A disk reader must not
@@ -33,9 +33,23 @@ def projected_portals(owner):
     """
     graph, memory = owner.graph, owner.memory
     stable = graph.stable
+    active = None if active_regions is None else {
+        int(region) for region in active_regions if region is not None and int(region) >= 0}
+    selected_pairs = None if portal_pairs is None else {
+        tuple(sorted((int(pair[0]), int(pair[1])))) for pair in portal_pairs}
     result = []
     for (left, right), portal in ((getattr(stable, 'portals', None) or {}).items()
                                   if stable is not None else ()):
+        # Exact-address Replay activates one experience.  Its receipt needs the
+        # portals incident to that experience's current regions, not a fresh
+        # materialization of every unrelated portal in the whole generation.
+        # Projection creation passes None and still records the complete graph.
+        pair = tuple(sorted((int(left), int(right))))
+        if selected_pairs is not None and pair not in selected_pairs:
+            continue
+        if selected_pairs is None and active is not None \
+                and int(left) not in active and int(right) not in active:
+            continue
         experience_keys = []
         for key in portal.get('keys') or ():
             identifier = graph.nodes.node_episode.get(key.get('node'))

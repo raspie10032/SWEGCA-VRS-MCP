@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 """Batch generations (2026-09-18): K observations enter as one generation; replay regroups them."""
 import pytest
+import shutil
+import time
 
 import swegca_vrs2.store as st
 from swegca_vrs2.store import Main
@@ -19,10 +21,11 @@ def main(tmp_path):
 
 
 def test_batch_of_one_is_the_old_single_record_generation(tmp_path):
+    seed = Main(tmp_path / 'seed', allow_ingest=True); seed.close()
+    shutil.copytree(tmp_path / 'seed', tmp_path / 'a')
+    shutil.copytree(tmp_path / 'seed', tmp_path / 'b')
     a = Main(tmp_path / 'a', allow_ingest=True); b = Main(tmp_path / 'b', allow_ingest=True)
     try:
-        b.db.execute('UPDATE identity SET value=? WHERE id=1', (a.identity,)); b.identity = a.identity
-        b.close(); b = Main(tmp_path / 'b', allow_ingest=True)
         for r in rows('x', 3):
             one = a.ingest(r)
             many = b.ingest_many([r])
@@ -38,7 +41,7 @@ def test_batch_holds_the_same_records_edges_and_journals_one_pair(main):
     out = main.ingest_many(batch)
     assert out['count'] == out['journaled'] == out['added'] == 12
     assert {r['pair_snapshot_id'] for r in out['results']} == {main.pair.snapshot_id}
-    pairs = [p for (p,) in main.db.execute('SELECT pair FROM observations ORDER BY seq')]
+    pairs = [p for *_, p in main._journal_rows(0, None)]
     assert len(set(pairs[-12:])) == 1 and main.memory.episode_count == 12
     assert main.graph.last_receipt['source_episode_count_added'] == 12
     assert all(main.graph.region_of(r['episode_id']) is not None for r in out['results'])
@@ -49,11 +52,41 @@ def test_resident_defers_checkpoint_until_idle_or_close(tmp_path):
     try:
         owner.ingest_many(rows('resident', 70))
         assert owner.dirty == 70
-        assert owner.db.execute('SELECT COUNT(*) FROM checkpoint').fetchone()[0] == 0
+        assert owner.journal.read_checkpoint() is None
         receipt = owner.checkpoint_if_dirty()
         assert receipt['seq'] == 70 and owner.dirty == 0
     finally:
         owner.close()
+
+
+def test_daemon_checkpoints_continuous_ingress_before_quiet_timeout(tmp_path):
+    from swegca_vrs2.linked_shards import shutdown_and_release
+    from swegca_vrs2.loopback import ensure_daemon
+    from swegca_vrs2.native_journal import NativeJournal
+
+    state = tmp_path / 'continuous-daemon'
+    client = ensure_daemon(state, allow_ingest=True)
+    try:
+        result = client.request('ingest_many', rows=rows('continuous', 64))
+        assert result['journaled'] == 64
+        deadline = time.time() + 4.5
+        checkpoint = None
+        while time.time() < deadline:
+            # Keep the daemon active so a checkpoint can only be explained by
+            # the pending-prefix threshold, not the five-second quiet path.
+            client.request('ping')
+            journal = NativeJournal(state, create=False, writable=False)
+            try:
+                checkpoint = journal.read_checkpoint()
+            finally:
+                journal.close()
+            if checkpoint is not None and checkpoint.seq >= 64:
+                break
+            time.sleep(0.1)
+        assert checkpoint is not None and checkpoint.seq == 64
+    finally:
+        client.close()
+        shutdown_and_release(state)
 
 
 def test_batch_is_idempotent_per_row_and_rejects_reused_ids_whole(main):
@@ -85,7 +118,7 @@ def test_crash_replay_regroups_batches_and_reproduces_the_consolidation(tmp_path
     m.consolidate(cycles=16)
     m.ingest_many(rows('after', 3))
     pair, count, version = m.pair.snapshot_id, m.memory.episode_count, m.graph.stable.version_id
-    m.db.close(); m.lock.release(); m.closed = True                # crash: no closing checkpoint
+    m.lock.release(); m.closed = True                              # crash: no closing checkpoint
     r = Main(tmp_path / 'c', allow_ingest=True)
     try:
         assert r.restore['replayed_after_checkpoint'] == 34            # 30 + consolidation row + 3

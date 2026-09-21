@@ -8,21 +8,20 @@ closed shard is now reopened from its complete checkpoint as an immutable recall
 generation.  Loading remains outside the judgment path; an unavailable shard is
 reported as a named miss rather than answered by a weaker algorithm.
 """
-import pickle
 import os
 import json
-import sqlite3
 import threading
 import time
-import zlib
 from collections import OrderedDict
 from pathlib import Path
 
-from .store import CHECKPOINT_MAGIC, digest, plain
+from .store import Main, digest, plain
 from .exact_replay import ExactReplayStore
 from .cue_shards import CueShardDirectory
 from .read_projection import ReadProjectionStore, projected_portals
 from .linked_shards import load_linked_shards, update_linked_shard
+from .native_journal import NativeJournal, is_native_store
+from .vrs_refine import SHARED_FLOOR
 
 AUTO_SHARD_RECORDS = 8_192
 MAX_STORAGE_BYTES = 500 * 1024 ** 3
@@ -33,13 +32,8 @@ AUTO_SHARD_PREFIX = 'shard-'
 
 # ── immutable complete recall generation ─────────────────────────────────────
 
-def _connect(directory):
-    return sqlite3.connect(str(Path(directory) / 'memory.sqlite3'), isolation_level=None,
-                           check_same_thread=False, timeout=5)
-
-
-def _table_exists(db, name):
-    return db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)).fetchone() is not None
+def _open_journal(directory, *, writable=False):
+    return NativeJournal(directory, create=False, writable=writable)
 
 
 class RecallGeneration:
@@ -52,12 +46,11 @@ class RecallGeneration:
 
     def __init__(self, state):
         from .engine.mosaic_memory_activation import FullCurrentMemoryVrsSnapshot
-        from .store import Main
         memory, graph = state['memory'], state['graph']
         pair = FullCurrentMemoryVrsSnapshot(memory, graph.snapshot_id)
         if pair.snapshot_id != state['pair']:
             raise ValueError('checkpoint_generation_integrity_failed')
-        self._generation = (memory, graph, pair, state.get('operations'))
+        self._generation = (memory, graph, pair, state['operations'])
         self.recall = Main.recall.__get__(self, RecallGeneration)
         self.consolidation_stale = Main.consolidation_stale.__get__(self, RecallGeneration)
 
@@ -77,37 +70,21 @@ class RecallGeneration:
         return None
 
 
-def _journal_head(db):
-    live = db.execute('SELECT seq, pair FROM observations ORDER BY seq DESC LIMIT 1').fetchone() \
-        if _table_exists(db, 'observations') else None
-    archived = db.execute('SELECT last_seq, last_pair FROM journal_archive ORDER BY segment DESC LIMIT 1').fetchone() \
-        if _table_exists(db, 'journal_archive') else None
-    rows = [row for row in (live, archived) if row is not None]
-    return max(rows, key=lambda row: int(row[0])) if rows else None
-
-
-def load_recall_generation(db):
+def load_recall_generation(journal):
     """Load a complete checkpoint only when it covers the journal head.
 
     Answering from an older checkpoint would silently omit experiences or VRS
     events.  The shard owner checkpoints before eviction, so a mismatch is an
     invariant failure and remains a named preparer miss until corrected.
     """
-    if not _table_exists(db, 'checkpoint'):
+    head = journal.read_checkpoint()
+    journal_head = journal.refresh_head()
+    if head is None or journal_head is None:
         raise ValueError('complete_checkpoint_missing')
-    head = db.execute('SELECT seq, pair, blob FROM checkpoint WHERE id=1').fetchone()
-    journal = _journal_head(db)
-    if head is None or journal is None:
-        raise ValueError('complete_checkpoint_missing')
-    seq, pair, blob = head
-    if (int(seq), pair) != (int(journal[0]), journal[1]):
+    seq, pair, blob = head.seq, head.pair, head.blob
+    if (int(seq), pair) != (int(journal_head[0]), journal_head[1]):
         raise ValueError('complete_checkpoint_not_at_journal_head')
-    if blob[:2] == CHECKPOINT_MAGIC:
-        blob = zlib.decompress(blob[2:])
-    state = pickle.loads(blob)
-    identity = db.execute('SELECT value FROM identity WHERE id=1').fetchone()
-    if state.get('identity') != (identity[0] if identity else None) or state.get('pair') != pair:
-        raise ValueError('checkpoint_identity_mismatch')
+    state = Main.checkpoint_deserialize(blob, journal.identity, pair)
     return RecallGeneration(state), int(seq)
 
 
@@ -118,36 +95,35 @@ class WarmView:
         self.id, self.directory = bundle_id, Path(directory)
         self.generation, self.seq, self.checkpoint_seq = None, 0, None
         self.loaded_at, self.load_ns, self.refreshed_at = None, 0, None
-        self.db = None
+        self.journal = None
         self.lock = threading.Lock()
 
-    def _db(self):
-        if self.db is None:
-            self.db = _connect(self.directory)
-        return self.db
+    def _journal(self):
+        if self.journal is None:
+            self.journal = _open_journal(self.directory)
+        return self.journal
 
     def moved(self):
         """True when the bundle's journal or checkpoint is past what this view covers (one cheap query)."""
         with self.lock:
             if self.generation is None:
                 return True
-            db = self._db()
-            head = db.execute('SELECT MAX(seq) FROM observations').fetchone() if _table_exists(db, 'observations') else None
-            return bool(head and head[0] and int(head[0]) > self.seq)
+            head = self._journal().refresh_head()
+            return bool(head and int(head[0]) > self.seq)
 
     def refresh(self):
         """Load or replace one complete checkpoint outside the judgment path."""
         with self.lock:
-            db = self._db()
-            head = db.execute('SELECT seq FROM checkpoint WHERE id=1').fetchone() if _table_exists(db, 'checkpoint') else None
-            checkpoint_seq = int(head[0]) if head else 0
-            journal = _journal_head(db)
-            journal_seq = int(journal[0]) if journal else 0
+            journal = self._journal()
+            checkpoint = journal.read_checkpoint()
+            checkpoint_seq = int(checkpoint.seq) if checkpoint else 0
+            journal_head = journal.refresh_head()
+            journal_seq = int(journal_head[0]) if journal_head else 0
             started = time.perf_counter_ns()
             if journal_seq > checkpoint_seq:
                 raise ValueError('complete_checkpoint_not_at_journal_head')
             if self.generation is None or checkpoint_seq > self.seq:
-                self.generation, self.seq = load_recall_generation(db)
+                self.generation, self.seq = load_recall_generation(journal)
                 self.checkpoint_seq = checkpoint_seq
                 self.loaded_at, self.load_ns = time.time(), time.perf_counter_ns() - started
             self.refreshed_at = time.time()
@@ -159,9 +135,9 @@ class WarmView:
 
     def close(self):
         with self.lock:
-            if self.db is not None:
-                self.db.close()
-                self.db = None
+            if self.journal is not None:
+                self.journal.close()
+                self.journal = None
             self.generation = None
 
     def status(self):
@@ -188,13 +164,17 @@ class Resident:
         self.auto_root = self.primary.directory / 'shards'
         self.auto_root.mkdir(mode=0o700, parents=True, exist_ok=True)
         discovered = sorted(path for path in self.auto_root.glob(AUTO_SHARD_PREFIX + '*')
-                            if (path / 'memory.sqlite3').is_file())
+                            if is_native_store(path))
         for path in discovered:
             self.bundles.setdefault(path.name, path)
         self.auto_ids = sorted(identifier for identifier in self.bundles
                                if identifier.startswith(AUTO_SHARD_PREFIX)
                                and self.bundles[identifier].parent == self.auto_root)
         self.exact = ExactReplayStore(self.primary.directory / 'exact-replay')
+        self.exact_address_segments_opened = self.exact.warm_address_segments()
+        prefetch_budget = min(512 * 1024 ** 2, max(0, MAX_RSS_BYTES -
+            (self._rss_bytes() or 0) - 256 * 1024 ** 2))
+        self.exact_replay_prefetched_bytes = self.exact.warm_replay_pages(prefetch_budget)
         self.cue_shards = CueShardDirectory(self.exact.directory / 'cue-shards')
         self.exact_progress_path = self.exact.directory / 'backfill.json'
         self.exact_progress_lock = threading.Lock()
@@ -208,13 +188,12 @@ class Resident:
         for identifier, directory in self.bundles.items():
             try:
                 linked = self.linked.get(identifier)
-                db = _connect(directory)
-                row = db.execute('SELECT pair FROM checkpoint WHERE id=1').fetchone() \
-                    if _table_exists(db, 'checkpoint') else None
-                journal = _journal_head(db)
-                db.close()
+                store = _open_journal(directory)
+                checkpoint = store.read_checkpoint()
+                journal = store.head()
+                store.close()
+                checkpoint_pair = checkpoint.pair if checkpoint is not None else None
                 if linked is not None:
-                    checkpoint_pair = row[0] if row is not None else None
                     journal_pair = journal[1] if journal is not None else None
                     if journal_pair is None or linked['pair_snapshot_id'] not in {
                             checkpoint_pair, journal_pair}:
@@ -231,17 +210,17 @@ class Resident:
                             recovered.close()
                         update_linked_shard(self.primary.directory, identifier, **repaired)
                         linked.update(repaired)
-                        row = (repaired['pair_snapshot_id'],)
+                        checkpoint_pair = repaired['pair_snapshot_id']
                     self.pair_ids[identifier] = linked['pair_snapshot_id']
                     self.record_counts[identifier] = linked['records']
                     self.cue_totals[identifier] = linked['cue_total']
-                if row is not None:
-                    self.pair_ids[identifier] = row[0]
+                if checkpoint_pair is not None:
+                    self.pair_ids[identifier] = checkpoint_pair
                 progress = self.exact_backfill.get(identifier, {})
                 if progress.get('complete'):
                     self.record_counts[identifier] = int(progress.get('count', 0))
                     self.cue_totals[identifier] = int(progress.get('cue_total', 0))
-            except sqlite3.Error:
+            except (OSError, ValueError):
                 continue
         self._pair_lock = threading.Lock()
         self._pair_xor = bytearray(32)
@@ -258,6 +237,8 @@ class Resident:
         self.projection_errors = {}
         self.projection_views = OrderedDict()
         self.projection_lock = threading.Lock()
+        self.portal_cache = OrderedDict()
+        self.portal_lock = threading.Lock()
         self.lock = threading.RLock()
 
     def reload_linked_shards(self):
@@ -329,11 +310,13 @@ class Resident:
             self._save_exact_progress()
 
     def _storage_bytes(self, *, force=False):
-        """Logical bytes with a short cache so ingest does not walk the tree.
+        """Allocated device bytes with a short cache so ingest does not walk the tree.
 
         At the declared 5 Gbps device ceiling, the one-second cache window can
         hide at most 625 MB of growth.  Admission forces a fresh scan inside
-        that remaining margin, so the 500 GB ceiling stays fail-closed.
+        that remaining margin, so the 500 GB SSD ceiling stays fail-closed.
+        Fixed-slot mmap files are sparse; their address-space length is reported
+        separately and must not be mistaken for occupied SSD capacity.
         """
         now = time.monotonic()
         with self._storage_lock:
@@ -344,7 +327,9 @@ class Resident:
             for root, _, files in os.walk(self.primary.directory):
                 for name in files:
                     try:
-                        total += os.stat(Path(root) / name).st_size
+                        stat = os.stat(Path(root) / name)
+                        blocks = getattr(stat, 'st_blocks', None)
+                        total += stat.st_size if blocks is None else int(blocks) * 512
                     except OSError:
                         continue
             self._storage_cache = (now, total)
@@ -366,7 +351,9 @@ class Resident:
                     storage_bytes=storage, storage_limit_bytes=MAX_STORAGE_BYTES,
                     storage_within_limit=storage <= MAX_STORAGE_BYTES,
                     exact_replay_logical_bytes=self.exact.logical_bytes(),
-                    exact_replay_allocated_bytes=self.exact.allocated_bytes())
+                    exact_replay_allocated_bytes=self.exact.allocated_bytes(),
+                    exact_address_segments_opened=self.exact_address_segments_opened,
+                    exact_replay_prefetched_bytes=self.exact_replay_prefetched_bytes)
 
     def _admit_resources(self):
         rss = self._rss_bytes()
@@ -446,7 +433,7 @@ class Resident:
     def read_directory_complete(self):
         return all(bool(self.exact_backfill.get(shard, {}).get('complete'))
                    for shard in ('main', *self.ids())
-                   if shard == 'main' or (self.bundles[shard] / 'memory.sqlite3').is_file())
+                   if shard == 'main' or is_native_store(self.bundles[shard]))
 
     def shards_for_cues(self, cues):
         if not self.read_directory_complete():
@@ -473,7 +460,7 @@ class Resident:
             if view is not None and view.memory is not None and identifier in view.memory.records:
                 return self.main_for(shard)
             if (owner is None and (view is None or view.memory is None)
-                    and (self.bundles[shard] / 'memory.sqlite3').is_file()):
+                    and is_native_store(self.bundles[shard])):
                 cold = WarmView(shard, self.bundles[shard])
                 try:
                     if identifier in cold.refresh().memory.records:
@@ -497,7 +484,7 @@ class Resident:
                 self.warm[shard].memory if shard in self.warm else None)
             if memory is not None and memory.episode_ids_for_cue(cue):
                 return owner if owner is not None else self.main_for(shard)
-            if memory is None and (self.bundles[shard] / 'memory.sqlite3').is_file():
+            if memory is None and is_native_store(self.bundles[shard]):
                 cold = WarmView(shard, self.bundles[shard])
                 try:
                     if cold.refresh().memory.episode_ids_for_cue(cue):
@@ -630,7 +617,7 @@ class Resident:
         if remaining:
             for shard in self.ids():
                 if (shard in ready or self.exact_backfill.get(shard, {}).get('complete')
-                        or not (self.bundles[shard] / 'memory.sqlite3').is_file()):
+                        or not is_native_store(self.bundles[shard])):
                     continue
                 temporary = WarmView(shard, self.bundles[shard])
                 owners.append((shard, temporary.refresh()))
@@ -676,7 +663,7 @@ class Resident:
                 temporary.close()
         complete = all(bool(self.exact_backfill.get(shard, {}).get('complete'))
                        for shard in ('main', *self.ids())
-                       if shard == 'main' or (self.bundles[shard] / 'memory.sqlite3').is_file())
+                       if shard == 'main' or is_native_store(self.bundles[shard]))
         return dict(scanned=budget - remaining, added=added, complete=complete)
 
     def backfill_projections(self, budget=1):
@@ -851,7 +838,6 @@ class Resident:
             owner, _ = self.peek_ready(shard)
         if owner is not None:
             stable = owner.graph.stable
-            portals = projected_portals(owner)
             node = owner.graph.nodes.episode_node.get(identifier)
             pending = stable is None or node is None or node >= stable.node_count
             weights = getattr(stable, 'record_weight', None) if stable is not None else None
@@ -866,15 +852,30 @@ class Resident:
             for cue_id in owner.memory._store['cues'][row]:
                 node = owner.graph.nodes.cue(int(cue_id))
                 cue_strengths.append(edge_strength.get(node, 0.0) if node >= 0 else 0.0)
+            memberships = owner.graph.memberships_of(identifier)
+            region = owner.graph.region_of(identifier)
+            shared_regions = tuple(sorted(int(item[0]) for item in memberships
+                                          if float(item[1]) >= float(SHARED_FLOOR)))
+            portal_pairs = tuple((shared_regions[left], shared_regions[right])
+                                 for left in range(len(shared_regions))
+                                 for right in range(left + 1, len(shared_regions)))
+            portal_key = (shard, owner.graph.snapshot_id, portal_pairs)
+            with self.portal_lock:
+                portals = self.portal_cache.pop(portal_key, None)
+                if portals is None:
+                    portals = tuple(projected_portals(owner, portal_pairs=portal_pairs))
+                self.portal_cache[portal_key] = portals
+                while len(self.portal_cache) > 512:
+                    self.portal_cache.popitem(last=False)
             return dict(shard=shard, pair_snapshot_id=owner.pair.snapshot_id,
                 graph_snapshot_id=owner.graph.snapshot_id,
                 stable_version_id=(stable.version_id if stable is not None else None),
-                strength=owner.graph.strength(identifier), region=owner.graph.region_of(identifier),
+                strength=owner.graph.strength(identifier), region=region,
                 weight=None if pending or weights is None else float(weights[node]),
                 state=None if pending else float(stable.state[node]),
                 stability=None if pending else float(stable.stability[node]), pending=pending,
                 usage=owner.graph.usage.get(source),
-                memberships=owner.graph.memberships_of(identifier),
+                memberships=memberships,
                 cue_strengths=tuple(cue_strengths),
                 superseded_by=owner.memory.superseded.get(identifier), portals=tuple(portals))
         with self.projection_lock:
@@ -1027,7 +1028,7 @@ class Resident:
             view = self.warm.pop(bundle_id, None)
             if view is not None:
                 view.close()
-            existed = (self.bundles[bundle_id] / 'memory.sqlite3').is_file()
+            existed = is_native_store(self.bundles[bundle_id])
             main = Main(self.bundles[bundle_id], allow_ingest=True, bundle_limit=self.bundle_limit,
                         defer_checkpoints=True)
             if not existed:
@@ -1126,4 +1127,6 @@ class Resident:
             for view in self.projection_views.values():
                 view.close()
             self.projection_views.clear()
+        with self.portal_lock:
+            self.portal_cache.clear()
         self.exact.close()

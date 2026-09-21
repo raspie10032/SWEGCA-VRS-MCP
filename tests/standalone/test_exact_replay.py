@@ -1,8 +1,13 @@
 import hashlib
+import os
+import struct
+import zlib
 
 import pytest
 
-from swegca_vrs2.exact_replay import ExactReplayStore
+from swegca_vrs2.exact_replay import (
+    CAPSULE, PAYLOAD, SLOT, ExactReplayStore, _key,
+)
 from swegca_vrs2.store import Main
 
 
@@ -42,13 +47,17 @@ def test_disk_exact_address_returns_original_replay_without_resident_index(tmp_p
         assert found["shard_row"] == 0
         assert found["cue_count"] == len(episode.cues)
         assert found["kind"] == "conversation"
+        assert found["proposition"] == "exact-claim"
+        assert found["polarity"] == "support"
         assert found["cues"].decoded is None
         assert tuple(found["cues"]) == episode.cues
         assert found["cues"].decoded == episode.cues
         replay = found["replay"]
         assert replay.episode_id == identifier and replay.source_addresses == ("source:exact",)
         assert replay.steps[0].outcome == "uncertain"
+        assert replay.steps[0].observation.decoded is None
         assert replay.steps[0].observation["metadata"]["uncertainty"] == "unresolved"
+        assert replay.steps[0].observation.decoded is not None
         assert replay.steps[0].observation["metadata"]["contradiction"] == "counter-source"
         assert exact.get("memory:" + "f" * 64) is None
         assert exact.allocated_bytes() < exact.logical_bytes()
@@ -95,6 +104,72 @@ def test_full_exact_segments_expand_without_changing_replay_addresses(tmp_path):
         assert (tmp_path / "exact" / f"source-p4-{target_prefix:02x}.vrs").exists()
         assert [exact.source_shard(source) for source in sources] == ["main"] * 6
     finally:
+        main.close()
+
+
+def test_existing_address_segments_are_opened_without_prefaulting_whole_files(tmp_path):
+    main = Main(tmp_path / "main", allow_ingest=True)
+    exact = None
+    reopened = None
+    try:
+        stored = main.ingest(dict(request_id="warm", text="기동 주소 세그먼트 준비",
+                                  source="source:warm", revision="1"))
+        episode = main.memory.episode(stored["episode_id"])
+        exact = ExactReplayStore(tmp_path / "exact", slot_power=8)
+        exact.put(stored["episode_id"], "main", 0, episode)
+        exact.close(); exact = None
+        reopened = ExactReplayStore(tmp_path / "exact", slot_power=8)
+        assert reopened.warm_address_segments() == 1
+        assert reopened.warm_address_segments() == 0
+        warmed = reopened.warm_replay_pages(1024 * 1024)
+        assert 0 < warmed <= 1024 * 1024
+        assert reopened.get(stored["episode_id"])["replay"].episode_id == stored["episode_id"]
+    finally:
+        if exact is not None:
+            exact.close()
+        if reopened is not None:
+            reopened.close()
+        main.close()
+
+
+def test_exact_capsule_observation_sha_rejects_rewritten_payload(tmp_path):
+    main = Main(tmp_path / 'main', allow_ingest=True)
+    exact = None
+    try:
+        stored = main.ingest(dict(request_id='tamper', text='원문 무결성',
+            source='source:tamper', revision='1'))
+        identifier = stored['episode_id']
+        exact = ExactReplayStore(tmp_path / 'exact', slot_power=8)
+        exact.put(identifier, 'main', 0, main.memory.episode(identifier))
+        key = _key(identifier)
+        fd, mapping = exact._open_segment(key, create=True, slot_power=8)
+        try:
+            slot, exists = exact._probe(mapping, key, 8)
+            assert exists
+            _, offset, length, _ = SLOT.unpack(mapping[slot:slot + SLOT.size])
+            data = os.open(exact.data_path, os.O_RDWR)
+            try:
+                payload = bytearray(os.pread(data, length, offset + CAPSULE.size))
+                header_length, observation_length, _ = PAYLOAD.unpack(payload[:PAYLOAD.size])
+                assert observation_length > 0
+                observation = PAYLOAD.size + header_length
+                payload[observation] ^= 1
+                checksum = zlib.crc32(payload)
+                os.pwrite(data, CAPSULE.pack(length, checksum), offset)
+                os.pwrite(data, payload, offset + CAPSULE.size)
+                os.fsync(data)
+                mapping[slot + 32:slot + SLOT.size] = struct.pack(
+                    '<QII', offset, length, checksum)
+                mapping.flush(); os.fsync(fd)
+            finally:
+                os.close(data)
+        finally:
+            mapping.close(); os.close(fd)
+        with pytest.raises(ValueError, match='observation_corrupt'):
+            exact.get(identifier)
+    finally:
+        if exact is not None:
+            exact.close()
         main.close()
 
 

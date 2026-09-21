@@ -117,7 +117,7 @@ class AgentFacade:
             hot_episode_count=reply.get('hot_episode_count'), lookup_requires_io=reply.get('lookup_requires_io'),
             authority={key:False for key in ('world', 'action', 'persistent_write', 'model_update', 'distribution', 'p3')},
             observation_only=True, backend='operator_provided_native_vrs2',
-            native_engine_bundled=False, local_store_migrated=False)
+            native_engine_bundled=False)
 
 
 class MCPServer:

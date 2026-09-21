@@ -10,15 +10,15 @@ creates storage shards automatically and keeps every shard as a complete VRS mai
 | --- | ---: |
 | resident process RSS | 4 GiB |
 | SSD transfer assumption | at most 5 Gbit/s (625 MB/s) |
-| logical state storage | 500 GB |
+| physically allocated state storage | 500 GB |
 | consolidation workers | 16 |
 | default records before opening the next automatic shard | 8,192 |
 
 The record count is a storage boundary, not an experience-quality boundary. An original episode is
 never divided. Its revisions stay with the shard that owns its source lineage. The 500 GB admission
-check counts logical file sizes, including sparse index capacity, so sparse allocation cannot hide a
-limit violation. The one-second storage scan cache reserves the full 625 MB that a 5 Gbit/s device
-could add during that interval and forces a fresh scan near the boundary.
+check counts allocated filesystem blocks because this is an SSD-capacity limit. Logical sparse-file
+sizes are reported separately. The one-second storage scan cache reserves the full 625 MB that a
+5 Gbit/s device could add during that interval and forces a fresh scan near the boundary.
 
 ## Automatic shards and connections
 
@@ -53,71 +53,90 @@ prefixes even at the 70 percent seal threshold. This is address capacity; it is 
 the user's "one billion VRS parameters."
 
 Replay capsules preserve the original observation, provenance, revision, outcome, evidence
-references and source addresses. Their derived cue block is stored in the same checksummed capsule
-but decoded when Re-evidence consumes it. This keeps the named Replay boundary from materializing
-thousands of derived strings that the next stage owns.
+references and source addresses. The complete original observation and derived cue block are stored
+in the same checksummed capsule. Replay verifies and binds the exact immutable payload; observation
+JSON and cue strings are decoded when their fields are consumed. This avoids a second full-text copy
+inside the named Replay boundary.
 
 ## Current-experience-copy measurement
 
-Measured on a consistent read-only copy of the active session experience on 2026-09-21:
+Measured with wall-clock time on a consistent checkpoint-covered copy of the
+active experience on 2026-09-21. The copy contains 15,637 journal rows and
+15,630 unique original experiences; the active tail was excluded at its existing
+verified checkpoint rather than sampled while it changed.
 
 | quantity | result |
 | --- | ---: |
-| unique experiences | 12,537 |
-| cue occurrences | 1,324,260 |
-| load existing VRS generation | 1.075 s |
-| build exact, source and cue read directories | 7.173 s |
-| load plus complete backfill | 8.247 s |
-| process peak RSS | 1.007 GB |
-| read-directory logical bytes | 2.004 GB |
-| read-directory allocated bytes | 494 MB |
+| unique experiences | 15,630 |
+| cue occurrences | 1,796,514 |
+| load existing VRS generation | 2.781 s |
+| first exact/source/cue directory build | 22.877 s |
+| process peak RSS | 1,055,240,192 bytes |
+| complete state logical bytes | 2,178,256,214 bytes |
+| complete state allocated bytes | 691,716,096 bytes |
 
-Replay timing used CPU time so scheduler descheduling was not hidden inside the component result:
+The first 50,000-random run used the fresh derived directory:
 
 | sample | median | p95 | p99 | maximum | at least 1 ms |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| every experience once, first pass (12,537) | 0.024 ms | 0.091 ms | 0.285 ms | 0.530 ms | 0 |
-| random Replay (50,000) | 0.022 ms | 0.081 ms | 0.277 ms | 0.502 ms | 0 |
-| largest capsule Replay (5,000; 60,000 characters, 8,362 cues) | 0.253 ms | 0.311 ms | 0.369 ms | 0.496 ms | 0 |
+| exact capsule Replay | 0.0115 ms | 0.0297 ms | 0.0575 ms | 0.6230 ms | 0 |
+| Déjà vu through Replay | 0.0205 ms | 0.0427 ms | 0.0728 ms | 0.3684 ms | 0 |
+| through Re-evidence | 0.0750 ms | 0.3975 ms | 0.7877 ms | 2.6953 ms | outside gate |
 
-Consuming all 8,362 cues for the largest capsule belongs to Re-evidence preparation and measured
-0.885 ms median, 1.061 ms p99 and 1.523 ms maximum together with Replay. It is reported separately;
-it is not deleted from the system or folded into the Replay number.
+Focused follow-up repeated the largest 107,773-byte observation and the largest
+8,378-cue experience 5,000 times each. Their through-Replay maxima were
+0.8391 ms and 0.7135 ms; same-boundary thread CPU maxima were 0.6092 ms and
+0.6183 ms. Re-evidence maxima were 3.1935 ms and 3.7271 ms and remain reported
+outside the requested Replay boundary.
 
-These results establish the `<1 ms through Replay` boundary for this current real experience copy
-and these samples. They do not prove a hard real-time bound for every device, cold page-cache state,
-future corpus or one-billion-parameter VRS. The disk directory keeps lookup work independent of the
-total record count by using a small number of sealed levels, but larger-scale and 5 Gbit/s constrained
-measurements remain required.
+The same 15,630 experiences were then attached as one complete linked VRS shard
+to an empty primary. A completely fresh main-owned read directory took 80.813 s
+to build exact Replay and 4.246 s to build the complete VRS read projection.
+It used 2,146,222,080 peak RSS bytes and 716,795,904 allocated disk bytes. This
+run kept the original linked store in place and did not export or re-ingest it.
 
-## SessionEnd linked-shard measurement
+| linked-shard sample | median | p95 | p99 | maximum | at least 1 ms |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| exact capsule Replay, 50,000 | 0.0109 ms | 0.0315 ms | 0.0617 ms | 0.8327 ms | 0 |
+| Déjà vu through Replay, 1,000 | 0.0167 ms | 0.0394 ms | 0.0672 ms | 0.3657 ms | 0 |
+| through Re-evidence, 1,000 | 0.0470 ms | 0.1208 ms | 0.2267 ms | 166.9352 ms | outside gate |
 
-An active session is itself a complete sharded VRS. SessionEnd never exports its
-observations into another SQLite database. Main atomically records each complete
-session component in `linked-shards.json` and owns those original databases in
-place. A 15,630-experience copy measured as follows:
+The linked largest-observation and largest-cue 5,000-sample runs had
+through-Replay maxima of 0.5938 ms and 0.6358 ms, with zero 1 ms violations.
+Their through-Re-evidence maxima were 1.5398 ms and 2.5573 ms.
 
-| operation | result |
-| --- | ---: |
-| validate complete session VRS and attach registry | 1.059 s |
-| open empty primary plus linked registry | 0.009 s |
-| build exact, source and cue directories | 8.832 s |
-| build complete VRS read projection | 2.170 s |
-| end-to-end benchmark wall time including 50,000 Replay samples | 17.53 s |
-| process peak RSS | 1.848 GB |
+One earlier 5,000-sample focused run observed one 1.3532 ms wall-clock outlier
+while its other 4,999 samples passed. The subsequent 20,000-sample run had zero
+violations, but the observed outlier means an unconditional hard real-time claim
+is still open on this general-purpose Linux host.
 
-The attached main primary contained zero copied experiences and reported 15,630
-logical experiences from the linked VRS. Fifty thousand random exact-address
-lookups through Replay measured 0.032 ms median, 0.358 ms p99 and 0.609 ms
-maximum, with zero samples at or above 1 ms. The previous observation re-ingest
-path took 31.189 s for merge alone on the same 15,630-experience source; that
-path has been removed.
+An initial cgroup-limited run exposed a restart-cold defect: one of 256 first
+prefixes took 12.0775 ms and one later low-level exact call took 1.5181 ms. The
+four-stage through-Replay sample itself had no violation, but the run was kept as
+a failure. The runtime now reads only the allocated exact-address extents and
+Replay capsule bytes during bounded startup preparation. It does not read sparse
+holes and retains no whole-file Python copy.
 
-Session components are registered in one atomic update, including every
-automatic child shard. Linked source lineages remain main-owned: later revisions
-stay with their original shard, update the registry generation atomically, and
-recover from a committed journal after an unclean process exit by replaying that
-VRS journal. This recovery does not export or re-ingest observations.
+After dropping the benchmark copy's file-cache pages, a second run applied
+`rbps=625000000`, `wbps=625000000`, `memory.max=4294967296`, and no swap to the
+exact benchmark process. It measured 50,000 random exact calls, 50,000 complete
+Déjà vu-through-Replay calls, and 5,000 calls for each largest-record case:
+
+| cgroup-limited post-repair sample | median | p99 | maximum | at least 1 ms |
+| --- | ---: | ---: | ---: | ---: |
+| first address per 256 prefixes | 0.0124 ms | 0.0586 ms | 0.1258 ms | 0 |
+| exact capsule Replay, 50,000 | 0.0089 ms | 0.0472 ms | 0.0819 ms | 0 |
+| Déjà vu through Replay, 50,000 | 0.0145 ms | 0.0533 ms | 0.1463 ms | 0 |
+
+The largest-observation and largest-cue through-Replay maxima were 0.1473 ms
+and 0.1944 ms. Process RSS was 1,064,554,496 bytes; the transient service's
+cgroup memory peak, which also accounts for charged file cache, was 1.6 GB.
+Re-evidence remained outside the named boundary and reached 23.4708 ms.
+
+The directory keeps algorithmic work independent of total record count. The
+current-experience linked-shard and actual 5 Gbit/s kernel-limited runs are
+complete. A larger-scale run remains an evidence gate, and a general-purpose OS
+measurement is not an unconditional hard real-time proof for every future host.
 
 ## Memory-bounded consolidation
 

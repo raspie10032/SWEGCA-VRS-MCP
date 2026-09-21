@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "swegca-vrs-mcp"
-version = "2.1.0"
+version = "2.2.0"
 description = "Persistent experience, recall and SWEGCA/VRS tools for MCP agents"
 requires-python = ">=3.11"
 license = "MIT AND MPL-2.0"
@@ -14,7 +14,7 @@ dependencies = ["mcp>=2,<3", "numpy>=2,<3", "filelock>=3,<4", "immutables>=0.21,
 
 [project.optional-dependencies]
 test = ["pytest>=8", "pytest-asyncio>=0.24", "PyYAML>=6,<7"]
-identity = ["cryptography>=42"]   # signed producers (harness/identity.py): Ed25519 keys; optional, verification degrades to "cannot verify here"
+identity = ["cryptography>=42"]   # optional Ed25519 producer verification
 core = ["torch>=2.6,<3", "numpy>=2,<3", "filelock>=3,<4"]
 
 [[tool.uv.index]]
@@ -28,6 +28,9 @@ torch = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux' or sys_platf
 [project.scripts]
 swegca-vrs-mcp = "swegca_vrs2.server:main"
 swegca-vrs2-mcp = "swegca_vrs2.server:main"
+swegca-vrs2-codex = "swegca_vrs2.layered:main"
+swegca-vrs2-hook = "swegca_vrs2.conversation_hooks:hook_main"
+swegca-vrs2-codex-hooks = "swegca_vrs2.codex_hooks:main"
 
 [project.urls]
 Repository = "https://github.com/raspie10032/SWEGCA-VRS-MCP"

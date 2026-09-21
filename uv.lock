@@ -1130,7 +1130,7 @@ wheels = [
 
 [[package]]
 name = "swegca-vrs-mcp"
-version = "2.1.0"
+version = "2.2.0"
 source = { editable = "." }
 dependencies = [
     { name = "filelock" },
@@ -1148,6 +1148,9 @@ core = [
     { name = "torch", version = "2.14.0", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform != 'linux' and sys_platform != 'win32'" },
     { name = "torch", version = "2.14.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
+identity = [
+    { name = "cryptography" },
+]
 test = [
     { name = "pytest" },
     { name = "pytest-asyncio" },
@@ -1156,6 +1159,7 @@ test = [
 
 [package.metadata]
 requires-dist = [
+    { name = "cryptography", marker = "extra == 'identity'", specifier = ">=42" },
     { name = "filelock", specifier = ">=3,<4" },
     { name = "filelock", marker = "extra == 'core'", specifier = ">=3,<4" },
     { name = "immutables", specifier = ">=0.21,<1" },
@@ -1168,7 +1172,7 @@ requires-dist = [
     { name = "torch", marker = "(sys_platform == 'linux' and extra == 'core') or (sys_platform == 'win32' and extra == 'core')", specifier = ">=2.6,<3", index = "https://download.pytorch.org/whl/cpu" },
     { name = "torch", marker = "sys_platform != 'linux' and sys_platform != 'win32' and extra == 'core'", specifier = ">=2.6,<3" },
 ]
-provides-extras = ["test", "core"]
+provides-extras = ["test", "identity", "core"]
 
 [[package]]
 name = "sympy"

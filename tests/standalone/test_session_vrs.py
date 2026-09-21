@@ -1,7 +1,6 @@
 import json
 import os
 from pathlib import Path
-import sqlite3
 import subprocess
 import sys
 import threading
@@ -16,7 +15,8 @@ from swegca_vrs2.conversation_finalize import finalize
 from swegca_vrs2.resident import Resident
 from swegca_vrs2.sharded import ShardedMain
 from swegca_vrs2.store import Main
-from tools.generate_codex_hooks import config as codex_hook_config
+from swegca_vrs2.native_journal import NativeJournal, is_native_store
+from swegca_vrs2.codex_hooks import config as codex_hook_config
 from swegca_vrs2.conversation_watch import watch
 
 
@@ -88,10 +88,23 @@ def test_codex_pretool_hook_injects_exact_session_id(tmp_path):
 
 
 def test_generated_codex_end_and_interrupt_hooks_fit_runtime_deadline(tmp_path):
-    hooks = codex_hook_config(Path('/python'), Path('/source'), tmp_path)['hooks']
-    assert hooks['SessionEnd'][0]['matcher'] == 'other'
+    hooks = codex_hook_config(Path('/python'), tmp_path,
+        module_root=Path('/source'))['hooks']
+    assert 'matcher' not in hooks['SessionStart'][0]
+    assert 'matcher' not in hooks['SessionEnd'][0]
     assert hooks['SessionEnd'][0]['hooks'][0]['timeout'] == 3
     assert hooks['Interrupt'][0]['hooks'][0]['timeout'] == 3
+
+
+def test_generated_hook_routes_only_the_configured_mcp_server(tmp_path):
+    event = {'hook_event_name': 'PreToolUse', 'session_id': 'exact-session',
+             'tool_name': 'mcp__memory_prod__memory_status', 'tool_input': {}}
+    assert handle('codex', tmp_path / 'state', event,
+                  tool_prefix='mcp__memory_prod__memory_')['hookSpecificOutput'][
+                      'updatedInput']['session_id'] == 'exact-session'
+    assert handle('codex', tmp_path / 'state', dict(event,
+        tool_name='mcp__another__memory_status'),
+        tool_prefix='mcp__memory_prod__memory_') is None
 
 
 def test_every_live_capture_event_enters_session_vrs_and_end_is_detached(tmp_path,
@@ -300,7 +313,7 @@ def test_merge_requires_end_and_preserves_original_address(tmp_path):
         stop(session_state, state)
 
 
-def test_armed_runtime_upgrade_waits_for_end_then_preserves_vrs_databases(tmp_path):
+def test_armed_runtime_upgrade_waits_for_end_then_preserves_native_vrs_stores(tmp_path):
     state, transcript = tmp_path / 'state', tmp_path / 'rollout.jsonl'
     session = 'upgrade-session'
     write_transcript(transcript, session, [
@@ -310,19 +323,22 @@ def test_armed_runtime_upgrade_waits_for_end_then_preserves_vrs_databases(tmp_pa
     session_state = capture.session_root('codex', session)
     try:
         capture.scan_transcript('codex', session, transcript)
-        main_db = state / 'memory.sqlite3'
-        session_db = session_state / 'memory.sqlite3'
-        assert session_db.is_file() and not main_db.exists()
+        assert is_native_store(session_state) and not is_native_store(state)
         arm_upgrade(state)
         assert merge_run(state) == 0
-        assert not main_db.exists()
+        assert not is_native_store(state)
+
+        # Keep a live durable-main resident before SessionEnd. After adoption it
+        # owns the linked session shard, so upgrade must release main first.
+        with VRSClient(state, writes=True) as main:
+            assert main.call('memory_status', {})['hot_episode_count'] == 0
 
         capture.mark_ended('codex', session)
         assert merge_run(state) == 0
         # The complete session VRS is adopted in place.  Merge creates no
         # duplicate primary experience rows. Runtime preparation opens the
         # existing empty primary control store and keeps all experience linked.
-        assert main_db.is_file() and session_db.is_file()
+        assert is_native_store(state) and is_native_store(session_state)
         registry = json.loads((state / 'linked-shards.json').read_text(encoding='utf-8'))
         assert registry['shards'][0]['records'] == 2
         assert (state / 'exact-replay' / 'capsules.vrs').is_file()
@@ -334,7 +350,7 @@ def test_armed_runtime_upgrade_waits_for_end_then_preserves_vrs_databases(tmp_pa
         receipt = json.loads(receipts[0].read_text(encoding='utf-8'))
         assert receipt['exact']['complete'] and receipt['projections']['complete']
         # Both old residents released ownership; the current runtime can open
-        # the preserved experiences from the already rebuilt V5 directory.
+        # the preserved experiences from the rebuilt current exact directory.
         with VRSClient(state, writes=False) as main:
             status = main.call('memory_status', {})
             exported = main.export(0)
@@ -490,10 +506,9 @@ os._exit(0)
         receipt = json.loads(receipt_path.read_text(encoding='utf-8'))
         registry = json.loads((state / 'linked-shards.json').read_text(encoding='utf-8'))
         linked = registry['shards'][0]
-        with sqlite3.connect(state / linked['path'] / 'memory.sqlite3') as db:
-            checkpoint_pair = db.execute('SELECT pair FROM checkpoint WHERE id=1').fetchone()[0]
-            journal_pair = db.execute(
-                'SELECT pair FROM observations ORDER BY seq DESC LIMIT 1').fetchone()[0]
+        linked_store = NativeJournal(state / linked['path'])
+        checkpoint_pair = linked_store.read_checkpoint().pair
+        journal_pair = linked_store.head()[1]
         assert checkpoint_pair != journal_pair == linked['pair_snapshot_id']
 
         main = Main(state, allow_ingest=False, defer_checkpoints=True)
@@ -501,9 +516,8 @@ os._exit(0)
         try:
             repaired = json.loads((state / 'linked-shards.json').read_text(encoding='utf-8'))[
                 'shards'][0]
-            with sqlite3.connect(state / repaired['path'] / 'memory.sqlite3') as db:
-                assert db.execute('SELECT pair FROM checkpoint WHERE id=1').fetchone()[0] \
-                    == repaired['pair_snapshot_id']
+            repaired_store = NativeJournal(state / repaired['path'])
+            assert repaired_store.read_checkpoint().pair == repaired['pair_snapshot_id']
             while not resident.backfill_exact(100)['complete']:
                 pass
             while not resident.backfill_projections(1)['complete']:

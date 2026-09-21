@@ -66,4 +66,10 @@ def test_readonly_cli_invalid_json_and_normal_exit(tmp_path):
 def test_console_entrypoint_is_standalone():
     from importlib.metadata import distribution
     entries={e.name:e.value for e in distribution('swegca-vrs-mcp').entry_points}
-    assert entries=={'swegca-vrs-mcp':'swegca_vrs2.server:main','swegca-vrs2-mcp':'swegca_vrs2.server:main'}
+    assert entries=={
+        'swegca-vrs-mcp':'swegca_vrs2.server:main',
+        'swegca-vrs2-mcp':'swegca_vrs2.server:main',
+        'swegca-vrs2-codex':'swegca_vrs2.layered:main',
+        'swegca-vrs2-hook':'swegca_vrs2.conversation_hooks:hook_main',
+        'swegca-vrs2-codex-hooks':'swegca_vrs2.codex_hooks:main',
+    }

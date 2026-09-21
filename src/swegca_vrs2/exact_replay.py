@@ -14,34 +14,36 @@ stage and is deliberately not frozen into the capsule.
 from __future__ import annotations
 
 from collections import OrderedDict
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 import json
 import hashlib
 import mmap
 import os
 from pathlib import Path
+import re
 import struct
 import threading
 import zlib
 
-from .engine.mosaic_memory_activation import MemoryStep, ReplayedEpisode
+from .engine.mosaic_memory_activation import MemoryStep, OUTCOMES, ReplayedEpisode
 from .store import plain
 from .compact_index import asks_and_description
 
-MAGIC = b'VRS2EXACT5\0'
+MAGIC = b'VRS2EXACT6\0'
 HEADER_BYTES = 4096
 SEGMENT_BITS = 8
 SLOT_POWER = int(os.environ.get('VRS2_EXACT_SLOT_POWER', '16'))
 SLOT_COUNT = 1 << SLOT_POWER
 SLOT = struct.Struct('<32sQII')       # key, capsule offset, payload bytes, CRC32
 CAPSULE = struct.Struct('<II')        # payload bytes, CRC32
-PAYLOAD = struct.Struct('<II')        # Replay JSON bytes, derived cue JSON bytes
+PAYLOAD = struct.Struct('<III')       # Replay header, original observation, derived cues
 EMPTY = b'\0' * 32
 LEVEL_STATE_OFFSET = 64
 LEVEL_STATE = struct.Struct('<QB7x')  # published keys, sealed for new keys
 LEVEL_LOAD_NUMERATOR = 7
 LEVEL_LOAD_DENOMINATOR = 10
-READ_SEGMENT_CACHE = int(os.environ.get('VRS2_EXACT_READ_SEGMENTS', '512'))
+READ_SEGMENT_CACHE = int(os.environ.get('VRS2_EXACT_READ_SEGMENTS', '2048'))
+PREFETCH_CHUNK = 1024 * 1024
 
 
 def _write_all(fd, data):
@@ -105,6 +107,72 @@ class LazyCues(Sequence):
         return iter(self._value())
 
 
+class LazyObservation(Mapping):
+    """Immutable original observation decoded only when its fields are read.
+
+    The complete bytes are read and checksummed before Replay returns. Keeping
+    their JSON materialization lazy makes the exact-address Replay boundary
+    independent of a large text field while the original remains fully
+    addressable by the evidence transport.
+    """
+    __slots__ = ('payload', 'decoded')
+
+    def __init__(self, payload):
+        self.payload = bytes(payload)
+        self.decoded = None
+
+    def _value(self):
+        if self.decoded is None:
+            try:
+                decoded = json.loads(self.payload)
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                raise ValueError('exact_replay_observation_corrupt') from None
+            if not isinstance(decoded, dict):
+                raise ValueError('exact_replay_observation_corrupt')
+            self.decoded = _freeze(decoded)
+            self.payload = None
+        return self.decoded
+
+    def __getitem__(self, key):
+        return self._value()[key]
+
+    def __iter__(self):
+        return iter(self._value())
+
+    def __len__(self):
+        return len(self._value())
+
+
+def _freeze(value):
+    if isinstance(value, dict):
+        from types import MappingProxyType
+        return MappingProxyType({key: _freeze(item) for key, item in value.items()})
+    if isinstance(value, list):
+        return tuple(_freeze(item) for item in value)
+    return value
+
+
+def _replay_step(row, observation):
+    """Bind one verified immutable capsule observation without a second JSON copy."""
+    phase, judgment, outcome = row['phase'], row['judgment'], row['outcome']
+    relations, evidence_refs = tuple(row['relations']), tuple(row['evidence_refs'])
+    if not isinstance(phase, str) or not phase.strip():
+        raise ValueError('exact_replay_phase_invalid')
+    if not isinstance(judgment, str) or not judgment.strip():
+        raise ValueError('exact_replay_judgment_invalid')
+    if outcome not in OUTCOMES:
+        raise ValueError('exact_replay_outcome_invalid')
+    if not isinstance(observation, Mapping) or not evidence_refs \
+            or any(not str(value).strip() for value in evidence_refs):
+        raise ValueError('exact_replay_provenance_invalid')
+    result = object.__new__(MemoryStep)
+    for name, value in (('phase', phase), ('observation', observation),
+                        ('relations', relations), ('judgment', judgment),
+                        ('outcome', outcome), ('evidence_refs', evidence_refs)):
+        object.__setattr__(result, name, value)
+    return result
+
+
 class ExactReplayStore:
     def __init__(self, directory, *, slot_power=None):
         self.directory = Path(directory)
@@ -134,6 +202,94 @@ class ExactReplayStore:
         self.data_read_fd = os.open(self.data_path, os.O_RDONLY)
         self.read_segment_limit = max(1, READ_SEGMENT_CACHE)
         self.read_segments = OrderedDict()
+
+    def warm_address_segments(self):
+        """Open existing exact-address levels before requests are served.
+
+        Mapping a sparse fixed-slot file does not read its full logical range or
+        copy it into RAM. Keeping the descriptors and mappings ready removes the
+        first-prefix file-open path; the addressed slot and Replay capsule stay
+        demand paged from SSD.
+        """
+        opened = 0
+        with self.lock:
+            for path in sorted(self.directory.glob('address-p*-*.vrs')):
+                match = re.fullmatch(r'address-p(\d+)-([0-9a-f]{2})\.vrs', path.name)
+                if not match:
+                    continue
+                slot_power, prefix = int(match.group(1)), int(match.group(2), 16)
+                cache_key = ('address', slot_power, prefix)
+                if cache_key in self.read_segments:
+                    continue
+                key = bytes((prefix,)) + b'\1' * 31
+                fd, mapping = self._open_segment(
+                    key, create=False, namespace='address', slot_power=slot_power)
+                if mapping is None:
+                    continue
+                self.read_segments[cache_key] = (fd, mapping)
+                opened += 1
+            while len(self.read_segments) > self.read_segment_limit:
+                old_fd, old_mapping = self.read_segments.popitem(last=False)[1]
+                old_mapping.close(); os.close(old_fd)
+        return opened
+
+    @staticmethod
+    def _prefetch_extents(path, remaining):
+        """Read allocated extents sequentially without retaining a Python copy."""
+        if remaining <= 0:
+            return 0
+        fd = os.open(path, os.O_RDONLY)
+        read = 0
+        try:
+            size = os.fstat(fd).st_size
+            position = 0
+            seek_data = getattr(os, 'SEEK_DATA', None)
+            seek_hole = getattr(os, 'SEEK_HOLE', None)
+            while position < size and read < remaining:
+                if seek_data is None or seek_hole is None:
+                    start, stop = position, size
+                else:
+                    try:
+                        start = os.lseek(fd, position, seek_data)
+                    except OSError:
+                        break
+                    try:
+                        stop = os.lseek(fd, start, seek_hole)
+                    except OSError:
+                        stop = size
+                if stop <= start:
+                    break
+                at = start
+                while at < stop and read < remaining:
+                    amount = min(PREFETCH_CHUNK, stop - at, remaining - read)
+                    block = os.pread(fd, amount, at)
+                    if not block:
+                        return read
+                    at += len(block)
+                    read += len(block)
+                position = stop
+        finally:
+            os.close(fd)
+        return read
+
+    def warm_replay_pages(self, budget_bytes=512 * 1024 ** 2):
+        """Warm only allocated exact-address and Replay capsule pages.
+
+        Fixed-slot tables are sparse, so logical length is not read volume.
+        Address extents are warmed first, followed by immutable capsule bytes,
+        under a caller-provided bound. The bytes enter the OS page cache and no
+        complete file copy remains in the Python heap.
+        """
+        remaining = max(0, int(budget_bytes))
+        warmed = 0
+        for path in sorted(self.directory.glob('address-p*-*.vrs')):
+            amount = self._prefetch_extents(path, remaining)
+            warmed += amount
+            remaining -= amount
+            if not remaining:
+                return warmed
+        amount = self._prefetch_extents(self.data_path, remaining)
+        return warmed + amount
 
     def _segment_path(self, key, namespace, slot_power=None):
         slot_power = self.slot_power if slot_power is None else int(slot_power)
@@ -245,29 +401,34 @@ class ExactReplayStore:
         step = episode.steps[0]
         text = step.observation.get('text', '')
         asks, description = asks_and_description(text)
-        body = dict(schema='swegca-vrs2-replay-capsule-v3', episode_id=identifier,
+        observation = json.dumps(plain(step.observation), ensure_ascii=False,
+            sort_keys=True, separators=(',', ':'), allow_nan=False).encode('utf-8')
+        body = dict(schema='swegca-vrs2-replay-capsule-v4', episode_id=identifier,
                     shard=str(shard), shard_row=int(row), matched_cues=[identifier],
                     cue_count=len(episode.cues),
                     kind=str((step.observation.get('metadata') or {}).get('kind') or ''),
+                    proposition=step.observation.get('proposition_id'),
+                    polarity=step.observation.get('evidence_polarity'),
                     asks=asks.casefold(), description=description.casefold(),
-                    steps=[dict(phase=step.phase, observation=plain(step.observation),
-                                relations=list(step.relations), judgment=step.judgment,
-                                outcome=step.outcome, evidence_refs=list(step.evidence_refs))],
+                    step=dict(phase=step.phase, relations=list(step.relations),
+                              judgment=step.judgment, outcome=step.outcome,
+                              evidence_refs=list(step.evidence_refs)),
                     source_addresses=list(episode.source_addresses), revision=episode.revision,
                     verification_state=episode.verification_state,
+                    observation_sha256=hashlib.sha256(observation).hexdigest(),
                     historical_truth_authorized=False)
         raw = json.dumps(body, ensure_ascii=False, sort_keys=True,
                          separators=(',', ':'), allow_nan=False).encode('utf-8')
         cues = json.dumps(list(episode.cues), ensure_ascii=False,
                           separators=(',', ':'), allow_nan=False).encode('utf-8')
-        return PAYLOAD.pack(len(raw), len(cues)) + raw + cues
+        return PAYLOAD.pack(len(raw), len(observation), len(cues)) + raw + observation + cues
 
     @staticmethod
     def _encode_source(source, shard):
         raw = json.dumps(dict(schema='swegca-vrs2-source-route-v1', source=source,
                               shard=str(shard)), ensure_ascii=False, sort_keys=True,
                          separators=(',', ':'), allow_nan=False).encode('utf-8')
-        return PAYLOAD.pack(len(raw), 0) + raw
+        return PAYLOAD.pack(len(raw), 0, 0) + raw
 
     def _append_capsule(self, payload):
         checksum = zlib.crc32(payload)
@@ -362,7 +523,7 @@ class ExactReplayStore:
                         if exists:
                             _, offset, length, stored_crc = SLOT.unpack(
                                 mapping[slot:slot + SLOT.size])
-                            body, _ = self._read_capsule(offset, length, stored_crc)
+                            body, _, _ = self._read_capsule(offset, length, stored_crc)
                             if namespace == 'address':
                                 if (body.get('episode_id') != identity
                                         or body.get('shard') != item[1]
@@ -436,7 +597,7 @@ class ExactReplayStore:
             try:
                 if exists:
                     _, offset, length, stored_crc = SLOT.unpack(mapping[slot:slot + SLOT.size])
-                    body, _ = self._read_capsule(offset, length, stored_crc)
+                    body, _, _ = self._read_capsule(offset, length, stored_crc)
                     if body.get('source') != source:
                         raise ValueError('experience_source_hash_collision')
                     if body.get('shard') != shard:
@@ -469,15 +630,22 @@ class ExactReplayStore:
             raise ValueError('exact_replay_capsule_corrupt')
         if len(payload) < PAYLOAD.size:
             raise ValueError('exact_replay_capsule_corrupt')
-        replay_length, cue_length = PAYLOAD.unpack(payload[:PAYLOAD.size])
-        if PAYLOAD.size + replay_length + cue_length != len(payload):
+        replay_length, observation_length, cue_length = PAYLOAD.unpack(payload[:PAYLOAD.size])
+        if PAYLOAD.size + replay_length + observation_length + cue_length != len(payload):
             raise ValueError('exact_replay_capsule_corrupt')
         replay_payload = payload[PAYLOAD.size:PAYLOAD.size + replay_length]
-        cue_payload = payload[PAYLOAD.size + replay_length:]
+        observation_start = PAYLOAD.size + replay_length
+        observation_payload = payload[observation_start:observation_start + observation_length]
+        cue_payload = payload[observation_start + observation_length:]
         try:
-            return json.loads(replay_payload), cue_payload
+            body = json.loads(replay_payload)
         except (UnicodeDecodeError, json.JSONDecodeError):
             raise ValueError('exact_replay_capsule_corrupt') from None
+        expected = body.get('observation_sha256')
+        if observation_payload and (not isinstance(expected, str)
+                or hashlib.sha256(observation_payload).hexdigest() != expected):
+            raise ValueError('exact_replay_observation_corrupt')
+        return body, observation_payload, cue_payload
 
     def _get_locked(self, identifier):
         key = _key(identifier)
@@ -502,18 +670,18 @@ class ExactReplayStore:
         if located is None:
             return None
         offset, length, checksum = located
-        body, cue_payload = self._read_capsule(offset, length, checksum)
-        if body.get('episode_id') != identifier or body.get('schema') != 'swegca-vrs2-replay-capsule-v3':
+        body, observation_payload, cue_payload = self._read_capsule(offset, length, checksum)
+        if body.get('episode_id') != identifier or body.get('schema') != 'swegca-vrs2-replay-capsule-v4':
             raise ValueError('exact_replay_capsule_identity_mismatch')
-        row = body['steps'][0]
-        step = MemoryStep(row['phase'], row['observation'], tuple(row['relations']), row['judgment'],
-                          row['outcome'], tuple(row['evidence_refs']))
+        row = body['step']
+        step = _replay_step(row, LazyObservation(observation_payload))
         replay = ReplayedEpisode(identifier, tuple(body['matched_cues']), (step,),
                                  tuple(body['source_addresses']), body['verification_state'])
         return dict(shard=body['shard'], revision=body['revision'], replay=replay,
                     shard_row=int(body['shard_row']),
                     cue_count=int(body['cue_count']),
                     cues=LazyCues(cue_payload, body['cue_count']), kind=body['kind'],
+                    proposition=body.get('proposition'), polarity=body.get('polarity'),
                     asks=body['asks'], description=body['description'])
 
     def get(self, identifier):
@@ -543,8 +711,8 @@ class ExactReplayStore:
         if located is None:
             return None
         offset, length, checksum = located
-        body, cue_payload = self._read_capsule(offset, length, checksum)
-        if cue_payload:
+        body, observation_payload, cue_payload = self._read_capsule(offset, length, checksum)
+        if observation_payload or cue_payload:
             raise ValueError('experience_source_route_identity_mismatch')
         if body.get('schema') != 'swegca-vrs2-source-route-v1' or body.get('source') != source:
             raise ValueError('experience_source_route_identity_mismatch')

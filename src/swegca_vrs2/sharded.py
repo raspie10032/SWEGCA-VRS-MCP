@@ -149,11 +149,12 @@ class ShardedMain:
         return base
 
     def _finish_exact(self, query, pair_snapshot, signal, recalled, replayed,
-                      exact, through_replay_ns, exclude_kinds, region_scope):
+                      exact, through_replay_ns, through_replay_cpu_ns,
+                      exclude_kinds, region_scope):
         """Attach current VRS Re-evidence after the direct Replay boundary."""
         finish_began = time.perf_counter_ns()
         episode = replayed.episodes[0]
-        proposition = episode.steps[0].observation.get('proposition_id')
+        proposition = exact['proposition']
         current = self.resident.current_vrs(exact)
         if current is None:
             raise ValueError('read_projection_not_ready:' + exact['shard'])
@@ -167,7 +168,8 @@ class ShardedMain:
                     raise ValueError('read_projection_not_ready:' + candidate['shard'])
                 if candidate_current['superseded_by'] is None:
                     active.append(candidate['replay'])
-            if {item.steps[0].observation.get('evidence_polarity') for item in active} == {'support', 'refute'}:
+            if {self.resident.exact_replay(item.episode_id)['polarity']
+                    for item in active} == {'support', 'refute'}:
                 opponents = tuple(sorted(item.episode_id for item in active))
 
         graph_snapshot = digest(('sharded-vrs-re-evidence-v1', pair_snapshot,
@@ -210,12 +212,14 @@ class ShardedMain:
                                    cross_shard_portals=[], membership_is_truth=False),
             pair_snapshot_id=pair_snapshot,
             timings_ns=dict(through_replay=through_replay_ns,
+                            through_replay_thread_cpu=through_replay_cpu_ns,
                             through_re_evidence=through_replay_ns + time.perf_counter_ns() - finish_began),
             authority=MappingProxyType({key: False for key in
                 ('world', 'action', 'persistent_write', 'model_update', 'distribution', 'p3')}))
 
     def recall(self, query, expected_snapshot, exclude_kinds=(), region_scope='all'):
         began = time.perf_counter_ns()
+        cpu_began = time.thread_time_ns()
         pair_snapshot = self._snapshot()
         if expected_snapshot is not None and expected_snapshot != pair_snapshot:
             raise ValueError('snapshot_mismatch')
@@ -224,7 +228,7 @@ class ShardedMain:
         exact = self.resident.exact_replay(exact_match.group(1)) if exact_match else None
         if exact is not None:
             replay = exact['replay']
-            kind = str((replay.steps[0].observation.get('metadata') or {}).get('kind') or '')
+            kind = exact['kind']
             if kind in tuple(exclude_kinds or ()):
                 exact = None
         if exact is not None:
@@ -238,8 +242,9 @@ class ShardedMain:
             recalled = RecallResult(query, (candidate,), pair_snapshot)
             replayed = ReplayResult(query, (replay,))
             through_replay_ns = time.perf_counter_ns() - began
+            through_replay_cpu_ns = time.thread_time_ns() - cpu_began
             return self._finish_exact(query, pair_snapshot, signal, recalled, replayed,
-                                      exact, through_replay_ns,
+                                      exact, through_replay_ns, through_replay_cpu_ns,
                                       exclude_kinds, region_scope)
         if region_scope in ('all', 'auto', 'regions'):
             return projected_recall(self.resident, pair_snapshot, query, exclude_kinds, region_scope)

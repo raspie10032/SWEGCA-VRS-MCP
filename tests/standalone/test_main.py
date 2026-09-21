@@ -3,7 +3,6 @@ import builtins
 import hashlib
 import json
 import socket
-import sqlite3
 from dataclasses import replace
 from pathlib import Path
 
@@ -29,6 +28,27 @@ def main(tmp_path):
     owner = Main(tmp_path / '한글 경로 with spaces', allow_ingest=True)
     yield owner
     owner.close()
+
+
+def test_serialized_prefix_checkpoint_commits_during_continuous_ingest(tmp_path):
+    owner = Main(tmp_path / "continuous", allow_ingest=True,
+                 defer_checkpoints=True)
+    try:
+        record(owner, "one")
+        record(owner, "two")
+        prepared = owner.checkpoint_prepare()
+        serialized = owner.checkpoint_serialize(prepared)
+        record(owner, "three")
+        receipt = owner.checkpoint_commit(prepared, serialized)
+        assert receipt["current"] is False
+        assert receipt["seq"] == 2 and receipt["replay_tail"] == 1
+        assert owner.dirty == 1
+        checkpoint = owner.journal.read_checkpoint()
+        assert checkpoint.seq == 2 and checkpoint.pair == prepared["pair"]
+        current = owner.checkpoint()
+        assert current["current"] is True and current["replay_tail"] == 0
+    finally:
+        owner.close()
 
 
 def test_six_outcomes_real_native_vrs_and_original_receipts(main):
@@ -102,7 +122,7 @@ def test_hot_cognition_no_disk_json_hash_network_or_model(main, monkeypatch):
     def forbidden(*args, **kwargs):
         raise AssertionError('cold I/O or model transport on hot cognition')
     for target in ((builtins,'open'),(Path,'open'),(json,'loads'),(json,'dumps'),
-                   (hashlib,'sha256'),(socket,'socket'),(sqlite3,'connect')):
+                   (hashlib,'sha256'),(socket,'socket')):
         monkeypatch.setattr(*target, forbidden)
     assert main.recall('한국어', pair)['receipt']['activation'].recall.candidates
 
@@ -146,28 +166,26 @@ def test_single_owner_readonly_forged_grants_and_stale_snapshot(main):
 
 def test_failed_durable_transaction_leaves_main_bit_exact(main):
     record(main)
-    original_db = main.db
-    class FailingCommit:
-        def __getattr__(self, key):
-            return getattr(original_db, key)
-        def execute(self, query, *args):
-            if query == 'COMMIT':
-                raise sqlite3.OperationalError('injected disk failure')
-            return original_db.execute(query, *args)
+    original_append = main.journal.append
     before = main.memory, main.graph, main.pair, main.operations, main.owner.snapshot()
-    main.db = FailingCommit()
-    with pytest.raises(sqlite3.OperationalError):
+    def fail(_):
+        raise OSError('injected disk failure')
+    main.journal.append = fail
+    with pytest.raises(OSError, match='injected disk failure'):
         record(main, 'two')
     assert before == (main.memory, main.graph, main.pair, main.operations, main.owner.snapshot())
-    assert original_db.execute('SELECT COUNT(*) FROM observations').fetchone()[0] == 1
-    main.db = original_db
+    assert main.journal.row_count == 1
+    main.journal.append = original_append
     assert record(main, 'two')['status'] == 'observation_recorded'
 
 
 def test_corrupt_durable_record_rejected_and_owner_lock_released(main):
     record(main)
-    main.db.execute("UPDATE observations SET fingerprint='bad'")
     main.close()
+    path = main.journal.head_path
+    body = bytearray(path.read_bytes())
+    body[-33] ^= 1
+    path.write_bytes(body)
     with pytest.raises(ValueError, match='integrity_failed'):
         Main(main.directory)
     # Failure must not leak an ownership lock.
@@ -313,13 +331,13 @@ def test_consolidation_follows_swegca_evidence_and_conflict_abstains(main):
     assert activation.re_evidence.unresolved_conflict
     # the journal carries the consolidations; a restart replays them to the same version id
     version=main.graph.stable.version_id; pair=main.pair.snapshot_id
-    rows=main.db.execute("SELECT COUNT(*) FROM observations WHERE request_id LIKE 'consolidation:%'").fetchone()[0]
+    rows=sum(req.startswith('consolidation:') for _, req, *_ in main._journal_rows(0, None))
     assert rows>=3
     main.close()
     restored=Main(main.directory,allow_ingest=True)
     try:
         assert restored.pair.snapshot_id==pair and restored.graph.stable.version_id==version
-        restored.db.execute('DELETE FROM checkpoint')
+        restored.journal.remove_checkpoint()
     finally:
         restored.close()
     replayed=Main(main.directory,allow_ingest=True)          # no checkpoint: the whole journal is replayed

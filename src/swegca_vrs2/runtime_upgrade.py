@@ -2,7 +2,7 @@
 
 The active session keeps using the resident generation it started with.  An
 upgrade is armed ahead of time, but it may run only after a newer SessionEnd
-marker is durably merged.  Original VRS databases stay untouched.  Only the
+marker is durably merged.  Original native VRS stores stay untouched.  Only the
 rebuildable disk read directory is removed after both residents release their
 owner locks. The detached handoff then rebuilds that directory with the current
 code before the next session can need durable main.
@@ -51,9 +51,12 @@ def activate_if_ready(capture):
     session_states = []
     for _, row in ended:
         session_states.append(capture.session_root(row['host'], row['session']))
+    # Durable main may already have adopted and opened the ended session shards.
+    # Release that parent owner first; otherwise waiting on a shard owner lock
+    # deadlocks until the timeout while main is still serving the shard.
+    shutdown_and_release(capture.root)
     for state in session_states:
         shutdown_and_release(state)
-    shutdown_and_release(capture.root)
     for state in session_states:
         drop_derived_read_directory(state)
     drop_derived_read_directory(capture.root)
@@ -79,7 +82,7 @@ def activate_if_ready(capture):
                    armed_ns=armed_ns, activated_ns=time.time_ns(),
                    exact_schema=marker.get('exact_schema'),
                    sessions=[str(state) for state in session_states],
-                   preserved='memory.sqlite3', rebuilt='exact-replay',
+                   preserved='native-vrs-journal', rebuilt='exact-replay',
                    exact=exact, projections=projections)
     receipt_path = capture.meta / 'runtime-upgrades' / (
         str(receipt['activated_ns']) + '.json')

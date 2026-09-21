@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
 """Every resident shard must retain the complete SWEGCA-VRS read path."""
-import sqlite3
 import threading
 import json
 from collections import OrderedDict
@@ -13,10 +12,11 @@ from swegca_vrs2.resident import (
     MAX_RSS_BYTES, MAX_STORAGE_BYTES, Resident, WarmView, load_recall_generation,
 )
 from swegca_vrs2.store import Main
+from swegca_vrs2.native_journal import NativeJournal
 
 
-def row(n, text, project, kind="log_entry"):
-    return dict(request_id=f"{project}:{n}", text=text, source=f"{project}/session-log.md#{n}", revision="1",
+def row(n, text, project, kind="conversation_turn"):
+    return dict(request_id=f"{project}:{n}", text=text, source=f"{project}/conversation#{n}", revision="1",
                 metadata=dict(kind=kind, project=project))
 
 
@@ -26,23 +26,22 @@ def test_checkpoint_is_one_complete_generation_without_index_only_table(tmp_path
         out = m.ingest_many([row(i, f"정산 배치 훅 데몬 이야기 {i}", "b") for i in range(5)])
         m.consolidate(cycles=4)
         m.checkpoint()
-        db = sqlite3.connect(str(tmp_path / "b" / "memory.sqlite3"))
-        assert db.execute("SELECT 1 FROM sqlite_master WHERE name='checkpoint_warm'").fetchone() is None
-        generation, covered = load_recall_generation(db)
+        journal = NativeJournal(tmp_path / "b")
+        generation, covered = load_recall_generation(journal)
         exact = generation.recall(out["results"][0]["episode_id"], generation.pair.snapshot_id)
         activation = exact["receipt"]["activation"]
         assert activation.stage_order == ("deja_vu", "recall", "replay", "re_evidence")
         assert activation.replay.episodes[0].episode_id == out["results"][0]["episode_id"]
         assert generation.graph.stable.version_id == m.graph.stable.version_id
-        assert covered == m.db.execute("SELECT MAX(seq) FROM observations").fetchone()[0]
+        assert covered == m._journal_head()[0]
 
         m.ingest(row(5, "체크포인트 뒤에 들어온 여섯째 기록 정산", "b"))
         with pytest.raises(ValueError, match="checkpoint_not_at_journal_head"):
-            load_recall_generation(db)
+            load_recall_generation(journal)
         m.checkpoint()
-        generation, _ = load_recall_generation(db)
+        generation, _ = load_recall_generation(journal)
         assert generation.memory.episode_count == 6
-        db.close()
+        journal.close()
     finally:
         m.close()
 

@@ -1,10 +1,6 @@
-# -*- coding: utf-8 -*-
-"""Dictionary-coded hot index — lossless hard compression of the hot memory (2026-09-14).
+"""Dictionary-coded hot index with lossless bounded resident memory.
 
-The ported ``HotIndex`` keeps every record as a resident ``MemoryEpisode`` (a tuple of
-cue strings per record) and every cue as a ``frozenset`` of 71-character episode ids.
-With substring cues that is millions of string references: about 700 MB resident and
-a 150 MB checkpoint for 2,600 records. This index keeps the same contract
+The index keeps the full memory activation contract
 (``HotMemoryIndex``: ``episode``, ``episode_ids_for_cue``, ``episode_count``,
 ``outcome_counts``, ``snapshot_id``; plus ``propositions``/``superseded``/``append``
 used by the composition) with a compact representation:
@@ -224,7 +220,9 @@ class CompactIndex:
 
     @classmethod
     def empty(cls, identity):
-        store = dict(vocab=Vocab(), ids=[], row_of={}, cues=[], postings={}, blobs=[], cache=OrderedDict(), kinds=[])
+        store = dict(vocab=Vocab(), ids=[], row_of={}, cues=[], postings={},
+            blobs=[], cache=OrderedDict(), kinds=[], props=[], asks=[], revs=[],
+            outs=[], light_cache=OrderedDict())
         return cls(store, 0, _digest(['memory', identity]), Map({o: 0 for o in OUTCOMES}), Map(), Map(), 0)
 
     # ── HotMemoryIndex contract ─────────────────────────────────────────
@@ -291,7 +289,7 @@ class CompactIndex:
             object.__setattr__(episode, name, value)
         return episode
 
-    # ── ingress (same rules as HotIndex.append) ─────────────────────────
+    # ── ingress ──────────────────────────────────────────────────────────
     def append(self, row):
         from .store import keys
         identifier = 'memory:' + _digest({k: v for k, v in row.items() if k != 'request_id'})
@@ -377,87 +375,33 @@ class CompactIndex:
             store['cache'].pop(row, None)
             store.get('light_cache', {}).pop(row, None)
 
-    # ── conversion from the ported HotIndex (old checkpoints) ───────────
-    @classmethod
-    def from_hot(cls, hot):
-        """Bulk conversion of a ported HotIndex: one vocabulary build, postings by one sort."""
-        index = cls.empty('convert')
-        store = index._store
-        rows = list(hot.records.items())
-        # 1. vocabulary in one pass (insertion order = first appearance), ids per record
-        first_id = {}
-        order = []
-        per_record = []
-        for identifier, episode in rows:
-            ids = []
-            for cue in dict.fromkeys(_cue(c) for c in episode.cues):
-                cue_id = first_id.get(cue)
-                if cue_id is None:
-                    cue_id = len(order)
-                    first_id[cue] = cue_id
-                    order.append(cue)
-                ids.append(cue_id)
-            per_record.append(np.asarray(ids, dtype=np.uint32))
-        store['vocab'].add(order)
-        # 2. records
-        for row_number, (identifier, episode) in enumerate(rows):
-            obs = episode.steps[0].observation
-            store['ids'].append(identifier)
-            store['row_of'][identifier] = row_number
-            store['cues'].append(per_record[row_number])
-            payload = dict(text=obs['text'], metadata=dict(obs.get('metadata') or {}),
-                           proposition=obs.get('proposition_id'), polarity=obs.get('evidence_polarity'),
-                           supersedes=obs.get('supersedes'), outcome=episode.steps[0].outcome,
-                           source=episode.source_addresses[0], revision=episode.revision)
-            store['blobs'].append(zlib.compress(json.dumps(payload, ensure_ascii=False, separators=(',', ':')).encode('utf-8'), 6))
-            store.setdefault('kinds', []).append(str((payload.get('metadata') or {}).get('kind') or ''))
-            prop, asks = _recall_columns(payload['text'], payload.get('proposition'))
-            store.setdefault('props', []).append(prop); store.setdefault('asks', []).append(asks)
-            store.setdefault('revs', []).append(payload['revision']); store.setdefault('outs', []).append(payload['outcome'])
-        # 3. postings: sort all (cue_id, row) pairs once and slice per cue
-        if per_record:
-            cue_col = np.concatenate(per_record)
-            row_col = np.repeat(np.arange(len(per_record), dtype=np.uint32),
-                                [len(a) for a in per_record])
-            sort = np.lexsort((row_col, cue_col))
-            cue_col, row_col = cue_col[sort], row_col[sort]
-            bounds = np.flatnonzero(np.r_[True, cue_col[1:] != cue_col[:-1], True])
-            postings = store['postings']
-            for lo, hi in zip(bounds[:-1], bounds[1:]):
-                postings[int(cue_col[lo])] = row_col[lo:hi].copy()
-        return cls(store, len(rows), hot.snapshot_id, hot.outcome_counts, hot.propositions, hot.superseded,
-                   sum(len(cues) for cues in per_record))
-
     def __getstate__(self):
         state = dict(self.__dict__)
         shared = dict(state['_store'])
         shared['cache'] = None
-        shared.pop('kind_masks', None)            # per-process mask cache, rebuilt on demand
+        shared.pop('light_cache', None)
+        shared.pop('stats', None)
+        shared.pop('kind_masks', None)
         shared.pop('cache_lock', None)
         state['_store'] = shared
         return state
 
     def __setstate__(self, state):
-        if 'cue_total' not in state:
-            # The journal is canonical. Reject an older derived checkpoint so Main
-            # rebuilds it under the current format; do not retain a migration path.
-            raise ValueError('checkpoint_missing_cue_total_rebuild_from_journal')
+        if type(state) is not dict or set(state) != {
+                '_store', 'count', 'snapshot_id', 'outcome_counts',
+                'propositions', 'superseded', 'cue_total'}:
+            raise ValueError('checkpoint_compact_index_schema_invalid')
         self.__dict__.update(state)
+        required = {'vocab', 'ids', 'row_of', 'cues', 'postings', 'blobs',
+                    'cache', 'kinds', *RECALL_COLUMNS}
+        if not required <= self._store.keys():
+            raise ValueError('checkpoint_compact_store_schema_invalid')
+        columns = ('ids', 'cues', 'blobs', 'kinds', *RECALL_COLUMNS)
+        if any(len(self._store[name]) != self.count for name in columns):
+            raise ValueError('checkpoint_compact_store_cardinality_invalid')
         if self._store.get('cache') is None:
             self._store['cache'] = OrderedDict()
-        if 'kinds' not in self._store:            # checkpoints written before the kind column (2026-09-15)
-            self._store['kinds'] = self._backfill_kinds()
-        if any(c not in self._store for c in RECALL_COLUMNS):   # before the recall columns (2026-09-18)
-            self._store['props'], self._store['asks'], self._store['revs'], self._store['outs'] = self._backfill_recall_columns()
-
-    def _backfill_recall_columns(self):
-        store = self._store
-        props, asks, revs, outs = [], [], [], []
-        for blob in store['blobs']:
-            payload = json.loads(zlib.decompress(blob).decode('utf-8'))
-            p, a = _recall_columns(payload.get('text') or '', payload.get('proposition'))
-            props.append(p); asks.append(a); revs.append(payload['revision']); outs.append(payload['outcome'])
-        return props, asks, revs, outs
+        self._store['light_cache'] = OrderedDict()
 
     def recall_candidates(self, signal, navigation_cues=()):
         """The engine's ``recall_memory`` on cue ids (2026-09-18): the same ``RecallResult`` — the same
@@ -576,10 +520,7 @@ class CompactIndex:
 
     def proposition_of_row(self, row):
         """The row's explicit proposition id or None — a list read, no episode build."""
-        props = self._store.get('props')
-        if props is None or row >= len(props):
-            return self.episode(self._store['ids'][row]).steps[0].observation.get('proposition_id')
-        return props[row] or None
+        return self._store['props'][row] or None
 
     def proposition_of(self, identifier):
         row = self._store['row_of'].get(identifier)
@@ -592,19 +533,7 @@ class CompactIndex:
         row = self._store['row_of'].get(identifier)
         if row is None or row >= self.count:
             raise KeyError(identifier)
-        asks = self._store.get('asks')
-        if asks is None or row >= len(asks):
-            a, d = asks_and_description(self.episode(identifier).steps[0].observation.get('text', ''))
-            return a.casefold(), d.casefold()
-        return asks[row]
-
-    def _backfill_kinds(self):
-        store = self._store
-        kinds = []
-        for blob in store['blobs']:
-            payload = json.loads(zlib.decompress(blob).decode('utf-8'))
-            kinds.append(str((payload.get('metadata') or {}).get('kind') or ''))
-        return kinds
+        return self._store['asks'][row]
 
     def masked(self, exclude_kinds):
         """A view of this generation whose postings skip records of the given kinds.
@@ -622,11 +551,9 @@ class CompactIndex:
         masks = store.get('kind_masks') or {}
         mask = masks.get(key)
         if mask is None:
-            kinds = store.get('kinds') or []
-            n = min(self.count, len(kinds))
-            mask = np.fromiter((k not in exclude for k in kinds[:n]), dtype=bool, count=n)
-            if n < self.count:                      # rows appended without a kind entry: keep them
-                mask = np.concatenate([mask, np.ones(self.count - n, dtype=bool)])
+            kinds = store['kinds']
+            mask = np.fromiter((kind not in exclude for kind in kinds[:self.count]),
+                               dtype=bool, count=self.count)
             store['kind_masks'] = {key: mask}      # atomic replace; readers hold old or new dict
         return self.masked_rows(mask)
 
