@@ -74,7 +74,9 @@ def test_cold_shard_is_named_unready_until_complete_generation_is_prepared(tmp_p
         sharded = ShardedMain(primary, resident)
         status = sharded.status()
         assert status["memory_ready"] is False
-        assert status["incomplete_shards"] == [{"id": "s1", "state": "preparing"}]
+        assert status["incomplete_shards"] == [{"id": "s1", "state": "cold"}]
+        assert not resident.wanted       # status inspection must not schedule every shard
+        resident.ready("s1")             # an actual read miss schedules only this shard
         prepared = resident.prepare_all()
         assert prepared[0]["complete_vrs"] is True
         assert sharded.status()["memory_ready"] is True
@@ -106,6 +108,8 @@ def test_automatic_split_preserves_source_and_supersedes_lineage(tmp_path):
         sharded = ShardedMain(primary, resident)
         status = sharded.status()
         if not status["memory_ready"]:
+            for shard in resident.ids():
+                resident.ready(shard)
             resident.prepare_all()
             status = sharded.status()
         root = sharded.recall("자동 분할 경험", status["pair_snapshot_id"])

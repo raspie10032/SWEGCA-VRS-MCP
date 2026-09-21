@@ -100,19 +100,23 @@ class ShardedMain:
         self.primary._check()
 
     def status(self):
-        try:
-            owners = self._owners()
-        except ValueError:
-            base = self.primary.status()
-            missing = [dict(id=shard, state=state) for shard in self.resident.ids()
-                       for owner, state in [self.resident.ready(shard)] if owner is None]
-            base.update(memory_ready=False, complete_vrs_shards_ready=False,
-                        pair_snapshot_id=self._snapshot(),
-                        resource_budget=self.resident.budget(),
-                        incomplete_shards=missing,
-                        logical_main='complete_vrs_sharded_generation')
-            return base
-        snapshot = self._snapshot(owners)
+        owners = [('main', self.primary)]
+        missing, shards = [], []
+        for shard in self.resident.ids():
+            owner, state = self.resident.peek_ready(shard)
+            if owner is None:
+                missing.append(dict(id=shard, state=state))
+                shards.append(dict(id=shard, state=state,
+                    pair_snapshot_id=self.resident.pair_ids.get(shard),
+                    records=self.resident.record_counts.get(shard), stable_version_id=None))
+            else:
+                owners.append((shard, owner))
+                shards.append(dict(id=shard, state=state,
+                    pair_snapshot_id=owner.pair.snapshot_id,
+                    records=owner.memory.episode_count,
+                    stable_version_id=(owner.graph.stable.version_id
+                                       if owner.graph.stable is not None else None)))
+        snapshot = self._snapshot()
         base = self.primary.status()
         counts = {}
         for _, owner in owners:
@@ -120,15 +124,22 @@ class ShardedMain:
                 counts[name] = counts.get(name, 0) + count
         base.update(pair_snapshot_id=snapshot,
                     hot_episode_count=sum(owner.memory.episode_count for _, owner in owners),
-                    outcome_counts=counts, lookup_requires_io=False,
-                    shards=[dict(id=shard, pair_snapshot_id=owner.pair.snapshot_id,
-                                 records=owner.memory.episode_count,
-                                 stable_version_id=(owner.graph.stable.version_id
-                                                    if owner.graph.stable is not None else None))
-                            for shard, owner in owners],
+                    logical_episode_count=self.resident.logical_record_count(),
+                    logical_episode_count_complete=(len(self.resident.record_counts)
+                                                    == 1 + len(self.resident.ids())),
+                    outcome_counts=counts,
+                    outcome_counts_complete=not missing,
+                    lookup_requires_io=True,
+                    lookup_io='disk Replay capsules and cold complete VRS shards',
+                    shards=[dict(id='main', state='hot', pair_snapshot_id=self.primary.pair.snapshot_id,
+                                 records=self.primary.memory.episode_count,
+                                 stable_version_id=(self.primary.graph.stable.version_id
+                                                    if self.primary.graph.stable is not None else None)),
+                            *shards],
+                    incomplete_shards=missing,
                     logical_main='complete_vrs_sharded_generation')
         base['resource_budget'] = self.resident.budget()
-        base['memory_ready'] = base['complete_vrs_shards_ready'] = True
+        base['memory_ready'] = base['complete_vrs_shards_ready'] = not missing
         return base
 
     def _finish_exact(self, query, pair_snapshot, signal, recalled, replayed,

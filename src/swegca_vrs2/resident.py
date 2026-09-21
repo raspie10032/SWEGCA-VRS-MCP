@@ -651,6 +651,19 @@ class Resident:
             self.wanted.add(bundle_id)
             return None, 'preparing'
 
+    def peek_ready(self, bundle_id):
+        """Read readiness without scheduling a load (status must stay side-effect free)."""
+        with self.lock:
+            main = self.hot.get(bundle_id)
+            if main is not None:
+                return main, 'hot'
+            if bundle_id in self.closing:
+                return None, 'closing'
+            view = self.warm.get(bundle_id)
+            if view is not None and view.generation is not None:
+                return view.generation, 'warm'
+            return None, 'cold'
+
     def prepare(self, bundle_id, force=False):
         """Load or refresh one warm bundle off the request path (the preparer's call). Returns a receipt or None
         when there was nothing to do."""
