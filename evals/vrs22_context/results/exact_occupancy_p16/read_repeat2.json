@@ -1,0 +1,19 @@
+{
+  "status": "MEASURED",
+  "scope": "synthetic exact-index high occupancy only",
+  "real_experience_scale_claimed": false,
+  "parameter_scale_claimed": false,
+  "samples": 10000,
+  "opened_address_segments": 2,
+  "prefetched_allocated_bytes": 50965010,
+  "median_ms": 0.00728,
+  "p99_ms": 0.0102,
+  "max_ms": 0.114282,
+  "at_or_above_1ms": 0,
+  "database_module_loaded": false,
+  "cgroup_limits": {
+    "memory_max": "4294967296",
+    "memory_swap_max": "0",
+    "io_max": "259:3 rbps=625000000 wbps=625000000 riops=max wiops=max"
+  }
+}

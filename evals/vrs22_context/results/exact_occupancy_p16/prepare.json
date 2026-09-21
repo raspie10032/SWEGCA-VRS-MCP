@@ -1,0 +1,12 @@
+{
+  "status": "PREPARED",
+  "scope": "synthetic exact-index high occupancy only",
+  "original_episode_id": "memory:52085a6ad6e0e6ad4072614fdf198b2305033a3c3a76c7006ec6e4e7bbfb3701",
+  "addresses": 45876,
+  "first_level_count": 45875,
+  "first_level_sealed": true,
+  "second_level_count": 1,
+  "ingest_seconds": 0.9653061410062946,
+  "allocated_bytes": 50974720,
+  "logical_bytes": 66693650
+}
