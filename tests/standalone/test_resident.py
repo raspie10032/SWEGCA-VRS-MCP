@@ -2,6 +2,7 @@
 """Every resident shard must retain the complete SWEGCA-VRS read path."""
 import sqlite3
 import threading
+import json
 from collections import OrderedDict
 from types import SimpleNamespace
 
@@ -182,6 +183,42 @@ def test_logical_snapshot_update_cost_does_not_scan_all_shards(tmp_path):
 
         resident.pair_ids = NoIteration(resident.pair_ids)
         assert resident.logical_snapshot() == after
+    finally:
+        resident.close()
+        primary.close()
+
+
+def test_exact_backfill_progress_persists_and_covers_one_cold_shard_at_a_time(tmp_path):
+    primary = Main(tmp_path / "main", allow_ingest=True)
+    resident = Resident(primary, {}, hot_limit=1, bundle_limit=2)
+    try:
+        receipt = resident.ingest_many([
+            row(number, f"정확주소 백필 경험 {number}", f"backfill-{number}")
+            for number in range(5)
+        ])
+        identifiers = [item["episode_id"] for item in receipt["results"]]
+        resident.settle()
+        # Simulate a pre-repair directory: keep experience stores and rebuild
+        # the exact directory/progress from their complete VRS generations.
+        resident.close()
+        primary.close()
+        import shutil
+        shutil.rmtree(tmp_path / "main" / "exact-replay")
+
+        primary = Main(tmp_path / "main", allow_ingest=True)
+        resident = Resident(primary, {}, hot_limit=0, bundle_limit=2)
+        passes = []
+        for _ in range(8):
+            result = resident.backfill_exact(2)
+            passes.append(result)
+            if result["complete"]:
+                break
+        assert passes[-1]["complete"] is True
+        assert sum(item["added"] for item in passes) == 5
+        assert all(resident.exact_replay(identifier) is not None for identifier in identifiers)
+        saved = json.loads((tmp_path / "main" / "exact-replay" / "backfill.json")
+                           .read_text(encoding="utf-8"))
+        assert set(saved["shards"]) == {"main", "shard-000001", "shard-000002"}
     finally:
         resident.close()
         primary.close()

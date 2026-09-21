@@ -186,7 +186,10 @@ class Resident:
                                if identifier.startswith(AUTO_SHARD_PREFIX)
                                and self.bundles[identifier].parent == self.auto_root)
         self.exact = ExactReplayStore(self.primary.directory / 'exact-replay')
-        self.exact_backfill = {'main': 0}
+        self.exact_progress_path = self.exact.directory / 'backfill.json'
+        self.exact_progress_lock = threading.Lock()
+        self.exact_backfill = self._load_exact_progress()
+        self.exact_backfill.setdefault('main', dict(count=0, tail=None))
         self.pair_ids = {'main': self.primary.pair.snapshot_id}
         for identifier, directory in self.bundles.items():
             try:
@@ -211,6 +214,48 @@ class Resident:
         self.wanted = set()                               # bundles a judgment missed: the preparer loads them next
         self.prepared = {}                                # bundle id -> receipt of the last prepare (ms, seq, when)
         self.lock = threading.Lock()
+
+    def _load_exact_progress(self):
+        try:
+            body = json.loads(self.exact_progress_path.read_text(encoding='utf-8'))
+            if body.get('schema') != 'swegca-vrs2-exact-backfill-v1':
+                return {}
+            progress = {}
+            for shard, row in body.get('shards', {}).items():
+                count = max(0, int(row.get('count', 0)))
+                tail = row.get('tail')
+                progress[str(shard)] = dict(count=count,
+                    tail=tail if isinstance(tail, str) else None,
+                    complete=bool(row.get('complete', False)))
+            return progress
+        except (OSError, ValueError, TypeError, json.JSONDecodeError):
+            return {}
+
+    def _save_exact_progress(self):
+        body = dict(schema='swegca-vrs2-exact-backfill-v1', shards=self.exact_backfill)
+        temporary = self.exact_progress_path.with_suffix('.tmp')
+        temporary.write_text(json.dumps(body, ensure_ascii=False, sort_keys=True,
+                                        separators=(',', ':')), encoding='utf-8')
+        os.replace(temporary, self.exact_progress_path)
+
+    def _exact_cursor(self, shard, owner):
+        row = self.exact_backfill.get(shard, {})
+        count = max(0, int(row.get('count', 0)))
+        ids = owner.memory._store['ids']
+        if count > owner.memory.episode_count:
+            return 0
+        if count and (count > len(ids) or ids[count - 1] != row.get('tail')):
+            return 0
+        return count
+
+    def _advance_exact_cursor(self, shard, owner, count):
+        count = max(0, min(int(count), owner.memory.episode_count))
+        ids = owner.memory._store['ids']
+        with self.exact_progress_lock:
+            self.exact_backfill[shard] = dict(
+                count=count, tail=(ids[count - 1] if count else None),
+                complete=(count >= owner.memory.episode_count))
+            self._save_exact_progress()
 
     def _storage_bytes(self, *, force=False):
         """Logical bytes with a short cache so ingest does not walk the tree.
@@ -447,6 +492,7 @@ class Resident:
         """Incrementally add pre-repair experiences without delaying startup."""
         remaining, added = max(0, int(budget)), 0
         owners = [('main', self.primary)]
+        temporary = None
         for identifier in self.ids():
             owner = self.hot.get(identifier)
             if owner is None:
@@ -454,23 +500,39 @@ class Resident:
                 owner = view.generation if view is not None else None
             if owner is not None:
                 owners.append((identifier, owner))
-        for shard, owner in owners:
-            if not remaining:
+        ready = {shard for shard, _ in owners}
+        if remaining:
+            for shard in self.ids():
+                if (shard in ready or self.exact_backfill.get(shard, {}).get('complete')
+                        or not (self.bundles[shard] / 'memory.sqlite3').is_file()):
+                    continue
+                temporary = WarmView(shard, self.bundles[shard])
+                owners.append((shard, temporary.refresh()))
                 break
-            start = int(self.exact_backfill.get(shard, 0))
-            ids = owner.memory._store['ids']
-            stop = min(owner.memory.episode_count, start + remaining)
-            for row in range(start, stop):
-                identifier = ids[row]
-                episode = owner.memory.episode(identifier)
-                added += int(self.exact.put(identifier, shard, episode))
-                for source in episode.source_addresses:
-                    self.exact.put_source(source, shard)
-            self.exact_backfill[shard] = stop
-            remaining -= stop - start
-        return dict(scanned=budget - remaining, added=added,
-                    complete=all(self.exact_backfill.get(shard, 0) >= owner.memory.episode_count
-                                 for shard, owner in owners))
+        try:
+            for shard, owner in owners:
+                if not remaining:
+                    break
+                start = self._exact_cursor(shard, owner)
+                ids = owner.memory._store['ids']
+                stop = min(owner.memory.episode_count, start + remaining)
+                for row in range(start, stop):
+                    identifier = ids[row]
+                    episode = owner.memory.episode(identifier)
+                    added += int(self.exact.put(identifier, shard, episode))
+                    for source in episode.source_addresses:
+                        self.exact.put_source(source, shard)
+                if (stop != start or (stop >= owner.memory.episode_count
+                                      and not self.exact_backfill.get(shard, {}).get('complete'))):
+                    self._advance_exact_cursor(shard, owner, stop)
+                remaining -= stop - start
+        finally:
+            if temporary is not None:
+                temporary.close()
+        complete = all(bool(self.exact_backfill.get(shard, {}).get('complete'))
+                       for shard in ('main', *self.ids())
+                       if shard == 'main' or (self.bundles[shard] / 'memory.sqlite3').is_file())
+        return dict(scanned=budget - remaining, added=added, complete=complete)
 
     _SEQUENCE_BITS = 48
     _SEQUENCE_MASK = (1 << _SEQUENCE_BITS) - 1
