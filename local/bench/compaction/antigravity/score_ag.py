@@ -252,12 +252,12 @@ def daemon_rows(state_dir, cid):
             return dict(available=False, reason="no daemon port")
         c = LoopbackClient(port, 30)
         try:
-            r = c.request("origins", kinds=["transcript"], session=cid, limit=5000)
+            r = c.request("origins", kinds=["transcript"], session=cid, limit=500)     # the daemon caps the page at 500
         finally:
             c.close()
-        rows = r.get("rows") or r.get("origins") or []
-        rows = [x for x in rows if cid[:8] in json.dumps(x, ensure_ascii=False)]
-        return dict(available=True, rows=len(rows), layers=sorted({str(x.get("layer")) for x in rows}))
+        rows = [x for x in (r.get("rows") or []) if cid[:8] in str(x.get("source"))]
+        spans = [x.get("source", "").rsplit("#", 1)[-1] for x in rows]
+        return dict(available=True, rows=len(rows), layers=sorted({str(x.get("layer")) for x in rows}), spans=spans[:12], spans_all=spans)
     except Exception as e:
         return dict(available=False, reason=repr(e)[:160])
 
@@ -311,6 +311,17 @@ def main(argv=None):
         tail_pass = all(o["vrs_tail_before"] for o in obs) if (obs and receipts is not None) else None
         recall_pass = all(o["vrs_recall_after"] > 0 for o in obs) if obs else None
         rows_pass = bool(vrows and vrows.get("available") and vrows.get("rows"))
+        if rows_pass and obs:
+            # the row spans (step ranges) must reach every boundary: the turn before each compaction is in the store
+            spans = []
+            for sp in vrows.get("spans_all") or vrows.get("spans") or []:
+                try:
+                    lo, hi = sp.split("-"); spans.append((int(lo), int(hi)))
+                except ValueError:
+                    pass
+            covered = all(any(lo <= o["step"] - 1 <= hi or lo <= o["step"] + 1 <= hi for lo, hi in spans) for o in obs)
+            vrows["boundaries_covered"] = covered
+            rows_pass = rows_pass and covered
         vrs = dict(vrs_tail=tail_pass, vrs_recall=recall_pass, vrs_rows=rows_pass, vrs=int(bool(tail_pass) and bool(recall_pass) and rows_pass))
     report = dict(run=a.run, model=run.get("model"), cid=run.get("cid"), checkpoint=run.get("checkpoint"), done=run.get("done"), timed_out=run.get("timed_out"),
                   nudges=run.get("nudges"), compactions=len(obs), intent_only_checkpoints=sum(1 for r in recs if r.get("checkpoint") and r["checkpoint"].get("intent_only")),

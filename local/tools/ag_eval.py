@@ -325,7 +325,9 @@ def main(argv):
             os.makedirs(a.vrs_receipts, exist_ok=True); env["VRS2_RECEIPTS"] = os.path.abspath(a.vrs_receipts)
         tail_log = io.open(os.path.join(a.out, "tail.log"), "a", encoding="utf-8")
         tail = subprocess.Popen([sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)), "vrs2-tail.py"), "--watch", db_path(cid),
-                                 "--agent", "antigravity", "--interval", "10"], env=env, stdout=tail_log, stderr=subprocess.STDOUT)
+                                 "--agent", "antigravity", "--interval", "3", "--cut"], env=env, stdout=tail_log, stderr=subprocess.STDOUT)
+        # --cut: the open turn (an agentic run is one user turn) is taken every interval as partial rows — the
+        # PreCompact hook's role for an agent without hooks, so the store holds the steps before each compaction
         run["vrs"] = dict(state=os.path.abspath(a.vrs_state), receipts=os.path.abspath(a.vrs_receipts) if a.vrs_receipts else None, tail_pid=tail.pid)
         print("tail pid", tail.pid, "->", a.vrs_state)
     send(server, cid, card, cfg)
