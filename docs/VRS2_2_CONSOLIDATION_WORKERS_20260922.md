@@ -3,8 +3,12 @@
 This is a **source-candidate benchmark** on a copy of 15,630 existing native
 experience records. It does not measure one billion VRS parameters, and it does
 not prove a seconds-scale bound at that size. The current resident deployment
-is still waiting for the active Codex task's SessionEnd handoff; the installed
-runtime wheel has not yet been rebuilt with this region-split change.
+is still waiting for the active Codex task's SessionEnd handoff. A rebuilt
+wheel from source commit `67cae88` is installed separately and passed archive,
+package-file, session-capture, and original Replay checks. Its SHA-256 is
+`2b8b1754f8d8efa443f7c6e2837417f18f3c98e42d637e51105e833ae434f051`.
+The one-shot post-SessionEnd watcher now points at this candidate, but the
+current session's old live runtime and main have not been switched.
 
 The copied shard contained 71 fine regions, 147,356 nodes, and 3,312,964 flat
 edges. The comparison ran the identical frozen generation for four cycles with
@@ -39,8 +43,24 @@ paths. Profiling changes wall times, so its numbers are diagnostic rather than
 the speedup estimate. The measured improvement remains modest; more work is
 required before any large-scale consolidation promise can be made.
 
-Reproduction script: `local/bench/vrs2-consolidation-workers.py`. Raw results
-and the diagnostic profile are in
+Reproduction script: `local/bench/vrs2-consolidation-workers.py`. It reads a
+separate copy of an existing native experience shard; the original is not
+modified. One bounded run used:
+
+```sh
+systemd-run --user --pipe --wait --collect \
+  --unit=vrs22-consolidation-fineparallel-20260922 \
+  -p MemoryMax=4294967296 -p MemorySwapMax=0 \
+  -p 'IOReadBandwidthMax=/var/tmp 625000000' \
+  -p 'IOWriteBandwidthMax=/var/tmp 625000000' \
+  /usr/bin/env OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 \
+  /home/raspie/.local/share/swegca-vrs2-runtime-2.2-candidate/venv/bin/python \
+  /var/home/raspie/Documents/Codex/SWEGCA-VRS-MCP-vrs22-repair-20260921/local/bench/vrs2-consolidation-workers.py \
+  --state-dir /var/tmp/vrs22-existing-experience-merge16-20260922 \
+  --io-device /dev/nvme2n1 --cycles 4
+```
+
+Raw results and the diagnostic profile are in
 `evals/vrs22_context/results/consolidation16/`; the baseline SHA-256 is
 `76de22543c957f4aefc24e3ea7d9ca614bf90650761d5690d97551283fd6925c`.
 Candidate repeat hashes are

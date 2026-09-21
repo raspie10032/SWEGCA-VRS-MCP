@@ -44,8 +44,8 @@ session lifecycle.
   scores were 4/20 for five and 20/20 for Terra 100k plain. The sanitized
   receipt is `evals/vrs22_context/results/plain_restored_validation_005.json`,
   SHA-256 `13d20ec66941fc2ef4eb15ba1c5461b8a91473d649c1952d8fc56ee7005eb274`.
-- Runtime source provenance: `65ec52d`; frozen installed wheel SHA-256:
-  `e0144305a8fa863f52679b7a4aa1e01901fa23942314e364d36c40c302a656c9`.
+- Runtime source provenance: `67cae88`; frozen candidate wheel SHA-256:
+  `2b8b1754f8d8efa443f7c6e2837417f18f3c98e42d637e51105e833ae434f051`.
   Preflight verified all 48 installed package files against that wheel and
   found zero forbidden source references or dependencies. A subprocess import
   audit found neither `sqlite3` loaded nor `filelock` available in either the
@@ -68,7 +68,7 @@ current status is `PENDING_LIVE_HANDOFF` because the actual task has not ended.
 The same gate rejects a full run before creating an output directory or making
 model calls. Its software self-test receipt is
 `evals/vrs22_context/results/v019_selftest_receipt.json`, SHA-256
-`96ff3d6922357188c8338add8061718d397c3dd833a582c4186e8271bef9647d`.
+`4d7d9afc8f1bc3b78d78f09a9c5cde3bf9e417f28b5fc71bd276c036e0bb82ca`.
 It covers two simultaneous sessions (main 0 before SessionEnd; all six session
 records linked after), installed hook injection/cursor/SessionEnd, a generation
 lease across a 6.5-second idle boundary with 81 records and four-stage

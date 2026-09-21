@@ -28,7 +28,7 @@
     "pretool_exact_session_injected": true,
     "cursor_accounted": true,
     "ended_only_after_session_end": true,
-    "session_end_hook_elapsed_ns": 112943246,
+    "session_end_hook_elapsed_ns": 112194640,
     "linked_experiences": 2,
     "original_text_preserved": true,
     "database_artifacts": []
@@ -54,10 +54,10 @@
     "test_python_readable": true,
     "shell_snapshot_readable": true,
     "rg_readable": true,
-    "isolated_home": "/var/tmp/vrs22-v019-main-probe-selftest-2/isolation/isolation-workspace/.grade-tmp/home"
+    "isolated_home": "/var/tmp/vrs22-v019-67cae88-selftest-20260922/isolation/isolation-workspace/.grade-tmp/home"
   },
   "runtime_install": {
-    "installed_package": "/home/raspie/.local/share/swegca-vrs2-runtime-2.2/venv/lib/python3.12/site-packages/swegca_vrs2",
+    "installed_package": "/home/raspie/.local/share/swegca-vrs2-runtime-2.2-candidate/venv/lib/python3.12/site-packages/swegca_vrs2",
     "wheel_package_files": 48,
     "mismatches": [],
     "forbidden_database_references": [],

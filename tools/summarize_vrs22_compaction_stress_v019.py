@@ -26,9 +26,9 @@ RATES = {"gpt-5.6-luna": (.20, .02, 1.20),
          "gpt-5.6-sol": (4.00, .40, 20.00)}
 FIELDS = ("input_tokens", "cached_input_tokens", "cache_write_input_tokens",
           "output_tokens", "reasoning_output_tokens")
-RUNTIME_PRODUCT_COMMIT = "65ec52d"
-RUNTIME_REPOSITORY_COMMIT = "65ec52d"
-RUNTIME_WHEEL_SHA256 = "e0144305a8fa863f52679b7a4aa1e01901fa23942314e364d36c40c302a656c9"
+RUNTIME_PRODUCT_COMMIT = "67cae88"
+RUNTIME_REPOSITORY_COMMIT = "67cae88"
+RUNTIME_WHEEL_SHA256 = "2b8b1754f8d8efa443f7c6e2837417f18f3c98e42d637e51105e833ae434f051"
 PRIVATE_PLAIN_ROOT = Path("/home/raspie/.local/share/vrs22-eval-runtime-v019/private")
 PLAIN_ARCHIVE = PRIVATE_PLAIN_ROOT / "plain-v005-control-evidence.tar.zst"
 PLAIN_EXTRACTED = PRIVATE_PLAIN_ROOT / "plain-v005-control-evidence"
