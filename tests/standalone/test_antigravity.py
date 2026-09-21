@@ -175,3 +175,16 @@ def test_registered_with_a_short_idle_the_sweep_takes_a_live_agent_within_its_id
     os.utime(path, (time.time() - 20, time.time() - 20))                     # 20 s quiet: taken (the default would wait 600 s)
     out = t.sweep_all(trigger="daemon", client_factory=Client)
     assert len(out) == 1 and out[0]["rows"] == 1 and out[0]["agent"] == "antigravity" and sent == [1]
+
+
+def test_a_wal_file_being_written_keeps_the_turn_open(tmp_path):
+    """Live test 2026-09-21: the answer step sat in <db>-wal while the database's own mtime was 4 s older — a quiet
+    check on the .db alone would have cut the turn with the user's words only."""
+    path = str(tmp_path / "wal.db")
+    make_db(path, [user_step(T0, "질문"), answer_step(T0 + 4, "답이 아직 써지는 중")])
+    os.utime(path, (time.time() - 60, time.time() - 60))
+    open(path + "-wal", "wb").write(b"x")                                   # the writer's WAL, touched just now
+    assert t.run(path, trigger="cli", project="proj", dry_run=True)["rows"] == 0   # not quiet: the open turn waits
+    os.utime(path + "-wal", (time.time() - 30, time.time() - 30))
+    assert t.run(path, trigger="cli", project="proj", dry_run=True)["rows"] == 1   # quiet now: taken whole
+

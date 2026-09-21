@@ -375,6 +375,17 @@ def antigravity_cwd(path):
     return None
 
 
+def last_write(path, stat=None):
+    """When the source was last written: a WAL-mode SQLite database takes its writes in ``<db>-wal`` while its own
+    mtime stays at the last checkpoint (the Antigravity live test, 2026-09-21) — the newer of the two counts."""
+    mtime = (stat or os.stat(path)).st_mtime
+    try:
+        mtime = max(mtime, os.stat(path + "-wal").st_mtime)
+    except OSError:
+        pass
+    return mtime
+
+
 def indexed_items(path, index, fmt):
     return antigravity_items(path, index) if fmt == "antigravity" else messages_json_items(path, index)
 
@@ -819,7 +830,7 @@ def has_content(seg):
 def plan(path, state, fmt, trigger, force_cut=False):
     """What this run would send: (rows_as_segments, new_state_fields, at_end, quiet). Pure — no ingest."""
     stat = os.stat(path)
-    quiet = time.time() - stat.st_mtime >= QUIET_S
+    quiet = time.time() - last_write(path, stat) >= QUIET_S
     if fmt in INDEXED:
         items, next_pos, at_end = indexed_items(path, int(state.get("index", 0)), fmt)
         first_line = int(state.get("index", 0)) + 1
@@ -1178,7 +1189,7 @@ def sweep_all(*, trigger="daemon", client_factory=None, idle_seconds=None):
                 stat = os.stat(item["path"])
             except OSError:
                 continue
-            if stat.st_size <= item["offset"] or now - stat.st_mtime < item.get("idle", idle):
+            if stat.st_size <= item["offset"] or now - last_write(item["path"], stat) < item.get("idle", idle):
                 continue
             if client is None and client_factory is not None:
                 client = client_factory()
