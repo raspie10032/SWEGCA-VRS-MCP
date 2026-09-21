@@ -1,0 +1,15 @@
+{
+  "status": "PASS",
+  "scope": "one active-session captured transcript prefix versus native VRS journals",
+  "transcript_lines": 36985,
+  "captured_lines": 31590,
+  "excluded_private_or_control_lines": 5395,
+  "expected_original_observations": 32210,
+  "native_original_observations": 32210,
+  "native_stores": 4,
+  "missing_requests": 0,
+  "unexpected_requests": 0,
+  "changed_originals": 0,
+  "cursor_accounted": true,
+  "sqlite_module_loaded": false
+}

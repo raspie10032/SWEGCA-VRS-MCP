@@ -25,6 +25,11 @@ import struct
 import threading
 import zlib
 
+try:
+    import resource
+except ImportError:  # Windows has no resource module.
+    resource = None
+
 from .engine.mosaic_memory_activation import MemoryStep, OUTCOMES, ReplayedEpisode
 from .store import plain
 from .compact_index import asks_and_description
@@ -44,6 +49,14 @@ LEVEL_LOAD_NUMERATOR = 7
 LEVEL_LOAD_DENOMINATOR = 10
 READ_SEGMENT_CACHE = int(os.environ.get('VRS2_EXACT_READ_SEGMENTS', '2048'))
 PREFETCH_CHUNK = 1024 * 1024
+
+
+def _descriptor_budget():
+    """Reserve descriptors for the daemon, cue index and concurrent readers."""
+    if resource is None:
+        return 1024
+    soft, _ = resource.getrlimit(resource.RLIMIT_NOFILE)
+    return 1024 if soft == resource.RLIM_INFINITY else max(1, int(soft))
 
 
 def _write_all(fd, data):
@@ -200,7 +213,11 @@ class ExactReplayStore:
                 if stream.read(len(MAGIC)) != MAGIC:
                     raise ValueError('exact_replay_capsule_header_invalid')
         self.data_read_fd = os.open(self.data_path, os.O_RDONLY)
-        self.read_segment_limit = max(1, READ_SEGMENT_CACHE)
+        descriptors = _descriptor_budget()
+        self.read_segment_limit = max(1, min(READ_SEGMENT_CACHE, descriptors // 4))
+        # A write can touch one address and one source prefix per experience.
+        # Bound its simultaneously mapped files independently of batch length.
+        self.write_batch_limit = max(1, min(64, descriptors // 16))
         self.read_segments = OrderedDict()
 
     def warm_address_segments(self):
@@ -446,13 +463,37 @@ class ExactReplayStore:
         return bool(self.put_many(((identifier, shard, row, episode),))['exact'])
 
     def put_many(self, records):
-        """Durably publish many exact capsules and source routes in one I/O batch.
+        """Durably publish exact capsules and source routes in bounded I/O batches.
 
         Capsule bytes reach disk before any address slot is published.  A crash
         can therefore leave only harmless unindexed tail bytes, never an index
         pointing at a partial Replay capsule.
         """
         records = list(records)
+        assignments, sources = {}, {}
+        for identifier, shard, row, episode in records:
+            assignment = (str(shard), int(row))
+            previous = assignments.setdefault(identifier, assignment)
+            if previous != assignment:
+                raise ValueError('exact_replay_address_reassigned')
+            for source in episode.source_addresses:
+                previous_shard = sources.setdefault(source, str(shard))
+                if previous_shard != str(shard):
+                    raise ValueError('experience_source_lineage_split')
+        if len(records) > self.write_batch_limit:
+            # Every original is already committed to the main journal.  Each
+            # bounded index chunk is crash recoverable from that journal, and
+            # the resident advances the complete-read cursor only after all
+            # chunks and cue/proposition routes have been published.
+            totals = dict(exact=0, sources=0)
+            for start in range(0, len(records), self.write_batch_limit):
+                result = self._put_many_chunk(records[start:start + self.write_batch_limit])
+                totals['exact'] += result['exact']
+                totals['sources'] += result['sources']
+            return totals
+        return self._put_many_chunk(records)
+
+    def _put_many_chunk(self, records):
         exact_rows = [(identifier, str(shard), int(row), episode,
                        self._encode(identifier, shard, row, episode))
                       for identifier, shard, row, episode in records]

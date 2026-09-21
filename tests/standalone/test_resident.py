@@ -108,6 +108,48 @@ def test_warm_view_refuses_an_uncheckpointed_tail(tmp_path):
         owner.close()
 
 
+def test_complete_exact_directory_routes_new_source_without_cold_scan(tmp_path, monkeypatch):
+    primary = Main(tmp_path / 'main', allow_ingest=True)
+    resident = Resident(primary, hot_limit=1, bundle_limit=1)
+    try:
+        resident.ingest(row(0, '첫 원경험', 'main'))
+        resident.ingest(row(0, '분할 원경험', 'shard'))
+        assert resident.read_directory_complete()
+        monkeypatch.setattr(WarmView, 'refresh', lambda self: (_ for _ in ()).throw(
+            AssertionError('complete_address_index_must_not_scan_cold_shards')))
+        assert resident._owner_with_source('new/source#1') is None
+        assert resident._owner_with_episode('memory:' + 'a' * 64) is None
+
+        new = primary.ingest(row(1, '아직 주소 인덱스에 없는 원경험', 'main'))
+        assert not resident.read_directory_complete()
+        resident._register_exact_many(primary, [new['episode_id']])
+        resident.refresh_pair('main', primary)
+        assert resident.read_directory_complete()
+    finally:
+        resident.close()
+        primary.close()
+
+
+def test_incomplete_new_shard_routes_from_journal_before_first_checkpoint(tmp_path,
+                                                                          monkeypatch):
+    primary = Main(tmp_path / 'main', allow_ingest=True)
+    resident = Resident(primary, hot_limit=1, bundle_limit=1)
+    try:
+        shard = resident._new_auto_shard()
+        resident.main_for(shard)
+        resident.evict(shard)
+        resident.settle()
+        resident.exact_backfill[shard]['complete'] = False
+        assert not resident.read_directory_complete()
+        monkeypatch.setattr(WarmView, 'refresh', lambda self: (_ for _ in ()).throw(
+            AssertionError('uncheckpointed_shard_requires_native_journal_owner')))
+        assert resident._owner_with_source('new/source#2') is None
+        assert resident._owner_with_episode('memory:' + 'b' * 64) is None
+    finally:
+        resident.close()
+        primary.close()
+
+
 def test_complete_shard_packet_with_nested_metadata_encodes(tmp_path):
     from swegca_vrs2.native_transport import encode
     from swegca_vrs2.loopback import origins

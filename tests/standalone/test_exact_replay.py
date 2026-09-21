@@ -107,6 +107,37 @@ def test_full_exact_segments_expand_without_changing_replay_addresses(tmp_path):
         main.close()
 
 
+def test_exact_batch_bounds_open_segments_below_service_file_limit(tmp_path, monkeypatch):
+    monkeypatch.setattr('swegca_vrs2.exact_replay._descriptor_budget', lambda: 128)
+    main = Main(tmp_path / 'main', allow_ingest=True)
+    try:
+        stored = main.ingest(dict(request_id='fd-budget', text='원경험 파일 한도',
+            source='source:fd-budget', revision='1', outcome='pending'))
+        episode = main.memory.episode(stored['episode_id'])
+        exact = ExactReplayStore(tmp_path / 'exact')
+        try:
+            assert exact.read_segment_limit <= 32
+            assert exact.write_batch_limit <= 8
+            identifiers = tuple('memory:' + f'{index + 1:064x}' for index in range(40))
+            result = exact.put_many((identifier, 'main', index, episode)
+                                    for index, identifier in enumerate(identifiers))
+            assert result == {'exact': 40, 'sources': 1}
+            assert all(exact.get(identifier)['shard_row'] == index
+                       for index, identifier in enumerate(identifiers))
+            assert exact.source_shard('source:fd-budget') == 'main'
+            later = tuple('memory:' + f'{index + 1000:064x}' for index in range(9))
+            conflicting = [(identifier, 'main', index, episode)
+                           for index, identifier in enumerate(later)]
+            conflicting.append((later[0], 'main', 999, episode))
+            with pytest.raises(ValueError, match='address_reassigned'):
+                exact.put_many(conflicting)
+            assert exact.get(later[0]) is None
+        finally:
+            exact.close()
+    finally:
+        main.close()
+
+
 def test_existing_address_segments_are_opened_without_prefaulting_whole_files(tmp_path):
     main = Main(tmp_path / "main", allow_ingest=True)
     exact = None

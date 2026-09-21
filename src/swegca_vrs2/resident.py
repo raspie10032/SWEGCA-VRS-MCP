@@ -195,8 +195,30 @@ class Resident:
                 journal = store.head()
                 store.close()
                 checkpoint_pair = checkpoint.pair if checkpoint is not None else None
+                journal_pair = journal[1] if journal is not None else None
+                if identifier in self.auto_ids:
+                    if journal is None:
+                        self.exact_backfill.setdefault(identifier, dict(
+                            count=0, tail=None, cue_total=0, complete=True))
+                        self.record_counts[identifier] = 0
+                        self.cue_totals[identifier] = 0
+                    elif checkpoint_pair != journal_pair:
+                        # A crashed writer may leave a complete native journal
+                        # beyond the last checkpoint. Rebuild its full VRS
+                        # generation before a source-route scan can touch it.
+                        from .store import Main
+                        recovered = Main(directory, allow_ingest=True,
+                                         defer_checkpoints=True)
+                        try:
+                            recovered.checkpoint()
+                            checkpoint_pair = recovered.pair.snapshot_id
+                            self.record_counts[identifier] = recovered.memory.episode_count
+                            self.cue_totals[identifier] = recovered.memory.cue_total
+                        finally:
+                            recovered.close()
+                        if checkpoint_pair != journal_pair:
+                            raise ValueError('auto_shard_recovery_pair_mismatch')
                 if linked is not None:
-                    journal_pair = journal[1] if journal is not None else None
                     if journal_pair is None or linked['pair_snapshot_id'] not in {
                             checkpoint_pair, journal_pair}:
                         raise ValueError('linked_shard_generation_changed')
@@ -223,6 +245,8 @@ class Resident:
                     self.record_counts[identifier] = int(progress.get('count', 0))
                     self.cue_totals[identifier] = int(progress.get('cue_total', 0))
             except (OSError, ValueError):
+                if identifier in self.auto_ids:
+                    raise
                 continue
         self._pair_lock = threading.Lock()
         self._logical_records = sum(self.record_counts.values())
@@ -311,6 +335,12 @@ class Resident:
                 cue_total=owner.memory.cue_total,
                 complete=(count >= owner.memory.episode_count))
             self._save_exact_progress()
+        # A cold shard discovered without a previous progress file may have
+        # no cached cardinality yet. Bind the new cursor to its full VRS
+        # generation so completeness checks compare against the real count.
+        with self._pair_lock:
+            self._set_counts_locked(shard, owner.memory.episode_count,
+                                    owner.memory.cue_total)
 
     def _storage_bytes(self, *, force=False):
         """Allocated device bytes with a short cache so ingest does not walk the tree.
@@ -441,10 +471,32 @@ class Resident:
         with self._pair_lock:
             return self._logical_cues
 
+    def _exact_shard_complete(self, shard):
+        progress = self.exact_backfill.get(shard, {})
+        if not progress.get('complete'):
+            return False
+        owner = self.primary if shard == 'main' else self.hot.get(shard)
+        if owner is not None:
+            count = owner.memory.episode_count
+            ids = owner.memory._store['ids']
+            tail = ids[count - 1] if count else None
+            return int(progress.get('count', -1)) == count and progress.get('tail') == tail
+        return int(progress.get('count', -1)) == self.record_counts.get(shard, -1)
+
     def read_directory_complete(self):
-        return all(bool(self.exact_backfill.get(shard, {}).get('complete'))
+        return all(self._exact_shard_complete(shard)
                    for shard in ('main', *self.ids())
                    if shard == 'main' or is_native_store(self.bundles[shard]))
+
+    def _ensure_exact_routing_complete(self):
+        """Finish recoverable address/source routing before admitting a new source."""
+        if self.read_directory_complete():
+            return
+        with self.read_build_lock:
+            while not self.read_directory_complete():
+                receipt = self.backfill_exact(1024)
+                if not receipt['scanned'] and not receipt['complete']:
+                    raise ValueError('exact_read_index_not_ready')
 
     def shards_for_cues(self, cues):
         if not self.read_directory_complete():
@@ -461,9 +513,13 @@ class Resident:
             exact = self.exact_replay(identifier)
             if exact is not None:
                 return self.main_for(exact['shard'])
+            if self.read_directory_complete():
+                return None
         if identifier in self.primary.memory.records:
             return self.primary
         for shard in self.bundles:
+            if self._exact_shard_complete(shard):
+                continue
             owner = self.hot.get(shard)
             if owner is not None and identifier in owner.memory.records:
                 return owner
@@ -472,12 +528,12 @@ class Resident:
                 return self.main_for(shard)
             if (owner is None and (view is None or view.memory is None)
                     and is_native_store(self.bundles[shard])):
-                cold = WarmView(shard, self.bundles[shard])
-                try:
-                    if identifier in cold.refresh().memory.records:
-                        return self.main_for(shard)
-                finally:
-                    cold.close()
+                # An incomplete exact directory may belong to a freshly
+                # created shard with no checkpoint yet. Open its full native
+                # journal owner; a WarmView accepts only a checkpoint at head.
+                owner = self.main_for(shard)
+                if identifier in owner.memory.records:
+                    return owner
         return None
 
     def _owner_with_source(self, source):
@@ -486,22 +542,26 @@ class Resident:
         routed = self.exact.source_shard(str(source))
         if routed is not None:
             return self.main_for(routed)
+        # A complete exact/source directory is the main-owned address index.
+        # Opening each cold shard on a miss would deserialize unrelated VRS
+        # checkpoints, and can race a shard's post-ingest checkpoint close.
+        if self.read_directory_complete():
+            return None
         cue = 'source:' + str(source)
         if self.primary.memory.episode_ids_for_cue(cue):
             return self.primary
         for shard in self.bundles:
+            if self._exact_shard_complete(shard):
+                continue
             owner = self.hot.get(shard)
             memory = owner.memory if owner is not None else (
                 self.warm[shard].memory if shard in self.warm else None)
             if memory is not None and memory.episode_ids_for_cue(cue):
                 return owner if owner is not None else self.main_for(shard)
             if memory is None and is_native_store(self.bundles[shard]):
-                cold = WarmView(shard, self.bundles[shard])
-                try:
-                    if cold.refresh().memory.episode_ids_for_cue(cue):
-                        return self.main_for(shard)
-                finally:
-                    cold.close()
+                owner = self.main_for(shard)
+                if owner.memory.episode_ids_for_cue(cue):
+                    return owner
         return None
 
     def main_for_ingest(self, row, requested=None):
@@ -529,6 +589,7 @@ class Resident:
         return active
 
     def ingest(self, row, requested=None):
+        self._ensure_exact_routing_complete()
         owner = self.main_for_ingest(row, requested)
         receipt = owner.ingest(row)
         self.refresh_pair(self._shard_of(owner), owner)
@@ -540,6 +601,7 @@ class Resident:
         rows = list(rows)
         if not rows:
             return self.primary.ingest_many(rows)
+        self._ensure_exact_routing_complete()
         self._admit_resources()
         if requested not in (None, '', 'main'):
             owner = self.main_for(requested)
@@ -627,7 +689,7 @@ class Resident:
         ready = {shard for shard, _ in owners}
         if remaining:
             for shard in self.ids():
-                if (shard in ready or self.exact_backfill.get(shard, {}).get('complete')
+                if (shard in ready or self._exact_shard_complete(shard)
                         or not is_native_store(self.bundles[shard])):
                     continue
                 temporary = WarmView(shard, self.bundles[shard])
@@ -672,9 +734,7 @@ class Resident:
         finally:
             if temporary is not None:
                 temporary.close()
-        complete = all(bool(self.exact_backfill.get(shard, {}).get('complete'))
-                       for shard in ('main', *self.ids())
-                       if shard == 'main' or is_native_store(self.bundles[shard]))
+        complete = self.read_directory_complete()
         return dict(scanned=budget - remaining, added=added, complete=complete)
 
     def backfill_projections(self, budget=1):
