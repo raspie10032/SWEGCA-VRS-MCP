@@ -48,6 +48,23 @@ def rows_of(session=None):
     return out
 
 
+def last_turn(session):
+    """(injected, opened, sources_not_opened) of the session's most recent injected receipt — what the next
+    prompt's packet says out loud (2026-09-21): replay that was skipped is named before the next use."""
+    rows = rows_of(session)
+    injected = [r for r in rows if r.get("injected")]
+    if not injected:
+        return 0, 0, []
+    last = injected[-1]
+    counts = count([last] + [r for r in rows if r.get("use") == "read" and r.get("ts", "") >= last.get("ts", "")])
+    opens = last.get("opens") or {}
+    # a record whose snippet was its whole text (the hint said 토막이 전문이다) needs no opening: not a miss
+    due = {src: c for src, c in counts.items() if not (isinstance(opens.get(src), dict) and opens[src].get("whole"))}
+    opened = sum(1 for c in due.values() if c[1])
+    missed = [src for src, c in due.items() if not c[1]]
+    return len(due), opened, missed
+
+
 def norm(path):
     return (path or "").replace("\\", "/").casefold()
 

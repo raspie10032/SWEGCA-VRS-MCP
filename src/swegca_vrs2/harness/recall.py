@@ -230,7 +230,7 @@ def open_hint(row):
     if state["state"] == "missing":
         return f"   ※ 원본 없음: {path} — 이 기록은 색인 때 판본이다(revision {str(row.get('revision'))[:12]})."
     offset, limit = state["lines"][0], max(1, min(OPEN_MAX_LINES, state["lines"][1] - state["lines"][0] + 1))
-    row["_open"] = dict(path=path.replace(chr(92), "/"), offset=int(offset), limit=int(limit))   # for the usage ledger
+    row["_open"] = dict(path=path.replace(chr(92), "/"), offset=int(offset), limit=int(limit), whole=bool(whole))   # for the usage ledger
     call = f'Read file_path="{path}" offset={offset} limit={limit}'
     if state["state"] == "changed":
         return f"   ※ 원본 바뀜 — 토막은 색인 때 판본(revision {str(row.get('revision'))[:12]}); 지금 파일을 읽는다: {call}"
@@ -247,7 +247,7 @@ def transcript_hint(row, meta, chars, whole):
         return f"   전문: swegca-vrs2 memory_read {row.get('episode_id')}  ({SNIPPET}/{chars}자)" if not whole else "   (토막이 전문이다)"
     state = origin_mod.verify_span(path, origin, origin.get("sha256") or row.get("text_sha256"))
     offset, limit = int(lines[0]), max(1, min(OPEN_MAX_LINES, int(lines[1]) - int(lines[0]) + 1))
-    row["_open"] = dict(path=path.replace(chr(92), "/"), offset=offset, limit=limit)
+    row["_open"] = dict(path=path.replace(chr(92), "/"), offset=offset, limit=limit, whole=bool(whole))
     call = f'Read file_path="{path}" offset={offset} limit={limit}'
     full = "" if whole else f" · 전문: swegca-vrs2 memory_read {row.get('episode_id')} ({SNIPPET}/{chars}자)"
     if state["state"] == "missing":
@@ -368,6 +368,21 @@ def render(packet, verdicts, records):
     return "\n".join(lines)
 
 
+def replay_line(session):
+    """One line ahead of the packet: how much of the last turn's injection was actually opened (2026-09-21 —
+    measured 25/328 in this session, and a Read-only matcher missed the shell reads). Silent when nothing was
+    injected last turn or everything was opened; never blocks a prompt."""
+    try:
+        from . import usage
+        injected, opened, missed = usage.last_turn(session)
+    except Exception:
+        return ""
+    if not injected or opened >= injected:
+        return ""
+    names = ", ".join(m.rsplit("/", 1)[-1][:40] for m in missed[:3])
+    return f"(지난 턴: 주입 {injected} 중 연 것 {opened} — 안 연 것 {names}. 열지 않은 기록은 쓰지 않는다.)\n"
+
+
 def context_for(prompt, cwd, session):
     """Adapter entry (2026-09-18): the recall packet for one prompt as text, or None when nothing is injected.
     Same rules and receipts as the hook; the hook's main() is a thin wrapper around this."""
@@ -407,6 +422,7 @@ def context_for(prompt, cwd, session):
              timing=packet.get("timing"), misses=packet.get("misses") or [])
         return None
     context = render(packet, verdicts, records)
+    context = replay_line(session) + context
     elapsed = round((time.perf_counter() - started) * 1000)
     note(injected=[r["source"] for r in verdicts + records], words=words, chars=len(context),
          ms=elapsed, session=session,

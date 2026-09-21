@@ -826,3 +826,26 @@ while the backfill ran), transcript bundles, the backfill-vs-live state race (id
 and `memory_context`'s snapshot precondition under continuous ingestion (a bridge-side retry with a fresh
 snapshot is the likely answer; not built).
 
+#### The four stages, measured on the live session (2026-09-21 13:3x → 14:0x)
+
+Asked whether the four stages of memory actually work, measured rather than described, on this session at
+11.4k rows: **Déjà vu** — region paths are present in every judgment (`paths: local/member/portal…` in each
+receipt). **Recall** — 9 of 12 prompts of the day injected something, median 506 ms. **Replay** — 25 of 328
+injected records were opened, 7.6 %; and the matcher only knew `Read`, while in bypass mode the main reads
+with `sed -n` / `cat` / `head` through Bash, so shell reads of an offered path were counted as *not opened*.
+**Re-evidence** — 45 hypotheses, 78 observations, 0 accepted, 0 rejected, 45 abstain (one producer, as the
+accumulator's rule says), 24 usage records.
+
+What changed for Replay: (1) `read_log` now handles `Bash` / `PowerShell` (matcher widened by the installer
+and live): a `sed -n A,Bp` of an offered path (a memory doc, a transcript's 「원문 위치」, anything a 「열기」
+line named — `offered_paths` from the session's recent receipts) is a `use: read` line with offset/limit,
+`head -N` gives 1..N, a whole-file read has no offset, a write (`>`, `>>`, `tee`, `Set-Content`) is not a
+read, and simple `VAR=value` assignments are substituted so `M=…; sed -n 1,60p "$M/x.md"` is seen (the shape
+the main actually uses; the first cut missed it). (2) `opens` entries carry `whole` — a record whose snippet
+is its whole text needs no opening and is not counted as a miss (`usage.last_turn`). (3) The next prompt's
+packet begins with one line when the last turn left injected records unopened:
+`(지난 턴: 주입 n 중 연 것 m — 안 연 것 …. 열지 않은 기록은 쓰지 않는다.)` — silent when nothing was
+injected or everything was opened, never blocks a prompt (`recall.replay_line`). Tests:
+`tests/standalone/test_replay.py` (parser shapes, the hook on a Bash read, `last_turn` with synthetic
+receipts, the line). Not done here: making the company batches call `produce()` — the user's programs.
+

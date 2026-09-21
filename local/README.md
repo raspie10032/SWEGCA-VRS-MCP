@@ -13,7 +13,7 @@ Since 2026-09-18 these are six-line shims; the bodies are `src/swegca_vrs2/harne
 | UserPromptSubmit | `recall_context_v2.py` | recall receipts per prompt: verdicts (asks-gated) + one record, 「열기」 line per item, 「※ 재검증 필요」 with both sides, `[열림 m/n]`, `⚠ 반복 n회` |
 | SessionStart | `session_start.py` | last session-log entries on startup/resume/compact (nearest ancestor project via `project_dir.py`) |
 | PreCompact | `precompact_snapshot.py` | writes a `[압축 직전 자동]` entry (recent requests, last answer, touched files, 「다음」) — no output (the harness rejects PreCompact context) |
-| PostToolUse Read/MCP | `memory_use_log.py` | logs each memory-file Read with offset/limit |
+| PostToolUse Read/Bash/PowerShell/MCP | `memory_use_log.py` | logs each Read of a memory file or an offered path with offset/limit; a shell read (`sed -n`/`cat`/`head`…) of an offered path counts too (2026-09-21) |
 | Stop | `stop_reindex_v2.py`, `usage_ledger.py`, `repeat_ledger.py --flush`, `hook_change_check.py` | index changed memory docs (its own failure / daily success → a `stop-hook` result, pending run-ledger lines flushed); injected-vs-opened ledger → `usage` journal rows; guard-blocked repeats → one `gate` observation per session; warn when a changed hook has no receipt |
 | PreToolUse | `bash_backslash_guard.py`, `log_label_guard.py`, `unopened_edit_guard.py` | gates: doubled backslashes in Bash; stale session-log time labels; editing an injected-but-unopened memory doc |
 

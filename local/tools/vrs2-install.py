@@ -53,7 +53,7 @@ SHIMS = {  # hook file -> (module, call, event, matcher, extra args)
     "session_start.py": ("session_start", "main()", "SessionStart", None, ""),
     "precompact_snapshot.py": ("precompact", "main(sys.argv[1:])", "PreCompact", None, ""),
     "memory_use_log.py": ("read_log", "main()", "PostToolUse",
-                          "Read|mcp__swegca-vrs__recall|mcp__swegca-vrs__get_episode|mcp__swegca-vrs2__memory_context|mcp__swegca-vrs2__memory_recall|mcp__swegca-vrs2__memory_read_path", ""),
+                          "Read|Bash|PowerShell|mcp__swegca-vrs__recall|mcp__swegca-vrs__get_episode|mcp__swegca-vrs2__memory_context|mcp__swegca-vrs2__memory_recall|mcp__swegca-vrs2__memory_read_path", ""),
     "bash_backslash_guard.py": ("guard_backslash", "main()", "PreToolUse", "Bash", ""),
     "log_label_guard.py": ("guard_label", "main()", "PreToolUse", "Bash|PowerShell", ""),
     "unopened_edit_guard.py": ("guard_unopened", "main()", "PreToolUse", "Write|Edit|Bash|PowerShell", ""),
