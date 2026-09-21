@@ -305,7 +305,8 @@ class Resident:
             if view is not None:
                 view.close()
             self._wait_closed(bundle_id)                  # a previous eviction of this bundle still checkpointing
-            main = Main(self.bundles[bundle_id], allow_ingest=True, bundle_limit=self.bundle_limit)
+            main = Main(self.bundles[bundle_id], allow_ingest=True, bundle_limit=self.bundle_limit,
+                        defer_checkpoints=True)
             self.hot[bundle_id] = main
             while len(self.hot) > self.hot_limit:
                 evicted_id, evicted = self.hot.popitem(last=False)

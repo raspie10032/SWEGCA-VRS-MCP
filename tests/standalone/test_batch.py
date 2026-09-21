@@ -44,6 +44,18 @@ def test_batch_holds_the_same_records_edges_and_journals_one_pair(main):
     assert all(main.graph.region_of(r['episode_id']) is not None for r in out['results'])
 
 
+def test_resident_defers_checkpoint_until_idle_or_close(tmp_path):
+    owner = Main(tmp_path / 'resident batch', allow_ingest=True, defer_checkpoints=True)
+    try:
+        owner.ingest_many(rows('resident', 70))
+        assert owner.dirty == 70
+        assert owner.db.execute('SELECT COUNT(*) FROM checkpoint').fetchone()[0] == 0
+        receipt = owner.checkpoint_if_dirty()
+        assert receipt['seq'] == 70 and owner.dirty == 0
+    finally:
+        owner.close()
+
+
 def test_batch_is_idempotent_per_row_and_rejects_reused_ids_whole(main):
     same = rows('s', 1)[0]
     main.ingest_many([same])

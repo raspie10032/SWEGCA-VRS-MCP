@@ -794,7 +794,7 @@ class Main:
         m, g, p, o = self._generation
         self._generation = (m, g, p, value)
 
-    def __init__(self, state_dir, *, allow_ingest=False, bundle_limit=None):
+    def __init__(self, state_dir, *, allow_ingest=False, bundle_limit=None, defer_checkpoints=False):
         self.directory = Path(state_dir).expanduser().resolve()
         self.directory.mkdir(parents=True, exist_ok=True)
         self.lock = FileLock(self.directory / 'owner.lock')
@@ -803,6 +803,7 @@ class Main:
         except Timeout:
             raise ValueError('state_directory_already_owned') from None
         self.closed, self.allow_ingest = False, allow_ingest
+        self.defer_checkpoints = bool(defer_checkpoints)
         self.bundle_limit = int(bundle_limit) if bundle_limit else BUNDLE_LIMIT
         self.db = None
         self._dirty = 0
@@ -1475,7 +1476,7 @@ class Main:
             self.owner.replace(self.pair.snapshot_id, pair)
             self._set_generation(memory, graph, pair, operations)
             self._dirty += len(fresh)
-            if self._dirty >= CHECKPOINT_EVERY:
+            if self._dirty >= CHECKPOINT_EVERY and not self.defer_checkpoints:
                 self.checkpoint()
         added_ids = {e.episode_id for e in episodes}
         summary = graph.summary() if episodes else None

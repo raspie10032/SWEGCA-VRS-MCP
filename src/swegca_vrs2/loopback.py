@@ -436,7 +436,8 @@ class Daemon:
         from .store import Main
         from .resident import Resident
         self.state_dir = Path(state_dir)
-        self.main = Main(self.state_dir, allow_ingest=allow_ingest, bundle_limit=bundle_limit)
+        self.main = Main(self.state_dir, allow_ingest=allow_ingest, bundle_limit=bundle_limit,
+                         defer_checkpoints=True)
         self.resident = LocalResident(self.main)
         # G7 resident layer (2026-09-19): the primary bundle hot, other registered bundles warm (index only)
         # or hot by use; an ingest names its bundle, a recall reaches all of them
