@@ -213,6 +213,8 @@ def wait_idle(server, cid, max_min=60, quiet_s=20, start=0, show=True, denials=N
                 lastrows = read_steps(cid, seen - 1)
                 if lastrows and lastrows[-1][1] in (PLANNER, ERROR, CHECKPOINT, 2):
                     return seen, False
+                if time.time() - max(mt, last_change) > 6 * quiet_s:
+                    return seen, False                     # quiet for two minutes on a tool step: stalled, let the caller nudge
         time.sleep(3)
     return seen, True
 
@@ -287,7 +289,7 @@ def main(argv):
     if a.cmd == "models":
         for k, m in sorted(models(server).items()):
             ck = m["checkpointer"]
-            print(f"{k:32} {m['display']:32} {m['enum']:24} max {m['max_tokens']:>8} thinking {str(m['thinking']):5} quota {m['quota']} | ckpt {ck['max_token_limit']}/{ck['token_threshold']} ureq {ck['max_user_requests']}")
+            print(f"{k:32} {m['display']:32} {m['enum']:24} max {m['max_tokens'] or 0:>8} thinking {str(m['thinking']):5} quota {m['quota']} | ckpt {ck['max_token_limit']}/{ck['token_threshold']} ureq {ck['max_user_requests']}")
         return 0
     if a.cmd == "wait":
         seen, timed_out = wait_idle(server, a.cid, a.max_min)
