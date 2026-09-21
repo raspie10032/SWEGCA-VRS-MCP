@@ -10,12 +10,12 @@ requires-python = ">=3.11"
 license = "MIT AND MPL-2.0"
 license-files = ["LICENSE", "LICENSES/MPL-2.0.txt"]
 readme = "README.md"
-dependencies = ["mcp>=2,<3", "numpy>=2,<3", "filelock>=3,<4", "immutables>=0.21,<1"]
+dependencies = ["mcp>=2,<3", "numpy>=2,<3", "immutables>=0.21,<1"]
 
 [project.optional-dependencies]
 test = ["pytest>=8", "pytest-asyncio>=0.24", "PyYAML>=6,<7"]
 identity = ["cryptography>=42"]   # optional Ed25519 producer verification
-core = ["torch>=2.6,<3", "numpy>=2,<3", "filelock>=3,<4"]
+core = ["torch>=2.6,<3", "numpy>=2,<3"]
 
 [[tool.uv.index]]
 name = "pytorch-cpu"

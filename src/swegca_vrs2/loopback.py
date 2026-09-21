@@ -35,7 +35,8 @@ import time
 from pathlib import Path
 
 from .native_transport import InterfaceError, encode, decode, MAX_BYTES
-# .store (numpy, scipy, filelock: ~0.5 s) is imported only on the daemon side; a hook process needs the socket client alone
+# .store and its numeric graph are imported only on the daemon side; a hook
+# process needs the socket client alone.
 
 HOST = '127.0.0.1'
 PORT_FILE = 'loopback.port'

@@ -11,7 +11,7 @@ import os
 from pathlib import Path
 import shutil
 
-from filelock import FileLock, Timeout
+from .native_lock import FileLock, Timeout
 
 from .loopback import LoopbackClient, port_of
 from .native_transport import InterfaceError

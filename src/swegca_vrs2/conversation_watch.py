@@ -8,9 +8,8 @@ import subprocess
 import sys
 import time
 
-from filelock import Timeout
-
 from .session_capture import SessionCapture
+from .native_lock import Timeout
 
 
 def watch(state_dir, host, session, transcript, *, poll_seconds=1.0):

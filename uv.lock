@@ -1133,7 +1133,6 @@ name = "swegca-vrs-mcp"
 version = "2.2.0"
 source = { editable = "." }
 dependencies = [
-    { name = "filelock" },
     { name = "immutables" },
     { name = "mcp" },
     { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
@@ -1142,7 +1141,6 @@ dependencies = [
 
 [package.optional-dependencies]
 core = [
-    { name = "filelock" },
     { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "numpy", version = "2.5.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "torch", version = "2.14.0", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform != 'linux' and sys_platform != 'win32'" },
@@ -1160,8 +1158,6 @@ test = [
 [package.metadata]
 requires-dist = [
     { name = "cryptography", marker = "extra == 'identity'", specifier = ">=42" },
-    { name = "filelock", specifier = ">=3,<4" },
-    { name = "filelock", marker = "extra == 'core'", specifier = ">=3,<4" },
     { name = "immutables", specifier = ">=0.21,<1" },
     { name = "mcp", specifier = ">=2,<3" },
     { name = "numpy", specifier = ">=2,<3" },

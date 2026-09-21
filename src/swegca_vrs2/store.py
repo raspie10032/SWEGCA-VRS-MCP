@@ -17,7 +17,7 @@ from types import MappingProxyType, SimpleNamespace
 import os
 import zlib
 
-from filelock import FileLock, Timeout
+from .native_lock import FileLock, Timeout
 from immutables import Map
 import numpy as np
 

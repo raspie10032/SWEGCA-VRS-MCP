@@ -4,7 +4,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from filelock import FileLock, Timeout
+from .native_lock import FileLock, Timeout
 
 from .session_capture import SessionCapture
 

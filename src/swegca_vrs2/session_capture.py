@@ -17,7 +17,7 @@ import stat
 import sys
 import time
 
-from filelock import FileLock
+from .native_lock import FileLock
 
 from .loopback import ensure_daemon
 from .native_transport import MAX_BYTES, decode
