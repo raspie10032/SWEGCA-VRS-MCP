@@ -119,7 +119,7 @@ comparison is available yet.
 
 ## Third pass: original content across the entire test path
 
-The installed product wheel is now the `0db5817` source candidate, SHA-256
+The installed product wheel at this pass was the `0db5817` source candidate, SHA-256
 `b99c1cbd4f8f51f3ff57836706db92ae2838554a90fb03c9d2844f29bcfed7c2`.
 The test code was checked from ingress through scoring, including the frozen
 fixture, hidden tests, Codex process/mounts, installed MCP/hook, transcript
@@ -167,3 +167,36 @@ running. The three new VRS model cells must remain unrun until that handoff,
 then the same full-path gates and manual answer/diff review must pass. This
 source and isolated evaluation evidence does not establish the unconditional
 all-size <1 ms Replay or one-billion-parameter seconds goals.
+
+## Fourth pass: read-path total and current wheel
+
+The natural Recall path called `logical_record_count` and `logical_cue_total`
+before Replay; each previously summed every shard on every query. Main now
+keeps exact aggregate totals and updates them on shard attachment, shard
+creation and generation refresh. This changes no candidate, region, portal,
+original observation or Replay logic. A regression makes shard dictionaries
+refuse value iteration during a query and checks totals after another ingest.
+
+The first full-suite attempt used a Python environment with pytest but without
+the product installed in its child-process environment: 124 tests passed and
+the two stdio SDK tests could not import `swegca_vrs2.server`. A separate
+offline environment installed the current product plus test dependencies, and
+the complete suite then passed **126/126 in 182.85 seconds**. This is a source
+and installed-test result, not a resident deployment result.
+
+Current product source commit: `f1ea47a`. Offline-built wheel SHA-256:
+`ade989360646b009d40031e45091d2043b3af8ee4ca0854cdd08817fba5ee285`.
+Its separate installed runtime passed dependency and all 48 source/wheel/
+installation file comparisons, with no extra installed package files. The
+full isolated evaluation self-test passed on this wheel at
+`/var/tmp/vrs22-whole-path-selftest-read-totals-20260922/receipt.json`, SHA-256
+`1fd5faade3d045a64e6d017f2ebc8e00fc8301518475741f7b62fc1a988142ef`.
+The 16 evaluation-grader regressions also passed. The one-shot SessionEnd
+watcher is now `swegca-vrs22-sessionend-handoff-f1ea47a-20260922.service`;
+the former `0db5817` watcher is inactive. The live marker remains absent,
+so no active legacy state was converted and no VRS model cell was run.
+
+The cached aggregate removes one identified shard-count-dependent operation.
+It does not prove the all-size <1 ms through-Replay requirement for natural
+queries, which can still scale with matched candidate count, or define the
+user's one-billion-parameter unit. Those hard goals remain open.

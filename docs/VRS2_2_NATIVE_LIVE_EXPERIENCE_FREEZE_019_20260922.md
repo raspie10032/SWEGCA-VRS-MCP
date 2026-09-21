@@ -44,8 +44,8 @@ session lifecycle.
   scores were 4/20 for five and 20/20 for Terra 100k plain. The sanitized
   receipt is `evals/vrs22_context/results/plain_restored_validation_005.json`,
   SHA-256 `13d20ec66941fc2ef4eb15ba1c5461b8a91473d649c1952d8fc56ee7005eb274`.
-- Runtime source provenance: `0db5817`; frozen candidate wheel SHA-256:
-  `b99c1cbd4f8f51f3ff57836706db92ae2838554a90fb03c9d2844f29bcfed7c2`.
+- Runtime source provenance: `f1ea47a`; frozen candidate wheel SHA-256:
+  `ade989360646b009d40031e45091d2043b3af8ee4ca0854cdd08817fba5ee285`.
   Preflight verified all 48 installed package files against that wheel and
   found zero forbidden source references or dependencies. Installed files also
   match the product source, with no extra installed modules. A subprocess import
@@ -69,17 +69,19 @@ The static inputs for `python tools/run_vrs22_compaction_stress_v019.py
 --output-dir /var/tmp/vrs22-v019-reserved --preflight-only` passed, while its
 current status is `PENDING_LIVE_HANDOFF` because the actual task has not ended.
 The one-shot SessionEnd watcher is
-`swegca-vrs22-sessionend-handoff-0db5817-20260922.service`, pointing to the
+`swegca-vrs22-sessionend-handoff-f1ea47a-20260922.service`, pointing to the
 new installed candidate; it does not merge while this task is active.
 The same gate rejects a full run before creating an output directory or making
 model calls. The current software self-test receipt is
-`/var/tmp/vrs22-whole-path-selftest-fine-dict-20260922/receipt.json`.
+`/var/tmp/vrs22-whole-path-selftest-read-totals-20260922/receipt.json`.
 It covers two simultaneous sessions (main 0 before SessionEnd; all six session
 records linked after), installed hook injection/cursor/SessionEnd, a generation
 lease across a 6.5-second idle boundary with 81 records and four-stage
 session-first recall, exact-address four-stage Replay of an original experience
 after main attachment, process/module/package checks, and mount isolation. It
-found zero database artifacts. Grader self-checks: 14 passed. The original
+found zero database artifacts. It also checks every original session envelope
+against its host-visible ingress record after SessionEnd, including two
+simultaneous sessions. Grader self-checks: 16 passed. The original
 experience Replay in this receipt belongs to the isolated self-test; the
 resident main must separately pass the same probe after handoff.
 
