@@ -456,7 +456,8 @@ class Daemon:
         # never a mix, and a Stop hook's ingest burst no longer stalls another session's prompt hook.
         if command == 'ping':
             return dict(status='ok', pid=os.getpid(), state_dir=str(self.state_dir),
-                        writes_enabled=self.main.allow_ingest, bundles=self.bundles.ids())
+                        writes_enabled=self.main.allow_ingest, bundles=self.bundles.ids(),
+                        implementation=str(Path(__file__).resolve()))
         if command == 'hook_recall':
             return hook_recall(self.main, arguments, self.bundles)
         if command == 'bundles':
