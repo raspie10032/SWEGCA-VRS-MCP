@@ -1,52 +1,109 @@
-# Sizing — recommended bundle size (2026-09-19)
+# VRS 2.2 resource and read-index boundaries (2026-09-21)
 
-A **bundle** is one store directory served by one resident process (`swegca_vrs2.loopback`). Records
-are never split (a source episode is one episode — paper contract); what is split, when a bundle
-outgrows its machine, is the *store*: one bundle per project or per company system, addressed by name.
+This document describes the repaired `vrs-regions` lineage. Earlier 60,000-record guidance treated
+manual project bundles and lexical warm views as the scaling mechanism. The current resident instead
+creates storage shards automatically and keeps every shard as a complete VRS main.
 
-## Recommendation
+## Hard limits
 
-| machine class | peak RSS budget for the daemon | settled RSS | records per bundle |
-| --- | --- | --- | --- |
-| 16 GB workstation shared with an IDE, browser and company programs (this PC) | **3.5 GB** | ~2 GB | **60,000** (default) |
-| 16 GB with little else running | 5.5 GB | 3.2 GB | ~100,000 |
-| 32 GB dedicated server | — | — | 400,000+ (extrapolated, not measured) |
+| resource | enforced limit |
+| --- | ---: |
+| resident process RSS | 4 GiB |
+| SSD transfer assumption | at most 5 Gbit/s (625 MB/s) |
+| logical state storage | 500 GB |
+| consolidation workers | 16 |
+| default records before opening the next automatic shard | 60,000 |
 
-The default `bundle_limit` is 60,000. It is **soft**: nothing is refused. `status` and every
-`ingest`/`ingest_many` result carry `bundle = {records, limit, fill, over}`, and the Stop-hook
-reindex prints `[기억] 뭉치 n/60,000 건 (x%)` at every stop from 90 % of the limit — the cue to plan a
-split. Configure it in `~/.claude/vrs2.json` (`"bundle_limit": 60000`, written by
-`vrs2-install.py --bundle-limit`), or `--bundle-limit` on the daemon.
+The record count is a storage boundary, not an experience-quality boundary. An original episode is
+never divided. Its revisions stay with the shard that owns its source lineage. The 500 GB admission
+check counts logical file sizes, including sparse index capacity, so sparse allocation cannot hide a
+limit violation. The one-second storage scan cache reserves the full 625 MB that a 5 Gbit/s device
+could add during that interval and forces a fresh scan near the boundary.
 
-## Where the numbers come from
+## Automatic shards and connections
 
-The scale curve of 2026-09-18/19 (`docs/RESULT_LEDGER.md` §6b; `local/bench/vrs2-scale-curve.py`,
-synthetic records mixed from live text, batch generations of 500) on an i5-13400 / 16 GB:
+`Resident.main_for_ingest` uses the current automatic shard until its configured record boundary and
+then creates the next shard. Explicit revisions and `supersedes` follow the existing experience or
+source route. Each shard retains its full graph, stable VRS version, evidence accumulator decisions,
+regions, portals, original episodes and checkpoint.
 
-* memory: ~32 KB per record settled (after a checkpoint), ~55 KB at the peak between checkpoints
-  (170k records → 5.7 GB peak, 2.2 GB settled at 200k). Linear in N; no wall inside 200k.
-* time: ~300 edges per record; ingest, consolidation and full-store recall grow linearly with N
-  (10k → 200k: ingest 17 → 279 ms/record in batches, consolidation 12 → 187 s, `all` recall
-  0.7 → 17.7 s).
-* the per-prompt line: the hook's recall must stay near 1 s. Region-scoped (`auto`) recall on this
-  corpus crosses 1 s between 50k and 100k records (0.84 s at 50k, 1.39 s at 100k). The live corpus
-  shares far fewer cues than the synthetic one (5.6k records → 69 ms), so this is the pessimistic side.
+Cross-shard reads use three disk structures owned by main:
 
-The memory budget and the latency line point at the same place — 60k — on this class of machine,
-which is why it is the default rather than either number alone.
+- an exact address and source-lineage directory;
+- a cue to exact-experience posting directory;
+- an immutable read projection of each complete checkpoint, including strengths, states, evidence
+  decisions, regions, memberships, cue strengths and portals.
 
-## When a bundle reaches the limit
+The projection is a read form of the same VRS generation. It is neither a lexical-only replacement
+nor another authority. Natural recall starts with cue postings, ranks one global candidate set, then
+uses exact Replay and current projected Re-evidence. Cold checkpoints do not have to be loaded into
+Python objects for that path.
 
-1. Split by project/system: register a second bundle in `~/.claude/vrs2.json` and route the project's
-   Stop hook to it (`vrs2-install.py --bundle <id>=<dir> --bundle-of <project slug>=<id>`, or edit
-   `bundles` / `bundle_of` by hand); records keep their ids and sources. No second daemon: the primary
-   daemon answers for every registered bundle (the G7 resident layer, `docs/VRS_REGIONS.md`
-   「Resident layer」) — the primary hot, the others warm (index only, refreshed from their journals),
-   hot while a Stop hook writes into them, `hot_bundles` at once (default 1).
-2. A warm bundle costs its index, not its graph: on the live store (5.7k records) a warm view is 189 MB
-   against 293 MB hot and loads in 0.4 s against 1.2 s; its rows come back in index order (BM25 without
-   VRS strengths or regions) and are tagged 「뭉치 <id>·warm」 in the hook. The primary keeps the engine's
-   full recall. Cross-bundle addressing: `lookup <episode_id>` names the bundle; the hook packet carries
-   `bundle` on every row.
-3. Before splitting, two software levers can move the line without a design change: the candidate loop
-   in `recall_candidates` (still Python per candidate, ~0.2 ms each) and per-region candidate caps.
+## Disk directory growth
+
+Exact address/source segments begin at 2^16 slots per hash prefix and can grow through powers
+18, 20, 22 and 23. Cue segments begin at 2^12 slots and can grow through powers 14, 16, 18, 20 and
+22. Each level seals at 70 percent occupancy. A durable per-level header records the published count
+and whether absent keys must continue to the next level.
+
+Sealing below full occupancy is required for lookup latency. It leaves an empty slot after a small
+expected number of probes, while the header distinguishes "absent here, continue" from "absent from
+the directory." The last exact level provides more than one billion usable address slots across 256
+prefixes even at the 70 percent seal threshold. This is address capacity; it is not a definition of
+the user's "one billion VRS parameters."
+
+Replay capsules preserve the original observation, provenance, revision, outcome, evidence
+references and source addresses. Their derived cue block is stored in the same checksummed capsule
+but decoded when Re-evidence consumes it. This keeps the named Replay boundary from materializing
+thousands of derived strings that the next stage owns.
+
+## Current-experience-copy measurement
+
+Measured on a consistent read-only copy of the active session experience on 2026-09-21:
+
+| quantity | result |
+| --- | ---: |
+| unique experiences | 12,537 |
+| cue occurrences | 1,324,260 |
+| load existing VRS generation | 1.075 s |
+| build exact, source and cue read directories | 7.173 s |
+| load plus complete backfill | 8.247 s |
+| process peak RSS | 1.007 GB |
+| read-directory logical bytes | 2.004 GB |
+| read-directory allocated bytes | 494 MB |
+
+Replay timing used CPU time so scheduler descheduling was not hidden inside the component result:
+
+| sample | median | p95 | p99 | maximum | at least 1 ms |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| every experience once, first pass (12,537) | 0.024 ms | 0.091 ms | 0.285 ms | 0.530 ms | 0 |
+| random Replay (50,000) | 0.022 ms | 0.081 ms | 0.277 ms | 0.502 ms | 0 |
+| largest capsule Replay (5,000; 60,000 characters, 8,362 cues) | 0.253 ms | 0.311 ms | 0.369 ms | 0.496 ms | 0 |
+
+Consuming all 8,362 cues for the largest capsule belongs to Re-evidence preparation and measured
+0.885 ms median, 1.061 ms p99 and 1.523 ms maximum together with Replay. It is reported separately;
+it is not deleted from the system or folded into the Replay number.
+
+These results establish the `<1 ms through Replay` boundary for this current real experience copy
+and these samples. They do not prove a hard real-time bound for every device, cold page-cache state,
+future corpus or one-billion-parameter VRS. The disk directory keeps lookup work independent of the
+total record count by using a small number of sealed levels, but larger-scale and 5 Gbit/s constrained
+measurements remain required.
+
+## Memory-bounded consolidation
+
+Consolidation estimates each shard's transient graph and cue state before scheduling it. Available
+memory is the 4 GiB limit minus current RSS and a 128 MiB reserve. Independent shards run in waves
+that fit this amount. One shard receives all 16 workers; several smaller shards divide the same 16
+workers within a wave. Completed shards commit and release their transient state before the next
+wave. A shard that cannot fit by itself fails with `vrs_memory_budget_exceeded`; the implementation
+does not remove regions, portals, evidence logic or original experiences to make it fit.
+
+## Unresolved billion-parameter requirement
+
+The repository's dormant recurrent cognitive-core defaults describe 709,560,320 trainable-style
+parameters (708,902,912 block parameters, 655,360 state-embedding parameters and 2,048 final-norm
+parameters). The live VRS experience store does not currently connect its records, cues, edges or
+read-index slots to that parameter count. The user's "one billion VRS parameters in seconds" target
+therefore remains unresolved and must not be claimed by substituting records, addresses, cues, edges,
+tokens or bytes for parameters.

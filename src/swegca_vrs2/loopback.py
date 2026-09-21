@@ -703,7 +703,7 @@ def _preparer(daemon):
         memory = daemon.main.memory
         done = memory.prefetch_light(budget_ns=20_000_000_000) if hasattr(memory, 'prefetch_light') else 0
         daemon.prepared.append(dict(kind='prefetch_light', rows=done, ms=(time.perf_counter_ns() - started) // 1_000_000, when=time.time()))
-        exact = daemon.bundles.backfill_exact(512)
+        exact = daemon.bundles.backfill_exact(4096)
         daemon.prepared.append(dict(kind='exact_replay_backfill', **exact,
                                     ms=(time.perf_counter_ns() - started) // 1_000_000, when=time.time()))
         projections = daemon.bundles.backfill_projections(1)
@@ -719,7 +719,7 @@ def _preparer(daemon):
                 daemon.prepared.append(receipt)
                 del daemon.prepared[:-64]
             last_pass = time.time()
-            exact = daemon.bundles.backfill_exact(256)
+            exact = daemon.bundles.backfill_exact(4096)
             if exact['scanned']:
                 daemon.prepared.append(dict(kind='exact_replay_backfill', **exact, when=time.time()))
                 del daemon.prepared[:-64]

@@ -13,6 +13,8 @@ stage and is deliberately not frozen into the capsule.
 """
 from __future__ import annotations
 
+from collections import OrderedDict
+from collections.abc import Sequence
 import json
 import hashlib
 import mmap
@@ -26,14 +28,20 @@ from .engine.mosaic_memory_activation import MemoryStep, ReplayedEpisode
 from .store import plain
 from .compact_index import asks_and_description
 
-MAGIC = b'VRS2EXACT2\0'
+MAGIC = b'VRS2EXACT5\0'
 HEADER_BYTES = 4096
 SEGMENT_BITS = 8
-SLOT_POWER = int(os.environ.get('VRS2_EXACT_SLOT_POWER', '23'))
+SLOT_POWER = int(os.environ.get('VRS2_EXACT_SLOT_POWER', '16'))
 SLOT_COUNT = 1 << SLOT_POWER
-SLOT = struct.Struct('<32sQII')       # key, capsule offset, compressed bytes, CRC32
-CAPSULE = struct.Struct('<II')        # compressed bytes, CRC32
+SLOT = struct.Struct('<32sQII')       # key, capsule offset, payload bytes, CRC32
+CAPSULE = struct.Struct('<II')        # payload bytes, CRC32
+PAYLOAD = struct.Struct('<II')        # Replay JSON bytes, derived cue JSON bytes
 EMPTY = b'\0' * 32
+LEVEL_STATE_OFFSET = 64
+LEVEL_STATE = struct.Struct('<QB7x')  # published keys, sealed for new keys
+LEVEL_LOAD_NUMERATOR = 7
+LEVEL_LOAD_DENOMINATOR = 10
+READ_SEGMENT_CACHE = int(os.environ.get('VRS2_EXACT_READ_SEGMENTS', '512'))
 
 
 def _write_all(fd, data):
@@ -65,13 +73,49 @@ def _source_key(source):
     return hashlib.sha256(source.encode('utf-8')).digest()
 
 
+class LazyCues(Sequence):
+    """Exact derived cues, decoded only when Re-evidence consumes them."""
+    __slots__ = ('payload', 'count', 'decoded')
+
+    def __init__(self, payload, count):
+        self.payload = payload
+        self.count = int(count)
+        self.decoded = None
+
+    def __len__(self):
+        return self.count
+
+    def _value(self):
+        if self.decoded is None:
+            try:
+                decoded = json.loads(self.payload)
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                raise ValueError('exact_replay_cues_corrupt') from None
+            if (not isinstance(decoded, list) or len(decoded) != self.count
+                    or any(not isinstance(cue, str) for cue in decoded)):
+                raise ValueError('exact_replay_cues_corrupt')
+            self.decoded = tuple(decoded)
+            self.payload = None
+        return self.decoded
+
+    def __getitem__(self, index):
+        return self._value()[index]
+
+    def __iter__(self):
+        return iter(self._value())
+
+
 class ExactReplayStore:
     def __init__(self, directory, *, slot_power=None):
         self.directory = Path(directory)
         self.directory.mkdir(mode=0o700, parents=True, exist_ok=True)
         self.slot_power = SLOT_POWER if slot_power is None else int(slot_power)
+        if not 1 <= self.slot_power <= 23:
+            raise ValueError('exact_replay_slot_power_out_of_range')
         self.slot_count = 1 << self.slot_power
         self.mask = self.slot_count - 1
+        self.slot_powers = tuple(dict.fromkeys(
+            (*range(self.slot_power, 23, 2), 23)))
         self.data_path = self.directory / 'capsules.vrs'
         self.proposition_directory = self.directory / 'propositions'
         self.proposition_directory.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -87,36 +131,69 @@ class ExactReplayStore:
             with self.data_path.open('rb') as stream:
                 if stream.read(len(MAGIC)) != MAGIC:
                     raise ValueError('exact_replay_capsule_header_invalid')
+        self.data_read_fd = os.open(self.data_path, os.O_RDONLY)
+        self.read_segment_limit = max(1, READ_SEGMENT_CACHE)
+        self.read_segments = OrderedDict()
 
-    def _segment_path(self, key, namespace):
-        return self.directory / f'{namespace}-{key[0]:02x}.vrs'
+    def _segment_path(self, key, namespace, slot_power=None):
+        slot_power = self.slot_power if slot_power is None else int(slot_power)
+        return self.directory / f'{namespace}-p{slot_power}-{key[0]:02x}.vrs'
 
-    def _open_segment(self, key, *, create, namespace='address'):
-        path = self._segment_path(key, namespace)
+    def _open_segment(self, key, *, create, namespace='address', slot_power=None):
+        slot_power = self.slot_power if slot_power is None else int(slot_power)
+        path = self._segment_path(key, namespace, slot_power)
         flags = os.O_RDWR | (os.O_CREAT if create else 0)
         try:
             fd = os.open(path, flags, 0o600)
         except FileNotFoundError:
             return None, None
-        expected = HEADER_BYTES + self.slot_count * SLOT.size
+        expected = HEADER_BYTES + (1 << slot_power) * SLOT.size
         size = os.fstat(fd).st_size
         if size == 0:
             if not create:
                 os.close(fd); return None, None
             os.ftruncate(fd, expected)
-            os.pwrite(fd, MAGIC + bytes((key[0],)) + bytes((self.slot_power,)), 0)
-            os.fsync(fd)
-        elif size != expected or os.pread(fd, len(MAGIC), 0) != MAGIC:
+        elif size != expected:
             os.close(fd)
             raise ValueError('exact_replay_address_segment_invalid')
-        return fd, mmap.mmap(fd, expected, access=mmap.ACCESS_WRITE if create else mmap.ACCESS_READ)
+        mapping = mmap.mmap(fd, expected,
+                            access=mmap.ACCESS_WRITE if create else mmap.ACCESS_READ)
+        header = mapping[:len(MAGIC) + 2]
+        expected_header = MAGIC + bytes((key[0], slot_power))
+        if header == b'\0' * len(header):
+            if not create:
+                mapping.close(); os.close(fd); return None, None
+            mapping[:len(expected_header)] = expected_header
+        elif header != expected_header:
+            mapping.close(); os.close(fd)
+            raise ValueError('exact_replay_address_segment_invalid')
+        return fd, mapping
 
-    def _probe(self, mapping, key):
-        start = int.from_bytes(key[1:9], 'little') & self.mask
-        step = (int.from_bytes(key[9:17], 'little') | 1) & self.mask
+    def _read_segment(self, key, namespace, slot_power):
+        """Return a bounded cached read mapping; caller holds ``self.lock``."""
+        cache_key = (namespace, int(slot_power), key[0])
+        cached = self.read_segments.pop(cache_key, None)
+        if cached is not None:
+            self.read_segments[cache_key] = cached
+            return cached[1]
+        fd, mapping = self._open_segment(
+            key, create=False, namespace=namespace, slot_power=slot_power)
+        if mapping is None:
+            return None
+        self.read_segments[cache_key] = (fd, mapping)
+        while len(self.read_segments) > self.read_segment_limit:
+            old_fd, old_mapping = self.read_segments.popitem(last=False)[1]
+            old_mapping.close(); os.close(old_fd)
+        return mapping
+
+    def _probe(self, mapping, key, slot_power=None):
+        slot_power = self.slot_power if slot_power is None else int(slot_power)
+        slot_count, mask = 1 << slot_power, (1 << slot_power) - 1
+        start = int.from_bytes(key[1:9], 'little') & mask
+        step = (int.from_bytes(key[9:17], 'little') | 1) & mask
         step = step or 1
-        for count in range(self.slot_count):
-            slot = (start + count * step) & self.mask
+        for count in range(slot_count):
+            slot = (start + count * step) & mask
             offset = HEADER_BYTES + slot * SLOT.size
             found = mapping[offset:offset + 32]
             if found == key:
@@ -125,15 +202,52 @@ class ExactReplayStore:
                 return offset, False
         raise ValueError('exact_replay_address_segment_full')
 
+    def _probe_pending(self, mapping, key, pending, slot_power):
+        slot_count, mask = 1 << slot_power, (1 << slot_power) - 1
+        start = int.from_bytes(key[1:9], 'little') & mask
+        step = (int.from_bytes(key[9:17], 'little') | 1) & mask or 1
+        for count in range(slot_count):
+            slot = (start + count * step) & mask
+            offset = HEADER_BYTES + slot * SLOT.size
+            found = pending.get(offset, mapping[offset:offset + 32])
+            if found == key:
+                return offset, True
+            if found == EMPTY:
+                return offset, False
+        raise ValueError('exact_replay_address_segment_full')
+
+    @staticmethod
+    def _level_state(mapping, slot_power):
+        count, sealed = LEVEL_STATE.unpack(
+            mapping[LEVEL_STATE_OFFSET:LEVEL_STATE_OFFSET + LEVEL_STATE.size])
+        if count > 1 << slot_power or sealed not in (0, 1):
+            raise ValueError('exact_replay_address_segment_invalid')
+        return int(count), bool(sealed)
+
+    @staticmethod
+    def _level_threshold(slot_power):
+        return max(1, ((1 << slot_power) * LEVEL_LOAD_NUMERATOR
+                       // LEVEL_LOAD_DENOMINATOR))
+
+    @staticmethod
+    def _write_level_state(mapping, count, sealed):
+        mapping[LEVEL_STATE_OFFSET:LEVEL_STATE_OFFSET + LEVEL_STATE.size] = \
+            LEVEL_STATE.pack(int(count), bool(sealed))
+
+    def _seal_level(self, fd, mapping, count):
+        """Publish overflow routing before a later level can receive keys."""
+        self._write_level_state(mapping, count, True)
+        mapping.flush(0, HEADER_BYTES)
+        os.fsync(fd)
+
     @staticmethod
     def _encode(identifier, shard, row, episode):
         step = episode.steps[0]
         text = step.observation.get('text', '')
         asks, description = asks_and_description(text)
-        body = dict(schema='swegca-vrs2-replay-capsule-v2', episode_id=identifier,
+        body = dict(schema='swegca-vrs2-replay-capsule-v3', episode_id=identifier,
                     shard=str(shard), shard_row=int(row), matched_cues=[identifier],
                     cue_count=len(episode.cues),
-                    cues=list(episode.cues),
                     kind=str((step.observation.get('metadata') or {}).get('kind') or ''),
                     asks=asks.casefold(), description=description.casefold(),
                     steps=[dict(phase=step.phase, observation=plain(step.observation),
@@ -144,110 +258,252 @@ class ExactReplayStore:
                     historical_truth_authorized=False)
         raw = json.dumps(body, ensure_ascii=False, sort_keys=True,
                          separators=(',', ':'), allow_nan=False).encode('utf-8')
-        return zlib.compress(raw, 3)
+        cues = json.dumps(list(episode.cues), ensure_ascii=False,
+                          separators=(',', ':'), allow_nan=False).encode('utf-8')
+        return PAYLOAD.pack(len(raw), len(cues)) + raw + cues
 
     @staticmethod
     def _encode_source(source, shard):
         raw = json.dumps(dict(schema='swegca-vrs2-source-route-v1', source=source,
                               shard=str(shard)), ensure_ascii=False, sort_keys=True,
                          separators=(',', ':'), allow_nan=False).encode('utf-8')
-        return zlib.compress(raw, 3)
+        return PAYLOAD.pack(len(raw), 0) + raw
 
-    def _append_capsule(self, compressed):
-        checksum = zlib.crc32(compressed)
+    def _append_capsule(self, payload):
+        checksum = zlib.crc32(payload)
         data_fd = os.open(self.data_path, os.O_RDWR)
         try:
             offset = os.lseek(data_fd, 0, os.SEEK_END)
-            _write_all(data_fd, CAPSULE.pack(len(compressed), checksum))
-            _write_all(data_fd, compressed)
+            _write_all(data_fd, CAPSULE.pack(len(payload), checksum))
+            _write_all(data_fd, payload)
             os.fsync(data_fd)
         finally:
             os.close(data_fd)
-        return offset, len(compressed), checksum
+        return offset, len(payload), checksum
 
     def put(self, identifier, shard, row, episode):
-        key = _key(identifier)
-        compressed = self._encode(identifier, shard, row, episode)
-        checksum = zlib.crc32(compressed)
+        return bool(self.put_many(((identifier, shard, row, episode),))['exact'])
+
+    def put_many(self, records):
+        """Durably publish many exact capsules and source routes in one I/O batch.
+
+        Capsule bytes reach disk before any address slot is published.  A crash
+        can therefore leave only harmless unindexed tail bytes, never an index
+        pointing at a partial Replay capsule.
+        """
+        records = list(records)
+        exact_rows = [(identifier, str(shard), int(row), episode,
+                       self._encode(identifier, shard, row, episode))
+                      for identifier, shard, row, episode in records]
+        sources = {}
+        for _, shard, _, episode, _ in exact_rows:
+            for source in episode.source_addresses:
+                previous = sources.get(source)
+                if previous is not None and previous != shard:
+                    raise ValueError('experience_source_lineage_split')
+                sources[source] = shard
+        source_rows = [(source, shard, self._encode_source(source, shard))
+                       for source, shard in sources.items()]
+        mappings, pending_slots, level_states, pending, staged = {}, {}, {}, {}, []
+        added_exact = added_sources = 0
         with self.lock:
-            fd, mapping = self._open_segment(key, create=True)
+            data_fd = os.open(self.data_path, os.O_RDWR)
             try:
-                slot, exists = self._probe(mapping, key)
-                if exists:
-                    _, offset, length, stored_crc = SLOT.unpack(mapping[slot:slot + SLOT.size])
-                    body = self._read_capsule(offset, length, stored_crc)
-                    if body['episode_id'] != identifier:
-                        raise ValueError('exact_replay_address_collision')
-                    if body.get('shard') != str(shard):
-                        raise ValueError('exact_replay_address_reassigned')
-                    if int(body.get('shard_row', -1)) != int(row):
-                        raise ValueError('exact_replay_row_reassigned')
-                    return False
-                offset, length, checksum = self._append_capsule(compressed)
-                # Tail first, key last: a reader never treats a partially written
-                # slot as committed.  CRC verifies both index and capsule.
-                mapping[slot + 32:slot + SLOT.size] = struct.pack('<QII', offset, length, checksum)
-                mapping[slot:slot + 32] = key
-                mapping.flush()
-                os.fsync(fd)
-                return True
+                for namespace, rows in (('address', exact_rows), ('source', source_rows)):
+                    for item in rows:
+                        identity = item[0]
+                        key = _key(identity) if namespace == 'address' else _source_key(identity)
+                        pending_key = (namespace, key)
+                        assignment = ((item[1], item[2]) if namespace == 'address'
+                                      else (item[1],))
+                        if pending_key in pending:
+                            if pending[pending_key] != assignment:
+                                if namespace == 'address':
+                                    raise ValueError('exact_replay_address_reassigned')
+                                raise ValueError('experience_source_lineage_split')
+                            continue
+                        selected = None
+                        for slot_power in self.slot_powers:
+                            map_key = (namespace, slot_power, key[0])
+                            if map_key not in mappings:
+                                mappings[map_key] = self._open_segment(
+                                    key, create=True, namespace=namespace,
+                                    slot_power=slot_power)
+                                pending_slots[map_key] = {}
+                                level_states[map_key] = list(self._level_state(
+                                    mappings[map_key][1], slot_power))
+                            fd, mapping = mappings[map_key]
+                            try:
+                                slot, exists = self._probe_pending(
+                                    mapping, key, pending_slots[map_key], slot_power)
+                            except ValueError as error:
+                                if str(error) != 'exact_replay_address_segment_full':
+                                    raise
+                                level_states[map_key] = [1 << slot_power, True]
+                                self._seal_level(fd, mapping, 1 << slot_power)
+                                continue
+                            count, sealed = level_states[map_key]
+                            if not exists and sealed:
+                                continue
+                            if not exists:
+                                count += 1
+                                sealed = count >= self._level_threshold(slot_power)
+                                level_states[map_key] = [count, sealed]
+                                if sealed:
+                                    # A crash after this barrier can only leave
+                                    # this batch unindexed.  It cannot hide a
+                                    # key already published in a higher level.
+                                    self._seal_level(fd, mapping, count)
+                            selected = (map_key, fd, mapping, slot, exists)
+                            break
+                        if selected is None:
+                            raise ValueError('exact_replay_directory_capacity_exceeded')
+                        map_key, fd, mapping, slot, exists = selected
+                        if exists:
+                            _, offset, length, stored_crc = SLOT.unpack(
+                                mapping[slot:slot + SLOT.size])
+                            body, _ = self._read_capsule(offset, length, stored_crc)
+                            if namespace == 'address':
+                                if (body.get('episode_id') != identity
+                                        or body.get('shard') != item[1]
+                                        or int(body.get('shard_row', -1)) != item[2]):
+                                    raise ValueError('exact_replay_address_reassigned')
+                            elif body.get('source') != identity or body.get('shard') != item[1]:
+                                raise ValueError('experience_source_lineage_split')
+                            pending[pending_key] = assignment
+                            continue
+                        payload = item[-1]
+                        checksum = zlib.crc32(payload)
+                        offset = os.lseek(data_fd, 0, os.SEEK_END)
+                        _write_all(data_fd, CAPSULE.pack(len(payload), checksum))
+                        _write_all(data_fd, payload)
+                        staged.append((mapping, slot, key, offset, len(payload), checksum))
+                        pending_slots[map_key][slot] = key
+                        pending[pending_key] = assignment
+                        if namespace == 'address':
+                            added_exact += 1
+                        else:
+                            added_sources += 1
+                os.fsync(data_fd)
+                touched = {}
+                for mapping, slot, key, offset, length, checksum in staged:
+                    mapping[slot + 32:slot + SLOT.size] = struct.pack(
+                        '<QII', offset, length, checksum)
+                    mapping[slot:slot + 32] = key
+                    touched[id(mapping)] = mapping
+                for map_key, (count, sealed) in level_states.items():
+                    mapping = mappings[map_key][1]
+                    self._write_level_state(mapping, count, sealed)
+                    touched[id(mapping)] = mapping
+                for mapping in touched.values():
+                    mapping.flush()
+                for fd, _ in mappings.values():
+                    os.fsync(fd)
+                return dict(exact=added_exact, sources=added_sources)
             finally:
-                mapping.close(); os.close(fd)
+                os.close(data_fd)
+                for fd, mapping in mappings.values():
+                    mapping.close(); os.close(fd)
 
     def put_source(self, source, shard):
         """Bind an experience source to its one lineage-owning storage shard."""
         key = _source_key(source)
-        compressed = self._encode_source(source, shard)
+        shard = str(shard)
+        payload = self._encode_source(source, shard)
         with self.lock:
-            fd, mapping = self._open_segment(key, create=True, namespace='source')
+            selected = None
+            for slot_power in self.slot_powers:
+                fd, mapping = self._open_segment(
+                    key, create=True, namespace='source', slot_power=slot_power)
+                try:
+                    slot, exists = self._probe(mapping, key, slot_power)
+                except ValueError as error:
+                    if str(error) == 'exact_replay_address_segment_full':
+                        self._seal_level(fd, mapping, 1 << slot_power)
+                        mapping.close(); os.close(fd)
+                        continue
+                    mapping.close(); os.close(fd)
+                    raise
+                count, sealed = self._level_state(mapping, slot_power)
+                if not exists and sealed:
+                    mapping.close(); os.close(fd)
+                    continue
+                selected = (fd, mapping, slot, exists)
+                break
+            if selected is None:
+                raise ValueError('exact_replay_directory_capacity_exceeded')
+            fd, mapping, slot, exists = selected
             try:
-                slot, exists = self._probe(mapping, key)
                 if exists:
                     _, offset, length, stored_crc = SLOT.unpack(mapping[slot:slot + SLOT.size])
-                    body = self._read_capsule(offset, length, stored_crc)
+                    body, _ = self._read_capsule(offset, length, stored_crc)
                     if body.get('source') != source:
                         raise ValueError('experience_source_hash_collision')
-                    if body.get('shard') != str(shard):
+                    if body.get('shard') != shard:
                         raise ValueError('experience_source_lineage_split')
                     return False
-                offset, length, checksum = self._append_capsule(compressed)
+                offset, length, checksum = self._append_capsule(payload)
                 mapping[slot + 32:slot + SLOT.size] = struct.pack(
                     '<QII', offset, length, checksum)
                 mapping[slot:slot + 32] = key
                 mapping.flush()
+                os.fsync(fd)
+                count += 1
+                sealed = count >= self._level_threshold(slot_power)
+                self._write_level_state(mapping, count, sealed)
+                mapping.flush(0, HEADER_BYTES)
                 os.fsync(fd)
                 return True
             finally:
                 mapping.close(); os.close(fd)
 
     def _read_capsule(self, offset, length, checksum):
-        with self.data_path.open('rb', buffering=0) as stream:
-            stream.seek(offset)
-            header = stream.read(CAPSULE.size)
-            if len(header) != CAPSULE.size:
-                raise ValueError('exact_replay_capsule_truncated')
-            stored_length, stored_crc = CAPSULE.unpack(header)
-            if stored_length != length or stored_crc != checksum:
-                raise ValueError('exact_replay_capsule_index_mismatch')
-            compressed = stream.read(length)
-        if len(compressed) != length or zlib.crc32(compressed) != checksum:
+        header = os.pread(self.data_read_fd, CAPSULE.size, offset)
+        if len(header) != CAPSULE.size:
+            raise ValueError('exact_replay_capsule_truncated')
+        stored_length, stored_crc = CAPSULE.unpack(header)
+        if stored_length != length or stored_crc != checksum:
+            raise ValueError('exact_replay_capsule_index_mismatch')
+        payload = os.pread(self.data_read_fd, length, offset + CAPSULE.size)
+        if len(payload) != length or zlib.crc32(payload) != checksum:
             raise ValueError('exact_replay_capsule_corrupt')
-        return json.loads(zlib.decompress(compressed).decode('utf-8'))
-
-    def get(self, identifier):
-        key = _key(identifier)
-        fd, mapping = self._open_segment(key, create=False)
-        if mapping is None:
-            return None
+        if len(payload) < PAYLOAD.size:
+            raise ValueError('exact_replay_capsule_corrupt')
+        replay_length, cue_length = PAYLOAD.unpack(payload[:PAYLOAD.size])
+        if PAYLOAD.size + replay_length + cue_length != len(payload):
+            raise ValueError('exact_replay_capsule_corrupt')
+        replay_payload = payload[PAYLOAD.size:PAYLOAD.size + replay_length]
+        cue_payload = payload[PAYLOAD.size + replay_length:]
         try:
-            slot, exists = self._probe(mapping, key)
+            return json.loads(replay_payload), cue_payload
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            raise ValueError('exact_replay_capsule_corrupt') from None
+
+    def _get_locked(self, identifier):
+        key = _key(identifier)
+        located = None
+        for slot_power in self.slot_powers:
+            mapping = self._read_segment(key, 'address', slot_power)
+            if mapping is None:
+                return None
+            try:
+                slot, exists = self._probe(mapping, key, slot_power)
+            except ValueError as error:
+                if str(error) == 'exact_replay_address_segment_full':
+                    continue
+                raise
             if not exists:
+                if self._level_state(mapping, slot_power)[1]:
+                    continue
                 return None
             _, offset, length, checksum = SLOT.unpack(mapping[slot:slot + SLOT.size])
-        finally:
-            mapping.close(); os.close(fd)
-        body = self._read_capsule(offset, length, checksum)
-        if body.get('episode_id') != identifier or body.get('schema') != 'swegca-vrs2-replay-capsule-v2':
+            located = (offset, length, checksum)
+            break
+        if located is None:
+            return None
+        offset, length, checksum = located
+        body, cue_payload = self._read_capsule(offset, length, checksum)
+        if body.get('episode_id') != identifier or body.get('schema') != 'swegca-vrs2-replay-capsule-v3':
             raise ValueError('exact_replay_capsule_identity_mismatch')
         row = body['steps'][0]
         step = MemoryStep(row['phase'], row['observation'], tuple(row['relations']), row['judgment'],
@@ -256,25 +512,63 @@ class ExactReplayStore:
                                  tuple(body['source_addresses']), body['verification_state'])
         return dict(shard=body['shard'], revision=body['revision'], replay=replay,
                     shard_row=int(body['shard_row']),
-                    cue_count=int(body['cue_count']), cues=tuple(body['cues']), kind=body['kind'],
+                    cue_count=int(body['cue_count']),
+                    cues=LazyCues(cue_payload, body['cue_count']), kind=body['kind'],
                     asks=body['asks'], description=body['description'])
 
-    def source_shard(self, source):
+    def get(self, identifier):
+        with self.lock:
+            return self._get_locked(identifier)
+
+    def _source_shard_locked(self, source):
         key = _source_key(source)
-        fd, mapping = self._open_segment(key, create=False, namespace='source')
-        if mapping is None:
-            return None
-        try:
-            slot, exists = self._probe(mapping, key)
+        located = None
+        for slot_power in self.slot_powers:
+            mapping = self._read_segment(key, 'source', slot_power)
+            if mapping is None:
+                return None
+            try:
+                slot, exists = self._probe(mapping, key, slot_power)
+            except ValueError as error:
+                if str(error) == 'exact_replay_address_segment_full':
+                    continue
+                raise
             if not exists:
+                if self._level_state(mapping, slot_power)[1]:
+                    continue
                 return None
             _, offset, length, checksum = SLOT.unpack(mapping[slot:slot + SLOT.size])
-        finally:
-            mapping.close(); os.close(fd)
-        body = self._read_capsule(offset, length, checksum)
+            located = (offset, length, checksum)
+            break
+        if located is None:
+            return None
+        offset, length, checksum = located
+        body, cue_payload = self._read_capsule(offset, length, checksum)
+        if cue_payload:
+            raise ValueError('experience_source_route_identity_mismatch')
         if body.get('schema') != 'swegca-vrs2-source-route-v1' or body.get('source') != source:
             raise ValueError('experience_source_route_identity_mismatch')
         return body['shard']
+
+    def source_shard(self, source):
+        with self.lock:
+            return self._source_shard_locked(source)
+
+    def close(self):
+        with self.lock:
+            for fd, mapping in self.read_segments.values():
+                mapping.close(); os.close(fd)
+            self.read_segments.clear()
+            if self.data_read_fd is not None:
+                os.close(self.data_read_fd)
+                self.data_read_fd = None
+
+    def __del__(self):
+        try:
+            if getattr(self, 'data_read_fd', None) is not None:
+                self.close()
+        except (OSError, BufferError):
+            pass
 
     def _proposition_path(self, proposition, *, create):
         if not isinstance(proposition, str) or not proposition:

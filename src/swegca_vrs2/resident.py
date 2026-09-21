@@ -484,8 +484,8 @@ class Resident:
             owner = self.main_for(requested)
             receipt = owner.ingest_many(rows)
             self.refresh_pair(self._shard_of(owner), owner)
-            for result in receipt['results']:
-                self._register_exact(owner, result['episode_id'])
+            self._register_exact_many(owner,
+                                      [result['episode_id'] for result in receipt['results']])
             return receipt
         results, groups, journaled = [], [], 0
         index = 0
@@ -502,8 +502,8 @@ class Resident:
                 chunk.append(rows[index]); index += 1
             receipt = owner.ingest_many(chunk)
             self.refresh_pair(self._shard_of(owner), owner)
-            for result in receipt['results']:
-                self._register_exact(owner, result['episode_id'])
+            self._register_exact_many(owner,
+                                      [result['episode_id'] for result in receipt['results']])
             results.extend(receipt['results'])
             journaled += receipt['journaled']
             groups.append(dict(shard='main' if owner is self.primary else
@@ -524,17 +524,22 @@ class Resident:
         raise ValueError('exact_replay_owner_not_registered')
 
     def _register_exact(self, owner, identifier):
+        self._register_exact_many(owner, [identifier])
+
+    def _register_exact_many(self, owner, identifiers):
         memory = owner.memory
-        episode = memory.episode(identifier)
         shard = self._shard_of(owner)
-        row = memory._store['row_of'][identifier]
-        self.exact.put(identifier, shard, row, episode)
-        self.cue_shards.put_many(episode.cues, shard, identifier)
-        for source in episode.source_addresses:
-            self.exact.put_source(source, shard)
-        proposition = episode.steps[0].observation.get('proposition_id')
-        if proposition:
-            self.exact.put_proposition(proposition, shard, identifier)
+        records = []
+        for identifier in identifiers:
+            episode = memory.episode(identifier)
+            records.append((identifier, shard, memory._store['row_of'][identifier], episode))
+        self.exact.put_many(records)
+        self.cue_shards.put_records((episode.cues, shard, identifier)
+                                    for identifier, _, _, episode in records)
+        for identifier, _, _, episode in records:
+            proposition = episode.steps[0].observation.get('proposition_id')
+            if proposition:
+                self.exact.put_proposition(proposition, shard, identifier)
 
     def exact_replay(self, identifier):
         return self.exact.get(identifier)
@@ -542,6 +547,8 @@ class Resident:
     def backfill_exact(self, budget=256):
         """Incrementally add pre-repair experiences without delaying startup."""
         remaining, added = max(0, int(budget)), 0
+        rss = self._rss_bytes() or 0
+        transient_available = max(0, MAX_RSS_BYTES - rss - 128 * 1024 ** 2)
         owners = [('main', self.primary)]
         temporary = None
         for identifier in self.ids():
@@ -566,21 +573,36 @@ class Resident:
                     break
                 start = self._exact_cursor(shard, owner)
                 ids = owner.memory._store['ids']
-                stop = min(owner.memory.episode_count, start + remaining)
-                for row in range(start, stop):
-                    identifier = ids[row]
+                hard_stop = min(owner.memory.episode_count, start + remaining)
+                records, estimated = [], 0
+                stop = start
+                while stop < hard_stop:
+                    identifier = ids[stop]
                     episode = owner.memory.episode(identifier)
-                    added += int(self.exact.put(identifier, shard, row, episode))
-                    self.cue_shards.put_many(episode.cues, shard, identifier)
-                    for source in episode.source_addresses:
-                        self.exact.put_source(source, shard)
-                    proposition = episode.steps[0].observation.get('proposition_id')
-                    if proposition:
-                        self.exact.put_proposition(proposition, shard, identifier)
+                    text = str(episode.steps[0].observation.get('text') or '')
+                    cost = (8192 + len(text.encode('utf-8')) * 3
+                            + sum(256 + len(cue.encode('utf-8')) for cue in episode.cues))
+                    if records and estimated + cost > transient_available:
+                        break
+                    if not records and cost > transient_available:
+                        raise ValueError('vrs_memory_budget_exceeded')
+                    records.append((identifier, shard, stop, episode))
+                    estimated += cost
+                    stop += 1
+                if records:
+                    added += self.exact.put_many(records)['exact']
+                    self.cue_shards.put_records((episode.cues, shard, identifier)
+                                                for identifier, _, _, episode in records)
+                    for identifier, _, _, episode in records:
+                        proposition = episode.steps[0].observation.get('proposition_id')
+                        if proposition:
+                            self.exact.put_proposition(proposition, shard, identifier)
                 if (stop != start or (stop >= owner.memory.episode_count
                                       and not self.exact_backfill.get(shard, {}).get('complete'))):
                     self._advance_exact_cursor(shard, owner, stop)
                 remaining -= stop - start
+                if stop < hard_stop:
+                    break
         finally:
             if temporary is not None:
                 temporary.close()

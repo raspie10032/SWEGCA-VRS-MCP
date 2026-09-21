@@ -42,6 +42,16 @@ The `<1 ms through Replay` boundary includes every main-owned stage from lookup
 entry through Replay completion. Any later source-page transport must be named
 separately and cannot be excluded from that boundary by assumption.
 
+The repaired read capsule keeps the exact derived cue vector checksummed beside
+the original Replay body and decodes that vector when Re-evidence consumes it.
+This follows the named four-stage boundary; no cue or original field is dropped.
+
+The only trainable-style parameter count found in this repository is the dormant
+recurrent cognitive-core default: 708,902,912 block parameters + 655,360 state
+embeddings + 2,048 final-norm parameters = 709,560,320. No live code currently
+maps VRS experiences, cues, edges or index slots to that count. The one-billion
+target remains unresolved until that architectural link and unit are explicit.
+
 ## Source lineage required by the repair
 
 The repair starts from `origin/vrs-regions` at

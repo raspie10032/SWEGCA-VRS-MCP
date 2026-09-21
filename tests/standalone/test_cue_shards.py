@@ -43,3 +43,21 @@ def test_one_batch_reserves_colliding_slots_before_publication(tmp_path):
         raise AssertionError("failed to construct collision fixture")
     assert directory.put_many(cues, "main", "memory:" + "1" * 64) == len(cues)
     assert all(directory.shards_for(cue) == ("main",) for cue in cues)
+
+
+def test_full_prefix_segment_expands_without_changing_cue_addresses(tmp_path):
+    directory = CueShardDirectory(tmp_path / "cues", slot_power=2)
+    by_prefix = {}
+    for number in range(10_000):
+        cue = f"expand-{number}"
+        prefix = hashlib.sha256(cue.encode()).digest()[0]
+        by_prefix.setdefault(prefix, []).append(cue)
+        if len(by_prefix[prefix]) == 6:
+            cues = by_prefix[prefix]
+            break
+    else:
+        raise AssertionError("failed to construct expansion fixture")
+    identifier = "memory:" + "a" * 64
+    assert directory.put_many(cues, "main", identifier) == len(cues)
+    assert (tmp_path / "cues" / "table-p4.vrs").is_file()
+    assert all(directory.matches_for(cue) == (("main", identifier),) for cue in cues)

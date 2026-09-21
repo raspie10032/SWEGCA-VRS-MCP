@@ -522,6 +522,49 @@ Not built: a residency budget (the preparer prefetches up to the light-cache siz
 first — beyond that the cache is LRU and the miss counter shows what that costs), thrashing detection,
 and full-result equivalence checks between a judgment with and without a warm bundle.
 
+### VRS 2.2 resident repair supersedes the minimal G7/G8 read path (2026-09-21)
+
+The G7/G8 paragraphs above are historical measurements. They no longer describe the active
+multi-shard read path. A secondary shard is a complete VRS main with its graph, stable version,
+regions, portals, evidence decisions and original episodes. A cold shard is read through an
+immutable projection of that complete state; it is not reduced to lexical rows and it is not
+silently loaded by `status`.
+
+The repaired path keeps the memory stages explicit:
+
+1. Déjà vu hashes informative cues into the disk cue directory and returns exact experience
+   addresses and their owning VRS shards.
+2. Recall ranks one global candidate set across the relevant projections. The hook does not append
+   a primary-only result to independently ranked bundle results.
+3. Replay resolves `memory:<sha256>` through the disk exact directory and returns the original
+   observation, provenance, revision, outcome and source addresses. The derived cue vector is a
+   checksummed part of the same immutable capsule, decoded only when Re-evidence consumes it.
+4. Re-evidence reads the candidate's current projected VRS state, strengths, evidence decision,
+   region membership and local or cross-shard portal path. It does not substitute a log row for an
+   experience.
+
+Both disk directories grow in sealed hash levels. An exact-address prefix starts at `p16`; a cue
+prefix starts at `p12`. A level seals at 70 percent rather than filling completely, records its
+published count and overflow state in a durable header, and then admits new keys to the next level.
+Absent-key lookup therefore takes a short expected probe at each existing level instead of scanning
+a full lower table. Existing keys remain in their original level and exact addresses do not change.
+The final exact level is `p23`; the final cue level is `p22`.
+
+Exact capsules and cue postings are append-only and checksummed. Capsule bytes are durable before an
+address slot is published. A level's sealed routing state is durable before a later level can publish
+a key. Batch ingest and read-index backfill write capsule/source records and cue/posting records with
+one durability barrier per batch. A failed batch can leave an unreachable append tail; it cannot
+publish an address to partial data or hide a published upper-level key behind an unsealed level.
+
+Read-only exact segment mappings are held in a bounded 512-entry LRU. This is a mapping and file
+descriptor bound, not a resident copy of every table. Consolidation still uses all 16 configured
+workers, schedules independent shards in memory-bounded waves, and fails closed if one shard's
+estimated transient state cannot fit beneath the 4 GB process limit.
+
+The current-experience-copy measurement and its limits are recorded in `docs/SIZING.md`. It proves
+the repaired path on 12,537 real records; it does not turn that record count into the user's
+one-billion-parameter target.
+
 ### Machine results close the loop — the minimal G11 (2026-09-19)
 
 G11 asks for the whole loop: intent → action → *actual outcome* → experience → VRS → later cognition.

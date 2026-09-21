@@ -1,3 +1,5 @@
+import hashlib
+
 import pytest
 
 from swegca_vrs2.exact_replay import ExactReplayStore
@@ -19,7 +21,8 @@ def test_disk_exact_address_returns_original_replay_without_resident_index(tmp_p
         assert exact.put(identifier, "main", 0, episode) is False
         with pytest.raises(ValueError, match="address_reassigned"):
             exact.put(identifier, "another-shard", 0, episode)
-        assert exact.put_source("source:exact", "main") is True
+        # Exact publication atomically installs its source lineage route too.
+        assert exact.put_source("source:exact", "main") is False
         assert exact.put_source("source:exact", "main") is False
         assert exact.source_shard("source:exact") == "main"
         assert exact.source_shard("source:missing") is None
@@ -39,6 +42,9 @@ def test_disk_exact_address_returns_original_replay_without_resident_index(tmp_p
         assert found["shard_row"] == 0
         assert found["cue_count"] == len(episode.cues)
         assert found["kind"] == "conversation"
+        assert found["cues"].decoded is None
+        assert tuple(found["cues"]) == episode.cues
+        assert found["cues"].decoded == episode.cues
         replay = found["replay"]
         assert replay.episode_id == identifier and replay.source_addresses == ("source:exact",)
         assert replay.steps[0].outcome == "uncertain"
@@ -48,3 +54,51 @@ def test_disk_exact_address_returns_original_replay_without_resident_index(tmp_p
         assert exact.allocated_bytes() < exact.logical_bytes()
     finally:
         main.close()
+
+
+def test_full_exact_segments_expand_without_changing_replay_addresses(tmp_path):
+    main = Main(tmp_path / "main", allow_ingest=True)
+    try:
+        stored = main.ingest(dict(request_id="exact-expand", text="확장 후에도 원경험 재생",
+            source="source:expand", revision="r1", outcome="success",
+            proposition="expand-claim", polarity="support",
+            metadata=dict(kind="conversation")))
+        episode = main.memory.episode(stored["episode_id"])
+        exact = ExactReplayStore(tmp_path / "exact", slot_power=2)
+        identifiers = tuple("memory:ab" + f"{index:062x}" for index in range(6))
+
+        result = exact.put_many(
+            (identifier, "main", index, episode)
+            for index, identifier in enumerate(identifiers))
+
+        assert result["exact"] == len(identifiers)
+        assert (tmp_path / "exact" / "address-p4-ab.vrs").exists()
+        assert [exact.get(identifier)["shard_row"] for identifier in identifiers] == list(range(6))
+        new_identifier = "memory:ac" + "0" * 62
+        with pytest.raises(ValueError, match="address_reassigned"):
+            exact.put_many(((new_identifier, "main", 1, episode),
+                            (new_identifier, "main", 0, episode)))
+
+        sources = []
+        target_prefix = None
+        candidate = 0
+        while len(sources) < 6:
+            source = f"source:collision:{candidate}"
+            prefix = hashlib.sha256(source.encode("utf-8")).digest()[0]
+            if target_prefix is None:
+                target_prefix = prefix
+            if prefix == target_prefix:
+                sources.append(source)
+            candidate += 1
+        for source in sources:
+            assert exact.put_source(source, "main") is True
+        assert (tmp_path / "exact" / f"source-p4-{target_prefix:02x}.vrs").exists()
+        assert [exact.source_shard(source) for source in sources] == ["main"] * 6
+    finally:
+        main.close()
+
+
+@pytest.mark.parametrize("slot_power", (0, 24))
+def test_exact_slot_power_is_bounded(slot_power, tmp_path):
+    with pytest.raises(ValueError, match="slot_power_out_of_range"):
+        ExactReplayStore(tmp_path / "exact", slot_power=slot_power)
