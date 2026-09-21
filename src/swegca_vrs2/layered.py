@@ -18,6 +18,7 @@ from .loopback import ensure_daemon
 from .native_memory import MEMORY_TOOLS
 from .native_transport import InterfaceError, MCPServer
 from .server import LoopbackMCP
+from .session_capture import SessionCapture
 
 
 def _tools():
@@ -61,6 +62,9 @@ class LayeredMCP(MCPServer):
         self.main = None
         self.routes = {}
         self.queries = {}
+        self.capture = SessionCapture(self.main_state)
+        self.pending_leases = {}
+        self.request_leases = {}
 
     @staticmethod
     def _session_id(arguments):
@@ -140,6 +144,9 @@ class LayeredMCP(MCPServer):
         request_id, view_id = self._handle(arguments)
         key = (session_id, request_id)
         if view_id is not None:
+            lease = self.request_leases.get(key)
+            if lease is not None:
+                self.capture.renew_recall('codex', session_id, lease)
             layer = self.routes.get((session_id, request_id, view_id))
             if layer is None:
                 raise InterfaceError('memory_handle_not_owned')
@@ -160,23 +167,32 @@ class LayeredMCP(MCPServer):
 
         query = arguments.get('query')
         local_snapshot = arguments.get('expected_pair_snapshot_id')
+        pending = self.pending_leases.get(session_id, [])
+        lease = pending.pop(0) if pending else self.capture.begin_recall('codex', session_id)
+        self.request_leases[key] = lease
+        self.capture.renew_recall('codex', session_id, lease)
         self.queries[key] = (query, local_snapshot)
         try:
             packet = self._session(session_id).call('memory_context', arguments)
+            fallback = self._local_complete(session_id, arguments, packet)
+            if fallback is not None:
+                return fallback
+            if isinstance(packet.get('view_id'), str):
+                self.routes[(session_id, request_id, packet['view_id'])] = 'session'
+            return self._annotate(packet, layer='session', fallback_used=False,
+                query=query, local_snapshot=local_snapshot,
+                local_candidate_count=packet.get('candidate_count'))
         except Exception:
             self.queries.pop(key, None)
+            self.request_leases.pop(key, None)
+            self.capture.end_recall('codex', session_id, lease)
             raise
-        fallback = self._local_complete(session_id, arguments, packet)
-        if fallback is not None:
-            return fallback
-        if isinstance(packet.get('view_id'), str):
-            self.routes[(session_id, request_id, packet['view_id'])] = 'session'
-        return self._annotate(packet, layer='session', fallback_used=False,
-            query=query, local_snapshot=local_snapshot,
-            local_candidate_count=packet.get('candidate_count'))
 
     def _continue(self, session_id, arguments):
         request_id, view_id = self._handle(arguments)
+        lease = self.request_leases.get((session_id, request_id))
+        if lease is not None:
+            self.capture.renew_recall('codex', session_id, lease)
         layer = self.routes.get((session_id, request_id, view_id))
         if layer is None:
             raise InterfaceError('memory_handle_not_owned')
@@ -201,7 +217,13 @@ class LayeredMCP(MCPServer):
         session_id = self._session_id(arguments)
         native = self._native(arguments)
         if name == 'memory_status':
-            status = self._session(session_id).call(name, native)
+            lease = self.capture.begin_recall('codex', session_id)
+            try:
+                status = self._session(session_id).call(name, native)
+            except Exception:
+                self.capture.end_recall('codex', session_id, lease)
+                raise
+            self.pending_leases.setdefault(session_id, []).append(lease)
             return dict(status, memory_layer='session', fallback_configured=True,
                 lookup_order=['session', 'main'], main_opened=False)
         if name == 'memory_context':
@@ -209,17 +231,34 @@ class LayeredMCP(MCPServer):
         if name == 'memory_continue':
             return self._continue(session_id, native)
         request_id, view_id = self._handle(native)
+        key = (session_id, request_id)
+        lease = self.request_leases.get(key)
+        if lease is not None and name != 'memory_release':
+            self.capture.renew_recall('codex', session_id, lease)
         layer = self.routes.get((session_id, request_id, view_id))
         if layer is None:
             raise InterfaceError('memory_handle_not_owned')
         remote = self._session(session_id) if layer == 'session' else self._main()
-        result = remote.call(name, native)
-        if name == 'memory_release':
+        if name != 'memory_release':
+            return remote.call(name, native)
+        try:
+            return remote.call(name, native)
+        finally:
+            # A failed release must not stop live transcript admission. The
+            # remote view remains fail closed, while the lease is always ended.
             self.routes.pop((session_id, request_id, view_id), None)
-            self.queries.pop((session_id, request_id), None)
-        return result
+            self.queries.pop(key, None)
+            self.request_leases.pop(key, None)
+            self.capture.end_recall('codex', session_id, lease)
 
     def close(self):
+        for (session_id, _), lease in list(self.request_leases.items()):
+            self.capture.end_recall('codex', session_id, lease)
+        for session_id, leases in list(self.pending_leases.items()):
+            for lease in leases:
+                self.capture.end_recall('codex', session_id, lease)
+        self.request_leases.clear()
+        self.pending_leases.clear()
         if self.main is not None:
             self.main.close()
         for remote in self.sessions.values():

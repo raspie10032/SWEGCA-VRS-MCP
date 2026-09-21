@@ -31,6 +31,7 @@ from .resident import WarmView
 CHUNK = 60000
 INPUT_LIMIT = 16 * 1024 * 1024
 FRAME_BUDGET = MAX_BYTES - 128 * 1024
+RECALL_LEASE_NS = 120 * 1_000_000_000
 
 
 def digest(value):
@@ -190,6 +191,61 @@ class SessionCapture:
     def end_path(self, host, session):
         return self.meta / 'ended' / host / (self.session_key(session) + '.json')
 
+    def recall_root(self, host, session):
+        return self.meta / 'recall-leases' / host / self.session_key(session)
+
+    def recall_barrier(self, host, session):
+        root = self.recall_root(host, session)
+        root.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        return FileLock(str(root) + '.lock', thread_local=False)
+
+    def _live_recall_leases(self, host, session):
+        root = self.recall_root(host, session)
+        if not root.exists():
+            return []
+        now = time.time_ns()
+        live = []
+        for path in root.glob('*.json'):
+            lease = read_json(path, {})
+            if int(lease.get('expires_ns', 0)) > now:
+                live.append(path)
+            else:
+                path.unlink(missing_ok=True)
+        return live
+
+    def begin_recall(self, host, session):
+        """Pause transcript admission after every scan already in flight finishes."""
+        root = private_directory(self.recall_root(host, session))
+        identifier = os.urandom(16).hex()
+        atomic_json(root / (identifier + '.json'), dict(
+            schema='swegca-vrs2-session-recall-lease-v1',
+            created_ns=time.time_ns(), expires_ns=time.time_ns() + RECALL_LEASE_NS))
+        # The lease is visible before this barrier wait. A scan that already
+        # crossed the barrier finishes first; later scans observe the lease.
+        with self.recall_barrier(host, session):
+            pass
+        return identifier
+
+    def renew_recall(self, host, session, identifier):
+        if not isinstance(identifier, str) or len(identifier) != 32:
+            raise ValueError('invalid_recall_lease')
+        path = self.recall_root(host, session) / (identifier + '.json')
+        if not path.is_file():
+            raise ValueError('recall_lease_expired')
+        lease = read_json(path, {})
+        lease['expires_ns'] = time.time_ns() + RECALL_LEASE_NS
+        atomic_json(path, lease)
+
+    def end_recall(self, host, session, identifier):
+        if isinstance(identifier, str) and len(identifier) == 32:
+            (self.recall_root(host, session) / (identifier + '.json')).unlink(missing_ok=True)
+
+    def end_all_recalls(self, host, session):
+        root = self.recall_root(host, session)
+        if root.exists():
+            for path in root.glob('*.json'):
+                path.unlink(missing_ok=True)
+
     @staticmethod
     def payloads(host, session_key, source_key, role, value, kind, line_number):
         chunks = [value[index:index + CHUNK] for index in range(0, len(value), CHUNK)]
@@ -205,7 +261,7 @@ class SessionCapture:
                     parts=len(chunks), epistemic_status='unverified_transcript')))
         return result
 
-    def scan_transcript(self, host, session, raw_path):
+    def scan_transcript(self, host, session, raw_path, *, force=False):
         if host not in ('codex', 'claude'):
             raise ValueError('invalid_host')
         path = Path(raw_path).expanduser().resolve()
@@ -218,10 +274,22 @@ class SessionCapture:
         cursor_path = self.cursor_path(host, session, path)
         cursor_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         lock = FileLock(str(cursor_path) + '.lock')
-        with lock:
-            if os.name != 'nt':
-                os.chmod(str(cursor_path) + '.lock', 0o600)
-            return self._scan_locked(host, session_key, path, cursor_path)
+        with self.recall_barrier(host, session):
+            if not force and self._live_recall_leases(host, session):
+                cursor = read_json(cursor_path, dict(offset=0, line=0, captured=0,
+                    excluded=0, recent_user=[]))
+                return dict(status='capture_deferred_for_memory_read', admitted=0,
+                    offset=int(cursor.get('offset', 0)), line=int(cursor.get('line', 0)),
+                    captured=int(cursor.get('captured', 0)),
+                    excluded=int(cursor.get('excluded', 0)),
+                    accounted=int(cursor.get('line', 0)) ==
+                        int(cursor.get('captured', 0)) + int(cursor.get('excluded', 0)),
+                    session=session_key,
+                    session_state=str(self.session_root(host, session_key)))
+            with lock:
+                if os.name != 'nt':
+                    os.chmod(str(cursor_path) + '.lock', 0o600)
+                return self._scan_locked(host, session_key, path, cursor_path)
 
     def _scan_locked(self, host, session_key, path, cursor_path):
         info = path.stat()

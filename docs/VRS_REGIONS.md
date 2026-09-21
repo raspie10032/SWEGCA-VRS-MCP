@@ -40,7 +40,12 @@ split into ordered parts with stable source addresses; retries are idempotent.
 The layered Codex MCP injects the exact host session ID into each VRS tool call.
 It runs the complete four stage path against the session VRS first. Durable main
 is opened only after the session Recall completes with zero candidates. A
-session hit never opens main.
+session hit never opens main. A recall lease starts before the session snapshot
+is returned and ends on release or every failure and shutdown path. While it is
+live, capture keeps its byte cursor unchanged rather than mutating the pinned
+snapshot. The tailer admits all deferred complete records immediately after the
+lease ends; `SessionEnd` clears abandoned leases and forces the stable final
+tail through the same native session VRS.
 
 Only a real `SessionEnd` schedules final attachment. Interrupt captures the
 latest tail but does not end or attach the session. Silence and elapsed time do

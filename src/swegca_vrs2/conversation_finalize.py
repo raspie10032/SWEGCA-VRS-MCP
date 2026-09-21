@@ -15,10 +15,13 @@ def finalize(state_dir, host, session, transcript):
     """Capture a stable final tail before publishing the durable end marker."""
     capture = SessionCapture(state_dir)
     path = Path(transcript).expanduser().resolve()
+    # SessionEnd is authoritative. Clear abandoned read transactions and admit
+    # their complete transcript tail before publishing the end marker.
+    capture.end_all_recalls(host, session)
     stable = 0
     result = None
     for _ in range(20):
-        result = capture.scan_transcript(host, session, path)
+        result = capture.scan_transcript(host, session, path, force=True)
         size = path.stat().st_size
         if result['offset'] == size:
             time.sleep(0.1)

@@ -70,7 +70,12 @@ also scan the same cursor as durable delivery boundaries. The cursor contains
 only byte/accounting positions and recent exact VRS addresses. It contains no
 dialogue text and is never a recall source. VRS tool calls receive the exact host
 session ID; reads complete against session VRS first and open main only after a
-zero-candidate completed recall.
+zero-candidate completed recall. `memory_status` establishes a bounded recall
+lease before returning its session pair snapshot. Until the matching read is
+released, transcript admission leaves the byte cursor in place so memory tool
+records cannot invalidate that pinned snapshot. Release, read failure, lease
+expiry, server close, and SessionEnd all unblock admission without excluding or
+discarding a host-visible record.
 
 `SessionEnd` returns within the host's three-second command-hook ceiling after
 spawning a detached finalizer. The finalizer captures a stable final transcript

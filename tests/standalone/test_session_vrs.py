@@ -363,6 +363,161 @@ def test_exact_main_address_is_forwarded_after_complete_session_miss(tmp_path):
         stop(session_state, state)
 
 
+def test_live_capture_waits_for_exact_recall_then_admits_every_deferred_record(tmp_path):
+    state, transcript = tmp_path / 'state', tmp_path / 'rollout.jsonl'
+    session = 'recall-capture-barrier'
+    write_transcript(transcript, session, [
+        {'type': 'response_item', 'payload': {'type': 'message', 'role': 'user',
+            'content': [{'type': 'input_text', 'text': 'barrier_anchor_unique_3131'}]}}])
+    capture = SessionCapture(state)
+    session_state = capture.session_root('codex', session)
+    capture.scan_transcript('codex', session, transcript)
+    with VRSClient(session_state, writes=False) as local:
+        before = local.export(0)['rows']
+    address = next(row['episode_id'] for row in before
+                   if row['observation']['text'] == 'barrier_anchor_unique_3131')
+    server = LayeredMCP(state)
+    try:
+        status = server.call_tool('memory_status', {'session_id': session})
+        append_message(transcript, 'deferred_tool_record_unique_4141')
+        deferred = capture.scan_transcript('codex', session, transcript)
+        assert deferred['status'] == 'capture_deferred_for_memory_read'
+        assert deferred['admitted'] == 0
+        assert deferred['offset'] < transcript.stat().st_size
+
+        packet = finish(server, session, server.call_tool('memory_context', {
+            'session_id': session, 'request_id': 'barrier-exact-query',
+            'query': address, 'exact_episode_id': address,
+            'expected_pair_snapshot_id': status['pair_snapshot_id']}))
+        assert packet['memory_layer'] == 'session'
+        assert packet['lookup_receipt']['main_opened'] is False
+        assert [row['episode_id'] for row in packet['memories']] == [address]
+        assert packet['activation_receipt']['stage_order']['data'] == [
+            'deja_vu', 'recall', 'replay', 're_evidence']
+        server.call_tool('memory_release', {'session_id': session,
+            'request_id': 'barrier-exact-query', 'view_id': packet['view_id']})
+
+        admitted = capture.scan_transcript('codex', session, transcript)
+        assert admitted['status'] == 'captured_to_session_vrs'
+        assert admitted['admitted'] == 1
+        assert admitted['offset'] == transcript.stat().st_size
+        with VRSClient(session_state, writes=False) as local:
+            after = local.export(0)['rows']
+        assert 'deferred_tool_record_unique_4141' in {
+            row['observation']['text'] for row in after}
+        assert not list(capture.recall_root('codex', session).glob('*.json'))
+        assert not (state / 'memory.sqlite3').exists()
+    finally:
+        server.close()
+        stop(session_state, state)
+
+
+def test_failed_exact_recall_releases_capture_barrier_without_losing_tail(tmp_path):
+    state, transcript = tmp_path / 'state', tmp_path / 'rollout.jsonl'
+    session = 'failed-recall-capture-barrier'
+    write_transcript(transcript, session, [
+        {'type': 'response_item', 'payload': {'type': 'message', 'role': 'user',
+            'content': [{'type': 'input_text', 'text': 'failed_barrier_anchor_5151'}]}}])
+    capture = SessionCapture(state)
+    session_state = capture.session_root('codex', session)
+    capture.scan_transcript('codex', session, transcript)
+    server = LayeredMCP(state)
+    try:
+        status = server.call_tool('memory_status', {'session_id': session})
+        append_message(transcript, 'tail_after_failed_recall_6161')
+        assert capture.scan_transcript('codex', session, transcript)[
+            'status'] == 'capture_deferred_for_memory_read'
+        with pytest.raises(InterfaceError, match='memory_context_exact_address_mismatch'):
+            server.call_tool('memory_context', {'session_id': session,
+                'request_id': 'failed-exact-query', 'query': 'memory:not-an-address',
+                'exact_episode_id': 'memory:not-an-address',
+                'expected_pair_snapshot_id': status['pair_snapshot_id']})
+
+        admitted = capture.scan_transcript('codex', session, transcript)
+        assert admitted['admitted'] == 1
+        with VRSClient(session_state, writes=False) as local:
+            exported = local.export(0)['rows']
+        assert 'tail_after_failed_recall_6161' in {
+            row['observation']['text'] for row in exported}
+        assert not list(capture.recall_root('codex', session).glob('*.json'))
+    finally:
+        server.close()
+        stop(session_state, state)
+
+
+def test_failed_remote_release_and_server_close_both_resume_live_capture(tmp_path,
+                                                                         monkeypatch):
+    state, transcript = tmp_path / 'state', tmp_path / 'rollout.jsonl'
+    session = 'release-failure-capture-barrier'
+    write_transcript(transcript, session, [
+        {'type': 'response_item', 'payload': {'type': 'message', 'role': 'user',
+            'content': [{'type': 'input_text', 'text': 'release_anchor_unique_8181'}]}}])
+    capture = SessionCapture(state)
+    session_state = capture.session_root('codex', session)
+    capture.scan_transcript('codex', session, transcript)
+    server = LayeredMCP(state)
+    try:
+        status = server.call_tool('memory_status', {'session_id': session})
+        packet = finish(server, session, server.call_tool('memory_context', {
+            'session_id': session, 'request_id': 'release-failure-query',
+            'query': 'release_anchor_unique_8181',
+            'expected_pair_snapshot_id': status['pair_snapshot_id']}))
+        append_message(transcript, 'tail_after_release_failure_9191')
+        assert capture.scan_transcript('codex', session, transcript)[
+            'status'] == 'capture_deferred_for_memory_read'
+
+        remote = server.sessions[session]
+        original_call = remote.call
+        def fail_release(name, arguments):
+            if name == 'memory_release':
+                raise InterfaceError('synthetic_release_failure')
+            return original_call(name, arguments)
+        monkeypatch.setattr(remote, 'call', fail_release)
+        with pytest.raises(InterfaceError, match='synthetic_release_failure'):
+            server.call_tool('memory_release', {'session_id': session,
+                'request_id': 'release-failure-query', 'view_id': packet['view_id']})
+        assert capture.scan_transcript('codex', session, transcript)['admitted'] == 1
+        assert not list(capture.recall_root('codex', session).glob('*.json'))
+
+        server.call_tool('memory_status', {'session_id': session})
+        append_message(transcript, 'tail_after_server_close_0202')
+        assert capture.scan_transcript('codex', session, transcript)[
+            'status'] == 'capture_deferred_for_memory_read'
+        server.close()
+        assert capture.scan_transcript('codex', session, transcript)['admitted'] == 1
+        with VRSClient(session_state, writes=False) as local:
+            texts = {row['observation']['text'] for row in local.export(0)['rows']}
+        assert {'tail_after_release_failure_9191',
+                'tail_after_server_close_0202'} <= texts
+    finally:
+        server.close()
+        stop(session_state, state)
+
+
+def test_session_end_clears_abandoned_recall_and_preserves_final_tail(tmp_path):
+    state, transcript = tmp_path / 'state', tmp_path / 'rollout.jsonl'
+    session = 'ended-recall-capture-barrier'
+    write_transcript(transcript, session, [])
+    capture = SessionCapture(state)
+    session_state = capture.session_root('codex', session)
+    capture.scan_transcript('codex', session, transcript)
+    capture.begin_recall('codex', session)
+    append_message(transcript, 'session_end_deferred_tail_7171')
+    assert capture.scan_transcript('codex', session, transcript)[
+        'status'] == 'capture_deferred_for_memory_read'
+    try:
+        result = finalize(state, 'codex', session, transcript)
+        assert result['offset'] == transcript.stat().st_size
+        assert not list(capture.recall_root('codex', session).glob('*.json'))
+        with VRSClient(state, writes=False) as main:
+            exported = main.export(0)['rows']
+        assert 'session_end_deferred_tail_7171' in {
+            row['observation']['text'] for row in exported}
+        assert not (state / 'memory.sqlite3').exists()
+    finally:
+        stop(session_state, state)
+
+
 def test_merge_requires_end_and_preserves_original_address(tmp_path):
     state, transcript = tmp_path / 'state', tmp_path / 'rollout.jsonl'
     session = 'ended-session'
