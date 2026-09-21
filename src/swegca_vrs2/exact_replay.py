@@ -24,8 +24,9 @@ import zlib
 
 from .engine.mosaic_memory_activation import MemoryStep, ReplayedEpisode
 from .store import plain
+from .compact_index import asks_and_description
 
-MAGIC = b'VRS2EXACT1\0'
+MAGIC = b'VRS2EXACT2\0'
 HEADER_BYTES = 4096
 SEGMENT_BITS = 8
 SLOT_POWER = int(os.environ.get('VRS2_EXACT_SLOT_POWER', '23'))
@@ -125,10 +126,15 @@ class ExactReplayStore:
         raise ValueError('exact_replay_address_segment_full')
 
     @staticmethod
-    def _encode(identifier, shard, episode):
+    def _encode(identifier, shard, row, episode):
         step = episode.steps[0]
-        body = dict(schema='swegca-vrs2-replay-capsule-v1', episode_id=identifier,
-                    shard=str(shard), matched_cues=[identifier],
+        text = step.observation.get('text', '')
+        asks, description = asks_and_description(text)
+        body = dict(schema='swegca-vrs2-replay-capsule-v2', episode_id=identifier,
+                    shard=str(shard), shard_row=int(row), matched_cues=[identifier],
+                    cue_count=len(episode.cues),
+                    kind=str((step.observation.get('metadata') or {}).get('kind') or ''),
+                    asks=asks.casefold(), description=description.casefold(),
                     steps=[dict(phase=step.phase, observation=plain(step.observation),
                                 relations=list(step.relations), judgment=step.judgment,
                                 outcome=step.outcome, evidence_refs=list(step.evidence_refs))],
@@ -158,9 +164,9 @@ class ExactReplayStore:
             os.close(data_fd)
         return offset, len(compressed), checksum
 
-    def put(self, identifier, shard, episode):
+    def put(self, identifier, shard, row, episode):
         key = _key(identifier)
-        compressed = self._encode(identifier, shard, episode)
+        compressed = self._encode(identifier, shard, row, episode)
         checksum = zlib.crc32(compressed)
         with self.lock:
             fd, mapping = self._open_segment(key, create=True)
@@ -173,6 +179,8 @@ class ExactReplayStore:
                         raise ValueError('exact_replay_address_collision')
                     if body.get('shard') != str(shard):
                         raise ValueError('exact_replay_address_reassigned')
+                    if int(body.get('shard_row', -1)) != int(row):
+                        raise ValueError('exact_replay_row_reassigned')
                     return False
                 offset, length, checksum = self._append_capsule(compressed)
                 # Tail first, key last: a reader never treats a partially written
@@ -238,14 +246,17 @@ class ExactReplayStore:
         finally:
             mapping.close(); os.close(fd)
         body = self._read_capsule(offset, length, checksum)
-        if body.get('episode_id') != identifier or body.get('schema') != 'swegca-vrs2-replay-capsule-v1':
+        if body.get('episode_id') != identifier or body.get('schema') != 'swegca-vrs2-replay-capsule-v2':
             raise ValueError('exact_replay_capsule_identity_mismatch')
         row = body['steps'][0]
         step = MemoryStep(row['phase'], row['observation'], tuple(row['relations']), row['judgment'],
                           row['outcome'], tuple(row['evidence_refs']))
         replay = ReplayedEpisode(identifier, tuple(body['matched_cues']), (step,),
                                  tuple(body['source_addresses']), body['verification_state'])
-        return dict(shard=body['shard'], revision=body['revision'], replay=replay)
+        return dict(shard=body['shard'], revision=body['revision'], replay=replay,
+                    shard_row=int(body['shard_row']),
+                    cue_count=int(body['cue_count']), kind=body['kind'],
+                    asks=body['asks'], description=body['description'])
 
     def source_shard(self, source):
         key = _source_key(source)
@@ -273,7 +284,7 @@ class ExactReplayStore:
             directory.mkdir(mode=0o700, parents=True, exist_ok=True)
         return directory / (key + '.json')
 
-    def put_proposition(self, proposition, shard):
+    def put_proposition(self, proposition, shard, identifier):
         """Bind one explicit claim to every shard carrying its VRS evidence."""
         path = self._proposition_path(proposition, create=True)
         with self.lock:
@@ -285,14 +296,17 @@ class ExactReplayStore:
                 if (body.get('schema') != 'swegca-vrs2-proposition-route-v1'
                         or body.get('proposition') != proposition):
                     raise ValueError('experience_proposition_hash_collision')
-                shards = set(str(item) for item in body.get('shards', ()))
-                if str(shard) in shards:
+                experiences = {(str(item['shard']), str(item['episode_id']))
+                               for item in body.get('experiences', ())}
+                if (str(shard), identifier) in experiences:
                     return False
-                shards.add(str(shard))
+                experiences.add((str(shard), identifier))
             else:
-                shards = {str(shard)}
+                experiences = {(str(shard), identifier)}
+            shards = sorted({item[0] for item in experiences})
             body = dict(schema='swegca-vrs2-proposition-route-v1', proposition=proposition,
-                        shards=sorted(shards))
+                        shards=shards, experiences=[dict(shard=item[0], episode_id=item[1])
+                                                   for item in sorted(experiences)])
             temporary = path.with_name('.' + path.name + '-' + os.urandom(8).hex())
             descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
             try:
@@ -325,6 +339,29 @@ class ExactReplayStore:
         if not isinstance(shards, list) or any(not isinstance(item, str) for item in shards):
             raise ValueError('experience_proposition_route_corrupt')
         return tuple(shards)
+
+    def proposition_experiences(self, proposition):
+        path = self._proposition_path(proposition, create=False)
+        try:
+            body = json.loads(path.read_text(encoding='utf-8'))
+        except FileNotFoundError:
+            return ()
+        except (OSError, ValueError, UnicodeError):
+            raise ValueError('experience_proposition_route_corrupt') from None
+        if (body.get('schema') != 'swegca-vrs2-proposition-route-v1'
+                or body.get('proposition') != proposition):
+            raise ValueError('experience_proposition_route_identity_mismatch')
+        rows = body.get('experiences')
+        if not isinstance(rows, list):
+            raise ValueError('experience_proposition_route_corrupt')
+        result = []
+        for row in rows:
+            if (not isinstance(row, dict) or not isinstance(row.get('shard'), str)
+                    or not isinstance(row.get('episode_id'), str)):
+                raise ValueError('experience_proposition_route_corrupt')
+            _key(row['episode_id'])
+            result.append((row['shard'], row['episode_id']))
+        return tuple(result)
 
     def logical_bytes(self):
         return sum(path.stat().st_size for path in self.directory.rglob('*') if path.is_file())

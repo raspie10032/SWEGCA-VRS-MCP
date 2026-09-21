@@ -7,9 +7,12 @@ from swegca_vrs2.cue_shards import CueShardDirectory
 
 def test_cue_directory_routes_only_matching_vrs_shards(tmp_path):
     directory = CueShardDirectory(tmp_path / "cues", slot_power=8)
-    assert directory.put_many(("정산", "배치", "정산"), "main") == 2
-    assert directory.put_many(("정산",), "main") == 0
-    assert directory.put_many(("정산", "반증"), "shard-000001") == 2
+    first = "memory:" + "1" * 64
+    second = "memory:" + "2" * 64
+    assert directory.put_many(("정산", "배치", "정산"), "main", first) == 2
+    assert directory.put_many(("정산",), "main", first) == 0
+    assert directory.put_many(("정산", "반증"), "shard-000001", second) == 2
+    assert directory.matches_for("정산") == (("shard-000001", second), ("main", first))
     assert directory.shards_for("정산") == ("shard-000001", "main")
     assert directory.shards_for("배치") == ("main",)
     assert directory.shards_for("반증") == ("shard-000001",)
@@ -22,7 +25,7 @@ def test_cue_directory_rejects_invalid_inputs(tmp_path):
     with pytest.raises(ValueError, match="invalid_vrs_cue"):
         directory.shards_for("")
     with pytest.raises(ValueError, match="invalid_vrs_shard_id"):
-        directory.put_many(("cue",), "x" * 127)
+        directory.put_many(("cue",), "x" * 127, "memory:" + "1" * 64)
 
 
 def test_one_batch_reserves_colliding_slots_before_publication(tmp_path):
@@ -38,5 +41,5 @@ def test_one_batch_reserves_colliding_slots_before_publication(tmp_path):
             break
     else:
         raise AssertionError("failed to construct collision fixture")
-    assert directory.put_many(cues, "main") == len(cues)
+    assert directory.put_many(cues, "main", "memory:" + "1" * 64) == len(cues)
     assert all(directory.shards_for(cue) == ("main",) for cue in cues)

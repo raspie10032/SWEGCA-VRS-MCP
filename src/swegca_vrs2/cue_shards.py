@@ -22,7 +22,7 @@ import threading
 import zlib
 
 
-MAGIC = b'VRS2CUES1\0'
+MAGIC = b'VRS2CUES2\0'
 HEADER_BYTES = 4096
 SLOT_POWER = int(os.environ.get('VRS2_CUE_SLOT_POWER', '16'))
 EMPTY = b'\0' * 32
@@ -30,8 +30,8 @@ COPY_BODY = struct.Struct('<QII')            # head, count, generation
 COPY = struct.Struct('<QIII')                # body + crc32
 SLOT_BYTES = 80                              # key32, cue offset8, two copies20
 CUE_HEADER = struct.Struct('<II')            # utf-8 bytes, crc32
-NODE_BODY = struct.Struct('<QH126s')          # previous, shard bytes, shard
-NODE = struct.Struct('<QH126sI')              # body + crc32
+NODE_BODY = struct.Struct('<QH126s32s')       # previous, shard bytes, shard, experience
+NODE = struct.Struct('<QH126s32sI')           # body + crc32
 
 
 def _write_all(fd, data):
@@ -166,29 +166,36 @@ class CueShardDirectory:
             raise ValueError('cue_shard_cue_corrupt') from None
 
     @staticmethod
-    def _node_bytes(previous, shard):
+    def _node_bytes(previous, shard, identifier):
         payload = str(shard).encode('utf-8')
         if not payload or len(payload) > 126:
             raise ValueError('invalid_vrs_shard_id')
+        if (not isinstance(identifier, str) or not identifier.startswith('memory:')
+                or len(identifier) != 71):
+            raise ValueError('invalid_exact_experience_address')
+        try:
+            experience = bytes.fromhex(identifier[7:])
+        except ValueError:
+            raise ValueError('invalid_exact_experience_address') from None
         padded = payload.ljust(126, b'\0')
-        body = NODE_BODY.pack(previous, len(payload), padded)
-        return NODE.pack(previous, len(payload), padded, zlib.crc32(body))
+        body = NODE_BODY.pack(previous, len(payload), padded, experience)
+        return NODE.pack(previous, len(payload), padded, experience, zlib.crc32(body))
 
     @staticmethod
     def _read_node(fd, offset):
         raw = os.pread(fd, NODE.size, offset)
         if len(raw) != NODE.size:
             raise ValueError('cue_shard_posting_truncated')
-        previous, length, payload, checksum = NODE.unpack(raw)
+        previous, length, payload, experience, checksum = NODE.unpack(raw)
         if (not 1 <= length <= 126
-                or zlib.crc32(NODE_BODY.pack(previous, length, payload)) != checksum):
+                or zlib.crc32(NODE_BODY.pack(previous, length, payload, experience)) != checksum):
             raise ValueError('cue_shard_posting_corrupt')
         try:
-            return previous, payload[:length].decode('utf-8')
+            return previous, payload[:length].decode('utf-8'), 'memory:' + experience.hex()
         except UnicodeDecodeError:
             raise ValueError('cue_shard_posting_corrupt') from None
 
-    def put_many(self, cues, shard):
+    def put_many(self, cues, shard, identifier):
         cues = tuple(dict.fromkeys(str(cue) for cue in cues))
         if not cues:
             return 0
@@ -217,10 +224,10 @@ class CueShardDirectory:
                     else:
                         cue_offset = self._append_cue(cue_fd, cue)
                     previous, count, generation = (state[:3] if state else (0, 0, 0))
-                    if state and self._read_node(posting_fd, previous)[1] == str(shard):
+                    if state and self._read_node(posting_fd, previous)[2] == identifier:
                         continue
                     node_offset = os.lseek(posting_fd, 0, os.SEEK_END)
-                    _write_all(posting_fd, self._node_bytes(previous, shard))
+                    _write_all(posting_fd, self._node_bytes(previous, shard, identifier))
                     updates.append((mapping, slot, exists, cue_offset,
                                     node_offset, count + 1, generation + 1,
                                     None if state is None else state[3]))
@@ -249,7 +256,7 @@ class CueShardDirectory:
                     mapping.close()
                 os.close(table_fd); os.close(posting_fd); os.close(cue_fd)
 
-    def shards_for(self, cue):
+    def matches_for(self, cue):
         key = _key(cue)
         fd = os.open(self.table_path, os.O_RDONLY)
         mapping = self._map_segment(fd, key, write=False)
@@ -266,21 +273,24 @@ class CueShardDirectory:
             if state is None:
                 raise ValueError('cue_shard_head_invalid')
             offset, count = state[0], state[1]
-            shards = []
+            matches = []
             for _ in range(count):
-                offset, shard = self._read_node(posting_fd, offset)
-                shards.append(shard)
+                offset, shard, identifier = self._read_node(posting_fd, offset)
+                matches.append((shard, identifier))
                 if not offset:
                     break
             else:
                 if offset:
                     raise ValueError('cue_shard_posting_count_invalid')
-            if len(shards) != count or offset:
+            if len(matches) != count or offset:
                 raise ValueError('cue_shard_posting_count_invalid')
-            return tuple(dict.fromkeys(shards))
+            return tuple(dict.fromkeys(matches))
         finally:
             os.close(posting_fd); os.close(cue_fd)
             mapping.close(); os.close(fd)
+
+    def shards_for(self, cue):
+        return tuple(dict.fromkeys(shard for shard, _ in self.matches_for(cue)))
 
     def logical_bytes(self):
         return sum(path.stat().st_size for path in self.directory.glob('*.vrs'))

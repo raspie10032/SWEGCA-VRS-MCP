@@ -15,24 +15,30 @@ def test_disk_exact_address_returns_original_replay_without_resident_index(tmp_p
         identifier = stored["episode_id"]
         episode = main.memory.episode(identifier)
         exact = ExactReplayStore(tmp_path / "exact", slot_power=8)
-        assert exact.put(identifier, "main", episode) is True
-        assert exact.put(identifier, "main", episode) is False
+        assert exact.put(identifier, "main", 0, episode) is True
+        assert exact.put(identifier, "main", 0, episode) is False
         with pytest.raises(ValueError, match="address_reassigned"):
-            exact.put(identifier, "another-shard", episode)
+            exact.put(identifier, "another-shard", 0, episode)
         assert exact.put_source("source:exact", "main") is True
         assert exact.put_source("source:exact", "main") is False
         assert exact.source_shard("source:exact") == "main"
         assert exact.source_shard("source:missing") is None
         with pytest.raises(ValueError, match="source_lineage_split"):
             exact.put_source("source:exact", "another-shard")
-        assert exact.put_proposition("exact-claim", "main") is True
-        assert exact.put_proposition("exact-claim", "main") is False
-        assert exact.put_proposition("exact-claim", "counter-shard") is True
+        assert exact.put_proposition("exact-claim", "main", identifier) is True
+        assert exact.put_proposition("exact-claim", "main", identifier) is False
+        counter = "memory:" + "e" * 64
+        assert exact.put_proposition("exact-claim", "counter-shard", counter) is True
         assert exact.proposition_shards("exact-claim") == ("counter-shard", "main")
+        assert exact.proposition_experiences("exact-claim") == (
+            ("counter-shard", counter), ("main", identifier))
         assert exact.proposition_shards("missing-claim") == ()
 
         found = exact.get(identifier)
         assert found["shard"] == "main"
+        assert found["shard_row"] == 0
+        assert found["cue_count"] == len(episode.cues)
+        assert found["kind"] == "conversation"
         replay = found["replay"]
         assert replay.episode_id == identifier and replay.source_addresses == ("source:exact",)
         assert replay.steps[0].outcome == "uncertain"

@@ -146,40 +146,29 @@ class ShardedMain:
         return base
 
     def _finish_exact(self, query, pair_snapshot, signal, recalled, replayed,
-                      shard, through_replay_ns, exclude_kinds, region_scope):
+                      exact, through_replay_ns, exclude_kinds, region_scope):
         """Attach current VRS Re-evidence after the direct Replay boundary."""
         finish_began = time.perf_counter_ns()
         episode = replayed.episodes[0]
         proposition = episode.steps[0].observation.get('proposition_id')
-        relevant = [shard]
-        if proposition:
-            relevant.extend(self.resident.exact.proposition_shards(proposition))
-        owners = []
-        for name in dict.fromkeys(relevant):
-            if name == 'main':
-                owner = self.primary
-            else:
-                owner, _ = self.resident.ready(name)
-                if owner is None:
-                    owner = self.resident.main_for(name)
-            owners.append((name, owner))
-        by_shard = dict(owners)
-        owner = by_shard.get(shard)
-        if owner is None:
-            raise ValueError('exact_replay_owner_not_ready')
+        current = self.resident.current_vrs(exact)
+        if current is None:
+            raise ValueError('read_projection_not_ready:' + exact['shard'])
         opponents = ()
         if proposition:
             active = []
-            for _, candidate_owner in owners:
-                for identifier in candidate_owner.memory.propositions.get(proposition, ()):
-                    if identifier not in candidate_owner.memory.superseded:
-                        active.append(candidate_owner.memory.episode_light(identifier))
+            for _, identifier in self.resident.exact.proposition_experiences(proposition):
+                candidate = self.resident.exact_replay(identifier)
+                candidate_current = self.resident.current_vrs(candidate)
+                if candidate_current is None:
+                    raise ValueError('read_projection_not_ready:' + candidate['shard'])
+                if candidate_current['superseded_by'] is None:
+                    active.append(candidate['replay'])
             if {item.steps[0].observation.get('evidence_polarity') for item in active} == {'support', 'refute'}:
                 opponents = tuple(sorted(item.episode_id for item in active))
 
         graph_snapshot = digest(('sharded-vrs-re-evidence-v1', pair_snapshot,
-                                 [(name, candidate.graph.snapshot_id)
-                                  for name, candidate in owners]))
+                                 current['graph_snapshot_id']))
 
         def judge(item):
             if opponents:
@@ -187,17 +176,17 @@ class ShardedMain:
                     'Opposing recorded claims for the same explicit proposition across VRS shards; neither is certified true.',
                     ('memory-snapshot:' + pair_snapshot, *item.source_addresses), opponents)
             return current_experience_verdict(item, memory_snapshot_id=pair_snapshot,
-                vrs_snapshot_id=graph_snapshot, current_strength=owner.graph.strength(item.episode_id),
+                vrs_snapshot_id=graph_snapshot, current_strength=current['strength'],
                 proposition=proposition or 'experience:' + item.episode_id)
 
         re_evidenced = re_evidence_memory(replayed, judge=judge)
         receipt = MemoryActivationReceipt('rozephine-memory-activation-v1', pair_snapshot,
             signal, recalled, replayed, re_evidenced)
-        local = owner.recall(query, None, exclude_kinds=exclude_kinds, region_scope=region_scope)
         identifier = episode.episode_id
-        path = dict(local['region_navigation']['paths'].get(identifier)
-                    or dict(region=None, path='pending'))
-        path['shard'] = shard
+        region = current['region']
+        path = dict(region=region if region is not None and region >= 0 else None,
+                    path='local' if region is not None and region >= 0 else 'pending',
+                    shard=exact['shard'])
         return dict(record_count=self.resident.logical_record_count(),
             receipt={'activation': receipt},
             memory_selection=dict(candidate_counts={identifier: 1}, selected_cues=(identifier,),
@@ -208,12 +197,13 @@ class ShardedMain:
             vrs_selection=dict(selection_method='current_owner_vrs_after_exact_replay',
                 numerical_version=vrs_refine.VERSION, logical_implication_claimed=False,
                 grants_authority=False,
-                stable_version_id=(owner.graph.stable.version_id if owner.graph.stable is not None else None)),
-            current_strengths={identifier: owner.graph.strength(identifier)},
-            current_promotions={identifier: owner.graph.strength(identifier) >= 1.0},
+                stable_version_id=current['stable_version_id']),
+            current_strengths={identifier: current['strength']},
+            current_promotions={identifier: current['strength'] >= 1.0},
             current_propositions={identifier: proposition},
-            superseded_by={identifier: owner.memory.superseded.get(identifier)},
-            region_navigation=dict(paths={identifier: path}, shard_roots={shard: local['region_navigation']},
+            superseded_by={identifier: current['superseded_by']},
+            region_navigation=dict(paths={identifier: path},
+                                   shard_roots={exact['shard']: dict(portals=current['portals'])},
                                    cross_shard_portals=[], membership_is_truth=False),
             pair_snapshot_id=pair_snapshot,
             timings_ns=dict(through_replay=through_replay_ns,
@@ -246,7 +236,7 @@ class ShardedMain:
             replayed = ReplayResult(query, (replay,))
             through_replay_ns = time.perf_counter_ns() - began
             return self._finish_exact(query, pair_snapshot, signal, recalled, replayed,
-                                      exact['shard'], through_replay_ns,
+                                      exact, through_replay_ns,
                                       exclude_kinds, region_scope)
         query_cues = keys(query)
         routed = self.resident.shards_for_cues(query_cues)

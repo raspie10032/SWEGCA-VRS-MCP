@@ -18,9 +18,10 @@ import zlib
 from collections import OrderedDict
 from pathlib import Path
 
-from .store import CHECKPOINT_MAGIC, digest
+from .store import CHECKPOINT_MAGIC, digest, plain
 from .exact_replay import ExactReplayStore
 from .cue_shards import CueShardDirectory
+from .read_projection import ReadProjectionStore
 
 AUTO_SHARD_RECORDS = 8_192
 MAX_STORAGE_BYTES = 500 * 1024 ** 3
@@ -222,6 +223,7 @@ class Resident:
         self.closing = {}                                 # bundle id -> thread checkpointing + closing it
         self.wanted = set()                               # bundles a judgment missed: the preparer loads them next
         self.prepared = {}                                # bundle id -> receipt of the last prepare (ms, seq, when)
+        self.projection_errors = {}
         self.lock = threading.Lock()
 
     def _load_exact_progress(self):
@@ -517,13 +519,14 @@ class Resident:
         memory = owner.memory
         episode = memory.episode(identifier)
         shard = self._shard_of(owner)
-        self.exact.put(identifier, shard, episode)
-        self.cue_shards.put_many(episode.cues, shard)
+        row = memory._store['row_of'][identifier]
+        self.exact.put(identifier, shard, row, episode)
+        self.cue_shards.put_many(episode.cues, shard, identifier)
         for source in episode.source_addresses:
             self.exact.put_source(source, shard)
         proposition = episode.steps[0].observation.get('proposition_id')
         if proposition:
-            self.exact.put_proposition(proposition, shard)
+            self.exact.put_proposition(proposition, shard, identifier)
 
     def exact_replay(self, identifier):
         return self.exact.get(identifier)
@@ -559,13 +562,13 @@ class Resident:
                 for row in range(start, stop):
                     identifier = ids[row]
                     episode = owner.memory.episode(identifier)
-                    added += int(self.exact.put(identifier, shard, episode))
-                    self.cue_shards.put_many(episode.cues, shard)
+                    added += int(self.exact.put(identifier, shard, row, episode))
+                    self.cue_shards.put_many(episode.cues, shard, identifier)
                     for source in episode.source_addresses:
                         self.exact.put_source(source, shard)
                     proposition = episode.steps[0].observation.get('proposition_id')
                     if proposition:
-                        self.exact.put_proposition(proposition, shard)
+                        self.exact.put_proposition(proposition, shard, identifier)
                 if (stop != start or (stop >= owner.memory.episode_count
                                       and not self.exact_backfill.get(shard, {}).get('complete'))):
                     self._advance_exact_cursor(shard, owner, stop)
@@ -640,7 +643,14 @@ class Resident:
         The journal is the truth, so a warm view opened meanwhile reads the last checkpoint plus the tail."""
         def run():
             try:
-                main.close()
+                try:
+                    ReadProjectionStore(self.bundles[bundle_id], bundle_id).write(main)
+                    self.projection_errors.pop(bundle_id, None)
+                except Exception as error:
+                    self.projection_errors[bundle_id] = type(error).__name__ + ': ' + str(error)[:160]
+                    raise
+                finally:
+                    main.close()
             finally:
                 with self.lock:
                     if self.closing.get(bundle_id) is thread:
@@ -649,6 +659,34 @@ class Resident:
         self.closing[bundle_id] = thread
         thread.start()
         return thread
+
+    def projection(self, bundle_id):
+        if bundle_id in (None, '', 'main'):
+            return None
+        expected = self.pair_ids.get(bundle_id)
+        return ReadProjectionStore(self.bundles[bundle_id], bundle_id).open(expected)
+
+    def current_vrs(self, exact):
+        """Current VRS facts for an exact capsule without opening a cold checkpoint."""
+        shard, identifier, row = exact['shard'], exact['replay'].episode_id, exact['shard_row']
+        if shard == 'main':
+            owner = self.primary
+        else:
+            owner, _ = self.peek_ready(shard)
+        if owner is not None:
+            stable = owner.graph.stable
+            portals = [dict(pair=[int(left), int(right)], value=plain(portal))
+                       for (left, right), portal in
+                       ((getattr(stable, 'portals', None) or {}).items()
+                        if stable is not None else ())]
+            return dict(shard=shard, pair_snapshot_id=owner.pair.snapshot_id,
+                graph_snapshot_id=owner.graph.snapshot_id,
+                stable_version_id=(stable.version_id if stable is not None else None),
+                strength=owner.graph.strength(identifier), region=owner.graph.region_of(identifier),
+                memberships=owner.graph.memberships_of(identifier),
+                superseded_by=owner.memory.superseded.get(identifier), portals=tuple(portals))
+        projection = self.projection(shard)
+        return None if projection is None else projection.current(identifier, row)
 
     def settle(self):
         """Wait for every background close (tests, shutdown)."""

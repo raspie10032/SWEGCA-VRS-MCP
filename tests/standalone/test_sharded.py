@@ -189,6 +189,10 @@ def test_exact_replay_opens_only_target_and_same_proposition_shards(tmp_path):
     try:
         target = resident.ingest(claim("target", "target-source", "support"), "target")["episode_id"]
         resident.evict("target"); resident.settle()
+        projected = resident.projection("target")
+        exact_location = resident.exact_replay(target)
+        assert projected.current(target, exact_location["shard_row"])["pair_snapshot_id"] == \
+            resident.pair_ids["target"]
         resident.ingest(dict(request_id="other", text="완전히 무관한 차가운 샤드",
             source="unrelated-source", revision="1"), "unrelated")
         resident.evict("unrelated"); resident.settle()
@@ -197,7 +201,8 @@ def test_exact_replay_opens_only_target_and_same_proposition_shards(tmp_path):
         sharded = ShardedMain(primary, resident)
         exact = sharded.recall(target, resident.logical_snapshot())
         assert exact["receipt"]["activation"].replay.episodes[0].episode_id == target
-        assert "target" in resident.hot
+        assert "target" not in resident.hot
+        assert "target" not in resident.warm
         assert "unrelated" not in resident.hot
         assert "unrelated" not in resident.warm
         assert "unrelated" not in resident.wanted
