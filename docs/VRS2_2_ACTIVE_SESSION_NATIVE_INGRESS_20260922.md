@@ -158,3 +158,35 @@ first-ranked Replay is 118.131 ms on that query. This identifies work to
 remove from the critical path without deleting the complete VRS stages or
 changing the ranking contract; it is not a latency repair yet. The app MCP
 `memory_status` still returned `tool_request_failed` on the old live process.
+
+## Long-lived MCP connection to a restarted session resident
+
+The installed Codex MCP process caches a loopback client for each session.
+In an isolated reproduction, a session daemon restarted on a new port while
+the stdio MCP process stayed alive. A later `memory_status` failed with
+`resident_request_failed`; a new direct `LayeredMCP` instance reached the same
+session state. `_Remote.call` now reattaches to the state directory and retries
+only the idempotent status request when that exact transport error occurs.
+In-flight context, page and Replay requests still fail closed because their
+view ownership cannot safely be retried after a daemon restart.
+
+The 23 session-VRS source tests passed in 176.99 s. A real stopped-and-restarted
+daemon changed port and the revised source and new installed wheel both
+reattached successfully. This is a reproduced product defect and repair; it
+does not establish that the old live app MCP `tool_request_failed` has this
+same cause or that the app connection is already repaired.
+
+Commit `c0de7f1686fd8bad476282d901b3c81accc5e54f` was built as an isolated
+wheel with SHA-256 `b94975c8f003d846c352f1d71e2810c22d3fda1091955370f2a75d0daafadd82`.
+All 48 product files matched source, wheel and installed runtime; the whole
+installed-path selftest passed with receipt
+`/var/tmp/vrs22-whole-path-selftest-mcp-reconnect-20260922/receipt.json`
+(SHA-256 `7f39fcf27d910ed28b4b398ec7692a4ab1a9002b844a5c77921a0eeba1d1fd25`).
+The new installed wheel's natural first-ranked Replay receipt is
+`evals/vrs22_context/results/first_ranked_original_replay_mcp_reconnect_wheel_20260922.json`
+(SHA-256 `b38453aba238405ecca27e8946fa90449fd5ae4a51e7a28f4255bc5b170f1bd7`).
+Under the same 4 GiB, no-swap and 625 MB/s state-device limits, first calls
+took 0.775 ms for one match, 19.425 ms for 100 and 120.410 ms for 1,008.
+The latency gate remains false. The one-shot post-SessionEnd watcher now uses
+this new wheel as `swegca-vrs22-sessionend-handoff-c0de7f1-20260922.service`.
+No SessionEnd marker exists and the active Codex hook/MCP has not switched.
