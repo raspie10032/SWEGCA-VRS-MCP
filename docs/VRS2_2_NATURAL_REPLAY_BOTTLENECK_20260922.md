@@ -91,3 +91,37 @@ the separate offline test venv lacked `pytest-asyncio`. After installing that
 plugin offline, the same source candidate passed the complete standalone suite
 **127/127 in 182.57 seconds**. The 21 targeted resident/sharded tests also
 passed separately.
+
+## First-query preparation and remaining fanout cost
+
+A phase probe on the same copied 15,630-record native main found that the
+first single-match natural call spent about 0.55 ms in lexical-key extraction
+and 0.26 ms enumerating 1,843 VRS portals even when the experience had no
+incident portal pair. Fixed lexical patterns are now compiled at module load;
+`projected_portals` returns an empty selection immediately. Full portal
+projection, region membership, provenance keys and cross-shard paths remain
+unchanged when portal pairs are selected. Seven representative address,
+mixed-script and ordinary cue inputs retained the same key tuples; the full
+native suite passed **127/127**.
+
+Both receipts below use the same first single-match cue, 4 GiB memory limit,
+zero swap and 625 MB/s SSD read/write limit. They run the source code on an
+experience copy, not the installed resident runtime:
+
+| First call | Replay reached | Full four-stage return | Cue probe | Major faults |
+| --- | ---: | ---: | ---: | ---: |
+| Table dropped from page cache | 2.500 ms | 2.621 ms | 1.599 ms | 1 |
+| 83,890,176-byte table read before timing | 0.904 ms | 1.027 ms | 0.010 ms | 0 |
+
+The source receipts are
+`evals/vrs22_context/results/natural_first_source_cold_20260922.json`
+(SHA-256 `bc834eb4daa8e365faf48f11990b5c38508ddd8c9331ddd0de2d057da1f478bc`)
+and `evals/vrs22_context/results/natural_first_source_warm_20260922.json`
+(SHA-256 `f359f733e189a0d006b8f6c393c7c6725d969abb062b636b507ad74627b20ccb`).
+Table reading itself took 33.3 ms outside the second timed query. This is a
+conditional sub-1 ms Replay observation, not an all-size or cold-query bound.
+The cold page fault still violates 1 ms. A separate 100-match first query
+after the same table read still took about 20.9 ms through Replay; exact
+capsule loading, current VRS facts and portal provenance materialization
+remain proportional to matched original experiences. No model evaluation is
+authorized by this result, and the product-performance gate stays closed.

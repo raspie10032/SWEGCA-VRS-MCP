@@ -1,0 +1,16 @@
+{
+  "status": "MEASURED",
+  "scope": "one first natural Replay on copied native main",
+  "record_count": 15630,
+  "cue_sha256": "3ed83b89af7c54a337aa4527f7612670a8136dbcc22510ea7bbf14cc6ef49636",
+  "matched_experiences": 1,
+  "prewarm_table": true,
+  "prewarm_seconds": 0.033296329,
+  "table_bytes": 83890176,
+  "through_replay_ms": 0.903729,
+  "full_four_stage_ms": 1.02679,
+  "cue_probe_ms": 0.01035,
+  "cue_probe_calls": 1,
+  "minor_faults": 5,
+  "major_faults": 0
+}

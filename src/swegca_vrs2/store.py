@@ -47,6 +47,11 @@ from .engine.mosaic_vrs_connectivity_regions import _csr as _engine_csr
 # Set VRS2_GRAPH_SUBSTRING_CUES=1 to restore the upstream node set (then rebuild the graph).
 GRAPH_SUBSTRING_CUES = os.environ.get('VRS2_GRAPH_SUBSTRING_CUES') == '1'
 _HANGUL_FRAGMENT = re.compile('[가-힣]{2,4}')
+_EXACT_ADDRESS = re.compile(r'\s*(memory:[0-9a-f]{64})\s*')
+_WORD_KEYS = re.compile(r'\w+')
+_ADDRESS_KEYS = re.compile(r'memory:[0-9a-f]{64}')
+_HANGUL_WORD = re.compile('[가-힣]+')
+_SCRIPT_RUNS = re.compile('[가-힣]+|[^가-힣]+')
 
 
 def graph_cue_ids(memory, row):
@@ -100,22 +105,22 @@ def freeze_view(value):
 def keys(text):
     """Lexical address keys; Hangul substrings are retrieval cues, never claims."""
     folded = text.casefold()
-    exact = re.fullmatch(r'\s*(memory:[0-9a-f]{64})\s*', folded)
+    exact = _EXACT_ADDRESS.fullmatch(folded)
     if exact:
         # An explicit original address is already the complete lookup key. Do
         # not also admit the generic token ``memory`` and the hexadecimal tail;
         # doing so turns one exact read into a whole-store lexical fanout.
         return (exact.group(1),)
-    result = dict.fromkeys(re.findall(r'\w+', folded))
-    result.update(dict.fromkeys(re.findall(r'memory:[0-9a-f]{64}', folded)))
+    result = dict.fromkeys(_WORD_KEYS.findall(folded))
+    result.update(dict.fromkeys(_ADDRESS_KEYS.findall(folded)))
     # Local adapter (2026-09-14): a mixed-script token (270인지, 폴더블8, 8월) also addresses
     # its script runs. Upstream gives such a token neither a whole-token match against the
     # separately written form ("big_chunk 270") nor the Hangul substrings below.
     for word in tuple(result):
-        if not re.fullmatch('[가-힣]+', word):
-            result.update(dict.fromkeys(part for part in re.findall('[가-힣]+|[^가-힣]+', word) if part != word))
+        if not _HANGUL_WORD.fullmatch(word):
+            result.update(dict.fromkeys(part for part in _SCRIPT_RUNS.findall(word) if part != word))
     for word in tuple(result):
-        if re.fullmatch('[가-힣]+', word):
+        if _HANGUL_WORD.fullmatch(word):
             for size in range(2, min(4, len(word)) + 1):
                 result.update(dict.fromkeys(word[i:i+size] for i in range(len(word)-size+1)))
     return tuple(result)

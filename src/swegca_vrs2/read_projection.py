@@ -37,6 +37,8 @@ def projected_portals(owner, active_regions=None, portal_pairs=None):
         int(region) for region in active_regions if region is not None and int(region) >= 0}
     selected_pairs = None if portal_pairs is None else {
         tuple(sorted((int(pair[0]), int(pair[1])))) for pair in portal_pairs}
+    if selected_pairs == set():
+        return []
     result = []
     for (left, right), portal in ((getattr(stable, 'portals', None) or {}).items()
                                   if stable is not None else ()):
