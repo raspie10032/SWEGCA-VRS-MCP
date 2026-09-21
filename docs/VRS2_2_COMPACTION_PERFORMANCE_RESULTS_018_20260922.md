@@ -23,6 +23,14 @@ dialogue, token, compaction, and VRS-protocol results do not depend on that
 storage implementation. The original coding regression result is retained as
 historical provenance rather than described as a clean native test surface.
 
+The same audit found a second provenance issue: the native VRS code never
+called a database, and every v018 state contained zero database artifacts, but
+its external file-lock package imported Python's database module while
+initializing an unused lock class. This did not participate in capture, recall,
+compaction, scoring, or the coding change. It means v018 is valid behavioral
+evidence, but it is not evidence for the stricter claim that the process never
+loaded that module.
+
 The exact final target file from each model was replayed in an in-memory,
 data-only checkpoint fixture with no storage backend or agent adapter. The
 fixture verified all three required behaviors: duplicate `metadata.json`
@@ -181,6 +189,16 @@ complete Déjà vu-through-Replay calls, and 5,000 calls for each largest-record
 case. All three passed with zero 1 ms violations. Across the repetitions, the
 largest Déjà vu-through-Replay value was 0.1759 ms and the largest-record
 through-Replay value was 0.2413 ms.
+
+Product commit `18401a0` removed the external lock dependency and replaced
+its used exclusive-file-lock behavior with a native OS lock. The full
+standalone suite passed 125 tests, including competing owners, reentrant
+acquisition, release by the background closer, session capture, SessionEnd
+attachment, batches, and shards. The installed package had no external lock
+package, loaded no database module during exact session and main fallback
+smokes, and created no database artifacts. A new 4 GiB and 5 Gbit/s
+cgroup-limited run reported the database module unloaded and zero 1 ms
+violations; its complete Déjà vu-through-Replay maximum was 0.1572 ms.
 
 These are post-run product corrections, not retroactive changes to the
 frozen v018 measurement artifact.

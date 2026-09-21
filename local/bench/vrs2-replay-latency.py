@@ -187,12 +187,15 @@ def main():
         disk_allocated = sum((getattr(item, "st_blocks", None) or
                               ((item.st_size + 511) // 512)) * 512 for item in file_stats)
         peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * 1024
+        database_module_loaded = any(
+            name == "sqlite3" or name.startswith("sqlite3.") for name in sys.modules)
         output = {
             "status": "PASS" if max(cold_ms) < 1.0 and max(replay_ms) < 1.0
                       and max(stage_replay_ms) < 1.0
                       and all(row["through_replay_max_ms"] < 1.0 for row in stress.values())
                       and peak <= args.rss_limit_gb * 1024 ** 3
-                      and disk_allocated <= MAX_STORAGE_BYTES else "FAIL",
+                      and disk_allocated <= MAX_STORAGE_BYTES
+                      and not database_module_loaded else "FAIL",
             "state": str(state), "records": len(ids), "iterations": len(queries),
             "full_iterations": len(stage_replay_ms),
             "main_load_s": round(load_s, 6), "exact_directory_build_s": round(build_s, 6),
@@ -241,6 +244,7 @@ def main():
             "disk_allocated_bytes": disk_allocated,
             "disk_logical_bytes": disk_logical,
             "storage_limit_bytes": MAX_STORAGE_BYTES,
+            "database_module_loaded": database_module_loaded,
             "ssd_limit_bps": int(args.ssd_limit_gbps * 1_000_000_000 / 8),
             "cgroup_limits": cgroup_limits(),
             "ssd_limit_note": "cgroup values are evidence only when io_max names this state device",

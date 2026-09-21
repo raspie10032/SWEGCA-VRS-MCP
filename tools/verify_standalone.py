@@ -30,6 +30,7 @@ def verify(root, dist):
                 names=z.namelist()
                 entry=next(n for n in names if n.endswith('.dist-info/entry_points.txt'))
                 entry_points=z.read(entry).decode()
+                metadata=[z.read(n) for n in names if n.endswith('.dist-info/METADATA')]
                 for required_entry in REQUIRED_ENTRY_POINTS:
                     assert required_entry in entry_points, required_entry
                 package_python={n:z.read(n) for n in names
@@ -37,6 +38,8 @@ def verify(root, dist):
         elif archive.name.endswith('.tar.gz'):
             with tarfile.open(archive) as tar:
                 names=tar.getnames()
+                metadata=[tar.extractfile(n).read() for n in names
+                          if n.endswith('/PKG-INFO')]
                 package_python={n:tar.extractfile(n).read() for n in names
                     if '/src/swegca_vrs2/' in '/'+n and n.endswith('.py')}
         else:
@@ -44,8 +47,15 @@ def verify(root, dist):
         forbidden=[n for n in names if any(v in n.lower() for v in
             ('swegca_vrs_mcp/','swegca_vrs2/harness/','swegca_vrs2/adapter.py',
              'local-data','memory.sqlite','.sqlite3'))]
+        forbidden.extend(n for n in names if 'hermes' in n.lower())
         assert not forbidden, forbidden
+        forbidden_dependencies=[line for raw in metadata
+            for line in raw.decode('utf-8',errors='replace').splitlines()
+            if line.lower().startswith('requires-dist:')
+            and any(value in line.lower() for value in ('filelock','sqlite','hermes'))]
+        assert not forbidden_dependencies, forbidden_dependencies
         sqlite_imports=[]
+        retired_imports=[]
         for name, raw in package_python.items():
             tree=ast.parse(raw.decode('utf-8'), filename=name)
             for node in ast.walk(tree):
@@ -54,7 +64,11 @@ def verify(root, dist):
                     [node.module or ''] if isinstance(node, ast.ImportFrom) else [])
                 if any(value == 'sqlite3' or value.startswith('sqlite3.') for value in imports):
                     sqlite_imports.append(f'{name}:{node.lineno}')
+                if any(value == 'filelock' or value.startswith('filelock.')
+                       or 'hermes' in value.lower() for value in imports):
+                    retired_imports.append(f'{name}:{node.lineno}')
         assert not sqlite_imports, sqlite_imports
+        assert not retired_imports, retired_imports
         for required in ('swegca_vrs2/store.py','swegca_vrs2/native_journal.py',
                          'swegca_vrs2/server.py','swegca_vrs2/layered.py',
                          'swegca_vrs2/conversation_hooks.py','swegca_vrs2/codex_hooks.py',
@@ -62,7 +76,8 @@ def verify(root, dist):
             assert any(n.endswith(required) for n in names), required
         results.append(dict(file=archive.name,bytes=archive.stat().st_size,
             sha256=hashlib.sha256(archive.read_bytes()).hexdigest(),
-            sqlite_imports=0, database_artifacts=0, retired_adapter_files=0))
+            sqlite_imports=0, database_artifacts=0, retired_adapter_files=0,
+            retired_imports=0, forbidden_runtime_dependencies=0))
     assert len(results)==2, results
     return dict(native_port_files=len(manifest['records']),artifacts=results,status='PASS')
 

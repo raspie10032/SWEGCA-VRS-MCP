@@ -147,6 +147,23 @@ The raw JSON SHA-256 values are
 `ac978aaf078d0973f7534b140606b9137fbedcbc9bb7fe080c07140f72d1e2c2`,
 and `d76138ebb8da6db16b3e265f263a132a2fb9ab4f83401378affe0d5c1238e10f`.
 
+A later whole-runtime import audit found that the external lock package loaded
+Python's database module while initializing an unused lock class. VRS did not
+open a database or create a database artifact, but the dependency was removed
+instead of treating that distinction as sufficient. Main, session capture,
+SessionEnd attachment, watcher exclusion, and read barriers now use the
+package's small OS file lock. The complete standalone suite passed 125 tests.
+The installed package then repeated the exact session hit and
+main-after-complete-miss paths with all four stages while the database module
+remained unloaded.
+
+The cgroup benchmark was repeated after this change. It reported
+`database_module_loaded=false`, the literal 500,000,000,000-byte ceiling,
+zero 1 ms violations in 50,000 exact and 50,000 complete
+Déjà vu-through-Replay samples, a 0.1572 ms through-Replay maximum, and a
+704 MB cgroup memory peak. Its raw JSON SHA-256 is
+`13a7a281c34a535cbde262ee40add52db0e61499bdd1333ec5e96855e7429b5a`.
+
 The directory keeps algorithmic work independent of total record count. The
 current-experience linked-shard and actual 5 Gbit/s kernel-limited runs are
 complete. A larger-scale run remains an evidence gate, and a general-purpose OS
