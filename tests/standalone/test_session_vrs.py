@@ -100,6 +100,18 @@ def test_generated_codex_end_and_interrupt_hooks_fit_runtime_deadline(tmp_path):
     assert hooks['Interrupt'][0]['hooks'][0]['timeout'] == 3
 
 
+def test_generated_hook_preserves_virtualenv_python_symlink(tmp_path):
+    base = tmp_path / 'base-python'
+    base.write_text('', encoding='utf-8')
+    virtualenv_python = tmp_path / 'venv' / 'bin' / 'python'
+    virtualenv_python.parent.mkdir(parents=True)
+    virtualenv_python.symlink_to(base)
+    hooks = codex_hook_config(virtualenv_python, tmp_path / 'state')['hooks']
+    run = hooks['SessionStart'][0]['hooks'][0]['command']
+    assert run.split()[0] == str(virtualenv_python.absolute())
+    assert str(base.resolve()) not in run
+
+
 def test_generated_hook_routes_only_the_configured_mcp_server(tmp_path):
     event = {'hook_event_name': 'PreToolUse', 'session_id': 'exact-session',
              'tool_name': 'mcp__memory_prod__memory_status', 'tool_input': {}}

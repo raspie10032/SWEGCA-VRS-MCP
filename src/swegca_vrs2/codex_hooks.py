@@ -14,7 +14,11 @@ def command(python, state_dir, *, module_root=None, server_name='swegca_vrs'):
     values = []
     if module_root is not None:
         values.extend(('env', f'PYTHONPATH={Path(module_root).expanduser().resolve()}'))
-    values.extend((str(Path(python).expanduser().resolve()), '-m',
+    # Keep a virtual environment's executable path intact.  Resolving its
+    # ``bin/python`` symlink selects the base interpreter and drops that
+    # environment's site-packages, so the installed swegca_vrs2 module is no
+    # longer importable when Codex invokes the generated hook.
+    values.extend((str(Path(python).expanduser().absolute()), '-m',
         'swegca_vrs2.conversation_hooks', '--host', 'codex',
         '--state-dir', str(Path(state_dir).expanduser().resolve()),
         '--tool-prefix', prefix))
@@ -51,7 +55,7 @@ def main():
     parser.add_argument('--server-name', default='swegca_vrs')
     parser.add_argument('--output', type=Path, required=True)
     args = parser.parse_args()
-    python = args.python.expanduser().resolve()
+    python = args.python.expanduser().absolute()
     state = args.state_dir.expanduser().resolve()
     if not python.is_file():
         parser.error('python executable unavailable')

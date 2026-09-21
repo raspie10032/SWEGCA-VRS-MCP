@@ -4,6 +4,9 @@
 
 - Enforce the 500 GB storage ceiling as exactly 500,000,000,000 allocated
   bytes instead of the larger 500 GiB value.
+- Preserve the virtual-environment `bin/python` path in generated Codex hooks;
+  resolving that symlink selected the base interpreter without the installed
+  SWEGCA-VRS2 package.
 
 ## 2.2.0 — 2026-09-21
 
