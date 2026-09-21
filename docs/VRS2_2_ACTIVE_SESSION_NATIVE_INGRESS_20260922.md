@@ -133,3 +133,28 @@ The one-shot post-SessionEnd handoff watcher now runs this new installed wheel
 as `swegca-vrs22-sessionend-handoff-0cd027d-20260922.service`; the older
 `d6e89bb` watcher is inactive. No SessionEnd marker exists, so no live main
 merge, hook switch or MCP switch has occurred.
+
+## Active native shadow continuation and remaining read cost
+
+An isolated native shadow tailer now follows this active session under a 4 GiB,
+zero-swap cgroup as
+`swegca-vrs22-native-shadow-tail-0cd027d-r1-20260922.service`. It does not
+change the installed Codex hook, app MCP or live main. A stopped-writer
+integrity audit of its captured prefix passed: 38,184 transcript lines,
+32,624 captured lines, 5,560 explicitly excluded private/control lines,
+33,244 expected and actual original observations across five native stores,
+zero missing, unexpected or changed originals and no SQLite module loaded.
+The receipt is `/var/tmp/vrs22-native-shadow-paused-audit-20260922.json`
+(SHA-256 `ade78ee261ca8d40caa38dc570b535a187ec73b9214da7052b59f1e6a83298c2`).
+The shadow tailer was restarted after the audit. A concurrent-writer audit
+can see journal rows newer than its frozen cursor; its first attempt reported
+seven such rows, while the stopped-writer audit showed exact equality.
+
+An instrumented broad natural Recall with 1,008 matching originals executed
+about 1.45 million Python calls in 0.304 s under profiling. Before the first
+Replay, it opens all candidate exact capsules and current VRS projections to
+derive complete ranking and region/portal navigation. The uninstrumented
+first-ranked Replay is 118.131 ms on that query. This identifies work to
+remove from the critical path without deleting the complete VRS stages or
+changing the ranking contract; it is not a latency repair yet. The app MCP
+`memory_status` still returned `tool_request_failed` on the old live process.
