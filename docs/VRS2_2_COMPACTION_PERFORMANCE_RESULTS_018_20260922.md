@@ -212,6 +212,12 @@ artifacts, and direct forbidden runtime dependencies. The final wheel SHA-256
 is `e0144305a8fa863f52679b7a4aa1e01901fa23942314e364d36c40c302a656c9`;
 all 48 installed package source files are byte-identical to that wheel.
 
+A separate maximum-depth structural benchmark traversed all five production
+address levels and performed 50,000 exact Replay lookups. Its maximum was
+0.0759 ms with zero 1 ms violations. The benchmark explicitly reports that it
+uses synthetic sealed lower levels and makes no experience-scale or
+parameter-scale claim.
+
 These are post-run product corrections, not retroactive changes to the
 frozen v018 measurement artifact.
 

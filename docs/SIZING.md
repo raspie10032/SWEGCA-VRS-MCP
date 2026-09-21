@@ -164,6 +164,19 @@ Déjà vu-through-Replay samples, a 0.1572 ms through-Replay maximum, and a
 704 MB cgroup memory peak. Its raw JSON SHA-256 is
 `13a7a281c34a535cbde262ee40add52db0e61499bdd1333ec5e96855e7429b5a`.
 
+The real-experience state above uses the first production address level. A
+separate structural benchmark therefore forced one exact address through every
+production level (powers 16, 18, 20, 22, and 23) before reaching its Replay
+capsule. Under the same cgroup limits, 50,000 maximum-depth exact lookups had a
+0.0101 ms median, 0.0144 ms p99, 0.0759 ms maximum, and zero 1 ms violations;
+the first lookup was 0.0844 ms. The process peak was 42,479,616 bytes and the
+database module remained unloaded. Raw result SHA-256:
+`94b0e0582f9918aa07c97972e810f7c23c5985ff3508b7f4374d0d0cdac0ddd2`.
+
+This structural run uses sealed empty lower levels to exercise maximum routing
+depth. It is evidence for bounded level traversal only. It is not a billion
+experience, high-occupancy collision, or parameter-scale measurement.
+
 The directory keeps algorithmic work independent of total record count. The
 current-experience linked-shard and actual 5 Gbit/s kernel-limited runs are
 complete. A larger-scale run remains an evidence gate, and a general-purpose OS
