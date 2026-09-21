@@ -766,3 +766,36 @@ one in 32/40 under the big-row bar and 35/40 with a lenient bar — the bar is n
 `hook_recall` ran at a median 508 ms while the backfill was ingesting (130–150 ms before it at 6.1k rows);
 re-measured after the backfill in the session log.
 
+#### Real time without a hook, and what must not multiply (2026-09-21, third batch)
+
+* **The live daemon sweeps.** A `vrs2-tail-sweeper` thread (every 60 s, `--tail-sweep 0` turns it off) tails
+  every log this machine has tailed and every file of a registered glob (`vrs2-tail.py --register "<glob>"
+  --agent NAME [--project SLUG] [--format F]`; `--registered`, `--sweep` for one pass now) that grew since its
+  state and has been quiet 10 minutes — a session that died mid-turn, an agent without hooks. It goes through
+  the daemon's own port like a hook, opens a client only when a log has something to send (an idle daemon
+  still idles out), and only the daemon that owns the configured live store sweeps — a test daemon on a
+  temporary store never touches this machine's tail states. So "all agents, real time" no longer depends on
+  a foreground `--watch` loop the user must keep running.
+* **A failed ingest is said out loud.** When a Stop / PreCompact tail run cannot send its rows (daemon down,
+  refused batch), the hook prints a `systemMessage` — `[기억] 대화 유입 실패 1건 — … (다음 정지에 다시 보냄)` — beside
+  the receipt; the log position does not move, so the rows go on the next run.
+* **Secrets are masked before storage** (`redact`): private-key blocks, Anthropic / OpenAI / AWS / GitHub /
+  Slack / Google keys, JWTs and `password= / token= / api_key=` assignments become `[가림:<kind>]`;
+  `metadata.redacted` counts them. The log keeps the original; the store must not multiply it. Hex digests
+  are not masked.
+* **More of the turn**: the user's mid-turn message (`[사용자 끼어듦 12:43: …]`, from the host's `queued_command`
+  attachment — the message itself arrives later as a user record and opens its turn), a background task's
+  status (`[배경 작업 completed: …]`), and the digest of each file the turn read (`읽음: proj/chunk_7.csv@3f2a9c1b7e5d`
+  — the file as it is at the tail's run; the version at read time stays in the log's tool result).
+* **One key per machine per producer** (`vrs2-identity.py keygen --producer P --add`): a second machine adds
+  its public key under the producer's `keys` instead of replacing the first machine's; the daemon verifies
+  against any of them and stamps the matching `key_id`. A borrowed key still fails.
+* **The SubagentStop payload** is written down the first time it fires (`payload_keys` in the receipt): the
+  field names `agent_transcript_path` / `agent_id` were assumed from memory; the receipt settles it.
+* `vrs2-tail.py --show LOG FIRST LAST` prints the turn(s) at those lines as the row was made — the human way to
+  open a 「원문 위치」 without reading raw jsonl. The delegate packet (`vrs2-delegate.py`) already renders
+  transcript rows through `choose`/`render`, conversation slot and 「원문 위치」 included; `memory_context`
+  returns the replayed episode with its metadata (position inside), but its snapshot precondition fails
+  whenever a write lands between `memory_status` and the call — under continuous ingestion (the backfill,
+  the sweeper) that is often; the hook path has no such precondition. Left as a named gap.
+

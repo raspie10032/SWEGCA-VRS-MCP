@@ -18,7 +18,7 @@ receipts under `~/.claude/hooks` or `$VRS2_RECEIPTS`); `local/hooks` are the Cla
 | `before_context_loss` | before the harness compacts/truncates context | transcript path, cwd, session_id, trigger | the log entry written or None | `precompact_snapshot.log` `{written|skip}` |
 | `after_context_loss` | first thing after compaction (and on start/resume) | cwd, source, session_id | context text or None | `session_start.log` `{source, entries, session}` |
 | `on_stop` | when the model's turn ends | cwd, session_id | per-step results | `stop_reindex_v2.log`, `usage_ledger.log`, `repeat_ledger.receipts.log`, hook check |
-| `on_turn` | whenever the host lets go of a turn: turn end (also a delegate's), before context loss (the open turn is cut), on start/resume (what was left) | transcript path, cwd, session_id, event | rows sent (one per turn, span-bound) | `vrs2_tail.log` `{trigger, rows, lines, parts, backlog}` |
+| `on_turn` | whenever the host lets go of a turn: turn end (also a delegate's), before context loss (the open turn is cut), on start/resume (what was left); and, without any hook, the daemon's sweep of tailed / registered logs quiet 10 min | transcript path, cwd, session_id, event | rows sent (one per turn, span-bound) | `vrs2_tail.log` `{trigger, rows, lines, parts, backlog}` |
 
 Evidence entry points (not tied to a moment): `emit(producer, hypothesis, outcome, axes, context, source, …)`,
 `confirm(hypothesis, holds, evidence_path, session_id)`, `alias(canonical, aliases)`.
