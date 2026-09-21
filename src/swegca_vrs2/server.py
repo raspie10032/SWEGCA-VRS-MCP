@@ -180,12 +180,40 @@ class LoopbackMCP(MemoryMCPServer):
             return dict(self.resident.request('status'), memory_only=True, model_tools_exported=False,
                 write_tools_exported=self.writes_enabled, receipt_transport='paged_main_evidence',
                 resident='loopback_daemon')
-        result = super().call_tool(name, arguments)
+        outermost = not getattr(self, '_inside', False)
+        self._inside = True
+        try:
+            result = self._call(name, arguments)
+        finally:
+            if outermost:
+                self._inside = False
+        if outermost and getattr(self, '_refreshed', None) is not None:
+            # memory_context starts through memory_recall: the refresh happened one level down
+            result['snapshot_refreshed'], self._refreshed = self._refreshed, None
         if name == 'memory_context' and result.get('status') == 'memory_context_ready':
             result['usage'] = dict(result['usage'], ingress='Use memory_store when the daemon runs with --allow-ingest. '
                 'Stores observations; no truth certification. Conversation logs are captured in real time by the host hooks '
                 'and vrs2-tail.py (kind=transcript rows bound to their place in the log), not by this bridge.')
         return result
+
+    def _call(self, name, arguments):
+        try:
+            return super().call_tool(name, arguments)
+        except InterfaceError as error:
+            # item 33 (2026-09-21): under real-time ingestion (hooks, the daemon's sweep) rows enter between
+            # memory_status and memory_context, and the pinned snapshot is stale before the caller can use it —
+            # measured: 2 of 2 calls failed with 8 rows in between. The bridge pins the current generation once
+            # and says which one it used; the caller's request id is untouched (no handle was made).
+            if not (str(error).endswith('snapshot_mismatch') and name in ('memory_context', 'memory_recall')
+                    and isinstance(arguments, dict) and arguments.get('expected_pair_snapshot_id')):
+                raise
+            fresh = self.resident.request('status').get('pair_snapshot_id')
+            if not fresh or fresh == arguments['expected_pair_snapshot_id']:
+                raise
+            result = super().call_tool(name, dict(arguments, expected_pair_snapshot_id=fresh))
+            self._refreshed = dict(expected=arguments['expected_pair_snapshot_id'], used=fresh,
+                reason='rows entered between memory_status and this call (real-time transcript tail); pinned to the current generation')
+            return result
 
     dispatch = StandaloneMCP.dispatch
 

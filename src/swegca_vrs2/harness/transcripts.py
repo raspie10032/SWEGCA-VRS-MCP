@@ -59,6 +59,8 @@ USER_CHARS = 1500
 ASSISTANT_CHARS = 2500
 TOOL_LINES = 24
 TEXT_CHARS = 6000
+THINKING_CHARS = 600       # item 4 (2026-09-21): the turn keeps a bounded excerpt of the model's reasoning — the why of what it did
+LOCK_STALE_S = 120.0       # item 27: a per-log lock older than this belongs to a dead run
 TAIL_CLAIM = "the transcript tail ingests every turn of the conversation log in real time"
 WATCH_FILE = os.path.join(STATE_DIR, "watch.json")     # registered log globs of agents without hooks (daemon sweep)
 READ_DIGESTS = 12          # Read calls per turn whose file digest (at Stop) is recorded
@@ -95,6 +97,7 @@ class Ev(NamedTuple):
     ids: tuple = ()
     results: tuple = ()
     usage: object = None
+    thinking: str = ""
 
 
 NOTHING = Ev(None)
@@ -310,9 +313,13 @@ def events_claude(record, own_sidechain=False):
                 if name == "Read" and isinstance(b.get("input"), dict) and b["input"].get("file_path"):
                     ids.append(("read:" + line[5:].strip(), str(b["input"]["file_path"])))
         usage = message.get("usage") if isinstance(message.get("usage"), dict) else None
-        if not texts and not tools and not usage:
+        # item 4: thinking blocks with text (half of them carry only a signature) — the reasoning behind the turn
+        thoughts = [b["thinking"].strip() for b in blocks if isinstance(b, dict) and b.get("type") == "thinking"
+                    and isinstance(b.get("thinking"), str) and b["thinking"].strip()]
+        if not texts and not tools and not usage and not thoughts:
             return NOTHING
-        return Ev("delegate_answer" if side else "assistant", "\n".join(texts), tuple(tools), when=when, model=message.get("model"), ids=tuple(ids), usage=usage)
+        return Ev("delegate_answer" if side else "assistant", "\n".join(texts), tuple(tools), when=when, model=message.get("model"), ids=tuple(ids), usage=usage,
+                  thinking="\n".join(thoughts))
     return NOTHING
 
 
@@ -391,7 +398,7 @@ def segments_of(items, first_line, fmt, carry_turn, own_sidechain=False):
 
     def new_segment(turn, part, start, end, line):
         return dict(turn=turn, part=part, lines=[line, line], bytes=[start, end], user=[], assistant=[], tools=[], results=[],
-                    events=[], when="", model=None, delegate=[], usage=dict(input=0, output=0, context_peak=0), records=0)
+                    events=[], when="", model=None, delegate=[], usage=dict(input=0, output=0, context_peak=0), records=0, thinking=[])
 
     def take_results(seg, results):
         for tool_id, is_error, head in results:
@@ -437,6 +444,8 @@ def segments_of(items, first_line, fmt, carry_turn, own_sidechain=False):
             if ev.role == "assistant":
                 if ev.text:
                     current["assistant"].append(ev.text)
+                if ev.thinking:
+                    current["thinking"].append(ev.thinking)
                 current["model"] = ev.model or current["model"]
             elif ev.role == "delegate":
                 current["delegate"].append("위임 과제: " + ev.text)
@@ -532,6 +541,8 @@ def compose(seg, agent, session, project):
         lines.append(line)
     if seg["assistant"]:
         lines.append("어시스턴트: " + squash("\n".join(seg["assistant"]), ASSISTANT_CHARS))
+    if seg.get("thinking"):
+        lines.append("사고: " + squash("\n".join(seg["thinking"]), THINKING_CHARS))
     if seg["delegate"]:
         lines.append(squash("\n".join(seg["delegate"]), 800))
     if seg["tools"]:
@@ -603,7 +614,7 @@ def row_of(seg, path, fmt, agent, session, project, stat):
                     model=seg["model"], tools=sorted({t.split(" ", 1)[0] for t in seg["tools"]})[:12], records=seg["records"],
                     tokens=dict(seg.get("usage") or {}), errors=sum(1 for e in seg["events"] if e.startswith("[도구 오류")),
                     rejected=sum(1 for e in seg["events"] if e.startswith("[사용자 거부")), redacted=int(seg.get("redacted") or 0),
-                    producer=PRODUCER, user=USER, origin=origin)
+                    thinking=sum(len(t) for t in seg.get("thinking") or []), producer=PRODUCER, user=USER, origin=origin)
     args = dict(request_id=f"transcript:{sha12(metadata['path'])}:{seg['lines'][0]}-{seg['lines'][1]}"[:128], text=text,
                 source=source[:1024], revision=span_digest[:12], outcome="pending", cues=[], metadata=metadata)
     try:
@@ -692,6 +703,51 @@ def run(path, *, trigger="cli", agent="claude-code", session=None, cwd=None, pro
         receipt(**rec)
         return rec
     fmt = fmt if fmt in FORMATS else detect_format(path)
+    lock = acquire_lock(path)
+    if lock is None:
+        # item 27: another run (the Stop hook, the daemon sweeper, a backfill) holds this log — it will take the
+        # same lines; running twice was idempotent on the daemon but raced on the state file
+        rec = dict(trigger=trigger, agent=agent, path=os.path.basename(path), skip="locked")
+        receipt(**rec)
+        return rec
+    try:
+        return _run_locked(path, trigger=trigger, agent=agent, session=session, cwd=cwd, project=project, fmt=fmt,
+                           force_cut=force_cut, client=client, dry_run=dry_run, started=started)
+    finally:
+        release_lock(lock)
+
+
+def acquire_lock(path):
+    """The per-log lock file (item 27): created exclusively; a stale one (a killed hook) is taken over."""
+    os.makedirs(STATE_DIR, exist_ok=True)
+    lock = state_path(path) + ".lock"
+    for attempt in range(2):
+        try:
+            fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            os.write(fd, str(os.getpid()).encode("ascii"))
+            os.close(fd)
+            return lock
+        except FileExistsError:
+            try:
+                if time.time() - os.stat(lock).st_mtime > LOCK_STALE_S:
+                    os.remove(lock)
+                    continue
+            except OSError:
+                continue
+            return None
+        except OSError:
+            return None
+    return None
+
+
+def release_lock(lock):
+    try:
+        os.remove(lock)
+    except OSError:
+        pass
+
+
+def _run_locked(path, *, trigger, agent, session, cwd, project, fmt, force_cut, client, dry_run, started):
     state = load_state(path)
     session = session or state.get("session") or _session_of(path, fmt)
     slug = None
@@ -706,6 +762,9 @@ def run(path, *, trigger="cli", agent="claude-code", session=None, cwd=None, pro
         receipt(**rec)
         return rec
     rows = [row_of(seg, path, fmt, agent, session, project, stat) for seg in chosen]
+    if trigger == "precompact" and rows:
+        leave_cut_marker(path, rows[-1])                # item 16: and the snapshot hook, if it runs after us, finds the cut here
+        link_snapshot(path, rows)                       # item 16: the partial row names the compaction snapshot entry
     rec = dict(trigger=trigger, agent=agent, session=str(session or "")[:8], path=os.path.basename(path), fmt=fmt, project=project,
                turns=[s["turn"] for s in chosen][:12], rows=len(rows), lines=[chosen[0]["lines"][0], chosen[-1]["lines"][1]] if chosen else None,
                parts={p: sum(1 for s in chosen if s["part"] == p) for p in ("whole", "partial", "tail") if any(s["part"] == p for s in chosen)},
@@ -729,7 +788,9 @@ def run(path, *, trigger="cli", agent="claude-code", session=None, cwd=None, pro
                     client.timeout_seconds = max(float(getattr(client, "timeout_seconds", 5.0)), 30.0 + 2.0 * len(rows))
                 except Exception:
                     pass
-            bundle = BUNDLE_OF.get(slug) if slug else None
+            # item 24: conversation turns may have a bundle of their own (`bundle_of: {"kind:transcript": id}`) — the
+            # cue to make one is the sizing warning at 90 % of the limit; until then they ride with the project
+            bundle = BUNDLE_OF.get("kind:" + KIND) or (BUNDLE_OF.get(slug) if slug else None)
             try:
                 out = client.request("ingest_many", rows=rows, **({"bundle": bundle} if bundle else {}))
                 sent = len(out.get("results") or rows)
@@ -760,6 +821,87 @@ def run(path, *, trigger="cli", agent="claude-code", session=None, cwd=None, pro
     rec.update(sent=sent, errors=errors[:4], ms=int((time.time() - started) * 1000), state=dict(offset=state.get("offset"), line=state.get("line"), turn=state.get("turn")))
     receipt(**rec)
     return rec
+
+
+def snapshot_marker(path):
+    return state_path(path) + ".snapshot.json"
+
+
+def cut_marker(path):
+    return state_path(path) + ".cut.json"
+
+
+def leave_cut_marker(path, row):
+    try:
+        meta = row["metadata"]
+        io.open(cut_marker(path), "w", encoding="utf-8").write(json.dumps(dict(lines=list(meta.get("lines") or []), turn=meta.get("turn"), ts=time.time())))
+    except Exception:
+        pass
+
+
+def link_snapshot(path, rows, max_age_s=180.0):
+    """Item 16 (2026-09-21): the PreCompact snapshot hook, which runs first, leaves a marker naming the session-log
+    line it wrote and the log lines it expects the cut to cover; the cut (partial) row takes it as
+    ``metadata.snapshot`` so the two records of one compaction point at each other. The marker is consumed."""
+    marker = snapshot_marker(path)
+    data = None
+    for _ in range(20):                                  # the host runs an event's hooks in parallel: give the snapshot 4 s
+        try:
+            data = json.load(io.open(marker, encoding="utf-8"))
+            break
+        except (OSError, ValueError):
+            time.sleep(0.2)
+    if data is None:
+        return False
+    try:
+        os.remove(marker)
+    except OSError:
+        pass
+    if time.time() - float(data.get("ts") or 0) > max_age_s or not data.get("log"):
+        return False
+    linked = False
+    for row in rows:
+        meta = row["metadata"]
+        if meta.get("part") == "partial" or list(meta.get("lines") or []) == list(data.get("lines") or []):
+            meta["snapshot"] = dict(log=data["log"], line=int(data.get("line") or 0), stamp=data.get("stamp"))
+            row["text"] = row["text"][:TEXT_CHARS - 80] + f"\n[압축 스냅샷: session-log.md {data.get('line')}행]"
+            linked = True
+    return linked
+
+
+PREMISE_EVENTS = ("Stop", "SubagentStop", "PreCompact", "SessionStart")
+
+
+def premise(settings_path=None):
+    """Is the premise wired on this machine (items 31/32, 2026-09-21): the tail on its four events, the use log on
+    Read/Bash/PowerShell, and a receipt from a real Stop. Read from the host's settings file — what Linux or a
+    fresh install checks first."""
+    settings_path = settings_path or os.path.join(os.path.dirname(RECEIPTS), "settings.json")
+    events = {e: False for e in PREMISE_EVENTS}
+    use_log = None
+    try:
+        hooks = (json.load(io.open(settings_path, encoding="utf-8")).get("hooks") or {})
+        for e in PREMISE_EVENTS:
+            events[e] = any("transcript_tail" in str(h.get("command", "")) for g in hooks.get(e, []) for h in g.get("hooks", []))
+        for g in hooks.get("PostToolUse", []):
+            if any("memory_use_log" in str(h.get("command", "")) for h in g.get("hooks", [])):
+                m = str(g.get("matcher", ""))
+                use_log = all(x in m for x in ("Read", "Bash", "PowerShell"))
+    except (OSError, ValueError):
+        pass
+    last_stop = None
+    try:
+        for raw in io.open(RECEIPT, encoding="utf-8", errors="replace").read().splitlines()[-400:]:
+            try:
+                r = json.loads(raw)
+            except ValueError:
+                continue
+            if r.get("trigger") == "stop" and r.get("ts"):
+                last_stop = r["ts"]
+    except OSError:
+        pass
+    ok = all(events.values()) and bool(use_log)
+    return dict(ok=ok, events=events, use_log=use_log, last_stop=last_stop, settings=settings_path)
 
 
 def _session_of(path, fmt):
@@ -992,6 +1134,9 @@ def cli(argv):
             print("---")
         return 0
     if a.status:
+        p = premise()
+        print("premise: " + ("wired" if p["ok"] else "NOT wired") + " — " + " ".join(f"{e}:{'ok' if v else 'MISSING'}" for e, v in p["events"].items())
+              + f" use_log:{'ok' if p['use_log'] else 'MISSING'} last_stop:{p['last_stop'] or '-'}  ({p['settings']})")
         for s in states():
             print(f"{s.get('agent', '?'):<12} {str(s.get('session', ''))[:8]:<8} turn {s.get('turn', 0):<5} line {s.get('line', 1):<7} rows {s.get('rows', 0):<6} "
                   f"{s.get('last_trigger', '?'):<12} {s.get('ts', '')}  {s['path']}")

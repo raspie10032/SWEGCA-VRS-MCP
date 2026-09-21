@@ -849,3 +849,60 @@ injected or everything was opened, never blocks a prompt (`recall.replay_line`).
 `tests/standalone/test_replay.py` (parser shapes, the hook on a Bash read, `last_turn` with synthetic
 receipts, the line). Not done here: making the company batches call `produce()` — the user's programs.
 
+#### The remaining items, in order (2026-09-21 14:0x → 14:3x)
+
+「순서대로 고치자」 — the items left after the four batches, taken by number:
+
+* **4 thinking** — a turn keeps a bounded excerpt of the model's reasoning: `사고: …` after the assistant line
+  (`THINKING_CHARS` 600 of the joined thinking blocks; half the blocks in a live log carry only a signature and
+  are skipped), `metadata.thinking` = the full length. The why of a decision was the one thing the turn text
+  lacked; the whole reasoning is not copied.
+* **10 · 11 batch results and work outside any agent** — nothing to build on the VRS side: `vrs2-run.py
+  --hypothesis "the settlement daily audit completes" --context SETTLEMENT --producer settlement-daily-audit
+  -- <the batch>` records a batch run as a machine result (ledger first, `--flush` at the next Stop when the
+  daemon was down), and `vrs2-produce.py` / a session-log line take what a person did by hand. The wiring is the
+  user's: the scheduler task `SETTLEMENT-DailyAudit` is deliberately not registered, and the company programs
+  are not in this repository.
+* **14 project wall** — `choose` kept every other project's rows out. A prompt that *names* a project (a slug
+  word of three letters or more: T2M, SQLITE, COGN, mcp, gemini — a Korean-named project has no such word)
+  now lets that project's rows through, after this project's own, with a conversation-turn slot of its own
+  (`MAX_TRANSCRIPTS` each), rendered `· 프로젝트 t2m`. Naming T2M no longer costs this project its turn.
+* **16 snapshot ↔ cut row** — the PreCompact snapshot entry ends with `로그 위치: <log>#l0-l1 (턴 k)` (the
+  partial row's key, from `transcripts.plan` on the tail's state, or from the tail's own cut marker when the
+  tail ran first — the host runs an event's hooks in parallel), and the cut row carries
+  `metadata.snapshot = {log, line, stamp}` plus a `[압축 스냅샷: session-log.md n행]` line (marker
+  `vrs2_tail/<sha12>.snapshot.json`, waited for up to 4 s, consumed). `turns` rows and the post-compaction
+  block show it (`· 압축 스냅샷 session-log.md n행`).
+* **18 host cleanup** — `cleanupPeriodDays` was 30 (the default): a turn's 「원문 위치」 would go missing after
+  a month (the row's text stays; the hint already says 「원본 로그 없음」). Set to 365 in the user's
+  `~/.claude/settings.json` (copy kept). The logs of the last month are 1.4 GB (T2M 704 MB), so a year is
+  ~17 GB — the user's number to raise or lower.
+* **22 contention** — re-measured after the backfill: Stop-time `vrs2_tail` median 2.9 s (max 5.6 s),
+  `stop_reindex_v2` median 5.6 s (max 8.2 s) — and the reindex receipts showed *why*: three session-log rows
+  refused at every Stop with `request_id_reused_with_different_content`, which left the file unstamped and
+  re-parsed (349 rows) each time. The id is `kind:source@revision`, the text carries the tick's code ledger,
+  and a hook killed after the daemon accepted (the 30 s limit under the backfill) never wrote the manifest —
+  so the same id came back with other content forever. `reindex.reissue` gives that content an id and revision
+  of its own (`+sha8(text)`) and supersedes the episode the old id stands for (new daemon command
+  `operation`: request id → episode); an older daemon without it still takes the row, without the link.
+  Found by reading the receipts, not by a failing test.
+* **24 turn bundle** — `bundle_of: {"kind:transcript": "<id>"}` routes every conversation turn to a bundle of
+  its own (before the project's `bundle_of`); the cue to create it is the sizing warning at 90 % of the limit
+  (the store is at 19 % now). The split itself is a config line and a daemon restart, not a code change.
+* **27 state race** — one run per log at a time: `acquire_lock` (an exclusive lock file beside the state; a
+  lock older than 120 s belongs to a dead run and is taken over); a second runner — the hook, the daemon's
+  sweeper, a backfill — steps aside with receipt `skip: locked` and the next trigger takes the same lines.
+* **31 · 32 the premise, checkable** — `vrs2-tail.py --status` begins with `premise: wired — Stop:ok
+  SubagentStop:ok PreCompact:ok SessionStart:ok use_log:ok last_stop:<ts>` read from the host's settings file
+  (`transcripts.premise`), and `test_item31` pins the installer's SHIMS to the four events and the widened
+  matcher. On Linux: `vrs2-install.py`, `vrs2-identity.py keygen --producer transcript-tail --add`, then
+  `vrs2-tail.py --status` must say `wired` and, after one Stop, show a `last_stop` — not verified from here.
+* **33 stale snapshot** — the bridge (`LoopbackMCP.call_tool`) catches `snapshot_mismatch` on a
+  `memory_context` / `memory_recall` start, pins the current `pair_snapshot_id` once and says so
+  (`snapshot_refreshed = {expected, used, reason}`); nothing to refresh → silent; no handle exists at that
+  point, so the request id stays usable. Measured before: 2 of 2 calls failed with 8 rows entering between
+  `memory_status` and the call.
+
+Tests: `tests/standalone/test_audit_items.py` (8); standalone suite 92 passed. The daemon needs a restart for
+`operation` and the `turns` snapshot field; hooks and the bridge pick the new code up on their next start.
+

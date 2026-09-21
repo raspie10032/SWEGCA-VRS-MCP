@@ -43,7 +43,7 @@ START_STALE = 300                    # seconds after which a start marker is ign
 RESIDENT_COMMANDS = {'status', 'cognitive_dialogue_start', 'cognitive_dialogue_continue',
                      'cognitive_dialogue_evidence_open', 'cognitive_dialogue_evidence',
                      'cognitive_dialogue_release'}
-LOCAL_COMMANDS = {'hook_recall', 'evidence_of', 'origins', 'turns', 'bundles', 'lookup', 'evict', 'ingest', 'ingest_many', 'checkpoint', 'compact', 'consolidate', 'refine', 'ping', 'shutdown', 'usage', 'alias'}
+LOCAL_COMMANDS = {'hook_recall', 'evidence_of', 'origins', 'turns', 'bundles', 'lookup', 'operation', 'evict', 'ingest', 'ingest_many', 'checkpoint', 'compact', 'consolidate', 'refine', 'ping', 'shutdown', 'usage', 'alias'}
 
 
 # ── client ────────────────────────────────────────────────────────────
@@ -325,7 +325,7 @@ def turns(main, arguments):
     for turn, first, identifier, meta, text in found[-limit:]:
         rows.append(dict(episode_id=identifier, turn=turn, part=meta.get('part'), lines=list((meta.get('origin') or {}).get('lines') or meta.get('lines') or []),
                          path=meta.get('path'), date=meta.get('date'), agent=meta.get('agent'), session=meta.get('session'),
-                         text=text[:snippet], text_chars=len(text), origin=_plain(meta.get('origin'))))
+                         text=text[:snippet], text_chars=len(text), origin=_plain(meta.get('origin')), snapshot=_plain(meta.get('snapshot'))))
     return dict(status='ok', session=session, count=len(rows), rows=rows, total=len(found))
 
 
@@ -501,6 +501,12 @@ class Daemon:
                         blob=self.main.memory.stats() if hasattr(self.main.memory, 'stats') else None)
         if command == 'lookup':
             return dict(status='ok', episode_id=arguments.get('episode_id'), bundle=self.bundles.lookup(str(arguments.get('episode_id') or '')))
+        if command == 'operation':
+            # 2026-09-21: what a request id already stands for — the reindex recovers a manifest it lost (a hook
+            # killed after the daemon accepted) instead of re-sending the id with other content forever
+            existing = self.main.operations.get(str(arguments.get('request_id') or ''))
+            return dict(status='ok', request_id=arguments.get('request_id'), known=existing is not None,
+                        episode_id=existing[1] if existing else None, pair_snapshot_id=existing[2] if existing else None)
         if command == 'origins':
             return origins(self.main, arguments)
         if command == 'turns':

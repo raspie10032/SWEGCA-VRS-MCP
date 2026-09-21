@@ -123,6 +123,9 @@ def cut_turns(session_id):
     lines = [f"=== 압축 직전 대화 — 스토어의 마지막 {len(rows)}턴 (세션 {str(session_id)[:8]}; 「원문 위치」로 그 자리를 연다) ==="]
     for r in rows:
         part = {"partial": " [압축 전 미완 — 여기서 잘렸다]", "tail": " [이어짐]"}.get(r.get("part"), "")
+        snap = r.get("snapshot") or {}
+        if snap.get("line"):
+            part += f" · 압축 스냅샷 session-log.md {snap['line']}행"       # item 16: the two records of one compaction
         lines.append(f"- 턴 {r.get('turn')}{part}")
         lines.append("  " + str(r.get("text") or "")[:TURN_CHARS].replace("\n", "\n  "))
         span = r.get("lines") or []

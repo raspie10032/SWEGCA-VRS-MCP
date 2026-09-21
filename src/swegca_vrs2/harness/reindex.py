@@ -17,6 +17,7 @@ v1(`stop_reindex.py`)과 같은 자리 — 현재 프로젝트 `memory/` 의 (mt
 갱신돼도 같은 cue 를 다시 붙인다(`code_ledger/<슬러그>.cues.json`). 로그 항목 없이 코드만 바뀐 틱은
 `code_change` 관측을 따로 남긴다 — 기계가 만드는 관측이다.
 """
+import hashlib
 import importlib.util
 import io
 import json
@@ -98,6 +99,24 @@ def main():
     run(str(data.get("cwd") or os.getcwd()), str(data.get("session_id") or ""))
 
 
+def reissue(client, args):
+    """``args`` for a row whose request id the daemon already holds with other content (2026-09-21, found in the
+    Stop receipts: three session-log rows refused at every Stop, which left the file unstamped and re-parsed each
+    time). The content gets an id of its own (``@revision+sha8(text)``) and supersedes the episode the old id
+    stands for (``operation``; an older daemon without it → no link, the row still enters)."""
+    out = dict(args)
+    tag = hashlib.sha256(args['text'].encode('utf-8')).hexdigest()[:8]
+    out["request_id"] = f"{args['request_id']}+{tag}"[:128]
+    out["revision"] = f"{args['revision']}+{tag}"           # a successor must differ in revision from what it supersedes
+    try:
+        known = client.request("operation", request_id=args["request_id"])
+        if known.get("episode_id"):
+            out["supersedes"] = known["episode_id"]
+    except Exception:
+        out.pop("supersedes", None)
+    return out
+
+
 def run(cwd, session_id=""):
     """Adapter entry (2026-09-18): index this project's changed memory docs (the Stop hook's body)."""
     data = {"cwd": cwd, "session_id": session_id}
@@ -171,7 +190,15 @@ def run(cwd, session_id=""):
                 try:
                     out = client.request("ingest", **args)
                 except Exception as error:
-                    if "supersedes" in args:
+                    if "request_id_reused_with_different_content" in str(error):
+                        # the daemon holds this id with other content (the code ledger of another tick; a manifest the
+                        # killed hook never wrote): give this content its own id and supersede what the id stands for
+                        args = reissue(client, args)
+                        try:
+                            out = client.request("ingest", **args)
+                        except Exception as error2:
+                            errors.append(f"{r['source'][:50]}: {error2}"[:160]); return
+                    elif "supersedes" in args:
                         args.pop("supersedes")
                         try:
                             out = client.request("ingest", **args)

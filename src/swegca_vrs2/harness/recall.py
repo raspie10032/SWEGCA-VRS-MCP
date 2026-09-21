@@ -115,10 +115,32 @@ def evidence_cues(row, fanout, total):
     return kept
 
 
+_SLUG_SKIP = {"users", "desktop", "documents", "home", "mnt", "appdata", "local", "roaming", "projects", "claude"}
+
+
+def project_names(slug):
+    """The words a project slug is called by: ``C--Users-asm-Desktop-T2M--------`` → {t2m}; a Korean-named
+    project (dashes only) has none and cannot be named."""
+    return {p.casefold() for p in str(slug or "").split("-")
+            if len(p) >= 3 and p.casefold() not in _SLUG_SKIP and p.casefold() != USER.casefold()}
+
+
+def named_projects(rows, stems, project):
+    """Item 14 (2026-09-21): the project wall keeps other projects' rows out of the packet — but a prompt that
+    names a project (T2M, SQLITE, COGN, mcp…) asks for it. Those projects' rows may pass, one slot each."""
+    out = set()
+    for row in rows:
+        slug = (row.get("metadata") or {}).get("project")
+        if slug and slug != project and slug not in out and project_names(slug) & stems:
+            out.add(slug)
+    return out
+
+
 def choose(packet, project, stems=None):
     fanout = packet.get("fanout") or {}
     total = max(1, int(packet.get("record_count") or 1))
     stems = stems if stems is not None else prompt_stems(packet.get("query") or "")
+    named = named_projects(packet["memories"], stems, project)
     verdicts, records = [], []
     for rank, row in enumerate(packet["memories"], 1):
         if row.get("superseded_by"):
@@ -146,8 +168,11 @@ def choose(packet, project, stems=None):
                       or (len(asked) >= 2 and rank <= VERDICT_TOP_RANK))
             if enough and len(verdicts) < MAX_VERDICTS:
                 verdicts.append(row)
-        elif (row.get("metadata") or {}).get("project") == project or (row.get("metadata") or {}).get("scope") == "global":
-            # scope: global — a doc that belongs to no one project (the Desktop layout) rides along everywhere
+        elif (row.get("metadata") or {}).get("project") == project or (row.get("metadata") or {}).get("scope") == "global" \
+                or (row.get("metadata") or {}).get("project") in named:
+            # scope: global — a doc that belongs to no one project (the Desktop layout) rides along everywhere;
+            # a project the prompt names gets through the wall too (item 14), after this project's own rows
+            row["_foreign"] = (row.get("metadata") or {}).get("project") in named
             asks = (row.get("asks") or "").casefold()
             asked = [c for c in informative if c in asks]
             # a record that names this phrasing in its own 「찾을 때 묻는 말」 answers to it: two rare
@@ -166,12 +191,15 @@ def choose(packet, project, stems=None):
     # A memory doc carries the phrasings it will be asked with ("찾을 때 묻는 말"); a record
     # matched through those comes before one that merely mentions the words; among equals the
     # store's order (BM25) stands — preferring memory docs over log entries was measured worse.
-    records.sort(key=lambda r: -r["_asked"])
+    records.sort(key=lambda r: (bool(r.get("_foreign")), -r["_asked"]))
     # a conversation turn (kind=transcript) has its own slot: it is the experience of what was said, bound to
-    # its place in the log, and must not compete with a memory doc for the one record slot
+    # its place in the log, and must not compete with a memory doc for the one record slot; a named project's
+    # turn (item 14) has one more slot of its own, so naming T2M does not push this project's turn out
     turns = [r for r in records if (r.get("metadata") or {}).get("kind") == "transcript"]
     others = [r for r in records if (r.get("metadata") or {}).get("kind") != "transcript"]
-    return verdicts, others[:MAX_RECORDS] + turns[:MAX_TRANSCRIPTS]
+    local = [r for r in turns if not r.get("_foreign")]
+    foreign = [r for r in turns if r.get("_foreign")]
+    return verdicts, others[:MAX_RECORDS] + local[:MAX_TRANSCRIPTS] + foreign[:MAX_TRANSCRIPTS]
 
 
 OPEN_MAX_LINES = 60      # 열기 줄의 limit 상한(로그 항목·문서 절)
@@ -352,6 +380,8 @@ def render(packet, verdicts, records):
             # real-time transcript rows (2026-09-21): a turn of a conversation, by agent/session/turn
             part = {"partial": " [압축 전 미완]", "tail": " [이어짐]"}.get(meta.get("part"), "")
             where = f"{meta.get('agent', '?')} 세션 {str(meta.get('session', ''))[:8]} 턴 {meta.get('turn')}{part}"
+            if row.get("_foreign"):
+                where += " · 프로젝트 " + "/".join(sorted(project_names(meta.get("project"))))   # item 14: named in the prompt
             label = "대화"
         else:
             label = "기록"

@@ -48,5 +48,9 @@ which is why it is the default rather than either number alone.
    VRS strengths or regions) and are tagged 「뭉치 <id>·warm」 in the hook. The primary keeps the engine's
    full recall. Cross-bundle addressing: `lookup <episode_id>` names the bundle; the hook packet carries
    `bundle` on every row.
-3. Before splitting, two software levers can move the line without a design change: the candidate loop
+3. Conversation turns (`kind: transcript`, one row per turn of every agent since 2026-09-21) are the fastest-growing
+   kind — ~5.6k of 11.4k rows a month after the tail went live. They can have a bundle of their own, across
+   projects: `"bundle_of": {"kind:transcript": "turns"}` (checked before the project's entry). Same mechanics
+   as a project split; the cue is the same 90 % warning.
+4. Before splitting, two software levers can move the line without a design change: the candidate loop
    in `recall_candidates` (still Python per candidate, ~0.2 ms each) and per-region candidate caps.

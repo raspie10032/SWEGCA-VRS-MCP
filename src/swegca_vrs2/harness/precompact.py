@@ -136,6 +136,36 @@ def build_entry(records, trigger, session_id):
     return entry if len(entry) <= ENTRY_CHARS else entry[:ENTRY_CHARS - 1] + "…"
 
 
+def cut_position(transcript):
+    """(lines, turn) of the open turn the PreCompact tail will cut right after this hook — the partial row's key
+    (item 16, 2026-09-21). Pure: ``transcripts.plan`` reads, ingests nothing."""
+    try:
+        from . import transcripts
+        state = transcripts.load_state(transcript)
+        fmt = transcripts.detect_format(transcript)
+        segs, _, _, _, _ = transcripts.plan(transcript, state, fmt, "precompact", force_cut=True)
+        if segs:
+            return list(segs[-1]["lines"]), int(segs[-1]["turn"])
+        # the tail ran first (hooks of one event run in parallel) and moved the state: it left the cut behind
+        data = json.load(io.open(transcripts.cut_marker(transcript), encoding="utf-8"))
+        if time.time() - float(data.get("ts") or 0) < 180 and data.get("lines"):
+            return list(data["lines"]), data.get("turn")
+    except Exception:
+        pass
+    return None, None
+
+
+def leave_marker(transcript, log_path, line, stamp, lines):
+    try:
+        from . import transcripts
+        os.makedirs(transcripts.STATE_DIR, exist_ok=True)
+        io.open(transcripts.snapshot_marker(transcript), "w", encoding="utf-8").write(json.dumps(
+            dict(log=log_path.replace(chr(92), "/"), line=int(line), stamp=stamp, lines=lines, ts=time.time()), ensure_ascii=False))
+        return True
+    except Exception:
+        return False
+
+
 def already_there(log_path, entry):
     """같은 요청 묶음으로 방금 쓴 항목이 있으면(연속 압축) 다시 쓰지 않는다."""
     try:
@@ -173,6 +203,10 @@ def main(argv):
     if not entry:
         receipt(skip="empty", slug=slug)
         return
+    lines, turn = cut_position(transcript)
+    if lines:
+        # item 16: the entry names the log position of the turn the tail cuts next (the partial row's key)
+        entry += f" | 로그 위치: {os.path.basename(transcript)}#{lines[0]}-{lines[1]} (턴 {turn})"
     if dry:
         sys.stdout.reconfigure(encoding="utf-8")
         print(entry)
@@ -185,7 +219,11 @@ def main(argv):
         needs_newline = handle.read() not in (b"\n", b"")
     with open(log_path, "a", encoding="utf-8") as out:
         out.write(("\n" if needs_newline else "") + entry + "\n")
-    receipt(written=len(entry), slug=slug, trigger=data.get("trigger"), session=str(data.get("session_id"))[:8])
+    with open(log_path, "rb") as handle:
+        entry_line = sum(1 for _ in handle)             # the entry is the last line now
+    marked = leave_marker(transcript, log_path, entry_line, entry[2:18], lines) if lines else False
+    receipt(written=len(entry), slug=slug, trigger=data.get("trigger"), session=str(data.get("session_id"))[:8],
+            line=entry_line, cut=lines, marker=marked)
 
 
 if __name__ == "__main__":
