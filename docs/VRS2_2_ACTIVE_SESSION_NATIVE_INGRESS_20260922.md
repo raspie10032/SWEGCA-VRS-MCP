@@ -105,3 +105,31 @@ original with a valid four-stage receipt, `grants_authority=false`, and
 live Codex MCP connection. The revised source standalone suite passed
 **131/131 in 182.61 s**. The installed runtime still needs a rebuild from
 this later source commit before this shutdown fix is a live candidate.
+
+## Installed projection-close candidate
+
+Commit `0cd027daab26317b9eef21c97fdeed0bb9871cfe` was built offline into
+an isolated wheel (SHA-256 `c32c8a27fd973ab04d5cf2111ef7e84c5199d448f370df6477539c61f21e525b`).
+All 48 product files matched source, wheel and installed runtime; the audit
+found no SQLite, filelock or Hermes product dependency or source reference.
+The installed runtime is still separate from the active Codex MCP connection.
+
+The new wheel's first-ranked original Replay receipt is
+`evals/vrs22_context/results/first_ranked_original_replay_projection_close_wheel_corrected_20260922.json`
+(SHA-256 `650d18af3e1f317877d7da686736dcc09c97a0f164a80faf1a2ba52f53354700`).
+On the same copied 15,630-experience native state, under 4 GiB memory, zero
+swap and 625 MB/s SSD cgroup limits on the state device, first calls took
+0.695 ms with one match, 19.159 ms with 100 matches, and 118.131 ms with
+1,008 matches. The all-size
+1 ms gate remains false; model evaluation remains disabled.
+
+The new installed wheel's whole-path selftest passed. Its private receipt is
+`/var/tmp/vrs22-whole-path-selftest-projection-close-20260922/receipt.json`
+(SHA-256 `c3815b86baee507a9995e853951cf8377edca45b11ef9a6f1c183baee154fdf4`).
+An isolated local MCP exact-address query against the repaired shadow also
+returned its original with all four stages, no authority and zero internal
+LLM calls. Live Codex MCP and the active legacy state have not yet switched.
+The one-shot post-SessionEnd handoff watcher now runs this new installed wheel
+as `swegca-vrs22-sessionend-handoff-0cd027d-20260922.service`; the older
+`d6e89bb` watcher is inactive. No SessionEnd marker exists, so no live main
+merge, hook switch or MCP switch has occurred.
