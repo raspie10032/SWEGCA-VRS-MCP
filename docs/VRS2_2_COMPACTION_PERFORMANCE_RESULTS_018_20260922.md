@@ -199,6 +199,11 @@ package, loaded no database module during exact session and main fallback
 smokes, and created no database artifacts. A new 4 GiB and 5 Gbit/s
 cgroup-limited run reported the database module unloaded and zero 1 ms
 violations; its complete Déjà vu-through-Replay maximum was 0.1572 ms.
+Release-audit commit `65ec52d` also makes the archive verifier reject the
+retired lock import, agent adapter imports or names, database imports or
+artifacts, and direct forbidden runtime dependencies. The final wheel SHA-256
+is `e0144305a8fa863f52679b7a4aa1e01901fa23942314e364d36c40c302a656c9`;
+all 48 installed package source files are byte-identical to that wheel.
 
 These are post-run product corrections, not retroactive changes to the
 frozen v018 measurement artifact.
