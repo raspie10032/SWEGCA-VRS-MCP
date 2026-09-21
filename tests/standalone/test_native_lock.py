@@ -44,6 +44,7 @@ def test_native_runtime_does_not_import_database_module_or_create_database(tmp_p
 import json,sys
 from pathlib import Path
 from swegca_vrs2.session_capture import SessionCapture
+from swegca_vrs2.linked_shards import shutdown_and_release
 from swegca_vrs2.layered import LayeredMCP
 root=Path(sys.argv[1]); root.mkdir(parents=True); state=root/'state'; transcript=root/'session.jsonl'
 transcript.write_text(
@@ -51,12 +52,15 @@ transcript.write_text(
  json.dumps({'type':'response_item','payload':{'type':'message','role':'user',
   'content':[{'type':'input_text','text':'native lock audit'}]}})+'\n',
  encoding='utf-8')
-SessionCapture(state).scan_transcript('codex','native-lock-test',transcript)
+capture=SessionCapture(state)
+capture.scan_transcript('codex','native-lock-test',transcript)
 server=LayeredMCP(state)
 try:
  status=server.call_tool('memory_status',{'session_id':'native-lock-test'})['status']
 finally:
  server.close()
+ shutdown_and_release(capture.session_root('codex','native-lock-test'),timeout=10)
+ if (state/'loopback.port').exists(): shutdown_and_release(state,timeout=10)
 artifacts=[str(path.relative_to(root)) for path in root.rglob('*') if path.is_file()
  and (path.suffix.lower() in ('.db','.sqlite','.sqlite3') or 'sqlite' in path.name.lower())]
 print(json.dumps({'status':status,
