@@ -133,6 +133,20 @@ and 0.1944 ms. Process RSS was 1,064,554,496 bytes; the transient service's
 cgroup memory peak, which also accounts for charged file cache, was 1.6 GB.
 Re-evidence remained outside the named boundary and reached 23.4708 ms.
 
+After the storage admission ceiling was corrected from 500 GiB to the literal
+500,000,000,000-byte limit, the benchmark imported that same product constant
+instead of carrying a second limit. Three fresh cgroup services repeated the
+complete measurement on 2026-09-22. Together they executed 150,000 random exact
+Replay calls, 150,000 complete Déjà vu-through-Replay calls, and 15,000 calls
+for each largest-record case. All three reported the literal storage limit and
+passed with zero 1 ms violations. The largest first-prefix, exact Replay,
+Déjà vu-through-Replay, and largest-record-through-Replay values across the
+three runs were 0.1372 ms, 0.0828 ms, 0.1759 ms, and 0.2413 ms respectively.
+The raw JSON SHA-256 values are
+`755ad985e608c8cd7104f58428c54a55a583d54284f0dab504befda8a83a3baa`,
+`ac978aaf078d0973f7534b140606b9137fbedcbc9bb7fe080c07140f72d1e2c2`,
+and `d76138ebb8da6db16b3e265f263a132a2fb9ab4f83401378affe0d5c1238e10f`.
+
 The directory keeps algorithmic work independent of total record count. The
 current-experience linked-shard and actual 5 Gbit/s kernel-limited runs are
 complete. A larger-scale run remains an evidence gate, and a general-purpose OS

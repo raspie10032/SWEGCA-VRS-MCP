@@ -65,7 +65,7 @@ def main():
         raise SystemExit("native benchmark state contains SQLite")
 
     from swegca_vrs2.store import Main
-    from swegca_vrs2.resident import Resident, WarmView
+    from swegca_vrs2.resident import MAX_STORAGE_BYTES, Resident, WarmView
     from swegca_vrs2.sharded import ShardedMain
 
     started = time.perf_counter()
@@ -192,7 +192,7 @@ def main():
                       and max(stage_replay_ms) < 1.0
                       and all(row["through_replay_max_ms"] < 1.0 for row in stress.values())
                       and peak <= args.rss_limit_gb * 1024 ** 3
-                      and disk_allocated <= 500 * 1024 ** 3 else "FAIL",
+                      and disk_allocated <= MAX_STORAGE_BYTES else "FAIL",
             "state": str(state), "records": len(ids), "iterations": len(queries),
             "full_iterations": len(stage_replay_ms),
             "main_load_s": round(load_s, 6), "exact_directory_build_s": round(build_s, 6),
@@ -240,7 +240,7 @@ def main():
             "rss_limit_bytes": int(args.rss_limit_gb * 1024 ** 3),
             "disk_allocated_bytes": disk_allocated,
             "disk_logical_bytes": disk_logical,
-            "storage_limit_bytes": 500 * 1024 ** 3,
+            "storage_limit_bytes": MAX_STORAGE_BYTES,
             "ssd_limit_bps": int(args.ssd_limit_gbps * 1_000_000_000 / 8),
             "cgroup_limits": cgroup_limits(),
             "ssd_limit_note": "cgroup values are evidence only when io_max names this state device",
