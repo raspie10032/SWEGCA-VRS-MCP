@@ -47,6 +47,13 @@ all checks.
   `ef6be9cc0a8f009dda28ec900d83cdc7031bce430a13ad387afc6bc38b2df43e`;
   Sol `368726a182ab96ce779bb56c41c7c145677ed00d168897d636cf8c5c7d841c5e`
 
+The same clean fixture replayed all six frozen plain outputs. Terra 100k plain
+passed all three behaviors; the other five retained the unmodified baseline
+and failed both duplicate checks. This independently reproduces the executable
+success pattern and 20-versus-4 code scores in the comparison table. The plain
+replay result SHA-256 is
+`9d1e39bbc7ba7d10bfe3970f17bf5ddc28660e3f2cc21f9477dc785bed1c7b36`.
+
 ## Headline comparison
 
 | model | arm | goal consistency, first 10 | dialogue context, first 10 | code quality | executable success |

@@ -1,0 +1,64 @@
+{
+  "schema": "vrs22-clean-checkpoint-output-validation-v1",
+  "fixture": "in-memory data-only checkpoint boundary",
+  "baseline_detected": true,
+  "baseline": {
+    "path": "/var/tmp/vrs22-coding-fixture-7c67f30/src/swegca_vrs2/checkpoint.py",
+    "sha256": "b98fa8c64d00b64e70b47a8dcd2f0813813c408ecc05c11bfce0826159ddbb59",
+    "valid_archive_with_unrelated_extra": true,
+    "duplicate_metadata_rejected_before_read": false,
+    "duplicate_array_rejected_before_read": false,
+    "pass": false
+  },
+  "candidates": {
+    "luna_short_plain": {
+      "path": "/var/tmp/vrs22-auto-compaction-confirmation-005/gpt-5.6-luna__short_plain-workspace/src/swegca_vrs2/checkpoint.py",
+      "sha256": "b98fa8c64d00b64e70b47a8dcd2f0813813c408ecc05c11bfce0826159ddbb59",
+      "valid_archive_with_unrelated_extra": true,
+      "duplicate_metadata_rejected_before_read": false,
+      "duplicate_array_rejected_before_read": false,
+      "pass": false
+    },
+    "luna_long_plain": {
+      "path": "/var/tmp/vrs22-auto-compaction-confirmation-005/gpt-5.6-luna__long_plain-workspace/src/swegca_vrs2/checkpoint.py",
+      "sha256": "b98fa8c64d00b64e70b47a8dcd2f0813813c408ecc05c11bfce0826159ddbb59",
+      "valid_archive_with_unrelated_extra": true,
+      "duplicate_metadata_rejected_before_read": false,
+      "duplicate_array_rejected_before_read": false,
+      "pass": false
+    },
+    "terra_short_plain": {
+      "path": "/var/tmp/vrs22-auto-compaction-confirmation-005/gpt-5.6-terra__short_plain-workspace/src/swegca_vrs2/checkpoint.py",
+      "sha256": "fab90e7f85350e5d710d2a2be6fba50dec52e7ffae9a6028b07d28b6b1b2d5cd",
+      "valid_archive_with_unrelated_extra": true,
+      "duplicate_metadata_rejected_before_read": true,
+      "duplicate_array_rejected_before_read": true,
+      "pass": true
+    },
+    "terra_long_plain": {
+      "path": "/var/tmp/vrs22-auto-compaction-confirmation-005/gpt-5.6-terra__long_plain-workspace/src/swegca_vrs2/checkpoint.py",
+      "sha256": "b98fa8c64d00b64e70b47a8dcd2f0813813c408ecc05c11bfce0826159ddbb59",
+      "valid_archive_with_unrelated_extra": true,
+      "duplicate_metadata_rejected_before_read": false,
+      "duplicate_array_rejected_before_read": false,
+      "pass": false
+    },
+    "sol_short_plain": {
+      "path": "/var/tmp/vrs22-auto-compaction-confirmation-005/gpt-5.6-sol__short_plain-workspace/src/swegca_vrs2/checkpoint.py",
+      "sha256": "b98fa8c64d00b64e70b47a8dcd2f0813813c408ecc05c11bfce0826159ddbb59",
+      "valid_archive_with_unrelated_extra": true,
+      "duplicate_metadata_rejected_before_read": false,
+      "duplicate_array_rejected_before_read": false,
+      "pass": false
+    },
+    "sol_long_plain": {
+      "path": "/var/tmp/vrs22-auto-compaction-confirmation-005/gpt-5.6-sol__long_plain-workspace/src/swegca_vrs2/checkpoint.py",
+      "sha256": "b98fa8c64d00b64e70b47a8dcd2f0813813c408ecc05c11bfce0826159ddbb59",
+      "valid_archive_with_unrelated_extra": true,
+      "duplicate_metadata_rejected_before_read": false,
+      "duplicate_array_rejected_before_read": false,
+      "pass": false
+    }
+  },
+  "all_candidates_pass": false
+}
