@@ -184,6 +184,10 @@ def resident_main_replay_probe(state: Path):
     return runtime_json("""import json,sys
 from swegca_vrs2.loopback import LoopbackClient,port_of
 from swegca_vrs2.server import LoopbackMCP
+from swegca_vrs2.linked_shards import load_linked_shards
+from swegca_vrs2.native_journal import is_native_store
+from swegca_vrs2.resident import WarmView
+from pathlib import Path
 port=port_of(sys.argv[1])
 if port is None: raise RuntimeError('resident_main_not_running')
 client=LoopbackClient(port,30)
@@ -191,9 +195,22 @@ server=LoopbackMCP(client,writes_enabled=False)
 request='v019-resident-main-replay-probe'
 packet=None
 try:
- rows=client.request('export_experiences',after_sequence=0,max_records=1,max_bytes=8192)['rows']
- if len(rows)!=1: raise RuntimeError('resident_main_original_experience_missing')
- address=rows[0]['episode_id']
+ root=Path(sys.argv[1]).resolve()
+ auto=[path for path in sorted((root/'shards').glob('shard-*'))
+       if path.is_dir() and is_native_store(path)] if (root/'shards').exists() else []
+ stores=[root]+auto+[row['directory'] for row in load_linked_shards(root).values()]
+ address=None
+ for index,path in enumerate(stores):
+  if (path/'checkpoint.vrsc').is_file():
+   view=WarmView('eval-original-'+str(index),path)
+   try:address=next(view.refresh().memory.iter_episode_ids(),None)
+   finally:view.close()
+  elif path==root:
+   rows=client.request('export_experiences',after_sequence=0,
+    max_records=1,max_bytes=8192)['rows']
+   address=rows[0]['episode_id'] if rows else None
+  if address:break
+ if not address: raise RuntimeError('resident_main_original_experience_missing')
  status=server.call_tool('memory_status',{})
  packet=server.call_tool('memory_context',dict(request_id=request,query=address,
    exact_episode_id=address,expected_pair_snapshot_id=status['pair_snapshot_id']))
@@ -293,33 +310,42 @@ print(json.dumps(scan(SessionCapture(sys.argv[1]),codex_home=sys.argv[2],since=0
 """, state, codex_home)
 
 
-def native_experience_snapshot(state: Path):
+def native_experience_snapshot(state: Path, original_linked_paths=()):
     return runtime_json("""import json,sys
 from pathlib import Path
 from swegca_vrs2.native_journal import NativeJournal,is_native_store
 from swegca_vrs2.linked_shards import load_linked_shards
 from swegca_vrs2.store import journal_entry
 root=Path(sys.argv[1]).resolve()
-def store(path):
+original=set(json.loads(sys.argv[2]))
+def store(path, check_unique):
     journal=NativeJournal(path,create=False,writable=False)
     try:
-        rows=list(journal.rows())
-        classified=[(journal_entry(row[1],row[2],row[3])[0],row) for row in rows]
-        observations=[row for kind,row in classified if kind=='observation']
+        rows=observations=receipted=0
+        head_pair=None
+        kinds={kind:0 for kind in ('consolidation','alias','usage')}
+        unique=set() if check_unique else None
+        for row in journal.rows():
+            rows+=1; head_pair=row[4]
+            kind,_=journal_entry(row[1],row[2],row[3])
+            if kind=='observation':
+                observations+=1
+                if type(row[1]) is str and type(row[2]) is str and type(row[3]) is str \
+                        and type(row[4]) is str and bool(row[4]):receipted+=1
+                if unique is not None:unique.add(row[1])
+            elif kind in kinds:kinds[kind]+=1
         return {'path':str(path.relative_to(root)) if path != root else '.',
-          'rows':len(rows),'observations':len(observations),
-          'state_transitions':len(rows)-len(observations),
-          'state_transition_kinds':{kind:sum(other==kind for other,_ in classified)
-            for kind in ('consolidation','alias','usage')},
-          'head_pair':None if not rows else rows[-1][4],
-          'receipted':sum(type(row[1]) is str and type(row[2]) is str
-            and type(row[3]) is str and type(row[4]) is str and bool(row[4])
-            for row in observations),
-          'unique_requests':len({row[1] for row in observations})}
+          'rows':rows,'observations':observations,
+          'state_transitions':rows-observations,'state_transition_kinds':kinds,
+          'head_pair':head_pair,'receipted':receipted,
+          'unique_requests':len(unique) if unique is not None else observations}
     finally: journal.close()
-sessions=[store(path) for path in sorted((root/'session-vrs').rglob('*'))
+sessions=[store(path,str(path.relative_to(root)) not in original)
+          for path in sorted((root/'session-vrs').rglob('*'))
           if path.is_dir() and is_native_store(path)] if (root/'session-vrs').exists() else []
-primary=store(root) if is_native_store(root) else {'path':'.','rows':0,'observations':0,
+auto=[store(path,False) for path in sorted((root/'shards').glob('shard-*'))
+      if path.is_dir() and is_native_store(path)] if (root/'shards').exists() else []
+primary=store(root,False) if is_native_store(root) else {'path':'.','rows':0,'observations':0,
   'state_transitions':0,'state_transition_kinds':{},'head_pair':None,
   'receipted':0,'unique_requests':0}
 linked=load_linked_shards(root) if (root/'linked-shards.json').exists() else {}
@@ -328,10 +354,180 @@ for path in sorted((root/'session-capture'/'ended').rglob('*.json')) if (root/'s
     ended.append(json.loads(path.read_text(encoding='utf-8')))
 forbidden=[str(path.relative_to(root)) for path in root.rglob('*') if path.is_file()
            and ('sqlite' in path.name.lower() or path.suffix.lower()=='.db')]
-print(json.dumps({'primary':primary,'sessions':sessions,
+print(json.dumps({'primary':primary,'auto':auto,
+  'auto_records':sum(row['observations'] for row in auto),
+  'auto_paths':[row['path'] for row in auto], 'sessions':sessions,
   'linked_records':sum(row['records'] for row in linked.values()),
-  'linked_ids':list(linked),'ended':ended,'database_artifacts':forbidden}))
-""", state)
+  'linked_ids':list(linked),
+  'linked_paths':[str(row['directory'].relative_to(root)) for row in linked.values()],
+  'ended':ended,'database_artifacts':forbidden}))
+""", state, json.dumps(list(original_linked_paths)))
+
+
+def clone_existing_main(source: Path, target: Path):
+    """Reflink one verified native main and only its completed linked shards."""
+    if target.exists():
+        raise ValueError("native_main_clone_target_exists")
+    paths = runtime_json("""import json,sys
+from pathlib import Path
+from swegca_vrs2.linked_shards import load_linked_shards
+from swegca_vrs2.native_journal import is_native_store
+root=Path(sys.argv[1]).resolve()
+if not is_native_store(root): raise ValueError('source_main_not_native')
+linked=load_linked_shards(root)
+auto=[path for path in sorted((root/'shards').glob('shard-*'))
+      if path.is_dir() and is_native_store(path)] if (root/'shards').exists() else []
+print(json.dumps({'stores':['.']+[str(path.relative_to(root)) for path in auto]
+  +[str(row['directory'].relative_to(root)) for row in linked.values()],
+  'auto_paths':[str(path.relative_to(root)) for path in auto],
+  'linked_ids':list(linked)}))
+""", source)
+    stores = paths["stores"]
+    if not stores or len(stores) != len(set(stores)):
+        raise ValueError("native_main_store_manifest_invalid")
+    source = source.resolve()
+
+    def file_sha(path):
+        digest = hashlib.sha256()
+        with path.open("rb") as stream:
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+
+    def inventory(root):
+        found = {}
+        for relative in stores:
+            directory = (root / relative).resolve()
+            if not directory.is_relative_to(root.resolve()) or not directory.is_dir():
+                raise ValueError("native_main_store_path_invalid")
+            for component in ("vrs-store.json", "checkpoint.vrsc", "journal",
+                              "read-projection", "exact-replay"):
+                member = directory / component
+                if not member.exists():
+                    continue
+                entries = member.rglob("*") if member.is_dir() else (member,)
+                for path in entries:
+                    if path.is_symlink():
+                        raise ValueError("native_main_store_symlink_rejected")
+                    if path.is_file():
+                        found[path.relative_to(root).as_posix()] = file_sha(path)
+        registry = root / "linked-shards.json"
+        if registry.exists():
+            found["linked-shards.json"] = file_sha(registry)
+        return found
+
+    before = inventory(source)
+    target.mkdir(mode=0o700, parents=True)
+    for relative in stores:
+        source_store, target_store = source / relative, target / relative
+        target_store.mkdir(mode=0o700, parents=True, exist_ok=True)
+        for component in ("vrs-store.json", "checkpoint.vrsc", "journal",
+                          "read-projection", "exact-replay"):
+            member = source_store / component
+            if member.exists():
+                subprocess.run(["cp", "-a", "--reflink=always", "--", str(member),
+                                str(target_store / component)], check=True)
+    registry = source / "linked-shards.json"
+    if registry.exists():
+        subprocess.run(["cp", "-a", "--reflink=always", "--", str(registry),
+                        str(target / registry.name)], check=True)
+    if before != inventory(source) or before != inventory(target):
+        raise ValueError("native_main_clone_changed_during_copy")
+    cloned = native_experience_snapshot(target,
+        [path for path in stores if path.startswith("session-vrs/")])
+    if (cloned["database_artifacts"] or
+            cloned["primary"]["observations"] + cloned["auto_records"]
+                + cloned["linked_records"] <= 0 or
+            cloned["linked_ids"] != paths["linked_ids"] or
+            cloned["auto_paths"] != paths["auto_paths"]):
+        raise ValueError("native_main_clone_incomplete")
+    return {"status": "PASS", "store_count": len(stores),
+            "linked_ids": paths["linked_ids"],
+            "linked_paths": cloned["linked_paths"], "file_count": len(before),
+            "primary_observations": cloned["primary"]["observations"],
+            "primary_rows": cloned["primary"]["rows"],
+            "primary_state_transitions": cloned["primary"]["state_transitions"],
+            "auto_records": cloned["auto_records"],
+            "auto_paths": cloned["auto_paths"],
+            "auto_journal": cloned["auto"],
+            "linked_records": cloned["linked_records"],
+            "database_artifacts": cloned["database_artifacts"]}
+
+
+def main_fallback_probe(state: Path):
+    """Prove a session miss reaches retained main experience through Replay."""
+    return runtime_json("""import json,sys
+from pathlib import Path
+from swegca_vrs2.layered import LayeredMCP
+from swegca_vrs2.linked_shards import load_linked_shards
+from swegca_vrs2.loopback import ensure_daemon
+from swegca_vrs2.native_journal import is_native_store
+from swegca_vrs2.resident import WarmView
+from swegca_vrs2.store import Main
+root=Path(sys.argv[1]).resolve()
+auto=[path for path in sorted((root/'shards').glob('shard-*'))
+      if path.is_dir() and is_native_store(path)] if (root/'shards').exists() else []
+stores=[root]+auto+[row['directory'] for row in load_linked_shards(root).values()]
+address=None
+for index,path in enumerate(stores):
+ if (path/'checkpoint.vrsc').is_file():
+  view=WarmView('eval-original-'+str(index),path)
+  try:address=next(view.refresh().memory.iter_episode_ids(),None)
+  finally:view.close()
+ else:
+  owner=Main(path,allow_ingest=True)
+  try:address=next(owner.memory.iter_episode_ids(),None)
+  finally:owner.close()
+ if address:break
+if not address:raise RuntimeError('retained_main_experience_missing')
+client=ensure_daemon(root,allow_ingest=True)
+try:prepared=client.request('reload_linked_shards')
+finally:client.close()
+if not (prepared.get('exact',{}).get('complete') is True
+        and prepared.get('projections',{}).get('complete') is True):
+ raise RuntimeError('retained_main_read_index_incomplete')
+server=LayeredMCP(root); session='vrs22-main-fallback-probe'; request='vrs22-main-fallback'
+packet=None
+try:
+ status=server.call_tool('memory_status',{'session_id':session})
+ packet=server.call_tool('memory_context',{'session_id':session,
+  'request_id':request,'query':address,'exact_episode_id':address,
+  'expected_pair_snapshot_id':status['pair_snapshot_id']})
+ for _ in range(64):
+  if packet.get('status')=='memory_context_ready':break
+  nxt=packet.get('next_call') or {}
+  if nxt.get('name')!='memory_continue':raise RuntimeError('fallback_continuation_invalid')
+  packet=server.call_tool('memory_continue',dict(nxt['arguments'],session_id=session))
+ valid=(packet.get('status')=='memory_context_ready'
+   and packet.get('memory_layer')=='main' and packet.get('fallback_used') is True
+   and packet.get('lookup_receipt',{}).get('session_candidate_count')==0
+   and packet.get('lookup_receipt',{}).get('main_opened') is True
+   and address in [row.get('episode_id') for row in packet.get('memories',[])]
+   and packet.get('activation_receipt',{}).get('stage_order',{}).get('data')
+     == ['deja_vu','recall','replay','re_evidence'])
+ if not valid:raise RuntimeError('existing_main_fallback_replay_failed')
+ print(json.dumps({'status':'PASS','main_fallback':True,'four_stage':True,
+                   'original_address':address}))
+finally:
+ try:
+  if packet and packet.get('view_id'):
+   server.call_tool('memory_release',{'session_id':session,
+    'request_id':request,'view_id':packet['view_id']})
+ finally:server.close()
+""", state, timeout=180)
+
+
+def stop_main_probe(state: Path):
+    runtime_json("""import json,sys
+from pathlib import Path
+from swegca_vrs2.linked_shards import shutdown_and_release
+from swegca_vrs2.session_capture import SessionCapture
+root=Path(sys.argv[1]).resolve()
+shutdown_and_release(root)
+probe=SessionCapture(root).session_root('codex','vrs22-main-fallback-probe')
+shutdown_and_release(probe)
+print(json.dumps({'stopped':True}))
+""", state, timeout=180)
 
 
 def cursor_snapshot(state: Path):
@@ -348,27 +544,39 @@ def cursor_snapshot(state: Path):
             "cursor_count": len(rows), "rows": rows}
 
 
-def wait_live_experience(state: Path, codex_home: Path, timeout=300, *, ended=False):
+def wait_live_experience(state: Path, codex_home: Path, timeout=300, *, ended=False,
+                         baseline=None):
     """Require the live watcher path to admit every complete host record."""
+    baseline = baseline or dict(primary_observations=0, primary_rows=0,
+        primary_state_transitions=0, auto_records=0, auto_journal=[],
+        linked_records=0, linked_paths=[])
+    original_paths = set(baseline["linked_paths"])
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         expected = transcript_lines(codex_home)
         try:
             cursor = cursor_snapshot(state)
-            native = native_experience_snapshot(state)
-            session_rows = sum(row["observations"] for row in native["sessions"])
-            session_journal_rows = sum(row["rows"] for row in native["sessions"])
-            session_state_rows = sum(row["state_transitions"] for row in native["sessions"])
-            receipted = sum(row["receipted"] for row in native["sessions"])
-            unique = sum(row["unique_requests"] for row in native["sessions"])
+            native = native_experience_snapshot(state, original_paths)
+            current_sessions = [row for row in native["sessions"]
+                                if row["path"] not in original_paths]
+            session_rows = sum(row["observations"] for row in current_sessions)
+            session_journal_rows = sum(row["rows"] for row in current_sessions)
+            session_state_rows = sum(row["state_transitions"] for row in current_sessions)
+            receipted = sum(row["receipted"] for row in current_sessions)
+            unique = sum(row["unique_requests"] for row in current_sessions)
             primary = native["primary"]["observations"]
             primary_journal_rows = native["primary"]["rows"]
             primary_state_rows = native["primary"]["state_transitions"]
             merged = native["linked_records"]
+            new_merged = merged - baseline["linked_records"]
+            primary_unchanged = (primary == baseline["primary_observations"]
+                and primary_journal_rows == baseline["primary_rows"]
+                and primary_state_rows == baseline["primary_state_transitions"])
+            auto_unchanged = native["auto"] == baseline["auto_journal"]
             end_ok = (not ended and not native["ended"]) or (ended and native["ended"]
                 and all(row.get("merged") is True for row in native["ended"]))
-            layer_boundary = ((merged == primary == 0) if not ended else
-                              (merged == session_rows and primary == 0))
+            layer_boundary = (primary_unchanged and auto_unchanged and
+                (new_merged == 0 if not ended else new_merged == session_rows))
             if (expected == cursor["line"] == cursor["captured"] + cursor["excluded"]
                     and session_rows == receipted == unique
                     and not native["database_artifacts"] and end_ok and layer_boundary):
@@ -376,14 +584,20 @@ def wait_live_experience(state: Path, codex_home: Path, timeout=300, *, ended=Fa
                     captured_records=cursor["captured"],
                     explicitly_excluded_records=cursor["excluded"], queued_parts=0,
                     session_experience_parts=session_rows,
-                    merged_experience_parts=merged, stored_parts=session_rows,
+                    merged_experience_parts=new_merged, stored_parts=session_rows,
+                    original_main_primary_parts=baseline["primary_observations"],
+                    original_main_auto_parts=baseline["auto_records"],
+                    original_main_journal_sequence=baseline["primary_rows"],
+                    original_main_state_transition_parts=baseline["primary_state_transitions"],
+                    original_main_linked_parts=baseline["linked_records"],
                     session_journal_sequence=session_journal_rows,
                     session_state_transition_parts=session_state_rows,
                     main_journal_sequence=primary_journal_rows,
                     main_state_transition_parts=primary_state_rows,
-                    main_logical_experience_parts=primary + merged,
+                    main_logical_experience_parts=primary + native["auto_records"] + merged,
                     session_ended=ended,
-                    active_session_main_untouched=(not ended and primary == merged == 0),
+                    active_session_main_untouched=(not ended and primary_unchanged and auto_unchanged
+                        and new_merged == 0),
                     receipt_coverage=receipted, cursor_count=cursor["cursor_count"],
                     linked_shards=native["linked_ids"], database_artifacts=[],
                     coverage_accounted=True)
@@ -530,7 +744,7 @@ for path in stores: shutdown_and_release(path)
                    check=True)
 
 
-def finalize_experience(workspace: Path, codex_home: Path):
+def finalize_experience(workspace: Path, codex_home: Path, baseline=None):
     state = workspace.parent / (workspace.name.removesuffix("-workspace") + "-vrs-state")
     code = """import json,sys
 from pathlib import Path
@@ -549,7 +763,8 @@ print(json.dumps({'finalizers':'conversation_finalize.finalize',
         str(state), str(codex_home)], cwd=workspace, capture_output=True,
         text=True, timeout=7200, check=True)
     telemetry = json.loads(result.stdout)
-    telemetry["live_experience"] = wait_live_experience(state, codex_home, ended=True)
+    telemetry["live_experience"] = wait_live_experience(
+        state, codex_home, ended=True, baseline=baseline)
     telemetry["coverage"] = telemetry["live_experience"]
     return telemetry
 
@@ -610,7 +825,7 @@ def command(model: str, arm: str, workspace: Path, codex_home: Path, guard_binar
 
 
 def call(model, arm, workspace, codex_home, output, label, prompt, mode, thread_id, ordinal,
-         required_episode_id=None, live_supervisor=None):
+         required_episode_id=None, live_supervisor=None, main_baseline=None):
     args = command(model, arm, workspace, codex_home, output / "vrs22-shell-guard", mode, thread_id)
     env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1",
                PATH=str(ROOT / ".venv/bin") + os.pathsep + os.environ.get("PATH", ""))
@@ -643,7 +858,7 @@ def call(model, arm, workspace, codex_home, output, label, prompt, mode, thread_
     if arm == "short_vrs" and actual_id:
         state = workspace.parent / (workspace.name.removesuffix("-workspace") + "-vrs-state")
         supervisor_coverage(live_supervisor, state, codex_home, actual_id)
-        live_experience = wait_live_experience(state, codex_home)
+        live_experience = wait_live_experience(state, codex_home, baseline=main_baseline)
         live_watcher = supervisor_coverage(live_supervisor, state, codex_home, actual_id)
     new_rollout = items_since(rollout_for(actual_id, codex_home), ordinal) if actual_id else []
     new_ordinal = max((x.get("ordinal", ordinal) for x in new_rollout), default=ordinal)
@@ -799,7 +1014,7 @@ def call(model, arm, workspace, codex_home, output, label, prompt, mode, thread_
     return row
 
 
-def setup_workspace(path: Path, codex_home: Path, arm: str):
+def setup_workspace(path: Path, codex_home: Path, arm: str, main_seed: Path | None = None):
     path.mkdir(parents=True)
     codex_home.mkdir(parents=True)
     (path / ".grade-tmp/home").mkdir(parents=True)
@@ -814,8 +1029,13 @@ def setup_workspace(path: Path, codex_home: Path, arm: str):
     shutil.copy2(SOURCE_ROOT / "pyproject.toml", path / "pyproject.toml")
     (path / "ping.txt").write_text("ping 8f362a\n", encoding="utf-8")
     if arm == "short_vrs":
+        if main_seed is None:
+            raise ValueError("retained_main_seed_required")
         state = path.parent / (path.name.removesuffix("-workspace") + "-vrs-state")
-        state.mkdir(mode=0o700)
+        receipt = clone_existing_main(main_seed, state)
+        receipt["fallback_probe"] = main_fallback_probe(state)
+        return receipt
+    return None
 
 
 def filler(start: int, count: int):
@@ -886,6 +1106,58 @@ def supervisor_selftest(root: Path):
     finally:
         if handle is not None:
             stop_watcher_process(handle)
+        stop_residents(workspace)
+
+
+def retained_main_layer_selftest(root: Path):
+    """Exercise live temp admission and SessionEnd above a populated main."""
+    root.mkdir(parents=True)
+    source, seed = root / "original-main", root / "retained-main-seed"
+    runtime_json("""import json,sys
+from swegca_vrs2.store import Main
+main=Main(sys.argv[1],allow_ingest=True)
+try:
+ main.ingest({'request_id':'retained-main-selftest','text':'original experience',
+  'source':'selftest:original','revision':'1','outcome':'pending'})
+ main.checkpoint()
+finally:main.close()
+print(json.dumps({'created':True}))
+""", source)
+    clone_existing_main(source, seed)
+    workspace = root / "cell-workspace"
+    codex_home = root / "cell-codex-home"
+    baseline = setup_workspace(workspace, codex_home, "short_vrs", seed)
+    state = root / "cell-vrs-state"
+    watcher = start_watcher(workspace, codex_home)
+    try:
+        transcript = codex_home / "sessions" / "2026" / "09" / "22" / "rollout-selftest.jsonl"
+        transcript.parent.mkdir(parents=True)
+        transcript.write_text("".join(json.dumps(row) + "\n" for row in (
+            {"type": "session_meta", "payload": {"id": "retained-main-cell"}},
+            {"type": "response_item", "payload": {"type": "message", "role": "user",
+                "content": [{"type": "input_text", "text": "new temporary experience"}]}})),
+            encoding="utf-8")
+        active = wait_live_experience(state, codex_home, timeout=60, baseline=baseline)
+        supervisor_coverage(watcher, state, codex_home, "retained-main-cell", timeout=60)
+        stop_watcher_process(watcher)
+        watcher = None
+        ended = finalize_experience(workspace, codex_home, baseline=baseline)
+        coverage = ended["coverage"]
+        if not (active["original_main_primary_parts"] == 1
+                and active["session_experience_parts"] == 2
+                and active["main_logical_experience_parts"] == 1
+                and active["active_session_main_untouched"] is True
+                and coverage["merged_experience_parts"] == 2
+                and coverage["main_logical_experience_parts"] == 3
+                and baseline["fallback_probe"]["main_fallback"] is True):
+            raise RuntimeError("populated_main_session_layer_invariant_failed")
+        return {"status": "PASS", "original_main_parts": 1,
+                "active_session_parts": 2, "active_main_untouched": True,
+                "ended_new_linked_parts": 2, "main_fallback": True,
+                "database_artifacts": coverage["database_artifacts"]}
+    finally:
+        if watcher is not None:
+            stop_watcher_process(watcher)
         stop_residents(workspace)
 
 
@@ -1161,11 +1433,11 @@ test "$HOME" = "$PWD/.grade-tmp/home"
             "isolated_home": str(home)}
 
 
-def run_one(model, arm, output, max_compactions, max_turns):
+def run_one(model, arm, output, max_compactions, max_turns, main_seed=None):
     stem = model + "__" + arm
     workspace = output / (stem + "-workspace")
     codex_home = output / (stem + "-codex-home")
-    setup_workspace(workspace, codex_home, arm)
+    seed_receipt = setup_workspace(workspace, codex_home, arm, main_seed)
     watcher = None
     rows = []
     thread_id = objective_id = None
@@ -1179,7 +1451,9 @@ def run_one(model, arm, output, max_compactions, max_turns):
         if arm == "short_vrs":
             watcher = start_watcher(workspace, codex_home)
         row = call(model, arm, workspace, codex_home, output, stem + "__initial", INITIAL.encode(),
-                   "start", None, -1, live_supervisor=watcher)
+                   "start", None, -1, live_supervisor=watcher, main_baseline=seed_receipt)
+        if arm == "short_vrs":
+            row["retained_main_seed"] = seed_receipt
         record(row)
         if not row["valid"]:
             return rows
@@ -1201,7 +1475,8 @@ def run_one(model, arm, output, max_compactions, max_turns):
             prompt = filler(line_index, count)
             line_index += count
             row = call(model, arm, workspace, codex_home, output, stem + f"__filler{number:02d}",
-                       prompt, "resume", thread_id, ordinal, live_supervisor=watcher)
+                       prompt, "resume", thread_id, ordinal, live_supervisor=watcher,
+                       main_baseline=seed_receipt)
             row["filler_phase"] = phase
             row["filler_start_line"] = line_index - count
             row["filler_line_count"] = count
@@ -1220,7 +1495,7 @@ def run_one(model, arm, output, max_compactions, max_turns):
                                  else PURPOSE_PROBE.encode()),
                                 "fork", thread_id, -1,
                                 required_episode_id=objective_id if arm == "short_vrs" else None,
-                                live_supervisor=watcher)
+                                live_supervisor=watcher, main_baseline=seed_receipt)
                 record(boundary)
                 # A probe failure is itself durability/instruction-following
                 # evidence. Preserve it, but keep driving the untouched source
@@ -1234,13 +1509,13 @@ def run_one(model, arm, output, max_compactions, max_turns):
                        vrs_recovery_probe(objective_id, thread_id) if arm == "short_vrs" else RECOVERY_PROBE.encode(),
                        "fork", thread_id, -1,
                        required_episode_id=objective_id if arm == "short_vrs" else None,
-                       live_supervisor=watcher)
+                       live_supervisor=watcher, main_baseline=seed_receipt)
             record(row)
             row = call(model, arm, workspace, codex_home, output, stem + "__coding",
                        vrs_final(objective_id, thread_id) if arm == "short_vrs" else FINAL.encode(),
                        "resume", thread_id, ordinal,
                        required_episode_id=objective_id if arm == "short_vrs" else None,
-                       live_supervisor=watcher)
+                       live_supervisor=watcher, main_baseline=seed_receipt)
             record(row)
         return rows
     finally:
@@ -1256,11 +1531,18 @@ def run_one(model, arm, output, max_compactions, max_turns):
                     rows[-1]["live_supervisor_stop"] = {
                         "status": "failed", "error": type(error).__name__}
             try:
-                if list((codex_home / "sessions").rglob("*.jsonl")) and rows:
-                    rows[-1]["final_session_end_merge"] = finalize_experience(workspace, codex_home)
-                    (output / (stem + ".partial.json")).write_text(
-                        json.dumps({"model": model, "arm": arm, "rows": rows}, indent=2) + "\n",
-                        encoding="utf-8")
+                if any(rollout_session(path) for path in
+                       (codex_home / "sessions").rglob("*.jsonl")):
+                    merged = finalize_experience(workspace, codex_home,
+                                                  baseline=seed_receipt)
+                    if rows:
+                        rows[-1]["final_session_end_merge"] = merged
+                        (output / (stem + ".partial.json")).write_text(
+                            json.dumps({"model": model, "arm": arm, "rows": rows}, indent=2) + "\n",
+                            encoding="utf-8")
+                    else:
+                        (output / (stem + ".cleanup.json")).write_text(
+                            json.dumps(merged, indent=2) + "\n", encoding="utf-8")
             finally:
                 stop_residents(workspace)
             if cleanup_error is not None:
@@ -1364,6 +1646,8 @@ def main():
                        env=dict(os.environ, TMPDIR=str(args.output_dir)))
         receipt = {"status": "PASS",
                    "live_supervisor": supervisor_selftest(args.output_dir / "live"),
+                   "retained_main_layer": retained_main_layer_selftest(
+                       args.output_dir / "retained-main-layer"),
                    "retained_main_replay": native_main_probe_selftest(
                        args.output_dir / "live/supervisor-selftest-vrs-state"),
                    "installed_hook": installed_hook_selftest(args.output_dir / "installed-hook"),
@@ -1392,6 +1676,10 @@ def main():
         args.output_dir / "live-supervisor-selftest/supervisor-selftest-vrs-state")
     (args.output_dir / "live-main-replay-selftest.json").write_text(
         json.dumps(main_replay, indent=2) + "\n", encoding="utf-8")
+    retained_layer = retained_main_layer_selftest(
+        args.output_dir / "retained-main-layer-selftest")
+    (args.output_dir / "retained-main-layer-selftest.json").write_text(
+        json.dumps(retained_layer, indent=2) + "\n", encoding="utf-8")
     installed_hook = installed_hook_selftest(args.output_dir / "installed-hook-selftest")
     (args.output_dir / "installed-hook-selftest.json").write_text(
         json.dumps(installed_hook, indent=2) + "\n", encoding="utf-8")
@@ -1403,20 +1691,31 @@ def main():
                                    args.output_dir / "vrs22-shell-guard")
     (args.output_dir / "isolation-selftest.json").write_text(
         json.dumps(isolation, indent=2) + "\n", encoding="utf-8")
+    main_seed = args.output_dir / "retained-main-seed"
+    seed_receipt = clone_existing_main(LIVE_STATE, main_seed)
+    try:
+        seed_receipt["fallback_probe"] = main_fallback_probe(main_seed)
+    finally:
+        stop_main_probe(main_seed)
+    (args.output_dir / "retained-main-seed.json").write_text(
+        json.dumps(seed_receipt, indent=2) + "\n", encoding="utf-8")
     all_rows = []
     cells = [(model, arm) for model in ((args.model,) if args.model else MODELS)
              for arm in ((args.arm,) if args.arm else ARMS)]
     if not args.model and not args.arm:
         random.Random(22021).shuffle(cells)
     for model, arm in cells:
-        rows = run_one(model, arm, args.output_dir, args.max_compactions, args.max_turns)
+        rows = run_one(model, arm, args.output_dir, args.max_compactions, args.max_turns,
+                       main_seed=main_seed)
         all_rows.extend({"model": model, "arm": arm, **row} for row in rows)
         (args.output_dir / "results.json").write_text(json.dumps({
-            "schema_version": "vrs22-auto-compaction-stress-v12-final-observation-accounting",
+            "schema_version": "vrs22-auto-compaction-stress-v13-retained-main",
             "runtime_product_commit": RUNTIME_PRODUCT_COMMIT,
             "runtime_repository_commit": RUNTIME_REPOSITORY_COMMIT,
             "runtime_wheel_sha256": RUNTIME_WHEEL_SHA256,
             "retained_main_replay_selftest": main_replay,
+            "retained_main_layer_selftest": retained_layer,
+            "retained_main_seed": seed_receipt,
             "max_compactions": args.max_compactions,
             "cell_order": cells,
             "rows": all_rows}, indent=2) + "\n", encoding="utf-8")

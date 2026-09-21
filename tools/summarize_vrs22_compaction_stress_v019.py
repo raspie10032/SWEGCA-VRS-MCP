@@ -77,28 +77,22 @@ def usd(usage, model):
 
 
 def changed_paths(workspace):
-    changed = []
-    for directory in ("src/swegca_vrs2", "tests/standalone"):
-        for original in (BASELINE / directory).rglob("*"):
-            if not original.is_file() or "__pycache__" in original.parts:
-                continue
-            relative = original.relative_to(BASELINE)
-            current = workspace / relative
-            if not current.is_file() or original.read_bytes() != current.read_bytes():
-                changed.append(relative.as_posix())
-        for current in (workspace / directory).rglob("*"):
-            if not current.is_file() or "__pycache__" in current.parts:
-                continue
-            relative = current.relative_to(workspace)
-            if not (BASELINE / relative).is_file():
-                changed.append(relative.as_posix())
-    if (workspace / "pyproject.toml").read_bytes() != (BASELINE / "pyproject.toml").read_bytes():
-        changed.append("pyproject.toml")
-    for path in workspace.iterdir():
-        if path.name not in ("src", "tests", "pyproject.toml", "vrs-state", "ping.txt",
-                             ".pytest_cache", ".grade-tmp", "__pycache__"):
-            changed.append(path.name)
-    return sorted(set(changed))
+    """Compare the complete coding fixture, including newly created subtrees."""
+    ignored = {".grade-tmp", ".pytest_cache", "__pycache__"}
+    allowed_runtime = {"ping.txt", "vrs-state"}
+
+    def files(root, *, runtime=False):
+        return {path.relative_to(root).as_posix(): path for path in root.rglob("*")
+                if (path.is_file() or path.is_symlink())
+                and not (set(path.relative_to(root).parts) & ignored)
+                and (not runtime or path.relative_to(root).parts[0] not in allowed_runtime)}
+
+    original = files(BASELINE)
+    current = files(workspace, runtime=True)
+    return sorted(path for path in original.keys() | current.keys()
+                  if path not in original or path not in current
+                  or original[path].is_symlink() != current[path].is_symlink()
+                  or original[path].read_bytes() != current[path].read_bytes())
 
 
 def run_test(workspace, test):
@@ -278,9 +272,14 @@ def live_experience_complete(rows):
         if (evidence.get("session_ended") is not False
                 or evidence.get("active_session_main_untouched") is not True
                 or evidence.get("merged_experience_parts") != 0
-                or evidence.get("main_journal_sequence") != 0
-                or evidence.get("main_state_transition_parts") != 0
-                or evidence.get("main_logical_experience_parts") != 0
+                or evidence.get("main_journal_sequence") !=
+                    evidence.get("original_main_journal_sequence", 0)
+                or evidence.get("main_state_transition_parts") !=
+                    evidence.get("original_main_state_transition_parts", 0)
+                or evidence.get("main_logical_experience_parts") !=
+                    evidence.get("original_main_primary_parts", 0) +
+                    evidence.get("original_main_auto_parts", 0) +
+                    evidence.get("original_main_linked_parts", 0)
                 or evidence.get("database_artifacts") != []
                 or evidence.get("session_experience_parts") != evidence.get("stored_parts")):
             return False
@@ -564,9 +563,14 @@ def grade_cell(model, arm, rows, run_dir, output):
         and merge_coverage.get("session_experience_parts") == merge_coverage.get("stored_parts")
         and merge_coverage.get("merged_experience_parts") == merge_coverage.get("stored_parts")
         and final_merge.get("live_experience", {}).get("main_logical_experience_parts")
-            == merge_coverage.get("stored_parts")
-        and final_merge.get("live_experience", {}).get("main_journal_sequence") == 0
-        and final_merge.get("live_experience", {}).get("main_state_transition_parts") == 0
+            == (merge_coverage.get("original_main_primary_parts", 0)
+                + merge_coverage.get("original_main_auto_parts", 0)
+                + merge_coverage.get("original_main_linked_parts", 0)
+                + merge_coverage.get("stored_parts", 0))
+        and final_merge.get("live_experience", {}).get("main_journal_sequence")
+            == merge_coverage.get("original_main_journal_sequence", 0)
+        and final_merge.get("live_experience", {}).get("main_state_transition_parts")
+            == merge_coverage.get("original_main_state_transition_parts", 0)
         and final_merge.get("live_experience", {}).get("receipt_coverage")
             == merge_coverage.get("stored_parts")
         and final_merge.get("live_experience", {}).get("database_artifacts") == []
@@ -578,6 +582,15 @@ def grade_cell(model, arm, rows, run_dir, output):
         and final_merge.get("finalizers") == "conversation_finalize.finalize"
         and final_merge.get("ended_count")
             == all_rows[-1].get("live_watcher", {}).get("discovered_sessions")))
+    seed = initial[0].get("retained_main_seed", {})
+    retained_main_ok = (arm != "short_vrs" or (
+        seed.get("status") == "PASS"
+        and seed.get("primary_observations", 0) + seed.get("auto_records", 0)
+            + seed.get("linked_records", 0) > 0
+        and seed.get("fallback_probe", {}).get("status") == "PASS"
+        and seed.get("fallback_probe", {}).get("main_fallback") is True
+        and seed.get("fallback_probe", {}).get("four_stage") is True
+        and seed.get("database_artifacts") == []))
     minimum_10_met = len(windows) >= 10 and ordered
     measurement_complete = (len(purposes) == len(recoveries) == len(codings) == 1
                 and [r["label"] for r in boundaries] == expected_boundary_labels
@@ -586,7 +599,7 @@ def grade_cell(model, arm, rows, run_dir, output):
                 and all(r["window_held"] and r["effective_context_window"] == effective
                         for r in all_rows)
                 and all(r["tool_types"] == [] for r in initial)
-                and live_ok and watchers_ok and final_merge_ok
+                and retained_main_ok and live_ok and watchers_ok and final_merge_ok
                 and watcher_shutdown_ok
                 and all(r["tool_types"] and all(t == "command_execution" for t in r["tool_types"])
                         for r in fillers)
@@ -667,7 +680,7 @@ def grade_cell(model, arm, rows, run_dir, output):
     return {"model": model, "arm": arm, "minimum_10_compactions_met": minimum_10_met,
             "measurement_complete": measurement_complete,
             "vrs_protocol_clean": protocol_clean,
-            "confirmation_valid": bool(measurement_complete and protocol_clean and code_tests_pass),
+            "measurement_valid": bool(measurement_complete and protocol_clean),
             "post_minimum_compaction_count": max(0, len(windows) - 10),
             "compaction_count": len(windows), "compaction_windows": windows,
             "compaction_count_total": len(compaction_ids),
@@ -690,6 +703,8 @@ def grade_cell(model, arm, rows, run_dir, output):
             "wall_seconds": sum(r["elapsed_ns"] for r in all_rows) / 1e9,
             "live_experience_complete": live_ok,
             "live_watchers_complete": watchers_ok,
+            "retained_main_complete": retained_main_ok,
+            "retained_main_seed": seed if arm == "short_vrs" else None,
             "live_experience_final": all_rows[-1].get("live_experience"),
             "live_watcher_final": all_rows[-1].get("live_watcher"),
             "live_supervisor_stop": supervisor_stop,
@@ -737,10 +752,13 @@ def main():
         parser.error(f"frozen plain evidence unavailable: {type(error).__name__}: {error}")
     data = json.loads((args.runs / "results.json").read_text(encoding="utf-8"))
     if (data.get("schema_version") !=
-            "vrs22-auto-compaction-stress-v12-final-observation-accounting"
+            "vrs22-auto-compaction-stress-v13-retained-main"
             or data.get("runtime_product_commit") != RUNTIME_PRODUCT_COMMIT
             or data.get("runtime_repository_commit") != RUNTIME_REPOSITORY_COMMIT
             or data.get("runtime_wheel_sha256") != RUNTIME_WHEEL_SHA256
+            or data.get("retained_main_seed", {}).get("status") != "PASS"
+            or data.get("retained_main_seed", {}).get("fallback_probe", {}).get("status") != "PASS"
+            or data.get("retained_main_layer_selftest", {}).get("status") != "PASS"
             or data.get("retained_main_replay_selftest") != {
                 "status": "PASS", "original_replayed": True, "four_stage": True,
                 "internal_llm_calls": 0, "grants_authority": False}):
@@ -787,10 +805,14 @@ def main():
             source_rows = grouped[(model, arm)] if arm == "short_vrs" else plain_grouped[(model, arm)]
             initial_hashes[arm] = next(row["prompt_sha256"] for row in source_rows
                                        if row["label"].endswith("__initial"))
+        same_task = len(set(initial_hashes.values())) == 1
         comparison.append({"model": model,
-            "initial_task_hash_match": len(set(initial_hashes.values())) == 1,
+            "initial_task_hash_match": same_task,
+            "comparison_eligible": same_task and all(
+                cell["measurement_valid"] for cell in cells.values()),
             "initial_prompt_sha256": initial_hashes,
             "headline_axes": {arm: {
+                "measurement_valid": cell["measurement_valid"],
                 "goal_consistency_first_ten": cell["goal_consistency"]["matched_first_ten"],
                 "code_quality": cell["code_quality"],
                 "strict_executable_success": cell["executable_success"],
@@ -801,7 +823,7 @@ def main():
                 "wall_seconds": cell["wall_seconds"],
             } for arm, cell in cells.items()}})
     (args.output_dir / "summary.json").write_text(json.dumps({
-        "schema_version": "vrs22-auto-compaction-summary-v9-final-observation-accounting",
+        "schema_version": "vrs22-auto-compaction-summary-v10-retained-main",
         "vrs_cells": results, "plain_cells": plain_results,
         "comparison": comparison,
         "plain_comparison_source": str(args.plain_runs),

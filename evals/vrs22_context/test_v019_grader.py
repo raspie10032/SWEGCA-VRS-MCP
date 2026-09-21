@@ -1,6 +1,9 @@
 """Self checks for the frozen v019 scoring rules."""
 import importlib.util
 from pathlib import Path
+import shutil
+
+import pytest
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -8,6 +11,10 @@ SPEC = importlib.util.spec_from_file_location(
     "v019_grader", ROOT / "tools/summarize_vrs22_compaction_stress_v019.py")
 GRADER = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(GRADER)
+RUNNER_SPEC = importlib.util.spec_from_file_location(
+    "v019_runner", ROOT / "tools/run_vrs22_compaction_stress_v019.py")
+RUNNER = importlib.util.module_from_spec(RUNNER_SPEC)
+RUNNER_SPEC.loader.exec_module(RUNNER)
 
 
 FULL = {
@@ -164,3 +171,44 @@ def test_live_experience_counts_observations_separately_from_state_transitions()
     assert GRADER.live_experience_complete([{"live_experience": evidence}])
     wrong = dict(evidence, session_journal_sequence=12)
     assert not GRADER.live_experience_complete([{"live_experience": wrong}])
+
+
+def test_changed_paths_catches_new_nested_files_and_missing_fixture_files(tmp_path):
+    workspace = tmp_path / "workspace"
+    shutil.copytree(GRADER.BASELINE, workspace)
+    assert GRADER.changed_paths(workspace) == []
+    (workspace / "src" / "unexpected").mkdir()
+    (workspace / "src" / "unexpected" / "payload.py").write_text("x = 1\n")
+    (workspace / "src" / "unexpected" / "external").symlink_to(tmp_path, target_is_directory=True)
+    (workspace / "tests" / "standalone" / "test_checkpoint.py").unlink()
+    assert GRADER.changed_paths(workspace) == [
+        "src/unexpected/external", "src/unexpected/payload.py",
+        "tests/standalone/test_checkpoint.py"]
+
+
+def test_runner_finalizes_a_started_session_after_first_call_fails(tmp_path, monkeypatch):
+    actions = []
+
+    def setup(workspace, codex_home, _arm, _main_seed):
+        workspace.mkdir()
+        transcript = codex_home / "sessions" / "rollout.jsonl"
+        transcript.parent.mkdir(parents=True)
+        transcript.write_text('{"type":"session_meta","payload":{"id":"session-a"}}\n')
+
+    def failed_call(*_args, **_kwargs):
+        raise RuntimeError("simulated_first_call_failure")
+
+    monkeypatch.setattr(RUNNER, "setup_workspace", setup)
+    monkeypatch.setattr(RUNNER, "start_watcher", lambda *_args: object())
+    monkeypatch.setattr(RUNNER, "call", failed_call)
+    monkeypatch.setattr(RUNNER, "stop_watcher_process",
+                        lambda *_args: actions.append("watcher_stopped") or {"status": "stopped"})
+    monkeypatch.setattr(RUNNER, "finalize_experience",
+                        lambda *_args, **_kwargs: actions.append("session_finalized") or {"ended_count": 1})
+    monkeypatch.setattr(RUNNER, "stop_residents",
+                        lambda *_args: actions.append("residents_stopped"))
+    with pytest.raises(RuntimeError, match="simulated_first_call_failure"):
+        RUNNER.run_one("gpt-5.6-luna", "short_vrs", tmp_path, 10, 20)
+    assert actions == ["watcher_stopped", "session_finalized", "residents_stopped"]
+    receipt = tmp_path / "gpt-5.6-luna__short_vrs.cleanup.json"
+    assert receipt.read_text().find('"ended_count": 1') >= 0
