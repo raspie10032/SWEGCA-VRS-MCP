@@ -18,10 +18,13 @@ import zlib
 from collections import OrderedDict
 from pathlib import Path
 
-from .store import CHECKPOINT_MAGIC
+from .store import CHECKPOINT_MAGIC, digest
+from .exact_replay import ExactReplayStore
 
 AUTO_SHARD_RECORDS = 8_192
 MAX_STORAGE_BYTES = 500 * 1024 ** 3
+MAX_RSS_BYTES = 4 * 1024 ** 3
+STORAGE_SCAN_TTL_SECONDS = 1.0
 AUTO_SHARD_PREFIX = 'shard-'
 
 
@@ -182,6 +185,26 @@ class Resident:
         self.auto_ids = sorted(identifier for identifier in self.bundles
                                if identifier.startswith(AUTO_SHARD_PREFIX)
                                and self.bundles[identifier].parent == self.auto_root)
+        self.exact = ExactReplayStore(self.primary.directory / 'exact-replay')
+        self.exact_backfill = {'main': 0}
+        self.pair_ids = {'main': self.primary.pair.snapshot_id}
+        for identifier, directory in self.bundles.items():
+            try:
+                db = _connect(directory)
+                row = db.execute('SELECT pair FROM checkpoint WHERE id=1').fetchone() \
+                    if _table_exists(db, 'checkpoint') else None
+                db.close()
+                if row is not None:
+                    self.pair_ids[identifier] = row[0]
+            except sqlite3.Error:
+                continue
+        self._pair_lock = threading.Lock()
+        self._pair_xor = bytearray(32)
+        for identifier, pair in self.pair_ids.items():
+            self._xor_pair_component(identifier, pair)
+        self._logical_snapshot_id = self._snapshot_from_pair_xor()
+        self._storage_lock = threading.Lock()
+        self._storage_cache = (0.0, 0)
         self.hot = OrderedDict()                          # bundle id -> Main (owned), LRU order
         self.warm = {}                                    # bundle id -> WarmView
         self.closing = {}                                 # bundle id -> thread checkpointing + closing it
@@ -189,18 +212,61 @@ class Resident:
         self.prepared = {}                                # bundle id -> receipt of the last prepare (ms, seq, when)
         self.lock = threading.Lock()
 
-    def _storage_bytes(self):
-        total = 0
-        for root, _, files in os.walk(self.primary.directory):
-            for name in files:
-                try:
-                    total += os.stat(Path(root) / name).st_size
-                except OSError:
-                    continue
-        return total
+    def _storage_bytes(self, *, force=False):
+        """Logical bytes with a short cache so ingest does not walk the tree.
+
+        At the declared 5 Gbps device ceiling, the one-second cache window can
+        hide at most 625 MB of growth.  Admission forces a fresh scan inside
+        that remaining margin, so the 500 GB ceiling stays fail-closed.
+        """
+        now = time.monotonic()
+        with self._storage_lock:
+            stamp, cached = self._storage_cache
+            if not force and stamp and now - stamp < STORAGE_SCAN_TTL_SECONDS:
+                return cached
+            total = 0
+            for root, _, files in os.walk(self.primary.directory):
+                for name in files:
+                    try:
+                        total += os.stat(Path(root) / name).st_size
+                    except OSError:
+                        continue
+            self._storage_cache = (now, total)
+            return total
+
+    @staticmethod
+    def _rss_bytes():
+        try:
+            pages = int(Path('/proc/self/statm').read_text(encoding='ascii').split()[1])
+            return pages * os.sysconf('SC_PAGE_SIZE')
+        except (OSError, ValueError, IndexError):
+            return None
+
+    def budget(self, *, force_storage=False):
+        rss = self._rss_bytes()
+        storage = self._storage_bytes(force=force_storage)
+        return dict(rss_bytes=rss, rss_limit_bytes=MAX_RSS_BYTES,
+                    rss_within_limit=(rss is None or rss <= MAX_RSS_BYTES),
+                    storage_bytes=storage, storage_limit_bytes=MAX_STORAGE_BYTES,
+                    storage_within_limit=storage <= MAX_STORAGE_BYTES,
+                    exact_replay_logical_bytes=self.exact.logical_bytes(),
+                    exact_replay_allocated_bytes=self.exact.allocated_bytes())
+
+    def _admit_resources(self):
+        rss = self._rss_bytes()
+        if rss is not None and rss > MAX_RSS_BYTES:
+            raise ValueError('vrs_memory_budget_exceeded')
+        storage = self._storage_bytes()
+        if storage > MAX_STORAGE_BYTES:
+            raise ValueError('vrs_storage_budget_exceeded')
+        # One cached second at the declared 5 Gbps ceiling is 625 MB.  Near
+        # the boundary, replace the cached value before admitting a write.
+        if storage >= MAX_STORAGE_BYTES - 625_000_000:
+            if self._storage_bytes(force=True) >= MAX_STORAGE_BYTES:
+                raise ValueError('vrs_storage_budget_exceeded')
 
     def _new_auto_shard(self):
-        if self._storage_bytes() >= MAX_STORAGE_BYTES:
+        if self._storage_bytes(force=True) >= MAX_STORAGE_BYTES:
             raise ValueError('vrs_storage_budget_exceeded')
         number = max((int(identifier[len(AUTO_SHARD_PREFIX):]) for identifier in self.auto_ids),
                      default=0) + 1
@@ -210,6 +276,31 @@ class Resident:
         self.bundles[identifier] = directory
         self.auto_ids.append(identifier)
         return identifier
+
+    def _xor_pair_component(self, shard, pair):
+        component = bytes.fromhex(digest((str(shard), str(pair))))
+        for index, value in enumerate(component):
+            self._pair_xor[index] ^= value
+
+    def _snapshot_from_pair_xor(self):
+        return digest(('complete-vrs-sharded-generation-v1',
+                       len(self.pair_ids), self._pair_xor.hex()))
+
+    def refresh_pair(self, shard, owner):
+        shard, pair = str(shard), owner.pair.snapshot_id
+        with self._pair_lock:
+            previous = self.pair_ids.get(shard)
+            if previous == pair:
+                return
+            if previous is not None:
+                self._xor_pair_component(shard, previous)
+            self.pair_ids[shard] = pair
+            self._xor_pair_component(shard, pair)
+            self._logical_snapshot_id = self._snapshot_from_pair_xor()
+
+    def logical_snapshot(self):
+        with self._pair_lock:
+            return self._logical_snapshot_id
 
     def _owner_with_episode(self, identifier):
         if not identifier:
@@ -244,6 +335,7 @@ class Resident:
         episode; another revision of an existing source follows that source.
         Only a previously unseen source uses the current append shard.
         """
+        self._admit_resources()
         if requested not in (None, '', 'main'):
             return self.main_for(requested)
         owner = self._owner_with_episode(row.get('supersedes'))
@@ -261,13 +353,25 @@ class Resident:
         return active
 
     def ingest(self, row, requested=None):
-        return self.main_for_ingest(row, requested).ingest(row)
+        owner = self.main_for_ingest(row, requested)
+        receipt = owner.ingest(row)
+        self.refresh_pair(self._shard_of(owner), owner)
+        self._register_exact(owner, receipt['episode_id'])
+        return receipt
 
     def ingest_many(self, rows, requested=None):
         """Batch ingest with automatic capacity boundaries and stable source routing."""
         rows = list(rows)
+        if not rows:
+            return self.primary.ingest_many(rows)
+        self._admit_resources()
         if requested not in (None, '', 'main'):
-            return self.main_for(requested).ingest_many(rows)
+            owner = self.main_for(requested)
+            receipt = owner.ingest_many(rows)
+            self.refresh_pair(self._shard_of(owner), owner)
+            for result in receipt['results']:
+                self._register_exact(owner, result['episode_id'])
+            return receipt
         results, groups, journaled = [], [], 0
         index = 0
         while index < len(rows):
@@ -282,6 +386,9 @@ class Resident:
                     break
                 chunk.append(rows[index]); index += 1
             receipt = owner.ingest_many(chunk)
+            self.refresh_pair(self._shard_of(owner), owner)
+            for result in receipt['results']:
+                self._register_exact(owner, result['episode_id'])
             results.extend(receipt['results'])
             journaled += receipt['journaled']
             groups.append(dict(shard='main' if owner is self.primary else
@@ -292,6 +399,48 @@ class Resident:
                     added=sum(int(result.get('distinct_source_episode_added', 0)) for result in results),
                     pair_snapshot_id=last, results=results, shards=groups,
                     bundle=self.primary.bundle())
+
+    def _shard_of(self, owner):
+        if owner is self.primary:
+            return 'main'
+        for identifier, candidate in self.hot.items():
+            if candidate is owner:
+                return identifier
+        raise ValueError('exact_replay_owner_not_registered')
+
+    def _register_exact(self, owner, identifier):
+        memory = owner.memory
+        episode = memory.episode(identifier)
+        self.exact.put(identifier, self._shard_of(owner), episode)
+
+    def exact_replay(self, identifier):
+        return self.exact.get(identifier)
+
+    def backfill_exact(self, budget=256):
+        """Incrementally add pre-repair experiences without delaying startup."""
+        remaining, added = max(0, int(budget)), 0
+        owners = [('main', self.primary)]
+        for identifier in self.ids():
+            owner = self.hot.get(identifier)
+            if owner is None:
+                view = self.warm.get(identifier)
+                owner = view.generation if view is not None else None
+            if owner is not None:
+                owners.append((identifier, owner))
+        for shard, owner in owners:
+            if not remaining:
+                break
+            start = int(self.exact_backfill.get(shard, 0))
+            ids = owner.memory._store['ids']
+            stop = min(owner.memory.episode_count, start + remaining)
+            for row in range(start, stop):
+                identifier = ids[row]
+                added += int(self.exact.put(identifier, shard, owner.memory.episode(identifier)))
+            self.exact_backfill[shard] = stop
+            remaining -= stop - start
+        return dict(scanned=budget - remaining, added=added,
+                    complete=all(self.exact_backfill.get(shard, 0) >= owner.memory.episode_count
+                                 for shard, owner in owners))
 
     _SEQUENCE_BITS = 48
     _SEQUENCE_MASK = (1 << _SEQUENCE_BITS) - 1
@@ -410,6 +559,9 @@ class Resident:
             return None
         started = time.perf_counter_ns()
         generation = view.refresh()
+        if (self._rss_bytes() or 0) > MAX_RSS_BYTES:
+            view.close()
+            raise ValueError('vrs_memory_budget_exceeded')
         receipt = dict(bundle=bundle_id, ms=(time.perf_counter_ns() - started) // 1_000_000, seq=view.seq,
                        records=generation.memory.episode_count, pair_snapshot_id=generation.pair.snapshot_id,
                        complete_vrs=True, when=time.time())
@@ -469,6 +621,7 @@ class Resident:
             main = Main(self.bundles[bundle_id], allow_ingest=True, bundle_limit=self.bundle_limit,
                         defer_checkpoints=True)
             self.hot[bundle_id] = main
+            self.refresh_pair(bundle_id, main)
             while len(self.hot) > self.hot_limit:
                 evicted_id, evicted = self.hot.popitem(last=False)
                 self._close_later(evicted_id, evicted)   # checkpoints the complete immutable generation
@@ -516,6 +669,9 @@ class Resident:
 
     def lookup(self, episode_id):
         """Which bundle holds a record id (the primary first, then every other bundle's index)."""
+        exact = self.exact_replay(episode_id) if episode_id.startswith('memory:') else None
+        if exact is not None:
+            return exact['shard']
         if episode_id in self.primary.memory.records:
             return 'main'
         for bundle_id in self.bundles:

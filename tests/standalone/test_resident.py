@@ -8,7 +8,9 @@ from types import SimpleNamespace
 import pytest
 
 from swegca_vrs2.loopback import hook_recall, _consolidate_stale_shards
-from swegca_vrs2.resident import Resident, WarmView, load_recall_generation
+from swegca_vrs2.resident import (
+    MAX_RSS_BYTES, MAX_STORAGE_BYTES, Resident, WarmView, load_recall_generation,
+)
 from swegca_vrs2.store import Main
 
 
@@ -129,7 +131,8 @@ def test_idle_consolidation_covers_main_and_every_hot_shard_with_one_cpu_budget(
             owner.ingest_many([row(i, f"독립 샤드 병렬 경험 {number} {i}", f"p{number}")
                                for i in range(8)])
         daemon = SimpleNamespace(main=owners[0], lock=threading.Lock(),
-            bundles=SimpleNamespace(hot=OrderedDict((("s1", owners[1]), ("s2", owners[2])))))
+            bundles=SimpleNamespace(hot=OrderedDict((("s1", owners[1]), ("s2", owners[2]))),
+                                    refresh_pair=lambda shard, owner: None))
         receipts = _consolidate_stale_shards(daemon, cycles=4)
         assert [r["shard"] for r in receipts] == ["main", "s1", "s2"]
         assert all(r["committed"] and r["parallel_shards"] == 3 for r in receipts)
@@ -139,3 +142,46 @@ def test_idle_consolidation_covers_main_and_every_hot_shard_with_one_cpu_budget(
     finally:
         for owner in owners:
             owner.close()
+
+
+def test_resource_budget_is_reported_and_admission_is_fail_closed(tmp_path, monkeypatch):
+    primary = Main(tmp_path / "main", allow_ingest=True)
+    resident = Resident(primary, {}, hot_limit=1)
+    try:
+        budget = resident.budget(force_storage=True)
+        assert budget["rss_limit_bytes"] == 4 * 1024 ** 3
+        assert budget["storage_limit_bytes"] == 500 * 1024 ** 3
+        assert budget["storage_bytes"] < budget["storage_limit_bytes"]
+
+        monkeypatch.setattr(resident, "_rss_bytes", lambda: MAX_RSS_BYTES + 1)
+        with pytest.raises(ValueError, match="memory_budget_exceeded"):
+            resident.ingest(row(0, "메모리 한도 거부", "budget"))
+
+        monkeypatch.setattr(resident, "_rss_bytes", lambda: 0)
+        monkeypatch.setattr(resident, "_storage_bytes", lambda **kwargs: MAX_STORAGE_BYTES)
+        with pytest.raises(ValueError, match="storage_budget_exceeded"):
+            resident.ingest(row(1, "저장소 한도 거부", "budget"))
+    finally:
+        resident.close()
+        primary.close()
+
+
+def test_logical_snapshot_update_cost_does_not_scan_all_shards(tmp_path):
+    primary = Main(tmp_path / "main", allow_ingest=True)
+    resident = Resident(primary, {}, hot_limit=1)
+    try:
+        before = resident.logical_snapshot()
+        primary.ingest(row(0, "논리 스냅샷 증분 갱신", "snapshot"))
+        resident.refresh_pair("main", primary)
+        after = resident.logical_snapshot()
+        assert after != before
+
+        class NoIteration(dict):
+            def items(self):
+                raise AssertionError("logical_snapshot scanned every shard")
+
+        resident.pair_ids = NoIteration(resident.pair_ids)
+        assert resident.logical_snapshot() == after
+    finally:
+        resident.close()
+        primary.close()

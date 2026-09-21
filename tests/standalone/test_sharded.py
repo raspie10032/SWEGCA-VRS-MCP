@@ -18,11 +18,13 @@ def test_global_four_stages_and_cross_shard_reevidence(tmp_path):
     primary = Main(tmp_path / "main", allow_ingest=True)
     resident = Resident(primary, {"s1": tmp_path / "s1"}, hot_limit=1)
     try:
-        support = primary.ingest(claim("support", "main", "support"))["episode_id"]
+        support = resident.ingest(claim("support", "main", "support"))["episode_id"]
         secondary = resident.main_for("s1")
-        refute = secondary.ingest(claim("refute", "secondary", "refute"))["episode_id"]
+        refute = resident.ingest(claim("refute", "secondary", "refute"), "s1")["episode_id"]
         primary.consolidate(cycles=4)
         secondary.consolidate(cycles=4)
+        resident.refresh_pair("main", primary)
+        resident.refresh_pair("s1", secondary)
 
         sharded = ShardedMain(primary, resident)
         status = sharded.status()
@@ -66,7 +68,7 @@ def test_cold_shard_is_named_unready_until_complete_generation_is_prepared(tmp_p
     resident = Resident(primary, {"s1": tmp_path / "s1"}, hot_limit=1)
     try:
         secondary = resident.main_for("s1")
-        secondary.ingest(claim("refute", "secondary", "refute"))
+        resident.ingest(claim("refute", "secondary", "refute"), "s1")
         resident.evict("s1")
         resident.settle()
         sharded = ShardedMain(primary, resident)
@@ -109,6 +111,20 @@ def test_automatic_split_preserves_source_and_supersedes_lineage(tmp_path):
         root = sharded.recall("자동 분할 경험", status["pair_snapshot_id"])
         assert root["record_count"] == 8
         assert len(root["receipt"]["activation"].replay.episodes) == 8
+        exact_id = receipt["results"][-1]["episode_id"]
+        exact = sharded.recall(exact_id, status["pair_snapshot_id"])
+        assert exact["receipt"]["activation"].stage_order == (
+            "deja_vu", "recall", "replay", "re_evidence")
+        assert exact["receipt"]["activation"].replay.episodes[0].episode_id == exact_id
+        samples = [sharded.recall(exact_id, status["pair_snapshot_id"])["timings_ns"]["through_replay"]
+                   for _ in range(20)]
+        assert sorted(samples)[18] < 1_000_000
+
+        excluded = sharded.recall(exact_id, status["pair_snapshot_id"],
+                                  exclude_kinds=("", "conversation"))
+        # These rows have no kind, so excluding the empty kind follows the
+        # same masked-index rule as Main and must not bypass it via the capsule.
+        assert not excluded["receipt"]["activation"].replay.episodes
 
         # Ended-session assimilation walks every automatic shard through one
         # monotonic cursor and preserves exact content-derived addresses.

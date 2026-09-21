@@ -489,6 +489,8 @@ class Daemon:
             graph = self.main.consolidate_run(prepared, **{k: int(v) for k, v in arguments.items() if k in ('seed', 'cycles')})
             with self.lock:
                 result = self.main.consolidate_commit(prepared, graph)
+                if result is not None:
+                    self.bundles.refresh_pair('main', self.main)
             return dict(status='ok', consolidate=result, raced=result is None)
         with self.lock:
             if command in RESIDENT_COMMANDS:
@@ -511,10 +513,14 @@ class Daemon:
                 return dict(status='ok', evicted=self.bundles.evict(str(arguments.get('bundle') or '')))
             if command == 'alias':
                 # hypothesis registry (2026-09-18): bind alias propositions to a canonical one
-                return self.main.alias_update(arguments.get('canonical'), arguments.get('aliases') or [])
+                result = self.main.alias_update(arguments.get('canonical'), arguments.get('aliases') or [])
+                self.bundles.refresh_pair('main', self.main)
+                return result
             if command == 'usage':
                 # usage re-evidence (2026-09-18): the Stop hook's ledger {source: [injected, opened]}
-                return self.main.usage_update(arguments.get('counts') or {})
+                result = self.main.usage_update(arguments.get('counts') or {})
+                self.bundles.refresh_pair('main', self.main)
+                return result
             if command == 'checkpoint':
                 return dict(status='ok', checkpoint=self.main.checkpoint())
             if command == 'compact':
@@ -557,6 +563,9 @@ def _preparer(daemon):
         memory = daemon.main.memory
         done = memory.prefetch_light(budget_ns=20_000_000_000) if hasattr(memory, 'prefetch_light') else 0
         daemon.prepared.append(dict(kind='prefetch_light', rows=done, ms=(time.perf_counter_ns() - started) // 1_000_000, when=time.time()))
+        exact = daemon.bundles.backfill_exact(512)
+        daemon.prepared.append(dict(kind='exact_replay_backfill', **exact,
+                                    ms=(time.perf_counter_ns() - started) // 1_000_000, when=time.time()))
     except Exception as error:
         daemon.prepared.append(dict(kind='prefetch_light', error=type(error).__name__, when=time.time()))
     last_pass = 0.0
@@ -567,6 +576,10 @@ def _preparer(daemon):
                 daemon.prepared.append(receipt)
                 del daemon.prepared[:-64]
             last_pass = time.time()
+            exact = daemon.bundles.backfill_exact(256)
+            if exact['scanned']:
+                daemon.prepared.append(dict(kind='exact_replay_backfill', **exact, when=time.time()))
+                del daemon.prepared[:-64]
         time.sleep(0.25)
 
 
@@ -617,6 +630,8 @@ def _consolidate_stale_shards(daemon, *, cycles):
             continue
         with daemon.lock:
             receipt = owner.consolidate_commit(generation, graph)
+            if receipt is not None:
+                daemon.bundles.refresh_pair(name, owner)
         receipts.append(dict(shard=name, committed=receipt is not None,
                              parallel_shards=len(prepared), workers_per_shard=workers,
                              version_id=None if receipt is None else receipt.get('version_id')))

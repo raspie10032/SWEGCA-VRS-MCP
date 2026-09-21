@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import math
 import re
+import time
 from itertools import chain
 from types import MappingProxyType
 
@@ -21,7 +22,9 @@ from .engine.mosaic_memory_activation import (
     CurrentEvidenceVerdict,
     DejaVuSignal,
     MemoryActivationReceipt,
+    RecallCandidate,
     RecallResult,
+    ReplayResult,
     current_experience_verdict,
     detect_deja_vu,
     recall_memory,
@@ -90,9 +93,8 @@ class ShardedMain:
                 f'{shard}:{state}' for shard, state in missing))
         return owners
 
-    @staticmethod
-    def _snapshot(owners):
-        return digest(('sharded-main-v1', [(shard, owner.pair.snapshot_id) for shard, owner in owners]))
+    def _snapshot(self, owners=None):
+        return self.resident.logical_snapshot()
 
     def _check(self):
         self.primary._check()
@@ -105,6 +107,8 @@ class ShardedMain:
             missing = [dict(id=shard, state=state) for shard in self.resident.ids()
                        for owner, state in [self.resident.ready(shard)] if owner is None]
             base.update(memory_ready=False, complete_vrs_shards_ready=False,
+                        pair_snapshot_id=self._snapshot(),
+                        resource_budget=self.resident.budget(),
                         incomplete_shards=missing,
                         logical_main='complete_vrs_sharded_generation')
             return base
@@ -123,15 +127,102 @@ class ShardedMain:
                                                     if owner.graph.stable is not None else None))
                             for shard, owner in owners],
                     logical_main='complete_vrs_sharded_generation')
+        base['resource_budget'] = self.resident.budget()
         base['memory_ready'] = base['complete_vrs_shards_ready'] = True
         return base
 
-    def recall(self, query, expected_snapshot, exclude_kinds=(), region_scope='all'):
+    def _finish_exact(self, query, pair_snapshot, signal, recalled, replayed,
+                      shard, through_replay_ns, exclude_kinds, region_scope):
+        """Attach current VRS Re-evidence after the direct Replay boundary."""
+        finish_began = time.perf_counter_ns()
         owners = self._owners()
-        pair_snapshot = self._snapshot(owners)
+        by_shard = dict(owners)
+        owner = by_shard.get(shard)
+        if owner is None:
+            raise ValueError('exact_replay_owner_not_ready')
+        episode = replayed.episodes[0]
+        proposition = episode.steps[0].observation.get('proposition_id')
+        opponents = ()
+        if proposition:
+            active = []
+            for _, candidate_owner in owners:
+                for identifier in candidate_owner.memory.propositions.get(proposition, ()):
+                    if identifier not in candidate_owner.memory.superseded:
+                        active.append(candidate_owner.memory.episode_light(identifier))
+            if {item.steps[0].observation.get('evidence_polarity') for item in active} == {'support', 'refute'}:
+                opponents = tuple(sorted(item.episode_id for item in active))
+
+        graph_snapshot = digest(('sharded-vrs-v1', [(name, candidate.graph.snapshot_id)
+                                                    for name, candidate in owners]))
+
+        def judge(item):
+            if opponents:
+                return CurrentEvidenceVerdict(item.episode_id, proposition, 'conflict',
+                    'Opposing recorded claims for the same explicit proposition across VRS shards; neither is certified true.',
+                    ('memory-snapshot:' + pair_snapshot, *item.source_addresses), opponents)
+            return current_experience_verdict(item, memory_snapshot_id=pair_snapshot,
+                vrs_snapshot_id=graph_snapshot, current_strength=owner.graph.strength(item.episode_id),
+                proposition=proposition or 'experience:' + item.episode_id)
+
+        re_evidenced = re_evidence_memory(replayed, judge=judge)
+        receipt = MemoryActivationReceipt('rozephine-memory-activation-v1', pair_snapshot,
+            signal, recalled, replayed, re_evidenced)
+        local = owner.recall(query, None, exclude_kinds=exclude_kinds, region_scope=region_scope)
+        identifier = episode.episode_id
+        path = dict(local['region_navigation']['paths'].get(identifier)
+                    or dict(region=None, path='pending'))
+        path['shard'] = shard
+        return dict(record_count=sum(candidate.memory.episode_count for _, candidate in owners),
+            receipt={'activation': receipt},
+            memory_selection=dict(candidate_counts={identifier: 1}, selected_cues=(identifier,),
+                rejected_cues=(), function_word_cues=(),
+                selection_method='main_owned_exact_replay_capsule', excluded_kinds=list(exclude_kinds or ()),
+                closure_rule='direct original experience; proposition opponents evaluated by Re-evidence',
+                candidate_order='exact_original_address', semantic_acceptance_claimed=False),
+            vrs_selection=dict(selection_method='current_owner_vrs_after_exact_replay',
+                numerical_version=vrs_refine.VERSION, logical_implication_claimed=False,
+                grants_authority=False,
+                stable_version_id=(owner.graph.stable.version_id if owner.graph.stable is not None else None)),
+            current_strengths={identifier: owner.graph.strength(identifier)},
+            current_promotions={identifier: owner.graph.strength(identifier) >= 1.0},
+            current_propositions={identifier: proposition},
+            superseded_by={identifier: owner.memory.superseded.get(identifier)},
+            region_navigation=dict(paths={identifier: path}, shard_roots={shard: local['region_navigation']},
+                                   cross_shard_portals=[], membership_is_truth=False),
+            pair_snapshot_id=pair_snapshot,
+            timings_ns=dict(through_replay=through_replay_ns,
+                            through_re_evidence=through_replay_ns + time.perf_counter_ns() - finish_began),
+            authority=MappingProxyType({key: False for key in
+                ('world', 'action', 'persistent_write', 'model_update', 'distribution', 'p3')}))
+
+    def recall(self, query, expected_snapshot, exclude_kinds=(), region_scope='all'):
+        began = time.perf_counter_ns()
+        pair_snapshot = self._snapshot()
         if expected_snapshot is not None and expected_snapshot != pair_snapshot:
             raise ValueError('snapshot_mismatch')
         query = text_field(query, 'query', 4096)
+        exact_match = re.fullmatch(r'\s*(memory:[0-9a-f]{64})\s*', query.casefold())
+        exact = self.resident.exact_replay(exact_match.group(1)) if exact_match else None
+        if exact is not None:
+            replay = exact['replay']
+            kind = str((replay.steps[0].observation.get('metadata') or {}).get('kind') or '')
+            if kind in tuple(exclude_kinds or ()):
+                exact = None
+        if exact is not None:
+            replay = exact['replay']
+            signal = DejaVuSignal(pair_snapshot, query, (replay.episode_id,),
+                                  (replay.episode_id,), 1.0, 1)
+            candidate = RecallCandidate(replay.episode_id, (replay.episode_id,), 1.0,
+                                        exact['revision'],
+                                        replay.verification_state,
+                                        tuple(step.outcome for step in replay.steps))
+            recalled = RecallResult(query, (candidate,), pair_snapshot)
+            replayed = ReplayResult(query, (replay,))
+            through_replay_ns = time.perf_counter_ns() - began
+            return self._finish_exact(query, pair_snapshot, signal, recalled, replayed,
+                                      exact['shard'], through_replay_ns,
+                                      exclude_kinds, region_scope)
+        owners = self._owners()
         # Kind masks are immutable shard views.  Pair each view with the shard's
         # complete graph; original addresses and ids do not change.
         views = []
