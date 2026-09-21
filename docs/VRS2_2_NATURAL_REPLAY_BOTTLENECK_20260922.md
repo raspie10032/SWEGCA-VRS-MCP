@@ -169,3 +169,14 @@ Re-evidence before returning. The first ranked candidate itself is selected
 only after full candidate scoring and VRS navigation, which explains why
 the clarified target still fails for wider matches. Cold page faults also
 remain a measured failure. The model-evaluation gate stays closed.
+
+An independent call-count probe on that installed wheel wrapped
+`Resident.exact_replay` and recorded the count when the first ranked
+`ReplayedEpisode` was constructed. It did not change either return value.
+For match counts 1, 100 and 1,008, respectively, the main had already opened
+1, 100 and 1,008 exact capsules. Each equals the entire candidate set.
+Thus the first-original latency currently includes opening every matched
+original before ranking completes. A repair must select the first experience
+using a lossless VRS-bound read index before opening unrelated originals,
+while leaving their exact addresses, later Replay, region paths, portals,
+source checks and Re-evidence reachable.
