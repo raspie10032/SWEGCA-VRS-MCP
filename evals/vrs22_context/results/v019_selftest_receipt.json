@@ -1,0 +1,69 @@
+{
+  "status": "PASS",
+  "live_supervisor": {
+    "status": "PASS",
+    "sessions": 2,
+    "active_session_rows": 6,
+    "active_main_rows": 0,
+    "active_linked_rows": 0,
+    "final_session_rows": 6,
+    "final_linked_rows": 6,
+    "explicitly_excluded_private_records": 2,
+    "database_artifacts": [],
+    "watcher_counts": [
+      1,
+      2
+    ]
+  },
+  "installed_hook": {
+    "status": "PASS",
+    "generated_lifecycle_unfiltered": true,
+    "pretool_exact_session_injected": true,
+    "cursor_accounted": true,
+    "ended_only_after_session_end": true,
+    "session_end_hook_elapsed_ns": 112738084,
+    "linked_experiences": 2,
+    "original_text_preserved": true,
+    "database_artifacts": []
+  },
+  "installed_generation_lease": {
+    "status": "PASS",
+    "idle_boundary_seconds": 6.5,
+    "session_records": 81,
+    "snapshot_pinned": true,
+    "four_stage": true,
+    "session_first": true,
+    "database_module_loaded": false,
+    "database_artifacts": []
+  },
+  "isolation": {
+    "status": "PASS",
+    "workspace_readable": true,
+    "sibling_output_blocked": true,
+    "codex_home_blocked": true,
+    "vrs_state_blocked": true,
+    "real_codex_home_blocked": true,
+    "evaluation_source_blocked": true,
+    "test_python_readable": true,
+    "shell_snapshot_readable": true,
+    "rg_readable": true,
+    "isolated_home": "/var/tmp/vrs22-v019-after-private-cache/isolation/isolation-workspace/.grade-tmp/home"
+  },
+  "runtime_install": {
+    "installed_package": "/home/raspie/.local/share/swegca-vrs2-runtime-2.2/venv/lib/python3.12/site-packages/swegca_vrs2",
+    "wheel_package_files": 48,
+    "mismatches": [],
+    "forbidden_database_references": [],
+    "forbidden_retired_references": [],
+    "forbidden_dependencies": [],
+    "process_audit": {
+      "retired_lock_available": false,
+      "database_module_loaded": false
+    },
+    "unexpected_non_source_files": []
+  },
+  "test_environment_audit": {
+    "retired_lock_available": false,
+    "database_module_loaded": false
+  }
+}
