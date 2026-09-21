@@ -33,13 +33,23 @@ def run(root: Path, *, sparse: int, medium: int, broad: int) -> dict:
     resident = None
     projection = importlib.import_module('swegca_vrs2.projected_recall')
     original_replay_result = projection.ReplayResult
-    clock: dict[str, int | None] = {'began': None, 'replay': None}
+    original_replayed_episode = projection.ReplayedEpisode
+    clock: dict[str, int | None | str] = {
+        'began': None, 'first_replay': None, 'first_episode_id': None, 'replay': None}
+
+    def stage_first_episode(*args, **kwargs):
+        result = original_replayed_episode(*args, **kwargs)
+        if clock['first_replay'] is None:
+            clock['first_replay'] = time.perf_counter_ns()
+            clock['first_episode_id'] = result.episode_id
+        return result
 
     def stage_replay(*args, **kwargs):
         result = original_replay_result(*args, **kwargs)
         clock['replay'] = time.perf_counter_ns()
         return result
 
+    projection.ReplayedEpisode = stage_first_episode
     projection.ReplayResult = stage_replay
     try:
         resident = Resident(owner, hot_limit=1)
@@ -59,27 +69,37 @@ def run(root: Path, *, sparse: int, medium: int, broad: int) -> dict:
         for desired, repetitions in ((1, sparse), (100, medium), (1000, broad)):
             fanout, cue = min(choices, key=lambda row: (abs(row[0] - desired), row[0]))
             # The first call is reported separately; it is not silently removed.
-            through_replay, full = [], []
+            first_replay, through_replay, full = [], [], []
             candidates = None
             for _ in range(repetitions):
                 clock['began'] = time.perf_counter_ns()
+                clock['first_replay'] = None
+                clock['first_episode_id'] = None
                 clock['replay'] = None
                 result = main.recall(cue, None)
                 finished = time.perf_counter_ns()
-                if clock['replay'] is None:
+                if clock['first_replay'] is None or clock['replay'] is None:
                     raise RuntimeError('replay_stage_not_reached')
                 activation = result['receipt']['activation']
                 if (len(activation.recall.candidates) != len(activation.replay.episodes)
                         or len(activation.replay.episodes) != fanout
                         or activation.re_evidence is None):
                     raise RuntimeError('four_stage_candidate_mismatch')
+                if clock['first_episode_id'] != activation.recall.candidates[0].episode_id:
+                    raise RuntimeError('first_replay_does_not_match_first_ranked_candidate')
                 candidates = len(activation.replay.episodes)
+                first_replay.append(clock['first_replay'] - clock['began'])
                 through_replay.append(clock['replay'] - clock['began'])
                 full.append(finished - clock['began'])
             warm = through_replay[1:] or through_replay
+            first_warm = first_replay[1:] or first_replay
             cases.append(dict(target_fanout=desired, actual_fanout=fanout,
                 cue_sha256=hashlib.sha256(cue.encode('utf-8')).hexdigest(),
                 candidate_count=candidates, calls=repetitions,
+                first_ranked_original_replay_ms=first_replay[0] / 1e6,
+                warm_median_first_ranked_original_replay_ms=statistics.median(first_warm) / 1e6,
+                first_ranked_original_replay_at_or_above_1ms=sum(
+                    value >= 1_000_000 for value in first_replay),
                 first_through_replay_ms=through_replay[0] / 1e6,
                 warm_median_through_replay_ms=statistics.median(warm) / 1e6,
                 warm_p99_through_replay_ms=percentile(warm, .99),
@@ -101,6 +121,7 @@ def run(root: Path, *, sparse: int, medium: int, broad: int) -> dict:
                     record_count=owner.memory.episode_count, cases=cases,
                     cgroup_limits=limits, sqlite_module_loaded='sqlite3' in sys.modules)
     finally:
+        projection.ReplayedEpisode = original_replayed_episode
         projection.ReplayResult = original_replay_result
         if resident is not None:
             resident.close()

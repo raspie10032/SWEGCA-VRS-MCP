@@ -138,3 +138,34 @@ exceeded 1 ms. This wheel result is now the evaluation runner's explicit
 performance-failure receipt. The cold single-match result above remains a
 separate failure even though this repeated-run receipt began with cached
 table pages.
+
+## Clarified latency target: first original experience
+
+The user clarified that the 1 ms target ends when the **first original
+experience** reaches Replay, rather than after every matched original has
+been replayed. The ranking and source identity still belong to main; the
+measured first experience is therefore the first **ranked** Recall candidate.
+`tools/benchmark_vrs22_natural_replay.py` now timestamps construction of its
+first `ReplayedEpisode` and verifies that its ID equals the first ranked
+Recall candidate. The earlier whole-Replay numbers remain in the same receipt
+as a separate diagnostic. The benchmark wrapper leaves product return values
+unchanged.
+
+On the same copied 15,630-experience native main and installed wheel, under
+the 4 GiB, zero-swap and 625 MB/s SSD cgroup, three calls per fanout gave:
+
+| Matched originals | First ranked original, first call | First ranked original, warm median | Calls at or above 1 ms |
+| ---: | ---: | ---: | ---: |
+| 1 | 0.794 ms | 0.310 ms | 0/3 |
+| 100 | 19.861 ms | 15.483 ms | 3/3 |
+| 1,008 | 120.954 ms | 92.945 ms | 3/3 |
+
+The raw receipt is
+`evals/vrs22_context/results/first_ranked_original_replay_wheel_20260922.json`
+(SHA-256 `8a683577d333d43e40bd599df517c7394407d37f99683f3f642908beeb03fee2`).
+This is a milestone inside `ShardedMain.recall`, not the time at which the
+caller receives a usable row: current main still computes all candidates and
+Re-evidence before returning. The first ranked candidate itself is selected
+only after full candidate scoring and VRS navigation, which explains why
+the clarified target still fails for wider matches. Cold page faults also
+remain a measured failure. The model-evaluation gate stays closed.

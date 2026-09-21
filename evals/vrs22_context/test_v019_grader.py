@@ -278,6 +278,7 @@ print(json.dumps({'stopped':True}))
 
 def test_measured_replay_violation_blocks_model_evaluation():
     audit = RUNNER.product_performance_audit()
+    assert audit["latency_metric"] == "first_ranked_original_experience_replayed_after_main_selection"
     assert audit["sample_valid"] is True
     assert audit["sampled_under_1ms"] is False
     assert audit["ready"] is False

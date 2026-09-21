@@ -32,8 +32,8 @@ RUNTIME_COMMAND = RUNTIME_PYTHON.with_name("swegca-vrs2-codex")
 RUNTIME_HOOK = RUNTIME_PYTHON.with_name("swegca-vrs2-hook")
 RUNTIME_WHEEL = Path("/home/raspie/.local/share/swegca-vrs2-runtime-2.2-first-query/dist/swegca_vrs_mcp-2.2.0-py3-none-any.whl")
 RUNTIME_WHEEL_SHA256 = "4b06afd976f3b983f37ba905fdb4b99eede691940733afa142952b0749992fe7"
-PERFORMANCE_RECEIPT = ROOT / "evals/vrs22_context/results/natural_replay_first_query_wheel_20260922.json"
-PERFORMANCE_RECEIPT_SHA256 = "7e3bd28812082689de912181bcdf84334b77f7121b58a9ff0a203568cb16f130"
+PERFORMANCE_RECEIPT = ROOT / "evals/vrs22_context/results/first_ranked_original_replay_wheel_20260922.json"
+PERFORMANCE_RECEIPT_SHA256 = "8a683577d333d43e40bd599df517c7394407d37f99683f3f642908beeb03fee2"
 REAL_CODEX_HOME = Path.home() / ".codex"
 LIVE_STATE = Path("/home/raspie/.local/share/swegca-vrs2-codex")
 USER_RUNTIME_DIR = Path("/run/user") / str(os.getuid())
@@ -380,14 +380,14 @@ def product_performance_audit():
         and receipt.get("record_count") == 15630
         and len(cases) == 3
         and [row.get("actual_fanout") for row in cases] == [1, 100, 1008]
-        and all(type(row.get("through_replay_at_or_above_1ms")) is int
+        and all(type(row.get("first_ranked_original_replay_at_or_above_1ms")) is int
                 for row in cases)
         and limits.get("memory.max") == "4294967296"
         and limits.get("memory.swap.max") == "0"
         and "259:3 rbps=625000000 wbps=625000000" in limits.get("io.max", "")
         and receipt.get("sqlite_module_loaded") is False)
     sampled_under_1ms = bool(sample_valid and all(
-        row["through_replay_at_or_above_1ms"] == 0 for row in cases))
+        row["first_ranked_original_replay_at_or_above_1ms"] == 0 for row in cases))
     # A finite sample cannot certify an all-size bound. The project also has
     # no user-approved unit for a VRS parameter or a measured billion-unit run.
     all_size_through_replay_proven = False
@@ -395,12 +395,13 @@ def product_performance_audit():
     billion_parameter_seconds_proven = False
     return dict(ready=bool(sampled_under_1ms and all_size_through_replay_proven
         and billion_parameter_unit_defined and billion_parameter_seconds_proven),
+        latency_metric="first_ranked_original_experience_replayed_after_main_selection",
         receipt_sha256=PERFORMANCE_RECEIPT_SHA256,
         sample_valid=sample_valid,
         sampled_under_1ms=sampled_under_1ms,
         observed_violations=[dict(matches=row.get("actual_fanout"),
-            calls_at_or_above_1ms=row.get("through_replay_at_or_above_1ms"))
-            for row in cases if row.get("through_replay_at_or_above_1ms")],
+            calls_at_or_above_1ms=row.get("first_ranked_original_replay_at_or_above_1ms"))
+            for row in cases if row.get("first_ranked_original_replay_at_or_above_1ms")],
         all_size_through_replay_proven=all_size_through_replay_proven,
         billion_parameter_unit_defined=billion_parameter_unit_defined,
         billion_parameter_seconds_proven=billion_parameter_seconds_proven)
