@@ -35,6 +35,8 @@ def tool(name, description, properties, required=(), *, readonly=True):
 MEMORY_TOOLS = [
     tool("memory_context", "Preferred memory-use entrypoint. Start with request_id, query (include "
          "relevant task context and current conditions), expected_pair_snapshot_id from memory_status. "
+         "For an exact experience address, also pass exact_episode_id and copy its entire value into "
+         "query byte for byte, including a literal memory: prefix; mismatch fails closed before recall. "
          "Main activates/re-evidences memory; this tool advances bounded fair turns and returns its "
          "cue selection/rejection, support/refutation/conflict controls and joined original records "
          "with provenance/revision/current status. Candidate order is NOT semantic acceptance. "
@@ -43,6 +45,7 @@ MEMORY_TOOLS = [
          "source_node references using memory_read before relying on missing conditions. No LLM "
          "selection, summary, memory writes or action authority. Release the request after use.",
          dict(request_id=string(), view_id=string(), query=string(4096),
+              exact_episode_id=string(128),
               expected_pair_snapshot_id=string(64),
               start_index={"type": "integer", "minimum": 0},
               page_size={"type": "integer", "minimum": 1, "maximum": 8},

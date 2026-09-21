@@ -145,13 +145,23 @@ def memory_context(server, arguments):
         if ('query' not in arguments or 'expected_pair_snapshot_id' not in arguments
                 or arguments.get('start_index', 0) != 0):
             raise InterfaceError('memory_context_start_requires_query_and_snapshot')
+        exact_episode_id = arguments.get('exact_episode_id')
+        exact_digest = (exact_episode_id.removeprefix('memory:')
+                        if isinstance(exact_episode_id, str) else '')
+        if exact_episode_id is not None and (
+                not exact_episode_id.startswith('memory:')
+                or len(exact_digest) != 64
+                or any(character not in '0123456789abcdef' for character in exact_digest)
+                or arguments['query'] != exact_episode_id):
+            raise InterfaceError('memory_context_exact_address_mismatch')
         ready = server.call_tool('memory_recall', {key: arguments[key] for key in
             ('request_id', 'query', 'expected_pair_snapshot_id')})
         if ready['status'] == 'memory_open_failed':
             return ready
         view = ready['view_id']
     else:
-        if 'query' in arguments or 'expected_pair_snapshot_id' in arguments:
+        if ('query' in arguments or 'expected_pair_snapshot_id' in arguments
+                or 'exact_episode_id' in arguments):
             raise InterfaceError('memory_context_continue_requires_same_handle_only')
         server._owned(identifier, view)
         ready = server._open(identifier, view)
@@ -179,6 +189,27 @@ def memory_context(server, arguments):
         for name in ('query', 'selected_support', 'selected_refutation', 'conflicting_propositions',
                      'unresolved_conflict', 'insufficient_evidence', 'should_abstain'):
             controls[name] = reader.section((*base, 're_evidence', name))
+        stage_order = reader.section((*base, 'stage_order'))
+        stage_queries = {stage: reader.section((*base, stage, 'query')) for stage in
+                         ('deja_vu', 'recall', 'replay', 're_evidence')}
+        stage_snapshots = {stage: reader.section((*base, stage, 'snapshot_id')) for stage in
+                           ('deja_vu', 'recall')}
+        activation_snapshot = reader.section((*base, 'snapshot_id'))
+        authority = {name: reader.section((*base, name)) for name in
+                     ('action_authorized', 'persistent_write_authorized')}
+        stage_order_valid = (stage_order['complete'] and stage_order['data'] ==
+                             ['deja_vu', 'recall', 'replay', 're_evidence'])
+        admission_query_verified = all(
+            section['complete'] and section['data'] == arguments.get('query')
+            for section in stage_queries.values())
+        activation_receipt = dict(
+            invariant=('validated_deja_vu_recall_replay_re_evidence'
+                       if stage_order_valid and admission_query_verified
+                       else 'invalid_memory_activation_receipt'),
+            stage_order=stage_order, stage_queries=stage_queries,
+            stage_snapshots=stage_snapshots, snapshot_id=activation_snapshot,
+            admission_query_verified=admission_query_verified,
+            authority=authority)
         selection = {name: reader.section((name,)) for name in ('memory_selection', 'vrs_selection')}
         rows = []
         for index in range(start, min(total, start+arguments.get('page_size', 3))):
@@ -204,7 +235,8 @@ def memory_context(server, arguments):
         # Final guard prevents returning a mixed or stale packet after many RPCs.
         reader.read('root')
         return dict(status='memory_context_ready', **handle, pair_snapshot_id=reader.snapshot,
-            main_controls=controls, main_cue_selection=selection, memories=rows,
+            main_controls=controls, main_cue_selection=selection,
+            activation_receipt=activation_receipt, memories=rows,
             candidate_count=total, start_index=start, next_index=next_index,
             next_call=({'tool': 'memory_context', 'arguments': dict(handle, start_index=next_index,
                 page_size=arguments.get('page_size', 3), wait_turns=0)} if next_index is not None else None),

@@ -6,6 +6,8 @@ import sys
 import threading
 import time
 
+import pytest
+
 from swegca_vrs2.layered import LayeredMCP
 from swegca_vrs2.loopback import ensure_daemon
 from swegca_vrs2.conversation_merge import run as merge_run
@@ -16,6 +18,7 @@ from swegca_vrs2.resident import Resident
 from swegca_vrs2.sharded import ShardedMain
 from swegca_vrs2.store import Main
 from swegca_vrs2.native_journal import NativeJournal, is_native_store
+from swegca_vrs2.native_transport import InterfaceError
 from swegca_vrs2.codex_hooks import config as codex_hook_config
 from swegca_vrs2.conversation_watch import watch
 
@@ -277,6 +280,84 @@ def test_session_hit_then_complete_miss_falls_back_to_main(tmp_path):
         assert durable['lookup_receipt']['session_candidate_count'] == 0
         server.call_tool('memory_release', {'session_id': session,
             'request_id': 'main-query', 'view_id': durable['view_id']})
+    finally:
+        server.close()
+        stop(session_state, state)
+
+
+def test_exact_session_address_is_fail_closed_and_exposes_four_stage_receipt(tmp_path):
+    state, session = tmp_path / 'state', 'exact-session-layer'
+    capture = SessionCapture(state)
+    session_state = capture.session_root('codex', session)
+    with VRSClient(session_state, writes=True) as local:
+        receipt = local.ingest_many([dict(request_id='exact-1', text='exact address body',
+            source='test:exact', revision='1', outcome='pending')])
+        address = receipt['results'][0]['episode_id']
+    server = LayeredMCP(state)
+    try:
+        status = server.call_tool('memory_status', {'session_id': session})
+        with pytest.raises(InterfaceError, match='memory_context_exact_address_mismatch'):
+            server.call_tool('memory_context', {'session_id': session,
+                'request_id': 'exact-bad', 'query': address.removeprefix('memory:'),
+                'exact_episode_id': address,
+                'expected_pair_snapshot_id': status['pair_snapshot_id']})
+        assert ('exact-bad' not in {request_id for _, request_id in server.queries})
+        with pytest.raises(InterfaceError, match='memory_context_exact_address_mismatch'):
+            server.call_tool('memory_context', {'session_id': session,
+                'request_id': 'exact-malformed', 'query': 'memory:not-an-address',
+                'exact_episode_id': 'memory:not-an-address',
+                'expected_pair_snapshot_id': status['pair_snapshot_id']})
+        packet = finish(server, session, server.call_tool('memory_context', {
+            'session_id': session, 'request_id': 'exact-good', 'query': address,
+            'exact_episode_id': address,
+            'expected_pair_snapshot_id': status['pair_snapshot_id']}))
+        activation = packet['activation_receipt']
+        assert packet['memory_layer'] == 'session' and packet['fallback_used'] is False
+        assert packet['lookup_receipt']['main_opened'] is False
+        assert [row['episode_id'] for row in packet['memories']] == [address]
+        assert activation['invariant'] == 'validated_deja_vu_recall_replay_re_evidence'
+        assert activation['stage_order']['data'] == [
+            'deja_vu', 'recall', 'replay', 're_evidence']
+        assert activation['admission_query_verified'] is True
+        assert all(row['data'] == address for row in activation['stage_queries'].values())
+        assert all(row['data'] == activation['snapshot_id']['data']
+                   for row in activation['stage_snapshots'].values())
+        assert all(row['data'] is False for row in activation['authority'].values())
+        server.call_tool('memory_release', {'session_id': session,
+            'request_id': 'exact-good', 'view_id': packet['view_id']})
+    finally:
+        server.close()
+        stop(session_state, state)
+
+
+def test_exact_main_address_is_forwarded_after_complete_session_miss(tmp_path):
+    state, session = tmp_path / 'state', 'exact-main-layer'
+    capture = SessionCapture(state)
+    session_state = capture.session_root('codex', session)
+    with VRSClient(session_state, writes=True) as local:
+        local.ingest_many([dict(request_id='local-only', text='unrelated session body',
+            source='test:local-only', revision='1', outcome='pending')])
+    with VRSClient(state, writes=True) as main:
+        receipt = main.ingest_many([dict(request_id='main-exact', text='durable exact body',
+            source='test:main-exact', revision='1', outcome='pending')])
+        address = receipt['results'][0]['episode_id']
+    server = LayeredMCP(state)
+    try:
+        status = server.call_tool('memory_status', {'session_id': session})
+        packet = finish(server, session, server.call_tool('memory_context', {
+            'session_id': session, 'request_id': 'main-exact-query', 'query': address,
+            'exact_episode_id': address,
+            'expected_pair_snapshot_id': status['pair_snapshot_id']}))
+        activation = packet['activation_receipt']
+        assert packet['memory_layer'] == 'main' and packet['fallback_used'] is True
+        assert packet['lookup_receipt']['session_candidate_count'] == 0
+        assert packet['lookup_receipt']['main_opened'] is True
+        assert [row['episode_id'] for row in packet['memories']] == [address]
+        assert activation['invariant'] == 'validated_deja_vu_recall_replay_re_evidence'
+        assert activation['admission_query_verified'] is True
+        assert all(row['data'] == address for row in activation['stage_queries'].values())
+        server.call_tool('memory_release', {'session_id': session,
+            'request_id': 'main-exact-query', 'view_id': packet['view_id']})
     finally:
         server.close()
         stop(session_state, state)

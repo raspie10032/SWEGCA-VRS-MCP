@@ -113,7 +113,7 @@ class LayeredMCP(MCPServer):
         packet = main.call('memory_context', dict(
             request_id=request_id, query=query,
             expected_pair_snapshot_id=status['pair_snapshot_id'],
-            **{key: arguments[key] for key in ('page_size', 'wait_turns')
+            **{key: arguments[key] for key in ('exact_episode_id', 'page_size', 'wait_turns')
                if key in arguments}))
         if isinstance(packet.get('view_id'), str):
             self.routes[(session_id, request_id, packet['view_id'])] = 'main'
@@ -161,7 +161,11 @@ class LayeredMCP(MCPServer):
         query = arguments.get('query')
         local_snapshot = arguments.get('expected_pair_snapshot_id')
         self.queries[key] = (query, local_snapshot)
-        packet = self._session(session_id).call('memory_context', arguments)
+        try:
+            packet = self._session(session_id).call('memory_context', arguments)
+        except Exception:
+            self.queries.pop(key, None)
+            raise
         fallback = self._local_complete(session_id, arguments, packet)
         if fallback is not None:
             return fallback
