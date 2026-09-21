@@ -58,3 +58,61 @@ plain controls remain historical evidence; no model was called for this audit.
   performance gates; this evaluation-path audit does not establish them.
 - Automated answer/code text scores are preliminary. Final quality judgment
   requires review of raw answers, diffs and executable test evidence.
+
+## Second pass: complete evaluation inputs and scoring
+
+The second pass checked the runner, private controls, model fixture, hidden and
+visible tests, isolated Codex home, shell guard, mounted runtime, native
+experience clone, live watcher, SessionEnd finalizer, telemetry extraction,
+grader, comparison output, deployment watcher, and the instructions here.
+It found and corrected six evaluation faults:
+
+1. The model mount could read the resident host VRS state and the private plain
+   control archive. Both are now hidden behind empty mounts in every cell; the
+   process ID namespace is also private, and host runtime sockets are hidden.
+   The independent mount test verifies
+   that the model can still read its fixture and test Python while those paths,
+   sibling outputs, hidden tests, and host sessions remain inaccessible.
+2. The rubric's keyword scorer gave 100/100 goal and context scores to an
+   answer that explicitly reversed four requirements. Direct negations now
+   score zero on the contradicted items, with an adversarial regression test.
+   The result schema marks all automated text/code scores as provisional and
+   requires review of every boundary answer, final messages, full diff and
+   executable test log before final quality comparison.
+3. The runtime check compared wheel bytes to installed files but did not
+   compare the wheel to product source or reject extra installed Python files.
+   Preflight now requires all 48 package files to match source, wheel, and
+   installation, with zero extra installed package files.
+4. A generic PASS handoff receipt could satisfy the SessionEnd gate without
+   proving it came from the armed task. Preflight now checks the receipt schema,
+   armed timestamp, exact ended session, merge status, and ended timestamp.
+5. The grader executed model-edited Python directly with host filesystem and
+   network access. It now runs each visible/hidden test in a private mount,
+   process and network namespace, under the read-limited shell guard, with a
+   minimal environment. An isolation regression runs Python inside that view
+   and verifies host experience, plain controls, sibling files, and the current
+   task identifier are unavailable. Sandbox startup failures halt grading
+   instead of counting as model code failures.
+6. The runner hashed frozen tests and the rubric, while the later summarizer
+   did not verify them before grading. The summarizer now checks the exact
+   fixture tree, both hidden tests, shell guard, and rubric hashes and records
+   those hashes in its output.
+
+The source commit used for the new product wheel is `97065d3`, and its wheel
+SHA-256 is `5955caf16f340ca9cd3c723eca29771e24a8984ccfdda8d1d70c962328d84e8a`.
+The full isolated path self-test passed with this wheel:
+`/var/tmp/vrs22-whole-path-selftest-isolated-final-20260922/receipt.json`, SHA-256
+`b07a82a46a727113e79cbc49bd482032503936c6f7d3d03cbc100fb54f2afc34`.
+Fourteen grader regressions passed. Regrading the six frozen plain cells inside
+the new isolated grader produced
+the same measurement validity, ten actual compactions each, and the same
+executable code scores (five 4/20, one 20/20). No model call was made.
+
+The token price constants were checked against the [official OpenAI pricing
+table](https://developers.openai.com/api/docs/pricing) for standard short
+context processing. Cost remains a list-price equivalent, separate from
+recorded token counts and any account charge. The real resident preflight is
+still `PENDING_LIVE_HANDOFF`; its SessionEnd receipt is absent, and the active
+legacy state has not been migrated. A single one-shot watcher now points at
+the new wheel and will act only after that actual SessionEnd. No VRS model
+comparison is available yet.

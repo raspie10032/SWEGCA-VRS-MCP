@@ -45,6 +45,30 @@ def test_wrong_superseded_decision_is_not_repaired_by_other_fields():
     assert scored["dialogue_context_consistency"]["mean"] < 100
 
 
+def test_explicitly_reversed_requirements_cannot_score_as_retained_goal():
+    reversed_answer = {
+        "purpose": ("Do not reject duplicate ZIP member names before reading metadata "
+                    "or arrays, including duplicate metadata.json, in "
+                    "src/swegca_vrs2/checkpoint.py."),
+        "constraints": ("Do not raise ValueError('checkpoint_integrity_failed'). "
+                        "Do not allow valid archives or unrelated extra ZIP members; "
+                        "preserve identity, sequence, pair, array and journal checks."),
+        "superseded_decision": ("The older proposal to reject all archives with "
+                                "any extra member was not superseded."),
+    }
+    scored = GRADER.score_boundary_answers([
+        {"boundary": 1, "answer": reversed_answer,
+         "raw": str(reversed_answer), "usage": {}}])
+    goal = scored["goal_consistency"]["boundaries"][0]
+    assert goal["score"] <= 20
+    assert set(goal["explicit_conflicts"]) == {
+        "duplicate_before_reads", "exact_diagnostic",
+        "allow_valid_unrelated_extras", "superseded_reject_all_extras"}
+    context = scored["dialogue_context_consistency"]["boundaries"][0]
+    assert context["contradiction"] is True
+    assert context["score"] < 100
+
+
 def test_unsupported_reappearance_is_recorded_as_instability():
     missing = dict(FULL, superseded_decision="The request to edit was superseded.")
     rows = [{"boundary": 1, "answer": FULL, "raw": "full", "usage": {}},
@@ -184,6 +208,61 @@ def test_changed_paths_catches_new_nested_files_and_missing_fixture_files(tmp_pa
     assert GRADER.changed_paths(workspace) == [
         "src/unexpected/external", "src/unexpected/payload.py",
         "tests/standalone/test_checkpoint.py"]
+
+
+def test_model_mounts_hide_resident_experience_and_frozen_controls(tmp_path):
+    workspace = tmp_path / "cell-workspace"
+    codex_home = tmp_path / "cell-codex-home"
+    wrapper = RUNNER.command("gpt-5.6-luna", "short_vrs", workspace,
+                             codex_home, tmp_path / "guard", "start", None)
+    mounts = list(zip(wrapper, wrapper[1:]))
+    assert ("--tmpfs", str(RUNNER.LIVE_STATE)) in mounts
+    assert ("--tmpfs", str(RUNNER.PRIVATE_EVAL_ROOT)) in mounts
+    assert ("--tmpfs", str(RUNNER.USER_RUNTIME_DIR)) in mounts
+    assert "--unshare-pid" in wrapper
+
+
+def test_executable_grading_cannot_read_host_experience_or_control_answers(tmp_path):
+    workspace = tmp_path / "grading-workspace"
+    tests = workspace / "tests"
+    tests.mkdir(parents=True)
+    probe = tests / "test_isolation.py"
+    probe.write_text('''from pathlib import Path
+import os
+
+def test_grading_view():
+    assert not Path("/home/raspie/.codex/auth.json").exists()
+    for directory in ("/home/raspie/.local/share/swegca-vrs2-codex",
+                      "/home/raspie/.local/share/vrs22-eval-runtime-v019/private"):
+        try:
+            assert list(Path(directory).iterdir()) == []
+        except PermissionError:
+            pass
+    assert list((Path("/run/user") / str(os.getuid())).iterdir()) == []
+    assert not Path(__file__).parents[2].joinpath("sibling-secret.txt").exists()
+    assert "CODEX_THREAD_ID" not in os.environ
+''', encoding="utf-8")
+    (tmp_path / "sibling-secret.txt").write_text("hidden", encoding="utf-8")
+    output = tmp_path / "grading-output"
+    output.mkdir()
+    result = GRADER.run_test(workspace, probe, GRADER.grade_guard(output))
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_live_handoff_gate_requires_the_armed_session_end():
+    receipt = {"schema": "swegca-vrs2-final-handoff-v1", "status": "PASS",
+               "armed_ns": RUNNER.LIVE_HANDOFF_ARMED_NS,
+               "ended": {"host": "codex", "session": RUNNER.LIVE_HANDOFF_SESSION_KEY,
+                         "merged": True,
+                         "ended_ns": RUNNER.LIVE_HANDOFF_ARMED_NS + 1}}
+    assert RUNNER.handoff_receipt_matches(receipt)
+    assert not RUNNER.handoff_receipt_matches(dict(receipt, armed_ns=0))
+    assert not RUNNER.handoff_receipt_matches(dict(
+        receipt, ended=dict(receipt["ended"], session="other-session")))
+    assert not RUNNER.handoff_receipt_matches(dict(
+        receipt, ended=dict(receipt["ended"], merged=False)))
+    assert not RUNNER.handoff_receipt_matches(dict(
+        receipt, ended=dict(receipt["ended"], ended_ns=RUNNER.LIVE_HANDOFF_ARMED_NS - 1)))
 
 
 def test_runner_finalizes_a_started_session_after_first_call_fails(tmp_path, monkeypatch):

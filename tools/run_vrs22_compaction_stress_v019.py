@@ -24,19 +24,23 @@ ROOT = Path(__file__).resolve().parents[1]
 SOURCE_ROOT = ROOT / "evals/vrs22_context/fixtures/checkpoint_v019"
 SOURCE_COMMIT = "6b35f73d7241620a43e30811b86811a8a1ec5a92e7ffa4e5f295054817cb7b0c"
 RUNTIME_ROOT = Path("/var/home/raspie/Documents/Codex/SWEGCA-VRS-MCP-vrs22-repair-20260921")
-RUNTIME_PRODUCT_COMMIT = "67cae88"
-RUNTIME_REPOSITORY_COMMIT = "67cae88"
-RUNTIME_PYTHON = Path("/home/raspie/.local/share/swegca-vrs2-runtime-2.2-candidate/venv/bin/python")
+RUNTIME_PRODUCT_COMMIT = "97065d3"
+RUNTIME_REPOSITORY_COMMIT = "97065d3"
+RUNTIME_PYTHON = Path("/home/raspie/.local/share/swegca-vrs2-runtime-2.2-light-evidence/venv/bin/python")
 RUNTIME_COMMAND = RUNTIME_PYTHON.with_name("swegca-vrs2-codex")
 RUNTIME_HOOK = RUNTIME_PYTHON.with_name("swegca-vrs2-hook")
-RUNTIME_WHEEL = Path("/home/raspie/.local/share/swegca-vrs2-runtime-2.2-candidate/dist/swegca_vrs_mcp-2.2.0-py3-none-any.whl")
-RUNTIME_WHEEL_SHA256 = "2b8b1754f8d8efa443f7c6e2837417f18f3c98e42d637e51105e833ae434f051"
+RUNTIME_WHEEL = Path("/home/raspie/.local/share/swegca-vrs2-runtime-2.2-light-evidence/dist/swegca_vrs_mcp-2.2.0-py3-none-any.whl")
+RUNTIME_WHEEL_SHA256 = "5955caf16f340ca9cd3c723eca29771e24a8984ccfdda8d1d70c962328d84e8a"
 REAL_CODEX_HOME = Path.home() / ".codex"
 LIVE_STATE = Path("/home/raspie/.local/share/swegca-vrs2-codex")
+USER_RUNTIME_DIR = Path("/run/user") / str(os.getuid())
+LIVE_HANDOFF_SESSION_KEY = "cdb60d64d61f116add74dd8c136d355ae95e487d2ac06b85e694ad44c3c1416b"
+LIVE_HANDOFF_ARMED_NS = 1789986798950209784
 # The cache carries an account-bound identity; keep its exact frozen bytes private.
 FROZEN_MODELS_CACHE = Path("/home/raspie/.local/share/vrs22-eval-runtime-v019/private/models_cache_20260922.json")
 FROZEN_MODELS_CACHE_SHA256 = "2ccbfbf460b6411b9c273ffae9db3d750313b9ef43725d6ce732324adfc9f5f1"
 PLAIN_ARCHIVE = Path("/home/raspie/.local/share/vrs22-eval-runtime-v019/private/plain-v005-control-evidence.tar.zst")
+PRIVATE_EVAL_ROOT = PLAIN_ARCHIVE.parent
 PLAIN_ARCHIVE_SHA256 = "e817623972c8161d3f9985811465d4f084977d3c781d0bb79088560f315ae9bb"
 CODEX_BINARY = Path("/var/home/raspie/.codex/packages/standalone/releases/0.153.4-x86_64-unknown-linux-musl/bin/codex")
 CODE_MODE_HOST = CODEX_BINARY.with_name("codex-code-mode-host")
@@ -259,6 +263,22 @@ print(json.dumps({'stopped':True}))
 """, state)
 
 
+def handoff_receipt_matches(receipt: dict) -> bool:
+    if not isinstance(receipt, dict):
+        return False
+    ended = receipt.get("ended", {})
+    return bool(
+        receipt.get("schema") == "swegca-vrs2-final-handoff-v1"
+        and receipt.get("status") == "PASS"
+        and receipt.get("armed_ns") == LIVE_HANDOFF_ARMED_NS
+        and isinstance(ended, dict)
+        and ended.get("host") == "codex"
+        and ended.get("session") == LIVE_HANDOFF_SESSION_KEY
+        and ended.get("merged") is True
+        and type(ended.get("ended_ns")) is int
+        and ended["ended_ns"] >= LIVE_HANDOFF_ARMED_NS)
+
+
 def live_handoff_audit():
     """Require the actual resident native deployment before spending model calls."""
     marker = LIVE_STATE / "session-capture/runtime-upgrade.vrs22-handoff.json"
@@ -277,7 +297,7 @@ from swegca_vrs2.native_journal import is_native_store
 print(json.dumps({'native_main':is_native_store(sys.argv[1])}))
 """, LIVE_STATE)["native_main"]
     checks = {
-        "session_end_handoff_receipt": receipt.get("status") == "PASS",
+        "session_end_handoff_receipt": handoff_receipt_matches(receipt),
         "native_main": native,
         "mcp_command": server.get("command") == str(RUNTIME_COMMAND),
         "mcp_args": server.get("args") == ["--state-dir", str(LIVE_STATE)],
@@ -795,9 +815,12 @@ def command(model: str, arm: str, workspace: Path, codex_home: Path, guard_binar
     # hidden tests, or the real Codex session history. Auth is bind-mounted;
     # its bytes are never copied into evaluation artifacts.
     visible_parent = workspace.parent
-    wrapper = ["bwrap", "--die-with-parent", "--ro-bind", "/", "/",
+    wrapper = ["bwrap", "--die-with-parent", "--unshare-pid", "--ro-bind", "/", "/",
                "--tmpfs", "/var/tmp", "--tmpfs", "/tmp",
                "--tmpfs", str(REAL_CODEX_HOME),
+               "--tmpfs", str(LIVE_STATE),
+               "--tmpfs", str(PRIVATE_EVAL_ROOT),
+               "--tmpfs", str(USER_RUNTIME_DIR),
                "--tmpfs", str(Path.home() / "Documents"),
                "--tmpfs", "/usr/local/bin",
                "--dir", str(ROOT),
@@ -827,8 +850,8 @@ def command(model: str, arm: str, workspace: Path, codex_home: Path, guard_binar
 def call(model, arm, workspace, codex_home, output, label, prompt, mode, thread_id, ordinal,
          required_episode_id=None, live_supervisor=None, main_baseline=None):
     args = command(model, arm, workspace, codex_home, output / "vrs22-shell-guard", mode, thread_id)
-    env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1",
-               PATH=str(ROOT / ".venv/bin") + os.pathsep + os.environ.get("PATH", ""))
+    env = {"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8",
+           "PYTHONDONTWRITEBYTECODE": "1"}
     started = time.perf_counter_ns()
     try:
         process = subprocess.run(args, input=prompt, capture_output=True, cwd=workspace,
@@ -1324,10 +1347,12 @@ def audit_installed_runtime(wheel: Path):
          "import pathlib,swegca_vrs2; print(pathlib.Path(swegca_vrs2.__file__).parent)"],
         text=True).strip())
     mismatches = []
+    source_mismatches = []
     database_references = []
     retired_references = []
     forbidden_dependencies = []
     package_files = 0
+    wheel_files = set()
     with zipfile.ZipFile(wheel) as archive:
         for name in archive.namelist():
             if name.endswith(".dist-info/METADATA"):
@@ -1341,10 +1366,14 @@ def audit_installed_runtime(wheel: Path):
                 continue
             package_files += 1
             relative = Path(name).relative_to("swegca_vrs2")
+            wheel_files.add(relative.as_posix())
             body = archive.read(name)
             path = installed / relative
             if not path.is_file() or path.read_bytes() != body:
                 mismatches.append(name)
+            source_path = RUNTIME_ROOT / "src/swegca_vrs2" / relative
+            if not source_path.is_file() or source_path.read_bytes() != body:
+                source_mismatches.append(name)
             if path.suffix == ".py":
                 text = body.decode("utf-8", errors="replace").lower()
                 if (re.search(r"(^|\n)\s*(import\s+sqlite3|from\s+sqlite3\s+import)", text)
@@ -1357,7 +1386,7 @@ def audit_installed_runtime(wheel: Path):
                     retired_references.append(name)
     unexpected = [str(path.relative_to(installed)) for path in installed.rglob("*")
                   if path.is_file() and "__pycache__" not in path.parts
-                  and path.suffix not in (".py", ".pyi")]
+                  and str(path.relative_to(installed)) not in wheel_files]
     process_audit = runtime_json("""import importlib.util,json,sys
 from swegca_vrs2.session_capture import SessionCapture
 from swegca_vrs2.layered import LayeredMCP
@@ -1367,7 +1396,8 @@ print(json.dumps({
                               for name in sys.modules)}))
 """)
     return {"installed_package": str(installed), "wheel_package_files": package_files,
-            "mismatches": mismatches, "forbidden_database_references": database_references,
+            "mismatches": mismatches, "source_mismatches": source_mismatches,
+            "forbidden_database_references": database_references,
             "forbidden_retired_references": retired_references,
             "forbidden_dependencies": forbidden_dependencies,
             "process_audit": process_audit,
@@ -1390,6 +1420,8 @@ def isolation_selftest(root: Path, guard_binary: Path):
                                            encoding="utf-8")
     (state / "secret.txt").write_text("vrs-state-secret\n", encoding="utf-8")
     (root / "sibling-secret.txt").write_text("sibling-secret\n", encoding="utf-8")
+    if not LIVE_STATE.is_dir() or not PRIVATE_EVAL_ROOT.is_dir():
+        raise RuntimeError("host evaluation isolation roots missing")
     visible_parent = workspace.parent
     script = """set -eu
 test "$(cat ping.txt)" = isolated
@@ -1398,15 +1430,22 @@ test "$(cat ping.txt)" = isolated
 ! cat ../isolation-vrs-state/secret.txt >/dev/null 2>&1
 ! cat /home/raspie/.codex/auth.json >/dev/null 2>&1
 ! cat /var/home/raspie/.codex/auth.json >/dev/null 2>&1
+test -d /home/raspie/.local/share/swegca-vrs2-codex
+test -z "$(find /home/raspie/.local/share/swegca-vrs2-codex -mindepth 1 -maxdepth 1 -print -quit)"
+test -d /home/raspie/.local/share/vrs22-eval-runtime-v019/private
+test -z "$(find /home/raspie/.local/share/vrs22-eval-runtime-v019/private -mindepth 1 -maxdepth 1 -print -quit)"
+test -z "$(find __USER_RUNTIME_DIR__ -mindepth 1 -maxdepth 1 -print -quit)"
 ! cat /var/home/raspie/Documents/Codex/SWEGCA-VRS-MCP-vrs22-repair-20260921/tools/run_vrs22_compaction_stress_v019.py >/dev/null 2>&1
 test -x /home/raspie/.local/share/vrs22-eval-runtime-v019/venv/bin/python
 /home/raspie/.local/share/vrs22-eval-runtime-v019/venv/bin/python -c 'import pytest'
 test "$(rg -l isolated ping.txt)" = ping.txt
 . ../isolation-codex-home/shell_snapshots/allowed.sh
 test "$HOME" = "$PWD/.grade-tmp/home"
-"""
-    wrapper = ["bwrap", "--die-with-parent", "--ro-bind", "/", "/",
+""".replace("__USER_RUNTIME_DIR__", str(USER_RUNTIME_DIR))
+    wrapper = ["bwrap", "--die-with-parent", "--unshare-pid", "--ro-bind", "/", "/",
         "--tmpfs", "/var/tmp", "--tmpfs", "/tmp", "--tmpfs", str(REAL_CODEX_HOME),
+        "--tmpfs", str(LIVE_STATE), "--tmpfs", str(PRIVATE_EVAL_ROOT),
+        "--tmpfs", str(USER_RUNTIME_DIR),
         "--tmpfs", str(Path.home() / "Documents"), "--tmpfs", "/usr/local/bin",
         "--dir", str(ROOT), "--dir", str(visible_parent),
         "--bind", str(workspace), str(workspace),
@@ -1428,6 +1467,8 @@ test "$HOME" = "$PWD/.grade-tmp/home"
     return {"status": "PASS", "workspace_readable": True,
             "sibling_output_blocked": True, "codex_home_blocked": True,
             "vrs_state_blocked": True, "real_codex_home_blocked": True,
+            "resident_live_state_blocked": True, "plain_control_archive_blocked": True,
+            "host_runtime_sockets_blocked": True,
             "evaluation_source_blocked": True, "test_python_readable": True,
             "shell_snapshot_readable": True, "rg_readable": True,
             "isolated_home": str(home)}
@@ -1607,7 +1648,8 @@ def main():
          "'retired_lock_available':importlib.util.find_spec('filelock') is not None,"
          "'database_module_loaded':any(n=='sqlite3' or n.startswith('sqlite3.') "
          "for n in sys.modules)}))"], text=True))
-    if hash_failures or runtime_audit["mismatches"] \
+    if hash_failures or runtime_audit["mismatches"] or runtime_audit["source_mismatches"] \
+            or runtime_audit["unexpected_non_source_files"] \
             or runtime_audit["forbidden_database_references"] \
             or runtime_audit["forbidden_retired_references"] \
             or runtime_audit["forbidden_dependencies"] \

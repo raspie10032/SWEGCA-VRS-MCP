@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shlex
 import shutil
 import subprocess
 import tempfile
@@ -21,14 +22,25 @@ HIDDEN = ROOT / "evals/vrs22_context/hidden/test_checkpoint_duplicate.py"
 HIDDEN_ARRAY = ROOT / "evals/vrs22_context/hidden/test_checkpoint_duplicate_array.py"
 REGRESSION = BASELINE / "tests/standalone/test_checkpoint.py"
 PYTHON = Path("/home/raspie/.local/share/vrs22-eval-runtime-v019/venv/bin/python")
+PYTHON_RUNTIME_ROOT = Path(os.path.realpath(PYTHON)).parents[1]
+GRADE_GUARD_SOURCE = ROOT / "tools/vrs22_shell_guard_v019.c"
+RUBRIC = ROOT / "docs/VRS2_2_AUTO_COMPACTION_GRADING_RUBRIC_20260921.md"
+BASELINE_SHA256 = "6b35f73d7241620a43e30811b86811a8a1ec5a92e7ffa4e5f295054817cb7b0c"
+HIDDEN_SHA256 = "47ae830eb1fe6a715028ad703c3eabef19d3fdd7f9ea9608eae649c2a9701d15"
+HIDDEN_ARRAY_SHA256 = "8d600a7e0dbb0d316af9ebe47f42d38a028e7e8ed113f7764d612c470aecebef"
+GRADE_GUARD_SHA256 = "a3d1fd46ff8eaeeb0f0783f640f5fdd070fbea1424ae5f4e25b1aba1dc771cae"
+RUBRIC_SHA256 = "ea03176616c8c981a654ab17e150d31c040d48e48e1aea8a662e35ebe0a9e1bd"
+REAL_CODEX_HOME = Path.home() / ".codex"
+LIVE_STATE = Path("/home/raspie/.local/share/swegca-vrs2-codex")
+USER_RUNTIME_DIR = Path("/run/user") / str(os.getuid())
 RATES = {"gpt-5.6-luna": (.20, .02, 1.20),
          "gpt-5.6-terra": (2.00, .20, 12.00),
          "gpt-5.6-sol": (4.00, .40, 20.00)}
 FIELDS = ("input_tokens", "cached_input_tokens", "cache_write_input_tokens",
           "output_tokens", "reasoning_output_tokens")
-RUNTIME_PRODUCT_COMMIT = "67cae88"
-RUNTIME_REPOSITORY_COMMIT = "67cae88"
-RUNTIME_WHEEL_SHA256 = "2b8b1754f8d8efa443f7c6e2837417f18f3c98e42d637e51105e833ae434f051"
+RUNTIME_PRODUCT_COMMIT = "97065d3"
+RUNTIME_REPOSITORY_COMMIT = "97065d3"
+RUNTIME_WHEEL_SHA256 = "5955caf16f340ca9cd3c723eca29771e24a8984ccfdda8d1d70c962328d84e8a"
 PRIVATE_PLAIN_ROOT = Path("/home/raspie/.local/share/vrs22-eval-runtime-v019/private")
 PLAIN_ARCHIVE = PRIVATE_PLAIN_ROOT / "plain-v005-control-evidence.tar.zst"
 PLAIN_EXTRACTED = PRIVATE_PLAIN_ROOT / "plain-v005-control-evidence"
@@ -68,6 +80,27 @@ def usage_total(records):
     return {field: sum(r["usage"][field] for r in records) for field in FIELDS}
 
 
+def frozen_grading_inputs():
+    digest = hashlib.sha256()
+    for path in sorted(item for item in BASELINE.rglob("*") if item.is_file()
+                       and "__pycache__" not in item.parts
+                       and ".pytest_cache" not in item.parts):
+        digest.update(path.relative_to(BASELINE).as_posix().encode())
+        digest.update(b"\0")
+        digest.update(path.read_bytes())
+        digest.update(b"\0")
+    actual = {"fixture": digest.hexdigest()}
+    for name, path in (("hidden", HIDDEN), ("hidden_array", HIDDEN_ARRAY),
+                       ("guard", GRADE_GUARD_SOURCE), ("rubric", RUBRIC)):
+        actual[name] = hashlib.sha256(path.read_bytes()).hexdigest()
+    expected = {"fixture": BASELINE_SHA256, "hidden": HIDDEN_SHA256,
+                "hidden_array": HIDDEN_ARRAY_SHA256,
+                "guard": GRADE_GUARD_SHA256, "rubric": RUBRIC_SHA256}
+    if actual != expected:
+        raise ValueError("frozen_grading_inputs_changed")
+    return actual
+
+
 def usd(usage, model):
     input_rate, cache_rate, output_rate = RATES[model]
     uncached = usage["input_tokens"] - usage["cached_input_tokens"] - usage["cache_write_input_tokens"]
@@ -95,14 +128,55 @@ def changed_paths(workspace):
                   or original[path].read_bytes() != current[path].read_bytes())
 
 
-def run_test(workspace, test):
+def grade_guard(output):
+    if hashlib.sha256(GRADE_GUARD_SOURCE.read_bytes()).hexdigest() != GRADE_GUARD_SHA256:
+        raise ValueError("frozen_grading_guard_changed")
+    binary = output / "vrs22-grade-guard"
+    if not binary.exists():
+        subprocess.run(["cc", "-O2", "-Wall", "-Wextra", "-o", str(binary),
+                        str(GRADE_GUARD_SOURCE)], check=True)
+    return binary
+
+
+def run_test(workspace, test, guard):
     temporary = workspace / ".grade-tmp"
     temporary.mkdir(exist_ok=True)
-    env = dict(os.environ, PYTHONPATH=str(workspace / "src"),
-               PYTHONDONTWRITEBYTECODE="1", TMPDIR=str(temporary))
-    return subprocess.run([str(PYTHON), "-m", "pytest", "-q", "-p", "no:cacheprovider",
-                           str(test), "--tb=short"], cwd=workspace, env=env,
-                          capture_output=True, text=True, timeout=120)
+    home = temporary / "home"
+    home.mkdir(exist_ok=True)
+    hidden = temporary / "hidden"
+    hidden.mkdir(exist_ok=True)
+    if test.is_relative_to(workspace):
+        test_path = test
+    else:
+        test_path = hidden / test.name
+        test_path.write_bytes(test.read_bytes())
+    command = "exec " + " ".join(shlex.quote(str(part)) for part in
+        (PYTHON, "-m", "pytest", "-q", "-p", "no:cacheprovider", test_path, "--tb=short"))
+    wrapper = ["bwrap", "--die-with-parent", "--unshare-pid", "--unshare-net",
+        "--ro-bind", "/", "/", "--tmpfs", "/var/tmp", "--tmpfs", "/tmp",
+        "--tmpfs", str(REAL_CODEX_HOME), "--tmpfs", str(LIVE_STATE),
+        "--tmpfs", str(PRIVATE_PLAIN_ROOT),
+        "--tmpfs", str(USER_RUNTIME_DIR),
+        "--tmpfs", str(Path.home() / "Documents"), "--tmpfs", "/usr/local/bin",
+        "--dir", str(ROOT), "--dir", str(workspace.parent),
+        "--bind", str(workspace), str(workspace),
+        "--ro-bind", "/usr/bin/bash", "/usr/local/bin/vrs22-real-bash",
+        "--ro-bind", str(guard), "/bin/bash", "--proc", "/proc", "--dev", "/dev",
+        "--setenv", "HOME", str(home), "--setenv", "TMPDIR", str(temporary),
+        "--setenv", "PYTHONPATH", str(workspace / "src"),
+        "--setenv", "PYTHONDONTWRITEBYTECODE", "1",
+        "--setenv", "VRS22_WORKSPACE", str(workspace),
+        "--setenv", "VRS22_TEST_ROOT", str(PYTHON.parent.parent),
+        "--setenv", "VRS22_PYTHON_RUNTIME_ROOT", str(PYTHON_RUNTIME_ROOT),
+        "--setenv", "VRS22_SHELL_SNAPSHOT_ROOT", str(temporary / "hidden"),
+        "--chdir", str(workspace), "--", "/bin/bash", "-c", command]
+    clean_env = {"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8"}
+    result = subprocess.run(wrapper, cwd=workspace, env=clean_env,
+                            capture_output=True, text=True, timeout=120)
+    if result.returncode == 125 or result.stderr.startswith("bwrap:"):
+        raise RuntimeError("isolated grading environment failed: " +
+                           result.stderr[:500])
+    return result
 
 
 def audit_commands(run_dir, rows):
@@ -324,6 +398,26 @@ def any_term(text, terms):
     return any(term in text for term in terms)
 
 
+def explicit_conflicts(answer):
+    """Fail closed on direct reversals; subtler claims still need review."""
+    purpose, constraints, superseded = answer_parts(answer)
+    current = purpose + " " + constraints
+    conflicts = set()
+    if re.search(r"\b(?:do not|don't|never|must not|should not)\s+reject\b.{0,80}\bduplicate\b", current):
+        conflicts.add("duplicate_before_reads")
+    if re.search(r"\b(?:read|load)\b.{0,50}\b(?:metadata|arrays?)\b.{0,60}\bbefore\b.{0,50}\bduplicate\b", current):
+        conflicts.add("duplicate_before_reads")
+    if re.search(r"\b(?:do not|don't|never|must not|should not)\s+raise\b.{0,80}\bcheckpoint_integrity_failed\b", current):
+        conflicts.add("exact_diagnostic")
+    if (re.search(r"\b(?:do not|don't|never|must not|should not)\s+(?:allow|accept|permit)\b.{0,80}\b(?:extra|additional)\b", current)
+            or re.search(r"\breject\s+(?:all|any|every)\b.{0,40}\b(?:extra|additional)\b", current)
+            or re.search(r"\b(?:extra|additional)\b.{0,30}\b(?:must|should)\s+be\s+rejected\b", current)):
+        conflicts.add("allow_valid_unrelated_extras")
+    if re.search(r"\b(?:not|never)\s+superseded\b|\b(?:still applies|remains in force)\b", superseded):
+        conflicts.add("superseded_reject_all_extras")
+    return conflicts
+
+
 def score_goal_answer(answer):
     purpose, constraints, superseded = answer_parts(answer)
     current = purpose + " " + constraints
@@ -367,15 +461,17 @@ def score_goal_answer(answer):
                   "reason": "target and all five preserved integrity checks are stated"
                   if target and len(preserved) == 5 else "scope or preserved checks are incomplete"
                   if target or preserved else "scope and preserved checks are absent"})
-    return {"score": sum(item["score"] for item in items), "items": items}
+    conflicts = explicit_conflicts(answer)
+    for item in items:
+        if item["item"] in conflicts:
+            item["score"] = 0
+            item["reason"] = "answer explicitly reverses this requirement"
+    return {"score": sum(item["score"] for item in items), "items": items,
+            "explicit_conflicts": sorted(conflicts)}
 
 
 def contradiction_in(answer):
-    purpose, constraints, _ = answer_parts(answer)
-    current = purpose + " " + constraints
-    patterns = (r"(?<!not )reject (?:all|any|every).{0,40}(?:extra|additional)",
-                r"(?:extra|additional).{0,30}(?:must|should) be rejected")
-    return any(re.search(pattern, current) for pattern in patterns)
+    return bool(explicit_conflicts(answer))
 
 
 def reask_in(raw):
@@ -632,9 +728,11 @@ def grade_cell(model, arm, rows, run_dir, output):
                                         fromfile="a/" + TARGET, tofile="b/" + TARGET))
     (output / (stem + ".diff")).write_text(diff, encoding="utf-8")
     paths = changed_paths(grade_workspace)
-    hidden = run_test(grade_workspace, HIDDEN)
-    hidden_array = run_test(grade_workspace, HIDDEN_ARRAY)
-    regression = run_test(grade_workspace, REGRESSION)
+    guard = grade_guard(output)
+    hidden = run_test(grade_workspace, HIDDEN, guard)
+    hidden_array = run_test(grade_workspace, HIDDEN_ARRAY, guard)
+    regression = run_test(grade_workspace,
+                          grade_workspace / "tests/standalone/test_checkpoint.py", guard)
     (output / (stem + ".grade.log")).write_text(
         "hidden metadata:\n" + hidden.stdout + hidden.stderr +
         "\nhidden array:\n" + hidden_array.stdout + hidden_array.stderr + "\nregression:\n" +
@@ -721,6 +819,9 @@ def grade_cell(model, arm, rows, run_dir, output):
             "executable_success": code_tests_pass,
             "goal_consistency": boundary_scores["goal_consistency"],
             "code_quality": code_quality,
+            "quality_review": {"status": "pending", "automated_scores_provisional": True,
+                "required_evidence": ["all_boundary_answers", "recovery_and_final_messages",
+                                      "complete_code_diff", "executable_test_log"]},
             "response_quality_checks": response_quality,
             "dialogue_context_consistency": boundary_scores["dialogue_context_consistency"],
             "purpose_json": purpose_json, "purpose_raw": purpose_raw,
@@ -746,6 +847,10 @@ def main():
     args = parser.parse_args()
     if args.output_dir.exists():
         parser.error("output directory already exists")
+    try:
+        grading_inputs = frozen_grading_inputs()
+    except (OSError, ValueError) as error:
+        parser.error(f"frozen grading inputs unavailable: {error}")
     try:
         args.plain_runs = ensure_plain_controls(args.plain_runs)
     except (OSError, ValueError, subprocess.SubprocessError) as error:
@@ -810,6 +915,7 @@ def main():
             "initial_task_hash_match": same_task,
             "comparison_eligible": same_task and all(
                 cell["measurement_valid"] for cell in cells.values()),
+            "quality_review_complete": False,
             "initial_prompt_sha256": initial_hashes,
             "headline_axes": {arm: {
                 "measurement_valid": cell["measurement_valid"],
@@ -824,6 +930,7 @@ def main():
             } for arm, cell in cells.items()}})
     (args.output_dir / "summary.json").write_text(json.dumps({
         "schema_version": "vrs22-auto-compaction-summary-v10-retained-main",
+        "frozen_grading_input_sha256": grading_inputs,
         "vrs_cells": results, "plain_cells": plain_results,
         "comparison": comparison,
         "plain_comparison_source": str(args.plain_runs),
