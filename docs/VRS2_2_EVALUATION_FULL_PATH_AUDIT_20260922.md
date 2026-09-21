@@ -263,3 +263,13 @@ evaluation path self-test passed at
 The active one-shot SessionEnd watcher now points to this wheel; the previous
 watcher is inactive. The armed session has no SessionEnd marker, resident native
 main or handoff receipt yet. The model cells remain unrun.
+
+The runner previously treated a successful handoff as sufficient to start
+model calls. It now has a separate fail-closed product-performance gate: the
+versioned natural Replay receipt records 1, 10 and 3 calls at or above 1 ms
+for the 1-, 100- and 1,008-match cases, respectively. The all-size bound and
+one-billion-parameter seconds claim also remain unproved. These conditions
+block model evaluation after SessionEnd as well as before it; preflight names
+the pending product-performance state. The independent grader requires the
+run's product-performance audit. The evaluation grader regressions are now
+**18/18 passed**.

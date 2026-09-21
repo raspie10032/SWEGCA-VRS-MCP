@@ -276,6 +276,17 @@ print(json.dumps({'stopped':True}))
 """, state, session)
 
 
+def test_measured_replay_violation_blocks_model_evaluation():
+    audit = RUNNER.product_performance_audit()
+    assert audit["sample_valid"] is True
+    assert audit["sampled_under_1ms"] is False
+    assert audit["ready"] is False
+    assert {row["matches"] for row in audit["observed_violations"]} == {
+        1, 100, 1008}
+    assert audit["all_size_through_replay_proven"] is False
+    assert audit["billion_parameter_unit_defined"] is False
+
+
 def test_session_content_audit_detects_changed_ingress(tmp_path):
     state = tmp_path / "state"
     home = tmp_path / "codex-home"

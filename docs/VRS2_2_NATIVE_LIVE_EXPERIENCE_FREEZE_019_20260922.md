@@ -100,10 +100,16 @@ The current natural-query path was separately measured on the 15,630-record
 copy; a 100-match query still took a warm median 15.152 ms through Replay,
 so the hard <1 ms goal is presently unmet. See
 `docs/VRS2_2_NATURAL_REPLAY_BOTTLENECK_20260922.md`.
+The runner records that measured violation and rejects model evaluation even
+after the live handoff. Once SessionEnd is complete, preflight will report
+`PENDING_PRODUCT_PERFORMANCE` until the full performance requirements are
+actually repaired and verified. A finite 15,630-record benchmark alone cannot
+certify the all-size bound or the one-billion-parameter goal.
 
-## After the current SessionEnd handoff
+## After the SessionEnd handoff and product performance repair
 
-Run the preflight again and inspect the actual new resident state. Then run:
+Run the preflight again, inspect the actual new resident state and require
+`READY` after performance repair. Then run:
 
 ```sh
 python tools/run_vrs22_compaction_stress_v019.py \

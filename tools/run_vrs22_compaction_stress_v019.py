@@ -31,6 +31,8 @@ RUNTIME_COMMAND = RUNTIME_PYTHON.with_name("swegca-vrs2-codex")
 RUNTIME_HOOK = RUNTIME_PYTHON.with_name("swegca-vrs2-hook")
 RUNTIME_WHEEL = Path("/home/raspie/.local/share/swegca-vrs2-runtime-2.2-natural-read/dist/swegca_vrs_mcp-2.2.0-py3-none-any.whl")
 RUNTIME_WHEEL_SHA256 = "5d1a04bcd575a79956aa043bac479e3cd5705637794418b49f99c40aa7a62b97"
+PERFORMANCE_RECEIPT = ROOT / "evals/vrs22_context/results/natural_replay_source_15630_20260922.json"
+PERFORMANCE_RECEIPT_SHA256 = "c1678fe3eb7c1a59eff3d94d620926266a846957bcd1f2a9acb0eeda0309db9c"
 REAL_CODEX_HOME = Path.home() / ".codex"
 LIVE_STATE = Path("/home/raspie/.local/share/swegca-vrs2-codex")
 USER_RUNTIME_DIR = Path("/run/user") / str(os.getuid())
@@ -363,6 +365,44 @@ print(json.dumps({'native_main':is_native_store(sys.argv[1])}))
     return {"ready": all(checks.values()), "checks": checks,
             "receipt_name": receipts[-1].name if receipts else None,
             "main_probe": probe}
+
+
+def product_performance_audit():
+    """Fail closed on the measured hard Replay and billion-parameter gates."""
+    body = PERFORMANCE_RECEIPT.read_bytes()
+    if sha(body) != PERFORMANCE_RECEIPT_SHA256:
+        raise ValueError("frozen_natural_replay_receipt_changed")
+    receipt = json.loads(body)
+    cases = receipt.get("cases", [])
+    limits = receipt.get("cgroup_limits", {})
+    sample_valid = bool(receipt.get("status") == "MEASURED"
+        and receipt.get("record_count") == 15630
+        and len(cases) == 3
+        and [row.get("actual_fanout") for row in cases] == [1, 100, 1008]
+        and all(type(row.get("through_replay_at_or_above_1ms")) is int
+                for row in cases)
+        and limits.get("memory.max") == "4294967296"
+        and limits.get("memory.swap.max") == "0"
+        and "259:3 rbps=625000000 wbps=625000000" in limits.get("io.max", "")
+        and receipt.get("sqlite_module_loaded") is False)
+    sampled_under_1ms = bool(sample_valid and all(
+        row["through_replay_at_or_above_1ms"] == 0 for row in cases))
+    # A finite sample cannot certify an all-size bound. The project also has
+    # no user-approved unit for a VRS parameter or a measured billion-unit run.
+    all_size_through_replay_proven = False
+    billion_parameter_unit_defined = False
+    billion_parameter_seconds_proven = False
+    return dict(ready=bool(sampled_under_1ms and all_size_through_replay_proven
+        and billion_parameter_unit_defined and billion_parameter_seconds_proven),
+        receipt_sha256=PERFORMANCE_RECEIPT_SHA256,
+        sample_valid=sample_valid,
+        sampled_under_1ms=sampled_under_1ms,
+        observed_violations=[dict(matches=row.get("actual_fanout"),
+            calls_at_or_above_1ms=row.get("through_replay_at_or_above_1ms"))
+            for row in cases if row.get("through_replay_at_or_above_1ms")],
+        all_size_through_replay_proven=all_size_through_replay_proven,
+        billion_parameter_unit_defined=billion_parameter_unit_defined,
+        billion_parameter_seconds_proven=billion_parameter_seconds_proven)
 
 
 def scan_experience(state: Path, codex_home: Path):
@@ -1772,9 +1812,15 @@ def main():
         parser.error(f"frozen input or installed runtime changed: hashes={hash_failures} "
                      f"runtime={runtime_audit}")
     live_audit = live_handoff_audit()
+    try:
+        performance_audit = product_performance_audit()
+    except (OSError, ValueError, json.JSONDecodeError) as error:
+        parser.error(f"product performance evidence unavailable: {error}")
     if args.preflight_only:
-        print(json.dumps({"status": "READY" if live_audit["ready"] else
-            "PENDING_LIVE_HANDOFF", "coding_fixture_tree_sha256": SOURCE_COMMIT,
+        readiness = ("READY" if live_audit["ready"] and performance_audit["ready"]
+            else "PENDING_LIVE_HANDOFF" if not live_audit["ready"]
+            else "PENDING_PRODUCT_PERFORMANCE")
+        print(json.dumps({"status": readiness, "coding_fixture_tree_sha256": SOURCE_COMMIT,
             "runtime_product_commit": RUNTIME_PRODUCT_COMMIT,
             "runtime_repository_commit": RUNTIME_REPOSITORY_COMMIT,
             "runtime_wheel_sha256": RUNTIME_WHEEL_SHA256,
@@ -1788,6 +1834,7 @@ def main():
             "runtime_install_audit": runtime_audit,
             "test_environment_audit": test_environment_audit,
             "live_handoff_audit": live_audit,
+            "product_performance_audit": performance_audit,
             "commands": commands}, indent=2))
         return
     if args.selftest_only:
@@ -1816,6 +1863,8 @@ def main():
         return
     if not live_audit["ready"]:
         parser.error(f"live native VRS handoff is incomplete: {live_audit}")
+    if not performance_audit["ready"]:
+        parser.error(f"product performance repair is incomplete: {performance_audit}")
     if args.output_dir.exists():
         parser.error("output directory already exists")
     args.output_dir.mkdir(parents=True)
@@ -1870,6 +1919,7 @@ def main():
             "retained_main_replay_selftest": main_replay,
             "retained_main_layer_selftest": retained_layer,
             "retained_main_seed": seed_receipt,
+            "product_performance_audit": performance_audit,
             "max_compactions": args.max_compactions,
             "cell_order": cells,
             "rows": all_rows}, indent=2) + "\n", encoding="utf-8")

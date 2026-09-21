@@ -928,6 +928,7 @@ def main():
             or data.get("runtime_product_commit") != RUNTIME_PRODUCT_COMMIT
             or data.get("runtime_repository_commit") != RUNTIME_REPOSITORY_COMMIT
             or data.get("runtime_wheel_sha256") != RUNTIME_WHEEL_SHA256
+            or data.get("product_performance_audit", {}).get("ready") is not True
             or data.get("retained_main_seed", {}).get("status") != "PASS"
             or data.get("retained_main_seed", {}).get("fallback_probe", {}).get("status") != "PASS"
             or data.get("retained_main_layer_selftest", {}).get("status") != "PASS"
