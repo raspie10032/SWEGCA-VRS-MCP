@@ -192,3 +192,15 @@ this new wheel as `swegca-vrs22-sessionend-handoff-c0de7f1-r1-20260922.service`.
 After the actual SessionEnd marker, it also stops only the isolated native
 shadow tailer so that copy does not keep polling after the live handoff.
 No SessionEnd marker exists and the active Codex hook/MCP has not switched.
+
+The installed wheel's stdio MCP handshake was also tested in an isolated
+native state. `initialize` negotiated protocol `2025-06-18`; `memory_status`
+with an explicit session ID returned `ready`, while the same request without
+that ID returned `tool_request_failed` by design. The current app-exposed
+`memory_status` declaration lists an empty input object, and its
+`memory_context` declaration lacks the session ID field present in the
+current product tool definition. This is evidence of stale app tool discovery
+or a missing hook injection on this connection, but it does not identify which
+one; the app call still fails even when this agent supplies an ID. A fresh
+app MCP connection after the authorized SessionEnd handoff must be checked
+before claiming live integration.
