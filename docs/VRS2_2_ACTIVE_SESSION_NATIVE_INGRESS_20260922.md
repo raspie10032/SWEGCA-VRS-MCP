@@ -53,3 +53,37 @@ prefix. It does not prove live hook installation, current main migration,
 temporary-first/main-second live reads, the <1 ms Replay target, or the
 user-defined one-billion VRS-parameter seconds target.
 Those remain separate gates before VRS model evaluation.
+
+## Installed source-equivalent wheel and live handoff readiness
+
+Commit `d6e89bb` was built as an offline wheel with SHA-256
+`39ba1ed06642947eeb5e9429b7da33e5d6ed4444ae269aab5cd33c4c24333e90`.
+The separate installed runtime has all 48 package files byte-equal to source
+and wheel, no extra product files, no SQLite/filelock/Hermes product references
+or dependencies, and no SQLite module loaded during its process check.
+
+This installed wheel captured another 258 active-session lines into the same
+isolated native temporary VRS. A second full-prefix audit reported **32,468
+of 32,468** original observations equal, zero missing, unexpected or changed
+originals. Its receipt is
+`evals/vrs22_context/results/live_session_native_shadow_installed_wheel_20260922.json`
+(SHA-256 `245442bc1b8595e4439464a28e6a131f33cda127a242442cd0aa37323dba0540`).
+The installed-wheel whole-path self-test passed, including temporary-first
+reads, main fallback, exact Replay, SessionEnd-only linkage and hook routing;
+its receipt is `/var/tmp/vrs22-whole-path-selftest-native-ingress-20260922/receipt.json`
+(SHA-256 `754ef08cfcf34cd5bb377075a4f811513c3398da14d23aae37b9fe31e9367865`).
+The evaluation grader passed **20/20**.
+
+The one-shot live watcher now runs from this installed wheel and remains
+active until the real SessionEnd marker. The previous watcher is inactive.
+At this report, the live preflight is `PENDING_LIVE_HANDOFF`: no SessionEnd
+receipt exists, the native live main has not replaced the legacy state, and
+the current hook still points to the old runtime. This is an explicit open
+gate, not a successful live switch.
+
+The installed wheel's cgroup Replay receipt is
+`evals/vrs22_context/results/first_ranked_original_replay_native_ingress_wheel_20260922.json`
+(SHA-256 `6edb80b56341b994f68ea8ce5151b34b990cb0981b6d5f1692dc10935f3a1822`).
+First ranked original Replay took 0.680 ms with one match, 19.127 ms with
+100 matches, and 117.526 ms with 1,008 matches on first calls. The 1 ms
+goal remains unmet; the model evaluation gate remains closed.
