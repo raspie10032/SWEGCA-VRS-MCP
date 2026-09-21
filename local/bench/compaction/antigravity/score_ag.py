@@ -66,9 +66,11 @@ def read_transcript(run_dir):
     return recs
 
 
-def tool_calls(recs, inputs, out_dir):
-    """Ordered tool events: (idx, ts, kind, detail)."""
+def tool_calls(recs, inputs, out_dir, also_inside=()):
+    """Ordered tool events: (idx, ts, kind, detail). ``also_inside``: the run's original out folder when the folder
+    was renamed after the run (run.json.renamed_from) - the trajectory's targets still name it."""
     events = []
+    roots = [norm(out_dir)] + [norm(x) for x in also_inside if x]
     for r in recs:
         t = r.get("tool")
         if not t:
@@ -80,7 +82,7 @@ def tool_calls(recs, inputs, out_dir):
                                path=a.get("AbsolutePath")))
         elif t in WRITE_TOOLS:
             target = a.get("TargetFile") or a.get("AbsolutePath") or ""
-            inside = norm(target).startswith(norm(out_dir) + os.sep)
+            inside = any(norm(target).startswith(root + os.sep) for root in roots)
             name = os.path.basename(target)
             m = re.match(r"chunk_(SQLITE|ME)_(\d+)\.csv$", name)
             events.append(dict(idx=r["idx"], ts=r.get("ts"), tool=t, kind="write", target=target, inside=inside, name=name,
@@ -333,7 +335,7 @@ def main(argv=None):
     recs = read_transcript(run_dir)
     inputs = {label: os.path.join(a.bench, "input", f"{label}-session-log.md") for label in score.LINES}
     sealed = json.load(io.open(os.path.join(a.bench, "inputs.sha256.json"), encoding="utf-8")) if os.path.isfile(os.path.join(a.bench, "inputs.sha256.json")) else {}
-    events = tool_calls(recs, inputs, run_dir)
+    events = tool_calls(recs, inputs, run_dir, also_inside=[run.get("renamed_from")])
     quality = score.score(run_dir)
     rows, _, _ = score.read_run(run_dir)
     hit = {(r["file"], r["line"]) for r in rows if (r["file"], r["line"]) in score.truth_by}
@@ -363,6 +365,7 @@ def main(argv=None):
                scope_drift_rate=(sum(o["scope_drift"] for o in obs) / n) if n else None,
                items_lost_total=sum(o["items_lost"] for o in obs),
                within_chunk_reread_rate=(sum(o["within_chunk_reread"] for o in obs) / n) if n else None,
+               recall_boundaries=sum(1 for o in obs if o["vrs_recall_after"] > 0),          # boundaries followed by a memory_context call
                resume_kinds={k: sum(o["resume"] == k for o in obs) for k in ("correct", "reread", "skipped", "wrong_file", "none")})
     vrs = None
     if a.receipts or a.state_dir:
