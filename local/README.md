@@ -18,6 +18,7 @@ Since 2026-09-18 these are six-line shims; the bodies are `src/swegca_vrs2/harne
 | PostToolUse Read/Bash/PowerShell/MCP | `memory_use_log.py` | logs each Read of a memory file or an offered path with offset/limit; a shell read (`sed -n`/`cat`/`head`…) of an offered path counts too (2026-09-21) |
 | Stop | `stop_reindex_v2.py`, `usage_ledger.py`, `repeat_ledger.py --flush`, `hook_change_check.py` | index changed memory docs (its own failure / daily success → a `stop-hook` result, pending run-ledger lines flushed); injected-vs-opened ledger → `usage` journal rows; guard-blocked repeats → one `gate` observation per session; warn when a changed hook has no receipt |
 | PreToolUse | `bash_backslash_guard.py`, `log_label_guard.py`, `unopened_edit_guard.py` | gates: doubled backslashes in Bash; stale session-log time labels; editing an injected-but-unopened memory doc |
+| SessionEnd | `session_end.py` | 2.2 (2026-09-21): tells the daemon the session (producer) finished → its proposal journal (`<state>/sessions/<id>/`, where every write of a live session went) merges into main as one generation with a receipt; a session that ends without the hook merges when idle > 30 min |
 
 `recall_replay.py` / `recall_report.py`: replay real prompts through the hook and report hit rates.
 

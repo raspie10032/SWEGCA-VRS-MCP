@@ -975,3 +975,53 @@ with or without VRS on the same machine, because Antigravity's own per-conversat
 agent finds it; what VRS changes is where the agent says it looked and that it goes straight to the origin.
 A test that separates the conditions needs another machine, another agent, or deleted logs.
 
+
+### The session producer layer — 2.2 (2026-09-21)
+
+Composed after the SWEGCA architecture (`docs/VRS22_PLAN.md` has the role table): main stays the one
+persistent Cognitive State; a session is an authority-limited producer; its temporary VRS is the producer's
+**proposal journal** — `<state>/sessions/<session id>/`, one small store of its own (journal, hot index,
+VRS graph), written to by that session alone, never read by main, merged into main after the session ends
+by a journaled transaction with a receipt, then removed.
+
+- **Writes.** `ingest` / `ingest_many` with `session=<id>` go to the journal (`layer: session` in the reply).
+  The transcript tail passes the session for a live log (written within `SESSION_IDLE_S` = 30 min); an older
+  log (a backlog, a dead session) goes to main as before. The Stop reindex passes the hook's `session_id`.
+  A journal accepts a `supersedes` naming a record it cannot see (a doc section main holds); main validates
+  it at the merge.
+- **Reads.** `hook_recall` with `session=<id>` judges the journal first — Déjà vu → Recall → Replay →
+  Re-evidence over it, with the **bounded exact top-K**: the candidate stage runs in columns (postings → a
+  row × cue matrix; the substring dedupe of `words` as bit sets over the query's informative cues; the BM25
+  pre-score as an array), rows are taken in pre-score order and get their full order key until no remaining
+  row's pre-score × gate ceiling can beat the K-th best full score (the ceiling is per row: promotion only
+  after a consolidation exists, asks/description factors only where the row has them), Replay and
+  Re-evidence run for the top K, the rest stay addressable as `unjudged_ids`. Main is read only on a
+  **complete miss** — no cue of the query has a posting in the journal — and the packet says so
+  (`layer`, `misses: session_miss/absent|complete_miss`). `turns` and `origins` with a session read the
+  journal too (after a compaction the SessionStart hook's turns come from there); `operation` answers for
+  the journal's ids (the reindex's manifest recovery).
+- **Merge.** `session_end` (the SessionEnd hook's shim, `session_end.py`) or the preparer's sweep (a
+  journal idle > 30 min, checked every 15 s) submits the session to the merger thread. `merge.py`:
+  `prepared` (journal read, `delta_digest` over the rows' fingerprints fixed) → `memory_committed` (one
+  `ingest_many`: the whole session is one batch generation in main) → `state_committed` (every row verified
+  present under its id) → `completed` (directory removed). The receipt binds `before_pair` / `after_pair`
+  (the state hashes), the digest, `evidence_refs`, the producer, `reissued` (a request id another producer
+  committed with other content: this row enters under its own id, superseding the held record when it is a
+  later revision of the same source), `unlinked_supersedes`, `conflicts` (propositions now carrying both
+  polarities — the accumulator's abstention, listed, never averaged). Daemon start recovers incomplete
+  transactions (`prepared` re-runs, `memory_committed` verifies and completes, a vanished journal rolls back).
+- **Residency.** Open journals are hot (`SESSION_HOT` = 4, LRU; beyond that checkpointed and closed on
+  disk, unmerged). The merge takes the daemon lock only around main's `ingest_many`. Off with
+  `VRS2_SESSION_LAYER=0` (main-only, as 2.1).
+
+Measured on this PC (i5-13400), a session-sized journal of real session-log rows, a hit (main is not read,
+so main's size does not enter): the four stages 0.37 / 0.55 / 0.82 ms p50 at 10 / 100 / 1,000 rows (385
+candidates at 1,000), the whole `hook_recall` packet 0.57 / 0.89 / 1.25 ms; one socket round trip adds ~1 ms
+on a kept connection and 2–15 ms when a hook connects per call (Windows TCP). Before the bounded stage the
+same packet took 2.3 / 19.5 ms at 100 / 1,000 rows. `tests/standalone/test_session_layer.py` (11): isolation,
+session-first and the miss, the merge receipt as one generation, re-issue and unlinking, conflicts, recovery,
+idle sweep, an unseen supersedes, bounded top-K exactness against the full path, the tail end to end.
+
+The rule's cost, stated: another active session of the same project does not see this session's new
+log entries or turns until this session ends and merges (before 2.2 every Stop's rows were in main at
+once). The evaluation (plan phase 6) is where that shows or does not.

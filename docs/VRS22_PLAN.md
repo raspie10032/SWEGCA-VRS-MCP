@@ -72,4 +72,11 @@ signed producers (`harness/identity.py`).
 
 ## 4. Ledger
 
-(filled in as each phase lands — commit, tests, numbers)
+| phase | commit | what landed | evidence |
+|---|---|---|---|
+| 1 cut | 0e4bd66 | `src/swegca_vrs_mcp/` (v0.3 core, Hermes adapter + delivery outbox, agent service/client, runtime, plasticity, v2.0 bridge), `tests/test_*.py`, `tests/architecture/`, legacy tools, `integrations/hermes`, `examples/synthetic.json`, legacy docs, the three upstream manifests: 79 files | standalone suite 104 → 104; `swegca_vrs2` never imported the package; the verdict tools use `V02_SRC` (the other repository) |
+| 2 session producer | 4cd5097 | `session_producer.py` (SessionLayer), `Main(proposal=True)`, `Main.recall(judge_limit)` with the columnar bounded exact top-K, `hook_recall(session=)` session-first / main on a complete miss, `sessions` command | `test_session_layer.py`; four stages 0.37 / 0.55 / 0.82 ms p50 at 10 / 100 / 1,000 rows; packet 0.57 / 0.89 / 1.25 ms |
+| 3 merge transaction | 4cd5097 | `merge.py`: prepared → memory_committed → state_committed → completed, receipt (before/after pair, delta digest, evidence refs, producer, reissued, unlinked supersedes, conflicts), `Merger` thread, recovery at daemon start, `session_end` / `session_merge` / `merge_receipts` | tests: one generation per merge, re-issue of a held slot, conflicts listed, recovery of prepared / memory_committed / vanished |
+| 4 hooks | cd6141d | tail + reindex + recall pass the session; `turns` / `origins` / `operation` read the journal; `session_end.py` SessionEnd shim (installer) | end-to-end tail test; live daemon restarted with the layer (17:0x) |
+| 5 measure | — | (a) above; (b) the 10^9-parameter pass: pending | |
+| 6 evaluate | — | pending | |
