@@ -10,7 +10,8 @@ import time
 from swegca_vrs2.harness import origin as origin_mod
 from swegca_vrs2.harness import read_log, recall
 from swegca_vrs2.harness import transcripts as t
-from swegca_vrs2.loopback import Daemon
+from swegca_vrs2.loopback import Daemon   # 2.2 note: these tests cover the tail and main's store directly (session_layer=False); the
+                                          # layer's own path (tail -> proposal journal -> merge) is in test_session_layer.py
 from tests.standalone.test_transcripts import Via
 
 
@@ -133,7 +134,7 @@ def test_turns_enter_the_store_from_the_database_and_are_verified_from_it(tmp_pa
                    answer_step(T0 + 2, "퀘이사 정렬 결과는 chunk_7 에 적었다 — 열두 줄이다"),
                    tool_step(T0 + 3, 5, "write_to_file", {"TargetFile": "C:\\work\\chunk_7.csv"})])
     os.utime(path, (time.time() - 30, time.time() - 30))
-    d = Daemon(tmp_path / "store", allow_ingest=True, idle_seconds=3600)
+    d = Daemon(tmp_path / "store", allow_ingest=True, idle_seconds=3600, session_layer=False)
     try:
         out = t.run(path, trigger="cli", agent="antigravity", project="proj", client=Via(d))
         assert out["rows"] == 1 and out["sent"] == 1 and not out["errors"]
@@ -232,7 +233,7 @@ def test_a_recut_turn_supersedes_the_row_the_old_id_stands_for(tmp_path, monkeyp
     path = str(tmp_path / "recut.db")
     make_db(path, [user_step(T0, "질문 하나를 길게 적는다"), answer_step(T0 + 2, "답")])
     os.utime(path, (time.time() - 30, time.time() - 30))
-    d = Daemon(tmp_path / "store", allow_ingest=True, idle_seconds=3600)
+    d = Daemon(tmp_path / "store", allow_ingest=True, idle_seconds=3600, session_layer=False)
     try:
         first = t.run(path, trigger="cli", agent="antigravity", project="proj", client=Via(d))
         assert first["rows"] == 1 and first["sent"] == 1 and first["lines"] == [1, 2] and not first["errors"]

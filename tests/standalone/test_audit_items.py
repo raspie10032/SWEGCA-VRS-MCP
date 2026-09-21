@@ -14,7 +14,8 @@ from swegca_vrs2.harness import precompact
 from swegca_vrs2.harness import recall
 from swegca_vrs2.harness import reindex
 from swegca_vrs2.harness import transcripts as t
-from swegca_vrs2.loopback import Daemon
+from swegca_vrs2.loopback import Daemon   # 2.2 note: these tests cover the tail and main's store directly (session_layer=False); the
+                                          # layer's own path (tail -> proposal journal -> merge) is in test_session_layer.py
 from swegca_vrs2.store import Main
 from tests.standalone.test_transcripts import Via, rec, write
 
@@ -42,7 +43,7 @@ def test_item4_the_turn_keeps_a_bounded_excerpt_of_the_reasoning(sandbox):
     assert "\n사고: The user asks why chunk_7." in text and text.index("어시스턴트:") < text.index("사고:")
     line = next(l for l in text.splitlines() if l.startswith("사고: "))
     assert len(line) <= len("사고: ") + t.THINKING_CHARS                       # bounded, not the whole reasoning
-    d = Daemon(sandbox / "store", allow_ingest=True, idle_seconds=3600)
+    d = Daemon(sandbox / "store", allow_ingest=True, idle_seconds=3600, session_layer=False)
     try:
         sent = t.run(log, trigger="stop", project="proj", client=Via(d))
         assert sent["rows"] == 1
@@ -89,7 +90,7 @@ def test_item16_the_snapshot_entry_and_the_cut_row_name_each_other(sandbox, monk
     entry = session_log.read_text(encoding="utf-8").splitlines()[-1]
     assert "로그 위치: s.jsonl#3-4 (턴 2)" in entry                        # the entry names the turn the tail cuts
     assert os.path.isfile(t.snapshot_marker(log))
-    d = Daemon(sandbox / "store", allow_ingest=True, idle_seconds=3600)
+    d = Daemon(sandbox / "store", allow_ingest=True, idle_seconds=3600, session_layer=False)
     try:
         out = t.run(log, trigger="precompact", project="proj", client=Via(d), force_cut=True)
         assert out["parts"] == {"whole": 1, "partial": 1}

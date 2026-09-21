@@ -524,6 +524,15 @@ class Daemon:
             self.recovered = self.merge.recover()      # a merge the last daemon died inside finishes or rolls back
             self.merger = Merger(self.merge)
 
+    def _journal_of(self, session):
+        """The open proposal journal of ``session`` for a read, or None (no layer, no session, no journal, merging)."""
+        if self.sessions is None or not session or not self.sessions.exists(session):
+            return None
+        try:
+            return self.sessions.main_for(session, create=False)
+        except ValueError:
+            return None
+
     def handle(self, message):
         command = message.get('command')
         arguments = {k: v for k, v in message.items() if k != 'command'}
@@ -568,13 +577,42 @@ class Daemon:
         if command == 'operation':
             # 2026-09-21: what a request id already stands for — the reindex recovers a manifest it lost (a hook
             # killed after the daemon accepted) instead of re-sending the id with other content forever
-            existing = self.main.operations.get(str(arguments.get('request_id') or ''))
-            return dict(status='ok', request_id=arguments.get('request_id'), known=existing is not None,
+            request_id = str(arguments.get('request_id') or '')
+            existing, layer = self.main.operations.get(request_id), 'main'
+            session = arguments.get('session')
+            if self.sessions is not None and session and self.sessions.exists(session):
+                try:                                       # 2.2: what the session's own journal holds under the id
+                    journal = self.sessions.main_for(session, create=False)
+                    held = journal.operations.get(request_id) if journal is not None else None
+                    if held is not None:
+                        existing, layer = held, 'session'
+                except ValueError:
+                    pass
+            return dict(status='ok', request_id=arguments.get('request_id'), known=existing is not None, layer=layer,
                         episode_id=existing[1] if existing else None, pair_snapshot_id=existing[2] if existing else None)
         if command == 'origins':
-            return origins(self.main, arguments)
+            out = origins(self.main, arguments)
+            # 2.2: a session's rows still in its proposal journal are listed after main's (the verifier sees both)
+            journal = self._journal_of(arguments.get('session'))
+            if journal is not None:
+                more = origins(journal, dict(arguments, offset=0))
+                for row in more['rows']:
+                    row['layer'] = 'session'
+                out['rows'].extend(more['rows']); out['count'] = len(out['rows']); out['total'] += more['total']
+            return out
         if command == 'turns':
-            return turns(self.main, arguments)
+            out = turns(self.main, arguments)
+            # 2.2: the session's own turns live in its proposal journal until it merges — after a compaction the
+            # SessionStart hook asks for exactly those; main's rows (an earlier merge of the same session) join them
+            journal = self._journal_of(arguments.get('session'))
+            if journal is not None:
+                more = turns(journal, arguments)
+                for row in more['rows']:
+                    row['layer'] = 'session'
+                merged = sorted(out['rows'] + more['rows'], key=lambda r: (r['turn'], (r['lines'] or [0])[0]))
+                limit = max(1, min(int(arguments.get('limit') or 3), 20))
+                out.update(rows=merged[-limit:], count=min(limit, len(merged)), total=out['total'] + more['total'])
+            return out
         if command == 'evidence_of':
             return evidence_of(self.main, arguments)
         if command in ('consolidate', 'refine'):

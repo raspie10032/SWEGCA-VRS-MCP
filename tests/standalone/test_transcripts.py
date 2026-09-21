@@ -14,7 +14,8 @@ import pytest
 from swegca_vrs2.harness import origin as origin_mod
 from swegca_vrs2.harness import recall
 from swegca_vrs2.harness import transcripts as t
-from swegca_vrs2.loopback import Daemon
+from swegca_vrs2.loopback import Daemon   # 2.2 note: these tests cover the tail and main's store directly (session_layer=False); the
+                                          # layer's own path (tail -> proposal journal -> merge) is in test_session_layer.py
 
 
 class Via:
@@ -84,7 +85,7 @@ def test_turns_enter_through_the_store_and_come_back_with_their_place(sandbox):
               rec("user", None),                                       # a tool result: part of the turn, never text
               rec("assistant", "확인했다 열두 줄 맞다")]
     write(log, lines)
-    d = Daemon(sandbox / "store", allow_ingest=True, idle_seconds=3600)
+    d = Daemon(sandbox / "store", allow_ingest=True, idle_seconds=3600, session_layer=False)
     try:
         out = t.run(log, trigger="stop", project="proj", client=Via(d))
         assert out["rows"] == 23 and out["sent"] == 23 and not out["errors"] and out["at_end"] and not out["backlog"]
@@ -123,7 +124,7 @@ def test_precompact_cuts_the_open_turn_and_stop_brings_its_tail(sandbox):
     log = str(sandbox / "s2.jsonl")
     write(log, [rec("user", "첫 요청 그래프를 그려 줘"), rec("assistant", "그렸다 그래프 완성"),
                 rec("user", "둘째 요청 축을 바꿔 줘"), rec("assistant", "축을 바꾸는 중이다", tools=[("Edit", dict(file_path="C:/work/proj/plot.py"))])])
-    d = Daemon(sandbox / "store", allow_ingest=True, idle_seconds=3600)
+    d = Daemon(sandbox / "store", allow_ingest=True, idle_seconds=3600, session_layer=False)
     try:
         # PreCompact: the second turn is not finished — it is cut and sent now, before the context is lost
         out = t.run(log, trigger="precompact", project="proj", force_cut=True, client=Via(d))
@@ -154,7 +155,7 @@ def test_budget_backlog_replay_and_a_generic_agent_log(sandbox, monkeypatch):
     monkeypatch.setattr(t, "ROWS_PER_RUN", 2)
     log = str(sandbox / "s3.jsonl")
     write(log, filler_lines(5))
-    d = Daemon(sandbox / "store", allow_ingest=True, idle_seconds=3600)
+    d = Daemon(sandbox / "store", allow_ingest=True, idle_seconds=3600, session_layer=False)
     try:
         counts = []
         for _ in range(4):
@@ -183,7 +184,7 @@ def test_budget_backlog_replay_and_a_generic_agent_log(sandbox, monkeypatch):
 
 
 def test_hook_entry_routes_events_and_sweeps_a_dead_session(sandbox, monkeypatch):
-    d = Daemon(sandbox / "store", allow_ingest=True, idle_seconds=3600)
+    d = Daemon(sandbox / "store", allow_ingest=True, idle_seconds=3600, session_layer=False)
     import swegca_vrs2.loopback as loopback
     monkeypatch.setattr(loopback, "ensure_daemon", lambda *a, **k: Via(d))
     project = str(sandbox / "proj")
@@ -223,7 +224,7 @@ def test_after_compaction_the_cut_turn_comes_from_the_store(sandbox, monkeypatch
     log = str(sandbox / "s5.jsonl")
     write(log, [rec("user", "표를 만들어 줘 열 셋"), rec("assistant", "만들었다 열 셋"),
                 rec("user", "이제 정렬해 줘 날짜순"), rec("assistant", "정렬하는 중 날짜순", tools=[("Edit", dict(file_path="C:/work/proj/table.py"))])])
-    d = Daemon(sandbox / "store", allow_ingest=True, idle_seconds=3600)
+    d = Daemon(sandbox / "store", allow_ingest=True, idle_seconds=3600, session_layer=False)
     try:
         t.run(log, trigger="precompact", project="proj", force_cut=True, client=Via(d))
         write(log, [boundary(), rec("assistant", "정렬했다 날짜순 완료")], mode="a")
@@ -259,7 +260,7 @@ def test_registered_logs_are_swept_without_a_hook_and_secrets_are_masked(sandbox
     quiet grown log — including a session that died mid-turn — through the store; a pasted key is masked in
     the stored text (the log keeps it)."""
     monkeypatch.setattr(t, "WATCH_FILE", str(sandbox / "tail" / "watch.json"))
-    d = Daemon(sandbox / "store", allow_ingest=True, idle_seconds=3600)
+    d = Daemon(sandbox / "store", allow_ingest=True, idle_seconds=3600, session_layer=False)
     try:
         other = sandbox / "gemini"
         other.mkdir()

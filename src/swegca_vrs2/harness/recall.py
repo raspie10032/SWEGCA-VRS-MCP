@@ -423,7 +423,8 @@ def context_for(prompt, cwd, session):
     Same rules and receipts as the hook; the hook's main() is a thin wrapper around this."""
     started = time.perf_counter()
     prompt = str(prompt or "")
-    session = str(session or "")[:8]
+    session_id = str(session or "")                # 2.2: the judgment reads this session's proposal journal first
+    session = session_id[:8]
     data = {"cwd": cwd}
     # a background-task notification arrives as a prompt too (2026-09-14: ~20 recalls nobody asked for)
     if "<task-notification>" in prompt or prompt.lstrip().startswith("[SYSTEM NOTIFICATION"):
@@ -447,12 +448,13 @@ def context_for(prompt, cwd, session):
     # folder-listing records (desktop-fs-ingest.py) are filtered out at the store unless the prompt is
     # about a location: with them in, ordinary prompts saw 2x the candidates and 1.6 s recalls
     exclude = ["test", "retirement"] if any(t.startswith(w) for w in LOCATION_WORDS for t in stems) else ["test", "fs_listing", "retirement"]   # retirement: G3 origin closes (2026-09-19)
-    packet = client.request("hook_recall", query=prompt[:4000], limit=LIMIT, snippet=SNIPPET, exclude_kinds=exclude, region_scope="auto")   # G6: region scope only above 5,000 whole-store candidates (vrs-regions)
+    packet = client.request("hook_recall", query=prompt[:4000], limit=LIMIT, snippet=SNIPPET, exclude_kinds=exclude, region_scope="auto",   # G6: region scope only above 5,000 whole-store candidates (vrs-regions)
+                            **({"session": session_id} if session_id else {}))
     client.close()
     project = project_of(str(data.get("cwd") or os.getcwd()))
     verdicts, records = choose(packet, project, stems)
     if not verdicts and not records:
-        note(skip="weak", words=words, session=session,
+        note(skip="weak", words=words, session=session, layer=packet.get("layer"),
              top=[(r["source"][:60], r["matched"]) for r in packet["memories"][:3]],
              timing=packet.get("timing"), misses=packet.get("misses") or [])
         return None
@@ -460,7 +462,7 @@ def context_for(prompt, cwd, session):
     context = replay_line(session) + context
     elapsed = round((time.perf_counter() - started) * 1000)
     note(injected=[r["source"] for r in verdicts + records], words=words, chars=len(context),
-         ms=elapsed, session=session,
+         ms=elapsed, session=session, layer=packet.get("layer"), judged=packet.get("judged"),   # 2.2: which layer answered
          # G8: the judgment's own time and what it had to decode or could not reach — hit and miss, both on record
          timing=packet.get("timing"), misses=packet.get("misses") or [], blob_hits=packet.get("blob_hits"),
          # G5: how the candidates were reached (local / member / portal / unbridged) and how many crossings went

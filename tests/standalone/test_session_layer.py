@@ -228,3 +228,44 @@ def test_safe_ids():
         safe_id("")
     with pytest.raises(ValueError):
         safe_id("..")
+
+
+def test_the_tail_writes_a_live_session_to_its_journal_and_session_end_merges_it(tmp_path, monkeypatch):
+    """The production path end to end: the transcript tail of a live log -> the session's proposal journal (main
+    untouched); the judgment with the session id answers from it; ``turns`` after a compaction comes from it; a dead
+    log (older than SESSION_IDLE_S) goes to main as before; SessionEnd merges the journal into main."""
+    from swegca_vrs2.harness import transcripts as t
+    from tests.standalone.test_transcripts import Via, rec, write, boundary
+    monkeypatch.setattr(t, "STATE_DIR", str(tmp_path / "tail"))
+    monkeypatch.setattr(t, "RECEIPT", str(tmp_path / "tail.log"))
+    d = daemon(tmp_path)
+    try:
+        live = str(tmp_path / "live.jsonl")
+        write(live, [rec("user", "퀘이사 정렬 결과를 어디에 적었더라", session="live"),
+                     rec("assistant", "퀘이사 정렬 결과는 chunk_7 파일에 적었다 — 열두 줄이다", session="live"),
+                     rec("user", "다음은 축 단위를 고치자", session="live"), rec("assistant", "축 단위를 고쳤다", session="live")])
+        out = t.run(live, trigger="stop", project="proj", client=Via(d))
+        assert out["rows"] == 2 and out["sent"] == 2 and not out["errors"] and out["layer"] == "session"
+        assert d.main.memory.episode_count == 0 and d.sessions.ids() == ["live"]
+        hit = d.handle(dict(command="hook_recall", session="live", query="퀘이사 정렬 결과 어디 적었지", limit=5, snippet=400))
+        assert hit["layer"] == "session" and "chunk_7" in hit["memories"][0]["text"]
+        # after a compaction the SessionStart hook asks the store for the session's last turns: the journal answers
+        write(live, [boundary()], mode="a")
+        page = d.handle(dict(command="turns", session="live", limit=3))
+        assert page["count"] == 2 and page["rows"][-1]["turn"] == 2 and page["rows"][-1]["layer"] == "session"
+        # a log nobody wrote for longer than the idle bound is not a live session: main, as before
+        dead = str(tmp_path / "dead.jsonl")
+        write(dead, [rec("user", "옛 세션의 요청", session="dead"), rec("assistant", "옛 세션의 답", session="dead")])
+        old = time.time() - 2 * t.SESSION_IDLE_S
+        os.utime(dead, (old, old))
+        out = t.run(dead, trigger="stop", project="proj", client=Via(d))
+        assert out["rows"] == 1 and out["layer"] == "main" and d.main.memory.episode_count == 1 and d.sessions.ids() == ["live"]
+        # the producer ends: its journal merges into main as one generation, and the judgment finds it there
+        receipt = d.handle(dict(command="session_end", session="live", wait=True))["merged"]
+        assert receipt["status"] == "completed" and receipt["rows"] == 2 and receipt["added"] == 2
+        assert d.main.memory.episode_count == 3 and d.sessions.ids() == []
+        got = d.handle(dict(command="hook_recall", session="live", query="퀘이사 정렬 결과 어디 적었지", limit=5, snippet=400))
+        assert got["layer"] == "main" and "chunk_7" in got["memories"][0]["text"]
+        assert [m for m in got["misses"] if m["kind"] == "session_miss"][0]["state"] == "absent"
+    finally:
+        d.close()

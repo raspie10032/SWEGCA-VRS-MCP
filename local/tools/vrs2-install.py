@@ -65,6 +65,8 @@ SHIMS = {  # hook file -> (module, call, event, matcher, extra args)
     # (turn complete), SubagentStop, PreCompact (the unfinished turn before the context is lost) and
     # SessionStart (what a crash or /clear left behind); one shim, several events
     "transcript_tail.py": ("transcripts", "main()", ("Stop", "SubagentStop", "PreCompact", "SessionStart"), None, ""),
+    # 2.2 (2026-09-21): the producer says it is finished -> the daemon merges its proposal journal into main
+    "session_end.py": ("session_end", "main()", "SessionEnd", None, ""),
 }
 PROJECT_DIR_SHIM = '''# -*- coding: utf-8 -*-
 """껍데기: 몸통은 swegca_vrs2.harness.project_dir."""

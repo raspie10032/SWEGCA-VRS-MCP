@@ -54,6 +54,7 @@ ROWS_PER_RUN = 40          # rows one run sends (one generation via ingest_many)
 READ_BUDGET = 8_000_000    # bytes one run parses from the offset (tool results make transcripts large)
 TIME_BUDGET_S = 15.0       # parsing + sending; a hook has 30 s
 QUIET_S = 8.0              # a log untouched this long may be cut at its end (the open turn is over)
+SESSION_IDLE_S = 1800.0    # 2.2: a log written within this is a live session -> its proposal journal; older -> main
 SWEEP_IDLE_S = 600.0       # SessionStart / Stop also drain sibling logs of the project quiet this long
 USER_CHARS = 1500
 ASSISTANT_CHARS = 2500
@@ -995,19 +996,26 @@ def _run_locked(path, *, trigger, agent, session, cwd, project, fmt, force_cut, 
             # item 24: conversation turns may have a bundle of their own (`bundle_of: {"kind:transcript": id}`) — the
             # cue to make one is the sizing warning at 90 % of the limit; until then they ride with the project
             bundle = BUNDLE_OF.get("kind:" + KIND) or (BUNDLE_OF.get(slug) if slug else None)
+            # 2.2: a live session's turns go to its proposal journal (the daemon merges it into main after the
+            # session ends); a log nobody wrote for SESSION_IDLE_S (a backlog, a dead session) goes to main as before
+            route = {"bundle": bundle} if bundle else {}
+            live = session and (time.time() - last_write(path, stat)) < SESSION_IDLE_S
+            if live:
+                route["session"] = str(session)
+            rec["layer"] = "session" if live else "main"
             try:
-                out = client.request("ingest_many", rows=rows, **({"bundle": bundle} if bundle else {}))
+                out = client.request("ingest_many", rows=rows, **route)
                 sent = len(out.get("results") or rows)
             except Exception as error:
                 errors.append(f"ingest_many: {error}"[:160])
                 for r in rows:                              # per-row fallback (an older daemon, one bad row)
                     try:
-                        client.request("ingest", **r, **({"bundle": bundle} if bundle else {}))
+                        client.request("ingest", **r, **route)
                         sent += 1
                     except Exception as error2:
                         if "request_id_reused_with_different_content" in str(error2):
                             try:                            # a re-cut turn: its own id, superseding the old row
-                                client.request("ingest", **reissue_row(client, r), **({"bundle": bundle} if bundle else {}))
+                                client.request("ingest", **reissue_row(client, r, session=route.get("session")), **route)
                                 sent += 1
                                 reissued = rec.setdefault("reissued", [])
                                 reissued.append(r["request_id"].rsplit(":", 1)[-1])
@@ -1040,7 +1048,7 @@ def _run_locked(path, *, trigger, agent, session, cwd, project, fmt, force_cut, 
     return rec
 
 
-def reissue_row(client, row):
+def reissue_row(client, row, session=None):
     """The daemon holds this request id with other content (a turn re-cut after an adapter fix, 2026-09-21): the
     row gets an id and revision of its own (``+sha8(text)``), is re-signed, and supersedes what the old id stands
     for — the old row stays recallable, the new one is the current version."""
@@ -1049,7 +1057,7 @@ def reissue_row(client, row):
     out["request_id"] = f"{row['request_id']}+{tag}"[:128]
     out["revision"] = f"{row['revision']}+{tag}"
     try:
-        known = client.request("operation", request_id=row["request_id"])
+        known = client.request("operation", request_id=row["request_id"], **({"session": session} if session else {}))
         if known.get("episode_id"):
             out["supersedes"] = known["episode_id"]
     except Exception:
