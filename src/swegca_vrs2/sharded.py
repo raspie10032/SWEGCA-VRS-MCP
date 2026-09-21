@@ -135,13 +135,24 @@ class ShardedMain:
                       shard, through_replay_ns, exclude_kinds, region_scope):
         """Attach current VRS Re-evidence after the direct Replay boundary."""
         finish_began = time.perf_counter_ns()
-        owners = self._owners()
+        episode = replayed.episodes[0]
+        proposition = episode.steps[0].observation.get('proposition_id')
+        relevant = [shard]
+        if proposition:
+            relevant.extend(self.resident.exact.proposition_shards(proposition))
+        owners = []
+        for name in dict.fromkeys(relevant):
+            if name == 'main':
+                owner = self.primary
+            else:
+                owner, _ = self.resident.ready(name)
+                if owner is None:
+                    owner = self.resident.main_for(name)
+            owners.append((name, owner))
         by_shard = dict(owners)
         owner = by_shard.get(shard)
         if owner is None:
             raise ValueError('exact_replay_owner_not_ready')
-        episode = replayed.episodes[0]
-        proposition = episode.steps[0].observation.get('proposition_id')
         opponents = ()
         if proposition:
             active = []
@@ -152,8 +163,9 @@ class ShardedMain:
             if {item.steps[0].observation.get('evidence_polarity') for item in active} == {'support', 'refute'}:
                 opponents = tuple(sorted(item.episode_id for item in active))
 
-        graph_snapshot = digest(('sharded-vrs-v1', [(name, candidate.graph.snapshot_id)
-                                                    for name, candidate in owners]))
+        graph_snapshot = digest(('sharded-vrs-re-evidence-v1', pair_snapshot,
+                                 [(name, candidate.graph.snapshot_id)
+                                  for name, candidate in owners]))
 
         def judge(item):
             if opponents:
@@ -172,7 +184,7 @@ class ShardedMain:
         path = dict(local['region_navigation']['paths'].get(identifier)
                     or dict(region=None, path='pending'))
         path['shard'] = shard
-        return dict(record_count=sum(candidate.memory.episode_count for _, candidate in owners),
+        return dict(record_count=self.resident.logical_record_count(),
             receipt={'activation': receipt},
             memory_selection=dict(candidate_counts={identifier: 1}, selected_cues=(identifier,),
                 rejected_cues=(), function_word_cues=(),

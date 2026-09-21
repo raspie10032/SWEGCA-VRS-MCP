@@ -176,3 +176,27 @@ def test_persistent_source_route_keeps_revision_in_cold_original_shard(tmp_path)
     finally:
         resident.close()
         primary.close()
+
+
+def test_exact_replay_opens_only_target_and_same_proposition_shards(tmp_path):
+    primary = Main(tmp_path / "main", allow_ingest=True)
+    resident = Resident(primary, {"target": tmp_path / "target", "unrelated": tmp_path / "unrelated"},
+                        hot_limit=1)
+    try:
+        target = resident.ingest(claim("target", "target-source", "support"), "target")["episode_id"]
+        resident.evict("target"); resident.settle()
+        resident.ingest(dict(request_id="other", text="완전히 무관한 차가운 샤드",
+            source="unrelated-source", revision="1"), "unrelated")
+        resident.evict("unrelated"); resident.settle()
+        assert not resident.hot and not resident.warm
+
+        sharded = ShardedMain(primary, resident)
+        exact = sharded.recall(target, resident.logical_snapshot())
+        assert exact["receipt"]["activation"].replay.episodes[0].episode_id == target
+        assert "target" in resident.hot
+        assert "unrelated" not in resident.hot
+        assert "unrelated" not in resident.warm
+        assert "unrelated" not in resident.wanted
+    finally:
+        resident.close()
+        primary.close()

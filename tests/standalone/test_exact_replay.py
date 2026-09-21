@@ -25,6 +25,11 @@ def test_disk_exact_address_returns_original_replay_without_resident_index(tmp_p
         assert exact.source_shard("source:missing") is None
         with pytest.raises(ValueError, match="source_lineage_split"):
             exact.put_source("source:exact", "another-shard")
+        assert exact.put_proposition("exact-claim", "main") is True
+        assert exact.put_proposition("exact-claim", "main") is False
+        assert exact.put_proposition("exact-claim", "counter-shard") is True
+        assert exact.proposition_shards("exact-claim") == ("counter-shard", "main")
+        assert exact.proposition_shards("missing-claim") == ()
 
         found = exact.get(identifier)
         assert found["shard"] == "main"

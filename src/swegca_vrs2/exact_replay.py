@@ -72,6 +72,8 @@ class ExactReplayStore:
         self.slot_count = 1 << self.slot_power
         self.mask = self.slot_count - 1
         self.data_path = self.directory / 'capsules.vrs'
+        self.proposition_directory = self.directory / 'propositions'
+        self.proposition_directory.mkdir(mode=0o700, parents=True, exist_ok=True)
         self.lock = threading.Lock()
         if not self.data_path.exists():
             fd = os.open(self.data_path, os.O_RDWR | os.O_CREAT | os.O_EXCL, 0o600)
@@ -262,8 +264,70 @@ class ExactReplayStore:
             raise ValueError('experience_source_route_identity_mismatch')
         return body['shard']
 
+    def _proposition_path(self, proposition, *, create):
+        if not isinstance(proposition, str) or not proposition:
+            raise ValueError('invalid_experience_proposition')
+        key = hashlib.sha256(proposition.encode('utf-8')).hexdigest()
+        directory = self.proposition_directory / key[:2]
+        if create:
+            directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+        return directory / (key + '.json')
+
+    def put_proposition(self, proposition, shard):
+        """Bind one explicit claim to every shard carrying its VRS evidence."""
+        path = self._proposition_path(proposition, create=True)
+        with self.lock:
+            if path.exists():
+                try:
+                    body = json.loads(path.read_text(encoding='utf-8'))
+                except (OSError, ValueError, UnicodeError):
+                    raise ValueError('experience_proposition_route_corrupt') from None
+                if (body.get('schema') != 'swegca-vrs2-proposition-route-v1'
+                        or body.get('proposition') != proposition):
+                    raise ValueError('experience_proposition_hash_collision')
+                shards = set(str(item) for item in body.get('shards', ()))
+                if str(shard) in shards:
+                    return False
+                shards.add(str(shard))
+            else:
+                shards = {str(shard)}
+            body = dict(schema='swegca-vrs2-proposition-route-v1', proposition=proposition,
+                        shards=sorted(shards))
+            temporary = path.with_name('.' + path.name + '-' + os.urandom(8).hex())
+            descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            try:
+                with os.fdopen(descriptor, 'w', encoding='utf-8') as stream:
+                    json.dump(body, stream, ensure_ascii=False, sort_keys=True,
+                              separators=(',', ':'))
+                    stream.flush(); os.fsync(stream.fileno())
+                os.replace(temporary, path)
+                directory_fd = os.open(path.parent, os.O_RDONLY)
+                try:
+                    os.fsync(directory_fd)
+                finally:
+                    os.close(directory_fd)
+            finally:
+                temporary.unlink(missing_ok=True)
+            return True
+
+    def proposition_shards(self, proposition):
+        path = self._proposition_path(proposition, create=False)
+        try:
+            body = json.loads(path.read_text(encoding='utf-8'))
+        except FileNotFoundError:
+            return ()
+        except (OSError, ValueError, UnicodeError):
+            raise ValueError('experience_proposition_route_corrupt') from None
+        if (body.get('schema') != 'swegca-vrs2-proposition-route-v1'
+                or body.get('proposition') != proposition):
+            raise ValueError('experience_proposition_route_identity_mismatch')
+        shards = body.get('shards')
+        if not isinstance(shards, list) or any(not isinstance(item, str) for item in shards):
+            raise ValueError('experience_proposition_route_corrupt')
+        return tuple(shards)
+
     def logical_bytes(self):
-        return sum(path.stat().st_size for path in self.directory.glob('*.vrs'))
+        return sum(path.stat().st_size for path in self.directory.rglob('*') if path.is_file())
 
     def allocated_bytes(self):
-        return sum(path.stat().st_blocks * 512 for path in self.directory.glob('*.vrs'))
+        return sum(path.stat().st_blocks * 512 for path in self.directory.rglob('*') if path.is_file())

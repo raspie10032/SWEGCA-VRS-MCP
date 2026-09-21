@@ -191,6 +191,7 @@ class Resident:
         self.exact_backfill = self._load_exact_progress()
         self.exact_backfill.setdefault('main', dict(count=0, tail=None))
         self.pair_ids = {'main': self.primary.pair.snapshot_id}
+        self.record_counts = {'main': self.primary.memory.episode_count}
         for identifier, directory in self.bundles.items():
             try:
                 db = _connect(directory)
@@ -199,6 +200,9 @@ class Resident:
                 db.close()
                 if row is not None:
                     self.pair_ids[identifier] = row[0]
+                progress = self.exact_backfill.get(identifier, {})
+                if progress.get('complete'):
+                    self.record_counts[identifier] = int(progress.get('count', 0))
             except sqlite3.Error:
                 continue
         self._pair_lock = threading.Lock()
@@ -334,18 +338,23 @@ class Resident:
     def refresh_pair(self, shard, owner):
         shard, pair = str(shard), owner.pair.snapshot_id
         with self._pair_lock:
+            self.record_counts[shard] = owner.memory.episode_count
             previous = self.pair_ids.get(shard)
             if previous == pair:
                 return
             if previous is not None:
                 self._xor_pair_component(shard, previous)
             self.pair_ids[shard] = pair
+            self.record_counts[shard] = owner.memory.episode_count
             self._xor_pair_component(shard, pair)
             self._logical_snapshot_id = self._snapshot_from_pair_xor()
 
     def logical_snapshot(self):
         with self._pair_lock:
             return self._logical_snapshot_id
+
+    def logical_record_count(self):
+        return sum(self.record_counts.values())
 
     def _owner_with_episode(self, identifier):
         if not identifier:
@@ -484,6 +493,9 @@ class Resident:
         self.exact.put(identifier, shard, episode)
         for source in episode.source_addresses:
             self.exact.put_source(source, shard)
+        proposition = episode.steps[0].observation.get('proposition_id')
+        if proposition:
+            self.exact.put_proposition(proposition, shard)
 
     def exact_replay(self, identifier):
         return self.exact.get(identifier)
@@ -522,6 +534,9 @@ class Resident:
                     added += int(self.exact.put(identifier, shard, episode))
                     for source in episode.source_addresses:
                         self.exact.put_source(source, shard)
+                    proposition = episode.steps[0].observation.get('proposition_id')
+                    if proposition:
+                        self.exact.put_proposition(proposition, shard)
                 if (stop != start or (stop >= owner.memory.episode_count
                                       and not self.exact_backfill.get(shard, {}).get('complete'))):
                     self._advance_exact_cursor(shard, owner, stop)
@@ -713,6 +728,7 @@ class Resident:
             main = Main(self.bundles[bundle_id], allow_ingest=True, bundle_limit=self.bundle_limit,
                         defer_checkpoints=True)
             self.hot[bundle_id] = main
+            self.wanted.discard(bundle_id)
             self.refresh_pair(bundle_id, main)
             while len(self.hot) > self.hot_limit:
                 evicted_id, evicted = self.hot.popitem(last=False)
