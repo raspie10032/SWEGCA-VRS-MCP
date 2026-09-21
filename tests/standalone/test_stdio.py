@@ -67,3 +67,53 @@ def test_console_entrypoint_is_standalone():
     from importlib.metadata import distribution
     entries={e.name:e.value for e in distribution('swegca-vrs-mcp').entry_points}
     assert entries=={'swegca-vrs-mcp':'swegca_vrs2.server:main','swegca-vrs2-mcp':'swegca_vrs2.server:main'}
+
+
+def test_bridge_client_rebuilds_after_a_daemon_restart(monkeypatch):
+    """2026-09-21: the daemon restarted under a live session and every MCP call failed for the rest of it; the
+    bridge's client now re-resolves the daemon (port file, spawn) once and retries."""
+    import swegca_vrs2.loopback as loopback
+    from swegca_vrs2.native_transport import InterfaceError
+    from swegca_vrs2.server import ReconnectingClient
+
+    class Dead:
+        closed = False
+
+        def request(self, command, **arguments):
+            raise InterfaceError('resident_request_failed')
+
+        def close(self):
+            self.closed = True
+
+    class Alive:
+        def request(self, command, **arguments):
+            return dict(status='ok', command=command, **arguments)
+
+        def close(self):
+            pass
+
+    made = []
+
+    def ensure(state_dir, allow_ingest=True, **kw):
+        made.append(state_dir)
+        return Dead() if len(made) == 1 else Alive()
+
+    monkeypatch.setattr(loopback, 'ensure_daemon', ensure)
+    client = ReconnectingClient('C:/tmp/state', True)
+    first = client.client
+    assert client.request('status', x=1) == dict(status='ok', command='status', x=1)
+    assert len(made) == 2 and first.closed and isinstance(client.client, Alive)
+    assert client.request('ping') == dict(status='ok', command='ping') and len(made) == 2   # no rebuild when it works
+
+    class Refusing:
+        def request(self, command, **arguments):
+            raise InterfaceError('memory_context_start_requires_query_and_snapshot')
+
+        def close(self):
+            pass
+    client.client = Refusing()
+    import pytest
+    with pytest.raises(InterfaceError):                    # a refusal is not a dead daemon: no rebuild, no retry
+        client.request('memory_context')
+    assert len(made) == 2
+

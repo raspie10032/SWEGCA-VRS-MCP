@@ -799,3 +799,30 @@ re-measured after the backfill in the session log.
   whenever a write lands between `memory_status` and the call — under continuous ingestion (the backfill,
   the sweeper) that is often; the hook path has no such precondition. Left as a named gap.
 
+#### After the backfill (2026-09-21 13:2x)
+
+The machine-wide backfill ended: 1,145 runs, **5,313 turns** from 13 projects (T2M 2,278 · SQLITE 1,587 · mcp
+481 · …), 0 errors, parts 5,285 whole / 19 tail / 9 partial; with this session's 297 the store holds ~5,600
+conversation turns beside its 5.7k records — 11,441 rows. Restore after restart 2.9 s (checkpoint seq 11,994).
+`hook_recall` at 11.4k rows: 118–488 ms over five prompts (judgment 241 ms), against 130–150 ms at 6.1k — the
+growth cost, on the measured curve, and the reason the transcript rows will want a bundle of their own before
+the year is out (the sizing rule warns at 90 %).
+
+Two lessons from the restart, both defects of procedure rather than code: (1) `shutdown` answers in 5 ms but
+the old process goes on checkpointing; a new daemon spawned two seconds later finds the state owned, exits,
+and `ensure_daemon` waits its whole timeout on a start marker nobody clears — wait for the old process to be
+gone (no port file, no process) before starting the next; (2) **the MCP bridge did not survive the restart**:
+it kept one client for the whole session, so every `memory_status` / `memory_context` of the session failed
+with `tool_request_failed` afterwards. `server.ReconnectingClient` now rebuilds the client through
+`ensure_daemon` on `resident_request_failed` / `resident_daemon_starting` and retries once; a refusal (a
+contract error) is not retried. The bridge's ingress text no longer says "no automatic conversation capture".
+
+Still open from the thirty-two: thinking blocks (a decision, not a patch — they are the model's reasoning;
+their length could be counted, their text should not be stored by default), batch / scheduler results and
+the user's own actions outside any agent (the company programs have to call `vrs2-run.py` / `produce()`
+themselves), the project wall in `choose`, the snapshot ↔ partial-row link, the host's 30-day transcript
+cleanup (a `cleanupPeriodDays` the user sets), hook contention under load (the 6 s batch was measured only
+while the backfill ran), transcript bundles, the backfill-vs-live state race (idempotent, cosmetic), Linux,
+and `memory_context`'s snapshot precondition under continuous ingestion (a bridge-side retry with a fresh
+snapshot is the likely answer; not built).
+

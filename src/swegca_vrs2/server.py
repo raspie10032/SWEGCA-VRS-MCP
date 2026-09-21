@@ -126,6 +126,37 @@ class StandaloneMCP(MemoryMCPServer):
         return result
 
 
+class ReconnectingClient:
+    """The bridge's client to the daemon. A daemon restart changes the port; the hook path re-reads the port file
+    on every call, but the bridge kept one client for the whole session and every tool call failed after a
+    restart (``tool_request_failed``, 2026-09-21). On a failed request the client is rebuilt through
+    ``ensure_daemon`` (re-reads the port, starts the daemon if it is gone) and the request is sent once more."""
+
+    def __init__(self, state_dir, allow_ingest):
+        from .loopback import ensure_daemon
+        self._ensure = lambda: ensure_daemon(state_dir, allow_ingest=allow_ingest)
+        self.client = self._ensure()
+
+    def request(self, command, **arguments):
+        try:
+            return self.client.request(command, **arguments)
+        except InterfaceError as error:
+            if str(error) not in ('resident_request_failed', 'resident_daemon_starting'):
+                raise
+            try:
+                self.client.close()
+            except Exception:
+                pass
+            self.client = self._ensure()
+            return self.client.request(command, **arguments)
+
+    def close(self):
+        try:
+            self.client.close()
+        except Exception:
+            pass
+
+
 class LoopbackMCP(MemoryMCPServer):
     """stdio bridge to the loopback daemon (``swegca_vrs2.loopback``) that owns the store.
 
@@ -152,7 +183,8 @@ class LoopbackMCP(MemoryMCPServer):
         result = super().call_tool(name, arguments)
         if name == 'memory_context' and result.get('status') == 'memory_context_ready':
             result['usage'] = dict(result['usage'], ingress='Use memory_store when the daemon runs with --allow-ingest. '
-                'Stores external observations only; no automatic conversation capture or truth certification.')
+                'Stores observations; no truth certification. Conversation logs are captured in real time by the host hooks '
+                'and vrs2-tail.py (kind=transcript rows bound to their place in the log), not by this bridge.')
         return result
 
     dispatch = StandaloneMCP.dispatch
@@ -171,10 +203,9 @@ def main():
     parser.add_argument('--loopback', action='store_true', help='Bridge to the resident loopback daemon owning --state-dir (start it if needed) instead of owning the store in this process.')
     options = parser.parse_args()
     if options.loopback:
-        from .loopback import ensure_daemon
         server = None
         try:
-            client = ensure_daemon(options.state_dir, allow_ingest=options.allow_ingest)
+            client = ReconnectingClient(options.state_dir, options.allow_ingest)
             server = LoopbackMCP(client, options.allow_ingest and bool(client.request('ping').get('writes_enabled')))
             server.serve(sys.stdin.buffer, sys.stdout.buffer)
         except (ValueError, OSError) as error:
