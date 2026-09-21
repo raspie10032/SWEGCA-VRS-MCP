@@ -667,3 +667,66 @@ Not built: key rotation and revocation (`keygen --replace` re-registers, old row
 stored `key_id` only nominally — a revoked key is not re-checked), a registry carried inside the store (it is
 a file beside it), signatures on imported file-backed records (origin binding covers those), and any per-user
 recall or write policy — several users share one store as several producers, nothing more.
+
+### Every turn is an experience — real-time transcript ingestion (2026-09-21)
+
+The premise, in the user's words: every experience enters through the VRS as an experience, and what comes
+back is not a log line but an experience that names its exact place. Until this step the store did not hold
+the conversation: the Stop hook indexed what the main *wrote about* a turn (the session-log entry), memory
+docs and verdicts; the transcript itself was read once, by PreCompact, for one snapshot entry. A question
+after compaction could find only what the main had chosen to log. Continuity that is not real time is not
+continuity — it is absence — so this closes it in the code, not in a test plan.
+
+`harness/transcripts.py` (hook shim `transcript_tail.py`, tool `vrs2-tail.py`) tails a conversation log and
+sends each **turn** — one user message and everything until the next — to the daemon as one row through
+the same `ingest_many` every other producer uses:
+
+* `kind = transcript`, text = the turn as said: the user's words, the assistant's text, one line per tool
+  call (`도구: Read proj/chunk_7.csv · Bash …`), one event line per compaction boundary
+  (`[압축 경계 auto · 전 967,352 → 후 11,761 토큰]`). Tool results are never copied: they are files and
+  outputs the origin holds. Text is bounded (6,000 chars) — the store is for recall, the log for the rest.
+* bound to its place (G3): `metadata.origin = {bytes, lines, sha256 of the raw span, span: true}`. Logs are
+  append-only, so `origin.verify_span` checks the row against the log by reading the span alone (a 60 MB
+  transcript is never scanned by the hook). The 「열기」 line is the exact call:
+  `원문 위치: Read file_path="…jsonl" offset=45 limit=4  (대화 턴 23 의 로그 45-48행)`, plus
+  `memory_read` for the stored text when the snippet is cut; a rotated log says `원본 자리 바뀜`.
+* producer `transcript-tail` (registered, signed when the machine holds its key), `project` = the slug of
+  the transcript's cwd (the hook's `choose` admits a row only for its own project), `agent`, `session`,
+  `turn`, `part` = `whole` / `partial` (cut by PreCompact or by the read budget) / `tail` (what followed a cut,
+  or a late assistant record after a Stop that saw an unfinished turn).
+* the hook packet has a slot for one conversation turn beside the one record slot (`MAX_TRANSCRIPTS`), so a
+  turn never displaces a memory doc and is never displaced by one; rendered as `N. 대화 — claude-code 세션
+  5e9f04f8 턴 295 (2026-09-21)`.
+
+**Real time** is every moment the host offers: Stop (turn complete), SubagentStop (the delegate's own
+transcript — its sidechain records are its turns), PreCompact (the unfinished turn *before* the context is
+lost — the cut is forced), SessionStart (what a crash or /clear left behind, plus a sweep of the project's
+quiet sibling logs that were tailed before and have grown since). An agent without hooks:
+`vrs2-tail.py --watch "<glob>"` polls its log directory; its open turn is taken only when the file has been
+quiet for `QUIET_S` (8 s), so a turn is never cut mid-write. Formats: `claude-code`, `messages-jsonl`
+(role/content per line, also under `message` / `payload` — OpenAI/Codex style), `messages-json` (a document
+with a `messages` list — positions are message indices), `text` (role-prefixed lines); detected from the
+first bytes or named with `--format`.
+
+Budget and state: a run sends at most 40 rows (one generation) and parses at most 8 MB from its offset; a
+never-tailed log drains over several runs (`backlog` in the receipt) — `--backfill "<glob>"` loops until
+empty. State per log is its own file (`~/.claude/hooks/vrs2_tail/<sha12(path)>.json`: offset, line, turn),
+so Stop and SubagentStop cannot lose each other's update; positions only move forward and request ids are
+`transcript:<sha12(path)>:<l0>-<l1>`, so a replay after a lost update is idempotent on the daemon.
+Receipts: `~/.claude/hooks/vrs2_tail.log`.
+
+Measured (live store, 2026-09-21): this session's 63 MB transcript backfilled in 10 runs / 51 s → 297 rows
+(turns 1–297, 4–25,278 lines); parse 150 ms per 8 MB window; `hook_recall` 136 ms at 6,110 records with a
+transcript turn at rank 2 for a question about the morning's work. The first backfill exposed a defect:
+`ensure_daemon`'s client allows 5 s, a 38-row batch took 10 s, timed out and replayed idempotently
+(no duplicates, wasted time) — the tail now widens its client timeout with the batch size.
+
+Tests (`test_transcripts.py`, 4): turns enter through the daemon and a `hook_recall` for a question brings
+the turn back with its lines, span-verified and rendered as the exact `Read` call — never by reading the
+log; PreCompact cuts the open turn and Stop brings its tail with contiguous spans; the read budget leaves a
+backlog and a replay sends nothing; a Codex-style `messages-jsonl` log; the hook routing of Stop /
+SubagentStop / SessionStart with the dead-session sweep. Not built: retention or cold bundles for transcript
+rows (they go to the project's bundle like everything else; the sizing rule warns at 90 %), redaction of
+secrets a user pasted into a turn (the text is stored as said — the log already holds it), and a service
+wrapper for `--watch` (a foreground loop the user starts; system settings are the user's).
+

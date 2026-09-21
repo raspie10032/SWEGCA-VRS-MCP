@@ -28,6 +28,7 @@ Since 2026-09-18 these are six-line shims; the bodies are `src/swegca_vrs2/harne
 * `vrs2-produce.py` — generic evidence producer; `vrs2-probe.py`, `vrs2-recall-bench.py`, `vrs2-delegate-record.py` — producers
 * `vrs2-identity.py` — signed producers: `keygen` (Ed25519 pair; public key into `~/.claude/vrs2-producers.json`, private key in `~/.claude/vrs2-keys`), `list`, `audit` (live evidence rows per producer: verified / unverified / legacy / proxy)
 * `vrs2-run.py` — a command as a machine result for a hypothesis (G11): axis intervention / counterfactual / observational, `--expect`, tree digest in `metadata.run`, run ledger + `--flush`; body in `harness/results.py`
+* `vrs2-tail.py` — real-time transcript ingestion: a conversation log → one row per turn (user words, assistant text, tool calls, compaction boundaries), bound to its span of the log; `--watch "<glob>"` for agents without hooks, `--backfill "<glob>"`, `--status`; formats claude-code / messages-jsonl / messages-json / text; body in `harness/transcripts.py`; the hook shim `transcript_tail.py` runs the same body on Stop / SubagentStop / PreCompact / SessionStart
 * `vrs2-confirm.py` — the session's current evidence against a recalled proposition (`--holds/--fails`)
 * `vrs2-alias.py` — hypothesis registry (alias propositions → canonical)
 * `vrs2-delegate.py` — delegation packet (task + receipts + tail) for subagents

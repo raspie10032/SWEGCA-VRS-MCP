@@ -162,6 +162,38 @@ def verify(path, kind, origin, want, head="", section="", index=None):
     return dict(state="missing", lines=None)
 
 
+
+def verify_span(path, origin, want):
+    """State of a span-bound record (a transcript turn, 2026-09-21): only the recorded byte span is read — the
+    log is append-only and may be tens of MB, so nothing scans it. ``intact`` when the span's digest still
+    matches, ``changed`` when the file has the span but its bytes differ (rotated, rewritten), ``missing``
+    when the file is gone or shorter than the span. A ``messages`` origin (a JSON document of messages) is
+    re-read as a whole and its message range compared."""
+    origin = origin or {}
+    span = origin.get("bytes") or []
+    lines = list(origin.get("lines") or [1, 1])
+    if len(span) != 2:
+        return dict(state="missing", lines=None)
+    try:
+        if origin.get("messages"):
+            import json
+            doc = json.load(io.open(path, encoding="utf-8"))
+            messages = doc.get("messages") if isinstance(doc, dict) else doc
+            if not isinstance(messages, list) or len(messages) < span[1]:
+                return dict(state="missing", lines=None)
+            raw = "\n".join(json.dumps(m, ensure_ascii=False, sort_keys=True) for m in messages[span[0]:span[1]])
+            return dict(state="intact" if digest(raw.strip()) == want else "changed", lines=lines)
+        size = os.path.getsize(path)
+        if size < span[1]:
+            return dict(state="missing" if size <= span[0] else "changed", lines=None if size <= span[0] else lines)
+        with open(path, "rb") as handle:
+            handle.seek(span[0])
+            raw = handle.read(span[1] - span[0])
+    except OSError:
+        return dict(state="missing", lines=None)
+    return dict(state="intact" if digest(normalize(raw.decode("utf-8", "replace")).strip()) == want else "changed", lines=lines)
+
+
 _PARTS = {}
 
 

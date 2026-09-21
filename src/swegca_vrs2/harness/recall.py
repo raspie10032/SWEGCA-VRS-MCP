@@ -49,6 +49,7 @@ MAX_VERDICTS = 2
 GATED_VERDICTS = ("bash-tool-collapses-doubled-backslashes", "session-log-time-labels-drift-from-the-clock",
                   "receipt-path-line-is-rarely-opened-before-use")
 MAX_RECORDS = 1
+MAX_TRANSCRIPTS = 1   # real-time transcript rows (2026-09-21): one conversation turn beside the record slot
 SNIPPET = 700
 COMMON_SHARE = 0.15   # a cue in more than this share of records is not evidence of relevance
 RARE_SHARE = 0.05     # ask-hit words must be at least this rare to count for a verdict
@@ -166,7 +167,11 @@ def choose(packet, project, stems=None):
     # matched through those comes before one that merely mentions the words; among equals the
     # store's order (BM25) stands — preferring memory docs over log entries was measured worse.
     records.sort(key=lambda r: -r["_asked"])
-    return verdicts, records[:MAX_RECORDS]
+    # a conversation turn (kind=transcript) has its own slot: it is the experience of what was said, bound to
+    # its place in the log, and must not compete with a memory doc for the one record slot
+    turns = [r for r in records if (r.get("metadata") or {}).get("kind") == "transcript"]
+    others = [r for r in records if (r.get("metadata") or {}).get("kind") != "transcript"]
+    return verdicts, others[:MAX_RECORDS] + turns[:MAX_TRANSCRIPTS]
 
 
 OPEN_MAX_LINES = 60      # 열기 줄의 limit 상한(로그 항목·문서 절)
@@ -211,6 +216,10 @@ def open_hint(row):
     whole = chars <= SNIPPET
     if kind == "verdict":
         return "   (토막이 판정 전문이다)" if whole else f"   전문: swegca-vrs2 memory_read {row.get('episode_id')}  ({SNIPPET}/{chars}자)"
+    if kind == "transcript":
+        # real-time transcript rows (2026-09-21): the experience carries the exact place of the turn in the
+        # conversation log (span-verified without reading the log); the turn's text is in the store itself
+        return transcript_hint(row, meta, chars, whole)
     path = meta.get("path")
     if not path:
         return ""
@@ -228,6 +237,23 @@ def open_hint(row):
     moved = "  (원본 자리 이동)" if state["state"] == "moved" else ""
     return (f"   (토막이 전문이다 · 앞뒤 맥락: {call}){moved}" if whole
             else f"   열기: {call}  (토막 {SNIPPET}/{chars}자 — 쓰기 전에 연다){moved}")
+
+
+def transcript_hint(row, meta, chars, whole):
+    path = meta.get("path") or ""
+    origin = meta.get("origin") or {}
+    lines = list(origin.get("lines") or meta.get("lines") or [])
+    if not path or len(lines) != 2:
+        return f"   전문: swegca-vrs2 memory_read {row.get('episode_id')}  ({SNIPPET}/{chars}자)" if not whole else "   (토막이 전문이다)"
+    state = origin_mod.verify_span(path, origin, origin.get("sha256") or row.get("text_sha256"))
+    offset, limit = int(lines[0]), max(1, min(OPEN_MAX_LINES, int(lines[1]) - int(lines[0]) + 1))
+    row["_open"] = dict(path=path.replace(chr(92), "/"), offset=offset, limit=limit)
+    call = f'Read file_path="{path}" offset={offset} limit={limit}'
+    full = "" if whole else f" · 전문: swegca-vrs2 memory_read {row.get('episode_id')} ({SNIPPET}/{chars}자)"
+    if state["state"] == "missing":
+        return f"   ※ 원본 로그 없음: {path}#{lines[0]}-{lines[1]} — 이 기록은 색인 때 판본이다(revision {str(row.get('revision'))[:12]}).{full}"
+    mark = " · ※ 원본 자리 바뀜(로그 회전?)" if state["state"] == "changed" else ""
+    return f"   원문 위치: {call}  (대화 턴 {meta.get('turn')} 의 로그 {lines[0]}-{lines[1]}행{mark}){full}"
 
 
 def origin_state(path, kind, meta, text, chars, text_sha256=None):
@@ -322,7 +348,14 @@ def render(packet, verdicts, records):
         meta = row.get("metadata") or {}
         where = meta.get("path") or row["source"]
         usage = (row.get("vrs") or {}).get("usage")
-        lines.append(f"{number}. 기록 — {where}" + (f" ({meta.get('date')})" if meta.get("date") else "")
+        if meta.get("kind") == "transcript":
+            # real-time transcript rows (2026-09-21): a turn of a conversation, by agent/session/turn
+            part = {"partial": " [압축 전 미완]", "tail": " [이어짐]"}.get(meta.get("part"), "")
+            where = f"{meta.get('agent', '?')} 세션 {str(meta.get('session', ''))[:8]} 턴 {meta.get('turn')}{part}"
+            label = "대화"
+        else:
+            label = "기록"
+        lines.append(f"{number}. {label} — {where}" + (f" ({meta.get('date')})" if meta.get("date") else "")
                      + (f" [뭉치 {row['bundle']}·{row.get('bundle_state', 'warm')}]" if row.get("bundle") not in (None, "main") else "")
                      + (" [VRS 승격]" if (row.get("vrs") or {}).get("promoted") else "")
                      + (" [서명 확인]" if meta.get("verified") is True else f" [⚠ 서명 불일치 — {meta.get('producer')} 사칭 가능]" if meta.get("verified") is False else "")

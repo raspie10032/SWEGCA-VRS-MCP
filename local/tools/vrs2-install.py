@@ -61,6 +61,10 @@ SHIMS = {  # hook file -> (module, call, event, matcher, extra args)
     "usage_ledger.py": ("usage", "main(sys.argv[1:])", "Stop", None, ""),
     "repeat_ledger.py": ("repeats", "main(sys.argv[1:])", "Stop", None, " --flush"),
     "hook_change_check.py": ("hook_check", "main()", "Stop", None, ""),
+    # real-time transcript ingestion (2026-09-21): every turn of the conversation log into the store — at Stop
+    # (turn complete), SubagentStop, PreCompact (the unfinished turn before the context is lost) and
+    # SessionStart (what a crash or /clear left behind); one shim, several events
+    "transcript_tail.py": ("transcripts", "main()", ("Stop", "SubagentStop", "PreCompact", "SessionStart"), None, ""),
 }
 PROJECT_DIR_SHIM = '''# -*- coding: utf-8 -*-
 """껍데기: 몸통은 swegca_vrs2.harness.project_dir."""
@@ -145,16 +149,17 @@ def main():
     py = cfg["python"].replace("\\", "/")
     for fname, (mod, call, event, matcher, extra) in SHIMS.items():
         cmd = f'"{py}" "{os.path.join(hooks_dir, fname).replace(chr(92), "/")}"{extra}'
-        groups = hooks.setdefault(event, [])
-        # drop any group entry that already runs this shim, then add ours
-        for g in groups:
-            g["hooks"] = [h for h in g.get("hooks", []) if fname not in h.get("command", "")]
-        groups[:] = [g for g in groups if g.get("hooks")]
-        entry = {"type": "command", "command": cmd, "timeout": 30}
-        if matcher:
-            groups.append({"matcher": matcher, "hooks": [entry]})
-        else:
-            groups.append({"hooks": [entry]})
+        for one in (event if isinstance(event, (list, tuple)) else (event,)):
+            groups = hooks.setdefault(one, [])
+            # drop any group entry that already runs this shim, then add ours
+            for g in groups:
+                g["hooks"] = [h for h in g.get("hooks", []) if fname not in h.get("command", "")]
+            groups[:] = [g for g in groups if g.get("hooks")]
+            entry = {"type": "command", "command": cmd, "timeout": 30}
+            if matcher:
+                groups.append({"matcher": matcher, "hooks": [entry]})
+            else:
+                groups.append({"hooks": [entry]})
     io.open(settings_path, "w", encoding="utf-8", newline="\n").write(json.dumps(settings, ensure_ascii=False, indent=2) + "\n")
     print(f"installed: {len(SHIMS)} shims in {hooks_dir}, settings.json hooks merged, config {os.path.join(CLAUDE, 'vrs2.json')}")
 
