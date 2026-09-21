@@ -694,7 +694,10 @@ def main():
             "vrs22-auto-compaction-stress-v12-final-observation-accounting"
             or data.get("runtime_product_commit") != RUNTIME_PRODUCT_COMMIT
             or data.get("runtime_repository_commit") != RUNTIME_REPOSITORY_COMMIT
-            or data.get("runtime_wheel_sha256") != RUNTIME_WHEEL_SHA256):
+            or data.get("runtime_wheel_sha256") != RUNTIME_WHEEL_SHA256
+            or data.get("retained_main_replay_selftest") != {
+                "status": "PASS", "original_replayed": True, "four_stage": True,
+                "internal_llm_calls": 0, "grants_authority": False}):
         parser.error("run is not from the frozen native VRS 2.2 runtime")
     grouped = defaultdict(list)
     for row in data["rows"]:

@@ -1,10 +1,13 @@
 # VRS 2.2 native live-experience evaluation: v019 readiness
 
-This is a **preflight and self-test receipt**, not a scored v019 model run. Do
-not start the three VRS cells until the current Codex task has ended and its
-SessionEnd handoff has preserved and moved the resident experience to native
-VRS. Verify the resident package, hooks, live ingestion, session-first/main
-fallback, and absence of database artifacts in the new task before starting.
+This is a **software preflight and self-test receipt**, not a scored v019 model
+run. Do not start the three VRS cells until the current Codex task has ended
+and its SessionEnd handoff has preserved and moved the resident experience to
+native VRS. The runner now rejects a full run until it finds the actual
+SessionEnd handoff receipt, native resident main, installed MCP and hooks, no
+old database/upgrade marker, and a four-stage Replay of one retained original
+main experience. Verify live ingestion and session-first/main fallback in the
+new task before accepting any score.
 Merging the main experience during the active task would violate the frozen
 session lifecycle.
 
@@ -13,7 +16,10 @@ session lifecycle.
 - `tools/run_vrs22_compaction_stress_v019.py` exercises **only** 100k+VRS
   cells for Luna, Terra, and Sol, with medium reasoning, 12 planned real Codex
   compacted events and at least 10 required in each cell. The six frozen v005
-  plain cells remain the controls (100k and 250k).
+  plain cells remain the controls (100k and 250k). Each model cell begins with
+  an empty isolated main and accumulates the task in its live session VRS.
+  This measures live session experience; retained pre-existing resident main
+  experience is validated separately by the handoff gate.
 - Clean coding fixture tree SHA-256:
   `6b35f73d7241620a43e30811b86811a8a1ec5a92e7ffa4e5f295054817cb7b0c`.
   The fixture, its visible regression, its hidden tests, its clean Python
@@ -39,15 +45,21 @@ session lifecycle.
 
 ## Verified now
 
-`python tools/run_vrs22_compaction_stress_v019.py --output-dir
-/var/tmp/vrs22-v019-reserved --preflight-only` passed. Its self-test receipt is
+The static inputs for `python tools/run_vrs22_compaction_stress_v019.py
+--output-dir /var/tmp/vrs22-v019-reserved --preflight-only` passed, while its
+current status is `PENDING_LIVE_HANDOFF` because the actual task has not ended.
+The same gate rejects a full run before creating an output directory or making
+model calls. Its software self-test receipt is
 `evals/vrs22_context/results/v019_selftest_receipt.json`, SHA-256
-`9f30aff1ed120325df077fceb775a0a31ab105518a657dd04e5eac8cb4de6d34`.
+`96ff3d6922357188c8338add8061718d397c3dd833a582c4186e8271bef9647d`.
 It covers two simultaneous sessions (main 0 before SessionEnd; all six session
 records linked after), installed hook injection/cursor/SessionEnd, a generation
 lease across a 6.5-second idle boundary with 81 records and four-stage
-session-first recall, process/module/package checks, and mount isolation. It
-found zero database artifacts. Grader self-checks: 8 passed.
+session-first recall, exact-address four-stage Replay of an original experience
+after main attachment, process/module/package checks, and mount isolation. It
+found zero database artifacts. Grader self-checks: 8 passed. The original
+experience Replay in this receipt belongs to the isolated self-test; the
+resident main must separately pass the same probe after handoff.
 
 Full native package suite: 125 passed. Under exact 4 GiB and 625 MB/s per NVMe
 read/write limits, 50,000 four-stage Replay calls took at most 0.157172 ms

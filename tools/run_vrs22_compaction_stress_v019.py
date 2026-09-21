@@ -16,6 +16,7 @@ import re
 import shutil
 import subprocess
 import time
+import tomllib
 import zipfile
 
 
@@ -31,6 +32,7 @@ RUNTIME_HOOK = RUNTIME_PYTHON.with_name("swegca-vrs2-hook")
 RUNTIME_WHEEL = Path("/var/tmp/swegca-vrs22-65ec52d-dist/swegca_vrs_mcp-2.2.0-py3-none-any.whl")
 RUNTIME_WHEEL_SHA256 = "e0144305a8fa863f52679b7a4aa1e01901fa23942314e364d36c40c302a656c9"
 REAL_CODEX_HOME = Path.home() / ".codex"
+LIVE_STATE = Path("/home/raspie/.local/share/swegca-vrs2-codex")
 # The cache carries an account-bound identity; keep its exact frozen bytes private.
 FROZEN_MODELS_CACHE = Path("/home/raspie/.local/share/vrs22-eval-runtime-v019/private/models_cache_20260922.json")
 FROZEN_MODELS_CACHE_SHA256 = "2ccbfbf460b6411b9c273ffae9db3d750313b9ef43725d6ce732324adfc9f5f1"
@@ -173,6 +175,113 @@ def runtime_json(code: str, *arguments: Path | str, timeout=300):
                             capture_output=True, text=True, timeout=timeout,
                             check=True, env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"))
     return json.loads(result.stdout)
+
+
+def resident_main_replay_probe(state: Path):
+    """Read one retained original experience through the resident main."""
+    return runtime_json("""import json,sys
+from swegca_vrs2.loopback import LoopbackClient,port_of
+from swegca_vrs2.server import LoopbackMCP
+port=port_of(sys.argv[1])
+if port is None: raise RuntimeError('resident_main_not_running')
+client=LoopbackClient(port,30)
+server=LoopbackMCP(client,writes_enabled=False)
+request='v019-resident-main-replay-probe'
+packet=None
+try:
+ rows=client.request('export_experiences',after_sequence=0,max_records=1,max_bytes=8192)['rows']
+ if len(rows)!=1: raise RuntimeError('resident_main_original_experience_missing')
+ address=rows[0]['episode_id']
+ status=server.call_tool('memory_status',{})
+ packet=server.call_tool('memory_context',dict(request_id=request,query=address,
+   exact_episode_id=address,expected_pair_snapshot_id=status['pair_snapshot_id']))
+ for _ in range(64):
+  if packet.get('status')=='memory_context_ready':break
+  nxt=packet.get('next_call') or {}
+  if nxt.get('name')!='memory_continue': raise RuntimeError('main_replay_continuation_invalid')
+  packet=server.call_tool('memory_continue',nxt['arguments'])
+ receipt=packet.get('activation_receipt') or {}
+ match=(packet.get('status')=='memory_context_ready'
+   and [row.get('episode_id') for row in packet.get('memories',[])]==[address]
+   and receipt.get('invariant')=='validated_deja_vu_recall_replay_re_evidence'
+   and receipt.get('stage_order',{}).get('data')==['deja_vu','recall','replay','re_evidence']
+   and packet.get('internal_llm_calls')==0 and packet.get('grants_authority') is False)
+ if not match: raise RuntimeError('resident_main_original_replay_failed')
+ print(json.dumps({'original_replayed':True,'four_stage':True,
+   'internal_llm_calls':0,'grants_authority':False}))
+finally:
+ try:
+  if packet and packet.get('view_id'):
+   server.call_tool('memory_release',dict(request_id=request,view_id=packet['view_id']))
+ finally:
+  try:server.close()
+  finally:client.close()
+""", state, timeout=120)
+
+
+def native_main_probe_selftest(state: Path):
+    runtime_json("""import json,sys
+from swegca_vrs2.loopback import ensure_daemon
+client=ensure_daemon(sys.argv[1],allow_ingest=True,wait_seconds=30)
+client.close()
+print(json.dumps({'started':True}))
+""", state)
+    try:
+        result = resident_main_replay_probe(state)
+        if result != {"original_replayed": True, "four_stage": True,
+                      "internal_llm_calls": 0, "grants_authority": False}:
+            raise RuntimeError("native main replay self-test failed")
+        return {"status": "PASS", **result}
+    finally:
+        runtime_json("""import json,sys
+from swegca_vrs2.linked_shards import shutdown_and_release
+shutdown_and_release(sys.argv[1],timeout=30)
+print(json.dumps({'stopped':True}))
+""", state)
+
+
+def live_handoff_audit():
+    """Require the actual resident native deployment before spending model calls."""
+    marker = LIVE_STATE / "session-capture/runtime-upgrade.vrs22-handoff.json"
+    receipts = sorted((LIVE_STATE / "session-capture/runtime-handoffs").glob("*.json"))
+    receipt = json.loads(receipts[-1].read_text(encoding="utf-8")) if receipts else {}
+    config = tomllib.loads((REAL_CODEX_HOME / "config.toml").read_text(encoding="utf-8"))
+    server = config.get("mcp_servers", {}).get("swegca-vrs", {})
+    hook_path = REAL_CODEX_HOME / "hooks.json"
+    current_hooks = json.loads(hook_path.read_text(encoding="utf-8"))
+    expected_hooks = runtime_json("""import json,sys
+from swegca_vrs2.codex_hooks import config
+print(json.dumps(config(sys.argv[1],sys.argv[2],server_name='swegca_vrs')))
+""", RUNTIME_PYTHON, LIVE_STATE)
+    native = runtime_json("""import json,sys
+from swegca_vrs2.native_journal import is_native_store
+print(json.dumps({'native_main':is_native_store(sys.argv[1])}))
+""", LIVE_STATE)["native_main"]
+    checks = {
+        "session_end_handoff_receipt": receipt.get("status") == "PASS",
+        "native_main": native,
+        "mcp_command": server.get("command") == str(RUNTIME_COMMAND),
+        "mcp_args": server.get("args") == ["--state-dir", str(LIVE_STATE)],
+        "mcp_enabled": server.get("enabled") is True,
+        "installed_hooks": current_hooks == expected_hooks,
+        "old_database_absent": not (LIVE_STATE / "memory.sqlite3").exists(),
+        "upgrade_marker_removed": not marker.exists(),
+    }
+    probe = None
+    if all(checks.values()):
+        try:
+            probe = resident_main_replay_probe(LIVE_STATE)
+            checks["retained_original_replay"] = probe == {
+                "original_replayed": True, "four_stage": True,
+                "internal_llm_calls": 0, "grants_authority": False}
+        except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
+            checks["retained_original_replay"] = False
+            probe = {"error_type": type(error).__name__}
+    else:
+        checks["retained_original_replay"] = False
+    return {"ready": all(checks.values()), "checks": checks,
+            "receipt_name": receipts[-1].name if receipts else None,
+            "main_probe": probe}
 
 
 def scan_experience(state: Path, codex_home: Path):
@@ -1222,8 +1331,10 @@ def main():
                 "retired_lock_available": False, "database_module_loaded": False}:
         parser.error(f"frozen input or installed runtime changed: hashes={hash_failures} "
                      f"runtime={runtime_audit}")
+    live_audit = live_handoff_audit()
     if args.preflight_only:
-        print(json.dumps({"status": "PASS", "coding_fixture_tree_sha256": SOURCE_COMMIT,
+        print(json.dumps({"status": "READY" if live_audit["ready"] else
+            "PENDING_LIVE_HANDOFF", "coding_fixture_tree_sha256": SOURCE_COMMIT,
             "runtime_product_commit": RUNTIME_PRODUCT_COMMIT,
             "runtime_repository_commit": RUNTIME_REPOSITORY_COMMIT,
             "runtime_wheel_sha256": RUNTIME_WHEEL_SHA256,
@@ -1236,6 +1347,7 @@ def main():
             "auth_available": prerequisites["auth"].is_file(),
             "runtime_install_audit": runtime_audit,
             "test_environment_audit": test_environment_audit,
+            "live_handoff_audit": live_audit,
             "commands": commands}, indent=2))
         return
     if args.selftest_only:
@@ -1248,6 +1360,8 @@ def main():
                        env=dict(os.environ, TMPDIR=str(args.output_dir)))
         receipt = {"status": "PASS",
                    "live_supervisor": supervisor_selftest(args.output_dir / "live"),
+                   "retained_main_replay": native_main_probe_selftest(
+                       args.output_dir / "live/supervisor-selftest-vrs-state"),
                    "installed_hook": installed_hook_selftest(args.output_dir / "installed-hook"),
                    "installed_generation_lease": installed_generation_lease_selftest(
                        args.output_dir / "installed-generation-lease"),
@@ -1258,6 +1372,8 @@ def main():
             json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
         print(json.dumps(receipt, indent=2))
         return
+    if not live_audit["ready"]:
+        parser.error(f"live native VRS handoff is incomplete: {live_audit}")
     if args.output_dir.exists():
         parser.error("output directory already exists")
     args.output_dir.mkdir(parents=True)
@@ -1268,6 +1384,10 @@ def main():
     selftest = supervisor_selftest(args.output_dir / "live-supervisor-selftest")
     (args.output_dir / "live-supervisor-selftest.json").write_text(
         json.dumps(selftest, indent=2) + "\n", encoding="utf-8")
+    main_replay = native_main_probe_selftest(
+        args.output_dir / "live-supervisor-selftest/supervisor-selftest-vrs-state")
+    (args.output_dir / "live-main-replay-selftest.json").write_text(
+        json.dumps(main_replay, indent=2) + "\n", encoding="utf-8")
     installed_hook = installed_hook_selftest(args.output_dir / "installed-hook-selftest")
     (args.output_dir / "installed-hook-selftest.json").write_text(
         json.dumps(installed_hook, indent=2) + "\n", encoding="utf-8")
@@ -1292,6 +1412,7 @@ def main():
             "runtime_product_commit": RUNTIME_PRODUCT_COMMIT,
             "runtime_repository_commit": RUNTIME_REPOSITORY_COMMIT,
             "runtime_wheel_sha256": RUNTIME_WHEEL_SHA256,
+            "retained_main_replay_selftest": main_replay,
             "max_compactions": args.max_compactions,
             "cell_order": cells,
             "rows": all_rows}, indent=2) + "\n", encoding="utf-8")
