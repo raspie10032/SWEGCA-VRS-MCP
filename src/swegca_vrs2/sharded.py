@@ -36,6 +36,7 @@ from .store import (
     PROMOTION_GATE, UNBRIDGED_FACTOR, digest, graph_cue_ids, keys, text_field,
 )
 from . import vrs_refine
+from .projected_recall import projected_recall
 
 
 class CompositeIndex:
@@ -108,13 +109,15 @@ class ShardedMain:
         for shard in self.resident.ids():
             owner, state = self.resident.peek_ready(shard)
             if owner is None:
-                missing.append(dict(id=shard, state=state))
-                shards.append(dict(id=shard, state=state,
+                projected = self.resident.read_ready(shard)
+                if not projected:
+                    missing.append(dict(id=shard, state=state))
+                shards.append(dict(id=shard, state=state, read_projection_ready=projected,
                     pair_snapshot_id=self.resident.pair_ids.get(shard),
                     records=self.resident.record_counts.get(shard), stable_version_id=None))
             else:
                 owners.append((shard, owner))
-                shards.append(dict(id=shard, state=state,
+                shards.append(dict(id=shard, state=state, read_projection_ready=True,
                     pair_snapshot_id=owner.pair.snapshot_id,
                     records=owner.memory.episode_count,
                     stable_version_id=(owner.graph.stable.version_id
@@ -133,7 +136,7 @@ class ShardedMain:
                     outcome_counts=counts,
                     outcome_counts_complete=not missing,
                     lookup_requires_io=True,
-                    lookup_io='disk Replay capsules and cold complete VRS shards',
+                    lookup_io='disk Replay capsules and current VRS read projections',
                     shards=[dict(id='main', state='hot', pair_snapshot_id=self.primary.pair.snapshot_id,
                                  records=self.primary.memory.episode_count,
                                  stable_version_id=(self.primary.graph.stable.version_id
@@ -238,6 +241,8 @@ class ShardedMain:
             return self._finish_exact(query, pair_snapshot, signal, recalled, replayed,
                                       exact, through_replay_ns,
                                       exclude_kinds, region_scope)
+        if region_scope in ('all', 'auto', 'regions'):
+            return projected_recall(self.resident, pair_snapshot, query, exclude_kinds, region_scope)
         query_cues = keys(query)
         routed = self.resident.shards_for_cues(query_cues)
 

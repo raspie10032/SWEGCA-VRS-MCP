@@ -51,20 +51,17 @@ def test_resident_recalls_every_ready_shard_through_all_four_stages(tmp_path):
     primary = Main(tmp_path / "main", allow_ingest=True)
     resident = Resident(primary, {"t2m": tmp_path / "t2m", "sq": tmp_path / "sq"}, hot_limit=1)
     try:
-        primary.ingest_many([row(i, f"주 뭉치의 정산 배치 기록 {i}", "main") for i in range(3)])
+        resident.ingest_many([row(i, f"주 뭉치의 정산 배치 기록 {i}", "main")
+                              for i in range(3)], "main")
         t2m = resident.main_for("t2m")
-        t2m.ingest_many([row(i, f"티투엠 안드로이드 배포 기록 정산 {i}", "t2m") for i in range(4)])
+        resident.ingest_many([row(i, f"티투엠 안드로이드 배포 기록 정산 {i}", "t2m")
+                              for i in range(4)], "t2m")
         t2m.consolidate(cycles=4)
+        resident.refresh_pair("t2m", t2m)
         assert list(resident.hot) == ["t2m"]
-        resident.main_for("sq").ingest(row(0, "에스큐 월배치 정산 기록", "sq"))
+        resident.ingest(row(0, "에스큐 월배치 정산 기록", "sq"), "sq")
         assert list(resident.hot) == ["sq"]
         resident.settle()
-
-        packet = hook_recall(primary, dict(query="정산 기록", limit=10, snippet=80), resident)
-        assert packet["bundles"][0] == dict(bundle="t2m", state="preparing", miss=True)
-        prepared = resident.prepare_all()
-        assert [p["bundle"] for p in prepared] == ["t2m"]
-        assert prepared[0]["complete_vrs"] is True
 
         packet = hook_recall(primary, dict(query="정산 기록", limit=10, snippet=80), resident)
         assert not packet["misses"]
@@ -73,18 +70,18 @@ def test_resident_recalls_every_ready_shard_through_all_four_stages(tmp_path):
             by_bundle.setdefault(recalled["bundle"], []).append(recalled)
         assert set(by_bundle) == {"main", "t2m", "sq"}
         assert len(by_bundle["main"]) == 3 and len(by_bundle["t2m"]) == 4 and len(by_bundle["sq"]) == 1
-        assert {r["bundle_state"] for r in by_bundle["t2m"]} == {"warm"}
+        assert {r["bundle_state"] for r in by_bundle["t2m"]} == {"cold"}
         assert all(r["vrs"] is not None and r["verdict"] in {"available", "retained"}
                    for r in by_bundle["t2m"])
         t2m_status = next(b for b in packet["bundles"] if b["bundle"] == "t2m")
-        assert t2m_status["complete_vrs"] is True
+        assert t2m_status["complete_vrs"] is True and t2m_status["read_projection_ready"] is True
         assert t2m_status["stage_order"] == ["deja_vu", "recall", "replay", "re_evidence"]
 
         t2m_id = by_bundle["t2m"][0]["episode_id"]
         assert resident.lookup(t2m_id) == "t2m"
         assert resident.lookup(by_bundle["main"][0]["episode_id"]) == "main"
         states = {b["id"]: b["state"] for b in resident.status()}
-        assert states == {"main": "hot", "t2m": "warm", "sq": "hot"}
+        assert states == {"main": "hot", "t2m": "cold", "sq": "hot"}
     finally:
         resident.close()
         primary.close()
@@ -200,13 +197,15 @@ def test_exact_backfill_progress_persists_and_covers_one_cold_shard_at_a_time(tm
         resident.settle()
         # Simulate a pre-repair directory: keep experience stores and rebuild
         # the exact directory/progress from their complete VRS generations.
+    finally:
         resident.close()
         primary.close()
-        import shutil
-        shutil.rmtree(tmp_path / "main" / "exact-replay")
 
-        primary = Main(tmp_path / "main", allow_ingest=True)
-        resident = Resident(primary, {}, hot_limit=0, bundle_limit=2)
+    import shutil
+    shutil.rmtree(tmp_path / "main" / "exact-replay")
+    primary = Main(tmp_path / "main", allow_ingest=True)
+    resident = Resident(primary, {}, hot_limit=0, bundle_limit=2)
+    try:
         passes = []
         for _ in range(8):
             result = resident.backfill_exact(2)
@@ -220,6 +219,33 @@ def test_exact_backfill_progress_persists_and_covers_one_cold_shard_at_a_time(tm
                            .read_text(encoding="utf-8"))
         assert saved["schema"] == "swegca-vrs2-read-index-backfill-v2"
         assert set(saved["shards"]) == {"main", "shard-000001", "shard-000002"}
+    finally:
+        resident.close()
+        primary.close()
+
+
+def test_projection_backfill_rebuilds_one_existing_cold_vrs_shard(tmp_path):
+    primary = Main(tmp_path / "main", allow_ingest=True)
+    resident = Resident(primary, {"cold": tmp_path / "cold"}, hot_limit=1)
+    try:
+        identifier = resident.ingest(row(1, "projection rebuild experience", "projection-source"),
+                                     "cold")["episode_id"]
+        owner = resident.hot["cold"]
+        owner.consolidate(cycles=4)
+        resident.refresh_pair("cold", owner)
+        resident.evict("cold"); resident.settle()
+        projection_root = tmp_path / "cold" / "read-projection"
+        import shutil
+        shutil.rmtree(projection_root)
+        resident.projection_views.clear()
+
+        result = resident.backfill_projections(1)
+        assert result["scanned"] == 1 and result["complete"] is True
+        assert result["projections"][0]["status"] == "projected"
+        exact = resident.exact_replay(identifier)
+        current = resident.current_vrs(exact)
+        assert current["pair_snapshot_id"] == resident.pair_ids["cold"]
+        assert not resident.hot and not resident.warm
     finally:
         resident.close()
         primary.close()

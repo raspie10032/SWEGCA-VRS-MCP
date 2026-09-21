@@ -295,9 +295,9 @@ def origins(main, arguments):
 
 
 def hook_recall(main, arguments, resident=None):
-    """Short packet for hooks: top candidates with provenance and a snippet. With a resident (G7, 2026-09-19)
-    the primary's rows come first (VRS, regions, re-evidence), then every other bundle's rows in its own
-    index order, each tagged ``bundle``/``bundle_state`` — the hook says which bundle a memory came from."""
+    """Short hook packet; a resident uses one globally ranked complete-main receipt."""
+    if resident is not None:
+        return _hook_recall_sharded(main, resident, arguments)
     query = str(arguments.get('query') or '')
     limit = max(1, min(int(arguments.get('limit', 5)), 50))
     snippet = max(80, min(int(arguments.get('snippet', 400)), 4000))
@@ -429,6 +429,146 @@ def hook_recall(main, arguments, resident=None):
                                                                              'path_counts', 'crossings_keyed', 'shared')},   # G5: paths by kind, crossings through a shared experience
                 rejected_paths=root['region_navigation']['rejected'][:20],
                 grants_authority=False)
+
+
+def _hook_recall_sharded(main, resident, arguments):
+    """One globally ranked hook packet from the same complete sharded receipt as MCP."""
+    from .sharded import ShardedMain
+    query = str(arguments.get('query') or '')
+    limit = max(1, min(int(arguments.get('limit', 5)), 50))
+    snippet = max(80, min(int(arguments.get('snippet', 400)), 4000))
+    exclude = tuple(str(kind) for kind in (arguments.get('exclude_kinds') or ()) if kind)[:8]
+    scope = arguments.get('region_scope') if arguments.get('region_scope') in ('all', 'regions', 'auto') else 'all'
+    began = time.perf_counter_ns()
+    root = ShardedMain(main, resident).recall(query, None, exclude_kinds=exclude,
+                                               region_scope=scope)
+    judged = time.perf_counter_ns()
+    activation = root['receipt']['activation']
+    judgments = {row.episode_id: row for row in activation.re_evidence.judgments}
+    rows, superseded_skipped = [], 0
+    for candidate in activation.recall.candidates:
+        if len(rows) >= limit:
+            break
+        exact = resident.exact_replay(candidate.episode_id)
+        if exact is None:
+            raise ValueError('hook_exact_replay_missing:' + candidate.episode_id)
+        current = resident.current_vrs(exact)
+        if current is None:
+            raise ValueError('read_projection_not_ready:' + exact['shard'])
+        if current['superseded_by'] is not None:
+            superseded_skipped += 1
+            continue
+        episode = exact['replay']
+        observation = episode.steps[0].observation
+        judgment = judgments.get(candidate.episode_id)
+        owner, state = (main, 'hot') if exact['shard'] == 'main' else resident.peek_ready(exact['shard'])
+        if exact['shard'] != 'main' and owner is None:
+            state = 'cold'
+        rows.append(dict(episode_id=candidate.episode_id,
+            source=episode.source_addresses[0], revision=exact['revision'],
+            outcome=episode.steps[0].outcome, matched=len(candidate.matched_cues),
+            matched_cues=list(candidate.matched_cues)[:64], cue_overlap=candidate.cue_overlap,
+            proposition=observation.get('proposition_id'),
+            polarity=observation.get('evidence_polarity'),
+            verdict=judgment.verdict if judgment else None,
+            superseded_by=current['superseded_by'],
+            metadata=_plain(observation.get('metadata') or {}),
+            text=observation.get('text', '')[:snippet],
+            text_chars=len(observation.get('text', '')),
+            text_sha256=None if (observation.get('metadata') or {}).get('origin') else
+                _record_digest(observation.get('text', '')),
+            asks=_asks_of(observation.get('text', '')),
+            vrs=dict(strength=round(current['strength'], 4),
+                promoted=current['strength'] >= 1.0,
+                weight=None if current['weight'] is None else round(current['weight'], 4),
+                state=None if current['state'] is None else round(current['state'], 4),
+                stability=None if current['stability'] is None else round(current['stability'], 4),
+                pending=current['pending'], usage=current['usage']),
+            region=root['region_navigation']['paths'].get(candidate.episode_id),
+            bundle=exact['shard'], bundle_state=state))
+
+    decisions, repeats = {}, {}
+    for row in rows:
+        proposition = row.get('proposition')
+        if not proposition:
+            continue
+        if proposition not in repeats:
+            sessions, count = set(), 0
+            for shard, identifier in resident.exact.proposition_experiences(proposition):
+                exact = resident.exact_replay(identifier)
+                current = None if exact is None else resident.current_vrs(exact)
+                if exact is None or current is None or current['superseded_by'] is not None:
+                    continue
+                episode = exact['replay']
+                metadata = episode.steps[0].observation.get('metadata') or {}
+                if metadata.get('producer') == 'gate' or episode.source_addresses[0].startswith('gate:'):
+                    count += 1
+                    sessions.add(str(metadata.get('project') or episode.source_addresses[0]))
+            repeats[proposition] = dict(observations=count, sessions=len(sessions))
+        row['repeats'] = repeats[proposition]
+        key = (row['bundle'], proposition)
+        if key not in decisions:
+            decisions[key] = resident.decision_for_proposition(*key)
+        if decisions[key] is not None:
+            row['decision'] = dict(_plain(decisions[key]), scope='owning_shard_vrs',
+                                   shard=row['bundle'])
+
+    conflicts = []
+    for proposition in activation.re_evidence.conflicting_propositions:
+        sides = dict(support=[], refute=[])
+        for candidate in activation.recall.candidates:
+            exact = resident.exact_replay(candidate.episode_id)
+            current = None if exact is None else resident.current_vrs(exact)
+            if exact is None or current is None or current['superseded_by'] is not None:
+                continue
+            episode = exact['replay']
+            observation = episode.steps[0].observation
+            if observation.get('proposition_id') != proposition:
+                continue
+            metadata = observation.get('metadata') or {}
+            polarity = observation.get('evidence_polarity')
+            if polarity in sides:
+                sides[polarity].append(dict(source=episode.source_addresses[0][:120],
+                    producer=metadata.get('producer'),
+                    date=metadata.get('date') or (str(exact['revision'])[:10]
+                        if str(exact['revision'])[:4].isdigit() else ''),
+                    outcome=episode.steps[0].outcome, episode_id=candidate.episode_id,
+                    shard=exact['shard']))
+        conflicts.append(dict(proposition=proposition, support=sides['support'][:4],
+                              refute=sides['refute'][:4], decision=None))
+
+    bundle_rows = []
+    for shard in resident.ids():
+        owner, state = resident.peek_ready(shard)
+        if owner is None:
+            state = 'cold' if resident.read_ready(shard) else state
+        bundle_rows.append(dict(bundle=shard, state=state,
+            read_projection_ready=resident.read_ready(shard), complete_vrs=resident.read_ready(shard),
+            stage_order=['deja_vu', 'recall', 'replay', 're_evidence']))
+    controls = activation.re_evidence
+    roots = root['region_navigation']['shard_roots']
+    return dict(status='ok', query=query, pair_snapshot_id=root['pair_snapshot_id'],
+        conflicts=conflicts, candidate_count=len(activation.recall.candidates),
+        returned=len(rows), memories=rows, superseded_skipped=superseded_skipped,
+        bundles=bundle_rows, misses=[],
+        timing=dict(judgment_ms=(judged - began) // 1_000_000,
+                    rows_ms=(time.perf_counter_ns() - judged) // 1_000_000,
+                    bundles_ms=0), blob_hits=0, blob_decodes=0,
+        should_abstain=controls.should_abstain,
+        unresolved_conflict=controls.unresolved_conflict,
+        conflicting_propositions=list(controls.conflicting_propositions),
+        insufficient_evidence=controls.insufficient_evidence,
+        selection={key: root['memory_selection'][key]
+                   for key in ('function_word_cues', 'candidate_order', 'closure_rule')},
+        fanout={cue: count for cue, count in root['memory_selection']['candidate_counts'].items()
+                if count}, record_count=root['record_count'],
+        vrs_stable=dict(shard_versions=root['vrs_selection'].get('shard_versions') or {}),
+        region_navigation=dict(shard_roots=roots,
+            cross_shard_portals=root['region_navigation']['cross_shard_portals']),
+        rejected_paths=[dict(episode_id=identifier, **path)
+                        for identifier, path in root['region_navigation']['paths'].items()
+                        if path.get('path') == 'unbridged'][:20],
+        grants_authority=False)
 
 
 class Daemon:
@@ -566,6 +706,9 @@ def _preparer(daemon):
         exact = daemon.bundles.backfill_exact(512)
         daemon.prepared.append(dict(kind='exact_replay_backfill', **exact,
                                     ms=(time.perf_counter_ns() - started) // 1_000_000, when=time.time()))
+        projections = daemon.bundles.backfill_projections(1)
+        daemon.prepared.append(dict(kind='read_projection_backfill', **projections,
+                                    ms=(time.perf_counter_ns() - started) // 1_000_000, when=time.time()))
     except Exception as error:
         daemon.prepared.append(dict(kind='prefetch_light', error=type(error).__name__, when=time.time()))
     last_pass = 0.0
@@ -579,6 +722,11 @@ def _preparer(daemon):
             exact = daemon.bundles.backfill_exact(256)
             if exact['scanned']:
                 daemon.prepared.append(dict(kind='exact_replay_backfill', **exact, when=time.time()))
+                del daemon.prepared[:-64]
+            projections = daemon.bundles.backfill_projections(1)
+            if projections['scanned']:
+                daemon.prepared.append(dict(kind='read_projection_backfill', **projections,
+                                            when=time.time()))
                 del daemon.prepared[:-64]
         time.sleep(0.25)
 

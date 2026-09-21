@@ -31,8 +31,14 @@ def test_global_four_stages_and_cross_shard_reevidence(tmp_path):
         assert status["memory_ready"] and status["complete_vrs_shards_ready"]
         assert status["hot_episode_count"] == 2 and len(status["shards"]) == 2
         root = sharded.recall("교차 샤드 명제 증거 정산", status["pair_snapshot_id"])
+        loaded = sharded.recall("교차 샤드 명제 증거 정산", status["pair_snapshot_id"],
+                                region_scope="loaded-all")
         activation = root["receipt"]["activation"]
+        loaded_activation = loaded["receipt"]["activation"]
         assert activation.stage_order == ("deja_vu", "recall", "replay", "re_evidence")
+        assert [row.episode_id for row in activation.recall.candidates] == [
+            row.episode_id for row in loaded_activation.recall.candidates]
+        assert activation.re_evidence == loaded_activation.re_evidence
         assert {row.episode_id for row in activation.recall.candidates} == {support, refute}
         assert {row.episode_id for row in activation.replay.episodes} == {support, refute}
         assert {row.episode_id for row in activation.re_evidence.judgments} == {support, refute}
@@ -63,7 +69,7 @@ def test_global_four_stages_and_cross_shard_reevidence(tmp_path):
         primary.close()
 
 
-def test_cold_shard_is_named_unready_until_complete_generation_is_prepared(tmp_path):
+def test_cold_shard_status_uses_complete_current_projection_without_loading(tmp_path):
     primary = Main(tmp_path / "main", allow_ingest=True)
     resident = Resident(primary, {"s1": tmp_path / "s1"}, hot_limit=1)
     try:
@@ -73,13 +79,11 @@ def test_cold_shard_is_named_unready_until_complete_generation_is_prepared(tmp_p
         resident.settle()
         sharded = ShardedMain(primary, resident)
         status = sharded.status()
-        assert status["memory_ready"] is False
-        assert status["incomplete_shards"] == [{"id": "s1", "state": "cold"}]
-        assert not resident.wanted       # status inspection must not schedule every shard
-        resident.ready("s1")             # an actual read miss schedules only this shard
-        prepared = resident.prepare_all()
-        assert prepared[0]["complete_vrs"] is True
-        assert sharded.status()["memory_ready"] is True
+        assert status["memory_ready"] is True
+        assert status["incomplete_shards"] == []
+        assert status["shards"][1]["state"] == "cold"
+        assert status["shards"][1]["read_projection_ready"] is True
+        assert not resident.wanted and not resident.hot and not resident.warm
     finally:
         resident.close()
         primary.close()
@@ -211,7 +215,7 @@ def test_exact_replay_opens_only_target_and_same_proposition_shards(tmp_path):
         primary.close()
 
 
-def test_natural_recall_prepares_only_cue_and_proposition_shards(tmp_path):
+def test_natural_recall_reads_cold_cue_and_proposition_shards_without_checkpoints(tmp_path):
     primary = Main(tmp_path / "main", allow_ingest=True)
     resident = Resident(primary, {
         "support": tmp_path / "support",
@@ -232,22 +236,50 @@ def test_natural_recall_prepares_only_cue_and_proposition_shards(tmp_path):
         resident.settle()
         sharded = ShardedMain(primary, resident)
 
-        import pytest
-        with pytest.raises(ValueError, match="complete_vrs_shards_not_ready"):
-            sharded.recall("희귀앵커알파", resident.logical_snapshot())
-        assert resident.wanted == {"support"}
-        assert "unrelated" not in resident.wanted
-        resident.prepare_all()
-        with pytest.raises(ValueError, match="complete_vrs_shards_not_ready"):
-            sharded.recall("희귀앵커알파", resident.logical_snapshot())
-        assert resident.wanted == {"refute"}
-        resident.prepare_all()
-
         root = sharded.recall("희귀앵커알파", resident.logical_snapshot())
         activation = root["receipt"]["activation"]
         assert {row.episode_id for row in activation.replay.episodes} == {support, refute}
         assert activation.re_evidence.unresolved_conflict
+        assert not resident.wanted
+        assert not resident.hot and not resident.warm
         assert "unrelated" not in resident.warm and "unrelated" not in resident.hot
+    finally:
+        resident.close()
+        primary.close()
+
+
+def test_cold_projected_recall_preserves_local_shared_experience_portal(tmp_path):
+    topic_a = "루프백 데몬 체크포인트 저널 재생 락"
+    topic_b = "정산 배치 엑셀 헤더 스프레드시트 매핑"
+    primary = Main(tmp_path / "main", allow_ingest=True)
+    resident = Resident(primary, {"cold": tmp_path / "cold"}, hot_limit=1)
+    try:
+        owner = resident.main_for("cold")
+        for number in range(14):
+            resident.ingest(dict(request_id=f"a{number}",
+                text=f"{topic_a} 기록 {number} 데몬 저널 체크포인트",
+                source=f"a/log#{number}", revision="1"), "cold")
+            resident.ingest(dict(request_id=f"b{number}",
+                text=f"{topic_b} 기록 {number} 정산 헤더 매핑" + (" 저널" if number < 4 else ""),
+                source=f"b/log#{number}", revision="1"), "cold")
+        bridge = resident.ingest(dict(request_id="bridge", text=f"{topic_a} 그리고 {topic_b}",
+            source="shared/log#1", revision="r7", outcome="success"), "cold")["episode_id"]
+        owner.consolidate(cycles=16)
+        resident.refresh_pair("cold", owner)
+        sharded = ShardedMain(primary, resident)
+        loaded = sharded.recall(topic_a, resident.logical_snapshot(), region_scope="loaded-all")
+        resident.evict("cold"); resident.settle()
+
+        projected = sharded.recall(topic_a, resident.logical_snapshot())
+        loaded_activation = loaded["receipt"]["activation"]
+        projected_activation = projected["receipt"]["activation"]
+        assert [row.episode_id for row in projected_activation.recall.candidates] == [
+            row.episode_id for row in loaded_activation.recall.candidates]
+        crossings = [path for path in projected["region_navigation"]["paths"].values()
+                     if path["path"] == "portal" and path.get("via")]
+        assert crossings and crossings[0]["via"]["episode_id"] == bridge
+        assert crossings[0]["via"]["revision"] == "r7"
+        assert not resident.hot and not resident.warm and not resident.wanted
     finally:
         resident.close()
         primary.close()

@@ -20,7 +20,37 @@ import numpy as np
 from .store import plain
 
 
-SCHEMA = 'swegca-vrs2-read-projection-v1'
+SCHEMA = 'swegca-vrs2-read-projection-v3'
+
+
+def projected_portals(owner):
+    """Serialize local portals with their original replayable experience keys.
+
+    Stable portals store compact graph node numbers.  A disk reader must not
+    reopen the checkpoint merely to turn those numbers back into original
+    experience addresses, so the projection records that lossless join while
+    the complete generation is already resident.
+    """
+    graph, memory = owner.graph, owner.memory
+    stable = graph.stable
+    result = []
+    for (left, right), portal in ((getattr(stable, 'portals', None) or {}).items()
+                                  if stable is not None else ()):
+        experience_keys = []
+        for key in portal.get('keys') or ():
+            identifier = graph.nodes.node_episode.get(key.get('node'))
+            if identifier is None:
+                raise ValueError('vrs_portal_key_has_no_original_experience')
+            episode = memory.episode_light(identifier)
+            experience_keys.append(dict(
+                episode_id=identifier, revision=episode.revision,
+                outcome=episode.steps[0].outcome,
+                weights=[float(value) for value in key.get('weights', ())],
+                strength=float(key.get('strength', graph.strength(identifier))),
+                shared=int(portal.get('shared', 0))))
+        result.append(dict(pair=[int(left), int(right)], value=plain(portal),
+                           experience_keys=experience_keys))
+    return result
 
 
 def _write_bytes(path, payload):
@@ -60,6 +90,11 @@ class ProjectionView:
         self.cue_total = int(manifest['cue_total'])
         self.ids = self._mapped('ids.bin', 'u1', (self.record_count, 32))
         self.strength = self._mapped('strength.f32', '<f4', (self.record_count,))
+        self.weight = self._mapped('weight.f32', '<f4', (self.record_count,))
+        self.state = self._mapped('state.f32', '<f4', (self.record_count,))
+        self.stability = self._mapped('stability.f32', '<f4', (self.record_count,))
+        self.pending = self._mapped('pending.u1', 'u1', (self.record_count,))
+        self.usage = self._mapped('usage.i64', '<i8', (self.record_count, 2))
         self.region = self._mapped('region.i32', '<i4', (self.record_count,))
         self.superseded = self._mapped('superseded.bin', 'u1', (self.record_count, 32))
         self.member_ptr = self._mapped('member_ptr.u64', '<u8', (self.record_count + 1,))
@@ -75,6 +110,8 @@ class ProjectionView:
         self.cue_region = self._mapped('cue_region.i32', '<i4', (int(manifest['cue_count']),))
         self.cue_blob = (self.root / 'cue_blob.bin').open('rb', buffering=0)
         self.portals = tuple(manifest.get('portals', ()))
+        self.decisions = manifest.get('decisions') or {}
+        self.shared = manifest.get('shared')
 
     def _mapped(self, name, dtype, shape):
         if not int(np.prod(shape)):
@@ -102,6 +139,12 @@ class ProjectionView:
             stable_version_id=self.stable_version_id,
             portals=self.portals,
             strength=float(self.strength[row]), region=int(self.region[row]),
+            weight=None if bool(self.pending[row]) else float(self.weight[row]),
+            state=None if bool(self.pending[row]) else float(self.state[row]),
+            stability=None if bool(self.pending[row]) else float(self.stability[row]),
+            pending=bool(self.pending[row]),
+            usage=None if int(self.usage[row][0]) < 0 else
+                [int(self.usage[row][0]), int(self.usage[row][1])],
             memberships=tuple((int(region), float(weight)) for region, weight in
                               zip(self.member_region[start:stop], self.member_weight[start:stop])),
             cue_strengths=tuple(float(value) for value in
@@ -121,6 +164,22 @@ class ProjectionView:
         region = int(self.cue_region[position])
         return None if region < 0 else region
 
+    def decision(self, proposition):
+        return self.decisions.get(proposition)
+
+    def close(self):
+        """Release every mapped generation file held by this cached view."""
+        if not self.cue_blob.closed:
+            self.cue_blob.close()
+        for name in ('ids', 'strength', 'weight', 'state', 'stability', 'pending', 'usage',
+                     'region', 'superseded', 'member_ptr',
+                     'member_region', 'member_weight', 'cue_ptr', 'cue_strength',
+                     'cue_hash', 'cue_offset', 'cue_length', 'cue_region'):
+            array = getattr(self, name, None)
+            mapping = getattr(array, '_mmap', None)
+            if mapping is not None and not mapping.closed:
+                mapping.close()
+
 
 class ReadProjectionStore:
     def __init__(self, shard_directory, shard):
@@ -136,14 +195,26 @@ class ReadProjectionStore:
     def write(self, owner):
         memory, graph, pair = owner.memory, owner.graph, owner.pair
         ids = tuple(memory._store['ids'][:memory.episode_count])
-        strengths, regions, superseded = [], [], []
+        strengths, weights, states, stabilities, pending_rows, usages = [], [], [], [], [], []
+        regions, superseded = [], []
         member_ptr, member_region, member_weight = [0], [], []
         cue_ptr, cue_strength = [0], []
         cue_ids_used = set()
         labels = graph.labels()
         vocab = memory._store['vocab']
+        stable = graph.stable
         for row, identifier in enumerate(ids):
             strengths.append(graph.strength(identifier))
+            node = graph.nodes.episode_node.get(identifier)
+            pending = stable is None or node is None or node >= stable.node_count
+            pending_rows.append(pending)
+            record_weights = getattr(stable, 'record_weight', None) if stable is not None else None
+            weights.append(0.0 if pending or record_weights is None else float(record_weights[node]))
+            states.append(0.0 if pending else float(stable.state[node]))
+            stabilities.append(0.0 if pending else float(stable.stability[node]))
+            source = memory.episode_light(identifier).source_addresses[0]
+            usage = graph.usage.get(source)
+            usages.append((-1, -1) if usage is None else (int(usage[0]), int(usage[1])))
             region = graph.region_of(identifier)
             regions.append(-1 if region is None else int(region))
             successor = memory.superseded.get(identifier)
@@ -179,16 +250,15 @@ class ReadProjectionStore:
             cue_blob.extend(payload)
             position += length
         cue_rows = normalized
-        stable = graph.stable
-        portals = []
-        for (left, right), portal in ((getattr(stable, 'portals', None) or {}).items()
-                                      if stable is not None else ()):
-            portals.append(dict(pair=[int(left), int(right)], value=plain(portal)))
+        portals = projected_portals(owner)
         manifest = dict(schema=SCHEMA, shard=self.shard,
             pair_snapshot_id=pair.snapshot_id, graph_snapshot_id=graph.snapshot_id,
             stable_version_id=(stable.version_id if stable is not None else None),
             record_count=len(ids), cue_total=int(memory.cue_total), cue_count=len(cue_rows),
-            portals=portals)
+            portals=portals,
+            decisions=plain((getattr(stable, 'decisions', None) or {}) if stable is not None else {}),
+            shared=(plain(stable.shared_counts()) if stable is not None
+                    and hasattr(stable, 'shared_counts') else None))
         generation = self.root / ('.building-' + uuid.uuid4().hex)
         final = self.root / pair.snapshot_id
         generation.mkdir(mode=0o700)
@@ -196,6 +266,11 @@ class ReadProjectionStore:
             _write_bytes(generation / 'ids.bin', b''.join(bytes.fromhex(identifier[7:])
                                                           for identifier in ids))
             _array(generation / 'strength.f32', strengths, '<f4')
+            _array(generation / 'weight.f32', weights, '<f4')
+            _array(generation / 'state.f32', states, '<f4')
+            _array(generation / 'stability.f32', stabilities, '<f4')
+            _array(generation / 'pending.u1', pending_rows, 'u1')
+            _array(generation / 'usage.i64', usages, '<i8')
             _array(generation / 'region.i32', regions, '<i4')
             _write_bytes(generation / 'superseded.bin', b''.join(superseded))
             _array(generation / 'member_ptr.u64', member_ptr, '<u8')
@@ -251,3 +326,17 @@ class ReadProjectionStore:
                 or manifest.get('pair_snapshot_id') != generation):
             raise ValueError('read_projection_identity_mismatch')
         return ProjectionView(root, manifest)
+
+    def ready(self, expected_pair):
+        """Cheap side-effect-free identity check used by status and admission."""
+        try:
+            generation = self.current_path.read_text(encoding='ascii').strip()
+            if generation != expected_pair:
+                return False
+            manifest = json.loads((self.root / generation / 'manifest.json').read_text(
+                                  encoding='utf-8'))
+        except (OSError, ValueError, UnicodeError):
+            return False
+        return (manifest.get('schema') == SCHEMA
+                and manifest.get('shard') == self.shard
+                and manifest.get('pair_snapshot_id') == generation)

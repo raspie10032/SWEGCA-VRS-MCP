@@ -21,7 +21,7 @@ from pathlib import Path
 from .store import CHECKPOINT_MAGIC, digest, plain
 from .exact_replay import ExactReplayStore
 from .cue_shards import CueShardDirectory
-from .read_projection import ReadProjectionStore
+from .read_projection import ReadProjectionStore, projected_portals
 
 AUTO_SHARD_RECORDS = 8_192
 MAX_STORAGE_BYTES = 500 * 1024 ** 3
@@ -224,7 +224,8 @@ class Resident:
         self.wanted = set()                               # bundles a judgment missed: the preparer loads them next
         self.prepared = {}                                # bundle id -> receipt of the last prepare (ms, seq, when)
         self.projection_errors = {}
-        self.projection_views = {}
+        self.projection_views = OrderedDict()
+        self.projection_lock = threading.Lock()
         self.lock = threading.Lock()
 
     def _load_exact_progress(self):
@@ -323,6 +324,12 @@ class Resident:
         if storage >= MAX_STORAGE_BYTES - 625_000_000:
             if self._storage_bytes(force=True) >= MAX_STORAGE_BYTES:
                 raise ValueError('vrs_storage_budget_exceeded')
+
+    def admit_read_resources(self):
+        """Fail closed before a read can grow this process beyond its RAM cap."""
+        rss = self._rss_bytes()
+        if rss is not None and rss > MAX_RSS_BYTES - 64 * 1024 * 1024:
+            raise ValueError('vrs_memory_budget_exceeded')
 
     def _new_auto_shard(self):
         if self._storage_bytes(force=True) >= MAX_STORAGE_BYTES:
@@ -582,6 +589,46 @@ class Resident:
                        if shard == 'main' or (self.bundles[shard] / 'memory.sqlite3').is_file())
         return dict(scanned=budget - remaining, added=added, complete=complete)
 
+    def backfill_projections(self, budget=1):
+        """Derive current read projections from existing complete VRS shards.
+
+        This is a bounded reconstruction, not a compatibility read.  One cold
+        complete generation is opened, projected from its real graph/regions,
+        and closed before the next shard is considered.
+        """
+        remaining, rows = max(0, int(budget)), []
+        for shard in self.ids():
+            if not remaining:
+                break
+            if shard in self.hot or shard in self.closing:
+                continue
+            expected = self.pair_ids.get(shard)
+            store = ReadProjectionStore(self.bundles[shard], shard)
+            if expected and store.ready(expected):
+                continue
+            view = self.warm.pop(shard, None)
+            temporary = view if view is not None else WarmView(shard, self.bundles[shard])
+            try:
+                owner = temporary.refresh()
+                self.admit_read_resources()
+                receipt = store.write(owner)
+                with self.projection_lock:
+                    cached = self.projection_views.pop(shard, None)
+                    if cached is not None:
+                        cached.close()
+                    self.projection_errors.pop(shard, None)
+                rows.append(dict(status='projected', **receipt))
+            except Exception as error:
+                message = type(error).__name__ + ': ' + str(error)[:160]
+                with self.projection_lock:
+                    self.projection_errors[shard] = message
+                rows.append(dict(status='failed', shard=shard, error=message))
+            finally:
+                temporary.close()
+            remaining -= 1
+        complete = all(self.read_ready(shard) for shard in self.ids())
+        return dict(scanned=len(rows), projections=rows, complete=complete)
+
     _SEQUENCE_BITS = 48
     _SEQUENCE_MASK = (1 << _SEQUENCE_BITS) - 1
 
@@ -646,10 +693,14 @@ class Resident:
             try:
                 try:
                     ReadProjectionStore(self.bundles[bundle_id], bundle_id).write(main)
-                    self.projection_views.pop(bundle_id, None)
-                    self.projection_errors.pop(bundle_id, None)
+                    with self.projection_lock:
+                        previous = self.projection_views.pop(bundle_id, None)
+                        if previous is not None:
+                            previous.close()
+                        self.projection_errors.pop(bundle_id, None)
                 except Exception as error:
-                    self.projection_errors[bundle_id] = type(error).__name__ + ': ' + str(error)[:160]
+                    with self.projection_lock:
+                        self.projection_errors[bundle_id] = type(error).__name__ + ': ' + str(error)[:160]
                     raise
                 finally:
                     main.close()
@@ -662,17 +713,44 @@ class Resident:
         thread.start()
         return thread
 
-    def projection(self, bundle_id):
+    def _projection_unlocked(self, bundle_id):
         if bundle_id in (None, '', 'main'):
             return None
+        error = self.projection_errors.get(bundle_id)
+        if error is not None:
+            raise ValueError('read_projection_build_failed:' + error)
         expected = self.pair_ids.get(bundle_id)
         cached = self.projection_views.get(bundle_id)
         if cached is not None and cached.pair_snapshot_id == expected:
+            self.projection_views.move_to_end(bundle_id)
             return cached
+        if cached is not None:
+            cached.close()
+            self.projection_views.pop(bundle_id, None)
         view = ReadProjectionStore(self.bundles[bundle_id], bundle_id).open(expected)
         if view is not None:
             self.projection_views[bundle_id] = view
+            while len(self.projection_views) > 64:
+                _, retired = self.projection_views.popitem(last=False)
+                retired.close()
         return view
+
+    def projection(self, bundle_id):
+        with self.projection_lock:
+            return self._projection_unlocked(bundle_id)
+
+    def read_ready(self, bundle_id):
+        """Whether one complete current VRS generation is readable without loading it."""
+        if bundle_id in (None, '', 'main'):
+            return True
+        owner, _ = self.peek_ready(bundle_id)
+        if owner is not None:
+            return True
+        if bundle_id in self.closing or bundle_id in self.projection_errors:
+            return False
+        expected = self.pair_ids.get(bundle_id)
+        return bool(expected and ReadProjectionStore(
+            self.bundles[bundle_id], bundle_id).ready(expected))
 
     def current_vrs(self, exact):
         """Current VRS facts for an exact capsule without opening a cold checkpoint."""
@@ -683,10 +761,11 @@ class Resident:
             owner, _ = self.peek_ready(shard)
         if owner is not None:
             stable = owner.graph.stable
-            portals = [dict(pair=[int(left), int(right)], value=plain(portal))
-                       for (left, right), portal in
-                       ((getattr(stable, 'portals', None) or {}).items()
-                        if stable is not None else ())]
+            portals = projected_portals(owner)
+            node = owner.graph.nodes.episode_node.get(identifier)
+            pending = stable is None or node is None or node >= stable.node_count
+            weights = getattr(stable, 'record_weight', None) if stable is not None else None
+            source = exact['replay'].source_addresses[0]
             center = owner.graph.nodes.episode_node.get(identifier)
             edge_strength = {}
             if center is not None:
@@ -701,11 +780,16 @@ class Resident:
                 graph_snapshot_id=owner.graph.snapshot_id,
                 stable_version_id=(stable.version_id if stable is not None else None),
                 strength=owner.graph.strength(identifier), region=owner.graph.region_of(identifier),
+                weight=None if pending or weights is None else float(weights[node]),
+                state=None if pending else float(stable.state[node]),
+                stability=None if pending else float(stable.stability[node]), pending=pending,
+                usage=owner.graph.usage.get(source),
                 memberships=owner.graph.memberships_of(identifier),
                 cue_strengths=tuple(cue_strengths),
                 superseded_by=owner.memory.superseded.get(identifier), portals=tuple(portals))
-        projection = self.projection(shard)
-        return None if projection is None else projection.current(identifier, row)
+        with self.projection_lock:
+            projection = self._projection_unlocked(shard)
+            return None if projection is None else projection.current(identifier, row)
 
     def region_for_cue(self, shard, cue):
         if shard == 'main':
@@ -719,8 +803,21 @@ class Resident:
             node = owner.graph.nodes.cue(cue_id)
             labels = owner.graph.labels()
             return None if node < 0 or node >= len(labels) or labels[node] < 0 else int(labels[node])
-        projection = self.projection(shard)
-        return None if projection is None else projection.region_for_cue(cue)
+        with self.projection_lock:
+            projection = self._projection_unlocked(shard)
+            return None if projection is None else projection.region_for_cue(cue)
+
+    def decision_for_proposition(self, shard, proposition):
+        if shard == 'main':
+            owner = self.primary
+        else:
+            owner, _ = self.peek_ready(shard)
+        if owner is not None:
+            stable = owner.graph.stable
+            return None if stable is None else (getattr(stable, 'decisions', None) or {}).get(proposition)
+        with self.projection_lock:
+            projection = self._projection_unlocked(shard)
+            return None if projection is None else projection.decision(proposition)
 
     def settle(self):
         """Wait for every background close (tests, shutdown)."""
@@ -934,3 +1031,7 @@ class Resident:
             pending = list(self.closing.values())
         for thread in pending:
             thread.join()
+        with self.projection_lock:
+            for view in self.projection_views.values():
+                view.close()
+            self.projection_views.clear()

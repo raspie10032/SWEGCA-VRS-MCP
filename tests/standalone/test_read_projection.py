@@ -21,6 +21,9 @@ def test_projection_preserves_current_vrs_generation_without_loading_checkpoint(
             current = view.current(identifier, row)
             assert current["pair_snapshot_id"] == main.pair.snapshot_id
             assert current["strength"] == pytest.approx(main.graph.strength(identifier))
+            assert current["pending"] is False
+            assert current["weight"] is not None
+            assert current["state"] is not None and current["stability"] is not None
             expected = main.graph.memberships_of(identifier)
             assert [item[0] for item in current["memberships"]] == [item[0] for item in expected]
             assert [item[1] for item in current["memberships"]] == pytest.approx(
