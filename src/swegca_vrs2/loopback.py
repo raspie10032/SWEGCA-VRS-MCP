@@ -618,7 +618,16 @@ def _tail_sweeper(daemon, port, every):
     except Exception:
         return
     while not daemon.stop.is_set():
-        for _ in range(max(1, int(every))):
+        # a live agent registered with a short idle (Antigravity, --idle 15) is swept at that pace: the period is
+        # the shortest registered idle, never below 5 s and never above ``every`` (2026-09-21 live test: 9 s
+        # with a foreground --watch; the sweep alone must not be a minute behind)
+        try:
+            idles = [float(e.get('idle')) for e in transcripts.load_watch() if e.get('idle')]
+            period = max(5.0, min([float(every)] + idles))
+        except Exception:
+            period = float(every)
+        deadline = time.time() + period
+        while time.time() < deadline:
             if daemon.stop.is_set():
                 return
             time.sleep(1.0)
