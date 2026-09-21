@@ -43,7 +43,8 @@ START_STALE = 300                    # seconds after which a start marker is ign
 RESIDENT_COMMANDS = {'status', 'cognitive_dialogue_start', 'cognitive_dialogue_continue',
                      'cognitive_dialogue_evidence_open', 'cognitive_dialogue_evidence',
                      'cognitive_dialogue_release'}
-LOCAL_COMMANDS = {'hook_recall', 'evidence_of', 'origins', 'turns', 'bundles', 'lookup', 'operation', 'evict', 'ingest', 'ingest_many', 'checkpoint', 'compact', 'consolidate', 'refine', 'ping', 'shutdown', 'usage', 'alias'}
+LOCAL_COMMANDS = {'hook_recall', 'evidence_of', 'origins', 'turns', 'bundles', 'lookup', 'operation', 'evict', 'ingest', 'ingest_many', 'checkpoint', 'compact', 'consolidate', 'refine', 'ping', 'shutdown', 'usage', 'alias',
+                  'sessions', 'session_end', 'session_merge', 'merge_receipts'}    # 2.2: the session producer layer
 
 
 # ── client ────────────────────────────────────────────────────────────
@@ -329,20 +330,39 @@ def turns(main, arguments):
     return dict(status='ok', session=session, count=len(rows), rows=rows, total=len(found))
 
 
-def hook_recall(main, arguments, resident=None):
+def hook_recall(main, arguments, resident=None, sessions=None):
     """Short packet for hooks: top candidates with provenance and a snippet. With a resident (G7, 2026-09-19)
     the primary's rows come first (VRS, regions, re-evidence), then every other bundle's rows in its own
-    index order, each tagged ``bundle``/``bundle_state`` — the hook says which bundle a memory came from."""
+    index order, each tagged ``bundle``/``bundle_state`` — the hook says which bundle a memory came from.
+
+    2.2 (2026-09-21): with a session layer and a ``session`` argument the judgment reads the session's proposal
+    journal first (bounded exact top-K: Replay and Re-evidence for the packet's rows) and main only on a complete
+    miss — no cue of the query has a posting there. The packet says which layer answered (``layer``) and, on a
+    fall-through, names the miss. The packet is a selection receipt: it grants no authority (SWEGCA §3.1)."""
     query = str(arguments.get('query') or '')
     limit = max(1, min(int(arguments.get('limit', 5)), 50))
     snippet = max(80, min(int(arguments.get('snippet', 400)), 4000))
     exclude = tuple(str(k) for k in (arguments.get('exclude_kinds') or ()) if k)[:8]
     scope = arguments.get('region_scope') if arguments.get('region_scope') in ('all', 'regions', 'auto') else 'all'
+    session = str(arguments.get('session') or '')
     # G8 (2026-09-19): the judgment is timed apart from what follows it, and what it had to decode is counted —
     # a hot hit and a miss are not the same number
     began = time.perf_counter_ns()
     stats0 = main.memory.stats() if hasattr(main.memory, 'stats') else {}
-    root = main.recall(query, None, exclude_kinds=exclude, region_scope=scope)      # current generation, no lock
+    layer, root, layer_miss = 'main', None, None
+    if sessions is not None and session:
+        try:
+            hit = sessions.recall(session, query, exclude_kinds=exclude, limit=limit, region_scope='all')
+        except ValueError:
+            hit = None
+        if hit is not None:
+            main, root = hit                          # the session's own store answers; main is not read
+            layer = 'session'
+        else:
+            layer_miss = dict(kind='session_miss', session=session[:12],
+                              state='absent' if not sessions.exists(session) else 'complete_miss')
+    if root is None:
+        root = main.recall(query, None, exclude_kinds=exclude, region_scope=scope)      # current generation, no lock
     judged = time.perf_counter_ns()
     status = {'pair_snapshot_id': root['pair_snapshot_id']}
     activation = root['receipt']['activation']
@@ -399,6 +419,7 @@ def hook_recall(main, arguments, resident=None):
         if row.get('proposition') in repeats:
             row['repeats'] = repeats[row['proposition']]
         row['bundle'] = 'main'
+        row['layer'] = layer
         pid = row.get('proposition')
         if pid:
             # G11: the accumulator's standing decision and its named gaps, so the hook can say what the claim
@@ -418,6 +439,8 @@ def hook_recall(main, arguments, resident=None):
     misses = [dict(kind='bundle_not_ready', bundle=b['bundle'], state=b['state']) for b in others if b.get('miss')]
     if decodes:
         misses.append(dict(kind='blob_decodes', count=decodes))
+    if layer_miss is not None:
+        misses.append(layer_miss)
     timing = dict(judgment_ms=(judged - began) // 1_000_000, rows_ms=(rowed - judged) // 1_000_000,
                   bundles_ms=(time.perf_counter_ns() - rowed) // 1_000_000)
     controls = activation.re_evidence
@@ -447,8 +470,10 @@ def hook_recall(main, arguments, resident=None):
         conflicts.append(dict(proposition=proposition, support=sides['support'][:4], refute=sides['refute'][:4],
                               decision=None if decision is None else {k: decision.get(k) for k in ('status', 'reason', 'unresolved', 'source_diversity')}))
     return dict(status='ok', query=query, pair_snapshot_id=status['pair_snapshot_id'], conflicts=conflicts,
-                candidate_count=len(activation.recall.candidates), returned=len(rows), memories=rows,
+                candidate_count=root['memory_selection'].get('candidate_count', len(activation.recall.candidates)), returned=len(rows), memories=rows,
                 superseded_skipped=superseded_skipped,
+                layer=layer, session=session[:12] or None,                        # 2.2: which layer answered
+                judged=root['memory_selection'].get('judged'), judge_bound=root['memory_selection'].get('judge_bound'),
                 bundles=[{k: v for k, v in b.items() if k != 'rows'} for b in others],
                 misses=misses, timing=timing, blob_hits=hits, blob_decodes=decodes,   # G8: hit and miss, named
                 should_abstain=controls.should_abstain, unresolved_conflict=controls.unresolved_conflict,
@@ -467,7 +492,8 @@ def hook_recall(main, arguments, resident=None):
 
 
 class Daemon:
-    def __init__(self, state_dir, *, allow_ingest, idle_seconds, bundle_limit=None, bundles=None, hot_bundles=1):
+    def __init__(self, state_dir, *, allow_ingest, idle_seconds, bundle_limit=None, bundles=None, hot_bundles=1,
+                 session_layer=None, session_idle=None, session_hot=None):
         from .server import LocalResident
         from .store import Main
         from .resident import Resident
@@ -482,6 +508,21 @@ class Daemon:
         self.idle_seconds = idle_seconds
         self.last = time.time()
         self.stop = threading.Event()
+        # 2.2 (2026-09-21): the session producer layer — an ingest that names its session writes the session's
+        # proposal journal, never main; a hook_recall that names its session reads it first; the merge transaction
+        # commits a finished session into main as one generation. Off with VRS2_SESSION_LAYER=0 (main-only, as 2.1).
+        if session_layer is None:
+            session_layer = os.environ.get('VRS2_SESSION_LAYER', '1') not in ('0', 'off', 'false')
+        self.sessions = self.merge = self.merger = None
+        self.recovered = []
+        if session_layer and allow_ingest:
+            from .session_producer import SessionLayer, SESSION_IDLE_S, SESSION_HOT
+            from .merge import MergeTransaction, Merger
+            self.sessions = SessionLayer(self.state_dir, hot_limit=session_hot or SESSION_HOT, bundle_limit=bundle_limit,
+                                         idle_seconds=SESSION_IDLE_S if session_idle is None else session_idle)
+            self.merge = MergeTransaction(self.main, self.sessions, self.lock)
+            self.recovered = self.merge.recover()      # a merge the last daemon died inside finishes or rolls back
+            self.merger = Merger(self.merge)
 
     def handle(self, message):
         command = message.get('command')
@@ -492,9 +533,32 @@ class Daemon:
         # never a mix, and a Stop hook's ingest burst no longer stalls another session's prompt hook.
         if command == 'ping':
             return dict(status='ok', pid=os.getpid(), state_dir=str(self.state_dir),
-                        writes_enabled=self.main.allow_ingest, bundles=self.bundles.ids())
+                        writes_enabled=self.main.allow_ingest, bundles=self.bundles.ids(),
+                        session_layer=self.sessions is not None)
         if command == 'hook_recall':
-            return hook_recall(self.main, arguments, self.bundles)
+            return hook_recall(self.main, arguments, self.bundles, self.sessions)
+        if command == 'sessions':
+            return dict(status='ok', enabled=self.sessions is not None,
+                        sessions=self.sessions.status() if self.sessions else [],
+                        merger=self.merger.status() if self.merger else None, recovered=list(self.recovered)[:8],
+                        idle_seconds=self.sessions.idle_seconds if self.sessions else None)
+        if command == 'merge_receipts':
+            return dict(status='ok', receipts=self.merge.receipts(int(arguments.get('limit', 20))) if self.merge else [])
+        if command in ('session_end', 'session_merge'):
+            # the producer says it is finished (SessionEnd hook) — or a merge is asked for outright; the merge runs
+            # off the request path unless ``wait`` is set (tests, tools)
+            if self.sessions is None:
+                return dict(status='ok', enabled=False)
+            session = str(arguments.get('session') or '')
+            if not session:
+                raise InterfaceError('session_required')
+            marked = self.sessions.end(session, reason=command) if self.sessions.exists(session) else False
+            if not marked:
+                return dict(status='ok', session=session[:12], journal=False, queued=False)
+            if arguments.get('wait'):
+                receipt = self.merge.merge(self.sessions.path(session).name)
+                return dict(status='ok', session=session[:12], journal=True, merged=receipt)
+            return dict(status='ok', session=session[:12], journal=True, queued=self.merger.submit(self.sessions.path(session).name))
         if command == 'bundles':
             return dict(status='ok', bundles=self.bundles.status(), hot_limit=self.bundles.hot_limit,
                         prepared=list(self.prepared[-16:]), wanted=sorted(self.bundles.wanted),
@@ -528,15 +592,24 @@ class Daemon:
                     result['bundles'] = self.bundles.status()
                 return result
             if command == 'ingest':
+                session = arguments.pop('session', None)
                 target = self.bundles.main_for(arguments.pop('bundle', None))     # G7: routed by bundle id
                 _verify_producer(arguments)                                        # signed producers: verified True/False
+                if self.sessions is not None and session and target is self.main:
+                    # 2.2: an active session's observation goes to its proposal journal, not main
+                    meta = arguments.get('metadata') or {}
+                    return self.sessions.ingest(session, arguments, agent=meta.get('agent'), project=meta.get('project'))
                 return target.ingest(arguments)
             if command == 'ingest_many':
                 # batch generations (2026-09-18): K observations -> one generation; all-or-nothing
+                session = arguments.get('session')
                 target = self.bundles.main_for(arguments.get('bundle'))
                 rows = list(arguments.get('rows') or [])
                 for row in rows:
                     _verify_producer(row)
+                if self.sessions is not None and session and target is self.main:
+                    meta = (rows[0].get('metadata') or {}) if rows else {}
+                    return self.sessions.ingest_many(session, rows, agent=meta.get('agent'), project=meta.get('project'))
                 return target.ingest_many(rows)
             if command == 'evict':
                 return dict(status='ok', evicted=self.bundles.evict(str(arguments.get('bundle') or '')))
@@ -563,6 +636,13 @@ class Daemon:
 
     def close(self):
         try:
+            if self.merger is not None:
+                self.merger.close()    # a running merge finishes its stage; the journal recovers the rest on start
+            if self.sessions is not None:
+                self.sessions.close()  # open proposal journals: checkpoint + close (unmerged — their sessions live on)
+        except Exception:
+            pass
+        try:
             self.bundles.close()       # other hot bundles: checkpoint + close; warm views dropped
         except Exception:
             pass
@@ -576,6 +656,7 @@ class Daemon:
 
 
 PREPARE_EVERY = 5.0      # seconds between preparer passes over the warm bundles (a view is at most this stale)
+MERGE_SWEEP_EVERY = 15.0  # 2.2: seconds between the preparer's looks for ended / idle sessions to merge
 
 
 def _preparer(daemon):
@@ -589,7 +670,7 @@ def _preparer(daemon):
         daemon.prepared.append(dict(kind='prefetch_light', rows=done, ms=(time.perf_counter_ns() - started) // 1_000_000, when=time.time()))
     except Exception as error:
         daemon.prepared.append(dict(kind='prefetch_light', error=type(error).__name__, when=time.time()))
-    last_pass = 0.0
+    last_pass = last_merge = 0.0
     while not daemon.stop.is_set():
         if daemon.bundles.wanted or time.time() - last_pass >= PREPARE_EVERY:
             for receipt in daemon.bundles.prepare_all(force=False):
@@ -597,6 +678,15 @@ def _preparer(daemon):
                 daemon.prepared.append(receipt)
                 del daemon.prepared[:-64]
             last_pass = time.time()
+        if daemon.merger is not None and time.time() - last_merge >= MERGE_SWEEP_EVERY:
+            # 2.2: sessions that ended (SessionEnd) or fell idle merge into main from here, off every request path
+            try:
+                submitted = daemon.merger.submit_due()
+                if submitted:
+                    daemon.prepared.append(dict(kind='merge_due', sessions=[x[:12] for x in submitted], when=time.time()))
+            except Exception as error:
+                daemon.prepared.append(dict(kind='merge_due', error=type(error).__name__, when=time.time()))
+            last_merge = time.time()
         time.sleep(0.25)
 
 

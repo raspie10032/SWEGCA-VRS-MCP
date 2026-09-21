@@ -299,9 +299,14 @@ class CompactIndex:
             return self, identifier
         previous = row['supersedes']
         if previous is not None:
-            old = self.episode(previous)
-            if old.source_addresses != (row['source'],) or old.revision == row['revision'] or previous in self.superseded:
-                raise ValueError('invalid_source_revision_successor')
+            if previous not in self.records and store.get('proposal'):
+                # 2.2: a proposal journal (a session's) supersedes a record that lives in main — accepted here,
+                # validated when the proposal is merged (the successor rule runs in main then)
+                pass
+            else:
+                old = self.episode(previous)
+                if old.source_addresses != (row['source'],) or old.revision == row['revision'] or previous in self.superseded:
+                    raise ValueError('invalid_source_revision_successor')
         cues = tuple(dict.fromkeys(_cue(c) for c in (*keys(row['text']), *(c.casefold() for c in row['cues']))))
         if row['proposition'] is not None:
             cues = (*cues, _cue('proposition:' + row['proposition']))
@@ -476,9 +481,15 @@ class CompactIndex:
         revs, outs = store.get('revs'), store.get('outs')
         size = len(current)
         candidates = []
+        # the matched cues of a row in the row's own order: a boolean mask over the vocabulary indexed by the row's
+        # cue ids (two array ops) instead of a Python pass over its ~330 ids (7 us -> ~2 us per row, 2026-09-21)
+        mask = np.zeros(max(int(vocab.count), max(current_ids, default=-1) + 1) + 1, dtype=bool)
+        if current_ids:
+            mask[np.fromiter(current_ids, dtype=np.int64, count=len(current_ids))] = True
         for row in rows:
             row_cues = cue_rows[row]
-            matched = tuple(current_ids[int(c)] for c in row_cues if int(c) in current_ids)
+            hit = row_cues[mask[row_cues]] if len(row_cues) else row_cues
+            matched = tuple(current_ids[int(c)] for c in hit)
             if revs is not None and row < len(revs):
                 revision, outcome = revs[row], outs[row]
             else:
@@ -488,6 +499,102 @@ class CompactIndex:
                 revision=revision, verification_state='unverified', historical_outcomes=(outcome,)))
         candidates.sort(key=lambda c: (-c.cue_overlap, c.episode_id))
         return RecallResult(signal.query, tuple(candidates), self.snapshot_id, source_dependencies=())
+
+    def cue_ids(self, cues):
+        """cue -> vocabulary id (None when unknown): one lookup per cue for the whole judgment."""
+        vocab = self._store['vocab']
+        return {cue: vocab.id_of(cue) for cue in dict.fromkeys(cues)}
+
+    def postings_for_id(self, cue_id):
+        """Visible row numbers of a vocabulary id (``rows_for_cue`` without the lookup)."""
+        if cue_id is None:
+            return ()
+        rows = self._store['postings'].get(cue_id)
+        if rows is None:
+            return ()
+        rows = rows[:int(np.searchsorted(rows, self.count))]
+        mask = getattr(self, '_mask', None)                 # a masked view (kind exclusion, region scope) filters here too
+        return rows[mask[rows]] if mask is not None and len(rows) else rows
+
+    def average_cue_count(self):
+        """Mean cue count per record (BM25's length normalization), cached per generation count — it was summed over
+        every row on every query (2026-09-21)."""
+        store = self._store
+        cached = store.get('avg_cues')
+        if cached is not None and cached[0] == self.count:
+            return cached[1]
+        cue_rows = store['cues']
+        total = sum(len(a) for a in cue_rows[:self.count])
+        value = total / max(1, self.count) if self.count else 1.0
+        store['avg_cues'] = (self.count, value)
+        return value
+
+    def proposition_rows(self):
+        """Sorted row numbers that carry an explicit proposition, cached per generation count: the closure of a
+        query intersects its candidate rows with this instead of reading a column per posting row."""
+        store = self._store
+        cached = store.get('prop_rows')
+        if cached is not None and cached[0] == self.count:
+            return cached[1]
+        props = store.get('props')
+        if props is None:
+            rows = np.fromiter((r for r in range(self.count) if self.proposition_of_row(r)), dtype=np.int64)
+        else:
+            rows = np.fromiter((r for r, p in enumerate(props[:self.count]) if p), dtype=np.int64)
+        store['prop_rows'] = (self.count, rows)
+        return rows
+
+    def candidate_columns(self, cues, ids=None):
+        """The candidate stage in columns (2.2, 2026-09-21): for the query's ``cues`` (in order), the visible
+        postings gathered into one row x cue boolean matrix. Returns None when no cue has a posting, else
+        dict(matched=<cues with postings, in cue order>, rows=<candidate row numbers, sorted>, M=<bool matrix>,
+        row_len=<cue count per candidate row>, pairs=(row index, cue index) of every posting). The same candidate
+        set, matched sets and overlaps as ``recall_candidates`` — without a Python pass per row."""
+        store = self._store
+        vocab, postings, count = store['vocab'], store['postings'], self.count
+        matched, arrays = [], []
+        for cue in cues:
+            cue_id = ids.get(cue) if ids is not None else vocab.id_of(cue)
+            rows = self.postings_for_id(cue_id) if cue_id is not None else None
+            if rows is not None and len(rows):                  # visible rows, masked when this is a masked view
+                matched.append(cue); arrays.append(rows)
+        if not arrays:
+            return None
+        all_rows = np.concatenate(arrays).astype(np.int64)
+        cols = np.repeat(np.arange(len(arrays)), [len(a) for a in arrays])
+        rows, inverse = np.unique(all_rows, return_inverse=True)
+        M = np.zeros((len(rows), len(arrays)), dtype=bool)
+        M[inverse, cols] = True
+        row_len = self.cue_lengths()[rows]
+        return dict(matched=matched, rows=rows, M=M, row_len=row_len, pairs=(inverse, cols))
+
+    def cue_lengths(self):
+        """Cue count per row as one array, cached per generation count (grown, not rebuilt)."""
+        store = self._store
+        cached = store.get('cue_len')
+        cue_rows = store['cues']
+        if cached is None or len(cached) > len(cue_rows):
+            cached = np.fromiter((len(a) for a in cue_rows), dtype=np.int64, count=len(cue_rows))
+        elif len(cached) < len(cue_rows):
+            cached = np.concatenate([cached, np.fromiter((len(a) for a in cue_rows[len(cached):]), dtype=np.int64, count=len(cue_rows) - len(cached))])
+        store['cue_len'] = cached
+        return cached[:self.count] if len(cached) > self.count else cached
+
+    def candidate_object(self, row, current_ids, size, mask):
+        """One RecallCandidate for ``row`` exactly as ``recall_candidates`` builds it (matched cues in the row's own
+        order through the vocabulary ``mask``)."""
+        store = self._store
+        row_cues = store['cues'][row]
+        hit = row_cues[mask[row_cues]] if len(row_cues) else row_cues
+        matched = tuple(current_ids[int(c)] for c in hit)
+        revs, outs = store.get('revs'), store.get('outs')
+        if revs is not None and row < len(revs):
+            revision, outcome = revs[row], outs[row]
+        else:
+            episode = self.episode(store['ids'][row]); revision, outcome = episode.revision, episode.steps[0].outcome
+        return RecallCandidate(episode_id=store['ids'][row], matched_cues=matched,
+                               cue_overlap=len(matched) / (len(row_cues) + size - len(matched)),
+                               revision=revision, verification_state='unverified', historical_outcomes=(outcome,))
 
     def episode_light(self, identifier):
         """The record without its cue strings (steps, sources, revision) — what replay and re-evidence

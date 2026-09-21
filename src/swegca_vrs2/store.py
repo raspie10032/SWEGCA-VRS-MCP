@@ -26,7 +26,7 @@ import numpy as np
 from .engine.mosaic_memory_activation import (
     OUTCOMES, MemoryEpisode, MemoryStep, FullCurrentMemoryVrsSnapshot,
     AtomicFullCurrentMemoryVrsOwner, current_experience_verdict,
-    CurrentEvidenceVerdict, MemoryActivationReceipt, RecallResult,
+    CurrentEvidenceVerdict, MemoryActivationReceipt, RecallResult, DejaVuSignal,
     detect_deja_vu, recall_memory, replay_memory, re_evidence_memory,
 )
 import math
@@ -714,7 +714,8 @@ class Graph:
         pending = stable is None or node >= stable.node_count
         weights = getattr(stable, 'record_weight', None) if stable is not None else None
         weight = None if pending or weights is None else round(float(weights[node]), 4)
-        return dict(strength=round(self.strength(identifier), 4), promoted=self.strength(identifier) >= vrs_refine.PROMOTION,
+        strength = self.strength(identifier)
+        return dict(strength=round(strength, 4), promoted=strength >= vrs_refine.PROMOTION,
                     weight=weight, state=None if pending else round(float(stable.state[node]), 4),
                     stability=None if pending else round(float(stable.stability[node]), 4), pending=pending,
                     usage=self.usage.get(source) if source else None)   # [injected, opened] from the sessions' ledger
@@ -824,7 +825,7 @@ class Main:
         m, g, p, o = self._generation
         self._generation = (m, g, p, value)
 
-    def __init__(self, state_dir, *, allow_ingest=False, bundle_limit=None):
+    def __init__(self, state_dir, *, allow_ingest=False, bundle_limit=None, proposal=False):
         self.directory = Path(state_dir).expanduser().resolve()
         self.directory.mkdir(parents=True, exist_ok=True)
         self.lock = FileLock(self.directory / 'owner.lock')
@@ -833,6 +834,9 @@ class Main:
         except Timeout:
             raise ValueError('state_directory_already_owned') from None
         self.closed, self.allow_ingest = False, allow_ingest
+        # 2.2 (2026-09-21): a producer's proposal journal (a session's) — not the Single-World state. Same store,
+        # same four stages; a ``supersedes`` it cannot see is accepted here and validated at the merge into main.
+        self.proposal = bool(proposal)
         self.bundle_limit = int(bundle_limit) if bundle_limit else BUNDLE_LIMIT
         self.db = None
         self._dirty = 0
@@ -864,6 +868,8 @@ class Main:
             self._set_generation(memory, graph, FullCurrentMemoryVrsSnapshot(memory, graph.snapshot_id), Map())
             started = perf_counter_ns()
             after = self._load_checkpoint()
+            if self.proposal and hasattr(self.memory, '_store'):
+                self.memory._store['proposal'] = True       # the backing store is shared by every generation
             # The journal stays the source of truth: every row the checkpoint claims to
             # cover is re-validated (fingerprint and request identity) before use.
             for _, req, body, fingerprint, _ in self._journal_rows(0, after):
@@ -1127,6 +1133,17 @@ class Main:
         return dict(seq=seq, bytes=len(blob), raw_bytes=raw_len, elapsed_ns=perf_counter_ns() - started)
 
     # ── journal access across archive segments and live rows ────────────
+    def journal_observations(self):
+        """The observation rows of this journal in order, as (request_id, row, fingerprint, pair) — what a
+        proposal journal hands to the merge (2.2). Alias/usage/consolidation rows are graph-only and skipped."""
+        self._check()
+        out = []
+        for _, req, body, fingerprint, pair in self._journal_rows(0, None):
+            kind, row = journal_entry(req, body, fingerprint)
+            if kind == 'observation':
+                out.append((req, row, fingerprint, pair))
+        return out
+
     def _journal_rows(self, after, upto):
         """Yield (seq, request_id, body, fingerprint, pair) for after < seq <= upto (None = all)."""
         for first, last, blob in self.db.execute(
@@ -1462,8 +1479,14 @@ class Main:
                     pair_snapshot_id=pair.snapshot_id, results=results, bundle=self.bundle(),
                     elapsed_ns=perf_counter_ns() - began)
 
-    def recall(self, query, expected_snapshot, exclude_kinds=(), region_scope='all'):
+    def recall(self, query, expected_snapshot, exclude_kinds=(), region_scope='all', judge_limit=None):
         """``expected_snapshot`` None = whatever generation is current (lock-free hook path).
+
+        ``judge_limit`` (2.2, the session producer's bounded judgment): Replay and Re-evidence run for the top
+        ``judge_limit`` candidates only — the candidate set and the order are exactly those of the unbounded
+        call (the gates on the BM25 score are bounded, so ordering stops once no remaining candidate can enter
+        the top K); every other candidate stays listed and addressable, and ``memory_selection.judged`` says
+        how many were judged. None (main's hook path) judges every candidate as before.
 
         ``region_scope``: 'all' generates candidates from the whole store; 'regions' (G6) generates them
         only from the regions the matched cues activate plus the regions reachable through a candidate
@@ -1479,7 +1502,14 @@ class Main:
             memory = memory.masked(exclude_kinds)      # same generation, postings filtered by record kind
         full_memory = memory
         candidates = keys(query)
-        fanout = {c: len(memory.episode_ids_for_cue(c)) for c in candidates}
+        columns = hasattr(memory, 'cue_ids')
+        if columns:
+            # one vocabulary lookup per cue for the whole judgment; fanout from the posting lengths (2026-09-21)
+            ids_of = memory.cue_ids(candidates)
+            fanout = {c: len(memory.postings_for_id(ids_of[c])) for c in candidates}
+        else:
+            ids_of = None
+            fanout = {c: len(memory.episode_ids_for_cue(c)) for c in candidates}
         selected = tuple(c for c in candidates if fanout[c])
         # Local adapter (2026-09-14): a cue carried by half the store or more is a
         # function word for this corpus (Korean one-character particles such as
@@ -1492,7 +1522,16 @@ class Main:
         # Complete explicit same-proposition evidence closure, including opponents
         # whose text has no query overlap. Historical outcomes alone never conflict.
         # recall columns (2026-09-18): a list read per posting row, not an episode build per row
-        propositions = {memory.proposition_of_row(int(r)) for cue in informative for r in memory.rows_for_cue(cue)} - {None}
+        if columns:
+            # the candidate rows of the informative cues, intersected with the rows that carry a proposition
+            prop_rows = memory.proposition_rows()
+            if len(prop_rows) and informative:
+                hit_rows = np.unique(np.concatenate([np.asarray(memory.postings_for_id(ids_of[c]), dtype=np.int64) for c in informative]))
+                propositions = {memory.proposition_of_row(int(r)) for r in np.intersect1d(hit_rows, prop_rows, assume_unique=True)} - {None}
+            else:
+                propositions = set()
+        else:
+            propositions = {memory.proposition_of_row(int(r)) for cue in informative for r in memory.rows_for_cue(cue)} - {None}
         cues = (*selected, *('proposition:' + p for p in sorted(propositions)))
         # Candidate order: BM25 over the matched informative cues (tf is 1 in a cue set;
         # idf from postings fanout; length normalization from the record's cue count),
@@ -1503,7 +1542,7 @@ class Main:
         idf = {c: math.log(1.0 + (total - fanout[c] + 0.5) / (fanout[c] + 0.5)) for c in informative}
         cue_counts = memory._store['cues'] if hasattr(memory, '_store') else None
         rows_of = memory._store['row_of'] if cue_counts is not None else None
-        average = (sum(len(a) for a in cue_counts) / max(1, len(cue_counts))) if cue_counts else 1.0
+        average = memory.average_cue_count() if columns else ((sum(len(a) for a in cue_counts) / max(1, len(cue_counts))) if cue_counts else 1.0)
         k1, b = 1.2, 0.3   # b measured over 15 known-answer queries: .75 MRR .63, .5 .69, .3 .69 (top3 12/15), .15 .65, 0 .38
         opponents = {}
         for p in propositions:
@@ -1611,15 +1650,20 @@ class Main:
                 else:
                     scope.update(fallback='fewer_than_floor', allowed_regions=sorted(allowed), excluded_rows=0,
                                  would_exclude=excluded)
-        signal = detect_deja_vu(memory, query=query, current_cues=cues)
-        # recall columns (2026-09-18): the engine's recall_memory on cue ids — same RecallResult, no episode builds
-        recalled = memory.recall_candidates(signal) if hasattr(memory, 'recall_candidates') else recall_memory(memory, signal)
+        # 2.2 bounded judgment: the candidate stage runs in columns once the order key exists (below)
+        bounded = judge_limit is not None and hasattr(memory, 'candidate_columns')
+        signal = recalled = None
+        if not bounded:
+            signal = detect_deja_vu(memory, query=query, current_cues=cues)
+            # recall columns (2026-09-18): the engine's recall_memory on cue ids — same RecallResult, no episode builds
+            recalled = memory.recall_candidates(signal) if hasattr(memory, 'recall_candidates') else recall_memory(memory, signal)
         # G6 (vrs-regions): region preactivation after déjà vu — the matched cues' regions are active;
         # a candidate is 'local' when its record sits in an active region, 'portal' when it is reached
         # through a region pair with a promoted bridge (a candidate portal of the stable version), and
         # 'unbridged' otherwise. Nothing is dropped: the path is a receipt (and, if measured useful,
         # a small order factor); rejected paths and their reasons are listed for the caller.
-        labels = graph.labels() if graph.stable is not None else None
+        # (bounded: no navigation — a proposal journal is unconsolidated, and the unbridged factor is 1.0 anyway)
+        labels = graph.labels() if graph.stable is not None and not bounded else None
         navigation = {}
         active_regions = set()
         if labels is not None and len(labels):
@@ -1712,23 +1756,76 @@ class Main:
             a = sum(1 for w in rare if asks and w in asks)
             d = sum(1 for w in rare if description and w in description)
             return (1.0 + ask_gate * min(ASK_GATE_MAX_HITS, a)) * (1.0 + desc_gate * min(ASK_GATE_MAX_HITS, d))
+        words_of = {}
+        def words_cached(row):
+            got = words_of.get(row.episode_id)
+            if got is None:
+                got = words_of[row.episode_id] = words(row.matched_cues)
+            return got
+        # before the first consolidation every edge sits at BASE (< PROMOTION): the promotion gate cannot fire,
+        # and the strength lookup per candidate (memberships, 4 us) is skipped — same key, bit for bit
+        promotable = graph.stable is not None
         def order(row):
             length = len(cue_counts[rows_of[row.episode_id]]) if cue_counts is not None else average
             norm = (k1 + 1.0) / (1.0 + k1 * (1.0 - b + b * length / average))
-            gate = 1.0 + promotion_gate * (graph.strength(row.episode_id) >= vrs_refine.PROMOTION)
+            gate = 1.0 + promotion_gate * (promotable and graph.strength(row.episode_id) >= vrs_refine.PROMOTION)
             path = navigation.get(row.episode_id, {}).get('path')
             gate *= unbridged_factor if path == 'unbridged' else 1.0
-            matched_words = words(row.matched_cues)
+            matched_words = words_cached(row)
             gate *= ask_hits(row, matched_words)
             return (-sum(idf[c] for c in matched_words) * norm * gate, -row.cue_overlap, row.episode_id)
-        recalled = RecallResult(recalled.query, tuple(sorted(recalled.candidates, key=order)),
-                                recalled.snapshot_id, source_dependencies=recalled.source_dependencies)
-        replayed = replay_memory(LightView(memory) if hasattr(memory, 'episode_light') else memory, recalled)
+        judged = None
+        bounded = self._bounded_candidates(memory, query, cues, idf, judge_limit, k1, b, average, graph, order, ids_of) if bounded else None
+        if bounded is not None:
+            signal, recalled, judged, head = bounded['signal'], bounded['recalled'], bounded['judged'], bounded['head']
+        elif signal is None:
+            # bounded, but no cue has a posting: the unbounded stage on the empty candidate set (same receipt shape)
+            signal = detect_deja_vu(memory, query=query, current_cues=cues)
+            recalled = memory.recall_candidates(signal) if hasattr(memory, 'recall_candidates') else recall_memory(memory, signal)
+            head = recalled
+        elif judge_limit is None or len(recalled.candidates) <= judge_limit:
+            recalled = RecallResult(recalled.query, tuple(sorted(recalled.candidates, key=order)),
+                                    recalled.snapshot_id, source_dependencies=recalled.source_dependencies)
+            head = recalled
+        else:
+            # bounded exact top-K (2.2) on candidate objects (an index without columns): the pre-score is the BM25 part of ``order``; the full key multiplies it by
+            # gates within [gate_floor, ceiling(row)], so a candidate whose pre-score x ceiling cannot beat the K-th
+            # best full key found so far can never enter the top K — the full key is computed in pre-score order
+            # until that bound closes. The ceiling is per row: the promotion factor only once a consolidation
+            # exists, the asks / description factors only for a row that has an asks line / a description.
+            # Ties break as in ``order`` (cue overlap, then id).
+            import bisect
+            k = max(1, int(judge_limit))
+            promotion_ceiling = (1.0 + promotion_gate) if promotable else 1.0
+            asks_ceiling = 1.0 + ask_gate * ASK_GATE_MAX_HITS
+            desc_ceiling = 1.0 + desc_gate * ASK_GATE_MAX_HITS
+            def ceiling(row):
+                asks, description = memory.asks_of(row.episode_id)
+                return promotion_ceiling * (asks_ceiling if asks else 1.0) * (desc_ceiling if description else 1.0)
+            def pre(row):
+                length = len(cue_counts[rows_of[row.episode_id]]) if cue_counts is not None else average
+                norm = (k1 + 1.0) / (1.0 + k1 * (1.0 - b + b * length / average))
+                return sum(idf[c] for c in words_cached(row)) * norm
+            scored = sorted(((pre(c), c) for c in recalled.candidates), key=lambda t: (-t[0], -t[1].cue_overlap, t[1].episode_id))
+            keys_, top, rest = [], [], []
+            for i, (p, c) in enumerate(scored):
+                if len(top) >= k and p * ceiling(c) < -keys_[k - 1][0]:
+                    rest = [c for _, c in scored[i:]]
+                    break
+                key = order(c)
+                at = bisect.bisect(keys_, key)
+                keys_.insert(at, key); top.insert(at, c)
+            judged = top[:k]
+            recalled = RecallResult(recalled.query, tuple(top + rest), recalled.snapshot_id, source_dependencies=recalled.source_dependencies)
+            head = RecallResult(recalled.query, tuple(judged), recalled.snapshot_id, source_dependencies=recalled.source_dependencies)
+        replayed = replay_memory(LightView(memory) if hasattr(memory, 'episode_light') else memory, head)
         re_evidenced = re_evidence_memory(replayed, judge=judge)
         receipt = MemoryActivationReceipt(schema_version='rozephine-memory-activation-v1',
             snapshot_id=memory.snapshot_id, deja_vu=signal, recall=recalled,
             replay=replayed, re_evidence=re_evidenced)
-        ids = [c.episode_id for c in receipt.recall.candidates]
+        # the receipt's per-record columns: every candidate on the unbounded path, the judged rows when bounded
+        # (the candidate list itself is complete either way)
+        ids = [c.episode_id for c in (head.candidates if judged is not None else receipt.recall.candidates)]
         selection = dict(candidate_counts={c: fanout[c] for c in candidates},
             selected_cues=cues, rejected_cues=tuple(c for c in candidates if c not in selected),
             function_word_cues=tuple(c for c in selected if c not in informative),
@@ -1737,6 +1834,11 @@ class Main:
             closure_rule='propositions of records matched by an informative cue (fanout below half the store)',
             candidate_order='bm25_over_matched_informative_words_x_promotion_gate_x_asks_gate_then_cue_overlap',
             asks_gate=ask_gate,
+            judged=len(head.candidates),
+            candidate_count=len(recalled.candidates) + (len(bounded['rest_ids']) if bounded is not None else 0),
+            # bounded: the candidates never fully ordered (below the top-K bound) stay addressable by id
+            unjudged_ids=list(bounded['rest_ids']) if bounded is not None else [],
+            judge_bound=None if judged is None else 'exact_top_k_under_bounded_gates',
             semantic_acceptance_claimed=False)
         return dict(record_count=memory.episode_count, receipt={'activation': receipt}, memory_selection=selection,
             vrs_selection=dict(selection_method='region_consolidated_strengths_and_connectivity_regions',
@@ -1762,6 +1864,102 @@ class Main:
             last_vrs_event=graph.last_receipt,
             superseded_by={i: memory.superseded.get(i) for i in ids},
             pair_snapshot_id=pair.snapshot_id, grants_authority=False)
+
+    def _bounded_candidates(self, memory, query, cues, idf, judge_limit, k1, b, average, graph, order, ids_of=None):
+        """2.2: the candidate stage in columns for the bounded judgment. Postings -> row x cue matrix; overlap and the
+        BM25 pre-score as arrays (the substring dedupe of ``words`` as bit sets over the query's informative cues:
+        a cue counts unless a longer matched cue contains it — substring containment is transitive, so this equals
+        ``words``); then the exact top-K: rows are taken in pre-score order, each gets its RecallCandidate and its
+        full ``order`` key, until no remaining row's pre-score x gate ceiling can beat the K-th best full score.
+        The rows never reached stay addressable as ids (``rest_ids``). None when no cue has a posting."""
+        import bisect
+        if ids_of is not None:
+            missing = [c for c in cues if c not in ids_of]
+            if missing:
+                ids_of = dict(ids_of, **memory.cue_ids(missing))       # the proposition closure's cues
+        columns = memory.candidate_columns(cues, ids_of)
+        if columns is None:
+            return None
+        matched, rows, M, row_len, (pair_rows, pair_cols) = columns['matched'], columns['rows'], columns['M'], columns['row_len'], columns['pairs']
+        n_rows, n_cues = M.shape
+        current = tuple(dict.fromkeys(cues))
+        size = len(current)
+        signal = DejaVuSignal(snapshot_id=memory.snapshot_id, query=query, current_cues=current, matched_cues=tuple(matched),
+                              recognition_strength=len(matched) / max(1, len(current)), candidate_count=int(n_rows))
+        # the informative matched cues, their idf, and containment among them as bit sets (one pass per cue over
+        # its substrings; a cue longer than 24 characters is compared against the shorter cues instead)
+        index_of = {c: j for j, c in enumerate(matched) if c in idf}
+        idf_vec = np.zeros(n_cues, dtype=np.float64)
+        for c, j in index_of.items():
+            idf_vec[j] = idf[c]
+        containers = [0] * n_cues
+        by_length = sorted(index_of, key=len)
+        for k_cue in by_length:
+            bit = 1 << index_of[k_cue]
+            n = len(k_cue)
+            if n <= 24:
+                for size_ in range(2, n):
+                    for i in range(n - size_ + 1):
+                        c = index_of.get(k_cue[i:i + size_])
+                        if c is not None:
+                            containers[c] |= bit
+            else:
+                for c_cue in by_length:
+                    if len(c_cue) >= n:
+                        break
+                    if c_cue in k_cue:
+                        containers[index_of[c_cue]] |= bit
+        words_ = max(1, (n_cues + 63) // 64)
+        cont = np.zeros((n_cues, words_), dtype=np.uint64)
+        for j, bits in enumerate(containers):
+            w = 0
+            while bits:
+                cont[j, w] = np.uint64(bits & 0xFFFFFFFFFFFFFFFF); bits >>= 64; w += 1
+        packed = np.packbits(M, axis=1, bitorder='little')
+        pad = words_ * 8 - packed.shape[1]
+        if pad:
+            packed = np.concatenate([packed, np.zeros((n_rows, pad), dtype=np.uint8)], axis=1)
+        W = np.ascontiguousarray(packed).view(np.uint64)                    # row bit sets over the matched cues
+        keep = idf_vec[pair_cols] > 0
+        pr, pc = pair_rows[keep], pair_cols[keep]
+        if len(pr):
+            dropped = (W[pr] & cont[pc]).any(axis=1)
+            pre = np.bincount(pr[~dropped], weights=idf_vec[pc[~dropped]], minlength=n_rows)
+        else:
+            pre = np.zeros(n_rows)
+        counts = M.sum(axis=1)
+        overlap = counts / (row_len + size - counts)
+        pre = pre * ((k1 + 1.0) / (1.0 + k1 * (1.0 - b + b * row_len / average)))
+        order_ = np.lexsort((-overlap, -pre))                               # pre-score first, then overlap; ids break ties in the full key
+        ids, asks_col, vocab = memory._store['ids'], memory._store.get('asks'), memory._store['vocab']
+        promotion_ceiling = (1.0 + PROMOTION_GATE) if graph.stable is not None else 1.0
+        asks_ceiling, desc_ceiling = 1.0 + ASK_GATE * ASK_GATE_MAX_HITS, 1.0 + DESCRIPTION_GATE * ASK_GATE_MAX_HITS
+        current_ids = {}
+        for cue in current:
+            cue_id = ids_of[cue] if ids_of is not None else vocab.id_of(cue)
+            if cue_id is not None:
+                current_ids[cue_id] = cue
+        mask = np.zeros(max(int(vocab.count), max(current_ids, default=-1) + 1) + 1, dtype=bool)
+        if current_ids:
+            mask[np.fromiter(current_ids, dtype=np.int64, count=len(current_ids))] = True
+        k = max(1, int(judge_limit))
+        keys_, objects, taken = [], [], 0
+        for r in order_:
+            r = int(r)
+            if len(keys_) >= k:
+                a, d = asks_col[int(rows[r])] if asks_col is not None and int(rows[r]) < len(asks_col) else ('', '')
+                ceiling = promotion_ceiling * (asks_ceiling if a else 1.0) * (desc_ceiling if d else 1.0)
+                if float(pre[r]) * ceiling < -keys_[k - 1][0]:
+                    break
+            obj = memory.candidate_object(int(rows[r]), current_ids, size, mask)
+            key = order(obj)
+            at = bisect.bisect(keys_, key)
+            keys_.insert(at, key); objects.insert(at, obj)
+            taken += 1
+        rest_ids = [ids[int(rows[int(r)])] for r in order_[taken:]]
+        recalled = RecallResult(query, tuple(objects), memory.snapshot_id, source_dependencies=())
+        head = RecallResult(query, tuple(objects[:k]), memory.snapshot_id, source_dependencies=())
+        return dict(signal=signal, recalled=recalled, judged=objects[:k], head=head, rest_ids=rest_ids)
 
     def close(self):
         if self.closed:
