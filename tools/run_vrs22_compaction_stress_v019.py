@@ -13,6 +13,7 @@ import os
 from pathlib import Path
 import random
 import re
+import shlex
 import shutil
 import subprocess
 import time
@@ -938,7 +939,7 @@ def command(model: str, arm: str, workspace: Path, codex_home: Path, guard_binar
     args = ["/usr/local/bin/codex", "exec"]
     if mode in ("resume", "fork"):
         args.append(mode)
-    args += ["--ignore-user-config", "--strict-config", "-m", model,
+    args += ["--strict-config", "--dangerously-bypass-hook-trust", "-m", model,
              "-c", 'model_reasoning_effort="medium"',
              "-c", 'sandbox_mode="workspace-write"',
              "-c", f"model_context_window={WINDOWS[arm]}",
@@ -1205,8 +1206,50 @@ def setup_workspace(path: Path, codex_home: Path, arm: str, main_seed: Path | No
         state = path.parent / (path.name.removesuffix("-workspace") + "-vrs-state")
         receipt = clone_existing_main(main_seed, state)
         receipt["fallback_probe"] = main_fallback_probe(state)
+        install_cell_hooks(codex_home, state)
         return receipt
     return None
+
+
+def install_cell_hooks(codex_home: Path, state: Path):
+    """Use installed product hooks, leaving SessionEnd to the cell finalizer."""
+    output = codex_home / "hooks.json"
+    subprocess.run([str(RUNTIME_PYTHON), "-m", "swegca_vrs2.codex_hooks",
+                    "--python", str(RUNTIME_PYTHON), "--state-dir", str(state),
+                    "--server-name", "vrs22", "--output", str(output)],
+                   capture_output=True, text=True, timeout=30, check=True)
+    config = json.loads(output.read_text(encoding="utf-8"))
+    hooks = config.get("hooks", {})
+    required = {"SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse",
+                "PreCompact", "PostCompact", "Stop", "Interrupt", "SessionEnd"}
+    if set(hooks) != required:
+        raise RuntimeError("isolated cell lifecycle hooks incomplete")
+    # Each `codex exec` process closes after one turn. The experiment's thread
+    # spans many such calls, and only finalize_experience ends it after coding.
+    del hooks["SessionEnd"]
+    output.write_text(json.dumps(config, ensure_ascii=False, indent=2) + "\n",
+                      encoding="utf-8")
+    output.chmod(0o600)
+    return output
+
+
+def cell_hook_selftest(codex_home: Path, state: Path, session: str):
+    """Execute the generated cell hook, including its isolated state route."""
+    hooks = json.loads((codex_home / "hooks.json").read_text(encoding="utf-8"))["hooks"]
+    if "SessionEnd" in hooks:
+        raise RuntimeError("evaluation cell may merge before final turn")
+    command = hooks["PreToolUse"][0]["hooks"][0]["command"]
+    event = {"hook_event_name": "PreToolUse", "session_id": session,
+             "tool_name": "mcp__vrs22__memory_context",
+             "tool_input": {"request_id": "cell-hook-selftest"}}
+    result = subprocess.run(shlex.split(command), input=json.dumps(event),
+                            capture_output=True, text=True, timeout=30, check=True)
+    updated = json.loads(result.stdout)["hookSpecificOutput"]["updatedInput"]
+    if (updated != {"request_id": "cell-hook-selftest", "session_id": session}
+            or (state / "session-capture" / "ended").exists()):
+        raise RuntimeError("evaluation cell hook routing or lifecycle failed")
+    return {"status": "PASS", "isolated_session_routing": True,
+            "session_end_deferred": True}
 
 
 def filler(start: int, count: int):
@@ -1300,6 +1343,7 @@ print(json.dumps({'created':True}))
     codex_home = root / "cell-codex-home"
     baseline = setup_workspace(workspace, codex_home, "short_vrs", seed)
     state = root / "cell-vrs-state"
+    cell_hooks = cell_hook_selftest(codex_home, state, "retained-main-cell")
     watcher = start_watcher(workspace, codex_home)
     try:
         transcript = codex_home / "sessions" / "2026" / "09" / "22" / "rollout-selftest.jsonl"
@@ -1326,6 +1370,7 @@ print(json.dumps({'created':True}))
         return {"status": "PASS", "original_main_parts": 1,
                 "active_session_parts": 2, "active_main_untouched": True,
                 "ended_new_linked_parts": 2, "main_fallback": True,
+                "cell_hooks": cell_hooks,
                 "original_content_integrity": ended["content_integrity"],
                 "database_artifacts": coverage["database_artifacts"]}
     finally:

@@ -376,6 +376,41 @@ def test_model_mounts_hide_resident_experience_and_frozen_controls(tmp_path):
     assert "--unshare-pid" in wrapper
 
 
+def test_isolated_cell_uses_native_hooks_without_early_session_end(tmp_path):
+    codex_home = tmp_path / "codex-home"
+    state = tmp_path / "cell-vrs-state"
+    codex_home.mkdir()
+    state.mkdir()
+    hooks_path = RUNNER.install_cell_hooks(codex_home, state)
+    config = json.loads(hooks_path.read_text(encoding="utf-8"))["hooks"]
+    assert hooks_path.stat().st_mode & 0o077 == 0
+    assert "SessionEnd" not in config
+    assert {"SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse",
+            "PreCompact", "PostCompact", "Stop", "Interrupt"} == set(config)
+    command = config["PreToolUse"][0]["hooks"][0]["command"]
+    assert str(RUNNER.RUNTIME_PYTHON) in command
+    assert str(state) in command
+    assert "mcp__vrs22__memory_" in command
+
+
+def test_codex_cell_command_loads_vetted_hooks_and_has_one_subcommand(tmp_path):
+    for mode in ("start", "resume", "fork"):
+        command = RUNNER.command("gpt-5.6-luna", "short_vrs",
+            tmp_path / "workspace", tmp_path / "codex-home", tmp_path / "guard",
+            mode, None if mode == "start" else "session-123")
+        inner = command[command.index("--") + 1:]
+        assert inner[:2] == ["/usr/local/bin/codex", "exec"]
+        assert inner[2] == ("--strict-config" if mode == "start" else mode)
+        assert "--dangerously-bypass-hook-trust" in inner
+        assert "--ignore-user-config" not in inner
+        assert inner.count(mode) == (0 if mode == "start" else 1)
+        assert inner[-1] == "-"
+        if mode == "start":
+            assert inner[inner.index("-C") + 1] == str(tmp_path / "workspace")
+        else:
+            assert inner[-2] == "session-123"
+
+
 def test_executable_grading_cannot_read_host_experience_or_control_answers(tmp_path):
     workspace = tmp_path / "grading-workspace"
     tests = workspace / "tests"

@@ -273,3 +273,45 @@ block model evaluation after SessionEnd as well as before it; preflight names
 the pending product-performance state. The independent grader requires the
 run's product-performance audit. The evaluation grader regressions are now
 **18/18 passed**.
+
+## Seventh pass: the actual evaluation cell lifecycle
+
+The earlier audit tested the installed hooks separately, but the isolated
+100k+VRS cell's `CODEX_HOME` contained no `hooks.json`. Thus a successful
+watcher self-test did not prove that the model cell would run the native
+PreToolUse session router or the compact/turn ingress hooks. The evaluation
+runner now generates its cell-local hook file from the exact installed product
+wheel, points it at that cell's native VRS state, and invokes Codex with the
+reviewed hook source enabled. The cell is otherwise isolated from the user's
+Codex home. Because the measured conversation spans many `codex exec`
+processes, the cell omits `SessionEnd` from this local hook file; the runner's
+single finalizer publishes SessionEnd and attaches the temporary shards only
+after the coding turn. The separately installed-product self-test continues to
+exercise the full `SessionEnd` hook.
+
+The new cell test executes the generated PreToolUse command, checks exact
+`session_id` injection, and checks that no end marker was published. The CLI
+argument regression checks all start/resume/fork forms and the hook trust
+flag without a model call. A reread of the CLI source found only one
+resume/fork subcommand; the apparent duplicate came from overlapping printed
+source ranges and required no fix.
+
+| Evaluation dependency | Current evidence |
+| --- | --- |
+| Frozen fixture, hidden tests, rubric, model cache, CLI binaries, product wheel | Static hashes and source/wheel/installed-file checks pass |
+| Retained main seed and natural session-first lookup | Clone/fallback and complete four-stage Replay self-tests pass |
+| Active ingress and hook routing | Two-session supervisor, installed full hook, generation lease, and new cell hook command pass |
+| SessionEnd boundary | Active main unchanged; cell finalizer attaches only after its last turn; installed full hook separately passes |
+| Model isolation and executable grader | Mount/guard self-tests and 20 grader regressions pass |
+| Real compactions, token totals, scored code and dialogue | Gates and parsers inspected; three new VRS model cells still unrun |
+
+The model-free whole-path self-test receipt is
+`/var/tmp/vrs22-whole-path-selftest-cell-hooks-v2-20260922/receipt.json`,
+SHA-256 `1c3b69bb8f4a0035be2123be3b20ff3e336502872f1152621d454f314708b7b8`.
+All six execution checks in that receipt report PASS; the retained-main check
+includes the new cell hook probe. The evaluation grader suite passed **20/20**.
+The current preflight remains `PENDING_LIVE_HANDOFF`, and the independent
+product-performance audit remains unready because measured natural Replay
+calls exceed 1 ms. No new model cell or compression comparison was run. Native
+hook execution by a real Codex model cell remains to be confirmed by its raw
+tool/hook trace after the live and performance gates pass.
