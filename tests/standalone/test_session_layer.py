@@ -322,3 +322,41 @@ def test_the_mcp_admission_reads_a_hinted_agents_live_session_first(tmp_path):
     c.request("cognitive_dialogue_start", request_id="x", query="q")
     c.request("status")
     assert c.client.seen[0][1]["session_hint"] == {"agent": "antigravity"} and "session_hint" not in c.client.seen[1][1]
+
+
+def test_memory_context_reads_a_bounded_session_judgment_with_more_candidates_than_k(tmp_path):
+    """agBV (2026-09-21 19:5x, exposed by the run, not found by suspicion): once the live journal held more matching
+    rows than the judged K, every memory_context failed with memory_context_cardinality_changed — the receipt's
+    candidate list was longer than replay/re-evidence, which memory_context binds by index. The bounded receipt
+    now carries the judged K as its candidates and the rest as unjudged_ids; memory_context pages through it."""
+    from swegca_vrs2.server import LoopbackMCP
+    d = daemon(tmp_path)
+    try:
+        d.handle(dict(command="ingest_many", rows=[row(i, f"main 의 오래된 경험 {WORDS[i]} 항목 {i}", session="old") for i in range(4)]))
+        rows = [row(i, f"안티그래비티 대화 턴 {i}: 청크 SQLITE {200 * i + 1} 을 썼다, 다음 시작줄 {200 * i + 201}", session="cascade-2", agent="antigravity")
+                for i in range(1, 41)]
+        for k in range(0, 40, 10):
+            d.handle(dict(command="ingest_many", session="cascade-2", rows=rows[k:k + 10]))
+        pair = d.handle(dict(command="status"))["pair_snapshot_id"]
+
+        class Direct:
+            def request(self, command, **arguments):
+                if command == "cognitive_dialogue_start" and "session" not in arguments:
+                    arguments = dict(arguments, session_hint={"agent": "antigravity"})
+                return d.handle(dict(arguments, command=command))
+            def close(self): pass
+        bridge = LoopbackMCP(Direct(), False)
+        ctx = bridge.call_tool("memory_context", dict(request_id="m2", query="청크 SQLITE 다음 시작줄", expected_pair_snapshot_id=pair, page_size=4))
+        assert ctx["status"] == "memory_context_ready", ctx
+        sel = ctx["main_cue_selection"]["memory_selection"]["data"]
+        assert sel["layer"] == "session" and sel["judged"] == 10 and sel["candidate_count"] == 40 and len(sel["unjudged_ids"]) == 30
+        assert ctx["candidate_count"] == 10 and len(ctx["memories"]) == 4 and all(m["complete"] for m in ctx["memories"])
+        seen = [m["episode_id"] for m in ctx["memories"]]
+        while ctx.get("next_call"):
+            ctx = bridge.call_tool("memory_context", ctx["next_call"]["arguments"])
+            assert ctx["status"] == "memory_context_ready", ctx
+            seen += [m["episode_id"] for m in ctx["memories"]]
+        assert len(seen) == 10 and len(set(seen)) == 10 and not (set(seen) & set(sel["unjudged_ids"]))
+        bridge.call_tool("memory_release", dict(request_id="m2", view_id=ctx["view_id"]))
+    finally:
+        d.close()

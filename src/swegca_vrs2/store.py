@@ -1483,7 +1483,8 @@ class Main:
         """``expected_snapshot`` None = whatever generation is current (lock-free hook path).
 
         ``judge_limit`` (2.2, the session producer's bounded judgment): Replay and Re-evidence run for the top
-        ``judge_limit`` candidates only — the candidate set and the order are exactly those of the unbounded
+        ``judge_limit`` candidates only — the receipt's candidate list is those K (index-bound to replay and
+        re-evidence, as memory_context requires); the set and the order are exactly those of the unbounded
         call (the gates on the BM25 score are bounded, so ordering stops once no remaining candidate can enter
         the top K); every other candidate stays listed and addressable, and ``memory_selection.judged`` says
         how many were judged. None (main's hook path) judges every candidate as before.
@@ -1820,12 +1821,17 @@ class Main:
             head = RecallResult(recalled.query, tuple(judged), recalled.snapshot_id, source_dependencies=recalled.source_dependencies)
         replayed = replay_memory(LightView(memory) if hasattr(memory, 'episode_light') else memory, head)
         re_evidenced = re_evidence_memory(replayed, judge=judge)
+        # bounded: the receipt's candidate list is the judged K — the same rows in the same order as replay.episodes
+        # and re_evidence.judgments, which memory_context binds by index (agBV 2026-09-21: a longer candidate list
+        # than the judged rows failed every memory_context with memory_context_cardinality_changed); every other
+        # candidate stays addressable by id in memory_selection.unjudged_ids (the fully keyed ones first, in order)
         receipt = MemoryActivationReceipt(schema_version='rozephine-memory-activation-v1',
-            snapshot_id=memory.snapshot_id, deja_vu=signal, recall=recalled,
+            snapshot_id=memory.snapshot_id, deja_vu=signal, recall=(head if judged is not None else recalled),
             replay=replayed, re_evidence=re_evidenced)
         # the receipt's per-record columns: every candidate on the unbounded path, the judged rows when bounded
-        # (the candidate list itself is complete either way)
         ids = [c.episode_id for c in (head.candidates if judged is not None else receipt.recall.candidates)]
+        unjudged = ([c.episode_id for c in recalled.candidates[len(head.candidates):]] + (list(bounded['rest_ids']) if bounded is not None else [])
+                    if judged is not None else [])
         selection = dict(candidate_counts={c: fanout[c] for c in candidates},
             selected_cues=cues, rejected_cues=tuple(c for c in candidates if c not in selected),
             function_word_cues=tuple(c for c in selected if c not in informative),
@@ -1836,8 +1842,8 @@ class Main:
             asks_gate=ask_gate,
             judged=len(head.candidates),
             candidate_count=len(recalled.candidates) + (len(bounded['rest_ids']) if bounded is not None else 0),
-            # bounded: the candidates never fully ordered (below the top-K bound) stay addressable by id
-            unjudged_ids=list(bounded['rest_ids']) if bounded is not None else [],
+            # bounded: the candidates outside the judged K (keyed but below it, then never fully ordered) stay addressable by id
+            unjudged_ids=unjudged,
             judge_bound=None if judged is None else 'exact_top_k_under_bounded_gates',
             semantic_acceptance_claimed=False)
         return dict(record_count=memory.episode_count, receipt={'activation': receipt}, memory_selection=selection,
