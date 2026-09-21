@@ -1,0 +1,288 @@
+{
+  "status": "PASS",
+  "records": 15630,
+  "fine_regions_seconds": 3.284,
+  "version_seconds": 7.239,
+  "top_functions": [
+    {
+      "function": "consolidate_run",
+      "file": "store.py",
+      "line": 1092,
+      "calls": 1,
+      "self_seconds": 7e-06,
+      "cumulative_seconds": 7.51878
+    },
+    {
+      "function": "consolidate",
+      "file": "store.py",
+      "line": 623,
+      "calls": 1,
+      "self_seconds": 5.5e-05,
+      "cumulative_seconds": 7.518773
+    },
+    {
+      "function": "consolidate",
+      "file": "vrs_refine.py",
+      "line": 539,
+      "calls": 1,
+      "self_seconds": 0.016922,
+      "cumulative_seconds": 7.239382
+    },
+    {
+      "function": "fine_regions",
+      "file": "vrs_refine.py",
+      "line": 365,
+      "calls": 1,
+      "self_seconds": 0.105216,
+      "cumulative_seconds": 3.281731
+    },
+    {
+      "function": "build_inputs",
+      "file": "vrs_refine.py",
+      "line": 435,
+      "calls": 1,
+      "self_seconds": 0.040547,
+      "cumulative_seconds": 3.137975
+    },
+    {
+      "function": "build_regions",
+      "file": "fast_regions.py",
+      "line": 188,
+      "calls": 9,
+      "self_seconds": 0.054726,
+      "cumulative_seconds": 3.134823
+    },
+    {
+      "function": "build",
+      "file": "vrs_evidence.py",
+      "line": 219,
+      "calls": 1,
+      "self_seconds": 0.008754,
+      "cumulative_seconds": 3.091515
+    },
+    {
+      "function": "episode",
+      "file": "compact_index.py",
+      "line": 252,
+      "calls": 15630,
+      "self_seconds": 0.048621,
+      "cumulative_seconds": 3.076372
+    },
+    {
+      "function": "_build",
+      "file": "compact_index.py",
+      "line": 274,
+      "calls": 15630,
+      "self_seconds": 0.128599,
+      "cumulative_seconds": 3.01109
+    },
+    {
+      "function": "_vector_moves",
+      "file": "fast_regions.py",
+      "line": 45,
+      "calls": 20,
+      "self_seconds": 0.007055,
+      "cumulative_seconds": 2.527703
+    },
+    {
+      "function": "_sequential",
+      "file": "fast_regions.py",
+      "line": 132,
+      "calls": 39,
+      "self_seconds": 0.814949,
+      "cumulative_seconds": 2.27045
+    },
+    {
+      "function": "<genexpr>",
+      "file": "compact_index.py",
+      "line": 278,
+      "calls": 1812144,
+      "self_seconds": 0.333394,
+      "cumulative_seconds": 1.588327
+    },
+    {
+      "function": "unique",
+      "file": "_arraysetops_impl.py",
+      "line": 145,
+      "calls": 169650,
+      "self_seconds": 0.092802,
+      "cumulative_seconds": 1.520988
+    },
+    {
+      "function": "_unique1d",
+      "file": "_arraysetops_impl.py",
+      "line": 350,
+      "calls": 169650,
+      "self_seconds": 0.565644,
+      "cumulative_seconds": 1.386645
+    },
+    {
+      "function": "string_of",
+      "file": "compact_index.py",
+      "line": 153,
+      "calls": 1797620,
+      "self_seconds": 0.289675,
+      "cumulative_seconds": 1.260441
+    },
+    {
+      "function": "__init__",
+      "file": "<string>",
+      "line": 2,
+      "calls": 15630,
+      "self_seconds": 0.010355,
+      "cumulative_seconds": 0.978237
+    },
+    {
+      "function": "_block",
+      "file": "compact_index.py",
+      "line": 136,
+      "calls": 1797620,
+      "self_seconds": 0.612716,
+      "cumulative_seconds": 0.970766
+    },
+    {
+      "function": "__post_init__",
+      "file": "mosaic_memory_activation.py",
+      "line": 53,
+      "calls": 15630,
+      "self_seconds": 0.029154,
+      "cumulative_seconds": 0.967882
+    },
+    {
+      "function": "run_phase",
+      "file": "vrs_refine.py",
+      "line": 626,
+      "calls": 2,
+      "self_seconds": 0.002793,
+      "cumulative_seconds": 0.580107
+    },
+    {
+      "function": "compute",
+      "file": "vrs_refine.py",
+      "line": 615,
+      "calls": 142,
+      "self_seconds": 0.089746,
+      "cumulative_seconds": 0.577062
+    },
+    {
+      "function": "<built-in method builtins.isinstance>",
+      "file": "~",
+      "line": 0,
+      "calls": 1879479,
+      "self_seconds": 0.134475,
+      "cumulative_seconds": 0.487282
+    },
+    {
+      "function": "_refine_subgraph",
+      "file": "vrs_refine.py",
+      "line": 525,
+      "calls": 142,
+      "self_seconds": 0.0191,
+      "cumulative_seconds": 0.485911
+    },
+    {
+      "function": "_wrapfunc",
+      "file": "fromnumeric.py",
+      "line": 48,
+      "calls": 169599,
+      "self_seconds": 0.042955,
+      "cumulative_seconds": 0.446706
+    },
+    {
+      "function": "refine",
+      "file": "vrs_refine.py",
+      "line": 86,
+      "calls": 142,
+      "self_seconds": 0.154407,
+      "cumulative_seconds": 0.400789
+    },
+    {
+      "function": "__instancecheck__",
+      "file": "typing.py",
+      "line": 1221,
+      "calls": 468900,
+      "self_seconds": 0.069899,
+      "cumulative_seconds": 0.396256
+    },
+    {
+      "function": "_csr",
+      "file": "mosaic_vrs_connectivity_regions.py",
+      "line": 27,
+      "calls": 24,
+      "self_seconds": 0.340689,
+      "cumulative_seconds": 0.358778
+    },
+    {
+      "function": "_plain_json",
+      "file": "mosaic_memory_activation.py",
+      "line": 36,
+      "calls": 234450,
+      "self_seconds": 0.073709,
+      "cumulative_seconds": 0.333271
+    },
+    {
+      "function": "<method 'argsort' of 'numpy.ndarray' objects>",
+      "file": "~",
+      "line": 0,
+      "calls": 168947,
+      "self_seconds": 0.333174,
+      "cumulative_seconds": 0.333174
+    },
+    {
+      "function": "__subclasscheck__",
+      "file": "typing.py",
+      "line": 1492,
+      "calls": 468900,
+      "self_seconds": 0.108841,
+      "cumulative_seconds": 0.326357
+    },
+    {
+      "function": "_freeze_json",
+      "file": "mosaic_memory_activation.py",
+      "line": 26,
+      "calls": 234450,
+      "self_seconds": 0.07172,
+      "cumulative_seconds": 0.300976
+    },
+    {
+      "function": "with_arrays",
+      "file": "flat_vrs.py",
+      "line": 126,
+      "calls": 1,
+      "self_seconds": 8e-06,
+      "cumulative_seconds": 0.279006
+    },
+    {
+      "function": "__init__",
+      "file": "flat_vrs.py",
+      "line": 62,
+      "calls": 1,
+      "self_seconds": 0.090003,
+      "cumulative_seconds": 0.278997
+    },
+    {
+      "function": "loads",
+      "file": "__init__.py",
+      "line": 299,
+      "calls": 31260,
+      "self_seconds": 0.014341,
+      "cumulative_seconds": 0.276961
+    },
+    {
+      "function": "cumsum",
+      "file": "fromnumeric.py",
+      "line": 2876,
+      "calls": 167608,
+      "self_seconds": 0.040147,
+      "cumulative_seconds": 0.270788
+    },
+    {
+      "function": "decode",
+      "file": "decoder.py",
+      "line": 333,
+      "calls": 31260,
+      "self_seconds": 0.025172,
+      "cumulative_seconds": 0.256925
+    }
+  ]
+}

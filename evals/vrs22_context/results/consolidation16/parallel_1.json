@@ -1,0 +1,46 @@
+{
+  "status": "PASS",
+  "state": "/var/tmp/vrs22-existing-experience-merge16-20260922",
+  "records": 15630,
+  "serial": {
+    "workers_requested": 1,
+    "cycles": 4,
+    "wall_seconds": 4.372041,
+    "process_cpu_seconds": 4.571326,
+    "peak_process_threads": 2,
+    "version_id": "ee5922c418667dd0bf4cc6b4590a388becb66bad7ed18ebeb849072230e263ea",
+    "fine_regions_seconds": 2.286,
+    "version_seconds": 4.194,
+    "regions": 71,
+    "nodes": 147356,
+    "edges": 3312964
+  },
+  "parallel": {
+    "workers_requested": 16,
+    "cycles": 4,
+    "wall_seconds": 3.445642,
+    "process_cpu_seconds": 5.027807,
+    "peak_process_threads": 18,
+    "version_id": "ee5922c418667dd0bf4cc6b4590a388becb66bad7ed18ebeb849072230e263ea",
+    "fine_regions_seconds": 1.747,
+    "version_seconds": 3.266,
+    "regions": 71,
+    "nodes": 147356,
+    "edges": 3312964
+  },
+  "wall_speedup": 1.2689,
+  "openblas_threads": "1",
+  "io_device": "/dev/nvme2n1",
+  "state_mount_source": "/dev/nvme2n1p3",
+  "disk_allocated_bytes": 85905408,
+  "storage_limit_bytes": 500000000000,
+  "cgroup": {
+    "path": "/user.slice/user-1000.slice/user@1000.service/app.slice/vrs22-consolidation-fineparallel-20260922.service",
+    "memory_max": "4294967296",
+    "memory_swap_max": "0",
+    "io_max": "259:3 rbps=625000000 wbps=625000000 riops=max wiops=max",
+    "memory_peak": "983465984"
+  },
+  "database_module_loaded": false,
+  "peak_rss_bytes": 1000681472
+}

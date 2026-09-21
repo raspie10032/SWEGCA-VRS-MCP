@@ -362,7 +362,7 @@ def build_portals(inp, strength, labels_of_nodes, previous):
     return portals, events
 
 
-def fine_regions(graph, coarse, *, min_nodes=FINE_MIN_NODES, previous=None):
+def fine_regions(graph, coarse, *, min_nodes=FINE_MIN_NODES, previous=None, workers=1):
     """Split every coarse region again by the same modularity rule on its induced subgraph.
 
     The connectivity regions the graph maintains are few and large (16 for 100k nodes, a hub of 20k):
@@ -382,6 +382,7 @@ def fine_regions(graph, coarse, *, min_nodes=FINE_MIN_NODES, previous=None):
     src = np.asarray(flat.src, np.int64); dst = np.asarray(flat.dst, np.int64)
     sign = np.asarray(flat.sign, np.int8); strength = np.asarray(flat.strength, np.float64)
     coarse = np.asarray(coarse, np.int64)
+    src_regions, dst_regions = coarse[src], coarse[dst]
     n = len(coarse)
     prev = None
     if previous is not None and len(previous):
@@ -401,17 +402,18 @@ def fine_regions(graph, coarse, *, min_nodes=FINE_MIN_NODES, previous=None):
                     claimed.add(fid); return fid
         fid = next_id; next_id += 1; claimed.add(fid); return fid
 
-    for r in np.unique(coarse):
+    def split_region(r):
         members = np.flatnonzero(coarse == r)
         if len(members) < min_nodes:
-            fine[members] = take(prev[members] if prev is not None else np.empty(0, np.int64))
-            continue
-        local = np.full(n, -1, np.int64); local[members] = np.arange(len(members))
-        e = np.flatnonzero((coarse[src] == r) & (coarse[dst] == r))
+            return members, None
+        e = np.flatnonzero((src_regions == r) & (dst_regions == r))
         if len(e) == 0:
-            fine[members] = take(prev[members] if prev is not None else np.empty(0, np.int64))
-            continue
-        source = SimpleNamespace(terms=graph.lazy_terms(members), edge_source=local[src[e]], edge_target=local[dst[e]],
+            return members, None
+        # ``members`` is sorted. Local search avoids a full-graph-sized mapping
+        # allocation for every region when several regions run concurrently.
+        source = SimpleNamespace(terms=graph.lazy_terms(members),
+                                 edge_source=np.searchsorted(members, src[e]),
+                                 edge_target=np.searchsorted(members, dst[e]),
                                  edge_sign=sign[e], vrs_strength=strength[e])
         warm = None
         if prev is not None:
@@ -421,10 +423,29 @@ def fine_regions(graph, coarse, *, min_nodes=FINE_MIN_NODES, previous=None):
                 _, sub_old = np.unique(prev[had], return_inverse=True)
                 warm = (SimpleNamespace(terms=SimpleNamespace(members=had), core_labels=sub_old), None)
         regions, _ = build_regions(source, vrs_snapshot_id=graph.snapshot_id, previous=warm)
-        sub = np.asarray(regions.core_labels, np.int64)
-        for k in np.unique(sub):
-            group = members[sub == k]
-            fine[group] = take(prev[group] if prev is not None else np.empty(0, np.int64))
+        return members, np.asarray(regions.core_labels, np.int64)
+
+    region_ids = np.unique(coarse)
+    if workers > 1 and len(region_ids) > 1:
+        with ThreadPoolExecutor(max_workers=min(int(workers), len(region_ids)),
+                                thread_name_prefix='vrs2-fine-region') as pool:
+            splits = pool.map(split_region, region_ids)
+            for members, sub in splits:
+                if sub is None:
+                    fine[members] = take(prev[members] if prev is not None else np.empty(0, np.int64))
+                    continue
+                for k in np.unique(sub):
+                    group = members[sub == k]
+                    fine[group] = take(prev[group] if prev is not None else np.empty(0, np.int64))
+    else:
+        for r in region_ids:
+            members, sub = split_region(r)
+            if sub is None:
+                fine[members] = take(prev[members] if prev is not None else np.empty(0, np.int64))
+                continue
+            for k in np.unique(sub):
+                group = members[sub == k]
+                fine[group] = take(prev[group] if prev is not None else np.empty(0, np.int64))
     return fine, len(claimed)
 
 
@@ -549,7 +570,9 @@ def consolidate(graph, memory, previous, *, seed=SEED, cycles=CYCLES, labels=Non
     fine_seconds = 0.0
     if labels is None and FINE_REGIONS and len(coarse):
         t_fine = time.perf_counter()
-        labels, _ = fine_regions(graph, coarse, previous=getattr(previous, 'labels', None) if previous is not None else None)
+        labels, _ = fine_regions(graph, coarse,
+                                 previous=getattr(previous, 'labels', None) if previous is not None else None,
+                                 workers=workers)
         fine_seconds = round(time.perf_counter() - t_fine, 3)
     else:
         labels = coarse
