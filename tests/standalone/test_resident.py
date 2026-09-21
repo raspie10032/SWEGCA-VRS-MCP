@@ -257,13 +257,26 @@ def test_logical_snapshot_update_cost_does_not_scan_all_shards(tmp_path):
         resident.refresh_pair("main", primary)
         after = resident.logical_snapshot()
         assert after != before
+        assert resident.logical_record_count() == 1
+        assert resident.logical_cue_total() == primary.memory.cue_total
 
         class NoIteration(dict):
             def items(self):
                 raise AssertionError("logical_snapshot scanned every shard")
 
+            def values(self):
+                raise AssertionError("logical read totals scanned every shard")
+
         resident.pair_ids = NoIteration(resident.pair_ids)
+        resident.record_counts = NoIteration(resident.record_counts)
+        resident.cue_totals = NoIteration(resident.cue_totals)
         assert resident.logical_snapshot() == after
+        assert resident.logical_record_count() == 1
+        assert resident.logical_cue_total() == primary.memory.cue_total
+        primary.ingest(row(1, "논리 스냅샷 추가 갱신", "snapshot"))
+        resident.refresh_pair("main", primary)
+        assert resident.logical_record_count() == 2
+        assert resident.logical_cue_total() == primary.memory.cue_total
     finally:
         resident.close()
         primary.close()

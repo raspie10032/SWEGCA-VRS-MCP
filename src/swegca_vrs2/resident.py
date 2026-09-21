@@ -225,6 +225,8 @@ class Resident:
             except (OSError, ValueError):
                 continue
         self._pair_lock = threading.Lock()
+        self._logical_records = sum(self.record_counts.values())
+        self._logical_cues = sum(self.cue_totals.values())
         self._pair_xor = bytearray(32)
         for identifier, pair in self.pair_ids.items():
             self._xor_pair_component(identifier, pair)
@@ -258,9 +260,8 @@ class Resident:
                 self.linked[identifier] = row
                 self.exact_backfill.setdefault(identifier, dict(
                     count=0, tail=None, cue_total=0, complete=(row['records'] == 0)))
-                self.record_counts[identifier] = row['records']
-                self.cue_totals[identifier] = row['cue_total']
                 with self._pair_lock:
+                    self._set_counts_locked(identifier, row['records'], row['cue_total'])
                     self.pair_ids[identifier] = row['pair_snapshot_id']
                     self._xor_pair_component(identifier, row['pair_snapshot_id'])
                     self._logical_snapshot_id = self._snapshot_from_pair_xor()
@@ -387,8 +388,8 @@ class Resident:
         self.bundles[identifier] = directory
         self.auto_ids.append(identifier)
         self.exact_backfill[identifier] = dict(count=0, tail=None, cue_total=0, complete=True)
-        self.record_counts[identifier] = 0
-        self.cue_totals[identifier] = 0
+        with self._pair_lock:
+            self._set_counts_locked(identifier, 0, 0)
         return identifier
 
     def _xor_pair_component(self, shard, pair):
@@ -400,6 +401,14 @@ class Resident:
         return digest(('complete-vrs-sharded-generation-v1',
                        len(self.pair_ids), self._pair_xor.hex()))
 
+    def _set_counts_locked(self, shard, records, cues):
+        """Keep the read-path totals aligned with complete shard generations."""
+        records, cues = int(records), int(cues)
+        self._logical_records += records - self.record_counts.get(shard, 0)
+        self._logical_cues += cues - self.cue_totals.get(shard, 0)
+        self.record_counts[shard] = records
+        self.cue_totals[shard] = cues
+
     def refresh_pair(self, shard, owner):
         shard, pair = str(shard), owner.pair.snapshot_id
         records, cues = owner.memory.episode_count, owner.memory.cue_total
@@ -410,15 +419,13 @@ class Resident:
             self.linked[shard].update(pair_snapshot_id=pair,
                                       records=records, cue_total=cues)
         with self._pair_lock:
-            self.record_counts[shard] = records
-            self.cue_totals[shard] = cues
+            self._set_counts_locked(shard, records, cues)
             previous = self.pair_ids.get(shard)
             if previous == pair:
                 return
             if previous is not None:
                 self._xor_pair_component(shard, previous)
             self.pair_ids[shard] = pair
-            self.record_counts[shard] = owner.memory.episode_count
             self._xor_pair_component(shard, pair)
             self._logical_snapshot_id = self._snapshot_from_pair_xor()
 
@@ -427,10 +434,12 @@ class Resident:
             return self._logical_snapshot_id
 
     def logical_record_count(self):
-        return sum(self.record_counts.values())
+        with self._pair_lock:
+            return self._logical_records
 
     def logical_cue_total(self):
-        return sum(self.cue_totals.values())
+        with self._pair_lock:
+            return self._logical_cues
 
     def read_directory_complete(self):
         return all(bool(self.exact_backfill.get(shard, {}).get('complete'))
@@ -1035,8 +1044,6 @@ class Resident:
                         defer_checkpoints=True)
             if not existed:
                 self.exact_backfill[bundle_id] = dict(count=0, tail=None, cue_total=0, complete=True)
-                self.record_counts[bundle_id] = 0
-                self.cue_totals[bundle_id] = 0
             self.hot[bundle_id] = main
             self.wanted.discard(bundle_id)
             self.refresh_pair(bundle_id, main)
