@@ -28,8 +28,11 @@ INGEST = tool('memory_store',
 
 
 class LocalResident:
-    def __init__(self, main):
-        self.main, self.sessions = main, {}
+    """Main's admission for the MCP tools. ``session_layer`` (2.2): when the daemon runs the session producer layer,
+    a ``cognitive_dialogue_start`` that names a ``session`` (or a ``session_hint`` the daemon resolved) is judged on
+    that session's proposal journal first; only a complete miss reads main. The admission says which layer answered."""
+    def __init__(self, main, session_layer=None):
+        self.main, self.sessions, self.session_layer = main, {}, session_layer
 
     def request(self, command, **args):
         try:
@@ -48,14 +51,37 @@ class LocalResident:
                 raise ValueError('duplicate_memory_request')
             if len(self.sessions) >= 64:
                 raise ValueError('release_existing_requests_before_admission')
-            root = self.main.recall(args['query'], args['expected_pair_snapshot_id'])
+            session = args.get('session')
+            owner, layer, miss = self.main, 'main', None
+            root = None
+            if session and self.session_layer is not None:
+                hit = self.session_layer.recall(session, args['query'], limit=int(args.get('judge_limit') or 10))
+                if hit is not None:
+                    owner, root = hit
+                    layer = 'session'
+                else:
+                    miss = 'absent' if self.session_layer.main_for(session, create=False) is None else 'complete_miss'
+            if root is None:
+                root = self.main.recall(args['query'], args['expected_pair_snapshot_id'])
+            selection = root.get('memory_selection')
+            if isinstance(selection, dict):
+                selection['layer'] = layer
+                if layer == 'session':
+                    selection['session'] = str(session)[:12]
+                if miss:
+                    selection['session_miss'] = miss
             view = uuid.uuid4().hex
             pair = root['pair_snapshot_id']
             pages = HotEvidencePages(freeze_view(root), request_id=identifier, snapshot_id=pair,
-                guard=self.main._check, maximum_page_bytes=32768, maximum_page_items=16,
+                guard=owner._check, maximum_page_bytes=32768, maximum_page_items=16,
                 maximum_open_cursors=16)
             self.sessions[identifier] = (view, pages)
-            return dict(status='queued', request_id=identifier, view_id=view, snapshot_id=pair)
+            out = dict(status='queued', request_id=identifier, view_id=view, snapshot_id=pair, layer=layer)
+            if layer == 'session':
+                out['session'] = str(session)[:12]
+            if miss:
+                out['session_miss'] = miss
+            return out
         if command not in ('cognitive_dialogue_continue', 'cognitive_dialogue_evidence_open',
                            'cognitive_dialogue_evidence', 'cognitive_dialogue_release'):
             raise ValueError('resident_operation_not_exported')
@@ -132,12 +158,17 @@ class ReconnectingClient:
     restart (``tool_request_failed``, 2026-09-21). On a failed request the client is rebuilt through
     ``ensure_daemon`` (re-reads the port, starts the daemon if it is gone) and the request is sent once more."""
 
-    def __init__(self, state_dir, allow_ingest):
+    def __init__(self, state_dir, allow_ingest, session_hint=None):
         from .loopback import ensure_daemon
         self._ensure = lambda: ensure_daemon(state_dir, allow_ingest=allow_ingest)
         self.client = self._ensure()
+        # 2.2: a hookless agent's bridge names the producer it serves (agent, project); the daemon resolves the hint to
+        # that agent's live proposal journal so memory_context reads the session first, then main on a complete miss
+        self.session_hint = session_hint or None
 
     def request(self, command, **arguments):
+        if command == 'cognitive_dialogue_start' and self.session_hint and 'session' not in arguments:
+            arguments = dict(arguments, session_hint=self.session_hint)
         try:
             return self.client.request(command, **arguments)
         except InterfaceError as error:
@@ -229,11 +260,14 @@ def main():
     parser.add_argument('--state-dir', type=Path, default=default_state_dir())
     parser.add_argument('--allow-ingest', action='store_true', help='Permit explicit external observation recording; grants no action or belief authority.')
     parser.add_argument('--loopback', action='store_true', help='Bridge to the resident loopback daemon owning --state-dir (start it if needed) instead of owning the store in this process.')
+    parser.add_argument('--session-agent', default=None, help='2.2: the agent this bridge serves (e.g. antigravity); memory_context then reads that agent\'s live session journal first, main on a complete miss.')
+    parser.add_argument('--session-project', default=None, help='2.2: narrow the session hint to one project slug.')
     options = parser.parse_args()
     if options.loopback:
         server = None
         try:
-            client = ReconnectingClient(options.state_dir, options.allow_ingest)
+            hint = {k: v for k, v in (('agent', options.session_agent), ('project', options.session_project)) if v}
+            client = ReconnectingClient(options.state_dir, options.allow_ingest, session_hint=hint or None)
             server = LoopbackMCP(client, options.allow_ingest and bool(client.request('ping').get('writes_enabled')))
             server.serve(sys.stdin.buffer, sys.stdout.buffer)
         except (ValueError, OSError) as error:

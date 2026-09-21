@@ -19,7 +19,7 @@ WORDS = "회수 병합 세션 저널 판정 영수증 스토어 데몬 훅 프�
 
 def row(i, text, session="s1", **extra):
     return dict(request_id=f"{session}:{i}", text=text, source=f"{session}/log#{i}", revision=f"r{i}", outcome="pending", cues=[],
-                metadata=dict(kind="transcript", project="p", agent="claude-code", session=session, turn=i, **extra))
+                metadata=dict(dict(kind="transcript", project="p", agent="claude-code", session=session, turn=i), **extra))
 
 
 def daemon(tmp_path, **kw):
@@ -269,3 +269,56 @@ def test_the_tail_writes_a_live_session_to_its_journal_and_session_end_merges_it
         assert [m for m in got["misses"] if m["kind"] == "session_miss"][0]["state"] == "absent"
     finally:
         d.close()
+
+
+def test_the_mcp_admission_reads_a_hinted_agents_live_session_first(tmp_path):
+    """2.2 for a hookless agent (Antigravity): its MCP bridge cannot name the cascade; it sends a hint (agent) and the
+    daemon resolves it to that agent's live journal. memory_recall's admission then says which layer judged."""
+    from swegca_vrs2.server import ReconnectingClient
+    d = daemon(tmp_path)
+    try:
+        d.handle(dict(command="ingest_many", rows=[row(i, f"main 의 오래된 경험 {WORDS[i]} 항목 {i}", session="old") for i in range(6)]))
+        d.handle(dict(command="ingest_many", session="cascade-1", rows=[row(1, "안티그래비티 대화: 청크 SQLITE 1201 을 썼다", session="cascade-1", agent="antigravity"),
+                                                                        row(2, "안티그래비티 대화: 다음은 SQLITE 1401", session="cascade-1", agent="antigravity")]))
+        pair = d.handle(dict(command="status"))["pair_snapshot_id"]
+        start = dict(command="cognitive_dialogue_start", profile="memory-only-no-provider", expected_pair_snapshot_id=pair)
+        hit = d.handle(dict(start, request_id="r1", query="청크 SQLITE 다음 시작줄", session_hint={"agent": "antigravity"}))
+        assert hit["status"] == "queued" and hit["layer"] == "session" and hit["session"] == "cascade-1"
+        d.handle(dict(command="cognitive_dialogue_release", request_id="r1", view_id=hit["view_id"]))
+        # through the bridge's own tool: memory_context shows the layer in its cue selection and joins the session's rows
+        from swegca_vrs2.server import LoopbackMCP
+        class Direct:
+            session_hint = {"agent": "antigravity"}
+            def request(self, command, **arguments):
+                if command == "cognitive_dialogue_start" and "session" not in arguments:
+                    arguments = dict(arguments, session_hint=self.session_hint)
+                return d.handle(dict(arguments, command=command))
+            def close(self): pass
+        bridge = LoopbackMCP(Direct(), False)
+        ctx = bridge.call_tool("memory_context", dict(request_id="m1", query="청크 SQLITE 다음 시작줄", expected_pair_snapshot_id=pair, page_size=4))
+        assert ctx["status"] == "memory_context_ready", ctx
+        assert ctx["main_cue_selection"]["memory_selection"]["data"]["layer"] == "session"
+        assert any("SQLITE" in str(m["replay"]["data"]) for m in ctx["memories"])
+        bridge.call_tool("memory_release", dict(request_id="m1", view_id=ctx["view_id"]))
+        miss = d.handle(dict(start, request_id="r2", query="오래된 경험 갈등 재발급", session_hint={"agent": "antigravity"}))
+        assert miss["layer"] == "main" and miss["session_miss"] == "complete_miss"
+        d.handle(dict(command="cognitive_dialogue_release", request_id="r2", view_id=miss["view_id"]))
+        other = d.handle(dict(start, request_id="r3", query="청크 SQLITE 다음 시작줄", session_hint={"agent": "nobody"}))
+        assert other["layer"] == "main" and "session_miss" not in other      # no live journal for that agent: plain main
+        d.handle(dict(command="cognitive_dialogue_release", request_id="r3", view_id=other["view_id"]))
+        d.handle(dict(command="session_end", session="cascade-1", wait=True))
+        pair = d.handle(dict(command="status"))["pair_snapshot_id"]                 # the merge published a new generation
+        ended = d.handle(dict(start, request_id="r4", query="청크 SQLITE 다음 시작줄", session_hint={"agent": "antigravity"}, expected_pair_snapshot_id=pair))
+        assert ended["layer"] == "main" and "session_miss" not in ended      # ended and merged: the hint resolves to nothing, main has the rows
+    finally:
+        d.close()
+    # the bridge's client adds the hint to the admission only
+    class Fake:
+        def __init__(self): self.seen = []
+        def request(self, command, **arguments): self.seen.append((command, arguments)); return {}
+        def close(self): pass
+    c = ReconnectingClient.__new__(ReconnectingClient)
+    c.client, c.session_hint, c._ensure = Fake(), {"agent": "antigravity"}, None
+    c.request("cognitive_dialogue_start", request_id="x", query="q")
+    c.request("status")
+    assert c.client.seen[0][1]["session_hint"] == {"agent": "antigravity"} and "session_hint" not in c.client.seen[1][1]

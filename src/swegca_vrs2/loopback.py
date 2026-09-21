@@ -523,6 +523,7 @@ class Daemon:
             self.merge = MergeTransaction(self.main, self.sessions, self.lock)
             self.recovered = self.merge.recover()      # a merge the last daemon died inside finishes or rolls back
             self.merger = Merger(self.merge)
+            self.resident.session_layer = self.sessions   # the MCP admission reads a named session first, too
 
     def _journal_of(self, session):
         """The open proposal journal of ``session`` for a read, or None (no layer, no session, no journal, merging)."""
@@ -625,6 +626,14 @@ class Daemon:
             return dict(status='ok', consolidate=result, raced=result is None)
         with self.lock:
             if command in RESIDENT_COMMANDS:
+                if command == 'cognitive_dialogue_start':
+                    # 2.2: the MCP bridge of a hookless agent cannot name its session; it sends a hint (agent, project)
+                    # and the layer resolves it to that agent's live journal (the most recently written, not ended)
+                    hint = arguments.pop('session_hint', None)
+                    if not arguments.get('session') and isinstance(hint, dict) and self.sessions is not None:
+                        live = self.sessions.live_for(agent=hint.get('agent'), project=hint.get('project'))
+                        if live:
+                            arguments['session'] = live
                 result = self.resident.request(command, **arguments)
                 if command == 'status':
                     result['bundles'] = self.bundles.status()

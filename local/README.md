@@ -38,12 +38,28 @@ Since 2026-09-18 these are six-line shims; the bodies are `src/swegca_vrs2/harne
 * `vrs2-sheet-index.py` — spreadsheets as schema records (headers/types/file lists, never values)
 * `vrs2-rebuild-graph.py` — rebuild the graph chain from the journal (`--drop-consolidations`)
 * `receipt-use.py` — how often injected receipts were opened, per session transcript
+* `agy.py`, `ag_rpc.py`, `ag_run.py` — Antigravity from the terminal: the live language server's `agentapi` (new conversation by model tier, send, metadata), a LanguageServerService RPC caller (Connect JSON; the CSRF token is read from the process and never printed), the continuity-card driver
+* `ag_eval.py` (+ `ag_step_types.json`) — 2.2 evaluation runs on Antigravity: `StartCascade` + `SendUserCascadeMessage` with `cascadeConfig.plannerConfig.planModel` (any served model: `models` lists them with their default checkpointer) and `checkpointConfig{maxTokenLimit, tokenThreshold}` (the compaction knob — the checkpointer compacts for real, `CORTEX_STEP_TYPE_CHECKPOINT` = 23 with a session summary), waits until idle, denies a step left waiting for approval with the card's rule (never approves a model's shell command), optionally tails the conversation into an evaluation store (`--vrs-state/--vrs-receipts`) and ends the session there, dumps `transcript.jsonl` for `bench/compaction/antigravity/score_ag.py`
 
 ## bench/compaction/
 
 Task cards and scorer for the goal-consistency-under-compaction test (needs a logged-in CLI to
 run with `--autocompact 100000`; inputs are not included). `GRADING.md` is the grading spec; its §0 is the
 premise gate — a run without real-time VRS receipts is 「VRS 없음」 and is not scored for continuity.
+
+## bench/compaction/antigravity/
+
+The same task on Antigravity (2026-09-21): `task_template.md` + `make_cards.py` (A/B × VRS paragraph, tool names
+`view_file` / `write_to_file`), `score_ag.py` (GRADING on trajectory steps: CHECKPOINT = boundary, `view_file` on an
+input = Read, `write_to_file` = Write, `call_mcp_tool memory_context` = recall; `--receipts` / `--state-dir` for the §0
+gate). A pilot at `maxTokenLimit` 40k compacted after nearly every read (a 200-line chunk of Korean log ≈ 70k Gemini
+tokens) and never finished a chunk; the runs use 100k / 10k.
+
+## bench/vrs2-stream-refine.py
+
+The 10^9-parameter pass (2.2 phase 5b): one `vrs_refine` cycle over a synthetic VRS of 10^9 edges / 10^8 nodes streamed
+from the SSD in the FlatGraph in-edge layout (CSR by target, signed strength; 16 threads, fixed per-thread buffers, no
+memmaps). Measured 55 s per cycle, 18 M edges/s, 0.34 GB/s, peak working set 2.8 GB (docs/VRS_REGIONS.md, 2.2).
 
 ## bench/vrs2-scale-curve.py
 

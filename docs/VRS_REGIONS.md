@@ -1025,3 +1025,26 @@ idle sweep, an unseen supersedes, bounded top-K exactness against the full path,
 The rule's cost, stated: another active session of the same project does not see this session's new
 log entries or turns until this session ends and merges (before 2.2 every Stop's rows were in main at
 once). The evaluation (plan phase 6) is where that shows or does not.
+
+**The MCP read channel of a hookless agent (17:5x).** Antigravity's turns reach the store through the tail
+(`vrs2-tail.py --watch`), so under the rule they sit in the cascade's proposal journal — and the MCP bridge
+(`swegca-vrs2-mcp --loopback`) could not name the cascade, so `memory_context` judged main only and the agent
+could not recall its own live turns. Now the bridge names the producer it serves (`--session-agent antigravity`,
+optionally `--session-project`), sends that as `session_hint` with the admission, and the daemon resolves it to
+that agent's live journal (`SessionLayer.live_for`: the most recently written, not ended, inside the idle
+window — with several live cascades of one agent the newest wins, stated in the admission). `LocalResident`
+then judges the journal first and main on a complete miss, exactly as `hook_recall`; the admission and
+`memory_selection` carry `layer` / `session` / `session_miss`. Test: the hinted admission, the miss, an unknown
+agent, an ended (merged) session, the bridge client adding the hint to the admission only.
+
+**The 10^9-parameter pass (phase 5b, 17:2x–17:3x).** `local/bench/vrs2-stream-refine.py`: one refinement
+cycle of `vrs_refine` (aggregate → state → reinforce/weaken/clamp) over a synthetic VRS of 10^9 edges and
+10^8 nodes that cannot be in RAM, streamed over the SSD in the FlatGraph's in-edge layout (CSR by target:
+`indptr` in RAM, `src` and a signed `strength` on disk, no dst or sign column), 16 threads each owning a
+contiguous target range, plain file reads into fixed per-thread buffers (the first version used memmaps and
+reported an 8.9 GB working set — mapped file pages count — and read a dst column twice: 107 / 82 s per cycle).
+Measured: **55.2 / 55.7 s per cycle** (aggregate 18 + state 1 + update 36–39), 18 M edges/s, 14.9 GB read +
+3.7 GB written = 0.34 GB/s, **peak working set 2.8 GB, peak private 3.3 GB**, 2,000 chunks of 5·10^5 edges;
+the 5 Gbps SSD ceiling makes 30 s the floor for 20 B/edge, so the pass is 1.8× the floor (the random gather
+over a 400 MB state array is the rest). At 10^8 / 10^7 the same code runs 3.4 s per cycle (29 M edges/s, 0.55
+GB/s). Seconds, under 4 GB, within the 500 GB store (8.2 GB on disk for 10^9).

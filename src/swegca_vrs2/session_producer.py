@@ -165,6 +165,25 @@ class SessionLayer:
             return None
         return main, root
 
+    def live_for(self, agent=None, project=None, now=None):
+        """The session a hint resolves to (2.2, for producers whose read channel does not carry the session id — the
+        MCP bridge of a hookless agent such as Antigravity): the most recently written journal of that agent (and
+        project when given) that has not ended and was written inside the idle window. None when there is none."""
+        now = time.time() if now is None else now
+        best, best_when = None, 0.0
+        for sid in self.ids():
+            if self.ended(sid) or sid in self.merging:
+                continue
+            state = self._state(sid)
+            if agent and state.get('agent') != agent:
+                continue
+            if project and state.get('project') != project:
+                continue
+            when = self.written_at(sid)
+            if (now - when) < self.idle_seconds and when > best_when:
+                best, best_when = sid, when
+        return best
+
     # ── lifecycle ────────────────────────────────────────────────────────────
     def end(self, session_id, *, reason='session_end'):
         """The producer declared itself finished: mark it (the merge follows; a late write still lands in the
