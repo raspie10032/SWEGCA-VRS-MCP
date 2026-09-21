@@ -117,13 +117,14 @@ def decode(body):
     assert 0 < scored["score"] < 20
 
 
-def exact_protocol_calls():
+def discovery_protocol_calls():
     address = "memory:" + "a" * 64
     session = "session-1"
     request = "vrs-request-1"
     view = "view-1"
     common = {"turn": "boundary01", "status": "completed", "page_size": None,
               "session_id": session, "query": None, "exact_episode_id": None,
+              "exact_episode_id_supplied": False,
               "memory_layer": None, "fallback_used": None, "lookup_receipt": None,
               "four_stage_valid": False, "stage_query_values": {}, "episode_ids": [],
               "experience_deleted": None, "request_id": None, "view_id": None,
@@ -132,15 +133,16 @@ def exact_protocol_calls():
     status = dict(common, tool="memory_status", packet_status="ready",
                   pair_snapshot_id="snapshot-1")
     context = dict(common, tool="memory_context", packet_status="memory_context_ready",
-        request_id=request, query=address, exact_episode_id=address,
+        request_id=request, query=GRADER.DISCOVERY_QUERY,
         expected_pair_snapshot_id="snapshot-1", packet_request_id=request,
         packet_view_id=view, pair_snapshot_id="snapshot-1", memory_layer="session",
         fallback_used=False, four_stage_valid=True, original_replay_valid=True,
-        stage_query_values={stage: address for stage in
+        stage_query_values={stage: GRADER.DISCOVERY_QUERY for stage in
             ("deja_vu", "recall", "replay", "re_evidence")},
         episode_ids=[address], lookup_receipt={
             "invariant": "session_first_main_only_after_complete_miss",
-            "query": address, "session_candidate_count": 1, "main_opened": False,
+            "query": GRADER.DISCOVERY_QUERY, "session_candidate_count": 1,
+            "main_opened": False,
             "selected_layer": "session"})
     release = dict(common, tool="memory_release", packet_status="released",
                    request_id=request, view_id=view, packet_request_id=request,
@@ -148,15 +150,17 @@ def exact_protocol_calls():
     return address, session, [status, context, release]
 
 
-def test_vrs_protocol_requires_both_full_exact_address_fields_and_same_handle():
-    address, session, calls = exact_protocol_calls()
+def test_vrs_protocol_requires_experience_location_discovery_and_same_handle():
+    address, session, calls = discovery_protocol_calls()
     assert GRADER.vrs_protocol(calls, address, session)
-    missing = [dict(call) for call in calls]
-    missing[1]["exact_episode_id"] = None
-    assert not GRADER.vrs_protocol(missing, address, session)
-    stripped = [dict(call) for call in calls]
-    stripped[1]["query"] = address.removeprefix("memory:")
-    assert not GRADER.vrs_protocol(stripped, address, session)
+    supplied_address = [dict(call) for call in calls]
+    supplied_address[1]["query"] = address
+    supplied_address[1]["exact_episode_id"] = address
+    supplied_address[1]["exact_episode_id_supplied"] = True
+    assert not GRADER.vrs_protocol(supplied_address, address, session)
+    wrong_cue = [dict(call) for call in calls]
+    wrong_cue[1]["query"] = "another cue"
+    assert not GRADER.vrs_protocol(wrong_cue, address, session)
     oversized_page = [dict(call) for call in calls]
     oversized_page[1]["page_size"] = 50
     assert not GRADER.vrs_protocol(oversized_page, address, session)
@@ -166,7 +170,7 @@ def test_vrs_protocol_requires_both_full_exact_address_fields_and_same_handle():
 
 
 def test_vrs_protocol_rejects_main_fallback_and_duplicate_status_calls():
-    address, session, calls = exact_protocol_calls()
+    address, session, calls = discovery_protocol_calls()
     fallback = [dict(call) for call in calls]
     fallback[1]["fallback_used"] = True
     fallback[1]["memory_layer"] = "main"
@@ -177,7 +181,7 @@ def test_vrs_protocol_rejects_main_fallback_and_duplicate_status_calls():
 
 
 def test_vrs_protocol_requires_complete_original_replay():
-    address, session, calls = exact_protocol_calls()
+    address, session, calls = discovery_protocol_calls()
     missing = [dict(call) for call in calls]
     missing[1]["original_replay_valid"] = False
     assert not GRADER.vrs_protocol(missing, address, session)
@@ -209,6 +213,67 @@ def test_vrs_protocol_requires_complete_original_replay():
         change(corrupted)
         assert not RUNNER.objective_replay_matches(corrupted, address, session)
         assert not GRADER.objective_replay_matches(corrupted, address, session)
+
+
+def test_natural_query_discovers_original_session_experience(tmp_path):
+    state = tmp_path / "state"
+    transcript = tmp_path / "rollout.jsonl"
+    session = "natural-location-session"
+    transcript.write_text("".join(json.dumps(row) + "\n" for row in (
+        {"type": "session_meta", "payload": {"id": session}},
+        {"type": "response_item", "payload": {"type": "message", "role": "user",
+            "content": [{"type": "input_text", "text": RUNNER.INITIAL}]}},
+        {"type": "response_item", "payload": {"type": "message", "role": "user",
+            "content": [{"type": "input_text", "text": "Read ping.txt. Irrelevant filler."}]}},
+    )), encoding="utf-8")
+    try:
+        proof = RUNNER.runtime_json("""import json,sys
+from swegca_vrs2.session_capture import SessionCapture,VRSClient
+from swegca_vrs2.layered import LayeredMCP
+state,session,transcript,query=sys.argv[1:]
+capture=SessionCapture(state)
+capture.scan_transcript('codex',session,transcript)
+with VRSClient(capture.session_root('codex',session),writes=False) as client:
+ rows=client.export(0)['rows']
+ address=next(row['episode_id'] for row in rows
+              if 'checkpoint_integrity_failed' in row['observation']['text'])
+server=LayeredMCP(state)
+try:
+ status=server.call_tool('memory_status',{'session_id':session})
+ packet=server.call_tool('memory_context',{'session_id':session,
+  'request_id':'natural-discovery','query':query,
+  'expected_pair_snapshot_id':status['pair_snapshot_id']})
+ for _ in range(64):
+  if packet.get('status')=='memory_context_ready':break
+  packet=server.call_tool('memory_continue',dict(packet['next_call']['arguments'],
+                                                session_id=session))
+ print(json.dumps({'address':address,'packet':packet}))
+ if packet.get('view_id'):
+  server.call_tool('memory_release',{'session_id':session,
+   'request_id':'natural-discovery','view_id':packet['view_id']})
+finally:server.close()
+""", state, session, transcript, RUNNER.DISCOVERY_QUERY)
+        packet = proof["packet"]
+        address = proof["address"]
+        assert address not in RUNNER.vrs_instruction(session)
+        assert packet["memory_layer"] == "session"
+        assert packet["lookup_receipt"]["main_opened"] is False
+        assert packet["candidate_count"] == 1
+        assert {row["data"] for row in
+            packet["activation_receipt"]["stage_queries"].values()} \
+            == {RUNNER.DISCOVERY_QUERY}
+        assert RUNNER.objective_replay_matches(packet, address, session)
+        assert GRADER.objective_replay_matches(packet, address, session)
+    finally:
+        RUNNER.runtime_json("""import json,sys
+from pathlib import Path
+from swegca_vrs2.linked_shards import shutdown_and_release
+from swegca_vrs2.session_capture import SessionCapture
+root=Path(sys.argv[1]);session=sys.argv[2]
+shutdown_and_release(root)
+shutdown_and_release(root/'session-vrs'/'codex'/SessionCapture.session_key(session))
+print(json.dumps({'stopped':True}))
+""", state, session)
 
 
 def test_session_content_audit_detects_changed_ingress(tmp_path):

@@ -42,6 +42,7 @@ RUNTIME_PRODUCT_COMMIT = "f1ea47a"
 RUNTIME_REPOSITORY_COMMIT = "f1ea47a"
 RUNTIME_WHEEL_SHA256 = "ade989360646b009d40031e45091d2043b3af8ee4ca0854cdd08817fba5ee285"
 INITIAL_SHA256 = "a9249ca6fed86315b83cb96f89cc5d0936b2775468c3e450c3258b32abb49523"
+DISCOVERY_QUERY = "checkpoint"
 PRIVATE_PLAIN_ROOT = Path("/home/raspie/.local/share/vrs22-eval-runtime-v019/private")
 PLAIN_ARCHIVE = PRIVATE_PLAIN_ROOT / "plain-v005-control-evidence.tar.zst"
 PLAIN_EXTRACTED = PRIVATE_PLAIN_ROOT / "plain-v005-control-evidence"
@@ -266,6 +267,8 @@ def mcp_calls(run_dir, rows):
                           "query": (item.get("arguments") or {}).get("query"),
                           "exact_episode_id":
                               (item.get("arguments") or {}).get("exact_episode_id"),
+                          "exact_episode_id_supplied":
+                              "exact_episode_id" in (item.get("arguments") or {}),
                           "memory_layer": (packet.get("memory_layer")
                                            if isinstance(packet, dict) else None),
                           "fallback_used": (packet.get("fallback_used")
@@ -326,6 +329,9 @@ def objective_replay_matches(packet, episode_id, session_id):
 
 
 def vrs_protocol(calls, expected_episode_id=None, expected_session_id=None):
+    if (not isinstance(expected_episode_id, str)
+            or not isinstance(expected_session_id, str) or not expected_session_id):
+        return False
     statuses = [call for call in calls if call["tool"] == "memory_status"]
     contexts = [call for call in calls if call["tool"] == "memory_context"]
     starts = [call for call in contexts if call["view_id"] is None]
@@ -335,30 +341,26 @@ def vrs_protocol(calls, expected_episode_id=None, expected_session_id=None):
     if not (len(statuses) == len(starts) == len(ready) == len(releases) == 1):
         return False
     status, start, packet, release = statuses[0], starts[0], ready[0], releases[0]
-    if expected_episode_id is None:
-        exact = True
-    else:
-        exact = bool(expected_episode_id.startswith("memory:")
+    discovery = bool(expected_episode_id.startswith("memory:")
             and len(expected_episode_id) == 71
-            and start["query"] == expected_episode_id
-            and start["exact_episode_id"] == expected_episode_id
+            and start["query"] == DISCOVERY_QUERY
+            and start["exact_episode_id_supplied"] is False
             and start["page_size"] is None
-            and start["request_id"] and start["request_id"] != expected_episode_id
+            and start["request_id"] and start["request_id"] != DISCOVERY_QUERY
             and start["expected_pair_snapshot_id"] == status["pair_snapshot_id"]
             and packet["packet_request_id"] == start["request_id"]
             and expected_episode_id in packet["episode_ids"]
             and packet["four_stage_valid"]
-            and set(packet["stage_query_values"].values()) == {expected_episode_id}
+            and set(packet["stage_query_values"].values()) == {DISCOVERY_QUERY}
             and packet["memory_layer"] == "session" and packet["fallback_used"] is False
             and isinstance(packet["lookup_receipt"], dict)
             and packet["lookup_receipt"].get("invariant")
                 == "session_first_main_only_after_complete_miss"
-            and packet["lookup_receipt"].get("query") == expected_episode_id
+            and packet["lookup_receipt"].get("query") == DISCOVERY_QUERY
             and packet["lookup_receipt"].get("session_candidate_count", 0) > 0
             and packet["lookup_receipt"].get("main_opened") is False
             and packet["lookup_receipt"].get("selected_layer") == "session")
-    routing = (expected_session_id is None or all(
-        call["session_id"] == expected_session_id for call in calls))
+    routing = all(call["session_id"] == expected_session_id for call in calls)
     order = ([call["tool"] for call in calls].index("memory_status")
              < [call["tool"] for call in calls].index("memory_context")
              < [call["tool"] for call in calls].index("memory_release"))
@@ -372,8 +374,8 @@ def vrs_protocol(calls, expected_episode_id=None, expected_session_id=None):
                 and not (isinstance(call["lookup_receipt"], dict)
                          and call["lookup_receipt"].get("main_opened") is True)
                 for call in contexts))
-    return bool(exact and routing and order and release_matches and clean
-                and (expected_episode_id is None or packet["original_replay_valid"]))
+    return bool(discovery and routing and order and release_matches and clean
+                and packet["original_replay_valid"])
 
 
 def live_experience_complete(rows):
@@ -769,7 +771,8 @@ def grade_cell(model, arm, rows, run_dir, output):
                 and len(compact_records) == len(compaction_ids)
                 and not suspicious_commands)
     protocol_clean = (all(r["valid"] for r in all_rows)
-                      and all(r.get("required_vrs_exact_address_observed", True) for r in all_rows)
+                      and all(r.get("required_vrs_location_discovery_observed", True)
+                              for r in all_rows)
                       and all(r.get("required_vrs_four_stage_observed", True) for r in all_rows)
                       and all(r.get("required_vrs_session_first_observed", True) for r in all_rows)
                       and all(r.get("required_vrs_original_replay_observed", True)

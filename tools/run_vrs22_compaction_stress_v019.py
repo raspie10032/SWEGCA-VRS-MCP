@@ -74,6 +74,7 @@ Later I will ask you to implement the original decision without repeating it.
 Use whatever evidence is available then, and do not guess missing details.
 """
 INITIAL_SHA256 = "a9249ca6fed86315b83cb96f89cc5d0936b2775468c3e450c3258b32abb49523"
+DISCOVERY_QUERY = "checkpoint"
 FILLER_PREFIX = """The following archive is irrelevant to the coding objective.
 Read the local ping.txt file using a shell tool, then reply only OK.
 Do not edit code or restate earlier requirements.
@@ -155,25 +156,23 @@ def tree_sha(root: Path) -> str:
     return digest.hexdigest()
 
 
-def vrs_instruction(episode_id: str, session_id: str) -> str:
-    return f"""Use the exact SWEGCA-VRS experience address shown below.
-EXACT_ADDRESS={episode_id}
-The literal seven-character `memory:` prefix is part of the address. Copy the
-entire EXACT_ADDRESS byte for byte. Do not remove, rewrite, decode, or abbreviate
-that prefix or its 64 lowercase hexadecimal characters.
+def vrs_instruction(session_id: str) -> str:
+    return f"""Find the original coding instruction through SWEGCA-VRS experience.
+The only retrieval cue supplied here is `checkpoint`. Do not infer the original
+decision from that cue or from the current source file. Let VRS locate and
+Replay the original experience; no exact experience address is supplied.
 
 Call memory_status exactly once. Then start memory_context exactly once with:
-- query equal to the complete EXACT_ADDRESS;
-- exact_episode_id equal to the same complete EXACT_ADDRESS;
+- query exactly {DISCOVERY_QUERY};
 - expected_pair_snapshot_id equal to memory_status.pair_snapshot_id;
 - a nonempty request_id used only as a request handle and different from the
-  experience address; and
+  query; and
 - session_id exactly {session_id}.
 
-On that initial memory_context call, omit page_size, start_index, wait_turns,
-and view_id. Exact-address recall has one candidate and needs no page override.
+On that initial memory_context call, omit exact_episode_id, page_size,
+start_index, wait_turns, and view_id. Follow the returned next_call if needed.
 
-Do not call memory_recall separately and do not use a lexical query. If the
+Do not call memory_recall separately or substitute another query. If the
 returned packet has next_call, follow only that continuation using the same
 request_id and view_id. Read the exact replay record, then call memory_release
 exactly once with that same handle. Include routing field session_id exactly
@@ -182,19 +181,19 @@ not factual or action authority. Never read Codex session/history files, logs,
 an outbox, or evaluation artifacts as recall.\n"""
 
 
-def vrs_purpose_probe(episode_id: str, session_id: str) -> bytes:
-    return (vrs_instruction(episode_id, session_id) + """Return only a JSON object with keys
+def vrs_purpose_probe(session_id: str) -> bytes:
+    return (vrs_instruction(session_id) + """Return only a JSON object with keys
 purpose, constraints, superseded_decision. State the original coding objective,
 its exact diagnostic and scope, and which earlier proposal was superseded.
 """).encode()
 
 
-def vrs_recovery_probe(episode_id: str, session_id: str) -> bytes:
-    return (vrs_instruction(episode_id, session_id) + RECOVERY_PROBE).encode()
+def vrs_recovery_probe(session_id: str) -> bytes:
+    return (vrs_instruction(session_id) + RECOVERY_PROBE).encode()
 
 
-def vrs_final(episode_id: str, session_id: str) -> bytes:
-    return (vrs_instruction(episode_id, session_id) + FINAL).encode()
+def vrs_final(session_id: str) -> bytes:
+    return (vrs_instruction(session_id) + FINAL).encode()
 
 
 def rollout_for(thread_id: str, codex_home: Path) -> Path:
@@ -1015,7 +1014,7 @@ def call(model, arm, workspace, codex_home, output, label, prompt, mode, thread_
     routing_session_id = thread_id if requires_vrs_recall else None
     vrs_recall_observed = all(name in mcp_sequence for name in
                               ("memory_status", "memory_context", "memory_release"))
-    vrs_exact_observed = not requires_vrs_recall
+    vrs_location_discovery_observed = not requires_vrs_recall
     vrs_four_stage_observed = not requires_vrs_recall
     vrs_session_first_observed = not requires_vrs_recall
     if requires_vrs_recall:
@@ -1038,17 +1037,17 @@ def call(model, arm, workspace, codex_home, output, label, prompt, mode, thread_
         status_packet = structured(status_calls[0]) if len(status_calls) == 1 else {}
         release_packet = structured(releases[0]) if len(releases) == 1 else {}
         request_id = start_arguments.get("request_id")
-        exact_context = bool(required_episode_id
+        discovered_context = bool(required_episode_id
             and len(status_calls) == len(starts) == len(ready_contexts) == len(releases) == 1
             and required_episode_id.startswith("memory:")
             and len(required_episode_id) == 71
-            and start_arguments.get("query") == required_episode_id
-            and start_arguments.get("exact_episode_id") == required_episode_id
+            and start_arguments.get("query") == DISCOVERY_QUERY
+            and "exact_episode_id" not in start_arguments
             and "page_size" not in start_arguments
             and "start_index" not in start_arguments
             and "wait_turns" not in start_arguments
             and "view_id" not in start_arguments
-            and request_id and request_id != required_episode_id
+            and request_id and request_id != DISCOVERY_QUERY
             and start_arguments.get("expected_pair_snapshot_id")
                 == status_packet.get("pair_snapshot_id")
             and all(x.get("status") == "completed" for x in contexts)
@@ -1074,7 +1073,7 @@ def call(model, arm, workspace, codex_home, output, label, prompt, mode, thread_
             and activation.get("admission_query_verified") is True
             and set(stage_queries) == {"deja_vu", "recall", "replay", "re_evidence"}
             and all(section.get("complete") is True
-                    and section.get("data") == required_episode_id
+                    and section.get("data") == DISCOVERY_QUERY
                     for section in stage_queries.values())
             and set(stage_snapshots) == {"deja_vu", "recall"}
             and activation_snapshot
@@ -1085,13 +1084,13 @@ def call(model, arm, workspace, codex_home, output, label, prompt, mode, thread_
             and set(authority) == {"action_authorized", "persistent_write_authorized"}
             and all(section.get("complete") is True and section.get("data") is False
                                   for section in authority.values()))
-        vrs_exact_observed = exact_context
+        vrs_location_discovery_observed = discovered_context
         vrs_session_first_observed = bool(
             ready_context.get("memory_layer") == "session"
             and ready_context.get("fallback_used") is False
             and lookup.get("invariant") == "session_first_main_only_after_complete_miss"
             and lookup.get("lookup_order") == ["session", "main"]
-            and lookup.get("query") == required_episode_id
+            and lookup.get("query") == DISCOVERY_QUERY
             and type(lookup.get("session_candidate_count")) is int
             and lookup["session_candidate_count"] > 0
             and lookup.get("main_opened") is False
@@ -1105,7 +1104,7 @@ def call(model, arm, workspace, codex_home, output, label, prompt, mode, thread_
         routing_exact = bool(routing_session_id and vrs_calls
             and all(x.get("arguments", {}).get("session_id") == routing_session_id
                     for x in vrs_calls))
-        valid = valid and vrs_recall_observed and exact_context and vrs_four_stage_observed \
+        valid = valid and vrs_recall_observed and discovered_context and vrs_four_stage_observed \
             and vrs_session_first_observed and vrs_original_replay_observed \
             and ordered and routing_exact \
             and all(x.get("status") == "completed" for x in status_calls + contexts + releases) \
@@ -1134,7 +1133,7 @@ def call(model, arm, workspace, codex_home, output, label, prompt, mode, thread_
            "required_episode_id": required_episode_id,
            "required_routing_session_id": routing_session_id,
            "required_vrs_recall_observed": (not requires_vrs_recall or vrs_recall_observed),
-           "required_vrs_exact_address_observed": vrs_exact_observed,
+           "required_vrs_location_discovery_observed": vrs_location_discovery_observed,
            "required_vrs_four_stage_observed": vrs_four_stage_observed,
            "required_vrs_session_first_observed": vrs_session_first_observed,
            "required_vrs_original_replay_observed": (
@@ -1643,7 +1642,7 @@ def run_one(model, arm, output, max_compactions, max_turns, main_seed=None):
             if fresh_compactions:
                 boundary = call(model, arm, workspace, codex_home, output,
                                 stem + f"__boundary{compactions:02d}",
-                                (vrs_purpose_probe(objective_id, thread_id) if arm == "short_vrs"
+                                (vrs_purpose_probe(thread_id) if arm == "short_vrs"
                                  else PURPOSE_PROBE.encode()),
                                 "fork", thread_id, -1,
                                 required_episode_id=objective_id if arm == "short_vrs" else None,
@@ -1658,13 +1657,13 @@ def run_one(model, arm, output, max_compactions, max_turns, main_seed=None):
                 phase = "trigger"
         if max_compactions > 0 and compactions >= max_compactions:
             row = call(model, arm, workspace, codex_home, output, stem + "__recovery",
-                       vrs_recovery_probe(objective_id, thread_id) if arm == "short_vrs" else RECOVERY_PROBE.encode(),
+                       vrs_recovery_probe(thread_id) if arm == "short_vrs" else RECOVERY_PROBE.encode(),
                        "fork", thread_id, -1,
                        required_episode_id=objective_id if arm == "short_vrs" else None,
                        live_supervisor=watcher, main_baseline=seed_receipt)
             record(row)
             row = call(model, arm, workspace, codex_home, output, stem + "__coding",
-                       vrs_final(objective_id, thread_id) if arm == "short_vrs" else FINAL.encode(),
+                       vrs_final(thread_id) if arm == "short_vrs" else FINAL.encode(),
                        "resume", thread_id, ordinal,
                        required_episode_id=objective_id if arm == "short_vrs" else None,
                        live_supervisor=watcher, main_baseline=seed_receipt)

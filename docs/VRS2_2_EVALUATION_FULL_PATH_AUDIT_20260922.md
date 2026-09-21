@@ -200,3 +200,43 @@ The cached aggregate removes one identified shard-count-dependent operation.
 It does not prove the all-size <1 ms through-Replay requirement for natural
 queries, which can still scale with matched candidate count, or define the
 user's one-billion-parameter unit. Those hard goals remain open.
+
+## Fifth pass: experience must locate the original instruction
+
+The fourth-pass VRS evaluation prompt supplied the exact `memory:` address of
+the first instruction. That made the four-stage Replay check valid but bypassed
+the system's ability to locate the experience. It was a test-design fault:
+successful exact-address Replay alone cannot establish retrieval of the
+correct location from accumulated experience.
+
+The VRS prompt now supplies only the `checkpoint` retrieval cue and the source
+session identifier. It omits the exact experience address and omits
+`exact_episode_id` from the MCP call. The model must use a natural Recall
+through session VRS, receive a complete four-stage Replay, and retrieve the
+original instruction's address and content from that packet. The runner keeps
+the expected address privately for verification. Both runner and independent
+grader reject a supplied exact address, a different query, main fallback, an
+incorrect original Replay, missing session routing, or an incomplete receipt.
+The grader still compares the full original instruction hash and provenance;
+an unrelated result containing only the word `checkpoint` cannot satisfy it.
+
+An installed-runtime integration test admitted the original instruction and
+an irrelevant later user message to a fresh session VRS. The natural query
+returned exactly one candidate, the original instruction, through the session
+layer; main stayed unopened. Its Déjà vu, Recall, Replay and Re-evidence query
+values were the cue, and the original Replay content/provenance checks passed.
+The evaluation grader suite is now **17/17 passed**. The six frozen plain cells
+were regraded unchanged: each still has ten real compactions and valid
+measurement; five code scores are 4/20 and Terra 100k plain is 20/20. The
+live preflight still reports `PENDING_LIVE_HANDOFF`, so no new model cell was
+started.
+
+The full isolated path self-test was rerun after this change and passed:
+`/var/tmp/vrs22-whole-path-selftest-natural-20260922/receipt.json`, SHA-256
+`fbbf5fd25c585880b88c1ae64abfb72a61d4f556296ca7e3f52add6f4be4a8d2`.
+
+The cue tells the VRS arm the broad topic and is absent from the historical
+plain probes. That difference must be disclosed with any comparison; the
+rubric still requires the detailed instruction, diagnostic, scope and revision
+to come from the original experience. Natural Recall at all main sizes remains
+unproven under the hard <1 ms through-Replay limit.

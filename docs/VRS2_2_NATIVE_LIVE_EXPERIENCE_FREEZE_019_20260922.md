@@ -60,8 +60,9 @@ session lifecycle.
   sessions, resident host VRS state, host runtime sockets, and the private
   frozen plain archive.
   Grading rejects commands that inspect task
-  history, hidden tests, or raw VRS storage. The model must use the MCP
-  experience address and a four-stage receipt; plain cells have no VRS.
+  history, hidden tests, or raw VRS storage. The model receives only the
+  `checkpoint` retrieval cue, then must locate the original experience through
+  the MCP and obtain a four-stage receipt; plain cells have no VRS.
 
 ## Verified now
 
