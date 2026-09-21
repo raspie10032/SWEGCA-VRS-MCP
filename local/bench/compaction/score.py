@@ -304,9 +304,11 @@ def parse_transcript(path: Path) -> dict[str, Any]:
                            "post_tokens": meta.get("postTokens"), "duration_ms": meta.get("durationMs"),
                            "format": "anthropic"})
         elif rtype == "compacted":
+            payload = record.get("payload") or {}
             events.append({"kind": "boundary", "index": index, "timestamp": ts,
                            "trigger": "auto", "pre_tokens": None, "post_tokens": None,
-                           "duration_ms": None, "format": "codex"})
+                           "duration_ms": None, "format": "codex",
+                           "compaction_response_id": payload.get("compaction_response_id")})
         if rtype == "assistant":
             message = record.get("message") or {}
             if message.get("model"):
@@ -327,7 +329,14 @@ def parse_transcript(path: Path) -> dict[str, Any]:
                                "cache_read_input_tokens"))
                 output = int(usage.get("output_tokens", 0) or 0)
                 token_calls.append({"index": index, "context": context,
-                                    "output": output, "total": context + output})
+                    "output": output, "total": context + output,
+                    "input_tokens": int(usage.get("input_tokens", 0) or 0),
+                    "cache_creation_input_tokens": int(
+                        usage.get("cache_creation_input_tokens", 0) or 0),
+                    "cache_read_input_tokens": int(
+                        usage.get("cache_read_input_tokens", 0) or 0),
+                    "cached_input_tokens": 0, "cache_write_input_tokens": 0,
+                    "reasoning_output_tokens": 0, "response_id": None})
         if rtype == "response_item":
             payload = record.get("payload") or {}
             ptype = payload.get("type")
@@ -345,12 +354,20 @@ def parse_transcript(path: Path) -> dict[str, Any]:
             if model:
                 models.append(str(model))
         if rtype == "token_usage_record":
-            usage = (record.get("payload") or {}).get("usage") or {}
+            payload = record.get("payload") or {}
+            usage = payload.get("usage") or {}
             context = int(usage.get("input_tokens", 0) or 0)
             output = int(usage.get("output_tokens", 0) or 0)
             total = int(usage.get("total_tokens", context + output) or context + output)
             token_calls.append({"index": index, "context": context,
-                                "output": output, "total": total})
+                "output": output, "total": total, "input_tokens": context,
+                "cached_input_tokens": int(usage.get("cached_input_tokens", 0) or 0),
+                "cache_write_input_tokens": int(
+                    usage.get("cache_write_input_tokens", 0) or 0),
+                "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0,
+                "reasoning_output_tokens": int(
+                    usage.get("reasoning_output_tokens", 0) or 0),
+                "response_id": payload.get("response_id")})
     boundaries = [event for event in events if event["kind"] == "boundary"]
     for boundary in boundaries:
         if boundary["format"] == "codex":
@@ -358,6 +375,31 @@ def parse_transcript(path: Path) -> dict[str, Any]:
             after = [row for row in token_calls if row["index"] > boundary["index"]]
             boundary["pre_tokens"] = before[-1]["context"] if before else None
             boundary["post_tokens"] = after[0]["context"] if after else None
+    identifiers = [row["response_id"] for row in token_calls
+                   if row.get("response_id") is not None]
+    unique_response_records = len(identifiers) == len(set(identifiers))
+    if not unique_response_records:
+        seen, deduplicated = set(), []
+        for row in token_calls:
+            identifier = row.get("response_id")
+            if identifier is not None and identifier in seen:
+                continue
+            if identifier is not None:
+                seen.add(identifier)
+            deduplicated.append(row)
+        token_calls = deduplicated
+    usage_fields = ("input_tokens", "cached_input_tokens", "cache_write_input_tokens",
+                    "cache_creation_input_tokens", "cache_read_input_tokens",
+                    "output", "reasoning_output_tokens")
+    usage = {field: sum(int(row.get(field, 0) or 0) for row in token_calls)
+             for field in usage_fields}
+    usage["output_tokens"] = usage.pop("output")
+    compact_ids = {event.get("compaction_response_id") for event in boundaries
+                   if event.get("compaction_response_id")}
+    compact_calls = [row for row in token_calls if row.get("response_id") in compact_ids]
+    compact_usage = {field: sum(int(row.get(field, 0) or 0) for row in compact_calls)
+                     for field in usage_fields}
+    compact_usage["output_tokens"] = compact_usage.pop("output")
     tools, opaque = {}, []
     for event in events:
         if event["kind"] == "tool":
@@ -367,6 +409,9 @@ def parse_transcript(path: Path) -> dict[str, Any]:
     return {"path": str(path), "events": sorted(events, key=lambda x: (x["index"], x["kind"])),
             "boundaries": boundaries, "parse_errors": errors, "models": sorted(set(models)),
             "tokens_total": sum(row["total"] for row in token_calls),
+            "token_usage": usage, "compaction_token_usage": compact_usage,
+            "provider_response_records": len(identifiers),
+            "provider_response_records_unique": unique_response_records,
             "context_peak": max((row["context"] for row in token_calls), default=0),
             "duration_s": None if first_ts is None or last_ts is None else round(last_ts - first_ts, 3),
             "tool_calls": tools, "opaque_tool_calls": len(opaque),
@@ -704,6 +749,8 @@ def evaluate(args: argparse.Namespace) -> dict[str, Any]:
             all_observations += observations
             result.update({key: parsed[key] for key in
                            ("parse_errors", "models", "tokens_total", "context_peak",
+                            "token_usage", "compaction_token_usage",
+                            "provider_response_records", "provider_response_records_unique",
                             "duration_s", "tool_calls", "opaque_tool_calls",
                             "opaque_tool_examples")})
             result.update(discipline)
@@ -712,6 +759,8 @@ def evaluate(args: argparse.Namespace) -> dict[str, Any]:
                 invalid.append("fewer_than_10_compactions")
             if parsed["parse_errors"]:
                 invalid.append("transcript_parse_errors")
+            if not parsed["provider_response_records_unique"]:
+                invalid.append("duplicate_provider_response_records")
             if result["model"] and parsed["models"] and result["model"] not in parsed["models"]:
                 invalid.append("model_mismatch")
             if not discipline["tool_audit_complete"]:

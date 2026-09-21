@@ -47,16 +47,25 @@ def test_anthropic_compactions_and_tokens(tmp_path):
 def test_codex_compactions_use_adjacent_usage(tmp_path):
     path = tmp_path / "codex.jsonl"
     rows = [{"type": "turn_context", "payload": {"model": "gpt-5.6-luna"}},
-            {"type": "token_usage_record", "payload": {"usage": {
-                "input_tokens": 99, "output_tokens": 1, "total_tokens": 100}}},
-            {"type": "compacted", "payload": {}},
-            {"type": "token_usage_record", "payload": {"usage": {
-                "input_tokens": 21, "output_tokens": 2, "total_tokens": 23}}}]
+            {"type": "token_usage_record", "payload": {"response_id": "normal",
+                "usage": {"input_tokens": 99, "cached_input_tokens": 80,
+                          "cache_write_input_tokens": 0, "output_tokens": 1,
+                          "reasoning_output_tokens": 1, "total_tokens": 100}}},
+            {"type": "compacted", "payload": {"compaction_response_id": "compact"}},
+            {"type": "token_usage_record", "payload": {"response_id": "compact",
+                "usage": {"input_tokens": 21, "cached_input_tokens": 10,
+                          "cache_write_input_tokens": 2, "output_tokens": 2,
+                          "reasoning_output_tokens": 0, "total_tokens": 23}}}]
     path.write_text("\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8")
     parsed = score.parse_transcript(path)
     assert parsed["tokens_total"] == 123
     assert parsed["boundaries"][0]["pre_tokens"] == 99
     assert parsed["boundaries"][0]["post_tokens"] == 21
+    assert parsed["provider_response_records"] == 2
+    assert parsed["provider_response_records_unique"] is True
+    assert parsed["token_usage"]["cached_input_tokens"] == 90
+    assert parsed["compaction_token_usage"]["input_tokens"] == 21
+    assert parsed["compaction_token_usage"]["cache_write_input_tokens"] == 2
 
 
 def test_truth_seal_bom_crlf_and_completion(tmp_path):
