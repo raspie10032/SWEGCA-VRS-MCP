@@ -962,3 +962,16 @@ Three things the run exposed (none found by suspicion):
   is still to be measured. `transcript.jsonl` is a candidate simpler source for the tail (JSONL, line-addressable,
   opened by Read) — not switched.
 
+Reruns after the user restarted Antigravity (15:39 → 15:46): the config file Antigravity reads is
+`~/.gemini/config/mcp_config.json`, not `~/.gemini/antigravity/mcp_config.json` (a string in the language server
+binary; a 0-byte file had sat there since May). With the config in place Antigravity spawned the server for a
+second at conversation start and wrote `~/.gemini/antigravity/mcp/swegca-vrs2/{instructions.md, <tool>.json ×8}`
+— discovery works, `memory_store` absent as intended — yet the model read those schema files and still built
+its own in-process client instead of calling `call_mcp_tool`, then followed the store rows' origin paths to the
+raw `.db` and `transcript.jsonl` (≈25 reads outside the workspace; 10/10, quoting the A3 instruction). The first
+rerun was void: the store rows named the card file and the agent found and read it — the card is moved away
+during a run from now on. Verdict for card 1: goal and context survive the new-conversation boundary at 10/10
+with or without VRS on the same machine, because Antigravity's own per-conversation log is on disk and the
+agent finds it; what VRS changes is where the agent says it looked and that it goes straight to the origin.
+A test that separates the conditions needs another machine, another agent, or deleted logs.
+

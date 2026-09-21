@@ -74,3 +74,19 @@ B2 = `f93c2efd`(91 스텝, 15:30:02 → 15:33:28). 세 대화 모두 스위퍼�
 - 다음: 사용자가 안티그래비티 MCP 를 새로고침(도구 등록) → B2′(같은 질문) · 같은 PC 로그가 없는 조건(B1′: brain 로그를 못 읽게 한 뒤)에서 B1 재측정 · `transcript.jsonl` 을
   안티그래비티 소스로 쓸지(JSONL·줄 위치·Read 로 열림) 검토.
 
+### 재실행 (2026-09-21 15:39~15:46, 사용자가 안티그래비티 재시작 뒤)
+
+- **B2′** = `b36a24fe`(74 스텝, 15:39:18 → 15:41:48): 도구 여전히 미등록 — `~/.gemini/antigravity/mcp_config.json` 은 **안티그래비티가 읽는 경로가 아니었다**(언어 서버
+  바이너리의 문자열: `~/.gemini/config/mcp_config.json`; 그 자리에 0바이트 파일이 5월부터 있었음). 에이전트는 서버 소스를 in-process 로 불러 memory_status→memory_context 를
+  돌렸고(스토어 행에서 세션 e82f83de 와 원문 출처를 인용), 그다음 `memory.sqlite3` 를 직접 열고, A 의 `.db` 를 직접 열고, **이 카드 파일을 찾아 읽었다**(스토어 행에 카드 경로가
+  있었음 → `find_by_name antigravity-card-1.md`) — 답안지를 본 판이라 **무효**. 답은 10/10 형식이었고 「원문 출처 위치: transcript:antigravity/e82f83de…」를 적었다.
+- **B2″** = `fd4b1fcd`(67 스텝, 15:43:23 → 15:46:01): 설정을 `~/.gemini/config/mcp_config.json` 으로 옮기고 카드 파일은 잠시 치운 뒤. 대화 시작 1초 뒤 안티그래비티가
+  서버를 띄워 `~/.gemini/antigravity/mcp/swegca-vrs2/{instructions.md, memory_*.json ×8}` 를 떨궜다(memory_store 없음 = 읽기 전용 성공) — **도구 발견은 됐다.** 그러나
+  모델은 그 스키마 파일을 읽고도 `call_mcp_tool` 을 쓰지 않고 다시 소스를 뒤져 in-process 클라이언트로 memory_status→memory_context 를 불렀다(4회). 스토어 행이 준
+  원문 위치(A 의 .db 경로·brain 폴더)를 따라가 `transcript.jsonl` 을 6개 스크립트로 파싱. **10/10**, 되묻기 0, 실행 안 함, A3 지시문을 그대로 인용(「load.py 까지만 쓰고
+  멈춰…」). 범위 밖 읽기 ≈25(`~/.claude/vrs2.json`·`mcp/_vrs2_env.py`·`vrs2-probe.py`·`vrs2-run.py` 까지).
+- 읽는 법: 목적·맥락은 세 조건 모두 10/10 로 보존됐다 — **이 카드로는 VRS 의 유무가 갈리지 않는다**(같은 PC 에 안티그래비티 자체 로그가 있고 에이전트가 그것을 찾아내기
+  때문). VRS 가 있을 때의 차이는 「어디서 찾았다고 말하나」(세션 id·원문 출처를 인용)와 「원문 위치로 곧장 간다」(스토어 행의 경로를 따라 .db·transcript.jsonl 을 열었다 —
+  설계대로이나, 제약 ④와는 충돌). 갈리는 시험을 하려면: 다른 PC(또는 brain 로그를 못 읽게 한 뒤) · 다른 에이전트(클로드 코드의 경험을 안티그래비티가 잇기) · 로그가
+  지워진 뒤. 그리고 `call_mcp_tool` 이 agentapi 대화에서 모델에게 주어지는지는 GUI 의 MCP 패널에서 봐야 한다(사용자).
+
