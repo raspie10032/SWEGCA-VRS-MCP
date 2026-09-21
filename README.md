@@ -5,9 +5,10 @@ local main owner, persistent observation store, hot memory activation, native
 VRS2 event arithmetic and overlapping connectivity regions. No Linux server,
 Unix socket, WSL, GPU, model download or API key is required.
 
-Hermes is **not included** in the v2.1 wheel or source archive. Historical Hermes
-and v0.3 code remains in repository history/source for existing users; it is not
-imported, installed or automatically migrated by this version.
+The repository holds `swegca_vrs2` alone (2.2, 2026-09-21): the historical v0.3
+stateful core, the Hermes adapter with its delivery outbox, the agent service and
+the v2.0 native bridge were removed from the source tree (they stay in git history
+before commit "2.2 cut"). Nothing in `swegca_vrs2` imported them.
 
 ## Windows installation
 
@@ -82,8 +83,7 @@ source addresses do not certify independent factual corroboration.
 
 ## Runtime and authority boundaries
 
-The new package is `swegca_vrs2`; it does not import the historical
-`swegca_vrs_mcp` package. [Native port manifest](NATIVE_VRS2_PORT.json) records exact
+The package is `swegca_vrs2`. [Native port manifest](NATIVE_VRS2_PORT.json) records exact
 first-party source/definition hashes. The native numerical version remains
 `vrs-re-evidence-event-signal-f32-v2-experimental`; it is not relabeled as the
 old shuffle algorithm or the complete Rozephine application.

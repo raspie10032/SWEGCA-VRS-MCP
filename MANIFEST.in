@@ -2,11 +2,9 @@ prune docs
 prune tools
 prune tests
 prune examples
-prune integrations
 include LICENSE README.md uv.lock NATIVE_VRS2_PORT.json NOTICE.md
 recursive-include LICENSES *.txt
 include docs/VRS2_STANDALONE_LEDGER.md docs/WINDOWS.md docs/VRS2_STANDALONE_VALIDATION.md
 include examples/claude-vrs2-windows.json
 recursive-include tests/standalone *.py
 include tools/verify_standalone.py tools/extract_vrs2_runtime.py tools/install_windows.ps1
-prune src/swegca_vrs_mcp

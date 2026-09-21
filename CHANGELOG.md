@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.2 (vrs-regions lineage) — 2026-09-21, in progress
+
+- Cut: the historical `swegca_vrs_mcp` package (v0.3 stateful core, Hermes adapter
+  with its delivery outbox — the SQLite conversation outbox path —, agent
+  service/client, runtime, plasticity, v2.0 native bridge), its tests
+  (`tests/test_*.py`, `tests/architecture/`), tools, `integrations/hermes`,
+  `examples/synthetic.json`, the legacy docs and the three upstream manifests of
+  the removed files. `swegca_vrs2` never imported any of it; conversations enter
+  the store through the transcript adapters in real time instead.
+- Session producer layer, merge transaction, measurements: see
+  `docs/VRS22_PLAN.md` (the ledger there records each phase as it lands).
+
 ## 2.0.0 — 2026-09-14
 
 - Add `swegca-vrs2-mcp --socket …` and `swegca-vrs-mcp --native-socket …` for an
