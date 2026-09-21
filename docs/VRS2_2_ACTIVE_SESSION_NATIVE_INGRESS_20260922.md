@@ -87,3 +87,21 @@ The installed wheel's cgroup Replay receipt is
 First ranked original Replay took 0.680 ms with one match, 19.127 ms with
 100 matches, and 117.526 ms with 1,008 matches on first calls. The 1 ms
 goal remains unmet; the model evaluation gate remains closed.
+
+## Exact MCP Replay after a graceful temporary-VRS shutdown
+
+A direct MCP read of a recent original in the isolated temporary VRS initially
+failed with `read_projection_pair_mismatch`. The original and the current VRS
+generation existed, but shutdown closed the last hot shard with a checkpoint
+without publishing its matching read projection. `Resident.close` now uses the
+same complete-projection publication as hot-shard eviction before releasing
+the shard owner. A regression closes and reopens a real split main and checks
+its exact address through Déjà vu, Recall, Replay and Re-evidence.
+
+The older shadow projection was rebuilt from its complete native shard, after
+which the installed-wheel MCP exact-address query returned one matching
+original with a valid four-stage receipt, `grants_authority=false`, and
+`internal_llm_calls=0`. This was a local isolated MCP path, not the still-old
+live Codex MCP connection. The revised source standalone suite passed
+**131/131 in 182.61 s**. The installed runtime still needs a rebuild from
+this later source commit before this shutdown fix is a live candidate.

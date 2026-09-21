@@ -150,6 +150,33 @@ def test_incomplete_new_shard_routes_from_journal_before_first_checkpoint(tmp_pa
         primary.close()
 
 
+def test_graceful_close_publishes_current_hot_shard_replay_projection(tmp_path):
+    root = tmp_path / 'main'
+    primary = Main(root, allow_ingest=True)
+    resident = Resident(primary, hot_limit=1, bundle_limit=1)
+    try:
+        resident.ingest(row(0, '주 경험', 'main'))
+        inserted = resident.ingest(row(0, '종료 직전의 원경험', 'session'))
+        identifier = inserted['episode_id']
+        shard = resident.lookup(identifier)
+        assert shard != 'main'
+    finally:
+        resident.close()
+        primary.close()
+
+    primary = Main(root, allow_ingest=False)
+    resident = Resident(primary, hot_limit=1, bundle_limit=1)
+    try:
+        assert resident.read_ready(shard)
+        recalled = ShardedMain(primary, resident).recall(identifier, None)
+        activation = recalled['receipt']['activation']
+        assert activation.stage_order == ('deja_vu', 'recall', 'replay', 're_evidence')
+        assert activation.replay.episodes[0].episode_id == identifier
+    finally:
+        resident.close()
+        primary.close()
+
+
 def test_complete_shard_packet_with_nested_metadata_encodes(tmp_path):
     from swegca_vrs2.native_transport import encode
     from swegca_vrs2.loopback import origins

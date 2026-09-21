@@ -1185,8 +1185,12 @@ class Resident:
     def close(self):
         with self.lock:
             while self.hot:
-                _, main = self.hot.popitem(last=False)
-                main.close()
+                bundle_id, main = self.hot.popitem(last=False)
+                # Shutdown is another hot-to-cold transition. Publish the
+                # complete VRS read projection before dropping its owner, just
+                # as eviction does, or the next process can see a newer pair
+                # with only an older projection and reject original Replay.
+                self._close_later(bundle_id, main)
             for view in self.warm.values():
                 view.close()
             self.warm.clear()
