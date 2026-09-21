@@ -315,3 +315,27 @@ product-performance audit remains unready because measured natural Replay
 calls exceed 1 ms. No new model cell or compression comparison was run. Native
 hook execution by a real Codex model cell remains to be confirmed by its raw
 tool/hook trace after the live and performance gates pass.
+
+## Eighth pass: first-query candidate and synchronized test runtime
+
+Source commit `3e65550` compiles fixed lexical patterns during module loading
+and skips portal enumeration when no portal pair was selected. It does not
+change the original Replay, full portal projection, region membership or
+cross-shard navigation. A copied-main first single-match query with its cue
+table already read took 0.904 ms through Replay, while a cold table query took
+2.500 ms. The installed wheel, SHA-256
+`4b06afd976f3b983f37ba905fdb4b99eede691940733afa142952b0749992fe7`,
+matched all 48 product source files and passed the complete native suite
+**127/127**. The wheel's 100-match and 1,008-match natural queries still
+violate 1 ms, so the model gate remains closed.
+
+The VRS-only runner and grader now pin that same product commit, wheel and
+new cgroup performance receipt. Evaluation grader regressions passed
+**20/20**. The installed-wheel whole-path self-test passed at
+`/var/tmp/vrs22-whole-path-selftest-first-query-20260922/receipt.json`
+(SHA-256 `cba977013e785b2cb12c9dc3a5ed783d3e9fe46b0ed6fc9203a5b3c9a9979f6e`).
+The one-shot post-SessionEnd handoff watcher now runs from this wheel; the
+previous watcher is inactive. The current Codex task has no SessionEnd marker
+or native resident main, and no model cell was run. Product source, evaluator
+and future handoff are version-aligned, while full performance acceptance
+remains unproved and contradicted by the measured multi-match cases.

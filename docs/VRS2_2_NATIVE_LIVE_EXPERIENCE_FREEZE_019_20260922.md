@@ -126,3 +126,16 @@ recovery/final message, complete code diff, and executable test log. Publish the
 hashes, per-boundary purpose and dialogue consistency, coding regression and
 quality scores, detailed token counts including compaction responses, and
 limits or failed cells. Do not fill a missing run with the older v018 results.
+
+## Later candidate status on 2026-09-22
+
+The frozen readiness steps above originally referred to product commit
+`7e35fb8`. The current evaluation runner, grader and one-shot post-SessionEnd
+handoff watcher now use source commit `3e65550` and wheel SHA-256
+`4b06afd976f3b983f37ba905fdb4b99eede691940733afa142952b0749992fe7`.
+All 48 installed files match that source and wheel; native tests passed
+127/127, grader regressions 20/20, and the installed-wheel whole-path
+self-test passed. The current performance receipt records 10/10 natural
+100-match and 3/3 natural 1,008-match Replay calls at or above 1 ms. Thus the
+hard performance gate remains closed. The live SessionEnd handoff has not
+occurred, and no new VRS model cell has been run.

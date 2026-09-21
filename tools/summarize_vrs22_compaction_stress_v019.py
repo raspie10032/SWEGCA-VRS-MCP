@@ -38,9 +38,9 @@ RATES = {"gpt-5.6-luna": (.20, .02, 1.20),
          "gpt-5.6-sol": (4.00, .40, 20.00)}
 FIELDS = ("input_tokens", "cached_input_tokens", "cache_write_input_tokens",
           "output_tokens", "reasoning_output_tokens")
-RUNTIME_PRODUCT_COMMIT = "7e35fb8"
-RUNTIME_REPOSITORY_COMMIT = "7e35fb8"
-RUNTIME_WHEEL_SHA256 = "5d1a04bcd575a79956aa043bac479e3cd5705637794418b49f99c40aa7a62b97"
+RUNTIME_PRODUCT_COMMIT = "3e65550"
+RUNTIME_REPOSITORY_COMMIT = "3e65550"
+RUNTIME_WHEEL_SHA256 = "4b06afd976f3b983f37ba905fdb4b99eede691940733afa142952b0749992fe7"
 INITIAL_SHA256 = "a9249ca6fed86315b83cb96f89cc5d0936b2775468c3e450c3258b32abb49523"
 DISCOVERY_QUERY = "checkpoint"
 PRIVATE_PLAIN_ROOT = Path("/home/raspie/.local/share/vrs22-eval-runtime-v019/private")

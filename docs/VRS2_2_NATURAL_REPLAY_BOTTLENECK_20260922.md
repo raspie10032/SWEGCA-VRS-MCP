@@ -125,3 +125,16 @@ after the same table read still took about 20.9 ms through Replay; exact
 capsule loading, current VRS facts and portal provenance materialization
 remain proportional to matched original experiences. No model evaluation is
 authorized by this result, and the product-performance gate stays closed.
+
+The same source was built into an isolated wheel, SHA-256
+`4b06afd976f3b983f37ba905fdb4b99eede691940733afa142952b0749992fe7`.
+All 48 installed package files match the source and wheel. Its cgroup-limited
+natural-query receipt is
+`evals/vrs22_context/results/natural_replay_first_query_wheel_20260922.json`
+(SHA-256 `7e3bd28812082689de912181bcdf84334b77f7121b58a9ff0a203568cb16f130`).
+On the copied existing main, 100 single-match calls had no Replay at or above
+1 ms; all 10 calls with 100 matches and all 3 calls with 1,008 matches still
+exceeded 1 ms. This wheel result is now the evaluation runner's explicit
+performance-failure receipt. The cold single-match result above remains a
+separate failure even though this repeated-run receipt began with cached
+table pages.
