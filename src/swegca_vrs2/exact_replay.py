@@ -14,6 +14,7 @@ stage and is deliberately not frozen into the capsule.
 from __future__ import annotations
 
 import json
+import hashlib
 import mmap
 import os
 from pathlib import Path
@@ -57,6 +58,12 @@ def _key(identifier):
     return value
 
 
+def _source_key(source):
+    if not isinstance(source, str) or not source:
+        raise ValueError('invalid_experience_source_address')
+    return hashlib.sha256(source.encode('utf-8')).digest()
+
+
 class ExactReplayStore:
     def __init__(self, directory, *, slot_power=None):
         self.directory = Path(directory)
@@ -78,11 +85,11 @@ class ExactReplayStore:
                 if stream.read(len(MAGIC)) != MAGIC:
                     raise ValueError('exact_replay_capsule_header_invalid')
 
-    def _segment_path(self, key):
-        return self.directory / f'address-{key[0]:02x}.vrs'
+    def _segment_path(self, key, namespace):
+        return self.directory / f'{namespace}-{key[0]:02x}.vrs'
 
-    def _open_segment(self, key, *, create):
-        path = self._segment_path(key)
+    def _open_segment(self, key, *, create, namespace='address'):
+        path = self._segment_path(key, namespace)
         flags = os.O_RDWR | (os.O_CREAT if create else 0)
         try:
             fd = os.open(path, flags, 0o600)
@@ -130,6 +137,25 @@ class ExactReplayStore:
                          separators=(',', ':'), allow_nan=False).encode('utf-8')
         return zlib.compress(raw, 3)
 
+    @staticmethod
+    def _encode_source(source, shard):
+        raw = json.dumps(dict(schema='swegca-vrs2-source-route-v1', source=source,
+                              shard=str(shard)), ensure_ascii=False, sort_keys=True,
+                         separators=(',', ':'), allow_nan=False).encode('utf-8')
+        return zlib.compress(raw, 3)
+
+    def _append_capsule(self, compressed):
+        checksum = zlib.crc32(compressed)
+        data_fd = os.open(self.data_path, os.O_RDWR)
+        try:
+            offset = os.lseek(data_fd, 0, os.SEEK_END)
+            _write_all(data_fd, CAPSULE.pack(len(compressed), checksum))
+            _write_all(data_fd, compressed)
+            os.fsync(data_fd)
+        finally:
+            os.close(data_fd)
+        return offset, len(compressed), checksum
+
     def put(self, identifier, shard, episode):
         key = _key(identifier)
         compressed = self._encode(identifier, shard, episode)
@@ -146,17 +172,36 @@ class ExactReplayStore:
                     if body.get('shard') != str(shard):
                         raise ValueError('exact_replay_address_reassigned')
                     return False
-                data_fd = os.open(self.data_path, os.O_RDWR)
-                try:
-                    offset = os.lseek(data_fd, 0, os.SEEK_END)
-                    _write_all(data_fd, CAPSULE.pack(len(compressed), checksum))
-                    _write_all(data_fd, compressed)
-                    os.fsync(data_fd)
-                finally:
-                    os.close(data_fd)
+                offset, length, checksum = self._append_capsule(compressed)
                 # Tail first, key last: a reader never treats a partially written
                 # slot as committed.  CRC verifies both index and capsule.
-                mapping[slot + 32:slot + SLOT.size] = struct.pack('<QII', offset, len(compressed), checksum)
+                mapping[slot + 32:slot + SLOT.size] = struct.pack('<QII', offset, length, checksum)
+                mapping[slot:slot + 32] = key
+                mapping.flush()
+                os.fsync(fd)
+                return True
+            finally:
+                mapping.close(); os.close(fd)
+
+    def put_source(self, source, shard):
+        """Bind an experience source to its one lineage-owning storage shard."""
+        key = _source_key(source)
+        compressed = self._encode_source(source, shard)
+        with self.lock:
+            fd, mapping = self._open_segment(key, create=True, namespace='source')
+            try:
+                slot, exists = self._probe(mapping, key)
+                if exists:
+                    _, offset, length, stored_crc = SLOT.unpack(mapping[slot:slot + SLOT.size])
+                    body = self._read_capsule(offset, length, stored_crc)
+                    if body.get('source') != source:
+                        raise ValueError('experience_source_hash_collision')
+                    if body.get('shard') != str(shard):
+                        raise ValueError('experience_source_lineage_split')
+                    return False
+                offset, length, checksum = self._append_capsule(compressed)
+                mapping[slot + 32:slot + SLOT.size] = struct.pack(
+                    '<QII', offset, length, checksum)
                 mapping[slot:slot + 32] = key
                 mapping.flush()
                 os.fsync(fd)
@@ -199,6 +244,23 @@ class ExactReplayStore:
         replay = ReplayedEpisode(identifier, tuple(body['matched_cues']), (step,),
                                  tuple(body['source_addresses']), body['verification_state'])
         return dict(shard=body['shard'], revision=body['revision'], replay=replay)
+
+    def source_shard(self, source):
+        key = _source_key(source)
+        fd, mapping = self._open_segment(key, create=False, namespace='source')
+        if mapping is None:
+            return None
+        try:
+            slot, exists = self._probe(mapping, key)
+            if not exists:
+                return None
+            _, offset, length, checksum = SLOT.unpack(mapping[slot:slot + SLOT.size])
+        finally:
+            mapping.close(); os.close(fd)
+        body = self._read_capsule(offset, length, checksum)
+        if body.get('schema') != 'swegca-vrs2-source-route-v1' or body.get('source') != source:
+            raise ValueError('experience_source_route_identity_mismatch')
+        return body['shard']
 
     def logical_bytes(self):
         return sum(path.stat().st_size for path in self.directory.glob('*.vrs'))

@@ -147,3 +147,32 @@ def test_automatic_split_preserves_source_and_supersedes_lineage(tmp_path):
     finally:
         resident.close()
         primary.close()
+
+
+def test_persistent_source_route_keeps_revision_in_cold_original_shard(tmp_path):
+    directory = tmp_path / "main"
+    primary = Main(directory, allow_ingest=True)
+    resident = Resident(primary, {}, hot_limit=1, bundle_limit=2)
+    try:
+        receipt = resident.ingest_many([
+            dict(request_id=f"seed-{number}", text=f"재시작 계보 {number}",
+                 source=f"source:{number}", revision="1")
+            for number in range(3)
+        ])
+        original = receipt["results"][2]["episode_id"]
+        assert resident.exact.source_shard("source:2") == "shard-000001"
+    finally:
+        resident.close()
+        primary.close()
+
+    primary = Main(directory, allow_ingest=True)
+    resident = Resident(primary, {}, hot_limit=1, bundle_limit=2)
+    try:
+        assert not resident.hot and "shard-000001" in resident.auto_ids
+        revised = resident.ingest(dict(request_id="seed-2-v2", text="재시작 계보 2 수정",
+            source="source:2", revision="2", supersedes=original))
+        assert revised["episode_id"] in resident.hot["shard-000001"].memory.records
+        assert revised["episode_id"] not in primary.memory.records
+    finally:
+        resident.close()
+        primary.close()

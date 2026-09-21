@@ -19,6 +19,12 @@ def test_disk_exact_address_returns_original_replay_without_resident_index(tmp_p
         assert exact.put(identifier, "main", episode) is False
         with pytest.raises(ValueError, match="address_reassigned"):
             exact.put(identifier, "another-shard", episode)
+        assert exact.put_source("source:exact", "main") is True
+        assert exact.put_source("source:exact", "main") is False
+        assert exact.source_shard("source:exact") == "main"
+        assert exact.source_shard("source:missing") is None
+        with pytest.raises(ValueError, match="source_lineage_split"):
+            exact.put_source("source:exact", "another-shard")
 
         found = exact.get(identifier)
         assert found["shard"] == "main"

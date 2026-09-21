@@ -305,6 +305,10 @@ class Resident:
     def _owner_with_episode(self, identifier):
         if not identifier:
             return None
+        if isinstance(identifier, str) and identifier.startswith('memory:'):
+            exact = self.exact_replay(identifier)
+            if exact is not None:
+                return self.main_for(exact['shard'])
         if identifier in self.primary.memory.records:
             return self.primary
         for shard in self.bundles:
@@ -314,9 +318,22 @@ class Resident:
             view = self.warm.get(shard)
             if view is not None and view.memory is not None and identifier in view.memory.records:
                 return self.main_for(shard)
+            if (owner is None and (view is None or view.memory is None)
+                    and (self.bundles[shard] / 'memory.sqlite3').is_file()):
+                cold = WarmView(shard, self.bundles[shard])
+                try:
+                    if identifier in cold.refresh().memory.records:
+                        return self.main_for(shard)
+                finally:
+                    cold.close()
         return None
 
     def _owner_with_source(self, source):
+        if not source:
+            return None
+        routed = self.exact.source_shard(str(source))
+        if routed is not None:
+            return self.main_for(routed)
         cue = 'source:' + str(source)
         if self.primary.memory.episode_ids_for_cue(cue):
             return self.primary
@@ -326,6 +343,13 @@ class Resident:
                 self.warm[shard].memory if shard in self.warm else None)
             if memory is not None and memory.episode_ids_for_cue(cue):
                 return owner if owner is not None else self.main_for(shard)
+            if memory is None and (self.bundles[shard] / 'memory.sqlite3').is_file():
+                cold = WarmView(shard, self.bundles[shard])
+                try:
+                    if cold.refresh().memory.episode_ids_for_cue(cue):
+                        return self.main_for(shard)
+                finally:
+                    cold.close()
         return None
 
     def main_for_ingest(self, row, requested=None):
@@ -411,7 +435,10 @@ class Resident:
     def _register_exact(self, owner, identifier):
         memory = owner.memory
         episode = memory.episode(identifier)
-        self.exact.put(identifier, self._shard_of(owner), episode)
+        shard = self._shard_of(owner)
+        self.exact.put(identifier, shard, episode)
+        for source in episode.source_addresses:
+            self.exact.put_source(source, shard)
 
     def exact_replay(self, identifier):
         return self.exact.get(identifier)
@@ -435,7 +462,10 @@ class Resident:
             stop = min(owner.memory.episode_count, start + remaining)
             for row in range(start, stop):
                 identifier = ids[row]
-                added += int(self.exact.put(identifier, shard, owner.memory.episode(identifier)))
+                episode = owner.memory.episode(identifier)
+                added += int(self.exact.put(identifier, shard, episode))
+                for source in episode.source_addresses:
+                    self.exact.put_source(source, shard)
             self.exact_backfill[shard] = stop
             remaining -= stop - start
         return dict(scanned=budget - remaining, added=added,
