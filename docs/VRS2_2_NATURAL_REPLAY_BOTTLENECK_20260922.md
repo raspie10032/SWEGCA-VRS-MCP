@@ -52,7 +52,7 @@ Raw cgroup receipts:
 The benchmark tool's SHA-256 is
 `834071aed9a61c5e6337dd70adb0f708c13de9e7c6386c9ce8daa4afcb85014d`.
 The first full-suite attempt had 125 passes and two test-environment failures:
-the separate offline test venv lacked `pytest-asyncio`. Installing that plugin
-offline made all four stdio tests pass; the 21 targeted resident/sharded tests
-also passed. Those two test results are separate runs, not a claim of one
-127-test full-suite pass.
+the separate offline test venv lacked `pytest-asyncio`. After installing that
+plugin offline, the same source candidate passed the complete standalone suite
+**127/127 in 182.57 seconds**. The 21 targeted resident/sharded tests also
+passed separately.

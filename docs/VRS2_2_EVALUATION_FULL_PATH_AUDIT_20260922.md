@@ -240,3 +240,26 @@ plain probes. That difference must be disclosed with any comparison; the
 rubric still requires the detailed instruction, diagnostic, scope and revision
 to come from the original experience. Natural Recall at all main sizes remains
 unproven under the hard <1 ms through-Replay limit.
+
+## Sixth pass: measured natural Replay and updated runtime
+
+The repaired evaluation now depends on natural experience location, so that
+product path was measured on the copied 15,630-record native main under the
+specified 4 GiB RAM and 625 MB/s SSD read/write limits. The installed
+`f1ea47a` path took a warm median 46.694 ms through Replay for 100 matches.
+Source commit `7e35fb8` defers only per-cue strengths until cross-shard portal
+construction; the same query took 15.152 ms. A single-match warm median was
+0.196 ms, but its first call was 9.112 ms. The hard all-size, every-query
+<1 ms requirement is still **not** met. Full measurements and scope are in
+`docs/VRS2_2_NATURAL_REPLAY_BOTTLENECK_20260922.md`.
+
+The new offline wheel SHA-256 is
+`5d1a04bcd575a79956aa043bac479e3cd5705637794418b49f99c40aa7a62b97`.
+All 48 product files matched source, wheel and installed runtime; the full
+native suite passed **127/127**, evaluation grader **17/17**, and the isolated
+evaluation path self-test passed at
+`/var/tmp/vrs22-whole-path-selftest-natural-read-20260922/receipt.json`
+(SHA-256 `dc78a3600248b1eca28243cc3445d2f001c358c2066e854d6a9252509ab7a191`).
+The active one-shot SessionEnd watcher now points to this wheel; the previous
+watcher is inactive. The armed session has no SessionEnd marker, resident native
+main or handoff receipt yet. The model cells remain unrun.
