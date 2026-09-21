@@ -667,10 +667,12 @@ prompts: local 19,766 · member 1,464
 "membership_is_truth=False"); a listing record that is a member of many regions is a poor key by its
 strength, not by rule.
 
-Not built: cross-bundle shared experiences (a joint graph would be needed; R4's key stays within one
-bundle for now), the association components R4 lists beyond connectivity (co-activation, entity, time,
-action-outcome, usefulness, agenda — usage re-evidence exists but does not enter membership), and the
-scale re-measurement of the wider scope at 60k+ (the 5.7k numbers cost nothing).
+The 2.2 resident repair adds cross-shard portals derived from original shared
+experience strength and membership; their replayable keys and provenance are
+part of the global receipt. Still not built are the association components R4
+lists beyond connectivity (co-activation, entity, time, action-outcome,
+usefulness and agenda; usage Re-evidence exists but does not enter membership)
+and a larger-scale re-measurement of the historical wider-scope experiment.
 
 ### Signed producers and users — the sixth step toward 3.0 (2026-09-19)
 
@@ -710,3 +712,20 @@ Not built: key rotation and revocation (`keygen --replace` re-registers, old row
 stored `key_id` only nominally — a revoked key is not re-checked), a registry carried inside the store (it is
 a file beside it), signatures on imported file-backed records (origin binding covers those), and any per-user
 recall or write policy — several users share one store as several producers, nothing more.
+
+### Session-local VRS and main-owned linked shards — 2.2 repair (2026-09-21)
+
+One locked tailer sends each complete host-visible transcript record into the
+active session's own complete VRS within a one-second poll, not a log index or
+outbox. Lifecycle hooks share the same idempotent cursor and add delivery
+boundaries. Recall runs session first and opens durable main only after the session
+recall completes with no candidates. When the host emits SessionEnd, a detached
+finalizer captures the stable tail before it publishes the end marker.
+
+Main then adopts the ended session primary and every automatic child shard in
+place through one durable `linked-shards.json` update. Each component retains
+its original episodes, journal, graph, stable decisions, regions, memberships,
+portals, source addresses and uncertainty. Main builds its exact/cue directory
+and read projections from those VRS generations. The former observation
+export/re-ingest merge is removed, so attachment does not recompute an already
+complete session graph or create a second experience database.

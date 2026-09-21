@@ -75,9 +75,19 @@ For an actual same-source correction, pass the old `episode_id` as `supersedes`
 with a new revision. The old original remains addressable. Metadata, including
 qualifications or emotion annotations, is preserved as data, not instructions.
 
-There is no automatic conversation interception. Clients decide when to request
-recording; main validates and commits observations. Recorded claims and matching
-source addresses do not certify independent factual corroboration.
+For Codex, `tools/generate_codex_hooks.py` generates lifecycle hooks that start
+one session-local tailer. The tailer sends every complete host-visible transcript
+record directly into a session-local VRS within its one-second poll. Event hooks
+also perform cursor-safe scans as delivery boundaries. Reads
+query that session VRS first and open durable main only after a complete miss.
+`SessionEnd` starts a detached finalizer within the host's three-second hook
+deadline; the finalizer captures the stable transcript tail and then adopts the
+complete session VRS as main-owned linked shards. No transcript outbox, log
+recall, observation export or re-ingest merge is used. Other clients can still
+record explicitly through `memory_store`.
+
+Recorded claims and matching source addresses do not certify independent
+factual corroboration.
 
 ## Runtime and authority boundaries
 
@@ -125,8 +135,7 @@ python -m build
 python tools/verify_standalone.py
 ```
 
-[Windows and Linux CI](../../actions/workflows/standalone.yml) installs the built
-wheel and tests actual stdio clients, new memory, original-source retrieval,
-process restart, conflicts, transaction failure, authority and archive contents.
-Actual Claude UI testing is separate from MCP SDK compatibility verification.
-Historical results: [v2.0 bridge validation](docs/VRS2_VALIDATION.md).
+Repository GitHub Actions are disabled. Verification is run locally against the
+built source and actual stdio clients, including new memory, original-source
+retrieval, process restart, conflicts, transaction failure and authority.
+Actual host UI testing is separate from MCP SDK compatibility verification.

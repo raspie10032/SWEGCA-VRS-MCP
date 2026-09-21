@@ -1,11 +1,8 @@
-"""Asynchronously assimilate explicitly ended session VRS experience."""
+"""Adopt explicitly ended complete session VRS shards into main ownership."""
 from __future__ import annotations
 
 import argparse
-import os
 from pathlib import Path
-import subprocess
-import sys
 
 from filelock import FileLock, Timeout
 
@@ -27,20 +24,6 @@ def run(state_dir):
     finally:
         lock.release()
     return 0
-
-
-def schedule(state_dir):
-    """Start one detached merger; the durable ended marker is the queue."""
-    command = [sys.executable, '-m', 'swegca_vrs2.conversation_merge',
-               '--state-dir', str(Path(state_dir).expanduser().resolve())]
-    options = dict(stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                   stderr=subprocess.DEVNULL, close_fds=True)
-    if os.name == 'nt':
-        options['creationflags'] = (subprocess.DETACHED_PROCESS |
-                                    subprocess.CREATE_NEW_PROCESS_GROUP)
-    else:
-        options['start_new_session'] = True
-    subprocess.Popen(command, **options)
 
 
 def main():

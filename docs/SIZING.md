@@ -12,7 +12,7 @@ creates storage shards automatically and keeps every shard as a complete VRS mai
 | SSD transfer assumption | at most 5 Gbit/s (625 MB/s) |
 | logical state storage | 500 GB |
 | consolidation workers | 16 |
-| default records before opening the next automatic shard | 60,000 |
+| default records before opening the next automatic shard | 8,192 |
 
 The record count is a storage boundary, not an experience-quality boundary. An original episode is
 never divided. Its revisions stay with the shard that owns its source lineage. The 500 GB admission
@@ -89,6 +89,35 @@ and these samples. They do not prove a hard real-time bound for every device, co
 future corpus or one-billion-parameter VRS. The disk directory keeps lookup work independent of the
 total record count by using a small number of sealed levels, but larger-scale and 5 Gbit/s constrained
 measurements remain required.
+
+## SessionEnd linked-shard measurement
+
+An active session is itself a complete sharded VRS. SessionEnd never exports its
+observations into another SQLite database. Main atomically records each complete
+session component in `linked-shards.json` and owns those original databases in
+place. A 15,630-experience copy measured as follows:
+
+| operation | result |
+| --- | ---: |
+| validate complete session VRS and attach registry | 1.059 s |
+| open empty primary plus linked registry | 0.009 s |
+| build exact, source and cue directories | 8.832 s |
+| build complete VRS read projection | 2.170 s |
+| end-to-end benchmark wall time including 50,000 Replay samples | 17.53 s |
+| process peak RSS | 1.848 GB |
+
+The attached main primary contained zero copied experiences and reported 15,630
+logical experiences from the linked VRS. Fifty thousand random exact-address
+lookups through Replay measured 0.032 ms median, 0.358 ms p99 and 0.609 ms
+maximum, with zero samples at or above 1 ms. The previous observation re-ingest
+path took 31.189 s for merge alone on the same 15,630-experience source; that
+path has been removed.
+
+Session components are registered in one atomic update, including every
+automatic child shard. Linked source lineages remain main-owned: later revisions
+stay with their original shard, update the registry generation atomically, and
+recover from a committed journal after an unclean process exit by replaying that
+VRS journal. This recovery does not export or re-ingest observations.
 
 ## Memory-bounded consolidation
 

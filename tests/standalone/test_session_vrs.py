@@ -1,11 +1,23 @@
 import json
+import os
 from pathlib import Path
+import sqlite3
+import subprocess
+import sys
+import threading
+import time
 
 from swegca_vrs2.layered import LayeredMCP
 from swegca_vrs2.loopback import ensure_daemon
 from swegca_vrs2.conversation_merge import run as merge_run
 from swegca_vrs2.runtime_upgrade import arm as arm_upgrade
 from swegca_vrs2.session_capture import SessionCapture, VRSClient, handle
+from swegca_vrs2.conversation_finalize import finalize
+from swegca_vrs2.resident import Resident
+from swegca_vrs2.sharded import ShardedMain
+from swegca_vrs2.store import Main
+from tools.generate_codex_hooks import config as codex_hook_config
+from swegca_vrs2.conversation_watch import watch
 
 
 def stop(*states):
@@ -22,6 +34,14 @@ def write_transcript(path, session, rows):
     values = [{'type': 'session_meta', 'payload': {'id': session}}, *rows]
     path.write_text(''.join(json.dumps(row, ensure_ascii=False) + '\n'
                             for row in values), encoding='utf-8')
+
+
+def append_message(path, value):
+    with path.open('a', encoding='utf-8') as stream:
+        stream.write(json.dumps({'type': 'response_item', 'payload': {
+            'type': 'message', 'role': 'user',
+            'content': [{'type': 'input_text', 'text': value}]}}
+            , ensure_ascii=False) + '\n')
 
 
 def finish(server, session, packet):
@@ -65,6 +85,149 @@ def test_codex_pretool_hook_injects_exact_session_id(tmp_path):
     output = result['hookSpecificOutput']
     assert output['permissionDecision'] == 'allow'
     assert output['updatedInput'] == {'session_id': 'exact-session'}
+
+
+def test_generated_codex_end_and_interrupt_hooks_fit_runtime_deadline(tmp_path):
+    hooks = codex_hook_config(Path('/python'), Path('/source'), tmp_path)['hooks']
+    assert hooks['SessionEnd'][0]['matcher'] == 'other'
+    assert hooks['SessionEnd'][0]['hooks'][0]['timeout'] == 3
+    assert hooks['Interrupt'][0]['hooks'][0]['timeout'] == 3
+
+
+def test_every_live_capture_event_enters_session_vrs_and_end_is_detached(tmp_path,
+                                                                         monkeypatch):
+    state, transcript = tmp_path / 'state', tmp_path / 'rollout.jsonl'
+    session = 'lifecycle-session'
+    write_transcript(transcript, session, [])
+    capture = SessionCapture(state)
+    base = dict(session_id=session, transcript_path=str(transcript))
+    try:
+        captured = 0
+        monkeypatch.setattr('swegca_vrs2.conversation_watch.schedule', lambda *args: 1)
+        for index, name in enumerate(('SessionStart', 'UserPromptSubmit', 'PostToolUse',
+                                      'Stop', 'PreCompact', 'PostCompact')):
+            append_message(transcript, f'lifecycle-{index}')
+            handle('codex', state, dict(base, hook_event_name=name))
+            cursor = next((capture.meta / 'cursors').rglob('*.json'))
+            current = json.loads(cursor.read_text(encoding='utf-8'))['captured']
+            assert current > captured
+            captured = current
+
+        append_message(transcript, 'status-boundary')
+        status_event = dict(base, hook_event_name='PreToolUse',
+                            tool_name='mcp__swegca_vrs__memory_status', tool_input={})
+        routed = handle('codex', state, status_event)
+        assert routed['hookSpecificOutput']['updatedInput']['session_id'] == session
+        after_status = json.loads(cursor.read_text(encoding='utf-8'))['captured']
+        assert after_status > captured
+
+        append_message(transcript, 'pinned-context-call')
+        context_event = dict(base, hook_event_name='PreToolUse',
+            tool_name='mcp__swegca_vrs__memory_context', tool_input={})
+        handle('codex', state, context_event)
+        assert json.loads(cursor.read_text(encoding='utf-8'))['captured'] == after_status
+
+        release_event = dict(base, hook_event_name='PostToolUse',
+            tool_name='mcp__swegca_vrs__memory_release')
+        handle('codex', state, release_event)
+        assert json.loads(cursor.read_text(encoding='utf-8'))['captured'] > after_status
+
+        calls = []
+        monkeypatch.setattr('swegca_vrs2.conversation_finalize.schedule_capture',
+                            lambda *args: calls.append(('interrupt', args)))
+        monkeypatch.setattr('swegca_vrs2.conversation_finalize.schedule',
+                            lambda *args: calls.append(('end', args)))
+        handle('codex', state, dict(base, hook_event_name='Interrupt'))
+        handle('codex', state, dict(base, hook_event_name='SessionEnd'))
+        assert [row[0] for row in calls] == ['interrupt', 'end']
+        assert not capture.end_path('codex', session).exists()
+    finally:
+        stop(capture.session_root('codex', session))
+
+
+def test_session_watcher_captures_between_hooks_and_never_infers_end(tmp_path):
+    state, transcript = tmp_path / 'state', tmp_path / 'rollout.jsonl'
+    session = 'watcher-session'
+    write_transcript(transcript, session, [])
+    capture = SessionCapture(state)
+    thread = threading.Thread(target=watch,
+        args=(state, 'codex', session, transcript), kwargs={'poll_seconds': 0.05})
+    thread.start()
+    try:
+        append_message(transcript, 'between_hooks_unique_9494')
+        deadline = time.time() + 10
+        cursor = None
+        while time.time() < deadline:
+            paths = list((capture.meta / 'cursors').rglob('*.json'))
+            if paths:
+                cursor = json.loads(paths[0].read_text(encoding='utf-8'))
+                if cursor['offset'] == transcript.stat().st_size:
+                    break
+            time.sleep(0.05)
+        assert cursor is not None and cursor['offset'] == transcript.stat().st_size
+        assert not capture.end_path('codex', session).exists()
+        capture.mark_ended('codex', session)
+        thread.join(timeout=5)
+        assert not thread.is_alive()
+    finally:
+        if thread.is_alive():
+            capture.mark_ended('codex', session)
+            thread.join(timeout=5)
+        stop(capture.session_root('codex', session))
+
+
+def test_detached_finalizer_captures_last_tail_before_attaching(tmp_path):
+    state, transcript = tmp_path / 'state', tmp_path / 'rollout.jsonl'
+    session = 'finalizer-session'
+    write_transcript(transcript, session, [])
+    capture = SessionCapture(state)
+    session_state = capture.session_root('codex', session)
+    try:
+        capture.scan_transcript('codex', session, transcript)
+        append_message(transcript, 'final_tail_unique_7272')
+        result = finalize(state, 'codex', session, transcript)
+        assert result['offset'] == transcript.stat().st_size
+        marker = json.loads(capture.end_path('codex', session).read_text(encoding='utf-8'))
+        assert marker['merged'] is True
+        registry = json.loads((state / 'linked-shards.json').read_text(encoding='utf-8'))
+        assert sum(row['records'] for row in registry['shards']) == 2
+        with VRSClient(state, writes=False) as main:
+            exported = main.export(0)
+        assert 'final_tail_unique_7272' in {
+            row['observation']['text'] for row in exported['rows']}
+    finally:
+        stop(session_state, state)
+
+
+def test_session_end_live_reloads_main_and_is_immediately_recallable(tmp_path):
+    state, transcript = tmp_path / 'state', tmp_path / 'rollout.jsonl'
+    session = 'live-reload-session'
+    write_transcript(transcript, session, [
+        {'type': 'response_item', 'payload': {'type': 'message', 'role': 'user',
+            'content': [{'type': 'input_text', 'text': 'live_reload_unique_8383'}]}}])
+    capture = SessionCapture(state)
+    session_state = capture.session_root('codex', session)
+    try:
+        capture.scan_transcript('codex', session, transcript)
+        with VRSClient(state, writes=True) as main:
+            assert main.call('memory_status', {})['hot_episode_count'] == 0
+        capture.mark_ended('codex', session)
+        assert capture.merge_ended() == 2
+        marker = json.loads(capture.end_path('codex', session).read_text(encoding='utf-8'))
+        assert marker['activation'] == 'reloaded'
+
+        with VRSClient(state, writes=False) as main:
+            status = main.call('memory_status', {})
+            assert status['logical_episode_count'] == 2
+            packet = main.call('memory_context', dict(request_id='live-reload-query',
+                query='live_reload_unique_8383',
+                expected_pair_snapshot_id=status['pair_snapshot_id']))
+            while packet.get('status') != 'memory_context_ready':
+                packet = main.call('memory_continue', dict(
+                    packet['next_call']['arguments'], request_id='live-reload-query'))
+            assert packet['candidate_count'] >= 1
+    finally:
+        stop(session_state, state)
 
 
 def test_session_hit_then_complete_miss_falls_back_to_main(tmp_path):
@@ -125,6 +288,11 @@ def test_merge_requires_end_and_preserves_original_address(tmp_path):
         assert not (state / 'memory.sqlite3').exists()
         capture.mark_ended('codex', session)
         assert capture.merge_ended() == len(addresses)
+        assert not (state / 'memory.sqlite3').exists()
+        registry = json.loads((state / 'linked-shards.json').read_text(encoding='utf-8'))
+        assert registry['schema'] == 'swegca-vrs2-linked-shards-v1'
+        assert registry['shards'][0]['records'] == len(addresses)
+        assert registry['shards'][0]['path'].startswith('session-vrs/codex/')
         with VRSClient(state, writes=False) as main:
             exported = main.export(0)
         assert [row['episode_id'] for row in exported['rows']] == addresses
@@ -151,19 +319,201 @@ def test_armed_runtime_upgrade_waits_for_end_then_preserves_vrs_databases(tmp_pa
 
         capture.mark_ended('codex', session)
         assert merge_run(state) == 0
+        # The complete session VRS is adopted in place.  Merge creates no
+        # duplicate primary experience rows. Runtime preparation opens the
+        # existing empty primary control store and keeps all experience linked.
         assert main_db.is_file() and session_db.is_file()
-        assert not (state / 'exact-replay').exists()
+        registry = json.loads((state / 'linked-shards.json').read_text(encoding='utf-8'))
+        assert registry['shards'][0]['records'] == 2
+        assert (state / 'exact-replay' / 'capsules.vrs').is_file()
         assert not (session_state / 'exact-replay').exists()
         assert not (state / 'session-capture' / 'runtime-upgrade.json').exists()
         receipts = list((state / 'session-capture' / 'runtime-upgrades').glob('*.json'))
         assert len(receipts) == 1
 
+        receipt = json.loads(receipts[0].read_text(encoding='utf-8'))
+        assert receipt['exact']['complete'] and receipt['projections']['complete']
         # Both old residents released ownership; the current runtime can open
-        # the preserved experiences and recreate its derived V5 directory.
+        # the preserved experiences from the already rebuilt V5 directory.
         with VRSClient(state, writes=False) as main:
+            status = main.call('memory_status', {})
             exported = main.export(0)
+        assert status['hot_episode_count'] == 0
+        assert status['logical_episode_count'] == registry['shards'][0]['records']
         assert 'upgrade_unique_6262' in {
             row['observation']['text'] for row in exported['rows']}
+        assert len(exported['rows']) == registry['shards'][0]['records']
         assert (state / 'exact-replay' / 'capsules.vrs').is_file()
+    finally:
+        stop(session_state, state)
+
+
+def test_ended_partitioned_session_attaches_every_vrs_shard_and_recalls_cold(tmp_path):
+    state, session = tmp_path / 'state', 'partitioned-session'
+    capture = SessionCapture(state)
+    session_state = capture.session_root('codex', session)
+    primary = Main(session_state, allow_ingest=True, bundle_limit=2,
+                   defer_checkpoints=True)
+    session_vrs = Resident(primary, {}, hot_limit=1, bundle_limit=2)
+    addresses = []
+    try:
+        receipt = session_vrs.ingest_many([dict(request_id=f'partition-{index}',
+            text=f'linked_partition_anchor experience {index}',
+            source=f'test:partition:{index}', revision='1', outcome='pending')
+            for index in range(5)])
+        addresses = [row['episode_id'] for row in receipt['results']]
+    finally:
+        session_vrs.close()
+        primary.close()
+
+    capture.mark_ended('codex', session)
+    assert capture.merge_ended() == 5
+    registry = json.loads((state / 'linked-shards.json').read_text(encoding='utf-8'))
+    assert len(registry['shards']) == 3
+    assert sum(row['records'] for row in registry['shards']) == 5
+    assert sorted(Path(row['path']).name for row in registry['shards']) == [
+        capture.session_key(session), 'shard-000001', 'shard-000002']
+
+    main = Main(state, allow_ingest=False, defer_checkpoints=True)
+    resident = Resident(main, {}, hot_limit=0)
+    sharded = ShardedMain(main, resident)
+    try:
+        assert set(resident.ids()) == {row['id'] for row in registry['shards']}
+        exact = resident.backfill_exact(100)
+        while not exact['complete']:
+            exact = resident.backfill_exact(100)
+        projections = resident.backfill_projections(1)
+        while not projections['complete']:
+            projections = resident.backfill_projections(1)
+        assert exact['complete'] and projections['complete']
+        root = sharded.recall('linked_partition_anchor', resident.logical_snapshot())
+        activation = root['receipt']['activation']
+        assert activation.stage_order == ('deja_vu', 'recall', 'replay', 're_evidence')
+        assert {row.episode_id for row in activation.replay.episodes} == set(addresses)
+        direct = sharded.recall(addresses[-1], resident.logical_snapshot())
+        assert direct['receipt']['activation'].replay.episodes[0].episode_id == addresses[-1]
+    finally:
+        resident.close()
+        main.close()
+
+
+def test_main_extends_attached_source_lineage_and_registry_survives_restart(tmp_path):
+    state, transcript = tmp_path / 'state', tmp_path / 'rollout.jsonl'
+    session = 'linked-revision-session'
+    write_transcript(transcript, session, [
+        {'type': 'response_item', 'payload': {'type': 'message', 'role': 'user',
+            'content': [{'type': 'input_text', 'text': 'linked revision one'}]}}])
+    capture = SessionCapture(state)
+    session_state = capture.session_root('codex', session)
+    try:
+        capture.scan_transcript('codex', session, transcript)
+        with VRSClient(session_state, writes=False) as local:
+            rows = local.export(0)['rows']
+        original = next(row for row in rows
+                        if row['observation']['text'] == 'linked revision one')
+        capture.mark_ended('codex', session)
+        assert capture.merge_ended() == 2
+
+        main = Main(state, allow_ingest=True, defer_checkpoints=True)
+        resident = Resident(main, {}, hot_limit=1)
+        try:
+            while not resident.backfill_exact(100)['complete']:
+                pass
+            second = dict(original['observation'], request_id='linked-revision-two',
+                          text='linked revision two', revision='2',
+                          supersedes=original['episode_id'])
+            receipt = resident.ingest(second)
+            assert receipt['episode_id'] != original['episode_id']
+            assert resident.exact_backfill[next(iter(resident.linked))]['count'] == 3
+            registry = json.loads((state / 'linked-shards.json').read_text(encoding='utf-8'))
+            linked = registry['shards'][0]
+            assert linked['records'] == 3
+            assert linked['pair_snapshot_id'] == resident.pair_ids[linked['id']]
+        finally:
+            resident.close()
+            main.close()
+
+        restored_main = Main(state, allow_ingest=False, defer_checkpoints=True)
+        restored = Resident(restored_main, {}, hot_limit=0)
+        try:
+            while not restored.backfill_exact(100)['complete']:
+                pass
+            while not restored.backfill_projections(1)['complete']:
+                pass
+            direct = ShardedMain(restored_main, restored).recall(
+                receipt['episode_id'], restored.logical_snapshot())
+            assert direct['receipt']['activation'].replay.episodes[0].steps[0].observation[
+                'text'] == 'linked revision two'
+        finally:
+            restored.close()
+            restored_main.close()
+    finally:
+        stop(session_state, state)
+
+
+def test_linked_shard_recovers_committed_journal_after_unclean_main_exit(tmp_path):
+    state, transcript = tmp_path / 'state', tmp_path / 'rollout.jsonl'
+    session = 'linked-crash-session'
+    write_transcript(transcript, session, [
+        {'type': 'response_item', 'payload': {'type': 'message', 'role': 'user',
+            'content': [{'type': 'input_text', 'text': 'linked crash revision one'}]}}])
+    capture = SessionCapture(state)
+    session_state = capture.session_root('codex', session)
+    try:
+        capture.scan_transcript('codex', session, transcript)
+        with VRSClient(session_state, writes=False) as local:
+            original = next(row for row in local.export(0)['rows']
+                            if row['observation']['text'] == 'linked crash revision one')
+        capture.mark_ended('codex', session)
+        capture.merge_ended()
+        payload = dict(original['observation'], request_id='linked-crash-two',
+                       text='linked crash revision two', revision='2',
+                       supersedes=original['episode_id'])
+        payload_path, receipt_path = tmp_path / 'payload.json', tmp_path / 'receipt.json'
+        payload_path.write_text(json.dumps(payload), encoding='utf-8')
+        script = tmp_path / 'crash_writer.py'
+        script.write_text('''
+import json, os, sys
+from pathlib import Path
+from swegca_vrs2.store import Main
+from swegca_vrs2.resident import Resident
+root, payload, receipt = map(Path, sys.argv[1:])
+main = Main(root, allow_ingest=True, defer_checkpoints=True)
+resident = Resident(main, {}, hot_limit=1)
+result = resident.ingest(json.loads(payload.read_text(encoding="utf-8")))
+receipt.write_text(json.dumps(result), encoding="utf-8")
+os._exit(0)
+''', encoding='utf-8')
+        environment = dict(os.environ, PYTHONPATH=str(Path(__file__).parents[2] / 'src'))
+        subprocess.run([sys.executable, str(script), str(state), str(payload_path),
+                        str(receipt_path)], check=True, env=environment, timeout=30)
+        receipt = json.loads(receipt_path.read_text(encoding='utf-8'))
+        registry = json.loads((state / 'linked-shards.json').read_text(encoding='utf-8'))
+        linked = registry['shards'][0]
+        with sqlite3.connect(state / linked['path'] / 'memory.sqlite3') as db:
+            checkpoint_pair = db.execute('SELECT pair FROM checkpoint WHERE id=1').fetchone()[0]
+            journal_pair = db.execute(
+                'SELECT pair FROM observations ORDER BY seq DESC LIMIT 1').fetchone()[0]
+        assert checkpoint_pair != journal_pair == linked['pair_snapshot_id']
+
+        main = Main(state, allow_ingest=False, defer_checkpoints=True)
+        resident = Resident(main, {}, hot_limit=0)
+        try:
+            repaired = json.loads((state / 'linked-shards.json').read_text(encoding='utf-8'))[
+                'shards'][0]
+            with sqlite3.connect(state / repaired['path'] / 'memory.sqlite3') as db:
+                assert db.execute('SELECT pair FROM checkpoint WHERE id=1').fetchone()[0] \
+                    == repaired['pair_snapshot_id']
+            while not resident.backfill_exact(100)['complete']:
+                pass
+            while not resident.backfill_projections(1)['complete']:
+                pass
+            recalled = ShardedMain(main, resident).recall(
+                receipt['episode_id'], resident.logical_snapshot())
+            assert recalled['receipt']['activation'].replay.episodes[0].steps[0].observation[
+                'text'] == 'linked crash revision two'
+        finally:
+            resident.close()
+            main.close()
     finally:
         stop(session_state, state)

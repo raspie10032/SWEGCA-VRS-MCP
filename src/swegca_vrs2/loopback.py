@@ -46,7 +46,8 @@ RESIDENT_COMMANDS = {'status', 'cognitive_dialogue_start', 'cognitive_dialogue_c
                      'cognitive_dialogue_release'}
 LOCAL_COMMANDS = {'hook_recall', 'evidence_of', 'origins', 'bundles', 'lookup', 'evict',
                   'ingest', 'ingest_many', 'export_experiences', 'checkpoint', 'compact',
-                  'consolidate', 'refine', 'ping', 'shutdown', 'usage', 'alias'}
+                  'consolidate', 'refine', 'ping', 'shutdown', 'usage', 'alias',
+                  'reload_linked_shards'}
 
 
 # ── client ────────────────────────────────────────────────────────────
@@ -615,8 +616,8 @@ class Daemon:
         if command == 'evidence_of':
             return evidence_of(self.main, arguments)
         if command == 'export_experiences':
-            # Session-end transfer reads the VRS journal through main. It never
-            # opens a transcript or a parallel outbox database.
+            # Diagnostic export reads original VRS journals. SessionEnd adopts
+            # the complete session VRS in place and does not use this path.
             with self.lock:
                 return self.bundles.export_observations(
                     arguments.get('after_sequence', 0),
@@ -665,6 +666,13 @@ class Daemon:
                 return dict(status='ok', checkpoint=self.main.checkpoint())
             if command == 'compact':
                 return dict(status='ok', compact=self.main.compact())
+            if command == 'reload_linked_shards':
+                added = self.bundles.reload_linked_shards()
+                exact = _backfill_all_exact(self.bundles)
+                projections = _backfill_all_projections(self.bundles)
+                return dict(status='linked_shards_reloaded', added=added,
+                            bundles=self.bundles.ids(), exact=exact,
+                            projections=projections)
             if command == 'shutdown':
                 # Drop the port file now, not after the closing checkpoint: a client that
                 # arrives meanwhile must spawn a fresh daemon, not attach to this dying one.
@@ -694,6 +702,36 @@ PREPARE_EVERY = 5.0      # seconds between preparer passes over the warm bundles
 CONSOLIDATION_WORKERS = min(16, os.cpu_count() or 1)
 
 
+def _backfill_all_exact(bundles, budget=60000):
+    """Build every shard serially in one pass while each cold VRS is bounded."""
+    scanned = added = passes = 0
+    complete = False
+    with bundles.read_build_lock:
+        for _ in range(max(1, len(bundles.ids()) + 1)):
+            receipt = bundles.backfill_exact(budget)
+            passes += 1
+            scanned += receipt['scanned']
+            added += receipt['added']
+            complete = receipt['complete']
+            if complete or receipt['scanned'] == 0:
+                break
+    return dict(scanned=scanned, added=added, complete=complete, passes=passes)
+
+
+def _backfill_all_projections(bundles):
+    """Project every complete shard one at a time, never retaining source VRSs."""
+    rows = []
+    complete = False
+    with bundles.read_build_lock:
+        for _ in range(max(1, len(bundles.ids()))):
+            receipt = bundles.backfill_projections(1)
+            rows.extend(receipt['projections'])
+            complete = receipt['complete']
+            if complete or receipt['scanned'] == 0:
+                break
+    return dict(scanned=len(rows), projections=rows, complete=complete)
+
+
 def _preparer(daemon):
     """G8: storage access, decoding and warm loads happen here, never inside a judgment. At start-up the primary's
     light cache is prefetched newest-first (the first judgments then run from RAM); afterwards every warm bundle
@@ -703,10 +741,10 @@ def _preparer(daemon):
         memory = daemon.main.memory
         done = memory.prefetch_light(budget_ns=20_000_000_000) if hasattr(memory, 'prefetch_light') else 0
         daemon.prepared.append(dict(kind='prefetch_light', rows=done, ms=(time.perf_counter_ns() - started) // 1_000_000, when=time.time()))
-        exact = daemon.bundles.backfill_exact(4096)
+        exact = _backfill_all_exact(daemon.bundles)
         daemon.prepared.append(dict(kind='exact_replay_backfill', **exact,
                                     ms=(time.perf_counter_ns() - started) // 1_000_000, when=time.time()))
-        projections = daemon.bundles.backfill_projections(1)
+        projections = _backfill_all_projections(daemon.bundles)
         daemon.prepared.append(dict(kind='read_projection_backfill', **projections,
                                     ms=(time.perf_counter_ns() - started) // 1_000_000, when=time.time()))
     except Exception as error:
@@ -719,11 +757,11 @@ def _preparer(daemon):
                 daemon.prepared.append(receipt)
                 del daemon.prepared[:-64]
             last_pass = time.time()
-            exact = daemon.bundles.backfill_exact(4096)
+            exact = _backfill_all_exact(daemon.bundles)
             if exact['scanned']:
                 daemon.prepared.append(dict(kind='exact_replay_backfill', **exact, when=time.time()))
                 del daemon.prepared[:-64]
-            projections = daemon.bundles.backfill_projections(1)
+            projections = _backfill_all_projections(daemon.bundles)
             if projections['scanned']:
                 daemon.prepared.append(dict(kind='read_projection_backfill', **projections,
                                             when=time.time()))

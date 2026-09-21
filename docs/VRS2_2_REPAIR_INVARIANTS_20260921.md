@@ -60,3 +60,22 @@ fine connectivity regions, connector/portal navigation, shared-experience keys,
 and the multi-bundle resident. Session capture and layering are ported onto this
 lineage. The simplified standalone candidate is evidence for the session-hook
 defect and is not the architectural base.
+
+## Implemented session ownership path
+
+SessionStart or the first user prompt starts one locked transcript tailer. It
+captures newly appended complete host-visible records into
+`session-vrs/<host>/<session-hash>` within a one-second poll; lifecycle events
+also scan the same cursor as durable delivery boundaries. The cursor contains
+only byte/accounting positions and recent exact VRS addresses. It contains no
+dialogue text and is never a recall source. VRS tool calls receive the exact host
+session ID; reads complete against session VRS first and open main only after a
+zero-candidate completed recall.
+
+`SessionEnd` returns within the host's three-second command-hook ceiling after
+spawning a detached finalizer. The finalizer captures a stable final transcript
+tail, publishes the end marker, stops the tailer, validates the session primary and all automatic
+child VRS shards, and atomically attaches them to main. Main reads the original
+experience databases through its exact directory and complete VRS projections.
+There is no export/re-ingest merge, transcript outbox, proposal journal or
+log-based recall.

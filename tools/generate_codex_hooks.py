@@ -23,11 +23,12 @@ def config(python, module_root, state_dir):
     run = command(python, module_root, state_dir)
     hooks = {}
     for event in ('UserPromptSubmit', 'PostToolUse', 'Stop', 'PreCompact',
-                  'PostCompact', 'Interrupt'):
+                  'PostCompact'):
         hooks[event] = [{'hooks': [handler(run)]}]
+    hooks['Interrupt'] = [{'hooks': [handler(run, 3)]}]
     hooks['SessionStart'] = [{'matcher': 'startup|resume|clear|compact',
                               'hooks': [handler(run)]}]
-    hooks['SessionEnd'] = [{'matcher': 'other', 'hooks': [handler(run, 600)]}]
+    hooks['SessionEnd'] = [{'matcher': 'other', 'hooks': [handler(run, 3)]}]
     hooks['PreToolUse'] = [{
         'matcher': '^mcp__swegca_vrs__memory_', 'hooks': [handler(run)]}]
     return {'description': 'SWEGCA-VRS2 session ingress and exact session routing',

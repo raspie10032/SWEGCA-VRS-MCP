@@ -22,6 +22,9 @@ from filelock import FileLock
 from .loopback import ensure_daemon
 from .native_transport import MAX_BYTES, decode
 from .server import LoopbackMCP, default_state_dir
+from .linked_shards import (attach_complete_shards, drop_derived_read_directory,
+                            reload_running_main, shutdown_and_release)
+from .resident import WarmView
 
 
 CHUNK = 60000
@@ -186,9 +189,6 @@ class SessionCapture:
     def end_path(self, host, session):
         return self.meta / 'ended' / host / (self.session_key(session) + '.json')
 
-    def merge_path(self, host, session_key):
-        return self.meta / 'merged' / host / (session_key + '.json')
-
     @staticmethod
     def payloads(host, session_key, source_key, role, value, kind, line_number):
         chunks = [value[index:index + CHUNK] for index in range(0, len(value), CHUNK)]
@@ -300,7 +300,12 @@ class SessionCapture:
 
     def mark_ended(self, host, session):
         key = self.session_key(session)
-        atomic_json(self.end_path(host, session), dict(host=host, session=key,
+        path = self.end_path(host, session)
+        previous = read_json(path, {})
+        if previous.get('host') == host and previous.get('session') == key \
+                and isinstance(previous.get('ended_ns'), int):
+            return key
+        atomic_json(path, dict(host=host, session=key,
             ended_ns=time.time_ns(), merged=False))
         return key
 
@@ -308,7 +313,7 @@ class SessionCapture:
         root = self.meta / 'ended'
         if not root.exists():
             return []
-        return [(path, read_json(path, {})) for path in root.rglob('*.json')]
+        return [(path, read_json(path, {})) for path in sorted(root.rglob('*.json'))]
 
     def merge_ended(self):
         merged_count = 0
@@ -318,36 +323,30 @@ class SessionCapture:
             host, session = marker.get('host'), marker.get('session')
             if host not in ('codex', 'claude') or not isinstance(session, str):
                 raise ValueError('ended_marker_invalid')
-            progress_path = self.merge_path(host, session)
-            progress = read_json(progress_path, dict(sequence=0, experiences=0))
-            sequence, experiences = int(progress.get('sequence', 0)), int(progress.get('experiences', 0))
-            with VRSClient(self.session_root(host, session), writes=False) as source, \
-                    VRSClient(self.root, writes=True) as target:
-                while True:
-                    page = source.export(sequence)
-                    rows = page.get('rows')
-                    if page.get('status') != 'experience_export' or not isinstance(rows, list):
-                        raise ValueError('session_vrs_export_failed')
-                    if rows:
-                        result = target.ingest_many([item['observation'] for item in rows])
-                        receipts = result.get('results')
-                        if (result.get('status') != 'observations_recorded'
-                                or not isinstance(receipts, list) or len(receipts) != len(rows)):
-                            raise ValueError('main_vrs_batch_rejected')
-                        for item, receipt in zip(rows, receipts):
-                            if receipt.get('episode_id') != item.get('episode_id'):
-                                raise ValueError('experience_address_changed')
-                        experiences += len(rows)
-                    next_sequence = int(page.get('next_sequence', sequence))
-                    if next_sequence < sequence or (not page.get('complete') and next_sequence == sequence):
-                        raise ValueError('session_vrs_export_stalled')
-                    sequence = next_sequence
-                    atomic_json(progress_path, dict(sequence=sequence,
-                        experiences=experiences, main_pair_id=result.get('pair_snapshot_id') if rows else
-                        progress.get('main_pair_id')))
-                    if page.get('complete'):
-                        break
-            marker.update(merged=True, merged_ns=time.time_ns(), experiences=experiences)
+            state = self.session_root(host, session)
+            shutdown_and_release(state)
+            directories = [state, *sorted(path for path in (state / 'shards').glob('shard-*')
+                                          if (path / 'memory.sqlite3').is_file())]
+            components = []
+            for directory in directories:
+                suffix = 'main' if directory == state else directory.name
+                identifier = f'session-{host}-{session}-{suffix}'
+                view = WarmView(identifier, directory)
+                try:
+                    owner = view.refresh()
+                    components.append(dict(identifier=identifier, directory=directory,
+                        pair_snapshot_id=owner.pair.snapshot_id,
+                        records=owner.memory.episode_count,
+                        cue_total=owner.memory.cue_total))
+                finally:
+                    view.close()
+            receipt = attach_complete_shards(self.root, components)
+            experiences = receipt['records']
+            activation = reload_running_main(self.root)
+            drop_derived_read_directory(state)
+            marker.update(merged=True, merged_ns=time.time_ns(), experiences=experiences,
+                          shards=receipt['shards'],
+                          activation=activation)
             atomic_json(marker_path, marker)
             merged_count += experiences
         return merged_count
@@ -398,14 +397,26 @@ def handle(host, state_dir, event):
     # Keep status -> context -> read -> release on one pinned snapshot. The
     # status pre-hook captures the prompt first; release (or Stop) captures the
     # intermediate VRS tool records after the request is done.
+    if name == 'SessionEnd':
+        if not isinstance(session, str) or not isinstance(path, str):
+            raise ValueError('session_end_transcript_missing')
+        from .conversation_finalize import schedule
+        schedule(state_dir, host, session, path)
+        return None
+    if name == 'Interrupt':
+        if not isinstance(session, str) or not isinstance(path, str):
+            raise ValueError('interrupt_transcript_missing')
+        from .conversation_finalize import schedule_capture
+        schedule_capture(state_dir, host, session, path)
+        return None
+    if name in ('SessionStart', 'UserPromptSubmit') and isinstance(session, str) \
+            and isinstance(path, str):
+        from .conversation_watch import schedule as schedule_watch
+        schedule_watch(state_dir, host, session, path)
     scan_now = not vrs_tool or (name == 'PreToolUse' and tool_name.endswith('memory_status')) \
         or (name == 'PostToolUse' and tool_name.endswith('memory_release'))
     if scan_now and isinstance(session, str) and isinstance(path, str):
         capture.scan_transcript(host, session, path)
-    if name == 'SessionEnd' and isinstance(session, str):
-        capture.mark_ended(host, session)
-        from .conversation_merge import schedule
-        schedule(state_dir)
     if name == 'PreToolUse' and vrs_tool:
         arguments = event.get('tool_input')
         if not isinstance(arguments, dict) or not isinstance(session, str):

@@ -1,24 +1,20 @@
-"""One-time runtime handoff after an explicitly ended session is assimilated.
+"""One-time runtime handoff after an explicitly ended session is attached.
 
 The active session keeps using the resident generation it started with.  An
 upgrade is armed ahead of time, but it may run only after a newer SessionEnd
 marker is durably merged.  Original VRS databases stay untouched.  Only the
 rebuildable disk read directory is removed after both residents release their
-owner locks, so the next session starts the current code and backfills from
-the preserved experiences.
+owner locks. The detached handoff then rebuilds that directory with the current
+code before the next session can need durable main.
 """
 from __future__ import annotations
 
 import os
 from pathlib import Path
-import shutil
 import time
 
-from filelock import FileLock, Timeout
-
 from .exact_replay import MAGIC as EXACT_MAGIC
-from .loopback import LoopbackClient, port_of
-from .native_transport import InterfaceError
+from .linked_shards import shutdown_and_release, drop_derived_read_directory
 from .session_capture import atomic_json, read_json
 
 
@@ -40,45 +36,6 @@ def arm(root):
     return body
 
 
-def _shutdown_and_release(state, timeout=120):
-    """Stop an existing daemon without starting one and wait for its owner lock."""
-    state = Path(state).resolve()
-    port = port_of(state)
-    if port is not None:
-        client = LoopbackClient(port, 10)
-        try:
-            try:
-                reply = client.request('shutdown')
-            except InterfaceError:
-                # A dead daemon may leave a stale port file.  Ownership below
-                # is authoritative: deletion is allowed only after its lock
-                # can be acquired.
-                reply = None
-            if reply is not None and reply.get('status') != 'stopping':
-                raise ValueError('runtime_upgrade_shutdown_rejected')
-        finally:
-            client.close()
-    lock = FileLock(state / 'owner.lock', thread_local=False)
-    try:
-        lock.acquire(timeout=timeout)
-    except Timeout:
-        raise ValueError('runtime_upgrade_owner_not_released') from None
-    finally:
-        if lock.is_locked:
-            lock.release()
-    try:
-        (state / 'loopback.port').unlink()
-    except OSError:
-        pass
-
-
-def _drop_read_directory(state):
-    state = Path(state).resolve()
-    target = state / 'exact-replay'
-    if target.exists():
-        shutil.rmtree(target)
-
-
 def activate_if_ready(capture):
     """Perform the armed handoff only after a post-arm SessionEnd was merged."""
     path = marker_path(capture.root)
@@ -95,17 +52,35 @@ def activate_if_ready(capture):
     for _, row in ended:
         session_states.append(capture.session_root(row['host'], row['session']))
     for state in session_states:
-        _shutdown_and_release(state)
-    _shutdown_and_release(capture.root)
+        shutdown_and_release(state)
+    shutdown_and_release(capture.root)
     for state in session_states:
-        _drop_read_directory(state)
-    _drop_read_directory(capture.root)
+        drop_derived_read_directory(state)
+    drop_derived_read_directory(capture.root)
+
+    # The ended task is no longer latency-sensitive. Rebuild the latest
+    # main-owned read state here so the next task does not take the one-time
+    # schema handoff cost on its first durable-memory fallback.
+    from .store import Main
+    from .resident import Resident
+    from .loopback import _backfill_all_exact, _backfill_all_projections
+    main = Main(capture.root, allow_ingest=True, defer_checkpoints=True)
+    resident = Resident(main, {}, hot_limit=0)
+    try:
+        exact = _backfill_all_exact(resident)
+        projections = _backfill_all_projections(resident)
+        if not exact['complete'] or not projections['complete']:
+            raise ValueError('runtime_upgrade_read_state_incomplete')
+    finally:
+        resident.close()
+        main.close()
 
     receipt = dict(schema='swegca-vrs2-runtime-upgrade-receipt-v1',
                    armed_ns=armed_ns, activated_ns=time.time_ns(),
                    exact_schema=marker.get('exact_schema'),
                    sessions=[str(state) for state in session_states],
-                   preserved='memory.sqlite3', rebuilt='exact-replay')
+                   preserved='memory.sqlite3', rebuilt='exact-replay',
+                   exact=exact, projections=projections)
     receipt_path = capture.meta / 'runtime-upgrades' / (
         str(receipt['activated_ns']) + '.json')
     atomic_json(receipt_path, receipt)

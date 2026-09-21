@@ -22,6 +22,7 @@ from .store import CHECKPOINT_MAGIC, digest, plain
 from .exact_replay import ExactReplayStore
 from .cue_shards import CueShardDirectory
 from .read_projection import ReadProjectionStore, projected_portals
+from .linked_shards import load_linked_shards, update_linked_shard
 
 AUTO_SHARD_RECORDS = 8_192
 MAX_STORAGE_BYTES = 500 * 1024 ** 3
@@ -175,6 +176,12 @@ class Resident:
     def __init__(self, primary, bundles=None, hot_limit=1, bundle_limit=None):
         self.primary = primary                            # the daemon's own Main (always hot)
         self.bundles = {str(k): Path(v) for k, v in (bundles or {}).items() if v}
+        self.linked = load_linked_shards(self.primary.directory)
+        for identifier, row in self.linked.items():
+            previous = self.bundles.get(identifier)
+            if previous is not None and previous.resolve() != row['directory']:
+                raise ValueError('linked_shard_bundle_conflict')
+            self.bundles[identifier] = row['directory']
         self.hot_limit = max(0, int(hot_limit))
         self.bundle_limit = min(int(bundle_limit or AUTO_SHARD_RECORDS), AUTO_SHARD_RECORDS)
         self.primary.bundle_limit = self.bundle_limit
@@ -191,6 +198,7 @@ class Resident:
         self.cue_shards = CueShardDirectory(self.exact.directory / 'cue-shards')
         self.exact_progress_path = self.exact.directory / 'backfill.json'
         self.exact_progress_lock = threading.Lock()
+        self.read_build_lock = threading.Lock()
         self.exact_backfill = self._load_exact_progress()
         self.exact_backfill.setdefault('main', dict(count=0, tail=None,
             cue_total=0, complete=(self.primary.memory.episode_count == 0)))
@@ -199,10 +207,34 @@ class Resident:
         self.cue_totals = {'main': self.primary.memory.cue_total}
         for identifier, directory in self.bundles.items():
             try:
+                linked = self.linked.get(identifier)
                 db = _connect(directory)
                 row = db.execute('SELECT pair FROM checkpoint WHERE id=1').fetchone() \
                     if _table_exists(db, 'checkpoint') else None
+                journal = _journal_head(db)
                 db.close()
+                if linked is not None:
+                    checkpoint_pair = row[0] if row is not None else None
+                    journal_pair = journal[1] if journal is not None else None
+                    if journal_pair is None or linked['pair_snapshot_id'] not in {
+                            checkpoint_pair, journal_pair}:
+                        raise ValueError('linked_shard_generation_changed')
+                    if checkpoint_pair != journal_pair or linked['pair_snapshot_id'] != journal_pair:
+                        from .store import Main
+                        recovered = Main(directory, allow_ingest=True,
+                                         defer_checkpoints=True)
+                        try:
+                            repaired = dict(pair_snapshot_id=recovered.pair.snapshot_id,
+                                records=recovered.memory.episode_count,
+                                cue_total=recovered.memory.cue_total)
+                        finally:
+                            recovered.close()
+                        update_linked_shard(self.primary.directory, identifier, **repaired)
+                        linked.update(repaired)
+                        row = (repaired['pair_snapshot_id'],)
+                    self.pair_ids[identifier] = linked['pair_snapshot_id']
+                    self.record_counts[identifier] = linked['records']
+                    self.cue_totals[identifier] = linked['cue_total']
                 if row is not None:
                     self.pair_ids[identifier] = row[0]
                 progress = self.exact_backfill.get(identifier, {})
@@ -226,7 +258,31 @@ class Resident:
         self.projection_errors = {}
         self.projection_views = OrderedDict()
         self.projection_lock = threading.Lock()
-        self.lock = threading.Lock()
+        self.lock = threading.RLock()
+
+    def reload_linked_shards(self):
+        """Add newly attached complete generations without restarting main."""
+        incoming = load_linked_shards(self.primary.directory)
+        added = []
+        with self.lock:
+            for identifier, row in incoming.items():
+                previous = self.bundles.get(identifier)
+                if previous is not None:
+                    if previous.resolve() != row['directory']:
+                        raise ValueError('linked_shard_bundle_conflict')
+                    continue
+                self.bundles[identifier] = row['directory']
+                self.linked[identifier] = row
+                self.exact_backfill.setdefault(identifier, dict(
+                    count=0, tail=None, cue_total=0, complete=(row['records'] == 0)))
+                self.record_counts[identifier] = row['records']
+                self.cue_totals[identifier] = row['cue_total']
+                with self._pair_lock:
+                    self.pair_ids[identifier] = row['pair_snapshot_id']
+                    self._xor_pair_component(identifier, row['pair_snapshot_id'])
+                    self._logical_snapshot_id = self._snapshot_from_pair_xor()
+                added.append(identifier)
+        return added
 
     def _load_exact_progress(self):
         try:
@@ -357,9 +413,16 @@ class Resident:
 
     def refresh_pair(self, shard, owner):
         shard, pair = str(shard), owner.pair.snapshot_id
+        records, cues = owner.memory.episode_count, owner.memory.cue_total
+        if shard in self.linked:
+            update_linked_shard(self.primary.directory, shard,
+                                pair_snapshot_id=pair, records=records,
+                                cue_total=cues)
+            self.linked[shard].update(pair_snapshot_id=pair,
+                                      records=records, cue_total=cues)
         with self._pair_lock:
-            self.record_counts[shard] = owner.memory.episode_count
-            self.cue_totals[shard] = owner.memory.cue_total
+            self.record_counts[shard] = records
+            self.cue_totals[shard] = cues
             previous = self.pair_ids.get(shard)
             if previous == pair:
                 return
@@ -529,6 +592,7 @@ class Resident:
     def _register_exact_many(self, owner, identifiers):
         memory = owner.memory
         shard = self._shard_of(owner)
+        previous = dict(self.exact_backfill.get(shard, {}))
         records = []
         for identifier in identifiers:
             episode = memory.episode(identifier)
@@ -540,6 +604,10 @@ class Resident:
             proposition = episode.steps[0].observation.get('proposition_id')
             if proposition:
                 self.exact.put_proposition(proposition, shard, identifier)
+        start = memory.episode_count - len(identifiers)
+        if (previous.get('complete') and int(previous.get('count', -1)) == start
+                and tuple(memory._store['ids'][start:]) == tuple(identifiers)):
+            self._advance_exact_cursor(shard, owner, memory.episode_count)
 
     def exact_replay(self, identifier):
         return self.exact.get(identifier)
@@ -660,19 +728,19 @@ class Resident:
 
     def export_observations(self, after_sequence=0, *, max_records=512,
                             max_bytes=768 * 1024):
-        """Session-end export across the main and every automatic shard.
+        """Experience export across the primary and every owned VRS shard.
 
         The cursor encodes ``(shard index, shard journal sequence)``.  Each row
         still comes from that shard's VRS journal through ``Main`` and retains
-        its exact original envelope and episode address.  This path is used only
-        for ended-session assimilation, never for recall.
+        its exact original envelope and episode address.  Recall never uses
+        this API; ended sessions are linked in place and are not re-ingested.
         """
         after_sequence = max(0, int(after_sequence))
         max_records = max(1, min(int(max_records), 4096))
         max_bytes = max(4096, min(int(max_bytes), 896 * 1024))
         shard_index = after_sequence >> self._SEQUENCE_BITS
         local_after = after_sequence & self._SEQUENCE_MASK
-        shard_ids = ['main', *self.auto_ids]
+        shard_ids = ['main', *self.ids()]
         if shard_index >= len(shard_ids):
             return dict(status='experience_export', rows=[], after_sequence=after_sequence,
                         next_sequence=after_sequence, head_sequence=after_sequence,
@@ -853,7 +921,8 @@ class Resident:
 
     # bundles
     def ids(self):
-        return list(self.bundles)
+        with self.lock:
+            return list(self.bundles)
 
     def ready(self, bundle_id):
         """(owner, state) pinned for one judgment without any loading: the hot Main, or a complete warm view that
@@ -1057,3 +1126,4 @@ class Resident:
             for view in self.projection_views.values():
                 view.close()
             self.projection_views.clear()
+        self.exact.close()
