@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <iterator>
+#include <stdexcept>
 #include <string>
 #include <unordered_set>
 #include <vector>
@@ -90,6 +91,31 @@ std::vector<std::string> lexical_keys(std::string_view text) {
             }
         }
     }
+    return result;
+}
+
+// SWEGCA: src/swegca_vrs2/engine/mosaic_memory_activation.py@7536139:22-23
+std::string normalize_cue(std::string_view cue) {
+    const auto original = decode_utf8(cue);
+    std::size_t first = 0;
+    while (first < original.size() && python_space(original[first])) ++first;
+    std::size_t last = original.size();
+    while (last > first && python_space(original[last - 1])) --last;
+    if (first == last) throw std::runtime_error("cue must not be empty");
+    std::string collapsed;
+    bool previous_space = false;
+    for (std::size_t at = first; at < last; ++at) {
+        if (python_space(original[at])) {
+            if (!previous_space) collapsed.push_back(' ');
+            previous_space = true;
+        } else {
+            append_utf8(collapsed, original[at]);
+            previous_space = false;
+        }
+    }
+    const auto folded = python_casefold(collapsed);
+    std::string result;
+    for (const auto point : folded) append_utf8(result, point);
     return result;
 }
 
