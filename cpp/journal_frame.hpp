@@ -17,8 +17,19 @@ struct JournalRow {
     std::string pair_id;
 };
 
+struct PendingJournalRow {
+    std::string request_id;
+    std::string body;
+    std::string fingerprint;
+    std::string pair_id;
+};
+
 // SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:129-134
 [[nodiscard]] std::vector<std::byte> encode_journal_frame(std::span<const JournalRow> rows);
+
+// SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:223-234
+[[nodiscard]] std::vector<std::byte> encode_journal_frame(
+    std::int64_t first_sequence, std::span<const PendingJournalRow> rows);
 
 // Validate the complete frame before delivering rows. Rows are then streamed
 // from a second inflation pass, so a batch does not require one large JSON tree.

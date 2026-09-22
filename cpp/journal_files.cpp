@@ -2,17 +2,24 @@
 
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <fstream>
+#include <iomanip>
+#include <limits>
+#include <random>
+#include <sstream>
 #include <stdexcept>
 #include <string>
+#include <system_error>
 #include <utility>
 #include <vector>
 
 #if defined(_WIN32)
 #include <fcntl.h>
 #include <io.h>
+#include <sys/stat.h>
 #else
 #include <fcntl.h>
 #include <unistd.h>
@@ -25,6 +32,7 @@ constexpr std::size_t magic_bytes = 8;
 constexpr std::size_t header_bytes = 8;
 constexpr std::size_t checksum_bytes = 32;
 constexpr std::uint64_t maximum_payload_bytes = 64ULL * 1024 * 1024;
+constexpr std::uint64_t rotate_bytes = 32ULL * 1024 * 1024;
 constexpr std::array<char, magic_bytes> file_magic{'V','R','S','2','J','N','L','1'};
 
 // SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:147-162
@@ -44,6 +52,134 @@ void durable_truncate(const std::filesystem::path& path, std::uint64_t length) {
 #endif
     if (truncated != 0 || synced != 0)
         throw std::runtime_error("native_vrs_journal_truncated");
+}
+
+// SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:39-46
+void fsync_directory(const std::filesystem::path& directory) {
+#if !defined(_WIN32)
+    const auto descriptor = open(directory.c_str(), O_RDONLY | O_DIRECTORY);
+    if (descriptor < 0) throw std::runtime_error("native_vrs_directory_sync_failed");
+    const auto synced = fsync(descriptor);
+    close(descriptor);
+    if (synced != 0) throw std::runtime_error("native_vrs_directory_sync_failed");
+#else
+    (void)directory;
+#endif
+}
+
+// SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:49-62
+void write_all(int descriptor, std::span<const std::byte> bytes) {
+    std::size_t offset = 0;
+    while (offset < bytes.size()) {
+#if defined(_WIN32)
+        const auto chunk = static_cast<unsigned int>(std::min<std::size_t>(
+            bytes.size() - offset, std::numeric_limits<unsigned int>::max()));
+        const auto count = _write(descriptor, bytes.data() + offset, chunk);
+#else
+        const auto count = ::write(descriptor, bytes.data() + offset, bytes.size() - offset);
+#endif
+        if (count < 0 && errno == EINTR) continue;
+        if (count <= 0) throw std::runtime_error("native_vrs_journal_write_failed");
+        offset += static_cast<std::size_t>(count);
+    }
+}
+
+class NativeDescriptor {
+public:
+    // SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:49-62
+    explicit NativeDescriptor(int descriptor) : descriptor_(descriptor) {}
+    NativeDescriptor(const NativeDescriptor&) = delete;
+    NativeDescriptor& operator=(const NativeDescriptor&) = delete;
+
+    // SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:49-62
+    ~NativeDescriptor() {
+        if (descriptor_ >= 0) {
+#if defined(_WIN32)
+            _close(descriptor_);
+#else
+            close(descriptor_);
+#endif
+        }
+    }
+
+    // SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:49-62
+    [[nodiscard]] int get() const { return descriptor_; }
+
+    // SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:49-62
+    void sync() {
+#if defined(_WIN32)
+        const auto result = _commit(descriptor_);
+#else
+        const auto result = fsync(descriptor_);
+#endif
+        if (result != 0) throw std::runtime_error("native_vrs_journal_write_failed");
+    }
+
+    // SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:49-62
+    void close_now() {
+        const auto previous = std::exchange(descriptor_, -1);
+#if defined(_WIN32)
+        const auto result = _close(previous);
+#else
+        const auto result = close(previous);
+#endif
+        if (result != 0) throw std::runtime_error("native_vrs_journal_write_failed");
+    }
+
+private:
+    int descriptor_;
+};
+
+// SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:49-62
+void atomic_head_magic(const std::filesystem::path& path) {
+    std::random_device random;
+    const auto temporary = path.parent_path() /
+        ("." + path.filename().string() + "-" + std::to_string(random()) +
+         "-" + std::to_string(random()));
+#if defined(_WIN32)
+    const auto raw_descriptor = _wopen(temporary.c_str(), _O_BINARY | _O_WRONLY | _O_CREAT | _O_EXCL,
+                                   _S_IREAD | _S_IWRITE);
+#else
+    const auto raw_descriptor = open(temporary.c_str(), O_WRONLY | O_CREAT | O_EXCL, 0600);
+#endif
+    if (raw_descriptor < 0) throw std::runtime_error("native_vrs_head_create_failed");
+    NativeDescriptor descriptor(raw_descriptor);
+    try {
+        write_all(descriptor.get(), std::as_bytes(std::span(file_magic)));
+        descriptor.sync();
+        descriptor.close_now();
+        std::filesystem::rename(temporary, path);
+        fsync_directory(path.parent_path());
+    } catch (...) {
+        std::error_code ignored;
+        std::filesystem::remove(temporary, ignored);
+        throw;
+    }
+}
+
+// SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:235-242
+void durable_append(const std::filesystem::path& path, std::span<const std::byte> bytes) {
+#if defined(_WIN32)
+    const auto raw_descriptor = _wopen(path.c_str(), _O_BINARY | _O_WRONLY | _O_APPEND);
+#else
+    const auto raw_descriptor = open(path.c_str(), O_WRONLY | O_APPEND);
+#endif
+    if (raw_descriptor < 0) throw std::runtime_error("native_vrs_journal_write_failed");
+    NativeDescriptor descriptor(raw_descriptor);
+    write_all(descriptor.get(), bytes);
+    descriptor.sync();
+    descriptor.close_now();
+}
+
+// SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:249-257
+void rotate_head(const std::filesystem::path& directory, std::int64_t last_sequence) {
+    const auto head = directory / "head.vrsj";
+    if (std::filesystem::file_size(head) <= magic_bytes) return;
+    std::ostringstream name;
+    name << "segment-" << std::setw(20) << std::setfill('0') << last_sequence << ".vrsj";
+    std::filesystem::rename(head, directory / name.str());
+    atomic_head_magic(head);
+    fsync_directory(directory);
 }
 
 // SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:153-155
@@ -132,6 +268,40 @@ JournalScan visit_journal_files(const std::filesystem::path& generation_director
         });
     }
     return scan;
+}
+
+// SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:223-257
+std::vector<std::int64_t> append_journal_rows(
+    const std::filesystem::path& generation_directory,
+    JournalScan& current,
+    std::span<const PendingJournalRow> rows) {
+    if (rows.empty()) return {};
+    if (current.last_sequence < 0 || rows.size() > static_cast<std::uint64_t>(
+            std::numeric_limits<std::int64_t>::max() - current.last_sequence))
+        throw std::runtime_error("native_vrs_sequence_invalid");
+    const auto first = current.last_sequence + 1;
+    if (current.row_count > std::numeric_limits<std::uint64_t>::max() - rows.size())
+        throw std::runtime_error("native_vrs_sequence_invalid");
+    std::vector<std::int64_t> sequences;
+    sequences.reserve(rows.size());
+    for (std::size_t i = 0; i < rows.size(); ++i)
+        sequences.push_back(first + static_cast<std::int64_t>(i));
+    auto last_pair = rows.back().pair_id;
+    const auto frame = encode_journal_frame(first, rows);
+    const auto head = generation_directory / "head.vrsj";
+    const auto start = std::filesystem::file_size(head);
+    try {
+        durable_append(head, frame);
+    } catch (...) {
+        durable_truncate(head, start);
+        throw;
+    }
+    current.row_count += rows.size();
+    current.last_sequence = sequences.back();
+    current.last_pair = std::move(last_pair);
+    if (std::filesystem::file_size(head) >= rotate_bytes)
+        rotate_head(generation_directory, current.last_sequence);
+    return sequences;
 }
 
 }  // namespace swegca::vrs

@@ -257,6 +257,26 @@ std::vector<std::byte> encode_journal_frame(std::span<const JournalRow> rows) {
     return writer.finish();
 }
 
+// SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:223-234
+std::vector<std::byte> encode_journal_frame(
+    std::int64_t first_sequence, std::span<const PendingJournalRow> rows) {
+    if (first_sequence < 1 || rows.size() > static_cast<std::uint64_t>(
+            std::numeric_limits<std::int64_t>::max() - first_sequence + 1))
+        throw std::runtime_error("native_vrs_sequence_invalid");
+    FrameDeflater writer;
+    writer.write("{\"rows\":[");
+    for (std::size_t i = 0; i < rows.size(); ++i) {
+        if (i) writer.write(",");
+        const auto encoded = Json(Json::Array{
+            Json(first_sequence + static_cast<std::int64_t>(i)),
+            Json(rows[i].request_id), Json(rows[i].body),
+            Json(rows[i].fingerprint), Json(rows[i].pair_id)}).canonical();
+        writer.write(encoded);
+    }
+    writer.write("],\"schema\":\"swegca-vrs2-frame-v1\"}");
+    return writer.finish();
+}
+
 // SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:136-177
 void visit_journal_frame(std::span<const std::byte> frame,
                          const std::function<void(JournalRow&&)>& visit) {
