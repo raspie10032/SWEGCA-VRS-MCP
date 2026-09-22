@@ -24,6 +24,8 @@ struct PinnedReadLayer {
     const NativeJournalReadView& journal;
     const ExactJournalDirectory& original_addresses;
     const NativeCueDirectory& cue_addresses;
+    const NativeCueDirectory& proposition_addresses;
+    const NativeCueDirectory& successor_addresses;
     std::int64_t published_row_limit;
 };
 

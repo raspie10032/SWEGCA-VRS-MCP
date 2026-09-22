@@ -128,12 +128,17 @@ published row limits hide future nodes from older readers. A descending
 sequence merge counts the exact distinct posting union without holding all
 candidate IDs in RAM. A second journal-ordered pass now validates source
 observations, resolves the first original and its header projection, and
-routes raw posting cues to 16 bounded worker queues by digest prefix. Each
-cue reaches one worker in journal order. Main's pinned read generation now
-requires the cue and exact original directories to carry the same journal
-generation, row limit, and pair certificate. A concrete published HotIndex
-must still bind its lookup methods to those pinned directories. Proposition
-and family directories are also missing.
+routes raw cue postings, proposition memberships and supersedes-successor
+links to 16 bounded worker queues by digest prefix. A key always reaches one
+worker in journal order. The proposition and successor links reuse the same
+derived posting format in separate directories; they do not grant evidence
+authority. A supersedes link requires a prior original with the same source
+and a different revision, and no other successor may claim that prior ID.
+Main's pinned read generation requires all three posting directories and the
+exact original directory to carry the same journal generation, row limit,
+and pair certificate. A concrete published HotIndex must still bind its
+lookup methods to those pinned directories. Explicit semantic-family
+directories are still missing.
 During a fresh, unpublished cue rebuild, the derived files are synced once
 behind the publication barrier instead of after every posting. Publication
 locks all prefixes, syncs every data and table file, then writes the durable
@@ -149,7 +154,7 @@ snapshot ID, and VRS snapshot ID. The owner may replace that immutable pair
 only if its expected current ID still matches, and only after the corresponding
 journal commit. `MainReadGeneration` now retains the pair together with the
 validated numerical input, node and region directories, coactivation index,
-portal state, native journal read view, exact original address and cue readers, and
+portal state, native journal read view, exact original address and three posting readers, and
 published row limit. Construction rejects VRS and original-source binding
 mismatches before one CAS owner can expose the bundle. The four-stage path now
 opens the selected original through that exact native address; conflicting

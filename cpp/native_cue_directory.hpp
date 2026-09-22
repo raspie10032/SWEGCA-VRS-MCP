@@ -72,6 +72,11 @@ public:
         return journal_generation_;
     }
 
+    // SWEGCA: src/swegca_vrs2/cue_shards.py@c06092a:59-91
+    [[nodiscard]] const std::filesystem::path& directory() const {
+        return directory_;
+    }
+
 private:
     using Key = std::array<unsigned char, 32>;
     struct PostingNode {
