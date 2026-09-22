@@ -59,7 +59,7 @@ work, and exhausted rounds return that work as pending. Its sparse maps and
 per-node edge lists still need a bounded physical representation for the
 4 GB product gate. It is not Graph.append, settlement publication, region
 construction, coactivation, or a timing result.
-The two numeric translation units compile with floating-point contraction
+The six numeric translation units compile with floating-point contraction
 disabled and fast-math disabled; otherwise fused or reassociated operations
 could change Python's separate binary64 steps before float32 rounding. These
 flags are a build contract, not a parity test.
@@ -68,7 +68,8 @@ The C++ `plan_vrs_state_update` now follows the source's first replayed
 connection observation, one strength change per current verdict, first-seen
 alias grouping, conflict abstention and retained source judgments. Its receipt
 remains detached and denies action, write and semantic-promotion authority.
-It is not bound to the event signal proposal or a published VRS generation.
+A source-based binder and event signal proposal consume it, but no Main
+generation publishes their result.
 The author calls Python `int()` and `float()` on observation fields; the C++
 numeric conversion covers JSON numbers, booleans and ASCII decimal strings,
 including numeric underscores. Python's non-ASCII decimal digits and extreme
@@ -80,8 +81,9 @@ against the immutable VRS generation, one explicit connection namespace,
 original edge strengths, source verdict operation and promotion decision. It
 rounds changed strengths to the selected f32 or f16 storage format and rejects
 an f16 threshold crossing caused only by rounding. The bound strength map and
-target seeds are still detached work; event signal settlement, durable input
-equality, and publication remain unimplemented. The f16 conversion is a
+target seeds are still detached work; signal settlement is translated in a
+separate unit, while durable input equality and publication remain
+unimplemented. The f16 conversion is a
 source-based binary16 translation, not a measured parity result.
 The C++ `settle_event_signal` now carries the source's fixed input-strength
 map through synchronous score rounds. It reads every incoming signed edge for
@@ -101,6 +103,14 @@ all same-claim strength proposals to abstain. This is the front of
 binding, affected-component region recomputation and Main journal commit/CAS
 must still follow in the source order. The plan does not infer truth from a
 shared cue or historical outcome.
+The C++ endpoint segment index now preserves the author's stable per-segment
+sort, segment-concatenation lookup order, source-generation binding and
+geometric tail merge. That lookup order is required by `math.fsum` in the
+event kernel. The current segment vectors are an algorithmic translation;
+they are not the bounded disk-backed representation needed for a large main
+under 4 GB. The verified append entry remains private to the future
+`EventDeltaView`, which must preserve the parent edge endpoint/sign prefix
+by construction before it can use the index.
 
 Existing VRS 2.2 pair certificates and numerical arrays are historical
 evidence. A new source implementation must account for their lineage and

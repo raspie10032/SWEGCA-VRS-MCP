@@ -3,7 +3,7 @@ AR ?= ar
 CXXFLAGS ?= -O2 -g -std=c++20 -Wall -Wextra -Wpedantic
 NUMERIC_CXXFLAGS = -ffp-contract=off -fno-fast-math
 
-CORE_OBJECTS = build/digest.o build/json.o build/unicode.o build/keys.o build/observation.o build/memory_episode.o build/memory_evidence.o build/memory_promotion.o build/vrs_state_update.o build/hot_index.o build/hot_index_pending.o build/memory_vrs_pair.o build/deja_vu.o build/memory_recall.o build/memory_receipt.o build/event_vrs_inputs.o build/python_fsum.o build/event_vrs_kernel.o build/event_signal_strength.o build/event_signal.o build/graph_append.o build/journal_frame.o build/journal_files.o build/owner_lock.o build/native_journal.o
+CORE_OBJECTS = build/digest.o build/json.o build/unicode.o build/keys.o build/observation.o build/memory_episode.o build/memory_evidence.o build/memory_promotion.o build/vrs_state_update.o build/hot_index.o build/hot_index_pending.o build/memory_vrs_pair.o build/deja_vu.o build/memory_recall.o build/memory_receipt.o build/event_vrs_inputs.o build/endpoint_segments.o build/python_fsum.o build/event_vrs_kernel.o build/event_signal_strength.o build/event_signal.o build/graph_append.o build/journal_frame.o build/journal_files.o build/owner_lock.o build/native_journal.o
 
 .PHONY: all clean
 all: build/libswegca-vrs.a
@@ -57,6 +57,9 @@ build/memory_receipt.o: cpp/memory_receipt.cpp cpp/memory_receipt.hpp cpp/deja_v
 	$(CXX) $(CXXFLAGS) -Icpp -c $< -o $@
 
 build/event_vrs_inputs.o: cpp/event_vrs_inputs.cpp cpp/event_vrs_inputs.hpp | build
+	$(CXX) $(CXXFLAGS) -Icpp -c $< -o $@
+
+build/endpoint_segments.o: cpp/endpoint_segments.cpp cpp/endpoint_segments.hpp cpp/event_vrs_inputs.hpp | build
 	$(CXX) $(CXXFLAGS) -Icpp -c $< -o $@
 
 build/python_fsum.o: cpp/python_fsum.cpp cpp/python_fsum.hpp | build
