@@ -129,9 +129,11 @@ sequence merge counts the exact distinct posting union without holding all
 candidate IDs in RAM. A second journal-ordered pass now validates source
 observations, resolves the first original and its header projection, and
 routes raw posting cues to 16 bounded worker queues by digest prefix. Each
-cue reaches one worker in journal order. The cue publication still needs to
-bind to Main's pinned read generation. Proposition and family directories and the concrete
-published HotIndex reader are still missing.
+cue reaches one worker in journal order. Main's pinned read generation now
+requires the cue and exact original directories to carry the same journal
+generation, row limit, and pair certificate. A concrete published HotIndex
+must still bind its lookup methods to those pinned directories. Proposition
+and family directories are also missing.
 The Main operation overlay now checks request ID and normalized observation
 fingerprint before any new HotIndex/Graph candidate is staged. Identical
 requests retain their original episode and pair certificate; conflicting
@@ -142,7 +144,7 @@ snapshot ID, and VRS snapshot ID. The owner may replace that immutable pair
 only if its expected current ID still matches, and only after the corresponding
 journal commit. `MainReadGeneration` now retains the pair together with the
 validated numerical input, node and region directories, coactivation index,
-portal state, native journal read view, exact original address reader, and
+portal state, native journal read view, exact original address and cue readers, and
 published row limit. Construction rejects VRS and original-source binding
 mismatches before one CAS owner can expose the bundle. The four-stage path now
 opens the selected original through that exact native address; conflicting

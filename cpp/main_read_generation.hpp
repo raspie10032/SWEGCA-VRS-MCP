@@ -1,5 +1,6 @@
 #pragma once
 
+#include "native_cue_directory.hpp"
 #include "session_first_read.hpp"
 
 #include <memory>
@@ -24,6 +25,7 @@ public:
         PortalPolicy policy, std::vector<PortalRevocation> revocations,
         std::shared_ptr<const NativeJournalReadView> journal,
         std::shared_ptr<const ExactJournalDirectory> original_addresses,
+        std::shared_ptr<const NativeCueDirectory> cue_addresses,
         std::int64_t published_row_limit);
 
     // SWEGCA: src/swegca_vrs2/engine/mosaic_memory_activation.py@7536139:113-135
@@ -40,6 +42,7 @@ private:
     std::vector<PortalRevocation> revocations_;
     std::shared_ptr<const NativeJournalReadView> journal_;
     std::shared_ptr<const ExactJournalDirectory> original_addresses_;
+    std::shared_ptr<const NativeCueDirectory> cue_addresses_;
     std::int64_t published_row_limit_;
 };
 

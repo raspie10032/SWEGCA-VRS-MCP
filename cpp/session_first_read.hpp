@@ -1,6 +1,7 @@
 #pragma once
 
 #include "exact_journal_replay.hpp"
+#include "native_cue_directory.hpp"
 #include "portal_navigation.hpp"
 
 #include <cstdint>
@@ -22,6 +23,7 @@ struct PinnedReadLayer {
     const std::vector<PortalRevocation>& revocations;
     const NativeJournalReadView& journal;
     const ExactJournalDirectory& original_addresses;
+    const NativeCueDirectory& cue_addresses;
     std::int64_t published_row_limit;
 };
 

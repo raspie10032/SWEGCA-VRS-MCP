@@ -62,7 +62,7 @@ build/main_operations.o: cpp/main_operations.cpp cpp/main_operations.hpp | build
 build/memory_vrs_pair.o: cpp/memory_vrs_pair.cpp cpp/memory_vrs_pair.hpp cpp/main_read_generation.hpp cpp/hot_index.hpp cpp/json.hpp cpp/digest.hpp | build
 	$(CXX) $(CXXFLAGS) -Icpp -c $< -o $@
 
-build/main_read_generation.o: cpp/main_read_generation.cpp cpp/main_read_generation.hpp cpp/session_first_read.hpp cpp/exact_journal_replay.hpp cpp/exact_journal_directory.hpp cpp/native_journal.hpp cpp/event_vrs_inputs.hpp | build
+build/main_read_generation.o: cpp/main_read_generation.cpp cpp/main_read_generation.hpp cpp/session_first_read.hpp cpp/exact_journal_replay.hpp cpp/exact_journal_directory.hpp cpp/native_cue_directory.hpp cpp/native_journal.hpp cpp/event_vrs_inputs.hpp | build
 	$(CXX) $(CXXFLAGS) -Icpp -c $< -o $@
 
 build/deja_vu.o: cpp/deja_vu.cpp cpp/deja_vu.hpp cpp/hot_index.hpp cpp/keys.hpp cpp/unicode.hpp | build
