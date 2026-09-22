@@ -38,6 +38,13 @@ and a 4 GB memory limit. The implementation must meet those requirements
 using author rules or obtain an explicit decision for any new rule. A split
 storage representation cannot change source addresses or bypass `Graph.append`
 when session VRS experience enters a main generation.
+The author's `mosaic_vrs_region_graph.py@3bddcb7` exports four sealed numeric
+arrays for cold grouping and `mosaic_vrs_region_storage.py@3bddcb7` loads or
+saves a detached topology. Neither implements a partitioned live Graph or
+cross-shard physical links. They cannot be cited as proof that the user's
+split-and-link and 4 GB requirements are already implemented. A new physical
+segmentation must preserve the same logical node, edge, region, membership,
+portal and original addresses while retaining the author's calculation rules.
 The C++ `ValidatedEventVrsInputs` introduced for the rebuild is only the
 author's cold validation and immutable generation-binding boundary expressed
 over a storage view. It scans finite direct, score, edge and strength values,
