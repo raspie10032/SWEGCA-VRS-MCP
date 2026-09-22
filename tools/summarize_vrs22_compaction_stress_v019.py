@@ -38,8 +38,8 @@ RATES = {"gpt-5.6-luna": (.20, .02, 1.20),
          "gpt-5.6-sol": (4.00, .40, 20.00)}
 FIELDS = ("input_tokens", "cached_input_tokens", "cache_write_input_tokens",
           "output_tokens", "reasoning_output_tokens")
-RUNTIME_PRODUCT_COMMIT = "0a4769f9ce25bb216f5173f817f7050404a0bccb"
-RUNTIME_REPOSITORY_COMMIT = "0a4769f9ce25bb216f5173f817f7050404a0bccb"
+RUNTIME_PRODUCT_COMMIT = "92762388d129df4b9937e2ec2339b97fdd03542a"
+RUNTIME_REPOSITORY_COMMIT = "92762388d129df4b9937e2ec2339b97fdd03542a"
 RUNTIME_SOURCE_TREE_SHA256 = "2e9fbf8870f547bba7574c8b7d3c741535f9fa78bcf8fbddb250b52fbfc1a4f2"
 INITIAL_SHA256 = "a9249ca6fed86315b83cb96f89cc5d0936b2775468c3e450c3258b32abb49523"
 DISCOVERY_QUERY = "checkpoint"
