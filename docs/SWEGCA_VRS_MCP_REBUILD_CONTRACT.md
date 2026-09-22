@@ -105,6 +105,11 @@ pending view. A failed pending view is never reused. This preserves the author's
 allowing a bounded physical shard implementation later. The currently added
 C++ pending view implements the row visibility part only; product publication,
 physical sharding, and performance remain unverified.
+The Main operation overlay now checks request ID and normalized observation
+fingerprint before any new HotIndex/Graph candidate is staged. Identical
+requests retain their original episode and pair certificate; conflicting
+reuse invalidates the unpublished transaction. Its physical operation
+directory and the Main commit coordinator are still missing.
 The pair ID is the author's SHA-256 of canonical schema version, memory
 snapshot ID, and VRS snapshot ID. The owner may replace that immutable pair
 only if its expected current ID still matches, and only after the corresponding
