@@ -1342,21 +1342,6 @@ class Main:
         # makes the BM25 length normalization exact and O(1), including pinned views.
         average = (memory.cue_total / max(1, memory.episode_count)) if cue_counts else 1.0
         k1, b = 1.2, 0.3   # b measured over 15 known-answer queries: .75 MRR .63, .5 .69, .3 .69 (top3 12/15), .15 .65, 0 .38
-        opponents = {}
-        for p in propositions:
-            fetch = getattr(memory, 'episode_light', memory.episode)     # polarity only: no cue strings needed
-            active = [fetch(i) for i in memory.propositions[p] if i not in memory.superseded]
-            if {e.steps[0].observation['evidence_polarity'] for e in active} == {'support', 'refute'}:
-                opponents[p] = tuple(sorted(e.episode_id for e in active))
-        def judge(episode):
-            p = episode.steps[0].observation.get('proposition_id')
-            if p in opponents and episode.episode_id not in memory.superseded:
-                return CurrentEvidenceVerdict(episode.episode_id, p, 'conflict',
-                    'Opposing recorded claims for the same explicit proposition; neither is certified true.',
-                    ('memory-snapshot:' + memory.snapshot_id, *episode.source_addresses), opponents[p])
-            return current_experience_verdict(episode, memory_snapshot_id=memory.snapshot_id,
-                vrs_snapshot_id=graph.snapshot_id, current_strength=graph.strength(episode.episode_id),
-                proposition=p or 'experience:' + episode.episode_id)
         # G6 region scope (vrs-regions): the matched cues' regions plus their candidate-portal partners
         # bound candidate generation; the excluded rows are counted for the receipt; too few -> whole store
         scope = dict(requested=region_scope, applied='all', allowed_regions=[], excluded_rows=0, fallback=None)
@@ -1561,6 +1546,25 @@ class Main:
         recalled = RecallResult(recalled.query, tuple(sorted(recalled.candidates, key=order)),
                                 recalled.snapshot_id, source_dependencies=recalled.source_dependencies)
         replayed = replay_memory(LightView(memory) if hasattr(memory, 'episode_light') else memory, recalled)
+        # Opposing original claims are evidence work. Keep the same complete
+        # kind-filtered snapshot, but read them only after Recall and Replay.
+        opponents = {}
+        for p in propositions:
+            fetch = getattr(full_memory, 'episode_light', full_memory.episode)
+            active = [fetch(i) for i in full_memory.propositions[p]
+                      if i not in full_memory.superseded]
+            if {e.steps[0].observation['evidence_polarity'] for e in active} == {'support', 'refute'}:
+                opponents[p] = tuple(sorted(e.episode_id for e in active))
+
+        def judge(episode):
+            p = episode.steps[0].observation.get('proposition_id')
+            if p in opponents and episode.episode_id not in full_memory.superseded:
+                return CurrentEvidenceVerdict(episode.episode_id, p, 'conflict',
+                    'Opposing recorded claims for the same explicit proposition; neither is certified true.',
+                    ('memory-snapshot:' + full_memory.snapshot_id, *episode.source_addresses), opponents[p])
+            return current_experience_verdict(episode, memory_snapshot_id=full_memory.snapshot_id,
+                vrs_snapshot_id=graph.snapshot_id, current_strength=graph.strength(episode.episode_id),
+                proposition=p or 'experience:' + episode.episode_id)
         re_evidenced = re_evidence_memory(replayed, judge=judge)
         receipt = MemoryActivationReceipt(schema_version='rozephine-memory-activation-v1',
             snapshot_id=memory.snapshot_id, deja_vu=signal, recall=recalled,

@@ -10,6 +10,7 @@ import numpy as np
 import pytest
 
 from swegca_vrs2.store import Main, OUTCOMES, EDGE, frozen
+from swegca_vrs2 import store as store_module
 from swegca_vrs2.server import StandaloneMCP
 from swegca_vrs2.engine.mosaic_vrs_event_kernel import EventVrsInputs
 from swegca_vrs2.engine.mosaic_vrs_event_signal import settle_event_signal
@@ -158,6 +159,42 @@ def test_conflict_closure_crosses_query_and_page_then_revision_preserves_history
     assert fresh['superseded_by'][b['episode_id']]
     assert old_root['receipt']['activation'].re_evidence.unresolved_conflict
     server.close()
+
+
+def test_opposing_originals_are_read_only_after_recall_replay(main, monkeypatch):
+    main.ingest(dict(request_id='support', text='고유검색단서 청색', source='test:support',
+        revision='1', proposition='object:color-blue', polarity='support', outcome='success'))
+    main.ingest(dict(request_id='refute', text='별개의 문장', source='test:refute',
+        revision='1', proposition='object:color-blue', polarity='refute', outcome='pending'))
+    memory = main.memory
+    phase = ['before_deja_vu']
+    reads = []
+    original_deja_vu = store_module.detect_deja_vu
+    original_replay = store_module.replay_memory
+    original_episode_light = type(memory).episode_light
+
+    def detect(*args, **kwargs):
+        phase[0] = 'deja_vu'
+        return original_deja_vu(*args, **kwargs)
+
+    def replay(*args, **kwargs):
+        phase[0] = 'replay'
+        result = original_replay(*args, **kwargs)
+        phase[0] = 'after_replay'
+        return result
+
+    def episode_light(self, episode_id):
+        if self is memory:
+            reads.append(phase[0])
+            assert phase[0] in ('replay', 'after_replay')
+        return original_episode_light(self, episode_id)
+
+    monkeypatch.setattr(store_module, 'detect_deja_vu', detect)
+    monkeypatch.setattr(store_module, 'replay_memory', replay)
+    monkeypatch.setattr(type(memory), 'episode_light', episode_light)
+    result = main.recall('고유검색단서', main.pair.snapshot_id)
+    assert result['receipt']['activation'].re_evidence.unresolved_conflict
+    assert 'after_replay' in reads
 
 
 def test_hot_cognition_no_disk_json_hash_network_or_model(main, monkeypatch):
