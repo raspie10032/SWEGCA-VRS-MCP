@@ -26,6 +26,10 @@ struct GraphAuxiliaryState {
     Json::Object last_receipt;
 };
 
+// SWEGCA: src/swegca_vrs2/store.py@c06092a:383-386
+[[nodiscard]] GraphAuxiliaryState empty_graph_auxiliary_state(
+    std::string_view identity);
+
 // SWEGCA: src/swegca_vrs2/store.py@c06092a:396-410
 [[nodiscard]] GraphAuxiliaryState graph_with_aliases(
     const GraphAuxiliaryState& current, std::string canonical,

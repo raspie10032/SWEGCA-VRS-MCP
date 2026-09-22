@@ -16,6 +16,7 @@ MainReadGeneration::MainReadGeneration(
     std::shared_ptr<const GraphNodeDirectory> nodes,
     std::shared_ptr<const GraphRegionDirectory> regions,
     std::shared_ptr<const CoactivationAssociations> associations,
+    std::shared_ptr<const GraphAuxiliaryState> auxiliary,
     PortalPolicy policy, std::vector<PortalRevocation> revocations,
     std::shared_ptr<const NativeJournalReadView> journal,
     std::shared_ptr<const ExactJournalDirectory> original_addresses,
@@ -26,7 +27,8 @@ MainReadGeneration::MainReadGeneration(
     // SWEGCA: src/swegca_vrs2/store.py@7536139:371-405
     : pair_(std::move(pair)), inputs_(std::move(inputs)),
       nodes_(std::move(nodes)), regions_(std::move(regions)),
-      associations_(std::move(associations)), policy_(std::move(policy)),
+      associations_(std::move(associations)), auxiliary_(std::move(auxiliary)),
+      policy_(std::move(policy)),
       revocations_(std::move(revocations)), journal_(std::move(journal)),
       original_addresses_(std::move(original_addresses)),
       cue_addresses_(std::move(cue_addresses)),
@@ -34,6 +36,7 @@ MainReadGeneration::MainReadGeneration(
       successor_addresses_(std::move(successor_addresses)),
       published_row_limit_(published_row_limit) {
     if (!pair_ || !inputs_ || !nodes_ || !regions_ || !associations_ ||
+        !auxiliary_ ||
         !journal_ || !original_addresses_ || !cue_addresses_ ||
         !proposition_addresses_ || !successor_addresses_)
         throw std::runtime_error("complete Main read generation required");
@@ -57,6 +60,8 @@ MainReadGeneration::MainReadGeneration(
         throw std::runtime_error("Main HotIndex read generation changed");
     if (pair_->vrs_snapshot_id() != source.snapshot_id())
         throw std::runtime_error("read generation belongs to another VRS snapshot");
+    if (auxiliary_->snapshot_id != pair_->vrs_snapshot_id())
+        throw std::runtime_error("Main auxiliary Graph generation changed");
     nodes_->require_source(source);
     regions_->require_source(source);
     regions_->require_memory_source(pair_->memory());
@@ -95,7 +100,8 @@ MainReadGeneration::MainReadGeneration(
 // SWEGCA: user@2026-09-22:13-21
 PinnedReadLayer MainReadGeneration::layer() const {
     return PinnedReadLayer{*pair_, inputs_->require_validated_immutable(), *nodes_,
-                           *regions_, *associations_, policy_, revocations_,
+                           *regions_, *associations_, *auxiliary_, policy_,
+                           revocations_,
                            *journal_, *original_addresses_, *cue_addresses_,
                            *proposition_addresses_, *successor_addresses_,
                            published_row_limit_};

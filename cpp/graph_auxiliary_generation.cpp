@@ -1,6 +1,7 @@
 #include "graph_auxiliary_generation.hpp"
 
 #include "digest.hpp"
+#include "graph_append.hpp"
 
 #include <cstddef>
 #include <limits>
@@ -67,6 +68,11 @@ void set_receipt(Json::Object& receipt, std::string_view status,
 }
 
 }  // namespace
+
+// SWEGCA: src/swegca_vrs2/store.py@c06092a:383-386
+GraphAuxiliaryState empty_graph_auxiliary_state(std::string_view identity) {
+    return GraphAuxiliaryState{empty_graph_snapshot_id(identity), {}, {}, {}};
+}
 
 // SWEGCA: src/swegca_vrs2/store.py@c06092a:396-410
 GraphAuxiliaryState graph_with_aliases(

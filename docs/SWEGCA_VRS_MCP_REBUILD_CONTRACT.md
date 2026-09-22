@@ -158,6 +158,10 @@ yet a Main commit/replay coordinator. Consolidation must run the author's
 VRS refinement and verify its version certificate; no alias/usage shortcut
 stands in for it. The current maps are source-level state and still need a
 bounded resident or native representation for the 4 GB product gate.
+Main's pinned read generation now retains the auxiliary Graph state and
+requires its snapshot ID to equal both the validated numerical source and
+the pair's VRS snapshot. The initial auxiliary state uses Graph.empty's
+identity digest and empty alias, usage, and receipt maps.
 This adapter currently reads physical address files on lookup. It is a
 source-bound correctness path, not accepted evidence for the author's
 `lookup_requires_io=False` hot property or the user-input-to-Recall <1 ms
