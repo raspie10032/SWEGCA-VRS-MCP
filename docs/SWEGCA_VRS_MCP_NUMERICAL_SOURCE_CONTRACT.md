@@ -59,7 +59,7 @@ work, and exhausted rounds return that work as pending. Its sparse maps and
 per-node edge lists still need a bounded physical representation for the
 4 GB product gate. It is not Graph.append, settlement publication, region
 construction, coactivation, or a timing result.
-The seven numeric translation units compile with floating-point contraction
+The eight numeric translation units compile with floating-point contraction
 disabled and fast-math disabled; otherwise fused or reassociated operations
 could change Python's separate binary64 steps before float32 rounding. These
 flags are a build contract, not a parity test.
@@ -121,9 +121,15 @@ to the old input generation, builds the changed component's topology from the
 settled generation, refuses unconverged work and records which old component
 identities must be replaced. Its graph receipt retains the signal proposal,
 explicit Re-evidence updates and author authority flags. Shared-original
-bridging, actual region publication and Main commit remain unfinished. The
-graph read surface also resolves a node's source-bound region memberships and
-its maximum outgoing strength without opening or copying original episodes.
+actual region publication and Main commit remain unfinished. The graph read
+surface also resolves a node's source-bound region memberships and its maximum
+outgoing strength without opening or copying original episodes. A shared-
+experience bridge derives overlapping memberships from the original's existing
+cue addresses and hot episode header. It keeps one original episode identity,
+revision, source addresses and historical outcomes; it does not manufacture a
+region-specific episode. The old generic Python region's `address_index`
+contract maps to the Graph's literal `cue:` node directory here. Numerical
+parity for this bridge has not been established.
 The C++ endpoint segment index now preserves the author's stable per-segment
 sort, segment-concatenation lookup order, source-generation binding and
 geometric tail merge. That lookup order is required by `math.fsum` in the

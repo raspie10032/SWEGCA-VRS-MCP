@@ -3,6 +3,7 @@
 #include "connectivity_regions.hpp"
 #include "graph_append.hpp"
 #include "json.hpp"
+#include "memory_vrs_pair.hpp"
 
 #include <cstdint>
 #include <memory>
@@ -43,6 +44,20 @@ struct GraphRegionPlan {
     Json receipt;
 };
 
+// One existing whole original connects multiple overlapping regions. This is
+// a navigation address, not a copied episode or a new evidence judgment.
+// SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_connectivity_regions.py@7536139:121-134
+struct SharedExperienceBridge {
+    std::string pair_snapshot_id;
+    std::string topology_id;
+    std::string episode_id;
+    std::string revision;
+    std::vector<std::string> source_addresses;
+    std::vector<std::string> outcomes;
+    std::vector<std::pair<std::uint32_t, double>> memberships;
+    bool grants_authority = false;
+};
+
 // SWEGCA: src/swegca_vrs2/store.py@7536139:282-298
 [[nodiscard]] GraphRegionPlan prepare_graph_regions(
     const MemoryEpisode& episode, const GraphAppendPlan& plan,
@@ -55,6 +70,12 @@ struct GraphRegionPlan {
 graph_memberships(std::string_view identifier, const EventVrsInputView& inputs,
                   const GraphNodeDirectory& nodes,
                   const GraphRegionDirectory& regions);
+
+// SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_connectivity_regions.py@7536139:213-248
+[[nodiscard]] std::optional<SharedExperienceBridge> graph_bridge_for_episode(
+    std::string_view episode_id, const FullCurrentMemoryVrsSnapshot& pair,
+    const EventVrsInputView& inputs, const GraphNodeDirectory& nodes,
+    const GraphRegionDirectory& regions);
 
 // SWEGCA: src/swegca_vrs2/store.py@7536139:304-306
 [[nodiscard]] double graph_strength(std::string_view identifier,

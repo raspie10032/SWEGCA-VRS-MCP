@@ -83,8 +83,8 @@ build/graph_append.o: cpp/graph_append.cpp cpp/graph_append.hpp cpp/event_delta.
 build/connectivity_regions.o: cpp/connectivity_regions.cpp cpp/connectivity_regions.hpp cpp/graph_append.hpp cpp/python_fsum.hpp cpp/digest.hpp cpp/json.hpp | build
 	$(CXX) $(CXXFLAGS) $(NUMERIC_CXXFLAGS) -Icpp -c $< -o $@
 
-build/graph_regions.o: cpp/graph_regions.cpp cpp/graph_regions.hpp cpp/connectivity_regions.hpp cpp/graph_append.hpp cpp/json.hpp | build
-	$(CXX) $(CXXFLAGS) -Icpp -c $< -o $@
+build/graph_regions.o: cpp/graph_regions.cpp cpp/graph_regions.hpp cpp/connectivity_regions.hpp cpp/graph_append.hpp cpp/memory_vrs_pair.hpp cpp/python_fsum.hpp cpp/json.hpp | build
+	$(CXX) $(CXXFLAGS) $(NUMERIC_CXXFLAGS) -Icpp -c $< -o $@
 
 build/journal_frame.o: cpp/journal_frame.cpp cpp/journal_frame.hpp cpp/json.hpp cpp/digest.hpp | build
 	$(CXX) $(CXXFLAGS) -Icpp -c $< -o $@
