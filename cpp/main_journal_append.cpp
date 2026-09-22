@@ -115,4 +115,40 @@ MainJournalAppendResult append_main_observation_journal_rows(
         recover_exact_tail(journal, old_sequence, plan), true};
 }
 
+// SWEGCA: src/swegca_vrs2/store.py@c06092a:1389-1452
+void require_committed_main_observation_frame(
+    const NativeJournal& journal, const JournalAppendResult& committed,
+    const MainObservationBatchPlan& plan,
+    std::string_view published_parent_pair) {
+    if (plan.journal_rows.empty() ||
+        plan.parent_pair_id != published_parent_pair ||
+        committed.sequences.size() != plan.journal_rows.size() ||
+        committed.frame.generation != journal.generation() ||
+        committed.frame.first_sequence != committed.sequences.front() ||
+        committed.frame.last_sequence != committed.sequences.back() ||
+        journal.row_count() <
+            static_cast<std::uint64_t>(committed.frame.last_sequence) ||
+        full_current_pair_snapshot_id(plan.memory_snapshot_id,
+                                      plan.graph_snapshot_id) !=
+            plan.pair_snapshot_id)
+        throw std::runtime_error("main_batch_committed_frame_changed");
+    std::size_t at = 0;
+    journal.visit_frame_rows(committed.frame, [&](JournalRow&& actual) {
+        if (at >= plan.journal_rows.size() ||
+            actual.sequence != committed.sequences[at] ||
+            actual.request_id != plan.journal_rows[at].request_id ||
+            actual.body != plan.journal_rows[at].body ||
+            actual.fingerprint != plan.journal_rows[at].fingerprint ||
+            actual.pair_id != plan.journal_rows[at].pair_id ||
+            actual.pair_id != plan.pair_snapshot_id ||
+            parse_native_journal_entry(actual.request_id, actual.body,
+                                       actual.fingerprint).kind !=
+                NativeJournalEntryKind::observation)
+            throw std::runtime_error("main_batch_committed_frame_changed");
+        ++at;
+    });
+    if (at != plan.journal_rows.size())
+        throw std::runtime_error("main_batch_committed_frame_changed");
+}
+
 }  // namespace swegca::vrs

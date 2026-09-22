@@ -303,10 +303,15 @@ per immutable node or edge page and retain earlier page locations through a
 three-level copy-on-write address map. Page reads verify their journal
 generation, logical page ID, count, checksums, and live record values. A
 partially written final derived page is truncated only by its locked writer;
-the original observation journal is untouched. The batch edit applier,
-durable map updates, endpoint dependency directory, publication certificate,
+the original observation journal is untouched. Durable map updates, the
+endpoint dependency directory, the publication certificate,
 and bounded read cache are still missing; no product numerical generation
-uses these files yet.
+uses these files yet. The committed batch applier now verifies the exact
+native observation frame through the same check as the Graph node directory,
+prepares the author's EventDelta successor, validates any old numerical page
+it replaces against that pinned parent, and writes only touched node/edge
+pages before returning unpublished map updates. Crash retries may leave
+unreferenced complete pages until derived-file reclamation is implemented.
 This adapter currently reads physical address files on lookup. It is a
 source-bound correctness path, not accepted evidence for the author's
 `lookup_requires_io=False` hot property or the user-input-to-Recall <1 ms

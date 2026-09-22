@@ -26,4 +26,13 @@ struct MainJournalAppendResult {
     std::string_view published_pair_id,
     const std::optional<std::pair<std::int64_t, std::string>>& expected_head);
 
+// Both Graph node and numerical projections must consume exactly the same
+// committed observation frame. The validator checks its typed rows and pair
+// certificate before either derived store writes anything.
+// SWEGCA: src/swegca_vrs2/store.py@c06092a:1389-1452
+void require_committed_main_observation_frame(
+    const NativeJournal& journal, const JournalAppendResult& committed,
+    const MainObservationBatchPlan& plan,
+    std::string_view published_parent_pair);
+
 }  // namespace swegca::vrs

@@ -3,8 +3,8 @@
 #include "digest.hpp"
 #include "journal_files.hpp"
 #include "json.hpp"
+#include "main_journal_append.hpp"
 #include "memory_vrs_pair.hpp"
-#include "native_journal_entry.hpp"
 
 #include <algorithm>
 #include <array>
@@ -571,19 +571,10 @@ void NativeGraphNodeDirectory::append_committed(
     std::string_view published_parent_pair) {
     const auto& source = parent.require_validated_immutable();
     require_source(source);
-    if (!batch.graph || batch.journal_rows.empty() ||
-        batch.parent_pair_id != published_parent_pair ||
-        committed.sequences.size() != batch.journal_rows.size() ||
-        committed.frame.generation != journal_generation_ ||
-        committed.frame.first_sequence != committed.sequences.front() ||
-        committed.frame.last_sequence != committed.sequences.back() ||
-        journal.generation() != journal_generation_ ||
-        journal.row_count() <
-            static_cast<std::uint64_t>(committed.frame.last_sequence) ||
-        full_current_pair_snapshot_id(batch.memory_snapshot_id,
-                                      batch.graph_snapshot_id) !=
-            batch.pair_snapshot_id)
+    if (!batch.graph || journal.generation() != journal_generation_)
         throw std::runtime_error("graph_node_batch_source_changed");
+    require_committed_main_observation_frame(
+        journal, committed, batch, published_parent_pair);
     const auto& plan = *batch.graph;
     if (plan.snapshot_id != batch.graph_snapshot_id ||
         plan.parent_snapshot_id != source.snapshot_id() ||
@@ -593,23 +584,6 @@ void NativeGraphNodeDirectory::append_committed(
         plan.changes.appended_unresolved.size() != plan.new_nodes.size() ||
         plan.changes.appended_edges.size() !=
             plan.changes.appended_strength.size())
-        throw std::runtime_error("graph_node_batch_source_changed");
-    std::size_t at = 0;
-    journal.visit_frame_rows(committed.frame, [&](JournalRow&& actual) {
-        if (at >= batch.journal_rows.size() ||
-            actual.sequence != committed.sequences[at] ||
-            actual.request_id != batch.journal_rows[at].request_id ||
-            actual.body != batch.journal_rows[at].body ||
-            actual.fingerprint != batch.journal_rows[at].fingerprint ||
-            actual.pair_id != batch.journal_rows[at].pair_id ||
-            actual.pair_id != batch.pair_snapshot_id ||
-            parse_native_journal_entry(actual.request_id, actual.body,
-                                       actual.fingerprint).kind !=
-                NativeJournalEntryKind::observation)
-            throw std::runtime_error("graph_node_batch_source_changed");
-        ++at;
-    });
-    if (at != batch.journal_rows.size())
         throw std::runtime_error("graph_node_batch_source_changed");
     append(plan.new_nodes);
     // The writer follows each unpublished source generation during recovery;
