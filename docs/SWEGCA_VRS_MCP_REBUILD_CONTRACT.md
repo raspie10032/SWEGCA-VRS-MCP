@@ -334,6 +334,12 @@ and binds each pinned instance to one exact immutable numerical source.
 Cold open verifies every stored source and target against that source. A
 durable source-bound segment manifest and Main publication connection are
 still missing, so this is not yet the product dependency read path.
+One cold-open numerical view now binds an immutable page-map generation, its
+node and edge page files, and the disk endpoint index to the same exact
+`EventVrsInputView` identity. It validates the full numerical source before
+the wrapper can escape. Reads currently open and verify a physical page on
+each field access; a generation-bound bounded page cache and manifest-driven
+recovery remain required before this view can enter the hot product path.
 This adapter currently reads physical address files on lookup. It is a
 source-bound correctness path, not accepted evidence for the author's
 `lookup_requires_io=False` hot property or the user-input-to-Recall <1 ms

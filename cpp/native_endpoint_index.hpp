@@ -58,6 +58,14 @@ public:
     [[nodiscard]] std::uint64_t base_edge_count() const {
         return base_edge_count_;
     }
+    // SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:91-127
+    [[nodiscard]] const std::filesystem::path& directory() const {
+        return directory_;
+    }
+    // SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:91-127
+    [[nodiscard]] const std::string& journal_generation() const {
+        return journal_generation_;
+    }
     // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_dependency_index.py@7536139:70-72
     [[nodiscard]] std::uint64_t index_bytes() const;
 
