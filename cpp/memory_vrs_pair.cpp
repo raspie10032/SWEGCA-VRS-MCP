@@ -2,6 +2,7 @@
 
 #include "digest.hpp"
 #include "json.hpp"
+#include "main_read_generation.hpp"
 
 #include <algorithm>
 #include <stdexcept>
@@ -36,13 +37,13 @@ FullCurrentMemoryVrsSnapshot::FullCurrentMemoryVrsSnapshot(
 
 // SWEGCA: src/swegca_vrs2/engine/mosaic_memory_activation.py@7536139:138-143
 AtomicFullCurrentMemoryVrsOwner::AtomicFullCurrentMemoryVrsOwner(
-    std::shared_ptr<const FullCurrentMemoryVrsSnapshot> initial)
+    std::shared_ptr<const MainReadGeneration> initial)
     : current_(std::move(initial)) {
     if (!current_) throw std::runtime_error("full-current memory pair is missing");
 }
 
 // SWEGCA: src/swegca_vrs2/engine/mosaic_memory_activation.py@7536139:145-147
-std::shared_ptr<const FullCurrentMemoryVrsSnapshot>
+std::shared_ptr<const MainReadGeneration>
 AtomicFullCurrentMemoryVrsOwner::snapshot() const {
     std::lock_guard lock(mutex_);
     return current_;
@@ -51,12 +52,12 @@ AtomicFullCurrentMemoryVrsOwner::snapshot() const {
 // SWEGCA: src/swegca_vrs2/engine/mosaic_memory_activation.py@7536139:149-158
 std::string AtomicFullCurrentMemoryVrsOwner::replace(
     std::string_view expected_snapshot_id,
-    std::shared_ptr<const FullCurrentMemoryVrsSnapshot> replacement) {
+    std::shared_ptr<const MainReadGeneration> replacement) {
     if (!replacement) throw std::runtime_error("full-current memory pair is missing");
     std::lock_guard lock(mutex_);
-    if (current_->snapshot_id() != expected_snapshot_id)
+    if (current_->pair().snapshot_id() != expected_snapshot_id)
         throw std::runtime_error("full-current snapshot changed before replacement");
-    auto result = replacement->snapshot_id();
+    auto result = replacement->pair().snapshot_id();
     current_ = std::move(replacement);
     return result;
 }

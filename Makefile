@@ -3,7 +3,7 @@ AR ?= ar
 CXXFLAGS ?= -O2 -g -std=c++20 -Wall -Wextra -Wpedantic
 NUMERIC_CXXFLAGS = -ffp-contract=off -fno-fast-math
 
-CORE_OBJECTS = build/digest.o build/json.o build/unicode.o build/keys.o build/observation.o build/memory_episode.o build/memory_evidence.o build/memory_promotion.o build/vrs_state_update.o build/hot_index.o build/hot_index_pending.o build/main_operations.o build/memory_vrs_pair.o build/deja_vu.o build/memory_recall.o build/memory_receipt.o build/event_vrs_inputs.o build/endpoint_segments.o build/event_delta.o build/python_fsum.o build/event_vrs_kernel.o build/event_signal_strength.o build/event_signal.o build/graph_append.o build/connectivity_regions.o build/graph_regions.o build/region_preactivation.o build/region_navigation.o build/coactivation.o build/coactivation_associations.o build/portal_lifecycle.o build/portal_navigation.o build/session_first_read.o build/four_stage_read.o build/journal_frame.o build/journal_files.o build/owner_lock.o build/native_journal.o build/original_journal_replay.o build/exact_journal_directory.o build/exact_journal_replay.o build/exact_journal_rebuild.o
+CORE_OBJECTS = build/digest.o build/json.o build/unicode.o build/keys.o build/observation.o build/memory_episode.o build/memory_evidence.o build/memory_promotion.o build/vrs_state_update.o build/hot_index.o build/hot_index_pending.o build/main_operations.o build/memory_vrs_pair.o build/main_read_generation.o build/deja_vu.o build/memory_recall.o build/memory_receipt.o build/event_vrs_inputs.o build/endpoint_segments.o build/event_delta.o build/python_fsum.o build/event_vrs_kernel.o build/event_signal_strength.o build/event_signal.o build/graph_append.o build/connectivity_regions.o build/graph_regions.o build/region_preactivation.o build/region_navigation.o build/coactivation.o build/coactivation_associations.o build/portal_lifecycle.o build/portal_navigation.o build/session_first_read.o build/four_stage_read.o build/journal_frame.o build/journal_files.o build/owner_lock.o build/native_journal.o build/original_journal_replay.o build/exact_journal_directory.o build/exact_journal_replay.o build/exact_journal_rebuild.o
 
 .PHONY: all clean
 all: build/libswegca-vrs.a
@@ -47,7 +47,10 @@ build/hot_index_pending.o: cpp/hot_index_pending.cpp cpp/hot_index_pending.hpp c
 build/main_operations.o: cpp/main_operations.cpp cpp/main_operations.hpp | build
 	$(CXX) $(CXXFLAGS) -Icpp -c $< -o $@
 
-build/memory_vrs_pair.o: cpp/memory_vrs_pair.cpp cpp/memory_vrs_pair.hpp cpp/hot_index.hpp cpp/json.hpp cpp/digest.hpp | build
+build/memory_vrs_pair.o: cpp/memory_vrs_pair.cpp cpp/memory_vrs_pair.hpp cpp/main_read_generation.hpp cpp/hot_index.hpp cpp/json.hpp cpp/digest.hpp | build
+	$(CXX) $(CXXFLAGS) -Icpp -c $< -o $@
+
+build/main_read_generation.o: cpp/main_read_generation.cpp cpp/main_read_generation.hpp cpp/session_first_read.hpp cpp/event_vrs_inputs.hpp | build
 	$(CXX) $(CXXFLAGS) -Icpp -c $< -o $@
 
 build/deja_vu.o: cpp/deja_vu.cpp cpp/deja_vu.hpp cpp/hot_index.hpp cpp/keys.hpp cpp/unicode.hpp | build

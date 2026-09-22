@@ -9,6 +9,8 @@
 
 namespace swegca::vrs {
 
+class MainReadGeneration;
+
 // Compute the author's pair certificate from two already prepared immutable
 // generation IDs. Main uses this before the journal row is committed.
 // SWEGCA: src/swegca_vrs2/engine/mosaic_memory_activation.py@7536139:121-135
@@ -40,21 +42,21 @@ class AtomicFullCurrentMemoryVrsOwner {
 public:
     // SWEGCA: src/swegca_vrs2/engine/mosaic_memory_activation.py@7536139:138-143
     explicit AtomicFullCurrentMemoryVrsOwner(
-        std::shared_ptr<const FullCurrentMemoryVrsSnapshot> initial);
+        std::shared_ptr<const MainReadGeneration> initial);
 
     // SWEGCA: src/swegca_vrs2/engine/mosaic_memory_activation.py@7536139:145-147
-    [[nodiscard]] std::shared_ptr<const FullCurrentMemoryVrsSnapshot> snapshot() const;
+    [[nodiscard]] std::shared_ptr<const MainReadGeneration> snapshot() const;
 
     // Main calls replace only after its journal commit succeeds. A reader
-    // observes one complete pair before or after this CAS, never half of each.
+    // observes the pair and every bound Graph directory in one generation.
     // SWEGCA: src/swegca_vrs2/engine/mosaic_memory_activation.py@7536139:149-158
     [[nodiscard]] std::string replace(
         std::string_view expected_snapshot_id,
-        std::shared_ptr<const FullCurrentMemoryVrsSnapshot> replacement);
+        std::shared_ptr<const MainReadGeneration> replacement);
 
 private:
     mutable std::mutex mutex_;
-    std::shared_ptr<const FullCurrentMemoryVrsSnapshot> current_;
+    std::shared_ptr<const MainReadGeneration> current_;
 };
 
 }  // namespace swegca::vrs

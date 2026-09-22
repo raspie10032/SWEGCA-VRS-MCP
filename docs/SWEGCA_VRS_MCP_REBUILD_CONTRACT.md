@@ -113,9 +113,12 @@ directory and the Main commit coordinator are still missing.
 The pair ID is the author's SHA-256 of canonical schema version, memory
 snapshot ID, and VRS snapshot ID. The owner may replace that immutable pair
 only if its expected current ID still matches, and only after the corresponding
-journal commit. Main must retain and pin the numerical Graph generation named
-by the pair's VRS ID while readers use that pair; the C++ pair/CAS primitive
-alone does not provide this Graph binding or a complete product transaction.
+journal commit. `MainReadGeneration` now retains the pair together with the
+validated numerical input, node and region directories, coactivation index,
+and portal state. Construction rejects a VRS ID mismatch or source binding
+mismatch before one CAS owner can expose the bundle. A reader must retain its
+snapshot pointer through Recall and Replay. This owner is still a primitive:
+the Main commit coordinator and physical storage publications are missing.
 The same canonical pair digest is now callable for an unpublished memory/Graph
 candidate before its journal row is written; constructing the published pair
 uses that exact function. This keeps the certificate calculation identical on
