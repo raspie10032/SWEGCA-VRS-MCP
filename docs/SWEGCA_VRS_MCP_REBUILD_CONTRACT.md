@@ -138,6 +138,12 @@ sequence-ordered immutable segment name after rotation; the generation,
 frame span, checksum, and row sequence are checked on the cold read. The
 episode-to-frame address join, published HotIndex, and end-to-end selected
 Replay are still missing, so this does not yet prove bounded Replay cost.
+Given an exact address, the C++ Replay source now reconstructs one author
+`MemoryEpisode` from that original row only after verifying its request ID,
+observation fingerprint, and requested episode ID. This is a cold original
+read for selected Replay, not a Recall-time transcript or capsule scan. Its
+address must still come from a generation-bound derived directory, not from
+searching journal bodies during a user read.
 
 The two populated SQLite stores have separate owner identities and sequence
 spaces. Export each to its own immutable native archive, recording the exact
