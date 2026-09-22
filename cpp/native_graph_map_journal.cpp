@@ -205,6 +205,7 @@ NativeGraphMapCursor append_graph_numeric_map_row(
     const NativeGraphPageFile& node_file,
     const NativeGraphPageFile& edge_file) {
     if (&map_journal == &source_journal ||
+        map_journal.directory() == source_journal.directory() ||
         !map_journal.shares_write_owner(source_journal) ||
         map_journal.row_count() != current.map_rows ||
         current.pages.journal_generation != source_journal.generation() ||
@@ -278,6 +279,7 @@ NativeGraphMapCursor recover_graph_numeric_map(
     const NativeGraphPageFile& node_file,
     const NativeGraphPageFile& edge_file) {
     if (&map_journal == &source_journal ||
+        map_journal.directory() == source_journal.directory() ||
         empty_state.journal_generation != source_journal.generation() ||
         node_file.journal_generation() != source_journal.generation() ||
         edge_file.journal_generation() != source_journal.generation() ||
