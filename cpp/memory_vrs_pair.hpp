@@ -9,6 +9,12 @@
 
 namespace swegca::vrs {
 
+// Compute the author's pair certificate from two already prepared immutable
+// generation IDs. Main uses this before the journal row is committed.
+// SWEGCA: src/swegca_vrs2/engine/mosaic_memory_activation.py@7536139:121-135
+[[nodiscard]] std::string full_current_pair_snapshot_id(
+    std::string_view memory_snapshot_id, std::string_view vrs_snapshot_id);
+
 // An immutable main-owned pair. The VRS generation is identified by its
 // digest; its numerical state is retained by Main until pair replacement.
 class FullCurrentMemoryVrsSnapshot {

@@ -116,6 +116,10 @@ only if its expected current ID still matches, and only after the corresponding
 journal commit. Main must retain and pin the numerical Graph generation named
 by the pair's VRS ID while readers use that pair; the C++ pair/CAS primitive
 alone does not provide this Graph binding or a complete product transaction.
+The same canonical pair digest is now callable for an unpublished memory/Graph
+candidate before its journal row is written; constructing the published pair
+uses that exact function. This keeps the certificate calculation identical on
+both sides of the commit boundary.
 
 The existing `VRS2JNL1` frame remains the canonical journal representation:
 little-endian payload length, zlib payload, SHA-256 payload checksum, and the
