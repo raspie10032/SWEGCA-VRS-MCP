@@ -59,6 +59,10 @@ work, and exhausted rounds return that work as pending. Its sparse maps and
 per-node edge lists still need a bounded physical representation for the
 4 GB product gate. It is not Graph.append, settlement publication, region
 construction, coactivation, or a timing result.
+The two numeric translation units compile with floating-point contraction
+disabled and fast-math disabled; otherwise fused or reassociated operations
+could change Python's separate binary64 steps before float32 rounding. These
+flags are a build contract, not a parity test.
 
 Existing VRS 2.2 pair certificates and numerical arrays are historical
 evidence. A new source implementation must account for their lineage and
