@@ -136,9 +136,19 @@ authority. A supersedes link requires a prior original with the same source
 and a different revision, and no other successor may claim that prior ID.
 Main's pinned read generation requires all three posting directories and the
 exact original directory to carry the same journal generation, row limit,
-and pair certificate. A concrete published HotIndex must still bind its
-lookup methods to those pinned directories. Explicit semantic-family
-directories are still missing.
+and pair certificate. The native published HotIndex now reads headers from
+the exact ID's projection address, and cue, proposition, and successor sets
+from those pinned directories. Main additionally checks that its pair's
+HotIndex uses those same directory objects. An explicit semantic-family
+reader can be supplied; ordinary standalone observations have the author's
+empty family tuple. A native writer for explicitly recorded family
+directories is still missing.
+This adapter currently reads physical address files on lookup. It is a
+source-bound correctness path, not accepted evidence for the author's
+`lookup_requires_io=False` hot property or the user-input-to-Recall <1 ms
+target. The resident bounded index and selective page strategy remain to be
+implemented without deleting the cue, proposition, supersedes, region,
+portal, or explicit-family rules.
 During a fresh, unpublished cue rebuild, the derived files are synced once
 behind the publication barrier instead of after every posting. Publication
 locks all prefixes, syncs every data and table file, then writes the durable

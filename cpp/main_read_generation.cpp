@@ -1,5 +1,7 @@
 #include "main_read_generation.hpp"
 
+#include "native_published_hot_index.hpp"
+
 #include <filesystem>
 #include <stdexcept>
 #include <utility>
@@ -43,6 +45,16 @@ MainReadGeneration::MainReadGeneration(
                                     successor_addresses_->directory()))
         throw std::runtime_error("Main posting directories alias");
     const auto& source = inputs_->require_validated_immutable();
+    const auto* native_memory =
+        dynamic_cast<const NativePublishedHotIndex*>(&pair_->memory());
+    if (!native_memory ||
+        native_memory->pair_snapshot_id() != pair_->snapshot_id() ||
+        native_memory->published_row_limit() != published_row_limit_ ||
+        &native_memory->originals() != original_addresses_.get() ||
+        &native_memory->cues() != cue_addresses_.get() ||
+        &native_memory->propositions() != proposition_addresses_.get() ||
+        &native_memory->successors() != successor_addresses_.get())
+        throw std::runtime_error("Main HotIndex read generation changed");
     if (pair_->vrs_snapshot_id() != source.snapshot_id())
         throw std::runtime_error("read generation belongs to another VRS snapshot");
     nodes_->require_source(source);

@@ -2,6 +2,7 @@
 
 #include "exact_journal_directory.hpp"
 #include "hot_index_projection_log.hpp"
+#include "hot_index.hpp"
 #include "native_cue_directory.hpp"
 #include "native_journal.hpp"
 
@@ -16,6 +17,7 @@ struct NativeHotIndexRebuildCount {
     std::uint64_t cue_postings;
     std::uint64_t proposition_postings;
     std::uint64_t successor_postings;
+    HotIndexSeed memory;
 };
 
 // A second journal-ordered pass routes cue, proposition and supersedes keys

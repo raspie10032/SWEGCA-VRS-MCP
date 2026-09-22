@@ -7,17 +7,14 @@
 #include <utility>
 
 namespace swegca::vrs {
-namespace {
-
 // SWEGCA: src/swegca_vrs2/store.py@7536139:172-172
-std::string next_snapshot_id(std::string_view previous, std::string_view identifier) {
+std::string next_hot_index_snapshot_id(std::string_view previous,
+                                       std::string_view identifier) {
     Json::Array values;
     values.emplace_back(std::string(previous));
     values.emplace_back(std::string(identifier));
     return sha256_hex(Json(std::move(values)).canonical());
 }
-
-}  // namespace
 
 // SWEGCA: src/swegca_vrs2/store.py@7536139:158-175
 HotIndexEpisodeHeader hot_index_header_from_episode(const MemoryEpisode& episode) {
@@ -76,7 +73,7 @@ HotIndexAppendPlan plan_hot_index_append(const HotIndexRead& index, const Json& 
     return HotIndexAppendPlan{
         identifier, std::move(episode), std::move(posting_cues), std::move(proposition),
         std::move(previous), row.at("outcome").string(),
-        next_snapshot_id(index.snapshot_id(), identifier),
+        next_hot_index_snapshot_id(index.snapshot_id(), identifier),
         index.outcome_count(row.at("outcome").string()) + 1};
 }
 

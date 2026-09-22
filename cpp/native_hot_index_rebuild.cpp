@@ -80,6 +80,7 @@ NativeHotIndexRebuildCount rebuild_native_hot_index_directories(
     if (!cues.fresh() || !propositions.fresh() || !successors.fresh())
         throw std::runtime_error("native_hot_index_rebuild_requires_fresh_directories");
     NativeHotIndexRebuildCount count{};
+    count.memory = empty_hot_index(journal.identity());
     std::array<PostingWorker, rebuild_workers> workers;
     std::atomic<bool> cancelled{false};
     std::mutex error_mutex;
@@ -175,6 +176,9 @@ NativeHotIndexRebuildCount rebuild_native_hot_index_directories(
                     throw std::runtime_error("invalid_source_revision_successor");
             }
             ++count.distinct_originals;
+            count.memory.snapshot_id = next_hot_index_snapshot_id(
+                count.memory.snapshot_id, identifier);
+            ++count.memory.outcome_counts.at(row.at("outcome").string());
             std::array<PostingWork, rebuild_workers> groups;
             const std::set<std::string> posting_cues(
                 projection.posting_cues.begin(), projection.posting_cues.end());

@@ -51,6 +51,19 @@ public:
     [[nodiscard]] virtual std::uint64_t outcome_count(std::string_view outcome) const = 0;
 };
 
+// An explicitly recorded family is a source directory, never an association
+// inferred from shared cues. Ordinary standalone observations supply none.
+// SWEGCA: src/swegca_vrs2/engine/mosaic_semantic_family_directory.py@7536139:8-27
+class RecordedSemanticFamilyRead {
+public:
+    virtual ~RecordedSemanticFamilyRead() = default;
+    [[nodiscard]] virtual bool contains_parent(std::string_view identifier) const = 0;
+    [[nodiscard]] virtual std::vector<std::string> parents_for_child(
+        std::string_view identifier) const = 0;
+    [[nodiscard]] virtual std::vector<std::string> members_for_parent(
+        std::string_view parent) const = 0;
+};
+
 // Only a committed immutable physical generation can be published in the
 // full-current pair. HotIndexPending is deliberately not a published index.
 class PublishedHotIndex : public HotIndexRead {
@@ -85,6 +98,10 @@ struct HotIndexSeed {
 
 // SWEGCA: src/swegca_vrs2/store.py@7536139:336-336
 [[nodiscard]] HotIndexSeed empty_hot_index(std::string_view identity);
+
+// SWEGCA: src/swegca_vrs2/store.py@7536139:172-172
+[[nodiscard]] std::string next_hot_index_snapshot_id(
+    std::string_view previous, std::string_view identifier);
 
 // A duplicate carries only its existing identifier. An addition carries the
 // entire author's append delta for the physical index to publish atomically.
