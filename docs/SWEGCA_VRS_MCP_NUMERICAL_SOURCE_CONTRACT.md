@@ -52,6 +52,13 @@ arithmetic helper follows CPython 3.12.7 `Modules/mathmodule.c:1289-1363`
 That source port is not numerical-parity evidence until the complete graph
 path can be built and checked against pinned author cases. Ordinary `double`
 accumulation would not preserve the author's specified rounding order.
+The C++ `advance_event_vrs` now carries the author's synchronous round order:
+all incoming edges contribute to each pending node, incident edges update
+after the new node scores, signed-zero float32 comparisons control pending
+work, and exhausted rounds return that work as pending. Its sparse maps and
+per-node edge lists still need a bounded physical representation for the
+4 GB product gate. It is not Graph.append, settlement publication, region
+construction, coactivation, or a timing result.
 
 Existing VRS 2.2 pair certificates and numerical arrays are historical
 evidence. A new source implementation must account for their lineage and

@@ -28,6 +28,9 @@ public:
     virtual ~EndpointDependencyIndex() = default;
     // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_dependency_index.py@7536139:51-53
     virtual void require_source(const EventVrsInputView& source) const = 0;
+    // Iteration order is the author's segment-concatenation order. The event
+    // kernel's fsum observes that order and must not receive sorted-by-ID
+    // replacements from a physical index.
     // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_dependency_index.py@7536139:55-68
     virtual void visit_edges(std::uint32_t node, EndpointDirection direction,
                              const std::function<void(std::uint32_t)>& visit) const = 0;
