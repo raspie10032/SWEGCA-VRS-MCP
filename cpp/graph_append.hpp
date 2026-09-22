@@ -28,6 +28,8 @@ public:
     [[nodiscard]] virtual bool contains(std::string_view name) const = 0;
     // SWEGCA: src/swegca_vrs2/store.py@7536139:201-202
     [[nodiscard]] virtual std::uint32_t address(std::string_view name) const = 0;
+    // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_connectivity_regions.py@7536139:250-272
+    [[nodiscard]] virtual std::string name(std::uint32_t address) const = 0;
 };
 
 // Detached inputs for prepare_event_delta and settle_event_signal. Main

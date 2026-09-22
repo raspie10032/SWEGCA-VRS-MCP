@@ -129,7 +129,12 @@ cue addresses and hot episode header. It keeps one original episode identity,
 revision, source addresses and historical outcomes; it does not manufacture a
 region-specific episode. The old generic Python region's `address_index`
 contract maps to the Graph's literal `cue:` node directory here. Numerical
-parity for this bridge has not been established.
+parity for this bridge has not been established. Region candidate lookup now
+uses the existing hot cue postings: each region unions its cue originals,
+multiple regions intersect, and the sorted result is only an address proposal
+for the ordinary four-stage read. The read directory must prove that the
+published memory and Graph belong to the same generation. This materializes
+candidate sets and has no demonstrated 4 GB bound or pre-Replay latency.
 The C++ endpoint segment index now preserves the author's stable per-segment
 sort, segment-concatenation lookup order, source-generation binding and
 geometric tail merge. That lookup order is required by `math.fsum` in the

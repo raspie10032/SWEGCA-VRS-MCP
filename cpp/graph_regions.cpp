@@ -3,6 +3,7 @@
 #include "python_fsum.hpp"
 
 #include <algorithm>
+#include <iterator>
 #include <map>
 #include <set>
 #include <stdexcept>
@@ -146,6 +147,7 @@ std::optional<SharedExperienceBridge> graph_bridge_for_episode(
         throw std::runtime_error("region topology belongs to a different VRS generation");
     nodes.require_source(inputs);
     regions.require_source(inputs);
+    regions.require_memory_source(pair.memory());
     const auto header = pair.memory().episode_header(episode_id);
     if (header.episode_id != episode_id)
         throw std::runtime_error("graph original identity changed");
@@ -188,6 +190,56 @@ std::optional<SharedExperienceBridge> graph_bridge_for_episode(
     return SharedExperienceBridge{pair.snapshot_id(), topology->topology_id(),
         header.episode_id, header.revision, header.source_addresses,
         header.historical_outcomes, std::move(memberships), false};
+}
+
+// SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_connectivity_regions.py@7536139:250-272
+std::vector<std::string> graph_region_candidates(
+    const std::vector<std::uint32_t>& region_ids,
+    std::uint32_t component, const FullCurrentMemoryVrsSnapshot& pair,
+    const EventVrsInputView& inputs, const GraphNodeDirectory& nodes,
+    const GraphRegionDirectory& regions) {
+    if (pair.vrs_snapshot_id() != inputs.snapshot_id())
+        throw std::runtime_error("region topology belongs to a different VRS generation");
+    nodes.require_source(inputs);
+    regions.require_source(inputs);
+    regions.require_memory_source(pair.memory());
+    const auto topology = regions.topology_for(component);
+    if (!topology || topology->vrs_snapshot_id() != inputs.snapshot_id())
+        throw std::runtime_error("region topology belongs to a different VRS generation");
+    const auto& offsets = topology->region_offsets();
+    if (region_ids.empty()) throw std::runtime_error("existing region IDs required");
+    for (const auto region : region_ids)
+        if (region + std::uint64_t{1} >= offsets.size())
+            throw std::runtime_error("existing region IDs required");
+    std::set<std::uint32_t> seen;
+    std::set<std::string> result;
+    bool first = true;
+    for (const auto region : region_ids) {
+        if (!seen.insert(region).second) continue;
+        std::set<std::string> current;
+        for (auto at = offsets[region]; at < offsets[region + 1]; ++at) {
+            const auto local = topology->region_nodes()[at];
+            const auto address = topology->terms()[local];
+            const auto name = nodes.name(address);
+            if (!nodes.contains(name) || nodes.address(name) != address)
+                throw std::runtime_error("region node directory changed");
+            if (name.rfind("cue:", 0) != 0) continue;
+            for (const auto& identifier : pair.memory().episode_ids_for_cue(
+                     std::string_view(name).substr(4)))
+                current.insert(identifier);
+        }
+        if (first) {
+            result = std::move(current);
+            first = false;
+        } else {
+            std::set<std::string> intersection;
+            std::set_intersection(result.begin(), result.end(),
+                                  current.begin(), current.end(),
+                                  std::inserter(intersection, intersection.end()));
+            result = std::move(intersection);
+        }
+    }
+    return {result.begin(), result.end()};
 }
 
 // SWEGCA: src/swegca_vrs2/store.py@7536139:304-306

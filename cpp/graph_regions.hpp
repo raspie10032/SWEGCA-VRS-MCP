@@ -31,6 +31,8 @@ public:
     // SWEGCA: src/swegca_vrs2/store.py@7536139:299-302
     [[nodiscard]] virtual std::uint32_t local_address(
         std::uint32_t component, std::uint32_t node) const = 0;
+    // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_connectivity_regions.py@7536139:235-248
+    virtual void require_memory_source(const PublishedHotIndex& memory) const = 0;
 };
 
 // A detached replacement of one affected component: remove old component
@@ -74,6 +76,15 @@ graph_memberships(std::string_view identifier, const EventVrsInputView& inputs,
 // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_connectivity_regions.py@7536139:213-248
 [[nodiscard]] std::optional<SharedExperienceBridge> graph_bridge_for_episode(
     std::string_view episode_id, const FullCurrentMemoryVrsSnapshot& pair,
+    const EventVrsInputView& inputs, const GraphNodeDirectory& nodes,
+    const GraphRegionDirectory& regions);
+
+// Region candidates are address proposals. The caller must still use the
+// ordinary Déjà vu -> Recall -> selected Replay -> Re-evidence path.
+// SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_connectivity_regions.py@7536139:250-272
+[[nodiscard]] std::vector<std::string> graph_region_candidates(
+    const std::vector<std::uint32_t>& region_ids,
+    std::uint32_t component, const FullCurrentMemoryVrsSnapshot& pair,
     const EventVrsInputView& inputs, const GraphNodeDirectory& nodes,
     const GraphRegionDirectory& regions);
 
