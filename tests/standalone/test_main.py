@@ -94,6 +94,36 @@ def test_component_edge_partition_preserves_order_when_new_record_joins_regions(
     assert np.array_equal(region.strengths, joined.flat.strength)
 
 
+def test_navigation_publication_uses_current_vrs_without_changing_numeric_graph(main):
+    first = main.ingest(dict(request_id='navigation-original', text='navsourceword',
+                             source='probe:navigation', revision='1',
+                             cues=['navigation-anchor']))
+    main.consolidate()
+    numeric_graph, original_pair = main.graph, main.pair
+    assert any(region.vrs_snapshot_id != numeric_graph.snapshot_id
+               for region, _ in numeric_graph.regions.values())
+    prepared = main.navigation_prepare()
+    assert prepared.pair.snapshot_id == original_pair.snapshot_id
+    assert prepared.pair.memory.episode(first['episode_id']) is main.memory.episode(first['episode_id'])
+    assert main.graph is numeric_graph
+    for region, _ in prepared.topology.values():
+        region.require_pair(prepared.pair)
+        assert region.vrs_snapshot_id == numeric_graph.snapshot_id
+    binding = main.navigation_commit(prepared)
+    assert binding.pair is main.pair and binding.topology is prepared.topology
+    assert main.graph is numeric_graph
+    assert main.owner.snapshot() is main.pair
+    signal = detect_deja_vu(main.pair.memory, query='navigation-anchor',
+                            current_cues=('navigation-anchor',))
+    assert any(preactivate_regions(main.pair, topology=region, signal=signal).regions
+               for region, _ in binding.topology.values())
+    stale = main.navigation_prepare()
+    main.ingest(dict(request_id='navigation-next', text='othernavword',
+                     source='probe:navigation-next', revision='1'))
+    assert main.navigation_commit(stale) is None
+    assert main._region_binding is None
+
+
 def test_checkpoint_rejects_region_without_generation_bound_cue_source(main):
     record(main, 'checkpoint-region-source')
     main.consolidate()

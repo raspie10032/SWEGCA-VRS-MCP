@@ -39,6 +39,7 @@ from . import csr_cache
 from . import vrs_refine
 from .native_journal import NativeJournal
 from .engine.mosaic_vrs_connectivity_regions import _csr as _engine_csr
+from .engine.mosaic_vrs_region_publication import RegionBinding
 
 # Local adapter (2026-09-14): generated Hangul n-gram cues (2-4 chars, produced by keys() for every
 # Hangul word) stay retrieval keys in the postings but do not become VRS nodes. As nodes they joined
@@ -508,15 +509,16 @@ class Graph:
         return Graph(settled_id, grown, nodes, components, directory, freeze_view(receipt), csr, self.stable,
                      self.usage, self.aliases)
 
-    def rebuild_regions(self):
-        """Build regions for components touched by nodes appended since consolidation.
+    def rebuild_regions(self, *, force=False):
+        """Build regions for changed components, or all for a current navigation view.
 
         Unrelated component entries remain structurally shared. A pending node may
         join several older components; its graph traversal yields their full merged
         component, whose old directory entries are replaced together.
         """
         flat, nodes = self.flat, self.nodes
-        pending = [node for node in range(flat.count) if node not in self.components]
+        pending = (range(flat.count) if force else
+                   [node for node in range(flat.count) if node not in self.components])
         if not pending:
             return self
         seen = np.zeros(flat.count, dtype=bool)
@@ -820,6 +822,7 @@ class Main:
 
     def _set_generation(self, memory, graph, pair, operations):
         self._generation = (memory, graph, pair, operations)
+        self._region_binding = None
 
     @property
     def memory(self):
@@ -1226,6 +1229,37 @@ class Main:
         self._check()
         memory, graph, pair, _ = self._generation
         return SimpleNamespace(memory=memory, graph=graph, pair=pair)
+
+    def navigation_prepare(self):
+        """Cold SWEGCA region build for the exact pinned numerical generation."""
+        self._check()
+        expected = self._generation
+        memory, graph, pair, _ = expected
+        derived = graph.rebuild_regions(force=True)
+        current_pair = full_current_pair(memory, derived)
+        if current_pair.snapshot_id != pair.snapshot_id:
+            raise ValueError('navigation_changed_pair_identity')
+        for region, _ in derived.regions.values():
+            if not region.converged:
+                raise ValueError('region_topology_pending_no_publication')
+            region.require_pair(current_pair)
+        return SimpleNamespace(expected=expected, pair=current_pair,
+                               topology=derived.regions)
+
+    def navigation_commit(self, prepared):
+        """Publish only while the prepared main generation is still current.
+
+        The daemon calls this under its existing write lock. This changes no
+        journal row, VRS arithmetic, original episode or authority.
+        """
+        self._check()
+        if self._generation is not prepared.expected:
+            return None
+        memory, graph, old_pair, operations = prepared.expected
+        self.owner.replace(old_pair.snapshot_id, prepared.pair)
+        self._generation = (memory, graph, prepared.pair, operations)
+        self._region_binding = RegionBinding(prepared.pair, prepared.topology)
+        return self._region_binding
 
     @staticmethod
     def consolidate_run(prepared, *, seed=vrs_refine.SEED, cycles=vrs_refine.CYCLES, workers=None):
