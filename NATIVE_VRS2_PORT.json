@@ -5,6 +5,14 @@
   "license": "MIT",
   "records": [
     {
+      "module": "mosaic_proposition_directory",
+      "source_commit": "3bddcb7adc8c07e21a57d8c921d312aed83270e5",
+      "source_path": "src/tinylm_slicer/mosaic_proposition_directory.py",
+      "source_sha256": "5e0db492f2309757a4fd66b4124cec6791fe7c67aa173bcbc220dd19fdb1d2c7",
+      "port_sha256": "2b8f5cf38d4082d583100d281404ccbf4e8ced4ca97393a483a97e7d2d85a418",
+      "definitions": ["PropositionDirectory", "proposition_directories"]
+    },
+    {
       "module": "mosaic_vrs_address_index",
       "source_sha256": "7edceca917194419828845d7350f7b19a2747b19fbddd1a7ccfbf07a2be6cf56",
       "port_sha256": "7edceca917194419828845d7350f7b19a2747b19fbddd1a7ccfbf07a2be6cf56",

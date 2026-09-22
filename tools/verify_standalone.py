@@ -21,7 +21,7 @@ def verify(root):
     manifest = json.loads((root / 'NATIVE_VRS2_PORT.json').read_text(encoding='utf-8'))
     package = root / 'src/swegca_vrs2'
     files = sorted(package.rglob('*.py'))
-    assert len(files) == 60, f'product source count changed: {len(files)}'
+    assert len(files) == 61, f'product source count changed: {len(files)}'
     ported = {path.stem for path in (package / 'engine').glob('*.py')} - {'__init__'}
     declared = {row['module'] for row in manifest['records']}
     assert len(declared) == len(manifest['records'])
@@ -45,9 +45,18 @@ def verify(root):
     project = tomllib.loads((root / 'pyproject.toml').read_text(encoding='utf-8'))
     assert project['project']['scripts'] == ENTRY_POINTS
     forbidden = []
+    missing_local_modules = []
     for path in files:
         tree = ast.parse(path.read_text(encoding='utf-8'), filename=str(path))
         for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and node.level and node.module:
+                parent = path.parent
+                for _ in range(node.level - 1):
+                    parent = parent.parent
+                imported = parent.joinpath(*node.module.split('.'))
+                if not imported.with_suffix('.py').is_file() and not (imported / '__init__.py').is_file():
+                    missing_local_modules.append(
+                        f'{path.relative_to(root)}:{node.lineno} -> {node.module}')
             names = ([alias.name for alias in node.names] if isinstance(node, ast.Import)
                      else [node.module or ''] if isinstance(node, ast.ImportFrom)
                      else [])
@@ -56,6 +65,7 @@ def verify(root):
                    or 'hermes' in name.lower() for name in names):
                 forbidden.append(f'{path.relative_to(root)}:{node.lineno}')
     assert not forbidden, forbidden
+    assert not missing_local_modules, missing_local_modules
     wheel_files = sorted(str(path.relative_to(root)) for path in root.rglob('*.whl'))
     assert not wheel_files, wheel_files
     assert not list(package.rglob('*.sqlite3'))
