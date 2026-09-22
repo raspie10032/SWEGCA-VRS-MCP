@@ -22,16 +22,19 @@ claim that the repaired source is installed. The active repair branch is
   temporary object as `source`. `ConnectivityRegions.require_pair` demands
   that the exact source object be reachable from `pair.memory` and that its
   VRS snapshot ID match (`engine/mosaic_vrs_connectivity_regions.py:228-239`).
-  `Main` currently constructs `FullCurrentMemoryVrsSnapshot(memory,
-  graph.snapshot_id)` with only the compact original-memory index
-  (`store.py:777,796`). The component source is absent from that pair.
+  At the time of the first probe, `Main` constructed
+  `FullCurrentMemoryVrsSnapshot(memory, graph.snapshot_id)` with only the
+  compact original-memory index. The component source was absent from that
+  pair. Commit `4992190` now binds the structural sources to a wrapper around
+  the original index without changing the pair digest or adding episodes.
 
 An isolated `Main` instance confirmed both faults after one original record
-and one consolidation: it had one component, `pair.memory` was `CompactIndex`,
-the component topology's `vrs_snapshot_id` differed from the pair's, and
-`region.require_pair(pair)` raised `region topology belongs to a different VRS
-generation`. The source identity would still be absent after fixing only the
-generation ID. No live state was changed by this probe.
+and one consolidation. After `4992190`, a second isolated probe confirmed
+`source_in_pair=True` and `original_count=1`, but the component topology's
+`vrs_snapshot_id` still differed from the pair's and `region.require_pair(pair)`
+still raised `region topology belongs to a different VRS generation`. The
+source binding is therefore only one required part of the repair. No live
+state was changed by either probe.
 
 ## Evidence semantics that an integration must preserve
 
