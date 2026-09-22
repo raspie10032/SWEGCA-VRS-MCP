@@ -36,6 +36,15 @@ JSON string literals because the author's observation text field rejects
 blank text; episode construction decodes them back to the exact original
 content and checks each part digest. This adapter is not yet connected to
 the host file watcher, session journal commit, or SessionEnd ownership link.
+The native transcript scanner now holds a private per-source cursor lock,
+reads only complete JSONL lines, batches validated observations beneath the
+transport frame budget, and advances its content-free cursor only after the
+session VRS ingest interface returns the exact original IDs and pair
+certificate. A partial line stays unread. A line above the current 16 MiB
+parser bound stops at the previous safe cursor; no line is discarded. The
+session Main coordinator must implement the ingest interface before this
+scanner can commit a real experience. A streaming parser for larger single
+lines remains necessary for the full no-omission requirement.
 
 ## One read path
 
