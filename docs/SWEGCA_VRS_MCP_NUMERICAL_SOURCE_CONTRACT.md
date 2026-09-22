@@ -161,8 +161,13 @@ hyperedge, including failed, negative and pending outcomes. It makes no
 pairwise relation or usefulness score. Because the product Graph publishes a
 separate topology per disconnected component, each observed original carries
 its own topology ID; the event's single topology ID is present only when all
-opened originals share one. Main-owned durable event admission, delta postings
-and association query are not yet implemented.
+opened originals share one. The detached association index now adds only
+observed events, posts shared immutable witnesses by topology and origin,
+rechecks original lineage against the current pair, and returns sorted
+destination proposals with explicit rejection reasons. It never turns request
+count, outcome or membership into a truth score. Main-owned durable event
+admission and generation-bound index publication are not yet implemented;
+the current ordered maps also lack a demonstrated 4 GB bound.
 The C++ endpoint segment index now preserves the author's stable per-segment
 sort, segment-concatenation lookup order, source-generation binding and
 geometric tail merge. That lookup order is required by `math.fsum` in the

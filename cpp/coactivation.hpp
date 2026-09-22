@@ -23,6 +23,9 @@ struct CoactivatedExperience {
     std::vector<std::pair<std::uint32_t, double>> memberships;
     std::string proposition;
     std::string current_verdict;
+
+    // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_coactivation.py@c06092a:80-89
+    [[nodiscard]] bool operator==(const CoactivatedExperience&) const = default;
 };
 
 // Source event topology_id is single-valued for a generic topology. The Graph
@@ -41,6 +44,9 @@ struct CoactivationEvent {
     std::vector<CoactivatedExperience> experiences;
     bool should_abstain;
     bool grants_authority = false;
+
+    // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_coactivation.py@c06092a:92-104
+    [[nodiscard]] bool operator==(const CoactivationEvent&) const = default;
 };
 
 // Prepared observation only. Main must recheck the pinned generation and
