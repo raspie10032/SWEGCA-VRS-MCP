@@ -2,7 +2,7 @@
 
 #include "digest.hpp"
 #include "memory_episode.hpp"
-#include "observation.hpp"
+#include "native_journal_entry.hpp"
 
 #include <array>
 #include <atomic>
@@ -140,12 +140,15 @@ NativeHotIndexRebuildCount rebuild_native_hot_index_directories(
                                          const JournalFrameAddress&) {
             if (cancelled.load())
                 throw std::runtime_error("native_hot_index_rebuild_cancelled");
-            const auto row = observation(Json::parse(stored.body));
-            if (row.at("request_id").string() != stored.request_id ||
-                sha256_hex(row.canonical()) != stored.fingerprint)
-                throw std::runtime_error("stored_observation_integrity_failed");
-            const auto identifier = episode_id_from_observation(row);
+            auto entry = parse_native_journal_entry(
+                stored.request_id, stored.body, stored.fingerprint);
             ++count.journal_rows;
+            if (entry.kind != NativeJournalEntryKind::observation) {
+                ++count.non_observation_rows;
+                return;
+            }
+            const auto& row = entry.value;
+            const auto identifier = episode_id_from_observation(row);
             const auto original = addresses.find(identifier, stored.sequence);
             const auto header = addresses.find_header(identifier, stored.sequence);
             if (!original || !header || original->sequence > stored.sequence ||
@@ -227,7 +230,7 @@ NativeHotIndexRebuildCount rebuild_native_hot_index_directories(
     if (producer_error) std::rethrow_exception(producer_error);
     if (count.journal_rows != journal.row_count() ||
         count.distinct_originals + count.duplicate_observations !=
-            count.journal_rows)
+            count.journal_rows - count.non_observation_rows)
         throw std::runtime_error("native_hot_index_rebuild_count_changed");
     return count;
 }

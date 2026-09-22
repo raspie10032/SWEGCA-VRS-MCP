@@ -11,6 +11,7 @@ struct ExactJournalRebuildCount {
     std::uint64_t journal_rows;
     std::uint64_t distinct_originals;
     std::uint64_t duplicate_observations;
+    std::uint64_t non_observation_rows;
 };
 
 // Rebuild a derived exact-address directory from one already validated active

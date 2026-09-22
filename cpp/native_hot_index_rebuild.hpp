@@ -14,6 +14,7 @@ struct NativeHotIndexRebuildCount {
     std::uint64_t journal_rows;
     std::uint64_t distinct_originals;
     std::uint64_t duplicate_observations;
+    std::uint64_t non_observation_rows;
     std::uint64_t cue_postings;
     std::uint64_t proposition_postings;
     std::uint64_t successor_postings;

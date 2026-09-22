@@ -143,6 +143,13 @@ HotIndex uses those same directory objects. An explicit semantic-family
 reader can be supplied; ordinary standalone observations have the author's
 empty family tuple. A native writer for explicitly recorded family
 directories is still missing.
+Both derived rebuild passes now use the author's typed `journal_entry` rule.
+Alias, usage, and consolidation rows must pass their exact fingerprint and
+request-ID prefix checks and remain counted in the source journal. They do
+not create a new observation ID, cue posting, proposition, or successor link.
+Their own Graph/VRS effects and pair certificates still require the Main
+generation replay path; skipping them in an address index is not dropping
+their experience or proof of complete Main restoration.
 This adapter currently reads physical address files on lookup. It is a
 source-bound correctness path, not accepted evidence for the author's
 `lookup_requires_io=False` hot property or the user-input-to-Recall <1 ms

@@ -1,7 +1,7 @@
 #include "exact_journal_rebuild.hpp"
 
-#include "digest.hpp"
-#include "observation.hpp"
+#include "memory_episode.hpp"
+#include "native_journal_entry.hpp"
 
 #include <array>
 #include <atomic>
@@ -126,12 +126,14 @@ ExactJournalRebuildCount rebuild_exact_journal_directory(
                                          const JournalFrameAddress& frame) {
             if (cancelled.load())
                 throw std::runtime_error("exact_journal_rebuild_cancelled");
-            const auto row = observation(Json::parse(stored.body));
-            if (row.at("request_id").string() != stored.request_id ||
-                sha256_hex(row.canonical()) != stored.fingerprint)
-                throw std::runtime_error("stored_observation_integrity_failed");
-            auto episode_id = episode_id_from_observation(row);
+            auto entry = parse_native_journal_entry(
+                stored.request_id, stored.body, stored.fingerprint);
             ++count.journal_rows;
+            if (entry.kind != NativeJournalEntryKind::observation) {
+                ++count.non_observation_rows;
+                return;
+            }
+            auto episode_id = episode_id_from_observation(entry.value);
             auto& worker = workers[worker_for(episode_id)];
             std::unique_lock lock(worker.mutex);
             worker.ready.wait(lock, [&] {
@@ -142,7 +144,7 @@ ExactJournalRebuildCount rebuild_exact_journal_directory(
             worker.queue.push_back(AddressWork{
                 std::move(episode_id),
                 OriginalJournalAddress{frame, stored.sequence},
-                std::move(row), std::move(stored.pair_id)});
+                std::move(entry.value), std::move(stored.pair_id)});
             lock.unlock();
             worker.ready.notify_one();
         });
@@ -166,7 +168,8 @@ ExactJournalRebuildCount rebuild_exact_journal_directory(
     }
     if (count.journal_rows != journal.row_count())
         throw std::runtime_error("exact_journal_rebuild_row_count_changed");
-    if (count.distinct_originals + count.duplicate_observations != count.journal_rows)
+    if (count.distinct_originals + count.duplicate_observations +
+            count.non_observation_rows != count.journal_rows)
         throw std::runtime_error("exact_journal_rebuild_count_changed");
     return count;
 }
