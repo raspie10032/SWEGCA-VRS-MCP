@@ -219,3 +219,20 @@ missing, unexpected or changed records, and zero post-cursor pending originals.
 The private counts-only receipt is
 `/var/tmp/vrs22-native-shadow-live-tail-audit-r1-20260922.json`
 (SHA-256 `7d372c3198888efe8146874bba6c398068c6becd276d86bc2142a2a9a5e502da`).
+
+## Durable one-shot SessionEnd handoff owner
+
+The prior handoff process was a transient `/run/user` unit and would disappear
+on a user-manager restart. Its replacement is the enabled user unit
+`swegca-vrs22-sessionend-handoff.service`, backed by the persistent unit file
+`/home/raspie/.config/systemd/user/swegca-vrs22-sessionend-handoff.service`
+and a task-owned deployment wrapper under the installed runtime's `deploy/`
+directory. `systemd-analyze --user verify` and Python syntax checks passed.
+The unit is active with a live wrapper and child handoff process, a 4 GiB
+memory limit and zero swap. `ConditionPathExists` binds startup to the armed
+handoff marker. The child still requires the durable SessionEnd marker before
+it can touch live main; there is currently no such marker, the old MCP config
+is unchanged and no native live main exists. After a successful handoff and
+receipt, the child removes its deployment script and marker, and the wrapper
+disables and removes its own unit and script. An actual reboot or SessionEnd
+has not yet occurred, so those later transitions remain unverified.
