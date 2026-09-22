@@ -52,9 +52,14 @@ the live watcher to release its lock, captures a stable final tail, and asks
 the session Main owner to seal every VRS shard. It verifies each sealed
 native journal generation, published row count, last pair ID, ownership
 lock release, and in-session path before writing an ended marker. Interrupt
-has no path to this end intent. Main registry attachment and background
-integration remain separate unfinished stages; a sealed marker alone does
-not publish those experiences in Main.
+has no path to this end intent. The native Main ownership registry now
+reopens the ended marker and its intent, rechecks every sealed journal, and
+atomically attaches the whole session batch. Identical retries are accepted;
+ID, path, or generation reassignment is rejected. This ownership link does
+not yet run the background SWEGCA Main append or publish a Main read
+generation. The registry currently reads and rewrites one JSON file per
+attachment, so its large-shard memory and attachment throughput still need
+the planned partitioned physical representation before scale acceptance.
 
 ## One read path
 
