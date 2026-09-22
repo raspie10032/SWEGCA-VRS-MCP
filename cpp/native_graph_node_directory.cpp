@@ -3,6 +3,8 @@
 #include "digest.hpp"
 #include "journal_files.hpp"
 #include "json.hpp"
+#include "memory_vrs_pair.hpp"
+#include "native_journal_entry.hpp"
 
 #include <algorithm>
 #include <array>
@@ -561,6 +563,62 @@ std::filesystem::path NativeGraphNodeDirectory::insert_name(
     }
 }
 
+// SWEGCA: src/swegca_vrs2/store.py@c06092a:427-512
+void NativeGraphNodeDirectory::append_committed(
+    const NativeJournal& journal, const JournalAppendResult& committed,
+    const MainObservationBatchPlan& batch,
+    const ValidatedEventVrsInputs& parent,
+    std::string_view published_parent_pair) {
+    const auto& source = parent.require_validated_immutable();
+    require_source(source);
+    if (!batch.graph || batch.journal_rows.empty() ||
+        batch.parent_pair_id != published_parent_pair ||
+        committed.sequences.size() != batch.journal_rows.size() ||
+        committed.frame.generation != journal_generation_ ||
+        committed.frame.first_sequence != committed.sequences.front() ||
+        committed.frame.last_sequence != committed.sequences.back() ||
+        journal.generation() != journal_generation_ ||
+        journal.row_count() <
+            static_cast<std::uint64_t>(committed.frame.last_sequence) ||
+        full_current_pair_snapshot_id(batch.memory_snapshot_id,
+                                      batch.graph_snapshot_id) !=
+            batch.pair_snapshot_id)
+        throw std::runtime_error("graph_node_batch_source_changed");
+    const auto& plan = *batch.graph;
+    if (plan.snapshot_id != batch.graph_snapshot_id ||
+        plan.parent_snapshot_id != source.snapshot_id() ||
+        plan.new_nodes.empty() ||
+        plan.changes.appended_direct.size() != plan.new_nodes.size() ||
+        plan.changes.appended_score.size() != plan.new_nodes.size() ||
+        plan.changes.appended_unresolved.size() != plan.new_nodes.size() ||
+        plan.changes.appended_edges.size() !=
+            plan.changes.appended_strength.size())
+        throw std::runtime_error("graph_node_batch_source_changed");
+    std::size_t at = 0;
+    journal.visit_frame_rows(committed.frame, [&](JournalRow&& actual) {
+        if (at >= batch.journal_rows.size() ||
+            actual.sequence != committed.sequences[at] ||
+            actual.request_id != batch.journal_rows[at].request_id ||
+            actual.body != batch.journal_rows[at].body ||
+            actual.fingerprint != batch.journal_rows[at].fingerprint ||
+            actual.pair_id != batch.journal_rows[at].pair_id ||
+            actual.pair_id != batch.pair_snapshot_id ||
+            parse_native_journal_entry(actual.request_id, actual.body,
+                                       actual.fingerprint).kind !=
+                NativeJournalEntryKind::observation)
+            throw std::runtime_error("graph_node_batch_source_changed");
+        ++at;
+    });
+    if (at != batch.journal_rows.size())
+        throw std::runtime_error("graph_node_batch_source_changed");
+    append(plan.new_nodes);
+    // The writer follows each unpublished source generation during recovery;
+    // existing readers retain their earlier immutable binding and row limit.
+    // SWEGCA: src/swegca_vrs2/store.py@c06092a:1429-1452
+    graph_snapshot_id_ = plan.snapshot_id;
+    node_count_ = source.node_count() + plan.new_nodes.size();
+}
+
 // SWEGCA: src/swegca_vrs2/store.py@c06092a:427-472
 // SWEGCA: user@2026-09-22:89-92
 void NativeGraphNodeDirectory::append(
@@ -680,16 +738,25 @@ void NativeGraphNodeDirectory::append(
 
 // SWEGCA: src/swegca_vrs2/store.py@c06092a:1429-1452
 void NativeGraphNodeDirectory::publish(
-    const ValidatedEventVrsInputs& successor,
-    std::string_view pair_snapshot_id, std::int64_t journal_rows) {
+    const NativeJournal& journal, const ValidatedEventVrsInputs& successor,
+    std::string_view memory_snapshot_id, std::string_view pair_snapshot_id,
+    std::int64_t journal_rows) {
     if (!owner_lock_ || !owner_lock_->locked())
         throw std::runtime_error("native_vrs_owner_lock_required");
     const auto& source = successor.require_validated_immutable();
     std::lock_guard append_guard(append_mutex_);
     const auto count = reverse_count();
+    const auto head = journal.head();
+    const bool matching_journal = journal.generation() == journal_generation_ &&
+        ((journal_rows == 0 && !head && journal.row_count() == 0) ||
+         (head && head->first == journal_rows &&
+          head->second == pair_snapshot_id));
     if (failed_.load() || count != source.node_count() ||
         read_indexed(directory_, journal_generation_) != count ||
-        pair_snapshot_id.size() != 64 ||
+        memory_snapshot_id.empty() ||
+        full_current_pair_snapshot_id(memory_snapshot_id,
+                                      source.snapshot_id()) != pair_snapshot_id ||
+        !matching_journal ||
         journal_rows < published_rows_)
         throw std::runtime_error("graph_node_publication_invalid");
     std::vector<std::unique_lock<std::mutex>> prefix_guards;

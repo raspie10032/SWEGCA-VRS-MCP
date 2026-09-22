@@ -189,6 +189,16 @@ published row limit, and count to match its other pinned state. This is a
 physical node directory only: bounded Graph numeric, regions, dependency
 and coactivation stores, full publication/recovery, and <1 ms acceptance
 remain unfinished.
+The node publication writer additionally requires its proposed pair to be
+the author's digest of the supplied memory and Graph IDs and the native
+journal head to carry that same pair at the published row. It cannot certify
+an arbitrary pair string or a row beyond the committed journal head.
+Node application itself accepts the detached source Graph batch only after
+the exact committed observation frame, pair, parent generation, and numerical
+array lengths agree. It can replay a historical committed frame during Main
+recovery; the writer advances its unpublished Graph binding after each batch
+while existing readers stay pinned. Publishing still waits for the current
+journal head.
 The pending view and the native HotIndex metadata projection now derive the
 same header from the author's episode. The checksummed projection frame binds
 that header and the distinct raw posting keys to a journal sequence and pair

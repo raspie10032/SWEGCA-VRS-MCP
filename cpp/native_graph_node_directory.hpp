@@ -1,6 +1,7 @@
 #pragma once
 
-#include "graph_append.hpp"
+#include "main_observation_batch.hpp"
+#include "native_journal.hpp"
 #include "owner_lock.hpp"
 
 #include <array>
@@ -42,16 +43,22 @@ public:
                              std::int64_t published_rows,
                              OwnerLock* owner_lock = nullptr);
 
-    // The plan has the author's record-then-fresh-cue order and contiguous
-    // uint32 addresses. Repeating the same plan after a partial write is
-    // accepted only when every existing address and exact name agree.
+    // Main may apply node names only for a committed source Graph batch.
+    // Repeating the same batch after a partial write is accepted only when
+    // every existing address and exact name agree.
     // SWEGCA: src/swegca_vrs2/store.py@c06092a:427-472
-    void append(std::span<const std::pair<std::string, std::uint32_t>> nodes);
+    void append_committed(const NativeJournal& journal,
+                          const JournalAppendResult& committed,
+                          const MainObservationBatchPlan& batch,
+                          const ValidatedEventVrsInputs& parent,
+                          std::string_view published_parent_pair);
 
     // Commit only after the original journal and all Graph numeric state are
     // durable. Main still replaces its complete read generation separately.
     // SWEGCA: src/swegca_vrs2/store.py@c06092a:1429-1452
-    void publish(const ValidatedEventVrsInputs& successor,
+    void publish(const NativeJournal& journal,
+                 const ValidatedEventVrsInputs& successor,
+                 std::string_view memory_snapshot_id,
                  std::string_view pair_snapshot_id,
                  std::int64_t journal_rows);
 
@@ -81,6 +88,7 @@ public:
 
 private:
     using Key = std::array<unsigned char, 32>;
+    void append(std::span<const std::pair<std::string, std::uint32_t>> nodes);
     [[nodiscard]] std::filesystem::path table_path(
         unsigned power, unsigned char prefix) const;
     [[nodiscard]] std::optional<std::pair<std::uint32_t, std::uint64_t>>
