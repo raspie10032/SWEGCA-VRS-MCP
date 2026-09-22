@@ -31,6 +31,14 @@ audit does not establish that the old product uses this field to perform such
 a write; it identifies a naming/contract hazard that needs an explicit
 boundary in the rebuild.
 
+The C++ `VRSExperiencePromotionDecision` now preserves the source threshold,
+four result actions and zero-authority flags as a detached decision value.
+Its `semantic_evidence_allowed` field remains the source's connection-strength
+status only; it is not a World-write receipt or claim-relative evidence
+admission. The Re-evidence state-update planner and event signal binding are
+still separate unfinished paths, so this value alone is not an active product
+promotion route.
+
 `src/swegca/mosaic_unrestricted_experience.py` in the public architecture
 imports SQLite for one registered general-purpose artifact reader. The user
 forbids SQLite in VRS-MCP, so copying that implementation would violate the
