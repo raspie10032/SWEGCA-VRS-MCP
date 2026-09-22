@@ -11,6 +11,7 @@ CORE_OBJECTS += build/main_journal_append.o
 CORE_OBJECTS += build/main_memory_projection_append.o
 CORE_OBJECTS += build/native_graph_node_directory.o
 CORE_OBJECTS += build/native_graph_numeric_record.o
+CORE_OBJECTS += build/native_graph_page_map.o build/native_graph_page_file.o
 
 .PHONY: all clean
 all: build/libswegca-vrs.a
@@ -136,6 +137,12 @@ build/native_graph_node_directory.o: cpp/native_graph_node_directory.cpp cpp/nat
 	$(CXX) $(CXXFLAGS) -Icpp -c $< -o $@
 
 build/native_graph_numeric_record.o: cpp/native_graph_numeric_record.cpp cpp/native_graph_numeric_record.hpp cpp/event_vrs_inputs.hpp | build
+	$(CXX) $(CXXFLAGS) $(NUMERIC_CXXFLAGS) -Icpp -c $< -o $@
+
+build/native_graph_page_map.o: cpp/native_graph_page_map.cpp cpp/native_graph_page_map.hpp | build
+	$(CXX) $(CXXFLAGS) -Icpp -c $< -o $@
+
+build/native_graph_page_file.o: cpp/native_graph_page_file.cpp cpp/native_graph_page_file.hpp cpp/native_graph_page_map.hpp cpp/native_graph_numeric_record.hpp cpp/owner_lock.hpp cpp/journal_files.hpp | build
 	$(CXX) $(CXXFLAGS) $(NUMERIC_CXXFLAGS) -Icpp -c $< -o $@
 
 build/main_observation_batch.o: cpp/main_observation_batch.cpp cpp/main_observation_batch.hpp cpp/graph_batch_append.hpp cpp/hot_index_pending.hpp cpp/main_operations.hpp cpp/memory_vrs_pair.hpp cpp/observation.hpp cpp/digest.hpp | build

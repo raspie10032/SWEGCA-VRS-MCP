@@ -298,6 +298,15 @@ widths, bit-preserved float32 values, separate edge base/current strengths,
 and record checksums. It rejects invalid values on both encode and decode.
 No page directory, versioned edit lookup, or publication exists yet, so this
 codec alone cannot serve a Graph generation or prove the 4 GB constraint.
+The first physical page primitives now store 256 fixed-width numerical records
+per immutable node or edge page and retain earlier page locations through a
+three-level copy-on-write address map. Page reads verify their journal
+generation, logical page ID, count, checksums, and live record values. A
+partially written final derived page is truncated only by its locked writer;
+the original observation journal is untouched. The batch edit applier,
+durable map updates, endpoint dependency directory, publication certificate,
+and bounded read cache are still missing; no product numerical generation
+uses these files yet.
 This adapter currently reads physical address files on lookup. It is a
 source-bound correctness path, not accepted evidence for the author's
 `lookup_requires_io=False` hot property or the user-input-to-Recall <1 ms
