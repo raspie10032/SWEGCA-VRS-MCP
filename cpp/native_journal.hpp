@@ -91,6 +91,14 @@ public:
     // SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:123-127
     [[nodiscard]] const std::filesystem::path& generation_path() const { return path_; }
 
+    // A derived native journal may append only under the exact Main journal
+    // owner lock, not an unrelated lock protecting a second authority.
+    // SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:91-127
+    [[nodiscard]] bool shares_write_owner(const NativeJournal& other) const {
+        return owner_lock_ && owner_lock_ == other.owner_lock_ &&
+               owner_lock_->locked();
+    }
+
 private:
     void require_write_owner() const;
 

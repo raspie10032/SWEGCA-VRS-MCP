@@ -293,18 +293,17 @@ remain unfinished. This source path has not been built or parity-tested.
 verified immutable endpoint/sign prefix. It no longer requires the in-memory
 `SegmentedEndpointDependencyIndex` concrete type. The source segment order
 remains the contract; a physical disk directory has not yet been installed.
-The native numerical node/edge record codec now fixes little-endian field
+The native numerical node/edge record codec fixes little-endian field
 widths, bit-preserved float32 values, separate edge base/current strengths,
 and record checksums. It rejects invalid values on both encode and decode.
-No page directory, versioned edit lookup, or publication exists yet, so this
-codec alone cannot serve a Graph generation or prove the 4 GB constraint.
+It is a physical value format, not a publication or 4 GB acceptance result.
 The first physical page primitives now store 256 fixed-width numerical records
 per immutable node or edge page and retain earlier page locations through a
 three-level copy-on-write address map. Page reads verify their journal
 generation, logical page ID, count, checksums, and live record values. A
 partially written final derived page is truncated only by its locked writer;
-the original observation journal is untouched. Durable map updates, the
-endpoint dependency directory, the publication certificate,
+the original observation journal is untouched. The endpoint dependency
+directory, the publication certificate,
 and bounded read cache are still missing; no product numerical generation
 uses these files yet. The committed batch applier now verifies the exact
 native observation frame through the same check as the Graph node directory,
@@ -312,6 +311,15 @@ prepares the author's EventDelta successor, validates any old numerical page
 it replaces against that pinned parent, and writes only touched node/edge
 pages before returning unpublished map updates. Crash retries may leave
 unreferenced complete pages until derived-file reclamation is implemented.
+The page map updates now enter a separate native derived journal under the
+same Main owner lock. Each row binds the Graph parent/successor, memory and
+pair IDs, exact original observation frame address, counts and changed page
+offsets. Recovery reopens that original frame, checks every row's type and
+pair, and validates every referenced changed page before rebuilding the
+bounded address map. This remains a derived index: original observations and
+their SWEGCA replay, not the map row, determine numerical truth. A map
+checkpoint, Main publication gate, physical endpoint index, and reclamation
+of orphaned pages are still needed.
 This adapter currently reads physical address files on lookup. It is a
 source-bound correctness path, not accepted evidence for the author's
 `lookup_requires_io=False` hot property or the user-input-to-Recall <1 ms
