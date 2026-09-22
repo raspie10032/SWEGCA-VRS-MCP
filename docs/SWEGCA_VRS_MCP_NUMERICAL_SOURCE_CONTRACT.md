@@ -59,7 +59,7 @@ work, and exhausted rounds return that work as pending. Its sparse maps and
 per-node edge lists still need a bounded physical representation for the
 4 GB product gate. It is not Graph.append, settlement publication, region
 construction, coactivation, or a timing result.
-The six numeric translation units compile with floating-point contraction
+The seven numeric translation units compile with floating-point contraction
 disabled and fast-math disabled; otherwise fused or reassociated operations
 could change Python's separate binary64 steps before float32 rounding. These
 flags are a build contract, not a parity test.
@@ -110,9 +110,13 @@ The C++ `affected_graph_component` now follows the author's directed outgoing
 walk from the new record and related prior records, then sorts the complete
 reached node and edge addresses and remaps endpoints locally. It retains signs
 and current strengths for every reached edge, including zero-strength edges.
-This produces a source-shaped input to `ConnectivityRegions.build`;
-weighted modularity, overlapping memberships, region publication and Main
-commit remain separate unfinished steps.
+This produces a source-shaped input to `ConnectivityRegions.build`. The C++
+region unit now carries the author's weighted modularity local moves,
+multilevel collapse, overlapping membership coefficients, reverse membership
+directory, source-generation guard and topology receipt. Its C++ reductions
+have not been compared to NumPy's `reduceat`, `sum` and `bincount` order, so
+exact numeric parity and topology digest equivalence remain unverified.
+Shared-original bridging, region publication and Main commit remain unfinished.
 The C++ endpoint segment index now preserves the author's stable per-segment
 sort, segment-concatenation lookup order, source-generation binding and
 geometric tail merge. That lookup order is required by `math.fsum` in the
