@@ -1,0 +1,188 @@
+#include "journal_frame.hpp"
+
+#include "digest.hpp"
+#include "json.hpp"
+
+#include <algorithm>
+#include <array>
+#include <limits>
+#include <stdexcept>
+#include <string>
+#include <string_view>
+#include <utility>
+#include <zlib.h>
+
+namespace swegca::vrs {
+namespace {
+
+constexpr std::uint64_t maximum_payload_bytes = 64ULL * 1024 * 1024;
+constexpr std::size_t checksum_bytes = 32;
+constexpr std::size_t header_bytes = 8;
+
+// SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:31-34
+std::uint64_t little_endian_length(std::span<const std::byte> frame) {
+    if (frame.size() < header_bytes) throw std::runtime_error("native_vrs_journal_truncated");
+    std::uint64_t size = 0;
+    for (std::size_t i = 0; i < header_bytes; ++i)
+        size |= static_cast<std::uint64_t>(std::to_integer<unsigned char>(frame[i])) << (i * 8);
+    return size;
+}
+
+class FrameDeflater {
+public:
+    // SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:129-134
+    FrameDeflater() : output_(header_bytes, std::byte{0}) {
+        if (deflateInit(&stream_, 3) != Z_OK)
+            throw std::runtime_error("native_vrs_frame_invalid");
+    }
+
+    FrameDeflater(const FrameDeflater&) = delete;
+    FrameDeflater& operator=(const FrameDeflater&) = delete;
+
+    // SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:129-134
+    ~FrameDeflater() { deflateEnd(&stream_); }
+
+    // SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:129-134
+    void write(std::string_view bytes) {
+        if (bytes.size() > std::numeric_limits<uInt>::max())
+            throw std::runtime_error("native_vrs_frame_too_large");
+        stream_.next_in = reinterpret_cast<Bytef*>(const_cast<char*>(bytes.data()));
+        stream_.avail_in = static_cast<uInt>(bytes.size());
+        while (stream_.avail_in) {
+            stream_.next_out = reinterpret_cast<Bytef*>(buffer_.data());
+            stream_.avail_out = static_cast<uInt>(buffer_.size());
+            if (deflate(&stream_, Z_NO_FLUSH) != Z_OK)
+                throw std::runtime_error("native_vrs_frame_invalid");
+            append_output();
+        }
+    }
+
+    // SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:129-134
+    std::vector<std::byte> finish() {
+        int code = Z_OK;
+        do {
+            stream_.next_out = reinterpret_cast<Bytef*>(buffer_.data());
+            stream_.avail_out = static_cast<uInt>(buffer_.size());
+            code = deflate(&stream_, Z_FINISH);
+            if (code != Z_OK && code != Z_STREAM_END)
+                throw std::runtime_error("native_vrs_frame_invalid");
+            append_output();
+        } while (code != Z_STREAM_END);
+        const auto payload_size = output_.size() - header_bytes;
+        for (std::size_t i = 0; i < header_bytes; ++i)
+            output_[i] = static_cast<std::byte>((payload_size >> (i * 8)) & 0xff);
+        const auto digest = hash_.finish();
+        output_.insert(output_.end(), digest.begin(), digest.end());
+        return std::move(output_);
+    }
+
+private:
+    z_stream stream_{};
+    std::array<std::byte, 65536> buffer_{};
+    std::vector<std::byte> output_;
+    Sha256 hash_;
+
+    // SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:129-134
+    void append_output() {
+        const auto count = buffer_.size() - stream_.avail_out;
+        if (output_.size() - header_bytes + count > maximum_payload_bytes)
+            throw std::runtime_error("native_vrs_frame_too_large");
+        const auto produced = std::span<const std::byte>(buffer_.data(), count);
+        hash_.update(produced);
+        output_.insert(output_.end(), produced.begin(), produced.end());
+    }
+};
+
+// SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:166-169
+std::string inflate_payload(std::span<const std::byte> compressed) {
+    z_stream stream{};
+    if (inflateInit(&stream) != Z_OK) throw std::runtime_error("native_vrs_frame_invalid");
+    stream.next_in = reinterpret_cast<Bytef*>(const_cast<std::byte*>(compressed.data()));
+    stream.avail_in = static_cast<uInt>(compressed.size());
+    std::string output;
+    std::array<char, 65536> buffer{};
+    int result = Z_OK;
+    try {
+        do {
+            stream.next_out = reinterpret_cast<Bytef*>(buffer.data());
+            stream.avail_out = static_cast<uInt>(buffer.size());
+            const auto prior_input = stream.avail_in;
+            result = inflate(&stream, Z_NO_FLUSH);
+            if (result != Z_OK && result != Z_STREAM_END)
+                throw std::runtime_error("native_vrs_frame_invalid");
+            const auto made = buffer.size() - stream.avail_out;
+            output.append(buffer.data(), made);
+            if (result == Z_OK && made == 0 && stream.avail_in == prior_input)
+                throw std::runtime_error("native_vrs_frame_invalid");
+        } while (result != Z_STREAM_END);
+    } catch (...) {
+        inflateEnd(&stream);
+        throw;
+    }
+    inflateEnd(&stream);
+    return output;
+}
+
+}  // namespace
+
+// SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:129-134
+std::vector<std::byte> encode_journal_frame(std::span<const JournalRow> rows) {
+    FrameDeflater writer;
+    writer.write("{\"rows\":[");
+    bool first = true;
+    for (const auto& row : rows) {
+        if (!first) writer.write(",");
+        first = false;
+        const auto encoded = Json(Json::Array{
+            Json(row.sequence), Json(row.request_id), Json(row.body),
+            Json(row.fingerprint), Json(row.pair_id)}).canonical();
+        writer.write(encoded);
+    }
+    writer.write("],\"schema\":\"swegca-vrs2-frame-v1\"}");
+    return writer.finish();
+}
+
+// SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:136-177
+std::vector<JournalRow> decode_journal_frame(std::span<const std::byte> frame) {
+    const auto length = little_endian_length(frame);
+    if (length > maximum_payload_bytes) throw std::runtime_error("native_vrs_frame_too_large");
+    if (frame.size() != header_bytes + length + checksum_bytes)
+        throw std::runtime_error("native_vrs_journal_truncated");
+    const auto payload = frame.subspan(header_bytes, static_cast<std::size_t>(length));
+    Sha256 hash;
+    hash.update(payload);
+    const auto digest = hash.finish();
+    if (!std::equal(digest.begin(), digest.end(), frame.begin() + header_bytes + length))
+        throw std::runtime_error("native_vrs_frame_integrity_failed");
+    Json decoded;
+    try {
+        decoded = Json::parse(inflate_payload(payload));
+    } catch (const std::exception&) {
+        throw std::runtime_error("native_vrs_frame_invalid");
+    }
+    const auto* object = std::get_if<Json::Object>(&decoded.data);
+    if (!object || !decoded.contains("schema") ||
+        !decoded.contains("rows"))
+        throw std::runtime_error("native_vrs_frame_invalid");
+    const auto* schema = std::get_if<std::string>(&decoded.at("schema").data);
+    if (!schema || *schema != "swegca-vrs2-frame-v1")
+        throw std::runtime_error("native_vrs_frame_invalid");
+    const auto* values = std::get_if<Json::Array>(&decoded.at("rows").data);
+    if (!values) throw std::runtime_error("native_vrs_frame_invalid");
+    std::vector<JournalRow> rows;
+    rows.reserve(values->size());
+    for (const auto& value : *values) {
+        const auto* fields = std::get_if<Json::Array>(&value.data);
+        if (!fields || fields->size() != 5)
+            throw std::runtime_error("native_vrs_row_invalid");
+        try {
+            rows.push_back(JournalRow{fields->at(0).integer(), fields->at(1).string(),
+                fields->at(2).string(), fields->at(3).string(), fields->at(4).string()});
+        } catch (const std::exception&) {
+            throw std::runtime_error("native_vrs_row_invalid");
+        }
+    }
+    return rows;
+}
+
+}  // namespace swegca::vrs
