@@ -236,3 +236,17 @@ is unchanged and no native live main exists. After a successful handoff and
 receipt, the child removes its deployment script and marker, and the wrapper
 disables and removes its own unit and script. An actual reboot or SessionEnd
 has not yet occurred, so those later transitions remain unverified.
+
+## App-server connection boundary
+
+The documented `config/mcpServer/reload` method was reached over the local
+Codex CLI app-server control socket and returned successfully. Its status
+listed `swegca-vrs` with the current product's optional `session_id` input
+field. However, `mcpServer/tool/call` on this active desktop task ID returned
+`thread not found`: that socket belongs to a separate CLI app-server, not the
+desktop app-server that owns this task. The desktop process runs its own
+app-server child over private parent pipes. Thus the reload did not prove a
+refresh of the desktop tool binding, and the current app MCP call still
+returns `tool_request_failed`. The isolated stdio MCP and new wheel remain
+verified independently; desktop integration still needs a fresh connection
+after the post-SessionEnd config switch.
