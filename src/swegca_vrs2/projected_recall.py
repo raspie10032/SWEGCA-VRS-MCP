@@ -71,6 +71,8 @@ class ProjectedRecall:
 
     def _replay(self, identifier):
         if identifier not in self.replays:
+            if len(self.replays) % 32 == 0:
+                self._check_memory()
             replay = self.resident.exact_replay(identifier)
             if replay is None:
                 raise ValueError('cue_directory_exact_replay_missing:' + identifier)
@@ -112,6 +114,8 @@ class ProjectedRecall:
 
     def _current(self, identifier):
         if identifier not in self.current:
+            if len(self.current) % 64 == 0:
+                self._check_memory()
             exact = self._exact(identifier)
             # Natural ranking and local navigation need current VRS facts, but
             # per-cue strengths are used only to build cross-shard portals.
