@@ -269,8 +269,9 @@ On the copied 15,630-original native state under 4 GiB, zero swap and a
 for one match, 15.432 ms for 100 matches and 98.692 ms for 1,008 matches.
 The measurement is
 `evals/vrs22_context/results/first_ranked_original_replay_portal_index_source_20260922.json`.
-The 1 ms all-size gate still fails. This source candidate is not the installed
-wheel or active Codex MCP, and no VRS model evaluation was started.
+The 1 ms all-size gate still fails. At the time of this source measurement,
+the changed files were not yet in the installed wheel or active Codex MCP,
+and no VRS model evaluation was started.
 
 ## Natural Recall latency dissection
 
@@ -290,3 +291,39 @@ choosing an arbitrary first posting would therefore still fail the strict
 latency condition in this copy. The meaning of the first original relative
 to final Recall rank is pending explicit clarification; no ranking semantics
 were changed.
+
+## Storage-scan admission and installed candidate
+
+The 500 GB allocated-storage scan now rejects a directory walk or file stat
+error instead of counting an unknown allocation as zero. Two targeted source
+resource tests passed. This preserves the existing 500 GB ceiling, automatic
+shards and original episodes; it does not change Recall ranking.
+
+Product source commit `24b723a` was built into a separate offline wheel with
+SHA-256 `931e6b8aa25af3e26005b33415d6d53054219d82655eafb36e3dc219809f3ee0`.
+All 48 source, wheel and installed Python files matched byte for byte, with
+no extra installed product files or SQLite, Hermes or external filelock
+imports/dependencies. The installed wheel's natural first-ranked Replay
+receipt is
+`evals/vrs22_context/results/first_ranked_original_replay_storage_audit_wheel_20260922.json`:
+0.715 ms for one match, 15.736 ms for 100 and 95.699 ms for 1,008 under
+4 GiB, zero swap and 625 MB/s I/O limits. The all-size 1 ms gate remains
+false.
+
+The installed-wheel whole-path selftest passed at
+`/var/tmp/vrs22-whole-path-selftest-storage-audit-r2-20260922/receipt.json`
+(SHA-256 `fbf5a2ff734bd4ba1a6059e4a5780e223c359ac8aedb0232cfae242744d7d231`),
+and 20 grader regressions passed. The first selftest attempt inherited a
+relative `PYTHONPATH=src` into its isolated fixture workspace, shadowing the
+installed package; the clean-environment rerun passed. The evaluation runner
+now pins the new wheel and its failing performance receipt, so its preflight
+still does not allow a VRS model call.
+
+The persistent `swegca-vrs22-sessionend-handoff.service` now runs this new
+installed wheel. Its supervisor and child are live under the 4 GiB, zero-swap,
+625 MB/s cgroup. The armed SessionEnd marker is still absent; the active
+Codex state, hooks and MCP were not switched. The separate native shadow
+tailer remains active. A concurrent live audit of its current prefix passed:
+40,302 transcript lines, 35,064 expected original observations, two valid
+post-cursor originals, zero missing, unexpected or changed originals, and no
+SQLite module loaded (`/var/tmp/vrs22-native-shadow-live-audit-20260922-r2.json`).
