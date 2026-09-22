@@ -225,21 +225,28 @@ class ShardedMain:
             raise ValueError('snapshot_mismatch')
         query = text_field(query, 'query', 4096)
         exact_match = re.fullmatch(r'\s*(memory:[0-9a-f]{64})\s*', query.casefold())
-        exact = self.resident.exact_replay(exact_match.group(1)) if exact_match else None
-        if exact is not None:
-            replay = exact['replay']
-            kind = exact['kind']
-            if kind in tuple(exclude_kinds or ()):
-                exact = None
-        if exact is not None:
-            replay = exact['replay']
-            signal = DejaVuSignal(pair_snapshot, query, (replay.episode_id,),
-                                  (replay.episode_id,), 1.0, 1)
-            candidate = RecallCandidate(replay.episode_id, (replay.episode_id,), 1.0,
-                                        exact['revision'],
-                                        replay.verification_state,
-                                        tuple(step.outcome for step in replay.steps))
+        columns = (self.resident.exact_recall_columns(exact_match.group(1))
+                   if exact_match else None)
+        if columns is not None and columns['kind'] in tuple(exclude_kinds or ()):
+            columns = None
+        if columns is not None:
+            identifier = columns['episode_id']
+            signal = DejaVuSignal(pair_snapshot, query, (identifier,),
+                                  (identifier,), 1.0, 1)
+            candidate = RecallCandidate(identifier, (identifier,), 1.0,
+                                        columns['revision'], columns['verification_state'],
+                                        columns['outcomes'])
             recalled = RecallResult(query, (candidate,), pair_snapshot)
+            exact = self.resident.exact_replay(identifier)
+            if (exact is None or exact['revision'] != columns['revision']
+                    or exact['replay'].verification_state != columns['verification_state']
+                    or tuple(step.outcome for step in exact['replay'].steps) != columns['outcomes']
+                    or exact['replay'].source_addresses != columns['source_addresses']
+                    or tuple(exact['cues']) != tuple(columns['cues'])
+                    or any(exact[key] != columns[key] for key in
+                           ('kind', 'proposition', 'polarity', 'asks', 'description'))):
+                raise ValueError('recall_columns_replay_mismatch')
+            replay = exact['replay']
             replayed = ReplayResult(query, (replay,))
             through_replay_ns = time.perf_counter_ns() - began
             through_replay_cpu_ns = time.thread_time_ns() - cpu_began

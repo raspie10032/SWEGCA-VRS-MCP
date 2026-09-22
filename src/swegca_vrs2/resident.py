@@ -675,6 +675,9 @@ class Resident:
     def exact_replay(self, identifier):
         return self.exact.get(identifier)
 
+    def exact_recall_columns(self, identifier):
+        return self.exact.peek(identifier)
+
     def backfill_exact(self, budget=256):
         """Incrementally add pre-repair experiences without delaying startup."""
         remaining, added = max(0, int(budget)), 0
@@ -905,7 +908,9 @@ class Resident:
 
     def current_vrs(self, exact, *, include_cue_strengths=True):
         """Current VRS facts for an exact capsule without opening a cold checkpoint."""
-        shard, identifier, row = exact['shard'], exact['replay'].episode_id, exact['shard_row']
+        shard = exact['shard']
+        identifier = exact.get('episode_id') or exact['replay'].episode_id
+        row = exact['shard_row']
         if shard == 'main':
             owner = self.primary
         else:
@@ -915,7 +920,7 @@ class Resident:
             node = owner.graph.nodes.episode_node.get(identifier)
             pending = stable is None or node is None or node >= stable.node_count
             weights = getattr(stable, 'record_weight', None) if stable is not None else None
-            source = exact['replay'].source_addresses[0]
+            source = (exact.get('source_addresses') or exact['replay'].source_addresses)[0]
             cue_strengths = ()
             if include_cue_strengths:
                 center = owner.graph.nodes.episode_node.get(identifier)

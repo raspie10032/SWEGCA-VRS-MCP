@@ -39,6 +39,7 @@ class ProjectedRecall:
         self.exclude = frozenset(exclude_kinds or ())
         self.region_scope = region_scope
         self.exact = {}
+        self.replays = {}
         self.current = {}
         self.postings = {}
 
@@ -49,11 +50,29 @@ class ProjectedRecall:
         if identifier not in self.exact:
             if len(self.exact) % 256 == 0:
                 self._check_memory()
-            exact = self.resident.exact_replay(identifier)
+            exact = self.resident.exact_recall_columns(identifier)
             if exact is None:
                 raise ValueError('cue_directory_exact_replay_missing:' + identifier)
             self.exact[identifier] = exact
         return self.exact[identifier]
+
+    def _replay(self, identifier):
+        if identifier not in self.replays:
+            replay = self.resident.exact_replay(identifier)
+            if replay is None:
+                raise ValueError('cue_directory_exact_replay_missing:' + identifier)
+            columns = self._exact(identifier)
+            if (replay['shard'] != columns['shard']
+                    or replay['revision'] != columns['revision']
+                    or replay['replay'].verification_state != columns['verification_state']
+                    or tuple(step.outcome for step in replay['replay'].steps) != columns['outcomes']
+                    or tuple(replay['cues']) != tuple(columns['cues'])
+                    or replay['replay'].source_addresses != columns['source_addresses']
+                    or any(replay[key] != columns[key] for key in
+                           ('kind', 'proposition', 'polarity', 'asks', 'description'))):
+                raise ValueError('recall_columns_replay_mismatch')
+            self.replays[identifier] = replay['replay']
+        return self.replays[identifier]
 
     @staticmethod
     def _kind(exact):
@@ -308,7 +327,6 @@ class ProjectedRecall:
                 continue
             own = max((weight for region, weight in current['memberships']
                        if region == source_region), default=1.0)
-            replay = exact['replay']
             for target_shard in shards:
                 if target_shard == source_shard:
                     continue
@@ -329,7 +347,7 @@ class ProjectedRecall:
                         version=self.pair_snapshot,
                         rule='original_experience_strength_mass_membership'))
                     portal['keys'].append(dict(episode_id=identifier,
-                        revision=exact['revision'], outcome=replay.steps[0].outcome,
+                        revision=exact['revision'], outcome=exact['outcomes'][0],
                         weights=[round(float(own), 6), round(float(weight), 6)],
                         strength=round(float(current['strength']), 6), source_shard=source_shard))
         result = []
@@ -356,6 +374,12 @@ class ProjectedRecall:
         identifiers = {identifier for cue in matched_all for identifier in self.matches(cue)}
         lexical_ids = {identifier for cue in selected for identifier in self.matches(cue)}
 
+        # Déjà vu is the completed cue-to-original-address lookup. Recall
+        # builds candidate metadata from derived columns; original observation
+        # bytes are read only by Replay below.
+        signal = DejaVuSignal(self.pair_snapshot, self.query, tuple(activation_cues),
+            matched_all, len(matched_all) / max(1, len(activation_cues)), len(identifiers))
+
         candidates = []
         current_cues = set(activation_cues)
         for identifier in identifiers:
@@ -364,8 +388,7 @@ class ProjectedRecall:
             matched_cues = tuple(cue for cue in exact['cues'] if cue in current_cues)
             candidates.append(RecallCandidate(identifier, matched_cues,
                 len(matched_cues) / len(episode_cues.union(current_cues)), exact['revision'],
-                exact['replay'].verification_state,
-                tuple(step.outcome for step in exact['replay'].steps)))
+                exact['verification_state'], exact['outcomes']))
         candidates.sort(key=lambda row: (-row.cue_overlap, row.episode_id))
 
         idf = {cue: math.log(1.0 + (total - fanout[cue] + 0.5) / (fanout[cue] + 0.5))
@@ -373,10 +396,6 @@ class ProjectedRecall:
         candidates, scope = self._scope_candidates(
             candidates, selected, informative, idf, len(lexical_ids))
         scoped_ids = {row.episode_id for row in candidates}
-        matched = tuple(cue for cue in activation_cues
-                        if any(identifier in scoped_ids for identifier in self.matches(cue)))
-        signal = DejaVuSignal(self.pair_snapshot, self.query, tuple(activation_cues), matched,
-            len(matched) / max(1, len(activation_cues)), len(scoped_ids))
         roots, paths = self._navigation(candidates, selected, scope)
         average = self.resident.logical_cue_total() / total if total else 1.0
         query_tokens = [token.casefold() for token in re.findall(r'\w+', self.query)]
@@ -403,7 +422,7 @@ class ProjectedRecall:
         recalled = RecallResult(self.query, candidates, self.pair_snapshot)
         episodes = []
         for candidate in candidates:
-            source = self._exact(candidate.episode_id)['replay']
+            source = self._replay(candidate.episode_id)
             episodes.append(ReplayedEpisode(candidate.episode_id, candidate.matched_cues,
                 source.steps, source.source_addresses, source.verification_state))
         replayed = ReplayResult(self.query, tuple(episodes))
@@ -416,7 +435,7 @@ class ProjectedRecall:
         for proposition in active_propositions:
             active = [identifier for identifier in self._proposition_ids(proposition)
                       if self._current(identifier)['superseded_by'] is None]
-            polarities = {self._exact(identifier)['polarity']
+            polarities = {self._replay(identifier).steps[0].observation.get('evidence_polarity')
                           for identifier in active}
             if polarities == {'support', 'refute'}:
                 opponents[proposition] = tuple(sorted(active))

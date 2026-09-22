@@ -688,7 +688,7 @@ class ExactReplayStore:
             raise ValueError('exact_replay_observation_corrupt')
         return body, observation_payload, cue_payload
 
-    def _get_locked(self, identifier):
+    def _location_locked(self, identifier):
         key = _key(identifier)
         located = None
         for slot_power in self.slot_powers:
@@ -708,6 +708,55 @@ class ExactReplayStore:
             _, offset, length, checksum = SLOT.unpack(mapping[slot:slot + SLOT.size])
             located = (offset, length, checksum)
             break
+        if located is None:
+            return None
+        return located
+
+    def _peek_locked(self, identifier):
+        """Read Recall columns without touching the original observation bytes.
+
+        The complete capsule checksum and original source are verified by
+        ``get`` at Replay. A malformed column cannot become accepted evidence.
+        """
+        located = self._location_locked(identifier)
+        if located is None:
+            return None
+        offset, length, checksum = located
+        raw = os.pread(self.data_read_fd, CAPSULE.size + PAYLOAD.size, offset)
+        if len(raw) != CAPSULE.size + PAYLOAD.size:
+            raise ValueError('exact_replay_capsule_truncated')
+        stored_length, stored_crc = CAPSULE.unpack(raw[:CAPSULE.size])
+        if stored_length != length or stored_crc != checksum:
+            raise ValueError('exact_replay_capsule_index_mismatch')
+        replay_length, observation_length, cue_length = PAYLOAD.unpack(raw[CAPSULE.size:])
+        if PAYLOAD.size + replay_length + observation_length + cue_length != length:
+            raise ValueError('exact_replay_capsule_corrupt')
+        head = os.pread(self.data_read_fd, replay_length,
+                        offset + CAPSULE.size + PAYLOAD.size)
+        cues = os.pread(self.data_read_fd, cue_length,
+                        offset + CAPSULE.size + PAYLOAD.size + replay_length + observation_length)
+        if len(head) != replay_length or len(cues) != cue_length:
+            raise ValueError('exact_replay_capsule_truncated')
+        try:
+            body = json.loads(head)
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            raise ValueError('exact_replay_capsule_corrupt') from None
+        if body.get('episode_id') != identifier or body.get('schema') != 'swegca-vrs2-replay-capsule-v4':
+            raise ValueError('exact_replay_capsule_identity_mismatch')
+        return dict(episode_id=identifier, shard=body['shard'], shard_row=int(body['shard_row']),
+                    revision=body['revision'], verification_state=body['verification_state'],
+                    outcomes=(body['step']['outcome'],), cue_count=int(body['cue_count']),
+                    cues=LazyCues(cues, body['cue_count']), kind=body['kind'],
+                    proposition=body.get('proposition'), polarity=body.get('polarity'),
+                    asks=body['asks'], description=body['description'],
+                    source_addresses=tuple(body['source_addresses']))
+
+    def peek(self, identifier):
+        with self.lock:
+            return self._peek_locked(identifier)
+
+    def _get_locked(self, identifier):
+        located = self._location_locked(identifier)
         if located is None:
             return None
         offset, length, checksum = located

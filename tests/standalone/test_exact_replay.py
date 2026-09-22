@@ -74,6 +74,40 @@ def test_disk_exact_address_returns_original_replay_without_resident_index(tmp_p
         main.close()
 
 
+def test_recall_columns_do_not_read_original_observation_before_replay(tmp_path, monkeypatch):
+    main = Main(tmp_path / 'main', allow_ingest=True)
+    try:
+        stored = main.ingest(dict(request_id='columns', text='원경험본문' * 4000,
+            source='source:columns', revision='r2', outcome='uncertain'))
+        identifier = stored['episode_id']
+        exact = ExactReplayStore(tmp_path / 'exact', slot_power=8)
+        exact.put(identifier, 'main', 0, main.memory.episode(identifier))
+        with exact.lock:
+            offset, length, _ = exact._location_locked(identifier)
+        with open(exact.data_path, 'rb') as stream:
+            stream.seek(offset + CAPSULE.size)
+            header_length, observation_length, _ = PAYLOAD.unpack(stream.read(PAYLOAD.size))
+        original_start = offset + CAPSULE.size + PAYLOAD.size + header_length
+        original_stop = original_start + observation_length
+        real_pread = os.pread
+
+        def no_original_read(fd, count, at):
+            if fd == exact.data_read_fd and at < original_stop and at + count > original_start:
+                raise AssertionError('Replay observation read during Recall columns')
+            return real_pread(fd, count, at)
+
+        with monkeypatch.context() as patcher:
+            patcher.setattr('swegca_vrs2.exact_replay.os.pread', no_original_read)
+            columns = exact.peek(identifier)
+        assert columns['episode_id'] == identifier
+        assert columns['revision'] == 'r2' and columns['outcomes'] == ('uncertain',)
+        assert tuple(columns['cues']) == main.memory.episode(identifier).cues
+        assert exact.get(identifier)['replay'].steps[0].observation['text'] == '원경험본문' * 4000
+        exact.close()
+    finally:
+        main.close()
+
+
 def test_full_exact_segments_expand_without_changing_replay_addresses(tmp_path):
     main = Main(tmp_path / "main", allow_ingest=True)
     try:

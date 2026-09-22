@@ -186,7 +186,7 @@ def test_persistent_source_route_keeps_revision_in_cold_original_shard(tmp_path)
         primary.close()
 
 
-def test_exact_replay_opens_only_target_and_same_proposition_shards(tmp_path):
+def test_exact_replay_opens_only_target_and_same_proposition_shards(tmp_path, monkeypatch):
     primary = Main(tmp_path / "main", allow_ingest=True)
     resident = Resident(primary, {"target": tmp_path / "target", "unrelated": tmp_path / "unrelated"},
                         hot_limit=1)
@@ -202,6 +202,23 @@ def test_exact_replay_opens_only_target_and_same_proposition_shards(tmp_path):
         resident.evict("unrelated"); resident.settle()
         assert not resident.hot and not resident.warm
 
+        import swegca_vrs2.sharded as sharded_module
+        real_result = sharded_module.RecallResult
+        real_replay = resident.exact_replay
+        reached_recall = False
+
+        def recall_result(*args, **kwargs):
+            nonlocal reached_recall
+            result = real_result(*args, **kwargs)
+            reached_recall = True
+            return result
+
+        def replay_after_recall(identifier):
+            assert reached_recall
+            return real_replay(identifier)
+
+        monkeypatch.setattr(sharded_module, 'RecallResult', recall_result)
+        monkeypatch.setattr(resident, 'exact_replay', replay_after_recall)
         sharded = ShardedMain(primary, resident)
         exact = sharded.recall(target, resident.logical_snapshot())
         assert exact["receipt"]["activation"].replay.episodes[0].episode_id == target
@@ -273,6 +290,41 @@ def test_natural_recall_reads_cold_cue_and_proposition_shards_without_checkpoint
         assert not resident.wanted
         assert not resident.hot and not resident.warm
         assert "unrelated" not in resident.warm and "unrelated" not in resident.hot
+    finally:
+        resident.close()
+        primary.close()
+
+
+def test_projected_natural_replay_starts_after_recall_result(tmp_path, monkeypatch):
+    import swegca_vrs2.projected_recall as projection
+
+    primary = Main(tmp_path / 'main', allow_ingest=True)
+    resident = Resident(primary, {}, hot_limit=0)
+    try:
+        resident.ingest(dict(request_id='stage-source', text='stageanchor observation',
+                             source='probe:stage', revision='1'))
+        real_result = projection.RecallResult
+        real_replay = resident.exact_replay
+        reached_recall = False
+        replayed = []
+
+        def recall_result(*args, **kwargs):
+            nonlocal reached_recall
+            result = real_result(*args, **kwargs)
+            reached_recall = True
+            return result
+
+        def replay_after_recall(identifier):
+            assert reached_recall
+            replayed.append(identifier)
+            return real_replay(identifier)
+
+        monkeypatch.setattr(projection, 'RecallResult', recall_result)
+        monkeypatch.setattr(resident, 'exact_replay', replay_after_recall)
+        root = ShardedMain(primary, resident).recall('stageanchor',
+                                                      resident.logical_snapshot())
+        assert replayed
+        assert {row.episode_id for row in root['receipt']['activation'].replay.episodes} == set(replayed)
     finally:
         resident.close()
         primary.close()
