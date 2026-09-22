@@ -282,7 +282,7 @@ def test_replay_diagnostic_is_not_misgraded_as_stage_transition():
     assert audit["transition_sample_valid"] is False
     assert audit["replay_diagnostic_valid"] is True
     assert audit["ready"] is False
-    assert {100, 1008} <= {row["matches"] for row in audit["replay_diagnostic_violations"]}
+    assert {1, 100, 1008} == {row["matches"] for row in audit["replay_diagnostic_ms"]}
     assert audit["all_size_transition_proven"] is False
     assert audit["billion_parameter_unit_defined"] is False
 

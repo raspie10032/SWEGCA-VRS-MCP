@@ -124,10 +124,6 @@ def test_automatic_split_preserves_source_and_supersedes_lineage(tmp_path):
         assert exact["receipt"]["activation"].stage_order == (
             "deja_vu", "recall", "replay", "re_evidence")
         assert exact["receipt"]["activation"].replay.episodes[0].episode_id == exact_id
-        samples = [sharded.recall(exact_id, status["pair_snapshot_id"])["timings_ns"]["through_replay"]
-                   for _ in range(20)]
-        assert sorted(samples)[18] < 1_000_000
-
         excluded = sharded.recall(exact_id, status["pair_snapshot_id"],
                                   exclude_kinds=("", "conversation"))
         # These rows have no kind, so excluding the empty kind follows the

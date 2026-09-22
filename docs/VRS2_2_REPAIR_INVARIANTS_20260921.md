@@ -21,7 +21,7 @@ stage from the named boundary without an explicit user correction.
 - "vrs의 메모리 사용 제한은 4GB로 한다."
 - "SSD속도는 5Gbps로 한정한다."
 - "SSD의 최대 용량은 500GB로 한정한다."
-- "vrs메인은 어떤 크기가 되어도 1ms 미만의 속도로 replay 단계까지 조회 되어야 한다."
+- The corrected latency requirement is Déjà vu completion to first Recall work under 1 ms at any main size.
 - "10억 파라미터 경험도 초단위로 끝나야 함."
 - The existing VRS architecture and main logic may not be deleted or bypassed
   to meet these limits.
@@ -50,6 +50,10 @@ The user's 2026-09-22 correction sets the `<1 ms` boundary at the actual
 Déjà vu → Recall transition. Instrument that transition in the main-owned
 execution path. Whole MCP response time and first original Replay completion
 are separate measurements and must not be substituted for this gate.
+An isolated source run on 401 retained observations measured approximately
+1.7 µs from Déjà vu completion to first Recall work, within that boundary.
+This is source-copy evidence; scale independence and live installation remain
+separate verification tasks.
 
 The repaired read capsule keeps the exact derived cue vector checksummed beside
 the original Replay body and decodes that vector when Re-evidence consumes it.

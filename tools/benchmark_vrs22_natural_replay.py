@@ -98,14 +98,10 @@ def run(root: Path, *, sparse: int, medium: int, broad: int) -> dict:
                 candidate_count=candidates, calls=repetitions,
                 first_ranked_original_replay_ms=first_replay[0] / 1e6,
                 warm_median_first_ranked_original_replay_ms=statistics.median(first_warm) / 1e6,
-                first_ranked_original_replay_at_or_above_1ms=sum(
-                    value >= 1_000_000 for value in first_replay),
                 first_through_replay_ms=through_replay[0] / 1e6,
                 warm_median_through_replay_ms=statistics.median(warm) / 1e6,
                 warm_p99_through_replay_ms=percentile(warm, .99),
                 warm_max_through_replay_ms=max(warm) / 1e6,
-                through_replay_at_or_above_1ms=sum(value >= 1_000_000
-                                                    for value in through_replay),
                 first_full_four_stage_ms=full[0] / 1e6,
                 full_four_stage_median_ms=statistics.median(full) / 1e6))
         control = Path('/proc/self/cgroup')

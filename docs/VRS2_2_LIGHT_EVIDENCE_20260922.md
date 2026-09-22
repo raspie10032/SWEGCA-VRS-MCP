@@ -47,6 +47,6 @@ and 37 related standalone tests passed. The complete standalone suite passed
 thread.
 
 These are measurements on 15,630 records. They do not establish a one-billion
-VRS-parameter processing bound or a universal <1 ms Replay bound; the user's
+VRS-parameter processing bound or a universal Déjà vu → Recall bound; the user's
 definition of a VRS parameter is not supplied, so records are not substituted
 for it.

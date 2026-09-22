@@ -11,12 +11,10 @@
       "calls": 3,
       "first_ranked_original_replay_ms": 0.694656,
       "warm_median_first_ranked_original_replay_ms": 0.2990225,
-      "first_ranked_original_replay_at_or_above_1ms": 0,
       "first_through_replay_ms": 0.698386,
       "warm_median_through_replay_ms": 0.3003375,
       "warm_p99_through_replay_ms": 0.330603,
       "warm_max_through_replay_ms": 0.330603,
-      "through_replay_at_or_above_1ms": 0,
       "first_full_four_stage_ms": 0.811818,
       "full_four_stage_median_ms": 0.414004
     },
@@ -28,12 +26,10 @@
       "calls": 3,
       "first_ranked_original_replay_ms": 19.158896,
       "warm_median_first_ranked_original_replay_ms": 15.0364515,
-      "first_ranked_original_replay_at_or_above_1ms": 3,
       "first_through_replay_ms": 19.210756,
       "warm_median_through_replay_ms": 15.086932,
       "warm_p99_through_replay_ms": 15.092967,
       "warm_max_through_replay_ms": 15.092967,
-      "through_replay_at_or_above_1ms": 3,
       "first_full_four_stage_ms": 29.716228,
       "full_four_stage_median_ms": 26.042813
     },
@@ -45,12 +41,10 @@
       "calls": 3,
       "first_ranked_original_replay_ms": 118.131138,
       "warm_median_first_ranked_original_replay_ms": 90.479899,
-      "first_ranked_original_replay_at_or_above_1ms": 3,
       "first_through_replay_ms": 118.760444,
       "warm_median_through_replay_ms": 91.1566855,
       "warm_p99_through_replay_ms": 91.554899,
       "warm_max_through_replay_ms": 91.554899,
-      "through_replay_at_or_above_1ms": 3,
       "first_full_four_stage_ms": 172.648337,
       "full_four_stage_median_ms": 133.011792
     }

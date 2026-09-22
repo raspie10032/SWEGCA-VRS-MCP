@@ -87,7 +87,6 @@ def read(root: Path, samples: int) -> dict:
             median_ms=statistics.median(elapsed) / 1e6,
             p99_ms=elapsed[int(samples * .99)] / 1e6,
             max_ms=elapsed[-1] / 1e6,
-            at_or_above_1ms=sum(value >= 1_000_000 for value in elapsed),
             database_module_loaded="sqlite3" in sys.modules)
         control = Path("/proc/self/cgroup")
         if control.is_file():

@@ -41,7 +41,7 @@ The earlier light-episode candidate's three 16-worker walls were 2.536820,
 2.581389 and 2.555257 seconds on the same copied state and limits. These
 runs are not an interleaved controlled experiment, so their wall-time
 difference is a measured indication rather than a universal speedup bound.
-Neither this corpus nor the test suite establishes the all-size <1 ms Replay
+Neither this corpus nor the test suite establishes the all-size <1 ms Déjà vu → Recall
 guarantee or the one-billion VRS-parameter seconds requirement. A VRS
 parameter must not be replaced with a record, node, edge, token, or byte.
 

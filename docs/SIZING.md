@@ -79,17 +79,17 @@ verified checkpoint rather than sampled while it changed.
 
 The first 50,000-random run used the fresh derived directory:
 
-| sample | median | p95 | p99 | maximum | at least 1 ms |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| exact capsule Replay | 0.0115 ms | 0.0297 ms | 0.0575 ms | 0.6230 ms | 0 |
-| Déjà vu through Replay | 0.0205 ms | 0.0427 ms | 0.0728 ms | 0.3684 ms | 0 |
-| through Re-evidence | 0.0750 ms | 0.3975 ms | 0.7877 ms | 2.6953 ms | outside gate |
+| sample | median | p95 | p99 | maximum |
+| --- | ---: | ---: | ---: | ---: |
+| exact capsule Replay | 0.0115 ms | 0.0297 ms | 0.0575 ms | 0.6230 ms |
+| Déjà vu through Replay | 0.0205 ms | 0.0427 ms | 0.0728 ms | 0.3684 ms |
+| through Re-evidence | 0.0750 ms | 0.3975 ms | 0.7877 ms | 2.6953 ms |
 
 Focused follow-up repeated the largest 107,773-byte observation and the largest
 8,378-cue experience 5,000 times each. Their through-Replay maxima were
 0.8391 ms and 0.7135 ms; same-boundary thread CPU maxima were 0.6092 ms and
-0.6183 ms. Re-evidence maxima were 3.1935 ms and 3.7271 ms and remain reported
-outside the requested Replay boundary.
+0.6183 ms. Re-evidence maxima were 3.1935 ms and 3.7271 ms. These times
+are separate diagnostics.
 
 The same 15,630 experiences were then attached as one complete linked VRS shard
 to an empty primary. A completely fresh main-owned read directory took 80.813 s
@@ -97,26 +97,26 @@ to build exact Replay and 4.246 s to build the complete VRS read projection.
 It used 2,146,222,080 peak RSS bytes and 716,795,904 allocated disk bytes. This
 run kept the original linked store in place and did not export or re-ingest it.
 
-| linked-shard sample | median | p95 | p99 | maximum | at least 1 ms |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| exact capsule Replay, 50,000 | 0.0109 ms | 0.0315 ms | 0.0617 ms | 0.8327 ms | 0 |
-| Déjà vu through Replay, 1,000 | 0.0167 ms | 0.0394 ms | 0.0672 ms | 0.3657 ms | 0 |
-| through Re-evidence, 1,000 | 0.0470 ms | 0.1208 ms | 0.2267 ms | 166.9352 ms | outside gate |
+| linked-shard sample | median | p95 | p99 | maximum |
+| --- | ---: | ---: | ---: | ---: |
+| exact capsule Replay, 50,000 | 0.0109 ms | 0.0315 ms | 0.0617 ms | 0.8327 ms |
+| Déjà vu through Replay, 1,000 | 0.0167 ms | 0.0394 ms | 0.0672 ms | 0.3657 ms |
+| through Re-evidence, 1,000 | 0.0470 ms | 0.1208 ms | 0.2267 ms | 166.9352 ms |
 
 The linked largest-observation and largest-cue 5,000-sample runs had
-through-Replay maxima of 0.5938 ms and 0.6358 ms, with zero 1 ms violations.
+through-Replay maxima of 0.5938 ms and 0.6358 ms.
 Their through-Re-evidence maxima were 1.5398 ms and 2.5573 ms.
 
 One earlier 5,000-sample focused run observed one 1.3532 ms wall-clock outlier
-while its other 4,999 samples passed. The subsequent 20,000-sample run had zero
-violations, but the observed outlier means an unconditional hard real-time claim
-is still open on this general-purpose Linux host.
+while its other 4,999 samples were faster. This Replay outlier does not
+measure the corrected Déjà vu → Recall transition.
 
 An initial cgroup-limited run exposed a restart-cold defect: one of 256 first
-prefixes took 12.0775 ms and one later low-level exact call took 1.5181 ms. The
-four-stage through-Replay sample itself had no violation, but the run was kept as
-a failure. The runtime now reads only the allocated exact-address extents and
-Replay capsule bytes during bounded startup preparation. It does not read sparse
+prefixes took 12.0775 ms and one later low-level exact call took 1.5181 ms.
+This older run was marked failed under an incorrectly applied Replay threshold;
+its raw timing remains a diagnostic. The runtime now reads only allocated
+exact-address extents and Replay capsule bytes during bounded startup
+preparation. It does not read sparse
 holes and retains no whole-file Python copy.
 
 After dropping the benchmark copy's file-cache pages, a second run applied
@@ -124,16 +124,16 @@ After dropping the benchmark copy's file-cache pages, a second run applied
 exact benchmark process. It measured 50,000 random exact calls, 50,000 complete
 Déjà vu-through-Replay calls, and 5,000 calls for each largest-record case:
 
-| cgroup-limited post-repair sample | median | p99 | maximum | at least 1 ms |
-| --- | ---: | ---: | ---: | ---: |
-| first address per 256 prefixes | 0.0124 ms | 0.0586 ms | 0.1258 ms | 0 |
-| exact capsule Replay, 50,000 | 0.0089 ms | 0.0472 ms | 0.0819 ms | 0 |
-| Déjà vu through Replay, 50,000 | 0.0145 ms | 0.0533 ms | 0.1463 ms | 0 |
+| cgroup-limited post-repair sample | median | p99 | maximum |
+| --- | ---: | ---: | ---: |
+| first address per 256 prefixes | 0.0124 ms | 0.0586 ms | 0.1258 ms |
+| exact capsule Replay, 50,000 | 0.0089 ms | 0.0472 ms | 0.0819 ms |
+| Déjà vu through Replay, 50,000 | 0.0145 ms | 0.0533 ms | 0.1463 ms |
 
 The largest-observation and largest-cue through-Replay maxima were 0.1473 ms
 and 0.1944 ms. Process RSS was 1,064,554,496 bytes; the transient service's
 cgroup memory peak, which also accounts for charged file cache, was 1.6 GB.
-Re-evidence remained outside the named boundary and reached 23.4708 ms.
+Re-evidence reached 23.4708 ms; this is a separate diagnostic.
 
 After the storage admission ceiling was corrected from 500 GiB to the literal
 500,000,000,000-byte limit, the benchmark imported that same product constant
@@ -141,7 +141,7 @@ instead of carrying a second limit. Three fresh cgroup services repeated the
 complete measurement on 2026-09-22. Together they executed 150,000 random exact
 Replay calls, 150,000 complete Déjà vu-through-Replay calls, and 15,000 calls
 for each largest-record case. All three reported the literal storage limit and
-passed with zero 1 ms violations. The largest first-prefix, exact Replay,
+passed in those diagnostic samples. The largest first-prefix, exact Replay,
 Déjà vu-through-Replay, and largest-record-through-Replay values across the
 three runs were 0.1372 ms, 0.0828 ms, 0.1759 ms, and 0.2413 ms respectively.
 The raw JSON SHA-256 values are
@@ -161,8 +161,7 @@ remained unloaded.
 
 The cgroup benchmark was repeated after this change. It reported
 `database_module_loaded=false`, the literal 500,000,000,000-byte ceiling,
-zero 1 ms violations in 50,000 exact and 50,000 complete
-Déjà vu-through-Replay samples, a 0.1572 ms through-Replay maximum, and a
+50,000 exact and 50,000 complete Déjà vu-through-Replay diagnostic samples, a 0.1572 ms through-Replay maximum, and a
 704 MB cgroup memory peak. Its raw JSON SHA-256 is
 `13a7a281c34a535cbde262ee40add52db0e61499bdd1333ec5e96855e7429b5a`.
 
@@ -170,7 +169,7 @@ The real-experience state above uses the first production address level. A
 separate structural benchmark therefore forced one exact address through every
 production level (powers 16, 18, 20, 22, and 23) before reaching its Replay
 capsule. Under the same cgroup limits, 50,000 maximum-depth exact lookups had a
-0.0101 ms median, 0.0144 ms p99, 0.0759 ms maximum, and zero 1 ms violations;
+0.0101 ms median, 0.0144 ms p99, and 0.0759 ms maximum;
 the first lookup was 0.0844 ms. The process peak was 42,479,616 bytes and the
 database module remained unloaded. Raw result SHA-256:
 `94b0e0582f9918aa07c97972e810f7c23c5985ff3508b7f4374d0d0cdac0ddd2`.

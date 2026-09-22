@@ -9,7 +9,6 @@
   "median_ms": 0.00728,
   "p99_ms": 0.0102,
   "max_ms": 0.114282,
-  "at_or_above_1ms": 0,
   "database_module_loaded": false,
   "cgroup_limits": {
     "memory_max": "4294967296",

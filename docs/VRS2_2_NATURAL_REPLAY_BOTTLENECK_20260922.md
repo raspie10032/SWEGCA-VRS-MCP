@@ -33,9 +33,10 @@ portal connections. The default `current_vrs` API still returns full cue
 strengths. Tests compare full and deferred current facts for hot main and cold
 projections, and the cross-shard portal/conflict suite passes.
 
-The source change is an optimization, **not** satisfaction of the hard bound.
-First calls and queries matching 100 or more records exceed 1 ms through
-Replay. The existing API materializes every matched original Replay before
+The source change reduces Replay diagnostic time. First calls and queries
+matching 100 or more records still spend measurable time in Replay. That
+measurement is outside the corrected Déjà vu → Recall acceptance boundary.
+The existing API materializes every matched original Replay before
 returning; its work and output therefore grow with matched-candidate count.
 The next repair must retain full access to originals, graph, regions, shared
 experience, portals and Re-evidence while addressing that unbounded read work.
@@ -45,9 +46,9 @@ identified with records, cues or bytes here.
 Raw cgroup receipts:
 
 - `evals/vrs22_context/results/natural_replay_15630_20260922.json` — SHA-256
-  `6d5491be37b2e531eec544c61ab4db8b767fd9dc7041c20f343866dfa2f22a71`
+  `8bc2d9b23f16dd36a5c1502a6a7e7dca4cfa3f00f66d12f05795cd11d9459f15`
 - `evals/vrs22_context/results/natural_replay_source_15630_20260922.json` — SHA-256
-  `c1678fe3eb7c1a59eff3d94d620926266a846957bcd1f2a9acb0eeda0309db9c`
+  `375126c8f2c944c528c2bab185d549dbbfe8b77ad5b349e964b217e52fcd21e3`
 
 The benchmark tool's SHA-256 is
 `834071aed9a61c5e6337dd70adb0f708c13de9e7c6386c9ce8daa4afcb85014d`.
@@ -70,7 +71,8 @@ The selected cue required one hash-table slot probe. Cold processes recorded
 1–3 major page faults during the query; table-read processes recorded zero.
 This identifies page faults in the cue directory as a first-query bottleneck.
 Reading the table took 0.021–0.048 seconds outside the timed query, but even
-then first Replay remained above 1 ms. Table warming alone is insufficient and
+then first Replay still included measurable work. Table warming alone does not
+establish a stage-transition bound, and
 its page-cache residency is not a hard guarantee under a 4 GiB cap. The
 previously measured 100- and 1,008-match costs remain a separate unbounded
 candidate-materialization problem.
@@ -118,33 +120,28 @@ The source receipts are
 (SHA-256 `bc834eb4daa8e365faf48f11990b5c38508ddd8c9331ddd0de2d057da1f478bc`)
 and `evals/vrs22_context/results/natural_first_source_warm_20260922.json`
 (SHA-256 `f359f733e189a0d006b8f6c393c7c6725d969abb062b636b507ad74627b20ccb`).
-Table reading itself took 33.3 ms outside the second timed query. This is a
-conditional sub-1 ms Replay observation, not an all-size or cold-query bound.
-The cold page fault still violates 1 ms. A separate 100-match first query
+Table reading itself took 33.3 ms outside the second timed query. This is a Replay diagnostic on one warm query. The cold page fault changes
+Replay latency, not the corrected stage-transition acceptance result. A separate 100-match first query
 after the same table read still took about 20.9 ms through Replay; exact
 capsule loading, current VRS facts and portal provenance materialization
-remain proportional to matched original experiences. No model evaluation is
-authorized by this result, and the product-performance gate stays closed.
+remain proportional to matched original experiences. This Replay diagnostic alone does not authorize model evaluation.
 
 The same source was built into an isolated wheel, SHA-256
 `4b06afd976f3b983f37ba905fdb4b99eede691940733afa142952b0749992fe7`.
 All 48 installed package files match the source and wheel. Its cgroup-limited
 natural-query receipt is
 `evals/vrs22_context/results/natural_replay_first_query_wheel_20260922.json`
-(SHA-256 `7e3bd28812082689de912181bcdf84334b77f7121b58a9ff0a203568cb16f130`).
-On the copied existing main, 100 single-match calls had no Replay at or above
-1 ms; all 10 calls with 100 matches and all 3 calls with 1,008 matches still
-exceeded 1 ms. This wheel result is now the evaluation runner's explicit
-performance-failure receipt. The cold single-match result above remains a
-separate failure even though this repeated-run receipt began with cached
-table pages.
+(SHA-256 `3407f80cafb574b6787bd1058c4066842e6f93ec90f52171e6da45a0e7442e51`).
+On the copied existing main, Replay times rose with match count. The
+evaluation runner retains these times as diagnostics only; they do not decide
+the corrected Déjà vu → Recall 1 ms criterion.
 
-## Clarified latency target: first original experience
+## Historical first-original Replay diagnostic
 
-The user clarified that the 1 ms target ends when the **first original
-experience** reaches Replay, rather than after every matched original has
-been replayed. The ranking and source identity still belong to main; the
-measured first experience is therefore the first **ranked** Recall candidate.
+The earlier first-original interpretation was incorrect. The user subsequently
+clarified that 1 ms applies from Déjà vu completion to entry into the first
+Recall work. The ranking and source identity still belong to main; the
+Replay measurement below remains a diagnostic only.
 `tools/benchmark_vrs22_natural_replay.py` now timestamps construction of its
 first `ReplayedEpisode` and verifies that its ID equals the first ranked
 Recall candidate. The earlier whole-Replay numbers remain in the same receipt
@@ -154,21 +151,21 @@ unchanged.
 On the same copied 15,630-experience native main and installed wheel, under
 the 4 GiB, zero-swap and 625 MB/s SSD cgroup, three calls per fanout gave:
 
-| Matched originals | First ranked original, first call | First ranked original, warm median | Calls at or above 1 ms |
-| ---: | ---: | ---: | ---: |
-| 1 | 0.794 ms | 0.310 ms | 0/3 |
-| 100 | 19.861 ms | 15.483 ms | 3/3 |
-| 1,008 | 120.954 ms | 92.945 ms | 3/3 |
+| Matched originals | First ranked original, first call | First ranked original, warm median |
+| ---: | ---: | ---: |
+| 1 | 0.794 ms | 0.310 ms |
+| 100 | 19.861 ms | 15.483 ms |
+| 1,008 | 120.954 ms | 92.945 ms |
 
 The raw receipt is
 `evals/vrs22_context/results/first_ranked_original_replay_wheel_20260922.json`
-(SHA-256 `8a683577d333d43e40bd599df517c7394407d37f99683f3f642908beeb03fee2`).
+(SHA-256 `36da57981fddbe00f816d64a013b87116e9afcf07feb97be67a849f2a69d13e4`).
 This is a milestone inside `ShardedMain.recall`, not the time at which the
 caller receives a usable row: current main still computes all candidates and
 Re-evidence before returning. The first ranked candidate itself is selected
 only after full candidate scoring and VRS navigation, which explains why
-the clarified target still fails for wider matches. Cold page faults also
-remain a measured failure. The model-evaluation gate stays closed.
+Replay latency rises for wider matches. This says nothing about whether the
+corrected Déjà vu → Recall transition meets its 1 ms requirement.
 
 An independent call-count probe on that installed wheel wrapped
 `Resident.exact_replay` and recorded the count when the first ranked

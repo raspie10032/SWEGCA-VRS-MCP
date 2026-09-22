@@ -23,27 +23,27 @@ timed lookups. The systemd cgroup set `memory.max=4294967296`,
 `memory.swap.max=0`, and physical SSD `259:3` read/write rates separately to
 625,000,000 bytes/s. The first process peaked at 79 MB cgroup memory.
 
-| Fresh read process | Random exact Replay calls | Median | p99 | Maximum | ≥1 ms |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| 1 | 10,000 | 0.00725 ms | 0.01082 ms | 0.138851 ms | 0 |
-| 2 | 10,000 | 0.00728 ms | 0.01020 ms | 0.114282 ms | 0 |
-| 3 | 10,000 | 0.00748 ms | 0.01288 ms | 0.330823 ms | 0 |
+| Fresh read process | Random exact Replay calls | Median | p99 | Maximum |
+| --- | ---: | ---: | ---: | ---: |
+| 1 | 10,000 | 0.00725 ms | 0.01082 ms | 0.138851 ms |
+| 2 | 10,000 | 0.00728 ms | 0.01020 ms | 0.114282 ms |
+| 3 | 10,000 | 0.00748 ms | 0.01288 ms | 0.330823 ms |
 
 The exact results are in
 `evals/vrs22_context/results/exact_occupancy_p16/`. Their SHA-256 values are:
 
 - `prepare.json`: `ae7adcd49194e17ff9a07f338c05d2deed906db9aa897c870f3b18ae9fc3d265`
-- `read.json`: `b6f20b33b704e7043e981764ac639e8ab30801f9da0bc669ed6c0f02672db08b`
-- `read_repeat2.json`: `b4779ea15e042851dc69bf565311f4d433ae59dc7653967674e83ca45556b0c9`
-- `read_repeat3.json`: `e48d2953efc3eff4b6607d992a9c1ae84401cf1a004478074963510466f22a73`
+- `read.json`: `292036af275ec4a900b52a9233009cf67230d3f9a60d09a83e7a6ce52c3b33b5`
+- `read_repeat2.json`: `d0a2c6778774c6c55899c723678e91f1bafbe10620da1452b05cd9a9d5c2a348`
+- `read_repeat3.json`: `a7afab1a090f0c39b48e8e53d7e70d1f7bfd51d48765c14f3aa6154263ca6256`
 
 The tool SHA-256 is
-`1f827895c18025f34b87d1ec9ed662bd2f362748ec517bc204bf0daf1556ff99`.
+`22b2f3e804942dd92014e08ef55a1a793fd4ecc8bffb2cc23c8bdf8bdf31eebd`.
 The installed runtime was the `f1ea47a` product wheel,
 `ade989360646b009d40031e45091d2043b3af8ee4ca0854cdd08817fba5ee285`.
 
 This measurement covers one high-occupancy prefix and a sample of exact
-addresses. It does not establish the requested unconditional <1 ms bound for
+addresses. It does not establish the requested unconditional <1 ms Déjà vu → Recall transition for
 every main size or natural query, a billion distinct experiences, or processing
 of one billion VRS parameters. The VRS parameter unit remains undefined by the
 available product state and must not be replaced with an address count.

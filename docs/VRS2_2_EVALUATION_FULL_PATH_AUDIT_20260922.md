@@ -54,8 +54,8 @@ plain controls remain historical evidence; no model was called for this audit.
   the resident state still has the legacy database and old hook/config. The
   VRS-only model run remains blocked by the live preflight. No live migration
   or model comparison is claimed here.
-- The hard <1 ms Replay and 1B-parameter seconds goals are separate product
-  performance gates; this evaluation-path audit does not establish them.
+- The <1 ms Déjà vu → Recall transition and 1B-parameter seconds goals are
+  separate product checks; this evaluation-path audit does not establish them.
 - Automated answer/code text scores are preliminary. Final quality judgment
   requires review of raw answers, diffs and executable test evidence.
 
@@ -166,7 +166,7 @@ config/hook/database are still active. The one-shot post-SessionEnd watcher is
 running. The three new VRS model cells must remain unrun until that handoff,
 then the same full-path gates and manual answer/diff review must pass. This
 source and isolated evaluation evidence does not establish the unconditional
-all-size <1 ms Replay or one-billion-parameter seconds goals.
+all-size <1 ms Déjà vu → Recall transition or one-billion-parameter seconds goals.
 
 ## Fourth pass: read-path total and current wheel
 
@@ -197,9 +197,9 @@ the former `0db5817` watcher is inactive. The live marker remains absent,
 so no active legacy state was converted and no VRS model cell was run.
 
 The cached aggregate removes one identified shard-count-dependent operation.
-It does not prove the all-size <1 ms through-Replay requirement for natural
-queries, which can still scale with matched candidate count, or define the
-user's one-billion-parameter unit. Those hard goals remain open.
+It does not measure the all-size <1 ms Déjà vu → Recall transition or define
+the user's one-billion-parameter unit. Replay can scale with matched candidate
+count, but its timing is a separate diagnostic.
 
 ## Fifth pass: experience must locate the original instruction
 
@@ -239,7 +239,7 @@ The cue tells the VRS arm the broad topic and is absent from the historical
 plain probes. That difference must be disclosed with any comparison; the
 rubric still requires the detailed instruction, diagnostic, scope and revision
 to come from the original experience. Natural Recall at all main sizes remains
-unproven under the hard <1 ms through-Replay limit.
+not measured here at the corrected Déjà vu → Recall transition boundary.
 
 ## Sixth pass: measured natural Replay and updated runtime
 
@@ -249,8 +249,8 @@ specified 4 GiB RAM and 625 MB/s SSD read/write limits. The installed
 `f1ea47a` path took a warm median 46.694 ms through Replay for 100 matches.
 Source commit `7e35fb8` defers only per-cue strengths until cross-shard portal
 construction; the same query took 15.152 ms. A single-match warm median was
-0.196 ms, but its first call was 9.112 ms. The hard all-size, every-query
-<1 ms requirement is still **not** met. Full measurements and scope are in
+0.196 ms, but its first call was 9.112 ms. These Replay diagnostics do not
+measure the corrected <1 ms Déjà vu → Recall transition. Measurements are in
 `docs/VRS2_2_NATURAL_REPLAY_BOTTLENECK_20260922.md`.
 
 The new offline wheel SHA-256 is
@@ -265,12 +265,11 @@ watcher is inactive. The armed session has no SessionEnd marker, resident native
 main or handoff receipt yet. The model cells remain unrun.
 
 The runner previously treated a successful handoff as sufficient to start
-model calls. It now has a separate fail-closed product-performance gate: the
-versioned natural Replay receipt records 1, 10 and 3 calls at or above 1 ms
-for the 1-, 100- and 1,008-match cases, respectively. The all-size bound and
-one-billion-parameter seconds claim also remain unproved. These conditions
-block model evaluation after SessionEnd as well as before it; preflight names
-the pending product-performance state. The independent grader requires the
+model calls. The historical runner used natural Replay times as a 1 ms
+performance gate; that interpretation was wrong and has been removed. Replay
+times remain diagnostics. Actual stage-transition evidence, all-size coverage,
+and the one-billion-parameter seconds claim are separate readiness checks.
+Preflight names the pending product-performance state. The independent grader requires the
 run's product-performance audit. The evaluation grader regressions are now
 **18/18 passed**.
 
@@ -311,8 +310,8 @@ SHA-256 `1c3b69bb8f4a0035be2123be3b20ff3e336502872f1152621d454f314708b7b8`.
 All six execution checks in that receipt report PASS; the retained-main check
 includes the new cell hook probe. The evaluation grader suite passed **20/20**.
 The current preflight remains `PENDING_LIVE_HANDOFF`, and the independent
-product-performance audit remains unready because measured natural Replay
-calls exceed 1 ms. No new model cell or compression comparison was run. Native
+product-performance audit remains unready because its actual transition and
+scale checks have not been established in that runner. No new model cell or compression comparison was run. Native
 hook execution by a real Codex model cell remains to be confirmed by its raw
 tool/hook trace after the live and performance gates pass.
 
@@ -326,8 +325,9 @@ table already read took 0.904 ms through Replay, while a cold table query took
 2.500 ms. The installed wheel, SHA-256
 `4b06afd976f3b983f37ba905fdb4b99eede691940733afa142952b0749992fe7`,
 matched all 48 product source files and passed the complete native suite
-**127/127**. The wheel's 100-match and 1,008-match natural queries still
-violate 1 ms, so the model gate remains closed.
+**127/127**. The wheel's 100-match and 1,008-match Replay times are
+diagnostics; live handoff and corrected transition checks still controlled
+model evaluation.
 
 The VRS-only runner and grader now pin that same product commit, wheel and
 new cgroup performance receipt. Evaluation grader regressions passed

@@ -193,7 +193,7 @@ Product commit `06dde24` then removed the benchmark's duplicated 500 GiB
 constant and imported the product's exact 500,000,000,000-byte ceiling. Three
 new cgroup-limited services each ran 50,000 random exact Replay calls, 50,000
 complete Déjà vu-through-Replay calls, and 5,000 calls for each largest-record
-case. All three passed with zero 1 ms violations. Across the repetitions, the
+case. All three met the resource checks. Across the repetitions, the
 largest Déjà vu-through-Replay value was 0.1759 ms and the largest-record
 through-Replay value was 0.2413 ms.
 
@@ -204,8 +204,8 @@ acquisition, release by the background closer, session capture, SessionEnd
 attachment, batches, and shards. The installed package had no external lock
 package, loaded no database module during exact session and main fallback
 smokes, and created no database artifacts. A new 4 GiB and 5 Gbit/s
-cgroup-limited run reported the database module unloaded and zero 1 ms
-violations; its complete Déjà vu-through-Replay maximum was 0.1572 ms.
+cgroup-limited run reported the database module unloaded; its complete
+Déjà vu-through-Replay diagnostic maximum was 0.1572 ms.
 Release-audit commit `65ec52d` also makes the archive verifier reject the
 retired lock import, agent adapter imports or names, database imports or
 artifacts, and direct forbidden runtime dependencies. The final wheel SHA-256
@@ -214,7 +214,7 @@ all 48 installed package source files are byte-identical to that wheel.
 
 A separate maximum-depth structural benchmark traversed all five production
 address levels and performed 50,000 exact Replay lookups. Its maximum was
-0.0759 ms with zero 1 ms violations. The benchmark explicitly reports that it
+0.0759 ms. The benchmark explicitly reports that it
 uses synthetic sealed lower levels and makes no experience-scale or
 parameter-scale claim.
 

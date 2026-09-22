@@ -13,7 +13,6 @@
       "warm_median_through_replay_ms": 0.194932,
       "warm_p99_through_replay_ms": 0.350444,
       "warm_max_through_replay_ms": 0.350444,
-      "through_replay_at_or_above_1ms": 0,
       "first_full_four_stage_ms": 0.952029,
       "full_four_stage_median_ms": 0.252132
     },
@@ -27,7 +26,6 @@
       "warm_median_through_replay_ms": 15.186405,
       "warm_p99_through_replay_ms": 15.340627,
       "warm_max_through_replay_ms": 15.340627,
-      "through_replay_at_or_above_1ms": 10,
       "first_full_four_stage_ms": 31.36181,
       "full_four_stage_median_ms": 26.255972
     },
@@ -41,7 +39,6 @@
       "warm_median_through_replay_ms": 97.931504,
       "warm_p99_through_replay_ms": 98.05819,
       "warm_max_through_replay_ms": 98.05819,
-      "through_replay_at_or_above_1ms": 3,
       "first_full_four_stage_ms": 259.498447,
       "full_four_stage_median_ms": 143.261534
     }

@@ -50,9 +50,9 @@ The full standalone source regression suite passed **130/130 in 182.36 s**
 after the fixes.
 This proves content integrity for one isolated, currently active session
 prefix. It does not prove live hook installation, current main migration,
-temporary-first/main-second live reads, the <1 ms Replay target, or the
-user-defined one-billion VRS-parameter seconds target.
-Those remain separate gates before VRS model evaluation.
+temporary-first/main-second live reads, the Déjà vu → Recall transition
+at the required scale, or the user-defined one-billion VRS-parameter seconds
+target. Those remain separate checks before VRS model evaluation.
 
 ## Installed source-equivalent wheel and live handoff readiness
 
@@ -83,10 +83,10 @@ gate, not a successful live switch.
 
 The installed wheel's cgroup Replay receipt is
 `evals/vrs22_context/results/first_ranked_original_replay_native_ingress_wheel_20260922.json`
-(SHA-256 `6edb80b56341b994f68ea8ce5151b34b990cb0981b6d5f1692dc10935f3a1822`).
+(SHA-256 `fcf33ac324b6aca1bdf671faf018dc6d4616da4c582e65995a57475c39b02fd6`).
 First ranked original Replay took 0.680 ms with one match, 19.127 ms with
-100 matches, and 117.526 ms with 1,008 matches on first calls. The 1 ms
-goal remains unmet; the model evaluation gate remains closed.
+100 matches, and 117.526 ms with 1,008 matches on first calls. These
+Replay timings do not grade the corrected 1 ms stage-transition criterion.
 
 ## Exact MCP Replay after a graceful temporary-VRS shutdown
 
@@ -116,12 +116,12 @@ The installed runtime is still separate from the active Codex MCP connection.
 
 The new wheel's first-ranked original Replay receipt is
 `evals/vrs22_context/results/first_ranked_original_replay_projection_close_wheel_corrected_20260922.json`
-(SHA-256 `650d18af3e1f317877d7da686736dcc09c97a0f164a80faf1a2ba52f53354700`).
+(SHA-256 `856ad3e1e7eb031e2fe823af5524a2c64325fb4db5e2cce87397c618cc4d68a3`).
 On the same copied 15,630-experience native state, under 4 GiB memory, zero
 swap and 625 MB/s SSD cgroup limits on the state device, first calls took
 0.695 ms with one match, 19.159 ms with 100 matches, and 118.131 ms with
-1,008 matches. The all-size
-1 ms gate remains false; model evaluation remains disabled.
+1,008 matches. This Replay diagnostic does not grade the all-size
+Déjà vu → Recall transition. Model evaluation remained disabled.
 
 The new installed wheel's whole-path selftest passed. Its private receipt is
 `/var/tmp/vrs22-whole-path-selftest-projection-close-20260922/receipt.json`
@@ -184,7 +184,7 @@ installed-path selftest passed with receipt
 (SHA-256 `7f39fcf27d910ed28b4b398ec7692a4ab1a9002b844a5c77921a0eeba1d1fd25`).
 The new installed wheel's natural first-ranked Replay receipt is
 `evals/vrs22_context/results/first_ranked_original_replay_mcp_reconnect_wheel_20260922.json`
-(SHA-256 `b38453aba238405ecca27e8946fa90449fd5ae4a51e7a28f4255bc5b170f1bd7`).
+(SHA-256 `fce79bd11adbc7c9af4106116abcb5773428473b1ae6aadd371398ddc58ae9d1`).
 Under the same 4 GiB, no-swap and 625 MB/s state-device limits, first calls
 took 0.775 ms for one match, 19.425 ms for 100 and 120.410 ms for 1,008.
 The latency gate remains false. The one-shot post-SessionEnd watcher now uses
@@ -269,7 +269,8 @@ On the copied 15,630-original native state under 4 GiB, zero swap and a
 for one match, 15.432 ms for 100 matches and 98.692 ms for 1,008 matches.
 The measurement is
 `evals/vrs22_context/results/first_ranked_original_replay_portal_index_source_20260922.json`.
-The 1 ms all-size gate still fails. At the time of this source measurement,
+The Replay timing does not measure the corrected 1 ms transition. At the
+time of this source measurement,
 the changed files were not yet in the installed wheel or active Codex MCP,
 and no VRS model evaluation was started.
 
@@ -287,8 +288,8 @@ called the existing exact-address four-stage path. It did **not** perform
 natural Recall ranking and is not an acceptance measurement: first call
 1.728 ms, warm median 0.978 ms, warm p99 1.424 ms, and 47 of 101 calls at or
 above 1 ms under the same 4 GiB, zero-swap, 625 MB/s cgroup limits. Simply
-choosing an arbitrary first posting would therefore still fail the strict
-latency condition in this copy. The meaning of the first original relative
+choosing an arbitrary first posting would change ranking semantics and is
+not evidence for the corrected stage-transition limit. The meaning of the first original relative
 to final Recall rank is pending explicit clarification; no ranking semantics
 were changed.
 
@@ -307,8 +308,8 @@ imports/dependencies. The installed wheel's natural first-ranked Replay
 receipt is
 `evals/vrs22_context/results/first_ranked_original_replay_storage_audit_wheel_20260922.json`:
 0.715 ms for one match, 15.736 ms for 100 and 95.699 ms for 1,008 under
-4 GiB, zero swap and 625 MB/s I/O limits. The all-size 1 ms gate remains
-false.
+4 GiB, zero swap and 625 MB/s I/O limits. These Replay times do not
+measure the all-size Déjà vu → Recall requirement.
 
 The installed-wheel whole-path selftest passed at
 `/var/tmp/vrs22-whole-path-selftest-storage-audit-r2-20260922/receipt.json`
@@ -403,7 +404,7 @@ missing/unexpected/changed records, and no SQLite module loaded. Audit receipt:
 
 The installed wheel's separate 15,630-original benchmark receipt is
 `evals/vrs22_context/results/first_ranked_original_replay_transport_r2_wheel_20260922.json`
-(SHA-256 `48438c08725175138e9725fb1ecea1424abccef9b8bcde3ae227776f0dc4760d`).
+(SHA-256 `6d622fc53c069fc78419048afc5e34ca7ea6eb589af492c110ae6d34e675467e`).
 It timestamps the first ranked original Replay constructor after natural
 `ShardedMain.recall` begins. The user has explicitly clarified that the 1 ms
 metric is Déjà vu → Recall, so this receipt is diagnostic only. The evaluation

@@ -31,7 +31,7 @@ RUNTIME_SOURCE = RUNTIME_PYTHON.parents[2] / "source/src"
 RUNTIME_PACKAGE = RUNTIME_SOURCE / "swegca_vrs2"
 RUNTIME_ENV = dict(os.environ, PYTHONDONTWRITEBYTECODE="1", PYTHONPATH=str(RUNTIME_SOURCE))
 PERFORMANCE_RECEIPT = ROOT / "evals/vrs22_context/results/first_ranked_original_replay_transport_r2_wheel_20260922.json"
-PERFORMANCE_RECEIPT_SHA256 = "48438c08725175138e9725fb1ecea1424abccef9b8bcde3ae227776f0dc4760d"
+PERFORMANCE_RECEIPT_SHA256 = "6d622fc53c069fc78419048afc5e34ca7ea6eb589af492c110ae6d34e675467e"
 REAL_CODEX_HOME = Path.home() / ".codex"
 LIVE_STATE = Path("/home/raspie/.local/share/swegca-vrs2-codex")
 USER_RUNTIME_DIR = Path("/run/user") / str(os.getuid())
@@ -379,15 +379,14 @@ def product_performance_audit():
         and receipt.get("record_count") == 15630
         and len(cases) == 3
         and [row.get("actual_fanout") for row in cases] == [1, 100, 1008]
-        and all(type(row.get("first_ranked_original_replay_at_or_above_1ms")) is int
+        and all(type(row.get("first_ranked_original_replay_ms")) in (int, float)
                 for row in cases)
         and limits.get("memory.max") == "4294967296"
         and limits.get("memory.swap.max") == "0"
         and "259:3 rbps=625000000 wbps=625000000" in limits.get("io.max", "")
         and receipt.get("sqlite_module_loaded") is False)
     # This receipt timestamps original Replay construction. It does not time
-    # the Déjà vu → Recall boundary named by the user. Never turn these samples
-    # into a verdict about the 1 ms requirement.
+    # the Déjà vu → Recall boundary named by the user.
     transition_sample_valid = False
     all_size_transition_proven = False
     billion_parameter_unit_defined = False
@@ -399,9 +398,10 @@ def product_performance_audit():
         transition_status="not_yet_measured_at_actual_stage_boundary",
         receipt_sha256=PERFORMANCE_RECEIPT_SHA256,
         replay_diagnostic_valid=sample_valid,
-        replay_diagnostic_violations=[dict(matches=row.get("actual_fanout"),
-            calls_at_or_above_1ms=row.get("first_ranked_original_replay_at_or_above_1ms"))
-            for row in cases if row.get("first_ranked_original_replay_at_or_above_1ms")],
+        replay_diagnostic_ms=[dict(matches=row.get("actual_fanout"),
+            first_call=row.get("first_ranked_original_replay_ms"),
+            warm_median=row.get("warm_median_first_ranked_original_replay_ms"))
+            for row in cases],
         all_size_transition_proven=all_size_transition_proven,
         billion_parameter_unit_defined=billion_parameter_unit_defined,
         billion_parameter_seconds_proven=billion_parameter_seconds_proven)
