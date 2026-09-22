@@ -6,6 +6,7 @@
 #include <functional>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace swegca::vrs {
@@ -35,11 +36,15 @@ struct ReplayResult {
                  bool action_authorized = false, bool persistent_write_authorized = false);
 };
 
-// The accepted read path passes a one-original RecallResult here. A detected
-// conflict can invoke the same function for each relevant opposing original.
+using OriginalReplayReader = std::function<MemoryEpisode(std::string_view)>;
+
+// The accepted read path passes a one-original RecallResult and a pinned
+// native-journal reader. Recall's full address list remains separate.
 // SWEGCA: src/swegca_vrs2/engine/mosaic_memory_activation.py@7536139:378-398
+// SWEGCA: user@2026-09-22:24-29
 [[nodiscard]] ReplayResult replay_memory(const PublishedHotIndex& index,
-                                         const RecallResult& selected);
+                                         const RecallResult& selected,
+                                         const OriginalReplayReader& read_original);
 
 struct CurrentEvidenceVerdict {
     std::string episode_id;

@@ -81,16 +81,27 @@ CurrentEvidenceVerdict judge_selected_original(
 
 // SWEGCA: src/swegca_vrs2/store.py@c06092a:1719-1768
 FullFourStageRead finish_selected_four_stage_read(
-    PortalNavigationRecall navigation, const FullCurrentMemoryVrsSnapshot& pair,
-    const EventVrsInputView& inputs, const GraphNodeDirectory& nodes) {
+    PortalNavigationRecall navigation, const PinnedReadLayer& layer) {
+    const auto& pair = layer.pair;
+    const auto& inputs = layer.inputs;
+    const auto& nodes = layer.nodes;
     const auto& memory = pair.memory();
     if (navigation.recall.snapshot_id != memory.snapshot_id() ||
         navigation.signal.snapshot_id != memory.snapshot_id() ||
         pair.vrs_snapshot_id() != inputs.snapshot_id())
         throw std::runtime_error("four-stage read generation changed");
     nodes.require_source(inputs);
+    const auto publication = layer.original_addresses.publication();
+    if (!publication || publication->pair_snapshot_id != pair.snapshot_id() ||
+        publication->published_rows != layer.published_row_limit)
+        throw std::runtime_error("four-stage original read generation changed");
+    const OriginalReplayReader read_original = [&](std::string_view identifier) {
+        return replay_exact_journal_original(
+            layer.journal, layer.original_addresses, identifier,
+            layer.published_row_limit);
+    };
     auto opened = select_replay_original(memory, navigation.recall);
-    auto replayed = replay_memory(memory, opened);
+    auto replayed = replay_memory(memory, opened, read_original);
     const auto opponents = opposing_originals(memory, replayed);
     const auto judge = [&](const ReplayedEpisode& episode) {
         return judge_selected_original(episode, memory, inputs, nodes, opponents);
@@ -119,7 +130,7 @@ FullFourStageRead finish_selected_four_stage_read(
                                           header.verification_state, header.historical_outcomes};
                 auto one = RecallResult(opened.query, {candidate}, opened.snapshot_id,
                                         opened.source_dependencies);
-                auto one_replay = replay_memory(memory, one);
+                auto one_replay = replay_memory(memory, one, read_original);
                 if (one_replay.episodes.size() != 1)
                     throw std::runtime_error("opposing original Replay changed");
                 candidates.push_back(std::move(candidate));

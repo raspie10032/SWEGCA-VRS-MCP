@@ -50,7 +50,7 @@ build/main_operations.o: cpp/main_operations.cpp cpp/main_operations.hpp | build
 build/memory_vrs_pair.o: cpp/memory_vrs_pair.cpp cpp/memory_vrs_pair.hpp cpp/main_read_generation.hpp cpp/hot_index.hpp cpp/json.hpp cpp/digest.hpp | build
 	$(CXX) $(CXXFLAGS) -Icpp -c $< -o $@
 
-build/main_read_generation.o: cpp/main_read_generation.cpp cpp/main_read_generation.hpp cpp/session_first_read.hpp cpp/event_vrs_inputs.hpp | build
+build/main_read_generation.o: cpp/main_read_generation.cpp cpp/main_read_generation.hpp cpp/session_first_read.hpp cpp/exact_journal_replay.hpp cpp/exact_journal_directory.hpp cpp/native_journal.hpp cpp/event_vrs_inputs.hpp | build
 	$(CXX) $(CXXFLAGS) -Icpp -c $< -o $@
 
 build/deja_vu.o: cpp/deja_vu.cpp cpp/deja_vu.hpp cpp/hot_index.hpp cpp/keys.hpp cpp/unicode.hpp | build
@@ -98,7 +98,7 @@ build/region_preactivation.o: cpp/region_preactivation.cpp cpp/region_preactivat
 build/region_navigation.o: cpp/region_navigation.cpp cpp/region_navigation.hpp cpp/graph_regions.hpp cpp/connectivity_regions.hpp | build
 	$(CXX) $(CXXFLAGS) -Icpp -c $< -o $@
 
-build/coactivation.o: cpp/coactivation.cpp cpp/coactivation.hpp cpp/graph_regions.hpp cpp/memory_receipt.hpp cpp/unicode.hpp | build
+build/coactivation.o: cpp/coactivation.cpp cpp/coactivation.hpp cpp/exact_journal_replay.hpp cpp/graph_regions.hpp cpp/memory_receipt.hpp cpp/unicode.hpp | build
 	$(CXX) $(CXXFLAGS) -Icpp -c $< -o $@
 
 build/coactivation_associations.o: cpp/coactivation_associations.cpp cpp/coactivation_associations.hpp cpp/coactivation.hpp cpp/graph_regions.hpp cpp/unicode.hpp | build
@@ -110,10 +110,10 @@ build/portal_lifecycle.o: cpp/portal_lifecycle.cpp cpp/portal_lifecycle.hpp cpp/
 build/portal_navigation.o: cpp/portal_navigation.cpp cpp/portal_navigation.hpp cpp/portal_lifecycle.hpp cpp/region_navigation.hpp cpp/region_preactivation.hpp cpp/memory_recall.hpp | build
 	$(CXX) $(CXXFLAGS) -Icpp -c $< -o $@
 
-build/session_first_read.o: cpp/session_first_read.cpp cpp/session_first_read.hpp cpp/portal_navigation.hpp cpp/keys.hpp | build
+build/session_first_read.o: cpp/session_first_read.cpp cpp/session_first_read.hpp cpp/exact_journal_replay.hpp cpp/portal_navigation.hpp cpp/keys.hpp | build
 	$(CXX) $(CXXFLAGS) -Icpp -c $< -o $@
 
-build/four_stage_read.o: cpp/four_stage_read.cpp cpp/four_stage_read.hpp cpp/portal_navigation.hpp cpp/memory_receipt.hpp cpp/memory_recall.hpp cpp/memory_evidence.hpp cpp/graph_regions.hpp | build
+build/four_stage_read.o: cpp/four_stage_read.cpp cpp/four_stage_read.hpp cpp/session_first_read.hpp cpp/exact_journal_replay.hpp cpp/portal_navigation.hpp cpp/memory_receipt.hpp cpp/memory_recall.hpp cpp/memory_evidence.hpp cpp/graph_regions.hpp | build
 	$(CXX) $(CXXFLAGS) -Icpp -c $< -o $@
 
 build/journal_frame.o: cpp/journal_frame.cpp cpp/journal_frame.hpp cpp/json.hpp cpp/digest.hpp | build

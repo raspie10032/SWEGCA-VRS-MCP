@@ -75,7 +75,9 @@ ReplayResult::ReplayResult(std::string new_query,
 }
 
 // SWEGCA: src/swegca_vrs2/engine/mosaic_memory_activation.py@7536139:378-398
-ReplayResult replay_memory(const PublishedHotIndex& index, const RecallResult& selected) {
+// SWEGCA: user@2026-09-22:24-29
+ReplayResult replay_memory(const PublishedHotIndex& index, const RecallResult& selected,
+                           const OriginalReplayReader& read_original) {
     if (selected.snapshot_id != index.snapshot_id())
         throw std::runtime_error("recall snapshot changed before replay");
     // SWEGCA: user@2026-09-22:24-29
@@ -83,7 +85,7 @@ ReplayResult replay_memory(const PublishedHotIndex& index, const RecallResult& s
         throw std::runtime_error("replay requires one selected original");
     std::vector<ReplayedEpisode> episodes;
     for (const auto& candidate : selected.candidates) {
-        const auto source = index.episode(candidate.episode_id);
+        const auto source = read_original(candidate.episode_id);
         episodes.emplace_back(candidate.episode_id, candidate.matched_cues,
                               source.steps, source.source_addresses,
                               source.verification_state);

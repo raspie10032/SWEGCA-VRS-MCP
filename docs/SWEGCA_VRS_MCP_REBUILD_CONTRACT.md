@@ -115,10 +115,17 @@ snapshot ID, and VRS snapshot ID. The owner may replace that immutable pair
 only if its expected current ID still matches, and only after the corresponding
 journal commit. `MainReadGeneration` now retains the pair together with the
 validated numerical input, node and region directories, coactivation index,
-and portal state. Construction rejects a VRS ID mismatch or source binding
-mismatch before one CAS owner can expose the bundle. A reader must retain its
+portal state, native journal read view, exact original address reader, and
+published row limit. Construction rejects VRS and original-source binding
+mismatches before one CAS owner can expose the bundle. The four-stage path now
+opens the selected original through that exact native address; conflicting
+opposing originals use the same path one at a time. A reader must retain its
 snapshot pointer through Recall and Replay. This owner is still a primitive:
 the Main commit coordinator and physical storage publications are missing.
+The derived `PublishedHotIndex` no longer offers original episode bodies.
+The four-stage read and subsequent coactivation observation both use the
+published exact-address directory and the pinned native journal to reopen
+only the originals they actually need.
 The same canonical pair digest is now callable for an unpublished memory/Graph
 candidate before its journal row is written; constructing the published pair
 uses that exact function. This keeps the certificate calculation identical on

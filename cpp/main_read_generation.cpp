@@ -13,13 +13,19 @@ MainReadGeneration::MainReadGeneration(
     std::shared_ptr<const GraphNodeDirectory> nodes,
     std::shared_ptr<const GraphRegionDirectory> regions,
     std::shared_ptr<const CoactivationAssociations> associations,
-    PortalPolicy policy, std::vector<PortalRevocation> revocations)
+    PortalPolicy policy, std::vector<PortalRevocation> revocations,
+    std::shared_ptr<const NativeJournalReadView> journal,
+    std::shared_ptr<const ExactJournalDirectory> original_addresses,
+    std::int64_t published_row_limit)
     // SWEGCA: src/swegca_vrs2/store.py@7536139:371-405
     : pair_(std::move(pair)), inputs_(std::move(inputs)),
       nodes_(std::move(nodes)), regions_(std::move(regions)),
       associations_(std::move(associations)), policy_(std::move(policy)),
-      revocations_(std::move(revocations)) {
-    if (!pair_ || !inputs_ || !nodes_ || !regions_ || !associations_)
+      revocations_(std::move(revocations)), journal_(std::move(journal)),
+      original_addresses_(std::move(original_addresses)),
+      published_row_limit_(published_row_limit) {
+    if (!pair_ || !inputs_ || !nodes_ || !regions_ || !associations_ ||
+        !journal_ || !original_addresses_)
         throw std::runtime_error("complete Main read generation required");
     const auto& source = inputs_->require_validated_immutable();
     if (pair_->vrs_snapshot_id() != source.snapshot_id())
@@ -27,12 +33,21 @@ MainReadGeneration::MainReadGeneration(
     nodes_->require_source(source);
     regions_->require_source(source);
     regions_->require_memory_source(pair_->memory());
+    const auto publication = original_addresses_->publication();
+    if (!original_addresses_->published_reader() || published_row_limit_ < 0 ||
+        static_cast<std::uint64_t>(published_row_limit_) > journal_->row_count() ||
+        journal_->generation() != original_addresses_->journal_generation() ||
+        !publication || publication->published_rows != published_row_limit_ ||
+        publication->journal_generation != journal_->generation() ||
+        publication->pair_snapshot_id != pair_->snapshot_id())
+        throw std::runtime_error("Main original read generation changed");
 }
 
 // SWEGCA: user@2026-09-22:13-21
 PinnedReadLayer MainReadGeneration::layer() const {
     return PinnedReadLayer{*pair_, inputs_->require_validated_immutable(), *nodes_,
-                           *regions_, *associations_, policy_, revocations_};
+                           *regions_, *associations_, policy_, revocations_,
+                           *journal_, *original_addresses_, published_row_limit_};
 }
 
 }  // namespace swegca::vrs

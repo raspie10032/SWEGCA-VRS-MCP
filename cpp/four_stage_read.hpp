@@ -2,6 +2,7 @@
 
 #include "memory_receipt.hpp"
 #include "portal_navigation.hpp"
+#include "session_first_read.hpp"
 
 namespace swegca::vrs {
 
@@ -23,7 +24,6 @@ struct FullFourStageRead {
 // if that first Re-evidence found a conflict. No history result grants truth.
 // SWEGCA: src/swegca_vrs2/store.py@c06092a:1719-1768
 [[nodiscard]] FullFourStageRead finish_selected_four_stage_read(
-    PortalNavigationRecall navigation, const FullCurrentMemoryVrsSnapshot& pair,
-    const EventVrsInputView& inputs, const GraphNodeDirectory& nodes);
+    PortalNavigationRecall navigation, const PinnedReadLayer& layer);
 
 }  // namespace swegca::vrs

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "exact_journal_replay.hpp"
 #include "portal_navigation.hpp"
 
 #include <cstdint>
@@ -19,6 +20,9 @@ struct PinnedReadLayer {
     const CoactivationAssociations& associations;
     const PortalPolicy& policy;
     const std::vector<PortalRevocation>& revocations;
+    const NativeJournalReadView& journal;
+    const ExactJournalDirectory& original_addresses;
+    std::int64_t published_row_limit;
 };
 
 enum class ReadLayer { session, main };

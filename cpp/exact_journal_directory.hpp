@@ -57,6 +57,10 @@ public:
     // SWEGCA: src/swegca_vrs2/exact_replay.py@c06092a:583-609
     [[nodiscard]] std::optional<ExactAddressPublication> publication() const;
 
+    // Main gives readers a handle opened without the writer's owner lock.
+    // SWEGCA: src/swegca_vrs2/exact_replay.py@c06092a:190-223
+    [[nodiscard]] bool published_reader() const { return owner_lock_ == nullptr; }
+
     // SWEGCA: src/swegca_vrs2/exact_replay.py@c06092a:190-223
     [[nodiscard]] const std::string& journal_generation() const {
         return journal_generation_;

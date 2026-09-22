@@ -1,5 +1,6 @@
 #include "coactivation.hpp"
 
+#include "exact_journal_replay.hpp"
 #include "unicode.hpp"
 
 #include <algorithm>
@@ -45,7 +46,10 @@ CoactivationEvent prepare_coactivation_event(
     const FullCurrentMemoryVrsSnapshot& pair,
     const MemoryActivationReceipt& activation, std::string request_id,
     std::int64_t observed_at_ns, const EventVrsInputView& inputs,
-    const GraphNodeDirectory& nodes, const GraphRegionDirectory& regions) {
+    const GraphNodeDirectory& nodes, const GraphRegionDirectory& regions,
+    const NativeJournalReadView& journal,
+    const ExactJournalDirectory& original_addresses,
+    std::int64_t published_row_limit) {
     if (!nonblank(request_id) || observed_at_ns < 0)
         throw std::runtime_error("main-issued request identity and nonnegative time required");
     validate_opened_identity(activation);
@@ -65,7 +69,9 @@ CoactivationEvent prepare_coactivation_event(
             throw std::runtime_error("activation stages repeat an original");
         const auto& replayed = activation.replay.episodes[at];
         const auto& verdict = activation.re_evidence.judgments[at];
-        const auto episode = pair.memory().episode(candidate.episode_id);
+        const auto episode = replay_exact_journal_original(
+            journal, original_addresses, candidate.episode_id,
+            published_row_limit);
         if (episode.episode_id != candidate.episode_id)
             throw std::runtime_error("activation original address changed");
         std::vector<std::string> outcomes;

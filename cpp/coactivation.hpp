@@ -11,6 +11,9 @@
 
 namespace swegca::vrs {
 
+class NativeJournalReadView;
+class ExactJournalDirectory;
+
 // Each observed original retains its own component topology identity. One
 // activation is still one hyperedge even when its originals span components.
 // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_coactivation.py@c06092a:80-104
@@ -56,6 +59,9 @@ struct CoactivationEvent {
     const FullCurrentMemoryVrsSnapshot& pair,
     const MemoryActivationReceipt& activation, std::string request_id,
     std::int64_t observed_at_ns, const EventVrsInputView& inputs,
-    const GraphNodeDirectory& nodes, const GraphRegionDirectory& regions);
+    const GraphNodeDirectory& nodes, const GraphRegionDirectory& regions,
+    const NativeJournalReadView& journal,
+    const ExactJournalDirectory& original_addresses,
+    std::int64_t published_row_limit);
 
 }  // namespace swegca::vrs
