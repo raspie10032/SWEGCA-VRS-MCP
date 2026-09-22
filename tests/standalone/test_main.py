@@ -75,6 +75,25 @@ def test_disconnected_components_store_only_their_own_node_positions(main):
     assert np.all(graph.labels() >= 0)
 
 
+def test_component_edge_partition_preserves_order_when_new_record_joins_regions(main):
+    for name, text, cue in (('partition-a', 'zzzzq', 'alphaanchor'),
+                            ('partition-b', 'xxxxr', 'betaanchor')):
+        main.ingest(dict(request_id=name, text=text, source='probe:' + name,
+                         revision='1', cues=[cue]))
+    initial = main.graph.rebuild_regions()
+    assert len(initial.regions) == 2
+    main.ingest(dict(request_id='partition-bridge', text='nnnnt',
+                     source='probe:bridge', revision='1',
+                     cues=['alphaanchor', 'betaanchor']))
+    joined = main.graph.rebuild_regions()
+    assert len(joined.regions) == 1
+    region, positions = next(iter(joined.regions.values()))
+    assert np.array_equal(positions.members[region.edge_source], joined.flat.src)
+    assert np.array_equal(positions.members[region.edge_target], joined.flat.dst)
+    assert np.array_equal(region.edge_sign, joined.flat.sign)
+    assert np.array_equal(region.strengths, joined.flat.strength)
+
+
 def test_checkpoint_rejects_region_without_generation_bound_cue_source(main):
     record(main, 'checkpoint-region-source')
     main.consolidate()

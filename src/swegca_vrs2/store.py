@@ -520,15 +520,28 @@ class Graph:
         if not pending:
             return self
         seen = np.zeros(flat.count, dtype=bool)
-        components, directory = self.components, self.regions
+        groups = []
+        component_of_node = np.full(flat.count, -1, dtype=np.int32)
         for start in pending:
             if seen[start]:
                 continue
-            members = self._component_members(flat, [start])
-            seen[members] = True
+            members = self._component_members(flat, [start], seen=seen)
+            component_of_node[members] = len(groups)
+            groups.append(members)
+        # Classify the changed components' edges in one stable pass. Each
+        # component still receives its original edge order for VRS arithmetic.
+        edge_group = component_of_node[flat.src]
+        selected_edges = np.flatnonzero(edge_group >= 0)
+        order = np.argsort(edge_group[selected_edges], kind='stable')
+        sorted_edges = selected_edges[order]
+        boundaries = np.r_[0, np.cumsum(np.bincount(edge_group[selected_edges],
+            minlength=len(groups)))]
+        del edge_group, selected_edges, order, component_of_node
+        components, directory = self.components, self.regions
+        for group, members in enumerate(groups):
             previous_ids = {components[node] for node in members if node in components}
             previous = directory.get(next(iter(previous_ids))) if len(previous_ids) == 1 else None
-            edges = np.flatnonzero(np.isin(flat.src, members))
+            edges = sorted_edges[boundaries[group]:boundaries[group + 1]]
             # Members are sorted global node IDs. Resolve only the endpoints
             # used by this component instead of allocating one int64 position
             # slot for every node in the whole graph for every component.
@@ -562,11 +575,13 @@ class Graph:
                      self.usage, self.aliases)
 
     @staticmethod
-    def _component_members(flat, starts):
+    def _component_members(flat, starts, seen=None):
         """Sorted node ids of the connected component(s) reachable from ``starts``."""
-        seen = np.zeros(flat.count, dtype=bool)
+        if seen is None:
+            seen = np.zeros(flat.count, dtype=bool)
         frontier = np.unique(np.asarray(starts, np.int64))
         seen[frontier] = True
+        visited = [frontier]
         while len(frontier):
             lo, hi = flat.out_ptr[frontier], flat.out_ptr[frontier + 1]
             counts = hi - lo
@@ -578,7 +593,9 @@ class Graph:
             reached = reached[~seen[reached]]
             frontier = np.unique(reached)
             seen[frontier] = True
-        return np.flatnonzero(seen)
+            if len(frontier):
+                visited.append(frontier)
+        return np.sort(np.concatenate(visited))
 
     def memberships(self, identifier):
         node = self.nodes[identifier]
