@@ -206,7 +206,16 @@ std::optional<std::string> NativeJournal::pair(std::int64_t sequence) const {
 std::vector<std::int64_t> NativeJournal::append(std::span<const PendingJournalRow> rows) {
     if (!writable_) throw std::runtime_error("native_vrs_journal_read_only");
     require_write_owner();
-    return append_journal_rows(path_, scan_, rows);
+    if (rows.empty()) return {};
+    return append_journal_rows_addressed(path_, scan_, rows).sequences;
+}
+
+// SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:223-257
+JournalAppendResult NativeJournal::append_addressed(
+    std::span<const PendingJournalRow> rows) {
+    if (!writable_) throw std::runtime_error("native_vrs_journal_read_only");
+    require_write_owner();
+    return append_journal_rows_addressed(path_, scan_, rows);
 }
 
 // SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:295-325

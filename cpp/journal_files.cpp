@@ -447,6 +447,15 @@ std::vector<std::int64_t> append_journal_rows(
     JournalScan& current,
     std::span<const PendingJournalRow> rows) {
     if (rows.empty()) return {};
+    return append_journal_rows_addressed(generation_directory, current, rows).sequences;
+}
+
+// SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:223-257
+JournalAppendResult append_journal_rows_addressed(
+    const std::filesystem::path& generation_directory,
+    JournalScan& current,
+    std::span<const PendingJournalRow> rows) {
+    if (rows.empty()) throw std::runtime_error("native_vrs_addressed_append_empty");
     if (current.last_sequence < 0 || rows.size() > static_cast<std::uint64_t>(
             std::numeric_limits<std::int64_t>::max() - current.last_sequence))
         throw std::runtime_error("native_vrs_sequence_invalid");
@@ -472,7 +481,9 @@ std::vector<std::int64_t> append_journal_rows(
     current.last_pair = std::move(last_pair);
     if (std::filesystem::file_size(head) >= rotate_bytes)
         rotate_head(generation_directory, current.last_sequence);
-    return sequences;
+    return JournalAppendResult{std::move(sequences), JournalFrameAddress{
+        generation_directory.filename().string(), "head.vrsj", start,
+        first, current.last_sequence}};
 }
 
 // SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:295-312

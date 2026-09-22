@@ -41,6 +41,9 @@ public:
 
     // SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:223-247
     [[nodiscard]] std::vector<std::int64_t> append(std::span<const PendingJournalRow> rows);
+    // SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:223-257
+    [[nodiscard]] JournalAppendResult append_addressed(
+        std::span<const PendingJournalRow> rows);
 
     // The producer emits complete five-field rows in sequence order. It can
     // stream the old journal into the new one without holding all rows in RAM.

@@ -157,6 +157,10 @@ The address-directory builder can stream each verified original row together
 with its frame address in one journal walk. It validates the complete frame
 and its sequence span before delivering any row from that frame. This is a
 rebuild/ingest path; it does not run on a user Recall or Replay request.
+For a new real-time observation, the native journal append now returns the
+durable frame address and its new sequences directly. Main can add the one
+new original address without scanning earlier journal rows. A duplicate
+author episode still keeps its first address in the exact directory.
 The C++ exact-address directory under construction uses the existing VRS
 prefix, odd-step, and sealed-level physical lookup rule. A slot stores only
 the original journal sequence and frame offset/span; the observation body is

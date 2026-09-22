@@ -28,6 +28,11 @@ struct JournalFrameAddress {
     std::int64_t last_sequence;
 };
 
+struct JournalAppendResult {
+    std::vector<std::int64_t> sequences;
+    JournalFrameAddress frame;
+};
+
 using JournalRowEmitter = std::function<void(JournalRow&&)>;
 // A producer invokes its emitter synchronously and never retains it.
 using JournalRowProducer = std::function<void(const JournalRowEmitter&)>;
@@ -74,6 +79,13 @@ void visit_journal_addressed_rows(
 // The caller holds the single-owner lock and has scanned the current head.
 // SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:223-257
 [[nodiscard]] std::vector<std::int64_t> append_journal_rows(
+    const std::filesystem::path& generation_directory,
+    JournalScan& current,
+    std::span<const PendingJournalRow> rows);
+
+// Return the original frame address at the same durable append boundary.
+// SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:223-257
+[[nodiscard]] JournalAppendResult append_journal_rows_addressed(
     const std::filesystem::path& generation_directory,
     JournalScan& current,
     std::span<const PendingJournalRow> rows);
