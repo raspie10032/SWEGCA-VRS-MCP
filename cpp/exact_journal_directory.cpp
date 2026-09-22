@@ -337,4 +337,11 @@ std::optional<OriginalJournalAddress> ExactJournalDirectory::find(
     return std::nullopt;
 }
 
+// SWEGCA: src/swegca_vrs2/exact_replay.py@c06092a:190-223
+bool ExactJournalDirectory::fresh() const {
+    std::lock_guard guard(mutex_);
+    if (failed_) throw std::runtime_error("exact_journal_address_directory_failed");
+    return std::filesystem::is_empty(directory_);
+}
+
 }  // namespace swegca::vrs

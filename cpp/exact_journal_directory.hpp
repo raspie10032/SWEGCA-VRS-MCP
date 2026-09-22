@@ -38,6 +38,10 @@ public:
     [[nodiscard]] std::optional<OriginalJournalAddress> find(
         std::string_view episode_id, std::int64_t published_row_limit) const;
 
+    // Rebuild starts only from a new unpublished directory.
+    // SWEGCA: src/swegca_vrs2/exact_replay.py@c06092a:190-223
+    [[nodiscard]] bool fresh() const;
+
     // SWEGCA: src/swegca_vrs2/exact_replay.py@c06092a:190-223
     [[nodiscard]] const std::string& journal_generation() const {
         return journal_generation_;
