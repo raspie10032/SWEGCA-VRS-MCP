@@ -3,9 +3,11 @@
 #include "digest.hpp"
 
 #include <algorithm>
+#include <deque>
 #include <limits>
 #include <map>
 #include <optional>
+#include <set>
 #include <stdexcept>
 #include <utility>
 
@@ -80,7 +82,53 @@ GraphNumericalCandidate settle_graph_event(
     identity.emplace_back(Json(std::move(score_rows)));
     auto settled = prepare_event_delta(
         std::move(prepared), sha256_hex(Json(std::move(identity)).canonical()), edits);
-    return GraphNumericalCandidate{std::move(settled), std::move(signal)};
+    return GraphNumericalCandidate{plan.snapshot_id, std::move(settled), std::move(signal)};
+}
+
+// SWEGCA: src/swegca_vrs2/store.py@7536139:263-281
+AffectedGraphComponent affected_graph_component(
+    const GraphAppendPlan& plan, const GraphNumericalCandidate& candidate) {
+    if (!candidate.settled || candidate.event_snapshot_id != plan.snapshot_id ||
+        plan.new_nodes.empty())
+        throw std::runtime_error("affected component generation changed");
+    const auto& settled = candidate.settled->require_validated_immutable();
+    std::set<std::uint32_t> members, edge_ids;
+    std::deque<std::uint32_t> queue;
+    queue.push_back(plan.new_nodes.front().second);
+    queue.insert(queue.end(), plan.prior_episode_nodes.begin(),
+                 plan.prior_episode_nodes.end());
+    while (!queue.empty()) {
+        const auto node = queue.front();
+        queue.pop_front();
+        if (node >= settled.node_count())
+            throw std::runtime_error("affected component endpoint outside directory");
+        if (!members.insert(node).second) continue;
+        settled.dependencies().visit_edges(node, EndpointDirection::outgoing,
+            [&](std::uint32_t edge) {
+                edge_ids.insert(edge);
+                queue.push_back(settled.edge(edge).target);
+            });
+    }
+    AffectedGraphComponent component;
+    component.nodes.assign(members.begin(), members.end());
+    component.edges.assign(edge_ids.begin(), edge_ids.end());
+    if (component.nodes.empty()) throw std::runtime_error("affected component is empty");
+    component.component_id = component.nodes.front();
+    std::map<std::uint32_t, std::uint32_t> local;
+    for (std::size_t at = 0; at < component.nodes.size(); ++at)
+        local.emplace(component.nodes[at], static_cast<std::uint32_t>(at));
+    component.local_source.reserve(component.edges.size());
+    component.local_target.reserve(component.edges.size());
+    component.signs.reserve(component.edges.size());
+    component.strengths.reserve(component.edges.size());
+    for (const auto address : component.edges) {
+        const auto edge = settled.edge(address);
+        component.local_source.push_back(local.at(edge.source));
+        component.local_target.push_back(local.at(edge.target));
+        component.signs.push_back(edge.sign);
+        component.strengths.push_back(static_cast<double>(settled.strength(address)));
+    }
+    return component;
 }
 
 // SWEGCA: src/swegca_vrs2/store.py@7536139:193-251
@@ -156,6 +204,9 @@ GraphAppendPlan plan_graph_append(
     std::sort(prior.begin(), prior.end(), [](const auto& left, const auto& right) {
         return left.episode_id < right.episode_id;
     });
+    std::vector<std::uint32_t> prior_nodes;
+    prior_nodes.reserve(prior.size());
+    for (const auto& old : prior) prior_nodes.push_back(nodes.address(old.episode_id));
 
     // Proposition and source/revision identity determine the fixed strength
     // proposal. Neither shared lexical cues nor an outcome label is evidence.
@@ -216,7 +267,8 @@ GraphAppendPlan plan_graph_append(
     return GraphAppendPlan{
         graph.snapshot_id(), snapshot_id, std::move(new_nodes), std::move(direct), std::move(scores),
         std::move(unresolved), std::move(appended_edges), std::move(strengths),
-        std::move(changed_nodes), VRSStateUpdateReceipt(snapshot_id, std::move(updates))};
+        std::move(changed_nodes), std::move(prior_nodes),
+        VRSStateUpdateReceipt(snapshot_id, std::move(updates))};
 }
 
 }  // namespace swegca::vrs

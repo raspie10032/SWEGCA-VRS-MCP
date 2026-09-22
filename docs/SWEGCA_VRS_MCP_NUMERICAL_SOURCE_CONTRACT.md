@@ -106,6 +106,13 @@ changed score/strength addresses into a settled successor with the author's
 score-bound snapshot digest. Affected-component region recomputation and Main
 journal commit/CAS must still follow in the source order. The plan does not
 infer truth from a shared cue or historical outcome.
+The C++ `affected_graph_component` now follows the author's directed outgoing
+walk from the new record and related prior records, then sorts the complete
+reached node and edge addresses and remaps endpoints locally. It retains signs
+and current strengths for every reached edge, including zero-strength edges.
+This produces a source-shaped input to `ConnectivityRegions.build`;
+weighted modularity, overlapping memberships, region publication and Main
+commit remain separate unfinished steps.
 The C++ endpoint segment index now preserves the author's stable per-segment
 sort, segment-concatenation lookup order, source-generation binding and
 geometric tail merge. That lookup order is required by `math.fsum` in the

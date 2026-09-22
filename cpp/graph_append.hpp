@@ -43,6 +43,7 @@ struct GraphAppendPlan {
     std::vector<EventEdge> appended_edges;
     std::vector<float> appended_strength;
     std::vector<std::uint32_t> changed_nodes;
+    std::vector<std::uint32_t> prior_episode_nodes;
     VRSStateUpdateReceipt strength_receipt;
 };
 
@@ -63,6 +64,7 @@ struct GraphAppendPlan {
     std::shared_ptr<const ValidatedEventVrsInputs> parent);
 
 struct GraphNumericalCandidate {
+    std::string event_snapshot_id;
     std::shared_ptr<const ValidatedEventVrsInputs> settled;
     EventSignalProposal signal;
 };
@@ -71,5 +73,19 @@ struct GraphNumericalCandidate {
 [[nodiscard]] GraphNumericalCandidate settle_graph_event(
     const GraphAppendPlan& plan,
     std::shared_ptr<const ValidatedEventVrsInputs> parent);
+
+struct AffectedGraphComponent {
+    std::uint32_t component_id;
+    std::vector<std::uint32_t> nodes;
+    std::vector<std::uint32_t> edges;
+    std::vector<std::uint32_t> local_source;
+    std::vector<std::uint32_t> local_target;
+    std::vector<std::int8_t> signs;
+    std::vector<double> strengths;
+};
+
+// SWEGCA: src/swegca_vrs2/store.py@7536139:263-281
+[[nodiscard]] AffectedGraphComponent affected_graph_component(
+    const GraphAppendPlan& plan, const GraphNumericalCandidate& candidate);
 
 }  // namespace swegca::vrs
