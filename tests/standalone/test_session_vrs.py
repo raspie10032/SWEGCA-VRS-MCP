@@ -226,6 +226,28 @@ def test_user_prompt_hook_falls_back_to_main_only_after_session_miss(tmp_path, m
         stop(session_state, state)
 
 
+def test_user_prompt_hook_keeps_session_receipt_when_main_is_unavailable(tmp_path, monkeypatch):
+    state, transcript, session = tmp_path / 'state', tmp_path / 'rollout.jsonl', 'prompt-no-main'
+    write_transcript(transcript, session, [])
+    capture = SessionCapture(state)
+    session_state = capture.session_root('codex', session)
+    try:
+        monkeypatch.setattr('swegca_vrs2.conversation_watch.schedule', lambda *args: 1)
+        result = handle('codex', state, dict(hook_event_name='UserPromptSubmit',
+            session_id=session, transcript_path=str(transcript),
+            prompt='세션과 메인에 없는 현재 발언'))
+        context = result['hookSpecificOutput']['additionalContext']
+        receipt = json.loads(context.split('The VRS receipt follows: ', 1)[1])
+        assert receipt['status'] == 'ok'
+        assert receipt['memory_layer'] == 'session'
+        assert receipt['candidate_count'] == 0
+        assert receipt['fallback_used'] is False
+        assert receipt['main_unavailable'] == 'durable_main_vrs_not_ready'
+        assert not engine_recall_active(session_state)
+    finally:
+        stop(session_state)
+
+
 def test_every_layered_mcp_tool_requires_exact_session_routing_argument():
     for tool in LAYERED_MEMORY_TOOLS:
         schema = tool['inputSchema']

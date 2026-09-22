@@ -286,18 +286,21 @@ class SessionCapture:
                 packet = local.client.request('hook_recall', query=prompt,
                                               limit=5, snippet=600)
             layer = 'session'
+            main_unavailable = None
             if packet.get('candidate_count') == 0:
                 if not is_native_store(self.root):
-                    raise ValueError('durable_main_vrs_not_ready')
-                with VRSClient(self.root, writes=True) as main:
-                    packet = main.client.request('hook_recall', query=prompt,
-                                                  limit=5, snippet=600)
-                layer = 'main'
+                    main_unavailable = 'durable_main_vrs_not_ready'
+                else:
+                    with VRSClient(self.root, writes=True) as main:
+                        packet = main.client.request('hook_recall', query=prompt,
+                                                      limit=5, snippet=600)
+                    layer = 'main'
             if packet.get('status') != 'ok' or packet.get('grants_authority') is not False:
                 raise ValueError('prompt_recall_receipt_invalid')
             return dict(packet, memory_layer=layer,
                         lookup_order=['session', 'main'],
-                        fallback_used=layer == 'main')
+                        fallback_used=layer == 'main',
+                        main_unavailable=main_unavailable)
         finally:
             self.end_recall(host, session, lease)
 
