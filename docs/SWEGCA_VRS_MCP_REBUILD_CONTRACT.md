@@ -320,6 +320,15 @@ bounded address map. This remains a derived index: original observations and
 their SWEGCA replay, not the map row, determine numerical truth. A map
 checkpoint, Main publication gate, physical endpoint index, and reclamation
 of orphaned pages are still needed.
+The native endpoint segment file primitive now stores source and target edge
+addresses in two endpoint-sorted arrays. It preserves original edge address
+order for equal endpoints, streams an adjacent stable merge, and binary
+searches an exact endpoint range. Each file is tied to an original journal
+generation and checked for metadata, ordering, record checksums, and a full
+edge-address permutation before publication. The index owner still needs to
+apply the author's geometric tail-merge rule, publish a source-bound segment
+manifest, and reclaim orphaned derived files. This primitive is not yet a
+physical `EndpointDependencyIndex` or a bounded resident read path.
 This adapter currently reads physical address files on lookup. It is a
 source-bound correctness path, not accepted evidence for the author's
 `lookup_requires_io=False` hot property or the user-input-to-Recall <1 ms
