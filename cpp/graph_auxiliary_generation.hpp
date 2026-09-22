@@ -63,6 +63,21 @@ struct GraphAliasUpdatePlan {
     std::string pair_snapshot_id;
 };
 
+struct GraphUsageUpdatePlan {
+    Json body;
+    std::string fingerprint;
+    std::string request_id;
+    GraphAuxiliaryState successor;
+    std::string pair_snapshot_id;
+};
+
+// Usage is source-bound provenance, never new evidence. Only a changed count
+// for a source with a live original enters the journal candidate.
+// SWEGCA: src/swegca_vrs2/store.py@c06092a:1291-1317
+[[nodiscard]] std::optional<GraphUsageUpdatePlan> plan_graph_usage_update(
+    const PublishedHotIndex& memory, const GraphAuxiliaryState& current,
+    const std::map<std::string, std::array<std::int64_t, 2>>& counts);
+
 // A declaration binds already known explicit proposition IDs. It is not
 // new evidence or an action authority. A no-op returns no journal candidate.
 // SWEGCA: src/swegca_vrs2/store.py@c06092a:1318-1347

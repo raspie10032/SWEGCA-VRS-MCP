@@ -2,6 +2,7 @@
 
 #include "native_published_hot_index.hpp"
 
+#include <array>
 #include <filesystem>
 #include <stdexcept>
 #include <utility>
@@ -23,6 +24,7 @@ MainReadGeneration::MainReadGeneration(
     std::shared_ptr<const NativeCueDirectory> cue_addresses,
     std::shared_ptr<const NativeCueDirectory> proposition_addresses,
     std::shared_ptr<const NativeCueDirectory> successor_addresses,
+    std::shared_ptr<const NativeCueDirectory> source_addresses,
     std::int64_t published_row_limit)
     // SWEGCA: src/swegca_vrs2/store.py@7536139:371-405
     : pair_(std::move(pair)), inputs_(std::move(inputs)),
@@ -34,19 +36,22 @@ MainReadGeneration::MainReadGeneration(
       cue_addresses_(std::move(cue_addresses)),
       proposition_addresses_(std::move(proposition_addresses)),
       successor_addresses_(std::move(successor_addresses)),
+      source_addresses_(std::move(source_addresses)),
+      // SWEGCA: src/swegca_vrs2/store.py@7536139:371-405
       published_row_limit_(published_row_limit) {
     if (!pair_ || !inputs_ || !nodes_ || !regions_ || !associations_ ||
         !auxiliary_ ||
         !journal_ || !original_addresses_ || !cue_addresses_ ||
-        !proposition_addresses_ || !successor_addresses_)
+        !proposition_addresses_ || !successor_addresses_ || !source_addresses_)
         throw std::runtime_error("complete Main read generation required");
-    if (std::filesystem::equivalent(cue_addresses_->directory(),
-                                    proposition_addresses_->directory()) ||
-        std::filesystem::equivalent(cue_addresses_->directory(),
-                                    successor_addresses_->directory()) ||
-        std::filesystem::equivalent(proposition_addresses_->directory(),
-                                    successor_addresses_->directory()))
-        throw std::runtime_error("Main posting directories alias");
+    const std::array<const NativeCueDirectory*, 4> directories{
+        cue_addresses_.get(), proposition_addresses_.get(),
+        successor_addresses_.get(), source_addresses_.get()};
+    for (std::size_t left = 0; left < directories.size(); ++left)
+        for (std::size_t right = left + 1; right < directories.size(); ++right)
+            if (std::filesystem::equivalent(directories[left]->directory(),
+                                             directories[right]->directory()))
+                throw std::runtime_error("Main posting directories alias");
     const auto& source = inputs_->require_validated_immutable();
     const auto* native_memory =
         dynamic_cast<const NativePublishedHotIndex*>(&pair_->memory());
@@ -56,7 +61,8 @@ MainReadGeneration::MainReadGeneration(
         &native_memory->originals() != original_addresses_.get() ||
         &native_memory->cues() != cue_addresses_.get() ||
         &native_memory->propositions() != proposition_addresses_.get() ||
-        &native_memory->successors() != successor_addresses_.get())
+        &native_memory->successors() != successor_addresses_.get() ||
+        &native_memory->sources() != source_addresses_.get())
         throw std::runtime_error("Main HotIndex read generation changed");
     if (pair_->vrs_snapshot_id() != source.snapshot_id())
         throw std::runtime_error("read generation belongs to another VRS snapshot");
@@ -69,6 +75,7 @@ MainReadGeneration::MainReadGeneration(
     const auto cue_publication = cue_addresses_->publication();
     const auto proposition_publication = proposition_addresses_->publication();
     const auto successor_publication = successor_addresses_->publication();
+    const auto source_publication = source_addresses_->publication();
     if (!original_addresses_->published_reader() || published_row_limit_ < 0 ||
         static_cast<std::uint64_t>(published_row_limit_) > journal_->row_count() ||
         journal_->generation() != original_addresses_->journal_generation() ||
@@ -95,6 +102,12 @@ MainReadGeneration::MainReadGeneration(
         successor_publication->published_rows != published_row_limit_ ||
         successor_publication->pair_snapshot_id != pair_->snapshot_id())
         throw std::runtime_error("Main successor read generation changed");
+    if (!source_addresses_->published_reader() || !source_publication ||
+        source_addresses_->journal_generation() != journal_->generation() ||
+        source_publication->journal_generation != journal_->generation() ||
+        source_publication->published_rows != published_row_limit_ ||
+        source_publication->pair_snapshot_id != pair_->snapshot_id())
+        throw std::runtime_error("Main source read generation changed");
 }
 
 // SWEGCA: user@2026-09-22:13-21
@@ -104,6 +117,7 @@ PinnedReadLayer MainReadGeneration::layer() const {
                            revocations_,
                            *journal_, *original_addresses_, *cue_addresses_,
                            *proposition_addresses_, *successor_addresses_,
+                           *source_addresses_,
                            published_row_limit_};
 }
 

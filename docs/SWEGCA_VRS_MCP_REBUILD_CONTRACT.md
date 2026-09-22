@@ -128,16 +128,18 @@ published row limits hide future nodes from older readers. A descending
 sequence merge counts the exact distinct posting union without holding all
 candidate IDs in RAM. A second journal-ordered pass now validates source
 observations, resolves the first original and its header projection, and
-routes raw cue postings, proposition memberships and supersedes-successor
+routes raw cue postings, proposition memberships, supersedes-successor, and
+original-source
 links to 16 bounded worker queues by digest prefix. A key always reaches one
-worker in journal order. The proposition and successor links reuse the same
+worker in journal order. The proposition, successor, and source links reuse the same
 derived posting format in separate directories; they do not grant evidence
 authority. A supersedes link requires a prior original with the same source
 and a different revision, and no other successor may claim that prior ID.
-Main's pinned read generation requires all three posting directories and the
+The source key is checked against the original observation before indexing.
+Main's pinned read generation requires all four posting directories and the
 exact original directory to carry the same journal generation, row limit,
 and pair certificate. The native published HotIndex now reads headers from
-the exact ID's projection address, and cue, proposition, and successor sets
+the exact ID's projection address, and cue, proposition, successor, and source sets
 from those pinned directories. Main additionally checks that its pair's
 HotIndex uses those same directory objects. An explicit semantic-family
 reader can be supplied; ordinary standalone observations have the author's
@@ -168,6 +170,12 @@ registry, skips unchanged bindings, and prepares the author's journal body,
 fingerprint, request ID, successor Graph metadata, and pair certificate.
 The plan remains unpublished until the missing Main journal coordinator
 commits its row. It does not turn alias declarations into evidence.
+The usage ingress plan now visits the source directory only for changed
+counts, confirms that at least one original for each source has no successor,
+and prepares the author's usage journal body, fingerprint, request ID,
+successor Graph metadata, and pair certificate. Source postings are streamed
+until a live original is found; the full list does not enter RAM. Usage remains
+provenance, not new evidence. This plan also awaits the Main coordinator.
 This adapter currently reads physical address files on lookup. It is a
 source-bound correctness path, not accepted evidence for the author's
 `lookup_requires_io=False` hot property or the user-input-to-Recall <1 ms
@@ -189,7 +197,7 @@ snapshot ID, and VRS snapshot ID. The owner may replace that immutable pair
 only if its expected current ID still matches, and only after the corresponding
 journal commit. `MainReadGeneration` now retains the pair together with the
 validated numerical input, node and region directories, coactivation index,
-portal state, native journal read view, exact original address and three posting readers, and
+portal state, native journal read view, exact original address and four posting readers, and
 published row limit. Construction rejects VRS and original-source binding
 mismatches before one CAS owner can expose the bundle. The four-stage path now
 opens the selected original through that exact native address; conflicting

@@ -35,6 +35,7 @@ NativePublishedHotIndex::NativePublishedHotIndex(
     std::shared_ptr<const NativeCueDirectory> cues,
     std::shared_ptr<const NativeCueDirectory> propositions,
     std::shared_ptr<const NativeCueDirectory> successors,
+    std::shared_ptr<const NativeCueDirectory> sources,
     std::vector<std::shared_ptr<const RecordedSemanticFamilyRead>>
         semantic_families)
     // SWEGCA: src/swegca_vrs2/store.py@7536139:122-175
@@ -43,9 +44,10 @@ NativePublishedHotIndex::NativePublishedHotIndex(
       published_row_limit_(published_row_limit),
       originals_(std::move(originals)), headers_(std::move(headers)),
       cues_(std::move(cues)), propositions_(std::move(propositions)),
-      successors_(std::move(successors)),
+      successors_(std::move(successors)), sources_(std::move(sources)),
       semantic_families_(std::move(semantic_families)) {
     if (!originals_ || !headers_ || !cues_ || !propositions_ || !successors_ ||
+        !sources_ ||
         memory_.snapshot_id.empty() || pair_snapshot_id_.empty() ||
         published_row_limit_ < 0)
         throw std::runtime_error("native_hot_index_generation_invalid");
@@ -71,16 +73,26 @@ NativePublishedHotIndex::NativePublishedHotIndex(
                                 published_row_limit_);
     require_posting_publication(*successors_, generation, pair_snapshot_id_,
                                 published_row_limit_);
-    if (std::filesystem::equivalent(cues_->directory(),
-                                    propositions_->directory()) ||
-        std::filesystem::equivalent(cues_->directory(),
-                                    successors_->directory()) ||
-        std::filesystem::equivalent(propositions_->directory(),
-                                    successors_->directory()))
-        throw std::runtime_error("native_hot_index_directory_alias");
+    require_posting_publication(*sources_, generation, pair_snapshot_id_,
+                                published_row_limit_);
+    const std::array<const NativeCueDirectory*, 4> directories{
+        cues_.get(), propositions_.get(), successors_.get(), sources_.get()};
+    for (std::size_t left = 0; left < directories.size(); ++left)
+        for (std::size_t right = left + 1; right < directories.size(); ++right)
+            if (std::filesystem::equivalent(directories[left]->directory(),
+                                             directories[right]->directory()))
+                throw std::runtime_error("native_hot_index_directory_alias");
     for (const auto& family : semantic_families_)
         if (!family)
             throw std::runtime_error("native_semantic_family_source_missing");
+}
+
+// SWEGCA: src/swegca_vrs2/store.py@c06092a:1299-1303
+bool NativePublishedHotIndex::has_live_source(std::string_view source) const {
+    return sources_->any_episode_id_for_cue(
+        source, published_row_limit_, [&](std::string_view identifier) {
+            return !successor_of(identifier).has_value();
+        });
 }
 
 // SWEGCA: src/swegca_vrs2/store.py@7536139:146-153

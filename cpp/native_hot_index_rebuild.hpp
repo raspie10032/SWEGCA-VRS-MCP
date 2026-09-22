@@ -18,10 +18,11 @@ struct NativeHotIndexRebuildCount {
     std::uint64_t cue_postings;
     std::uint64_t proposition_postings;
     std::uint64_t successor_postings;
+    std::uint64_t source_postings;
     HotIndexSeed memory;
 };
 
-// A second journal-ordered pass routes cue, proposition and supersedes keys
+// A second journal-ordered pass routes cue, proposition, supersedes and source keys
 // to 16 independent workers. Every key keeps author journal order, while its
 // values come from the verified projection of the first original.
 // SWEGCA: src/swegca_vrs2/store.py@7536139:145-175
@@ -30,6 +31,7 @@ struct NativeHotIndexRebuildCount {
 [[nodiscard]] NativeHotIndexRebuildCount rebuild_native_hot_index_directories(
     const NativeJournal& journal, const ExactJournalDirectory& addresses,
     const HotIndexProjectionLog& headers, NativeCueDirectory& cues,
-    NativeCueDirectory& propositions, NativeCueDirectory& successors);
+    NativeCueDirectory& propositions, NativeCueDirectory& successors,
+    NativeCueDirectory& sources);
 
 }  // namespace swegca::vrs

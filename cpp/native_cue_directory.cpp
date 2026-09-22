@@ -697,17 +697,18 @@ std::uint64_t NativeCueDirectory::posting_count(
     return head ? head->count : 0;
 }
 
-// SWEGCA: src/swegca_vrs2/engine/mosaic_memory_activation.py@7536139:301-348
-std::vector<std::string> NativeCueDirectory::episode_ids_for_cue(
-    std::string_view cue, std::int64_t published_row_limit) const {
+// SWEGCA: src/swegca_vrs2/cue_shards.py@c06092a:392-440
+bool NativeCueDirectory::walk_postings(
+    std::string_view cue, std::int64_t published_row_limit,
+    const std::function<bool(std::string_view)>& predicate) const {
+    if (!predicate) throw std::runtime_error("native_cue_predicate_missing");
     const auto head = head_for(cue, published_row_limit);
-    if (!head) return {};
+    if (!head) return false;
     const auto path = posting_path(head->prefix);
     std::ifstream stream(path, std::ios::binary);
     if (!stream) throw std::runtime_error("native_cue_posting_truncated");
     require_data_header(stream, posting_magic, journal_generation_);
     const auto size = std::filesystem::file_size(path);
-    std::vector<std::string> identifiers;
     std::uint64_t offset = head->head;
     std::uint64_t remaining = head->count;
     std::optional<std::int64_t> previous_sequence;
@@ -717,14 +718,33 @@ std::vector<std::string> NativeCueDirectory::episode_ids_for_cue(
             (previous_sequence && node.sequence >= *previous_sequence) ||
             node.cumulative_count != remaining)
             throw std::runtime_error("native_cue_posting_order_changed");
-        identifiers.push_back(node.episode_id);
+        if (predicate(node.episode_id)) return true;
         previous_sequence = node.sequence;
         offset = node.previous;
         --remaining;
         if ((remaining == 0) != (offset == 0))
             throw std::runtime_error("native_cue_posting_count_invalid");
     }
+    return false;
+}
+
+// SWEGCA: src/swegca_vrs2/engine/mosaic_memory_activation.py@7536139:301-348
+std::vector<std::string> NativeCueDirectory::episode_ids_for_cue(
+    std::string_view cue, std::int64_t published_row_limit) const {
+    std::vector<std::string> identifiers;
+    (void)walk_postings(cue, published_row_limit,
+        [&](std::string_view identifier) {
+            identifiers.emplace_back(identifier);
+            return false;
+        });
     return identifiers;
+}
+
+// SWEGCA: src/swegca_vrs2/cue_shards.py@c06092a:392-440
+bool NativeCueDirectory::any_episode_id_for_cue(
+    std::string_view cue, std::int64_t published_row_limit,
+    const std::function<bool(std::string_view)>& predicate) const {
+    return walk_postings(cue, published_row_limit, predicate);
 }
 
 // SWEGCA: src/swegca_vrs2/engine/mosaic_memory_activation.py@7536139:246-267

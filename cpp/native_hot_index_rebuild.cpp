@@ -30,12 +30,14 @@ struct PostingWork {
     std::vector<std::string> cues;
     std::vector<std::string> propositions;
     std::vector<std::string> predecessors;
+    std::vector<std::string> sources;
     std::string episode_id;
     std::int64_t sequence;
 
     // SWEGCA: src/swegca_vrs2/store.py@7536139:145-175
     [[nodiscard]] bool empty() const {
-        return cues.empty() && propositions.empty() && predecessors.empty();
+        return cues.empty() && propositions.empty() &&
+               predecessors.empty() && sources.empty();
     }
 };
 
@@ -65,19 +67,24 @@ std::size_t worker_for(std::string_view cue) {
 NativeHotIndexRebuildCount rebuild_native_hot_index_directories(
     const NativeJournal& journal, const ExactJournalDirectory& addresses,
     const HotIndexProjectionLog& headers, NativeCueDirectory& cues,
-    NativeCueDirectory& propositions, NativeCueDirectory& successors) {
+    NativeCueDirectory& propositions, NativeCueDirectory& successors,
+    NativeCueDirectory& sources) {
     if (journal.generation() != addresses.journal_generation() ||
         journal.generation() != headers.journal_generation() ||
         journal.generation() != cues.journal_generation() ||
         journal.generation() != propositions.journal_generation() ||
-        journal.generation() != successors.journal_generation())
+        journal.generation() != successors.journal_generation() ||
+        journal.generation() != sources.journal_generation())
         throw std::runtime_error("native_hot_index_generation_changed");
-    if (std::filesystem::equivalent(cues.directory(), propositions.directory()) ||
-        std::filesystem::equivalent(cues.directory(), successors.directory()) ||
-        std::filesystem::equivalent(propositions.directory(),
-                                    successors.directory()))
-        throw std::runtime_error("native_hot_index_directory_alias");
-    if (!cues.fresh() || !propositions.fresh() || !successors.fresh())
+    const std::array<const NativeCueDirectory*, 4> directories{
+        &cues, &propositions, &successors, &sources};
+    for (std::size_t left = 0; left < directories.size(); ++left)
+        for (std::size_t right = left + 1; right < directories.size(); ++right)
+            if (std::filesystem::equivalent(directories[left]->directory(),
+                                             directories[right]->directory()))
+                throw std::runtime_error("native_hot_index_directory_alias");
+    if (!cues.fresh() || !propositions.fresh() || !successors.fresh() ||
+        !sources.fresh())
         throw std::runtime_error("native_hot_index_rebuild_requires_fresh_directories");
     NativeHotIndexRebuildCount count{};
     count.memory = empty_hot_index(journal.identity());
@@ -130,6 +137,9 @@ NativeHotIndexRebuildCount rebuild_native_hot_index_directories(
                             successors.put(work->predecessors,
                                            work->episode_id, work->sequence);
                         }
+                        if (!work->sources.empty())
+                            sources.put(work->sources,
+                                        work->episode_id, work->sequence);
                     }
                 } catch (...) {
                     fail(std::current_exception());
@@ -198,6 +208,12 @@ NativeHotIndexRebuildCount rebuild_native_hot_index_directories(
                 groups[worker_for(previous)].predecessors.push_back(previous);
                 ++count.successor_postings;
             }
+            if (projection.header.source_addresses !=
+                std::vector<std::string>{row.at("source").string()})
+                throw std::runtime_error("native_hot_index_source_changed");
+            const auto& source = projection.header.source_addresses.front();
+            groups[worker_for(source)].sources.push_back(source);
+            ++count.source_postings;
             for (std::size_t number = 0; number < rebuild_workers; ++number) {
                 if (groups[number].empty()) continue;
                 auto& worker = workers[number];

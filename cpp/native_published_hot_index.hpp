@@ -30,8 +30,12 @@ public:
         std::shared_ptr<const NativeCueDirectory> cues,
         std::shared_ptr<const NativeCueDirectory> propositions,
         std::shared_ptr<const NativeCueDirectory> successors,
+        std::shared_ptr<const NativeCueDirectory> sources,
         std::vector<std::shared_ptr<const RecordedSemanticFamilyRead>>
             semantic_families = {});
+
+    // SWEGCA: src/swegca_vrs2/store.py@c06092a:1299-1303
+    [[nodiscard]] bool has_live_source(std::string_view source) const override;
 
     // SWEGCA: src/swegca_vrs2/store.py@7536139:146-153
     [[nodiscard]] bool contains_episode(std::string_view identifier) const override;
@@ -86,6 +90,10 @@ public:
     [[nodiscard]] const NativeCueDirectory& successors() const {
         return *successors_;
     }
+    // SWEGCA: src/swegca_vrs2/store.py@c06092a:1299-1303
+    [[nodiscard]] const NativeCueDirectory& sources() const {
+        return *sources_;
+    }
 
 private:
     HotIndexSeed memory_;
@@ -96,6 +104,7 @@ private:
     std::shared_ptr<const NativeCueDirectory> cues_;
     std::shared_ptr<const NativeCueDirectory> propositions_;
     std::shared_ptr<const NativeCueDirectory> successors_;
+    std::shared_ptr<const NativeCueDirectory> sources_;
     std::vector<std::shared_ptr<const RecordedSemanticFamilyRead>>
         semantic_families_;
 };

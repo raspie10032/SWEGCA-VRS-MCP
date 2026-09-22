@@ -28,6 +28,7 @@ struct PinnedReadLayer {
     const NativeCueDirectory& cue_addresses;
     const NativeCueDirectory& proposition_addresses;
     const NativeCueDirectory& successor_addresses;
+    const NativeCueDirectory& source_addresses;
     std::int64_t published_row_limit;
 };
 

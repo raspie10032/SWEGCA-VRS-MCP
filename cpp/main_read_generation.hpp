@@ -30,6 +30,7 @@ public:
         std::shared_ptr<const NativeCueDirectory> cue_addresses,
         std::shared_ptr<const NativeCueDirectory> proposition_addresses,
         std::shared_ptr<const NativeCueDirectory> successor_addresses,
+        std::shared_ptr<const NativeCueDirectory> source_addresses,
         std::int64_t published_row_limit);
 
     // SWEGCA: src/swegca_vrs2/engine/mosaic_memory_activation.py@7536139:113-135
@@ -50,6 +51,7 @@ private:
     std::shared_ptr<const NativeCueDirectory> cue_addresses_;
     std::shared_ptr<const NativeCueDirectory> proposition_addresses_;
     std::shared_ptr<const NativeCueDirectory> successor_addresses_;
+    std::shared_ptr<const NativeCueDirectory> source_addresses_;
     std::int64_t published_row_limit_;
 };
 

@@ -69,6 +69,10 @@ public:
 class PublishedHotIndex : public HotIndexRead {
 public:
     ~PublishedHotIndex() override = default;
+    // Source liveness is the author's set of originals with no successor.
+    // This physical check supports usage provenance, not truth or retrieval.
+    // SWEGCA: src/swegca_vrs2/store.py@c06092a:1299-1303
+    [[nodiscard]] virtual bool has_live_source(std::string_view source) const = 0;
     // SWEGCA: src/swegca_vrs2/engine/mosaic_memory_activation.py@7536139:317-320
     [[nodiscard]] virtual std::vector<std::string> episode_ids_for_cue(
         std::string_view cue) const = 0;

@@ -245,4 +245,37 @@ std::optional<GraphAliasUpdatePlan> plan_graph_alias_update(
         std::move(successor), std::move(pair)};
 }
 
+// SWEGCA: src/swegca_vrs2/store.py@c06092a:1291-1317
+std::optional<GraphUsageUpdatePlan> plan_graph_usage_update(
+    const PublishedHotIndex& memory, const GraphAuxiliaryState& current,
+    const std::map<std::string, std::array<std::int64_t, 2>>& counts) {
+    std::map<std::string, std::array<std::int64_t, 2>> known;
+    for (const auto& [source, pair] : counts) {
+        const auto prior = current.usage.find(source);
+        if ((prior == current.usage.end() || prior->second != pair) &&
+            memory.has_live_source(source))
+            known.emplace(source, pair);
+    }
+    if (known.empty()) return std::nullopt;
+    Json::Object count_rows;
+    for (const auto& [source, pair] : known) {
+        Json::Array values;
+        values.emplace_back(pair[0]);
+        values.emplace_back(pair[1]);
+        count_rows.emplace(source, Json(std::move(values)));
+    }
+    Json::Object body;
+    body.emplace("kind", Json(std::string("usage")));
+    body.emplace("counts", Json(std::move(count_rows)));
+    Json journal_body(std::move(body));
+    auto fingerprint = sha256_hex(journal_body.canonical());
+    auto successor = graph_with_usage(current, known);
+    auto pair_snapshot_id = full_current_pair_snapshot_id(
+        memory.snapshot_id(), successor.snapshot_id);
+    return GraphUsageUpdatePlan{
+        std::move(journal_body), fingerprint,
+        "usage:" + fingerprint.substr(0, 40),
+        std::move(successor), std::move(pair_snapshot_id)};
+}
+
 }  // namespace swegca::vrs

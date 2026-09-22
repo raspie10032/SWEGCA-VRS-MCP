@@ -6,6 +6,7 @@
 #include <atomic>
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <mutex>
 #include <optional>
 #include <span>
@@ -46,6 +47,13 @@ public:
     // SWEGCA: src/swegca_vrs2/engine/mosaic_memory_activation.py@7536139:301-348
     [[nodiscard]] std::vector<std::string> episode_ids_for_cue(
         std::string_view cue, std::int64_t published_row_limit) const;
+
+    // Stop at the first qualifying original while retaining O(1) cursor
+    // memory. Source-liveness checks must not materialize a large posting.
+    // SWEGCA: src/swegca_vrs2/cue_shards.py@c06092a:392-440
+    [[nodiscard]] bool any_episode_id_for_cue(
+        std::string_view cue, std::int64_t published_row_limit,
+        const std::function<bool(std::string_view)>& predicate) const;
 
     // A descending k-way merge of source sequences counts the exact distinct
     // union while retaining only one posting cursor per cue in RAM.
@@ -101,6 +109,9 @@ private:
         std::string_view cue, std::int64_t published_row_limit) const;
     [[nodiscard]] PostingNode node_at(std::uint8_t prefix,
                                       std::uint64_t offset) const;
+    [[nodiscard]] bool walk_postings(
+        std::string_view cue, std::int64_t published_row_limit,
+        const std::function<bool(std::string_view)>& predicate) const;
 
     std::filesystem::path directory_;
     std::string journal_generation_;
