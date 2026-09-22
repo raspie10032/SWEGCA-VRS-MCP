@@ -221,11 +221,13 @@ std::optional<GraphAliasUpdatePlan> plan_graph_alias_update(
     }
     const auto target = alias_root(current, canonical);
     bool unchanged = true;
-    for (const auto& alias : prepared)
-        if (alias_root(current, alias) != target) {
+    for (const auto& alias : prepared) {
+        const auto binding = current.aliases.find(alias);
+        if (binding == current.aliases.end() || binding->second != target) {
             unchanged = false;
             break;
         }
+    }
     if (unchanged) return std::nullopt;
     Json::Array alias_rows;
     alias_rows.reserve(prepared.size());
