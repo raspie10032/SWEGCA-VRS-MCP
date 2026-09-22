@@ -38,11 +38,10 @@ void HotIndexPending::ensure_valid() const {
 // SWEGCA: src/swegca_vrs2/store.py@7536139:342-348
 std::pair<std::string, bool> HotIndexPending::append(const Json& row) {
     ensure_valid();
-    auto plan = plan_hot_index_append(*this, row);
-    auto identifier = plan.identifier;
-    if (!plan.added()) return {std::move(identifier), false};
-
     try {
+        auto plan = plan_hot_index_append(*this, row);
+        auto identifier = plan.identifier;
+        if (!plan.added()) return {std::move(identifier), false};
         const auto position = plans_.size();
         snapshot_id_ = *plan.new_snapshot_id;
         pending_outcomes_[*plan.outcome] = *plan.new_outcome_count;
@@ -50,11 +49,11 @@ std::pair<std::string, bool> HotIndexPending::append(const Json& row) {
         if (plan.proposition) pending_propositions_[*plan.proposition].push_back(identifier);
         plans_.push_back(std::move(plan));
         pending_ids_.emplace(identifier, position);
+        return {std::move(identifier), true};
     } catch (...) {
         failed_ = true;
         throw;
     }
-    return {std::move(identifier), true};
 }
 
 // SWEGCA: src/swegca_vrs2/store.py@7536139:146-148
