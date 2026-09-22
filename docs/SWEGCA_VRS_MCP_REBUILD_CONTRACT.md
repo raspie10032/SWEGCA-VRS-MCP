@@ -134,6 +134,11 @@ requires the cue and exact original directories to carry the same journal
 generation, row limit, and pair certificate. A concrete published HotIndex
 must still bind its lookup methods to those pinned directories. Proposition
 and family directories are also missing.
+During a fresh, unpublished cue rebuild, the derived files are synced once
+behind the publication barrier instead of after every posting. Publication
+locks all prefixes, syncs every data and table file, then writes the durable
+marker. Later appends to an already published directory retain per-posting
+sync so older published row limits keep a durable prior head.
 The Main operation overlay now checks request ID and normalized observation
 fingerprint before any new HotIndex/Graph candidate is staged. Identical
 requests retain their original episode and pair certificate; conflicting

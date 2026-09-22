@@ -268,7 +268,8 @@ std::string read_cue(const std::filesystem::path& path, std::uint64_t offset,
 
 // SWEGCA: src/swegca_vrs2/cue_shards.py@c06092a:223-244
 std::uint64_t append_cue(const std::filesystem::path& path,
-                         std::string_view cue, std::string_view generation) {
+                         std::string_view cue, std::string_view generation,
+                         bool sync_now) {
     if (cue.empty() || cue.size() > maximum_cue_bytes)
         throw std::runtime_error("invalid_vrs_cue");
     const auto offset = std::filesystem::file_size(path);
@@ -290,7 +291,7 @@ std::uint64_t append_cue(const std::filesystem::path& path,
     stream.flush();
     if (!stream) throw std::runtime_error("native_cue_write_failed");
     stream.close();
-    sync_file(path);
+    if (sync_now) sync_file(path);
     return offset;
 }
 
@@ -379,7 +380,7 @@ RawPosting read_node(const std::filesystem::path& path, std::uint64_t offset,
 std::uint64_t append_node(const std::filesystem::path& path,
                           std::uint64_t previous, std::int64_t sequence,
                           std::uint64_t count, std::string_view episode_id,
-                          std::string_view generation) {
+                          std::string_view generation, bool sync_now) {
     const auto offset = std::filesystem::file_size(path);
     if (offset < data_header_bytes ||
         offset > std::numeric_limits<std::uint64_t>::max() - posting_bytes)
@@ -395,7 +396,7 @@ std::uint64_t append_node(const std::filesystem::path& path,
     stream.flush();
     if (!stream) throw std::runtime_error("native_cue_posting_write_failed");
     stream.close();
-    sync_file(path);
+    if (sync_now) sync_file(path);
     return offset;
 }
 
@@ -545,6 +546,15 @@ void NativeCueDirectory::put(std::span<const std::string> cues,
         const auto prefix = key[0];
         std::lock_guard guard(prefix_mutex_[prefix]);
         try {
+            // A fresh derived directory has no published readers. Its files
+            // become durable together before the first publication marker.
+            // Once published, each later append retains the previous head.
+            // SWEGCA: src/swegca_vrs2/cue_shards.py@c06092a:260-360
+            bool sync_now;
+            {
+                std::lock_guard published(publication_mutex_);
+                sync_now = publication_.has_value();
+            }
             const auto text_path = cue_path(prefix);
             const auto nodes_path = posting_path(prefix);
             if (!std::filesystem::exists(text_path))
@@ -585,10 +595,12 @@ void NativeCueDirectory::put(std::span<const std::string> cues,
                         throw std::runtime_error("native_cue_posting_order_changed");
                     }
                 } else {
-                    cue_offset = append_cue(text_path, cue, journal_generation_);
+                    cue_offset = append_cue(text_path, cue,
+                                            journal_generation_, sync_now);
                 }
                 const auto head_offset = append_node(nodes_path, previous,
-                    journal_sequence, count + 1, episode_id, journal_generation_);
+                    journal_sequence, count + 1, episode_id,
+                    journal_generation_, sync_now);
                 const auto copy = encode_copy(head_offset, count + 1,
                     static_cast<std::uint64_t>(journal_sequence));
                 table.clear();
@@ -615,7 +627,7 @@ void NativeCueDirectory::put(std::span<const std::string> cues,
                 table.flush();
                 if (!table) throw std::runtime_error("native_cue_table_write_failed");
                 table.close();
-                sync_file(path);
+                if (sync_now) sync_file(path);
                 inserted = true;
                 break;
             }
@@ -802,6 +814,15 @@ void NativeCueDirectory::publish(std::int64_t journal_rows,
     body.emplace("pair_snapshot_id", Json(std::string(pair_snapshot_id)));
     const auto bytes = Json(std::move(body)).canonical();
     try {
+        // The marker is the visibility boundary. The 256 prefix locks above
+        // stop writers while every derived file is made durable first.
+        // SWEGCA: src/swegca_vrs2/cue_shards.py@c06092a:260-360
+        for (const auto& entry : std::filesystem::directory_iterator(directory_)) {
+            if (!entry.is_regular_file())
+                throw std::runtime_error("native_cue_directory_invalid");
+            if (entry.path().filename() != publication_name)
+                sync_file(entry.path());
+        }
         write_atomic_file(directory_ / publication_name,
                           std::as_bytes(std::span(bytes)));
         publication_ = CueDirectoryPublication{
