@@ -357,14 +357,17 @@ class Resident:
             if not force and stamp and now - stamp < STORAGE_SCAN_TTL_SECONDS:
                 return cached
             total = 0
-            for root, _, files in os.walk(self.primary.directory):
+            def failed_scan(error):
+                raise ValueError('vrs_storage_scan_failed') from error
+
+            for root, _, files in os.walk(self.primary.directory, onerror=failed_scan):
                 for name in files:
                     try:
                         stat = os.stat(Path(root) / name)
                         blocks = getattr(stat, 'st_blocks', None)
                         total += stat.st_size if blocks is None else int(blocks) * 512
-                    except OSError:
-                        continue
+                    except OSError as error:
+                        raise ValueError('vrs_storage_scan_failed') from error
             self._storage_cache = (now, total)
             return total
 

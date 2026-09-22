@@ -19,6 +19,8 @@ never divided. Its revisions stay with the shard that owns its source lineage. T
 check counts allocated filesystem blocks because this is an SSD-capacity limit. Logical sparse-file
 sizes are reported separately. The one-second storage scan cache reserves the full 625 MB that a
 5 Gbit/s device could add during that interval and forces a fresh scan near the boundary.
+If a directory cannot be walked or a file cannot be statted during that scan,
+admission fails instead of treating the unknown allocation as zero.
 
 ## Automatic shards and connections
 

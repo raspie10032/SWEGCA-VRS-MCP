@@ -2,6 +2,7 @@
 """Every resident shard must retain the complete SWEGCA-VRS read path."""
 import threading
 import json
+import os
 from collections import OrderedDict
 from types import SimpleNamespace
 
@@ -313,6 +314,39 @@ def test_resource_budget_is_reported_and_admission_is_fail_closed(tmp_path, monk
         monkeypatch.setattr(resident, "_storage_bytes", lambda **kwargs: MAX_STORAGE_BYTES)
         with pytest.raises(ValueError, match="storage_budget_exceeded"):
             resident.ingest(row(1, "저장소 한도 거부", "budget"))
+    finally:
+        resident.close()
+        primary.close()
+
+
+def test_storage_admission_rejects_incomplete_filesystem_scan(tmp_path, monkeypatch):
+    primary = Main(tmp_path / "main", allow_ingest=True)
+    resident = Resident(primary, {}, hot_limit=1)
+    try:
+        def unreadable_directory(_root, *, onerror):
+            onerror(OSError("unreadable directory"))
+            yield from ()
+
+        with monkeypatch.context() as patch:
+            patch.setattr("swegca_vrs2.resident.os.walk", unreadable_directory)
+            with pytest.raises(ValueError, match="vrs_storage_scan_failed"):
+                resident.ingest(row(0, "저장소 스캔 오류", "budget"))
+
+        def missing_file(_root, *, onerror):
+            yield str(primary.directory), (), ("vanished.vrs",)
+
+        original_stat = os.stat
+        def failing_stat(path, *args, **kwargs):
+            if str(path).endswith("vanished.vrs"):
+                raise FileNotFoundError(path)
+            return original_stat(path, *args, **kwargs)
+
+        with monkeypatch.context() as patch:
+            patch.setattr("swegca_vrs2.resident.os.walk", missing_file)
+            patch.setattr("swegca_vrs2.resident.os.stat", failing_stat)
+            with pytest.raises(ValueError, match="vrs_storage_scan_failed"):
+                resident.ingest(row(1, "저장소 파일 오류", "budget"))
+        assert primary.memory.episode_count == 0
     finally:
         resident.close()
         primary.close()
