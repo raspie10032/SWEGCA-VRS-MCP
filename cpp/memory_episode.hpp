@@ -40,4 +40,8 @@ struct MemoryEpisode {
 // SWEGCA: src/swegca_vrs2/store.py@7536139:145-166
 [[nodiscard]] MemoryEpisode episode_from_observation(const Json& row);
 
+// Keep the author's pre-episode posting keys distinct from episode.cues.
+// SWEGCA: src/swegca_vrs2/store.py@7536139:154-158
+[[nodiscard]] std::vector<std::string> postings_cues_from_observation(const Json& row);
+
 }  // namespace swegca::vrs

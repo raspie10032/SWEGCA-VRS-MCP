@@ -82,18 +82,28 @@ MemoryEpisode::MemoryEpisode(std::string new_episode_id,
         throw std::runtime_error("verification state must not be empty");
 }
 
+// SWEGCA: src/swegca_vrs2/store.py@7536139:154-158
+std::vector<std::string> postings_cues_from_observation(const Json& row) {
+    auto cues = lexical_keys(row.at("text").string());
+    std::unordered_set<std::string> seen(cues.begin(), cues.end());
+    for (const auto& extra : row.at("cues").array()) {
+        auto folded = casefold_text(extra.string());
+        if (seen.insert(folded).second) cues.push_back(std::move(folded));
+    }
+    const auto& proposition = row.at("proposition");
+    if (!std::holds_alternative<std::nullptr_t>(proposition.data))
+        cues.push_back("proposition:" + proposition.string());
+    if (cues.empty()) cues.push_back("source:" + row.at("source").string());
+    return cues;
+}
+
 // SWEGCA: src/swegca_vrs2/store.py@7536139:145-166
 MemoryEpisode episode_from_observation(const Json& row) {
     auto identity = row.object();
     identity.erase("request_id");
     const auto identifier = "memory:" + sha256_hex(Json(std::move(identity)).canonical());
-    auto cues = lexical_keys(row.at("text").string());
-    for (const auto& extra : row.at("cues").array())
-        cues.push_back(normalize_cue(extra.string()));
+    auto cues = postings_cues_from_observation(row);
     const auto& proposition = row.at("proposition");
-    if (!std::holds_alternative<std::nullptr_t>(proposition.data))
-        cues.push_back("proposition:" + proposition.string());
-    if (cues.empty()) cues.push_back("source:" + row.at("source").string());
     Json::Object evidence;
     evidence.emplace("text", row.at("text"));
     evidence.emplace("metadata", row.at("metadata"));

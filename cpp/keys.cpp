@@ -94,6 +94,14 @@ std::vector<std::string> lexical_keys(std::string_view text) {
     return result;
 }
 
+// SWEGCA: src/swegca_vrs2/store.py@7536139:154-154
+std::string casefold_text(std::string_view text) {
+    const auto folded = python_casefold(text);
+    std::string result;
+    for (const auto point : folded) append_utf8(result, point);
+    return result;
+}
+
 // SWEGCA: src/swegca_vrs2/engine/mosaic_memory_activation.py@7536139:22-23
 std::string normalize_cue(std::string_view cue) {
     const auto original = decode_utf8(cue);
@@ -113,10 +121,7 @@ std::string normalize_cue(std::string_view cue) {
             previous_space = false;
         }
     }
-    const auto folded = python_casefold(collapsed);
-    std::string result;
-    for (const auto point : folded) append_utf8(result, point);
-    return result;
+    return casefold_text(collapsed);
 }
 
 }  // namespace swegca::vrs

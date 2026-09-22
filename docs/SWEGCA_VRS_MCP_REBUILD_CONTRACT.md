@@ -43,6 +43,9 @@ proposition, or source fallback. The later physical `CompactIndex.append` also
 put the episode ID into its cue vector (`compact_index.py:311-316`). The new
 ID-to-row address route stays a physical lookup, never an extra semantic cue
 in Déjà vu, navigation, Recall, or the returned original episode.
+The author's explicit-cue posting key receives `casefold()` before insertion;
+the episode cue is then stripped and whitespace-normalized. Preserve those
+distinct values where they differ (`store.py@7536139:154-166`).
 
 Replay opens the first selected current original, preserving source, revision,
 historical outcome, uncertainty, and exact content. Re-evidence judges that
