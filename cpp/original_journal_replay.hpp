@@ -24,4 +24,10 @@ struct OriginalJournalAddress {
     const NativeJournal& journal, const OriginalJournalAddress& address,
     std::string_view expected_episode_id);
 
+// SWEGCA: src/swegca_vrs2/store.py@7536139:340-349
+// SWEGCA: user@2026-09-22:24-25
+[[nodiscard]] MemoryEpisode replay_original_from_journal(
+    const NativeJournalReadView& journal, const OriginalJournalAddress& address,
+    std::string_view expected_episode_id);
+
 }  // namespace swegca::vrs

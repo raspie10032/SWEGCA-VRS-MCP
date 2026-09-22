@@ -95,6 +95,22 @@ void write_new_manifest(const std::filesystem::path& path,
 
 }  // namespace
 
+// SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:91-127
+NativeJournalReadView::NativeJournalReadView(
+    std::filesystem::path generation_path, std::string generation,
+    std::uint64_t row_count)
+    : generation_path_(std::move(generation_path)),
+      generation_(std::move(generation)), row_count_(row_count) {}
+
+// SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:136-177
+JournalRow NativeJournalReadView::row_at(const JournalFrameAddress& address,
+                                         std::int64_t sequence) const {
+    if (address.generation != generation_ || sequence < 1 ||
+        static_cast<std::uint64_t>(sequence) > row_count_)
+        throw std::runtime_error("native_journal_read_generation_changed");
+    return read_journal_row_at(generation_path_, address, sequence);
+}
+
 // SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:70-81
 bool is_native_store(const std::filesystem::path& directory) {
     try {
@@ -161,6 +177,11 @@ std::optional<std::pair<std::int64_t, std::string>> NativeJournal::head() const 
 
 // SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:196-204
 std::uint64_t NativeJournal::row_count() const { return scan_.row_count; }
+
+// SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:196-221
+NativeJournalReadView NativeJournal::read_snapshot() const {
+    return NativeJournalReadView(path_, generation_, scan_.row_count);
+}
 
 // SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:206-214
 void NativeJournal::visit_rows(std::int64_t after, std::optional<std::int64_t> upto,
@@ -229,11 +250,11 @@ void NativeJournal::rewrite(const JournalRowProducer& produce_rows) {
     try {
         write_generation_head(target, produce_rows);
         write_new_manifest(manifest_path, identity_, next_generation);
-        const auto old = path_;
         generation_ = next_generation;
         path_ = target;
         scan_ = visit_journal_files(path_, false, [](JournalRow&&) {});
-        std::filesystem::remove_all(old);
+        // An existing read view still addresses the old immutable generation.
+        // Reclamation requires a separate owner policy after all views retire.
     } catch (...) {
         // If the new manifest became visible, it owns this generation even if
         // the following directory sync or scan failed. Preserve both copies.

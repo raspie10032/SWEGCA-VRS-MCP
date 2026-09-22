@@ -168,6 +168,11 @@ For a new real-time observation, the native journal append now returns the
 durable frame address and its new sequences directly. Main can add the one
 new original address without scanning earlier journal rows. A duplicate
 author episode still keeps its first address in the exact directory.
+`NativeJournalReadView` now pins the physical generation path and row limit
+without a new journal scan. A later append cannot widen that view, and a
+generation rewrite no longer immediately deletes the previous journal path
+while a reader may hold it. The eventual owner must reclaim retired paths
+only after their readers have gone and must enforce the 500 GB storage gate.
 The C++ exact-address directory under construction uses the existing VRS
 prefix, odd-step, and sealed-level physical lookup rule. A slot stores only
 the original journal sequence and frame offset/span; the observation body is

@@ -17,4 +17,10 @@ namespace swegca::vrs {
     const NativeJournal& journal, const ExactJournalDirectory& addresses,
     std::string_view episode_id, std::int64_t published_row_limit);
 
+// SWEGCA: src/swegca_vrs2/exact_replay.py@c06092a:691-786
+// SWEGCA: user@2026-09-22:24-25
+[[nodiscard]] MemoryEpisode replay_exact_journal_original(
+    const NativeJournalReadView& journal, const ExactJournalDirectory& addresses,
+    std::string_view episode_id, std::int64_t published_row_limit);
+
 }  // namespace swegca::vrs

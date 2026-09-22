@@ -14,6 +14,31 @@
 
 namespace swegca::vrs {
 
+// A read pins one physical journal generation and its published row boundary.
+// Later appends and a manifest switch cannot move this view to another source.
+// SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:91-127
+class NativeJournalReadView {
+public:
+    NativeJournalReadView(const NativeJournalReadView&) = default;
+    NativeJournalReadView& operator=(const NativeJournalReadView&) = default;
+    // SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:91-127
+    [[nodiscard]] const std::string& generation() const { return generation_; }
+    // SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:196-204
+    [[nodiscard]] std::uint64_t row_count() const { return row_count_; }
+    // SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:136-177
+    [[nodiscard]] JournalRow row_at(const JournalFrameAddress& address,
+                                    std::int64_t sequence) const;
+
+private:
+    friend class NativeJournal;
+    NativeJournalReadView(std::filesystem::path generation_path,
+                          std::string generation, std::uint64_t row_count);
+
+    std::filesystem::path generation_path_;
+    std::string generation_;
+    std::uint64_t row_count_;
+};
+
 // A journal has no independent experience authority. Its writable owner must
 // hold the same OS lock as the main generation that applies its rows.
 class NativeJournal {
@@ -26,6 +51,10 @@ public:
     void refresh_head();
     [[nodiscard]] std::optional<std::pair<std::int64_t, std::string>> head() const;
     [[nodiscard]] std::uint64_t row_count() const;
+    // Main takes this while serializing publication against journal append.
+    // The returned value needs no scan and remains on the old physical path.
+    // SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:196-221
+    [[nodiscard]] NativeJournalReadView read_snapshot() const;
     void visit_rows(std::int64_t after, std::optional<std::int64_t> upto,
                     const std::function<void(JournalRow&&)>& visit) const;
     // SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:136-194
