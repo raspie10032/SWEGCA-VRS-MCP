@@ -31,6 +31,16 @@ def verify(root):
         raw = (package / 'engine' / (row['module'] + '.py')).read_bytes()
         assert hashlib.sha256(raw).hexdigest() == row['port_sha256'], row['module']
         assert not raw.startswith(b'\xef\xbb\xbf'), row['module']
+        if isinstance(row['definitions'], list):
+            declared_names = []
+            for node in ast.parse(raw, filename=row['module']).body:
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                    declared_names.append(node.name)
+                elif isinstance(node, (ast.Assign, ast.AnnAssign)):
+                    targets = node.targets if isinstance(node, ast.Assign) else (node.target,)
+                    declared_names.extend(target.id for target in targets if isinstance(target, ast.Name))
+            assert len(declared_names) == len(set(declared_names)), row['module']
+            assert set(declared_names) == set(row['definitions']), row['module']
 
     project = tomllib.loads((root / 'pyproject.toml').read_text(encoding='utf-8'))
     assert project['project']['scripts'] == ENTRY_POINTS

@@ -98,6 +98,7 @@
       "source_sha256": "336073a8eb69357d5761add74316a6f06719c61bbaeb93b82fd3e4005390d9e5",
       "port_sha256": "b6c02f7ba1b2675b2e26b7f7a1c7abf5ce759f89b60e8e62bbd8b5f0d078b45f",
       "definitions": [
+        "VERIFIED_EXPERIENCE_PROMOTION_STRENGTH",
         "VRSExperiencePromotionDecision",
         "assess_vrs_experience_promotion"
       ]
@@ -107,6 +108,8 @@
       "source_sha256": "e43aafe08e0a3b6e0ba6b8fa10150768d563645f5767749836552d1d8ecef39a",
       "port_sha256": "c5711b6b998d2baabb45ddf42c776002eb1194ac161e70fb99cb5f7562b63696",
       "definitions": [
+        "VRS_STABLE_REINFORCEMENT_FACTOR",
+        "VRS_UNSTABLE_WEAKENING_FACTOR",
         "VRSConnectionStateUpdate",
         "VRSStateUpdateReceipt",
         "plan_vrs_state_update"
