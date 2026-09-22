@@ -174,23 +174,30 @@ def test_codex_prompt_and_resume_hooks_expose_exact_session_id(tmp_path, monkeyp
 
 def test_user_prompt_hook_recalls_session_experience_before_model_dispatch(tmp_path, monkeypatch):
     state, transcript, session = tmp_path / 'state', tmp_path / 'rollout.jsonl', 'prompt-session'
-    write_transcript(transcript, session, [])
+    prior = '데자뷰 훅 입력 즉시 과거 경험'
+    current = '데자뷰 훅 입력 새 사용자 발언'
+    write_transcript(transcript, session, [{'type': 'response_item', 'payload': {
+        'type': 'message', 'role': 'user',
+        'content': [{'type': 'input_text', 'text': prior}]}}])
     capture = SessionCapture(state)
     session_state = capture.session_root('codex', session)
     try:
-        with VRSClient(session_state, writes=True) as client:
-            client.ingest_many([dict(request_id='prior-experience',
-                text='데자뷰 훅 입력 즉시 과거 경험', source='session:prior',
-                revision='1', outcome='pending')])
+        capture.scan_transcript('codex', session, transcript)
+        append_message(transcript, current)
         monkeypatch.setattr('swegca_vrs2.conversation_watch.schedule', lambda *args: 1)
         result = handle('codex', state, dict(hook_event_name='UserPromptSubmit',
             session_id=session, transcript_path=str(transcript),
-            prompt='데자뷰 훅 입력'))
+            prompt=current))
         context = result['hookSpecificOutput']['additionalContext']
-        assert '"memory_layer":"session"' in context
-        assert 'session:prior' in context
-        assert '과거 경험' in context
-        assert '"fallback_used":false' in context
+        receipt = json.loads(context.split('The VRS receipt follows: ', 1)[1])
+        assert receipt['memory_layer'] == 'session'
+        assert receipt['candidate_count'] == 1
+        assert receipt['memories'][0]['text'] == prior
+        assert receipt['fallback_used'] is False
+        with VRSClient(session_state, writes=False) as client:
+            originals = client.export(0)['rows']
+        assert [row['observation']['text'] for row in originals
+                if row['observation']['metadata']['role'] == 'user'] == [prior, current]
         assert not engine_recall_active(session_state)
     finally:
         stop(session_state)
