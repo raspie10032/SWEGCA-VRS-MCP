@@ -2,7 +2,7 @@ CXX ?= g++
 AR ?= ar
 CXXFLAGS ?= -O2 -g -std=c++20 -Wall -Wextra -Wpedantic
 
-CORE_OBJECTS = build/digest.o build/json.o build/unicode.o build/keys.o build/observation.o build/journal_frame.o build/journal_files.o
+CORE_OBJECTS = build/digest.o build/json.o build/unicode.o build/keys.o build/observation.o build/journal_frame.o build/journal_files.o build/owner_lock.o
 
 .PHONY: all clean
 all: build/libswegca-vrs.a
@@ -29,6 +29,9 @@ build/journal_frame.o: cpp/journal_frame.cpp cpp/journal_frame.hpp cpp/json.hpp 
 	$(CXX) $(CXXFLAGS) -Icpp -c $< -o $@
 
 build/journal_files.o: cpp/journal_files.cpp cpp/journal_files.hpp cpp/journal_frame.hpp | build
+	$(CXX) $(CXXFLAGS) -Icpp -c $< -o $@
+
+build/owner_lock.o: cpp/owner_lock.cpp cpp/owner_lock.hpp | build
 	$(CXX) $(CXXFLAGS) -Icpp -c $< -o $@
 
 build/libswegca-vrs.a: $(CORE_OBJECTS)
