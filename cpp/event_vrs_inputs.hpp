@@ -8,6 +8,8 @@
 
 namespace swegca::vrs {
 
+class EventDeltaView;
+
 // Logical edge value; the native on-disk layout is encoded explicitly and
 // never inferred from sizeof(EventEdge).
 struct EventEdge {
@@ -73,10 +75,19 @@ public:
     [[nodiscard]] const EventVrsInputView& require_validated_immutable() const;
 
 private:
+    // The author's prepare_event_delta validates only edits and appended
+    // values, then records bindings on a successor sharing the cold parent.
+    // Only EventDeltaView can enter this path after verifying the prefix.
+    // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_event_delta.py@7536139:117-180
+    ValidatedEventVrsInputs(std::shared_ptr<const EventVrsInputView> source,
+                            const ValidatedEventVrsInputs& parent,
+                            std::uint64_t appended_nodes, std::uint64_t appended_edges);
+
     std::shared_ptr<const EventVrsInputView> source_;
     std::string snapshot_id_;
     std::uint64_t node_count_;
     std::uint64_t edge_count_;
+    friend class EventDeltaView;
 };
 
 }  // namespace swegca::vrs

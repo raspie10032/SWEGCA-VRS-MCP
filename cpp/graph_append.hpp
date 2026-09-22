@@ -1,6 +1,8 @@
 #pragma once
 
 #include "event_vrs_inputs.hpp"
+#include "event_delta.hpp"
+#include "event_signal.hpp"
 #include "hot_index.hpp"
 #include "vrs_state_update.hpp"
 
@@ -54,5 +56,20 @@ struct GraphAppendPlan {
     const MemoryEpisode& episode, std::string snapshot_id,
     const HotIndexRead& memory, const GraphNodeDirectory& nodes,
     const ValidatedEventVrsInputs& current_inputs);
+
+// SWEGCA: src/swegca_vrs2/store.py@7536139:208-210
+[[nodiscard]] std::shared_ptr<const ValidatedEventVrsInputs> prepare_graph_event_delta(
+    const GraphAppendPlan& plan,
+    std::shared_ptr<const ValidatedEventVrsInputs> parent);
+
+struct GraphNumericalCandidate {
+    std::shared_ptr<const ValidatedEventVrsInputs> settled;
+    EventSignalProposal signal;
+};
+
+// SWEGCA: src/swegca_vrs2/store.py@7536139:250-262
+[[nodiscard]] GraphNumericalCandidate settle_graph_event(
+    const GraphAppendPlan& plan,
+    std::shared_ptr<const ValidatedEventVrsInputs> parent);
 
 }  // namespace swegca::vrs

@@ -51,6 +51,25 @@ ValidatedEventVrsInputs::ValidatedEventVrsInputs(
     source_->dependencies().require_source(*source_);
 }
 
+// SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_event_delta.py@7536139:170-180
+ValidatedEventVrsInputs::ValidatedEventVrsInputs(
+    std::shared_ptr<const EventVrsInputView> source,
+    const ValidatedEventVrsInputs& parent,
+    std::uint64_t appended_nodes, std::uint64_t appended_edges)
+    : source_(std::move(source)), snapshot_id_(source_ ? source_->snapshot_id() : std::string()),
+      node_count_(source_ ? source_->node_count() : 0),
+      edge_count_(source_ ? source_->edge_count() : 0) {
+    (void)parent.require_validated_immutable();
+    if (!source_ || !sha256_id(snapshot_id_) ||
+        node_count_ > std::uint64_t{0x100000000ULL} ||
+        edge_count_ > std::uint64_t{std::numeric_limits<std::uint32_t>::max()} ||
+        node_count_ != parent.node_count_ + appended_nodes ||
+        edge_count_ != parent.edge_count_ + appended_edges)
+        throw std::runtime_error("event delta shape or generation changed");
+    source_->require_immutable_binding();
+    source_->dependencies().require_source(*source_);
+}
+
 // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_event_kernel.py@7536139:68-76
 const EventVrsInputView& ValidatedEventVrsInputs::require_validated_immutable() const {
     source_->require_immutable_binding();

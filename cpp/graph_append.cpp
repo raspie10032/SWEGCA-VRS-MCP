@@ -35,6 +35,54 @@ std::string empty_graph_snapshot_id(std::string_view identity) {
     return sha256_hex(Json(empty_graph_identity(identity)).canonical());
 }
 
+// SWEGCA: src/swegca_vrs2/store.py@7536139:208-210
+std::shared_ptr<const ValidatedEventVrsInputs> prepare_graph_event_delta(
+    const GraphAppendPlan& plan,
+    std::shared_ptr<const ValidatedEventVrsInputs> parent) {
+    if (!parent || parent->require_validated_immutable().snapshot_id() != plan.parent_snapshot_id)
+        throw std::runtime_error("graph append parent generation changed");
+    EventDeltaChanges changes;
+    changes.appended_direct = plan.appended_direct;
+    changes.appended_score = plan.appended_score;
+    changes.appended_unresolved = plan.appended_unresolved;
+    changes.appended_edges = plan.appended_edges;
+    changes.appended_strength = plan.appended_strength;
+    return prepare_event_delta(std::move(parent), plan.snapshot_id, changes);
+}
+
+// SWEGCA: src/swegca_vrs2/store.py@7536139:250-262
+GraphNumericalCandidate settle_graph_event(
+    const GraphAppendPlan& plan,
+    std::shared_ptr<const ValidatedEventVrsInputs> parent) {
+    auto prepared = prepare_graph_event_delta(plan, std::move(parent));
+    std::vector<std::int64_t> changed;
+    changed.reserve(plan.changed_nodes.size());
+    for (const auto node : plan.changed_nodes) changed.push_back(node);
+    auto receipt = std::make_shared<const VRSStateUpdateReceipt>(plan.strength_receipt);
+    auto signal = settle_event_signal(prepared, changed, std::move(receipt),
+                                      "vrs-edge:", nullptr, 512);
+    if (!signal.pending_nodes().empty())
+        throw std::runtime_error("vrs_signal_pending_no_publication");
+    EventDeltaChanges edits;
+    Json::Array score_rows;
+    for (const auto& [address, score] : signal.scores()) {
+        edits.score_edits.emplace_back(address, score);
+        Json::Array row;
+        row.emplace_back(static_cast<std::int64_t>(address));
+        row.emplace_back(static_cast<double>(score));
+        score_rows.emplace_back(Json(std::move(row)));
+    }
+    for (const auto& [address, strength] : signal.strengths())
+        edits.strength_edits.emplace_back(address, strength);
+    Json::Array identity;
+    identity.emplace_back(plan.snapshot_id);
+    identity.emplace_back(std::string("settled"));
+    identity.emplace_back(Json(std::move(score_rows)));
+    auto settled = prepare_event_delta(
+        std::move(prepared), sha256_hex(Json(std::move(identity)).canonical()), edits);
+    return GraphNumericalCandidate{std::move(settled), std::move(signal)};
+}
+
 // SWEGCA: src/swegca_vrs2/store.py@7536139:193-251
 GraphAppendPlan plan_graph_append(
     const MemoryEpisode& episode, std::string snapshot_id,

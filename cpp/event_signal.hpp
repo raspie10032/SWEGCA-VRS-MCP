@@ -16,6 +16,10 @@ namespace swegca::vrs {
 class EventSignalProposal final : public EventVrsProposal {
 public:
     // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_event_signal.py@7536139:23-35
+    EventSignalProposal(const EventSignalProposal&) = default;
+    // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_event_signal.py@7536139:23-35
+    EventSignalProposal(EventSignalProposal&&) = default;
+    // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_event_signal.py@7536139:23-35
     [[nodiscard]] Json receipt() const override;
     // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_event_signal.py@7536139:23-35
     [[nodiscard]] const std::shared_ptr<const VRSStateUpdateReceipt>& strength_receipt() const {

@@ -12,6 +12,10 @@ namespace swegca::vrs {
 
 class EventVrsProposal {
 public:
+    // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_event_kernel.py@7536139:100-110
+    EventVrsProposal(const EventVrsProposal&) = default;
+    // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_event_kernel.py@7536139:100-110
+    EventVrsProposal(EventVrsProposal&&) = default;
     // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_event_kernel.py@7536139:89-110
     virtual ~EventVrsProposal() = default;
     // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_event_kernel.py@7536139:112-120

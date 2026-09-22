@@ -99,18 +99,27 @@ bidirectional positive edge additions, 0.1 record-presence direct signal,
 unresolved new nodes, changed-node seeds and explicit-proposition strength
 receipt against the unpublished HotIndex view. An opposing original causes
 all same-claim strength proposals to abstain. This is the front of
-`Graph.append`, not a published Graph: `prepare_event_delta`, signal settlement
-binding, affected-component region recomputation and Main journal commit/CAS
-must still follow in the source order. The plan does not infer truth from a
-shared cue or historical outcome.
+`Graph.append`, not a published Graph: the sparse `prepare_event_delta` bridge
+now creates a detached successor. `settle_graph_event` then applies the
+source's 512-round signal budget, refuses pending work, and writes only the
+changed score/strength addresses into a settled successor with the author's
+score-bound snapshot digest. Affected-component region recomputation and Main
+journal commit/CAS must still follow in the source order. The plan does not
+infer truth from a shared cue or historical outcome.
 The C++ endpoint segment index now preserves the author's stable per-segment
 sort, segment-concatenation lookup order, source-generation binding and
 geometric tail merge. That lookup order is required by `math.fsum` in the
 event kernel. The current segment vectors are an algorithmic translation;
 they are not the bounded disk-backed representation needed for a large main
-under 4 GB. The verified append entry remains private to the future
-`EventDeltaView`, which must preserve the parent edge endpoint/sign prefix
-by construction before it can use the index.
+under 4 GB. The verified append entry is private to `EventDeltaView`, which
+preserves the parent edge endpoint/sign prefix by construction before it uses
+the index. The delta view carries the author's immutable four-byte sparse
+overlay for direct, score, unresolved, edge and strength values. A successor
+shares the cold base and prior radix branches; changed addresses and appended
+values are checked before binding. It takes the author's trusted delta route
+after those checks, avoiding a full cold scan of every old node and edge per
+append. The current in-memory radix and retained parent generations still
+need a bounded disk representation and a generation-pinning publication path.
 
 Existing VRS 2.2 pair certificates and numerical arrays are historical
 evidence. A new source implementation must account for their lineage and
