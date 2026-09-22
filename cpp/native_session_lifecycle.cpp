@@ -243,4 +243,56 @@ std::vector<SessionShardSeal> finalize_session_end(
     return seals;
 }
 
+// SWEGCA: src/swegca_vrs2/session_capture.py@c06092a:461-494
+// SWEGCA: src/swegca_vrs2/linked_shards.py@c06092a:39-66
+std::vector<SessionShardSeal> read_verified_ended_session(
+    const std::filesystem::path& state_root, SessionHost host,
+    std::string_view session_id) {
+    const auto root = std::filesystem::weakly_canonical(state_root);
+    const auto key = session_key(session_id);
+    const auto marker = read_marker(ended_path(root, host, key));
+    if (marker.object().size() != 6 ||
+        marker.at("schema").string() != ended_schema ||
+        marker.at("event").string() != "SessionEnd" ||
+        marker.at("host").string() != host_name(host) ||
+        marker.at("session_key").string() != key)
+        throw std::runtime_error("session_ended_marker_invalid");
+    const auto& transcript_digest =
+        marker.at("transcript_path_digest").string();
+    require_digest(transcript_digest);
+    if (read_marker(intent_path(root, host, key)).canonical() !=
+        intent_body(host, key, transcript_digest).canonical())
+        throw std::runtime_error("session_end_intent_missing");
+    const auto session_root = std::filesystem::canonical(
+        root / "session-vrs" / host_name(host) / key);
+    const auto& rows = marker.at("shards").array();
+    std::vector<SessionShardSeal> seals;
+    seals.reserve(rows.size());
+    for (const auto& raw : rows) {
+        if (raw.object().size() != 7)
+            throw std::runtime_error("session_ended_shard_invalid");
+        const auto& relative = raw.at("path").string();
+        const auto path = std::filesystem::path(relative);
+        if (relative.empty() || path.is_absolute() ||
+            path.lexically_normal().generic_string() != relative)
+            throw std::runtime_error("session_ended_shard_path_invalid");
+        const auto count = raw.at("journal_rows").integer();
+        const auto records = raw.at("records").integer();
+        const auto cues = raw.at("cue_total").integer();
+        if (count < 0 || records < 0 || cues < 0)
+            throw std::runtime_error("session_ended_shard_count_invalid");
+        seals.push_back(SessionShardSeal{
+            raw.at("id").string(), root / path,
+            raw.at("journal_generation").string(),
+            raw.at("pair_snapshot_id").string(),
+            static_cast<std::uint64_t>(count),
+            static_cast<std::uint64_t>(records),
+            static_cast<std::uint64_t>(cues)});
+    }
+    if (verified_seals(root, session_root, seals).canonical() !=
+        marker.at("shards").canonical())
+        throw std::runtime_error("session_ended_shard_changed");
+    return seals;
+}
+
 }  // namespace swegca::vrs

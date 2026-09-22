@@ -51,4 +51,12 @@ void mark_session_end_intent(
     const std::filesystem::path& transcript_path,
     SessionVrsFinalizer& session_vrs);
 
+// Main reopens the durable real-SessionEnd certificate and verifies the
+// sealed native journals before accepting ownership. No transcript is read.
+// SWEGCA: src/swegca_vrs2/session_capture.py@c06092a:461-494
+// SWEGCA: src/swegca_vrs2/linked_shards.py@c06092a:39-66
+[[nodiscard]] std::vector<SessionShardSeal> read_verified_ended_session(
+    const std::filesystem::path& state_root, SessionHost host,
+    std::string_view session_id);
+
 }  // namespace swegca::vrs
