@@ -27,6 +27,10 @@ seed 1729 and 16 cycles, and its edge candidate scoring come from the old
 VRS 2.2 vehicle. They are not licensed by the author source as mandatory
 SWEGCA behavior. Their old presence must not be used to omit author
 coactivation, memberships or portal lifecycle.
+`compact_index.py@c06092a:311` also normalizes explicit cue posting keys with
+`_cue`; the author `HotIndex.append@7536139:154` applies `casefold()` only
+before insertion. This 2.2 normalization is not copied into the rebuilt
+author-rule postings path.
 
 The user still requires physical splitting, linked original experience,
 parallel work on the 16-thread CPU, preservation of the entire SWEGCA logic,
