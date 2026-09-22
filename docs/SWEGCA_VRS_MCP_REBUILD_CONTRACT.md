@@ -327,8 +327,13 @@ searches an exact endpoint range. Each file is tied to an original journal
 generation and checked for metadata, ordering, record checksums, and a full
 edge-address permutation before publication. The index owner still needs to
 apply the author's geometric tail-merge rule, publish a source-bound segment
-manifest, and reclaim orphaned derived files. This primitive is not yet a
-physical `EndpointDependencyIndex` or a bounded resident read path.
+manifest, and reclaim orphaned derived files. The disk-backed dependency
+owner now keeps the cold base boundary, applies that geometric rule only to
+chronological delta segments, preserves segment-concatenation query order,
+and binds each pinned instance to one exact immutable numerical source.
+Cold open verifies every stored source and target against that source. A
+durable source-bound segment manifest and Main publication connection are
+still missing, so this is not yet the product dependency read path.
 This adapter currently reads physical address files on lookup. It is a
 source-bound correctness path, not accepted evidence for the author's
 `lookup_requires_io=False` hot property or the user-input-to-Recall <1 ms

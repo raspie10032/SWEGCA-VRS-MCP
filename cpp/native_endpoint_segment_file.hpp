@@ -49,6 +49,14 @@ public:
     // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_dependency_index.py@7536139:13-27
     static void validate_all(const NativeEndpointSegment& segment);
 
+    // Cold recovery additionally binds every stored endpoint to the exact
+    // immutable numerical source address. Checksums and a permutation alone
+    // cannot prove that source and target columns were not exchanged.
+    // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_dependency_index.py@7536139:46-53
+    static void validate_source(
+        const NativeEndpointSegment& segment,
+        const EventVrsInputView& source);
+
     // Binary search the endpoint column, then stream every exact edge address
     // in the segment's stable order.
     // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_dependency_index.py@7536139:55-68

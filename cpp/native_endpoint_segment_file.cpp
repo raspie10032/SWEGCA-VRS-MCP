@@ -375,6 +375,28 @@ void NativeEndpointSegmentFile::validate_all(
     }
 }
 
+// SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_dependency_index.py@7536139:46-53
+void NativeEndpointSegmentFile::validate_source(
+    const NativeEndpointSegment& segment,
+    const EventVrsInputView& source) {
+    validate_all(segment);
+    if (segment.first_edge + segment.edge_count > source.edge_count())
+        throw std::runtime_error("endpoint_segment_source_changed");
+    for (const auto direction : {EndpointDirection::outgoing,
+                                 EndpointDirection::incoming}) {
+        Cursor cursor(segment, direction);
+        while (cursor.active()) {
+            const auto stored = cursor.current();
+            const auto edge = source.edge(stored.edge);
+            const auto expected = direction == EndpointDirection::outgoing ?
+                edge.source : edge.target;
+            if (stored.node != expected)
+                throw std::runtime_error("endpoint_segment_source_changed");
+            cursor.advance();
+        }
+    }
+}
+
 // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_dependency_index.py@7536139:55-68
 void NativeEndpointSegmentFile::visit_edges(
     const NativeEndpointSegment& segment,

@@ -15,6 +15,7 @@ CORE_OBJECTS += build/native_graph_page_map.o build/native_graph_page_file.o
 CORE_OBJECTS += build/native_graph_numeric_append.o
 CORE_OBJECTS += build/native_graph_map_journal.o
 CORE_OBJECTS += build/native_endpoint_segment_file.o
+CORE_OBJECTS += build/native_endpoint_index.o
 
 .PHONY: all clean
 all: build/libswegca-vrs.a
@@ -116,6 +117,9 @@ build/endpoint_segments.o: cpp/endpoint_segments.cpp cpp/endpoint_segments.hpp c
 	$(CXX) $(CXXFLAGS) -Icpp -c $< -o $@
 
 build/native_endpoint_segment_file.o: cpp/native_endpoint_segment_file.cpp cpp/native_endpoint_segment_file.hpp cpp/event_vrs_inputs.hpp cpp/owner_lock.hpp | build
+	$(CXX) $(CXXFLAGS) -Icpp -c $< -o $@
+
+build/native_endpoint_index.o: cpp/native_endpoint_index.cpp cpp/native_endpoint_index.hpp cpp/native_endpoint_segment_file.hpp cpp/event_vrs_inputs.hpp cpp/owner_lock.hpp | build
 	$(CXX) $(CXXFLAGS) -Icpp -c $< -o $@
 
 build/event_delta.o: cpp/event_delta.cpp cpp/event_delta.hpp cpp/endpoint_segments.hpp cpp/sparse_event_radix.hpp cpp/event_vrs_inputs.hpp | build
