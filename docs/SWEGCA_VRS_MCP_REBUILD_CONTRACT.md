@@ -28,6 +28,14 @@ ordered, source-bound observations within the author's field limits; their
 content enters the session VRS instead of remaining only as transcript
 addresses. The original byte and line spans, content digest, role, revision,
 and part order remain attached so Replay can open the exact original segment.
+The new C++ source adapter now extracts Codex and Claude host-visible records,
+filters private reasoning payload fields, and streams normalized observation
+parts with stable request IDs, source addresses, raw-line and content byte
+spans, and content digests. Whitespace-only parts are journaled as explicit
+JSON string literals because the author's observation text field rejects
+blank text; episode construction decodes them back to the exact original
+content and checks each part digest. This adapter is not yet connected to
+the host file watcher, session journal commit, or SessionEnd ownership link.
 
 ## One read path
 
