@@ -252,3 +252,22 @@ refresh of the desktop tool binding, and the current app MCP call still
 returns `tool_request_failed`. The isolated stdio MCP and new wheel remain
 verified independently; desktop integration still needs a fresh connection
 after the post-SessionEnd config switch.
+
+## Portal metadata read candidate
+
+The source candidate now reads each portal key's original revision and outcome
+from the same generation's compact index columns. It keeps the original
+experience address, portal weights, strength, shared count and complete
+projection. It no longer decodes an unrelated original blob merely to form a
+portal key. `LazyCues` also validates decoded cue strings with a C-level
+`map`/`all` loop while retaining the same fail-closed error. The standalone
+source suite passed 135/135 tests, including a portal regression that rejects
+an original-blob decode and verifies the complete key.
+
+On the copied 15,630-original native state under 4 GiB, zero swap and a
+625 MB/s SSD cgroup cap, source first-ranked original Replay took 0.750 ms
+for one match, 15.432 ms for 100 matches and 98.692 ms for 1,008 matches.
+The measurement is
+`evals/vrs22_context/results/first_ranked_original_replay_portal_index_source_20260922.json`.
+The 1 ms all-size gate still fails. This source candidate is not the installed
+wheel or active Codex MCP, and no VRS model evaluation was started.

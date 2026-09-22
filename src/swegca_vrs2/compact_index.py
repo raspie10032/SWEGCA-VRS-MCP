@@ -237,6 +237,13 @@ class CompactIndex:
     def iter_episode_ids(self):
         return iter(self._store['ids'][:self.count])
 
+    def revision_outcome(self, identifier):
+        """Return the original's indexed revision and outcome in this generation."""
+        row = self._store['row_of'].get(identifier)
+        if row is None or row >= self.count:
+            raise KeyError(identifier)
+        return self._store['revs'][row], self._store['outs'][row]
+
     def episode_ids_for_cue(self, cue):
         store = self._store
         cue_id = store['vocab'].id_of(cue)

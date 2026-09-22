@@ -57,10 +57,10 @@ def projected_portals(owner, active_regions=None, portal_pairs=None):
             identifier = graph.nodes.node_episode.get(key.get('node'))
             if identifier is None:
                 raise ValueError('vrs_portal_key_has_no_original_experience')
-            episode = memory.episode_light(identifier)
+            revision, outcome = memory.revision_outcome(identifier)
             experience_keys.append(dict(
-                episode_id=identifier, revision=episode.revision,
-                outcome=episode.steps[0].outcome,
+                episode_id=identifier, revision=revision,
+                outcome=outcome,
                 weights=[float(value) for value in key.get('weights', ())],
                 strength=float(key.get('strength', graph.strength(identifier))),
                 shared=int(portal.get('shared', 0))))

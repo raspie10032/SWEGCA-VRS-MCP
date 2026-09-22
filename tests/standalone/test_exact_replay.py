@@ -6,9 +6,18 @@ import zlib
 import pytest
 
 from swegca_vrs2.exact_replay import (
-    CAPSULE, PAYLOAD, SLOT, ExactReplayStore, _key,
+    CAPSULE, PAYLOAD, SLOT, ExactReplayStore, LazyCues, _key,
 )
 from swegca_vrs2.store import Main
+
+
+def test_lazy_cues_keep_fail_closed_string_validation():
+    assert tuple(LazyCues(b'["source", "revision"]', 2)) == ('source', 'revision')
+    assert tuple(LazyCues(b'[]', 0)) == ()
+    for payload, count in ((b'["source", 1]', 2), (b'["source", null]', 2),
+                           (b'{"source": "not an array"}', 1), (b'["source"]', 2)):
+        with pytest.raises(ValueError, match='exact_replay_cues_corrupt'):
+            tuple(LazyCues(payload, count))
 
 
 def test_disk_exact_address_returns_original_replay_without_resident_index(tmp_path):

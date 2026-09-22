@@ -1,0 +1,65 @@
+{
+  "status": "MEASURED",
+  "scope": "copied existing native experience, natural ShardedMain Recall through Replay",
+  "record_count": 15630,
+  "cases": [
+    {
+      "target_fanout": 1,
+      "actual_fanout": 1,
+      "cue_sha256": "3ed83b89af7c54a337aa4527f7612670a8136dbcc22510ea7bbf14cc6ef49636",
+      "candidate_count": 1,
+      "calls": 3,
+      "first_ranked_original_replay_ms": 0.749798,
+      "warm_median_first_ranked_original_replay_ms": 0.297043,
+      "first_ranked_original_replay_at_or_above_1ms": 0,
+      "first_through_replay_ms": 0.753538,
+      "warm_median_through_replay_ms": 0.298633,
+      "warm_p99_through_replay_ms": 0.334183,
+      "warm_max_through_replay_ms": 0.334183,
+      "through_replay_at_or_above_1ms": 0,
+      "first_full_four_stage_ms": 0.872219,
+      "full_four_stage_median_ms": 0.418024
+    },
+    {
+      "target_fanout": 100,
+      "actual_fanout": 100,
+      "cue_sha256": "53e54fd268849dfffb522811a7df3ce41e76b218ba0ee720c594758f77af66d0",
+      "candidate_count": 100,
+      "calls": 3,
+      "first_ranked_original_replay_ms": 15.43164,
+      "warm_median_first_ranked_original_replay_ms": 14.176598,
+      "first_ranked_original_replay_at_or_above_1ms": 3,
+      "first_through_replay_ms": 15.483611,
+      "warm_median_through_replay_ms": 14.2300135,
+      "warm_p99_through_replay_ms": 14.231468,
+      "warm_max_through_replay_ms": 14.231468,
+      "through_replay_at_or_above_1ms": 3,
+      "first_full_four_stage_ms": 26.054021,
+      "full_four_stage_median_ms": 25.150622
+    },
+    {
+      "target_fanout": 1000,
+      "actual_fanout": 1008,
+      "cue_sha256": "84816ff383c826e9c11e26fdbd8d66e4edd7cf1ec1a4b23f8d10d84aa56e0d8f",
+      "candidate_count": 1008,
+      "calls": 3,
+      "first_ranked_original_replay_ms": 98.691798,
+      "warm_median_first_ranked_original_replay_ms": 96.47301,
+      "first_ranked_original_replay_at_or_above_1ms": 3,
+      "first_through_replay_ms": 99.319585,
+      "warm_median_through_replay_ms": 97.204348,
+      "warm_p99_through_replay_ms": 104.354417,
+      "warm_max_through_replay_ms": 104.354417,
+      "through_replay_at_or_above_1ms": 3,
+      "first_full_four_stage_ms": 138.615994,
+      "full_four_stage_median_ms": 138.615994
+    }
+  ],
+  "cgroup_limits": {
+    "memory.max": "4294967296",
+    "memory.swap.max": "0",
+    "io.max": "259:3 rbps=625000000 wbps=625000000 riops=max wiops=max",
+    "memory.peak": "696090624"
+  },
+  "sqlite_module_loaded": false
+}

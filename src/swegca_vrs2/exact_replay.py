@@ -107,7 +107,7 @@ class LazyCues(Sequence):
             except (UnicodeDecodeError, json.JSONDecodeError):
                 raise ValueError('exact_replay_cues_corrupt') from None
             if (not isinstance(decoded, list) or len(decoded) != self.count
-                    or any(not isinstance(cue, str) for cue in decoded)):
+                    or not all(map(str.__instancecheck__, decoded))):
                 raise ValueError('exact_replay_cues_corrupt')
             self.decoded = tuple(decoded)
             self.payload = None
