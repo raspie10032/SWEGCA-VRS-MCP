@@ -328,7 +328,9 @@ def origins(main, arguments):
                          kind=meta.get('kind'), path=meta.get('path'), section=meta.get('section') or '', index=meta.get('index'),
                          project=meta.get('project'), head=text.split('\n', 1)[0][:120],
                          producer=meta.get('producer'), verified=meta.get('verified'), key_id=meta.get('key_id'),   # signed producers
-                         origin=_plain(meta.get('origin')), text_sha256=None if meta.get('origin') else _record_digest(text)))
+                         origin=_plain(meta.get('origin')),
+                         text_sha256=None if isinstance(meta.get('origin'), dict)
+                             and meta['origin'].get('sha256') else _record_digest(text)))
     return dict(status='ok', count=len(rows), rows=rows, next=next_row, total=count)
 
 
@@ -375,7 +377,9 @@ def hook_recall(main, arguments, resident=None):
             text=obs.get('text', '')[:snippet], text_chars=len(obs.get('text', '')),
             # G3 origin binding (2026-09-19): rows ingested before it carry no origin; the hook verifies the
             # source against the full text's digest instead (hashing here is outside main.recall's hot path)
-            text_sha256=None if (obs.get('metadata') or {}).get('origin') else _record_digest(obs.get('text', '')),
+            text_sha256=None if isinstance((obs.get('metadata') or {}).get('origin'), dict)
+                and (obs.get('metadata') or {})['origin'].get('sha256')
+                else _record_digest(obs.get('text', '')),
             # verdict records end with their asks line; hooks match query cues against it
             asks=_asks_of(obs.get('text', '')),
             # vrs-regions: refined strength, promotion, state/stability, pending (not yet consolidated)
@@ -513,8 +517,9 @@ def _hook_recall_sharded(main, resident, arguments):
             metadata=_plain(observation.get('metadata') or {}),
             text=observation.get('text', '')[:snippet],
             text_chars=len(observation.get('text', '')),
-            text_sha256=None if (observation.get('metadata') or {}).get('origin') else
-                _record_digest(observation.get('text', '')),
+            text_sha256=None if isinstance((observation.get('metadata') or {}).get('origin'), dict)
+                and (observation.get('metadata') or {})['origin'].get('sha256')
+                else _record_digest(observation.get('text', '')),
             asks=_asks_of(observation.get('text', '')),
             vrs=dict(strength=round(current['strength'], 4),
                 promoted=current['strength'] >= 1.0,

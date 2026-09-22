@@ -19,6 +19,7 @@ from swegca_vrs2.store import Main
 from swegca_vrs2.native_journal import NativeJournal, is_native_store
 from swegca_vrs2.native_transport import InterfaceError
 from swegca_vrs2.read_lease import engine_recall_active
+from swegca_vrs2.provenance import record_digest
 from swegca_vrs2.codex_hooks import config as codex_hook_config
 from swegca_vrs2.conversation_watch import watch
 from tools.audit_vrs22_session_native_capture import audit as audit_native_capture
@@ -108,7 +109,18 @@ def test_transcript_enters_only_session_vrs_without_sqlite_outbox(tmp_path):
         assert not (state / 'conversation_hooks.sqlite3').exists()
         with VRSClient(capture.session_root('codex', session), writes=False) as local:
             status = local.call('memory_status', {})
+            originals = local.export(0)['rows']
+        resident = ensure_daemon(capture.session_root('codex', session))
+        try:
+            recalled = resident.request('hook_recall', query='purpose_unique_91')
+        finally:
+            resident.close()
         assert status['hot_episode_count'] == 3
+        user = next(row['observation'] for row in originals
+                    if row['observation']['metadata'].get('role') == 'user')
+        matched = next(row for row in recalled['memories']
+                       if row['source'] == user['source'])
+        assert matched['text_sha256'] == record_digest(user['text'])
     finally:
         stop(capture.session_root('codex', session))
 

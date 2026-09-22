@@ -134,7 +134,7 @@ def verify(path, kind, origin, want, head="", section="", index=None):
         raw, data = read_raw(path)
     except OSError:
         return dict(state="missing", lines=None)
-    origin = origin or {}
+    origin = origin if isinstance(origin, dict) else {}
     span = origin.get("bytes")
     if kind == "doc":
         whole = normalize(raw)
