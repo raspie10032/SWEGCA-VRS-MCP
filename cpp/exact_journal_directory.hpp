@@ -4,6 +4,7 @@
 #include "owner_lock.hpp"
 
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <filesystem>
 #include <mutex>
@@ -59,8 +60,8 @@ private:
     std::filesystem::path directory_;
     std::string journal_generation_;
     OwnerLock* owner_lock_;
-    mutable std::mutex mutex_;
-    bool failed_ = false;
+    mutable std::array<std::mutex, 256> prefix_mutex_;
+    std::atomic<bool> failed_{false};
 };
 
 }  // namespace swegca::vrs

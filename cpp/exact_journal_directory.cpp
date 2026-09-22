@@ -255,8 +255,11 @@ ExactJournalDirectory::ExactJournalDirectory(std::filesystem::path directory,
 // SWEGCA: src/swegca_vrs2/exact_replay.py@c06092a:496-609
 void ExactJournalDirectory::put(std::string_view episode_id,
                                 const OriginalJournalAddress& address) {
-    std::lock_guard guard(mutex_);
-    if (failed_ || !owner_lock_ || !owner_lock_->locked())
+    const auto key = key_of(episode_id);
+    std::lock_guard guard(prefix_mutex_[key[0]]);
+    if (failed_.load())
+        throw std::runtime_error("exact_journal_address_directory_failed");
+    if (!owner_lock_ || !owner_lock_->locked())
         throw std::runtime_error("native_vrs_owner_lock_required");
     if (address.frame.generation != journal_generation_ || address.sequence < 1 ||
         address.frame.first_sequence < 1 ||
@@ -264,7 +267,6 @@ void ExactJournalDirectory::put(std::string_view episode_id,
         address.sequence > address.frame.last_sequence ||
         address.frame.byte_offset < 8)
         throw std::runtime_error("exact_journal_address_invalid");
-    const auto key = key_of(episode_id);
     try {
         for (const auto power : powers) {
             const auto path = segment_path(key, power);
@@ -307,7 +309,7 @@ void ExactJournalDirectory::put(std::string_view episode_id,
         }
         throw std::runtime_error("exact_replay_directory_capacity_exceeded");
     } catch (...) {
-        failed_ = true;
+        failed_.store(true);
         throw;
     }
 }
@@ -315,11 +317,11 @@ void ExactJournalDirectory::put(std::string_view episode_id,
 // SWEGCA: src/swegca_vrs2/exact_replay.py@c06092a:691-713
 std::optional<OriginalJournalAddress> ExactJournalDirectory::find(
     std::string_view episode_id, std::int64_t published_row_limit) const {
-    std::lock_guard guard(mutex_);
-    if (failed_) throw std::runtime_error("exact_journal_address_directory_failed");
+    const auto key = key_of(episode_id);
+    std::lock_guard guard(prefix_mutex_[key[0]]);
+    if (failed_.load()) throw std::runtime_error("exact_journal_address_directory_failed");
     if (published_row_limit < 0)
         throw std::runtime_error("exact_journal_published_limit_invalid");
-    const auto key = key_of(episode_id);
     for (const auto power : powers) {
         const auto path = segment_path(key, power);
         if (!std::filesystem::exists(path)) return std::nullopt;
@@ -339,8 +341,7 @@ std::optional<OriginalJournalAddress> ExactJournalDirectory::find(
 
 // SWEGCA: src/swegca_vrs2/exact_replay.py@c06092a:190-223
 bool ExactJournalDirectory::fresh() const {
-    std::lock_guard guard(mutex_);
-    if (failed_) throw std::runtime_error("exact_journal_address_directory_failed");
+    if (failed_.load()) throw std::runtime_error("exact_journal_address_directory_failed");
     return std::filesystem::is_empty(directory_);
 }
 

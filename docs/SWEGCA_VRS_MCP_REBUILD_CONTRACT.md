@@ -136,8 +136,9 @@ addressed frame for one exact sequence. These addresses are a derived read
 index, not an experience store. A renamed `head.vrsj` is resolved through the
 sequence-ordered immutable segment name after rotation; the generation,
 frame span, checksum, and row sequence are checked on the cold read. The
-episode-to-frame address join, published HotIndex, and end-to-end selected
-Replay are still missing, so this does not yet prove bounded Replay cost.
+exact-address join is now present as a library primitive. Published HotIndex
+and end-to-end selected Replay wiring are still missing, so this does not yet
+prove bounded Replay cost.
 The addressed cold read validates the entire compressed frame first, then
 stops its second streaming pass at the chosen row; it does not construct the
 remaining originals in that frame during Replay.
@@ -166,9 +167,13 @@ need to call this primitive after their complete Recall has selected one
 original. Merely having the primitive in the library is not product wiring.
 The exact-address rebuild walks one already validated active journal, checks
 each original observation's request ID and fingerprint, and retains the first
-address for a repeated author episode ID. It requires a fresh unpublished
-directory; a failed or interrupted build is discarded and rebuilt rather than
-published. This directory is still only one derived projection. It does not
+address for a repeated author episode ID. It routes verified IDs into 16
+bounded, ordered worker queues by address prefix, so independent segment
+writes can proceed concurrently without reordering a duplicate original.
+Each worker still uses synchronous segment I/O; throughput and 4 GB RSS are
+unmeasured. The rebuild requires a fresh unpublished directory; a failed or
+interrupted build is discarded and rebuilt rather than published. This
+directory is still only one derived projection. It does not
 replace the complete HotIndex posting, proposition, supersession, semantic
 family, Graph, region, coactivation, and portal representations.
 
