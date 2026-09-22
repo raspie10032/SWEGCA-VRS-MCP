@@ -150,6 +150,14 @@ not create a new observation ID, cue posting, proposition, or successor link.
 Their own Graph/VRS effects and pair certificates still require the Main
 generation replay path; skipping them in an address index is not dropping
 their experience or proof of complete Main restoration.
+The detached alias and usage Graph transitions now reproduce the author's
+flat alias-root map, usage overwrite, snapshot digest chain, and receipt
+fields. An unchanged numerical source may be rebound with an empty event
+delta only after its parent snapshot is checked. These transitions are not
+yet a Main commit/replay coordinator. Consolidation must run the author's
+VRS refinement and verify its version certificate; no alias/usage shortcut
+stands in for it. The current maps are source-level state and still need a
+bounded resident or native representation for the 4 GB product gate.
 This adapter currently reads physical address files on lookup. It is a
 source-bound correctness path, not accepted evidence for the author's
 `lookup_requires_io=False` hot property or the user-input-to-Recall <1 ms
