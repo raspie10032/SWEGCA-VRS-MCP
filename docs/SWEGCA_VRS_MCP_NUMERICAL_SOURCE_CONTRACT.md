@@ -83,6 +83,15 @@ an f16 threshold crossing caused only by rounding. The bound strength map and
 target seeds are still detached work; event signal settlement, durable input
 equality, and publication remain unimplemented. The f16 conversion is a
 source-based binary16 translation, not a measured parity result.
+The C++ `settle_event_signal` now carries the source's fixed input-strength
+map through synchronous score rounds. It reads every incoming signed edge for
+each affected node, caches the invocation's topology and original scores,
+revisits changed nodes and outgoing targets, and returns exhausted work as
+pending. Its receipt reports zero reapplied strength updates and no storage
+binding. The current ordered maps and per-node topology vectors still lack
+a bounded physical representation under the 4 GB limit, and no production
+Main generation publishes their result. The translated path has not been
+compiled or compared numerically with the author implementation.
 
 Existing VRS 2.2 pair certificates and numerical arrays are historical
 evidence. A new source implementation must account for their lineage and

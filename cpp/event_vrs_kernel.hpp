@@ -12,8 +12,10 @@ namespace swegca::vrs {
 
 class EventVrsProposal {
 public:
+    // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_event_kernel.py@7536139:89-110
+    virtual ~EventVrsProposal() = default;
     // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_event_kernel.py@7536139:112-120
-    [[nodiscard]] Json receipt() const;
+    [[nodiscard]] virtual Json receipt() const;
 
     // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_event_kernel.py@7536139:94-110
     [[nodiscard]] const std::map<std::uint32_t, float>& scores() const { return scores_; }
@@ -25,8 +27,12 @@ public:
     [[nodiscard]] const std::vector<std::uint32_t>& seed_nodes() const { return seed_nodes_; }
     // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_event_kernel.py@7536139:94-110
     [[nodiscard]] std::uint64_t rounds() const { return rounds_; }
+    // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_event_kernel.py@7536139:94-110
+    [[nodiscard]] std::uint64_t node_evaluations() const { return node_evaluations_; }
+    // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_event_kernel.py@7536139:94-110
+    [[nodiscard]] std::uint64_t edge_evaluations() const { return edge_evaluations_; }
 
-private:
+protected:
     // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_event_kernel.py@7536139:101-110
     EventVrsProposal(std::shared_ptr<const ValidatedEventVrsInputs> inputs,
                      std::map<std::uint32_t, float> scores,
@@ -45,6 +51,7 @@ private:
     std::uint64_t edge_evaluations_;
     std::vector<std::uint32_t> seed_nodes_;
 
+private:
     friend EventVrsProposal advance_event_vrs(
         std::shared_ptr<const ValidatedEventVrsInputs> inputs,
         const std::vector<std::int64_t>& changed_nodes,
