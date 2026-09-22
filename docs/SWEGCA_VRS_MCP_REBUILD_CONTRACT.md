@@ -345,6 +345,14 @@ reopened through those immutable pages and its native endpoint segments. This
 keeps the resident Main generation from retaining an ever-growing chain of
 old sparse deltas. The reopen remains unpublished until the missing Main
 coordinator certifies the corresponding map and endpoint manifest rows.
+The active endpoint partition now has a separate derived manifest journal
+under the same Main owner lock. Every row binds the full active contiguous
+segment list, cold-base boundary, Graph generation and pair certificate to
+one exact original observation frame. Recovery validates the entire manifest
+chain but requires physical files only for the final active row, allowing
+files used solely by released historical generations to be reclaimed later.
+Final endpoint-to-source validation still occurs when the numerical view is
+cold-opened; the manifest alone never authorizes a numerical value.
 This adapter currently reads physical address files on lookup. It is a
 source-bound correctness path, not accepted evidence for the author's
 `lookup_requires_io=False` hot property or the user-input-to-Recall <1 ms
