@@ -6,11 +6,12 @@ import socket
 from dataclasses import replace
 from fractions import Fraction
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
 
-from swegca_vrs2.store import Main, OUTCOMES, EDGE, frozen, full_current_pair
+from swegca_vrs2.store import Graph, Main, OUTCOMES, EDGE, frozen, full_current_pair
 from swegca_vrs2 import store as store_module
 from swegca_vrs2.server import StandaloneMCP
 from swegca_vrs2.engine.mosaic_vrs_event_kernel import EventVrsInputs
@@ -61,6 +62,21 @@ def test_component_region_source_uses_original_cues_and_stays_generation_bound(m
                for region, _ in matches)
     with pytest.raises(ValueError, match='different VRS generation'):
         matches[0][0].require_pair(main.pair)
+
+
+def test_checkpoint_rejects_region_without_generation_bound_cue_source(main):
+    record(main, 'checkpoint-region-source')
+    main.consolidate()
+    graph = main.graph
+    component, (region, positions) = next(iter(graph.regions.items()))
+    old_region = replace(region, source=SimpleNamespace(terms=region.terms))
+    old_graph = Graph(graph.snapshot_id, graph.flat, graph.nodes, graph.components,
+        graph.regions.set(component, (old_region, positions)), graph.last_receipt,
+        stable=graph.stable, usage=graph.usage, aliases=graph.aliases)
+    prepared = dict(main.checkpoint_prepare(), graph=old_graph)
+    _, blob = Main.checkpoint_serialize(prepared)
+    with pytest.raises(ValueError, match='checkpoint_region_source_invalid'):
+        Main.checkpoint_deserialize(blob, main.identity, main.pair.snapshot_id)
 
 
 def test_light_evidence_inputs_equal_full_original_episodes(main):

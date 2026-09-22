@@ -935,6 +935,13 @@ class Main:
                 or not isinstance(state['graph'], Graph)
                 or not isinstance(state['operations'], Map)):
             raise ValueError('checkpoint_schema_invalid')
+        for _, (region, positions) in state['graph'].regions.items():
+            source = region.source
+            if (not isinstance(source, ComponentRegionSource)
+                    or source.address_index.positions is not positions
+                    or source.terms is not region.terms
+                    or source.vrs_strength is not region.strengths):
+                raise ValueError('checkpoint_region_source_invalid')
         return state
 
     def rebuild_from_journal(self, progress=None):
