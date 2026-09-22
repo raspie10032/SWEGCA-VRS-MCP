@@ -21,7 +21,12 @@ def verify(root):
     manifest = json.loads((root / 'NATIVE_VRS2_PORT.json').read_text(encoding='utf-8'))
     package = root / 'src/swegca_vrs2'
     files = sorted(package.rglob('*.py'))
-    assert len(files) == 47, f'product source count changed: {len(files)}'
+    assert len(files) == 60, f'product source count changed: {len(files)}'
+    ported = {path.stem for path in (package / 'engine').glob('*.py')} - {'__init__'}
+    declared = {row['module'] for row in manifest['records']}
+    assert len(declared) == len(manifest['records'])
+    assert ported - declared == {'mosaic_evidence_accumulator',
+                                'mosaic_semantic_family_directory'}
     for row in manifest['records']:
         raw = (package / 'engine' / (row['module'] + '.py')).read_bytes()
         assert hashlib.sha256(raw).hexdigest() == row['port_sha256'], row['module']

@@ -55,7 +55,7 @@
     {
       "module": "mosaic_memory_activation",
       "source_sha256": "b05cf0d1be31ec00a44bd04af647f7f52b20110e9121cf61fe8f1c966bc5ab2d",
-      "port_sha256": "1e5a7810eea4bea442d0bfa4eea2aa3679b753376d8c1b78471c1931bd75873e",
+      "port_sha256": "369e94387a1628d7ad7d7dc03defb54117035438e0ddc0c71a919058e02153f3",
       "definitions": [
         "_text",
         "_cue",
@@ -81,7 +81,12 @@
         "ReEvidenceResult",
         "re_evidence_memory",
         "MemoryActivationReceipt",
-        "activate_memory"
+        "activate_memory",
+        "_snapshot_id",
+        "HotEpisodeMapping",
+        "_validated_memory_content",
+        "MemoryActivationIndex",
+        "CompositeMemoryActivationIndex"
       ]
     },
     {
@@ -114,8 +119,112 @@
         "SparseEventEdges",
         "prepare_event_delta"
       ]
+    },
+    {
+      "module": "mosaic_vrs_portal_activation",
+      "source_commit": "0f12d0a0e71f27a0629d9313f276be5ea4c26c37",
+      "source_path": "src/tinylm_slicer/mosaic_vrs_portal_activation.py",
+      "source_sha256": "85e4536983d5b563b88f3c8e701df401ea45f864cdb624f01c13ee6ded47ee67",
+      "port_sha256": "85e4536983d5b563b88f3c8e701df401ea45f864cdb624f01c13ee6ded47ee67",
+      "definitions": "whole_module"
+    },
+    {
+      "module": "mosaic_vrs_local_navigation",
+      "source_commit": "0f12d0a0e71f27a0629d9313f276be5ea4c26c37",
+      "source_path": "src/tinylm_slicer/mosaic_vrs_local_navigation.py",
+      "source_sha256": "06ea54ccf6dfcdca99f34f4d30d32685f11fa362c3c8412bf2338fd2a207e4e9",
+      "port_sha256": "06ea54ccf6dfcdca99f34f4d30d32685f11fa362c3c8412bf2338fd2a207e4e9",
+      "definitions": "whole_module"
+    },
+    {
+      "module": "mosaic_vrs_portal_lifecycle",
+      "source_commit": "77439d0481dd8c1aa0d1800f4c84387daa0e8f97",
+      "source_path": "src/tinylm_slicer/mosaic_vrs_portal_lifecycle.py",
+      "source_sha256": "eb8d30d3b800276fe6110cd4c436a0251b83b1f0d1edcd9cf98bbababed5e2b7",
+      "port_sha256": "eb8d30d3b800276fe6110cd4c436a0251b83b1f0d1edcd9cf98bbababed5e2b7",
+      "definitions": "whole_module"
+    },
+    {
+      "module": "mosaic_vrs_coactivation_navigation",
+      "source_commit": "6e2146d62a7db0213de3206925176aad31343af3",
+      "source_path": "src/tinylm_slicer/mosaic_vrs_coactivation_navigation.py",
+      "source_sha256": "2ae6077faa9bdf2a4625a4532d1e93b6d4fa40c59e7477dabb69c4828588a19b",
+      "port_sha256": "2ae6077faa9bdf2a4625a4532d1e93b6d4fa40c59e7477dabb69c4828588a19b",
+      "definitions": "whole_module"
+    },
+    {
+      "module": "mosaic_vrs_membership_cache",
+      "source_commit": "6215be45fb3e4a879639474f90169bf0a8d6cec6",
+      "source_path": "src/tinylm_slicer/mosaic_vrs_membership_cache.py",
+      "source_sha256": "3d34024e6b25006217e81393f46449494a2db923e6a73895200df70fe85d0d04",
+      "port_sha256": "3d34024e6b25006217e81393f46449494a2db923e6a73895200df70fe85d0d04",
+      "definitions": "whole_module"
+    },
+    {
+      "module": "mosaic_vrs_coactivation",
+      "source_commit": "31248ce2d1ad371d5725fe4d8614844d7508eee6",
+      "source_path": "src/tinylm_slicer/mosaic_vrs_coactivation.py",
+      "source_sha256": "143d2a45aee8dcaabd38f3f48edc8b8a95818a5d8ee9172691fbe406d9323743",
+      "port_sha256": "143d2a45aee8dcaabd38f3f48edc8b8a95818a5d8ee9172691fbe406d9323743",
+      "definitions": "whole_module"
+    },
+    {
+      "module": "mosaic_vrs_region_publication",
+      "source_commit": "85d1f1742336495cbbe4e36ffa3c78fa59ca8917",
+      "source_path": "src/tinylm_slicer/mosaic_vrs_region_publication.py",
+      "source_sha256": "19add5bd37504ffbfdea2165805e88c97d737a9d0bb71cbbbaab2e62a4cff0e2",
+      "port_sha256": "19add5bd37504ffbfdea2165805e88c97d737a9d0bb71cbbbaab2e62a4cff0e2",
+      "definitions": "whole_module"
+    },
+    {
+      "module": "mosaic_compressed_memory",
+      "source_commit": "229554c4673bd4265008c4587ffe450ec7ba2e9b",
+      "source_path": "src/tinylm_slicer/mosaic_compressed_memory.py",
+      "source_sha256": "6bf2102a4cdce72a5455d90f1f03825369a80f94d9123eb93407da07515644dc",
+      "port_sha256": "6bf2102a4cdce72a5455d90f1f03825369a80f94d9123eb93407da07515644dc",
+      "definitions": "whole_module"
+    },
+    {
+      "module": "mosaic_lossless_float_tuple",
+      "source_commit": "9a3cfb903748321ae46f3363a89c968ef6a5e9fb",
+      "source_path": "src/tinylm_slicer/mosaic_lossless_float_tuple.py",
+      "source_sha256": "a6c7303ba1d6510d824055355896a6bfcf50e11c61183541c1304305a170a6e0",
+      "port_sha256": "a6c7303ba1d6510d824055355896a6bfcf50e11c61183541c1304305a170a6e0",
+      "definitions": "whole_module"
+    },
+    {
+      "module": "mosaic_lossless_blocks",
+      "source_commit": "18a40101db08d2432ba6e6d2bb3dad9147f69b48",
+      "source_path": "src/tinylm_slicer/mosaic_lossless_blocks.py",
+      "source_sha256": "3d6ba40d5efb06cbad8ad751a04b3f33936a03d9950c7cb5090395e364dcaaf9",
+      "port_sha256": "3d6ba40d5efb06cbad8ad751a04b3f33936a03d9950c7cb5090395e364dcaaf9",
+      "definitions": "whole_module"
+    },
+    {
+      "module": "mosaic_snapshot_digest",
+      "source_commit": "61e64d4164d5ac35fb43901f7fba1b5f89a5dfcf",
+      "source_path": "src/tinylm_slicer/mosaic_snapshot_digest.py",
+      "source_sha256": "cf59ddf581b5d98eaca3a28730a9b9984796d319fe9071cce31d7018ffe523d1",
+      "port_sha256": "cf59ddf581b5d98eaca3a28730a9b9984796d319fe9071cce31d7018ffe523d1",
+      "definitions": "whole_module"
+    },
+    {
+      "module": "mosaic_packed_memberships",
+      "source_commit": "d38b911de60d0e7edbf26e58fbefca1267b1062e",
+      "source_path": "src/tinylm_slicer/mosaic_packed_memberships.py",
+      "source_sha256": "889ed37bfd27d508968b64f5e4576b14546000ba38e35798db944a8e245b17c4",
+      "port_sha256": "889ed37bfd27d508968b64f5e4576b14546000ba38e35798db944a8e245b17c4",
+      "definitions": "whole_module"
+    },
+    {
+      "module": "mosaic_resident_observation_tree",
+      "source_commit": "229554c4673bd4265008c4587ffe450ec7ba2e9b",
+      "source_path": "src/tinylm_slicer/mosaic_resident_observation_tree.py",
+      "source_sha256": "f0af7c4bd7c17d3c98fb9a2f088c4ca1eaa4eb84556fe698d80a0e61fc724316",
+      "port_sha256": "f0af7c4bd7c17d3c98fb9a2f088c4ca1eaa4eb84556fe698d80a0e61fc724316",
+      "definitions": "whole_module"
     }
   ],
-  "scope": "Memory activation, event-local VRS2 numeric settlement, overlapping connectivity regions, exact evidence pages. No model or private experiences.",
-  "modifications": "Selected definitions with explicit dependency headers; absolute imports made relative. Standalone persistent main and ingestion are separate composition code."
+  "scope": "Memory activation, event-local VRS2 settlement, overlapping regions, exact evidence pages, source-bound portal navigation and coactivation. No model or private experiences.",
+  "modifications": "Selected definitions with explicit dependency headers; whole-module portal dependencies retain committed source bytes. Standalone persistent main and ingestion are separate composition code."
 }

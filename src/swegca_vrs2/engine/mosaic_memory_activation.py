@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from threading import Lock
 from types import MappingProxyType
 from typing import Any, Callable, Iterable, Mapping, Protocol, runtime_checkable
+from .mosaic_snapshot_digest import snapshot_digest
 OUTCOMES = frozenset({'success', 'failure', 'negative', 'uncertain', 'conflict', 'pending'})
 VERDICTS = frozenset({'support', 'refute', 'insufficient', 'conflict', 'available', 'retained'})
 _FULL_CURRENT_MEMORY_VRS_SCHEMA = 'rozephine-full-current-memory-vrs-snapshot-v1'
@@ -614,3 +615,232 @@ def activate_memory(
         replay=replayed,
         re_evidence=re_evidenced,
     )
+
+
+def _snapshot_id(
+    episodes: Mapping[str, "MemoryEpisode"],
+    postings: Mapping[str, tuple[str, ...]],
+) -> str:
+    return snapshot_digest(episodes, postings)
+
+
+class HotEpisodeMapping(Mapping[str, MemoryEpisode]):
+    """Compatibility view that expands an episode only when the caller asks."""
+
+    def __init__(self, index: HotMemoryIndex) -> None:
+        self._index = index
+
+    def __getitem__(self, episode_id: str) -> MemoryEpisode:
+        return self._index.episode(episode_id)
+
+    def __iter__(self):
+        return iter(self._index.iter_episode_ids())
+
+    def __len__(self) -> int:
+        return self._index.episode_count
+
+
+def _validated_memory_content(snapshot_id, episodes_by_id, postings_by_cue, *,
+                              coverage=(), lookup_requires_io=False):
+    """Shared cold checks; no discarded index/proposition directory is built."""
+    if snapshot_id:
+        _text(snapshot_id, 'snapshot_id')
+    episodes = dict(episodes_by_id)
+    if set(episodes) != {episode.episode_id for episode in episodes.values()}:
+        raise ValueError('memory activation index episode identity changed')
+    postings = {cue: tuple(identifiers) for cue, identifiers in postings_by_cue.items()}
+    for cue, identifiers in postings.items():
+        if (_cue(cue) != cue or not identifiers
+                or identifiers != tuple(sorted(set(identifiers)))
+                or any(identifier not in episodes for identifier in identifiers)):
+            raise ValueError('memory activation posting changed')
+    counts = {outcome: 0 for outcome in OUTCOMES}
+    for episode in episodes.values():
+        for step in episode.steps:
+            if not isinstance(step.observation, Mapping):
+                raise ValueError('memory observation must be a mapping')
+            counts[step.outcome] += 1
+    for outcome, supplied in coverage:
+        if supplied is not None and supplied != bool(counts[outcome]):
+            raise ValueError('memory activation outcome coverage changed')
+    if lookup_requires_io:
+        raise ValueError('hot memory activation cannot perform I/O')
+    computed = _snapshot_id(episodes, postings)
+    if snapshot_id and snapshot_id != computed:
+        raise ValueError('memory activation snapshot content changed')
+    return computed, episodes, postings, counts
+
+
+@dataclass(frozen=True)
+class MemoryActivationIndex:
+    """Cold-built immutable snapshot; every hot operation is memory-only."""
+
+    snapshot_id: str
+    episodes_by_id: Mapping[str, MemoryEpisode]
+    postings_by_cue: Mapping[str, tuple[str, ...]]
+    includes_success: bool | None = None
+    includes_failure: bool | None = None
+    includes_negative: bool | None = None
+    includes_uncertain: bool | None = None
+    includes_conflict: bool | None = None
+    includes_pending: bool | None = None
+    lookup_requires_io: bool = False
+    outcome_counts: Mapping[str, int] = field(init=False, repr=False)
+
+    proposition_directory: object = field(init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        computed, episodes, postings, counts = _validated_memory_content(
+            self.snapshot_id, self.episodes_by_id, self.postings_by_cue,
+            coverage=tuple((outcome, getattr(self, 'includes_'+outcome)) for outcome in OUTCOMES),
+            lookup_requires_io=self.lookup_requires_io)
+        for outcome in OUTCOMES:
+            object.__setattr__(self, 'includes_'+outcome, bool(counts[outcome]))
+        if not self.snapshot_id:
+            object.__setattr__(self, 'snapshot_id', computed)
+        object.__setattr__(self, "episodes_by_id", MappingProxyType(episodes))
+        object.__setattr__(
+            self,
+            "postings_by_cue",
+            MappingProxyType(postings),
+        )
+        object.__setattr__(self, "outcome_counts", MappingProxyType(counts))
+        from .mosaic_proposition_directory import PropositionDirectory
+        object.__setattr__(self, 'proposition_directory', PropositionDirectory.from_rows(
+            (episode.episode_id, (step.observation for step in episode.steps))
+            for episode in episodes.values()))
+
+    @property
+    def episode_count(self) -> int:
+        return len(self.episodes_by_id)
+
+    def episode(self, episode_id: str) -> MemoryEpisode:
+        return self.episodes_by_id[episode_id]
+
+    def episode_ids_for_cue(self, cue: str) -> tuple[str, ...]:
+        return self.postings_by_cue.get(_cue(cue), ())
+
+    def iter_episode_ids(self) -> Iterable[str]:
+        return iter(self.episodes_by_id)
+
+
+@dataclass(frozen=True)
+class CompositeMemoryActivationIndex:
+    """Immutable structural sharing across hot sources and experience waves."""
+
+    sources: tuple[HotMemoryIndex, ...]
+    snapshot_id: str = field(init=False)
+    outcome_counts: Mapping[str, int] = field(init=False, repr=False)
+    _episode_source_by_id: Mapping[str, HotMemoryIndex] = field(
+        init=False, repr=False
+    )
+    _postings_by_cue: Mapping[str, tuple[str, ...]] = field(
+        init=False, repr=False
+    )
+    _unrouted_sources: tuple[HotMemoryIndex, ...] = field(
+        init=False, repr=False
+    )
+    lookup_requires_io: bool = field(default=False, init=False)
+
+    def __post_init__(self) -> None:
+        sources = tuple(self.sources)
+        if not sources or any(
+            not isinstance(source, HotMemoryIndex) or source.lookup_requires_io
+            for source in sources
+        ):
+            raise ValueError("composite hot memory source changed")
+        payload = json.dumps(
+            {
+                "schema_version": "rozephine-composite-hot-memory-v1",
+                "source_snapshot_ids": [source.snapshot_id for source in sources],
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        counts = {
+            outcome: sum(source.outcome_counts[outcome] for source in sources)
+            for outcome in OUTCOMES
+        }
+        episode_sources: dict[str, HotMemoryIndex] = {}
+        posting_sets: dict[str, set[str]] = {}
+        unrouted_sources: list[HotMemoryIndex] = []
+        for source in sources:
+            if not isinstance(source, MemoryActivationIndex):
+                # Virtual sources such as the full VRS graph already own an
+                # efficient address index.  Keep those sources structurally
+                # shared instead of enumerating their whole corpus here.
+                unrouted_sources.append(source)
+                continue
+            for episode_id in source.episodes_by_id:
+                if episode_id in episode_sources:
+                    raise ValueError("hot memory episode identity overlaps")
+                episode_sources[episode_id] = source
+            for cue, episode_ids in source.postings_by_cue.items():
+                posting_sets.setdefault(cue, set()).update(episode_ids)
+        object.__setattr__(self, "sources", sources)
+        object.__setattr__(self, "snapshot_id", hashlib.sha256(payload).hexdigest())
+        object.__setattr__(self, "outcome_counts", MappingProxyType(counts))
+        object.__setattr__(
+            self,
+            "_episode_source_by_id",
+            MappingProxyType(episode_sources),
+        )
+        object.__setattr__(
+            self,
+            "_postings_by_cue",
+            MappingProxyType(
+                {
+                    cue: tuple(sorted(episode_ids))
+                    for cue, episode_ids in posting_sets.items()
+                }
+            ),
+        )
+        object.__setattr__(self, "_unrouted_sources", tuple(unrouted_sources))
+
+    @property
+    def episode_count(self) -> int:
+        return sum(source.episode_count for source in self.sources)
+
+    @property
+    def episodes_by_id(self) -> Mapping[str, MemoryEpisode]:
+        return HotEpisodeMapping(self)
+
+    def episode(self, episode_id: str) -> MemoryEpisode:
+        found = []
+        routed = self._episode_source_by_id.get(episode_id)
+        if routed is not None:
+            found.append(routed.episode(episode_id))
+        for source in self._unrouted_sources:
+            try:
+                found.append(source.episode(episode_id))
+            except KeyError:
+                pass
+        if not found:
+            raise KeyError(episode_id)
+        if len(found) != 1:
+            raise ValueError("hot memory episode identity overlaps")
+        return found[0]
+
+    def episode_ids_for_cue(self, cue: str) -> tuple[str, ...]:
+        normalized = _cue(cue)
+        return tuple(
+            sorted(
+                {
+                    *self._postings_by_cue.get(normalized, ()),
+                    *(
+                        episode_id
+                        for source in self._unrouted_sources
+                        for episode_id in source.episode_ids_for_cue(normalized)
+                    ),
+                }
+            )
+        )
+
+    def iter_episode_ids(self) -> Iterable[str]:
+        seen = set()
+        for source in self.sources:
+            for episode_id in source.iter_episode_ids():
+                if episode_id in seen:
+                    raise ValueError("hot memory episode identity overlaps")
+                seen.add(episode_id)
+                yield episode_id

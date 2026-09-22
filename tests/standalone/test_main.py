@@ -4,6 +4,7 @@ import hashlib
 import json
 import socket
 from dataclasses import replace
+from fractions import Fraction
 from pathlib import Path
 
 import numpy as np
@@ -16,6 +17,9 @@ from swegca_vrs2.engine.mosaic_vrs_event_kernel import EventVrsInputs
 from swegca_vrs2.engine.mosaic_vrs_event_signal import settle_event_signal
 from swegca_vrs2.engine.mosaic_vrs_dependency_index import EndpointDependencyIndex
 from swegca_vrs2.engine.mosaic_memory_promotion import assess_vrs_experience_promotion
+from swegca_vrs2.engine.mosaic_memory_activation import current_experience_verdict
+from swegca_vrs2.engine.mosaic_vrs_portal_activation import activate_with_portals
+from swegca_vrs2.engine.mosaic_vrs_portal_lifecycle import PortalPolicy
 from swegca_vrs2 import vrs_evidence, vrs_refine
 
 
@@ -115,6 +119,24 @@ def test_six_outcomes_real_native_vrs_and_original_receipts(main):
     assert all(settled['region_memberships'].values())
     assert not any(root['current_promotions'].values())
     assert not any(main.status()['authority'].values())
+
+
+def test_author_portal_fallback_replays_original_when_navigation_unavailable(main):
+    original = record(main, 'portal-fallback', outcome='pending')
+    pair = main.pair
+    activated = activate_with_portals(pair, topology=None, associations=None,
+        policy=PortalPolicy('test', 1, 1, Fraction(0)), observed_at_ns=0,
+        query='한국어 기억', current_cues=('한국어', '기억'),
+        judge=lambda replayed: current_experience_verdict(replayed,
+            memory_snapshot_id=pair.memory.snapshot_id,
+            vrs_snapshot_id=pair.vrs_snapshot_id), navigation_term_budget=1)
+    receipt = activated.activation
+    assert activated.navigation_failures == ((None,
+        'portal topology or prepared associations unavailable'),)
+    assert tuple(row.episode_id for row in receipt.replay.episodes) == (
+        original['episode_id'],)
+    assert receipt.stage_order == ('deja_vu', 'recall', 'replay', 're_evidence')
+    assert dict(activated.elapsed_ns)['total'] >= 0
 
 
 def test_persistence_exact_identity_snapshot_original_and_idempotency(main):
