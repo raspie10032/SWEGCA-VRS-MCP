@@ -4,25 +4,29 @@ v2.2 includes the local backend. A Linux socket, SSH, WSL or remote main is not
 needed. Install the Windows **desktop application** of Claude; local stdio MCP
 configuration belongs to the desktop client, not a remote website connector URL.
 
-Install Python 3.11+ and use PowerShell 7. Run the commands in the repository
-README, or run `pwsh -File tools/install_windows.ps1 -PythonVersion 3.12` after
-downloading this repository. The script installs v2.2.0 and prints a configuration
-snippet. It does not edit existing Claude settings.
+The prior Windows installer used a product wheel and has been removed. A
+Windows Python runtime with source-built NumPy and immutables has not yet been
+verified under the no-prebuilt-wheel requirement. The final implementation
+language is C++. The configuration below describes the source runtime boundary
+for a verified local Python environment; it is not evidence of a completed
+Windows installation.
 
 In Claude Desktop open Settings → Developer → Edit Config. Windows configuration
 is `%APPDATA%\Claude\claude_desktop_config.json`. Merge the following entry into
-its existing `mcpServers` object, preserving other entries. Replace `YOUR_NAME`
-with the actual profile path, or use the script-generated paths.
+its existing `mcpServers` object, preserving other entries. Replace the example
+paths with the actual source checkout, Python executable, and state directory.
 
 ```json
 {
   "mcpServers": {
     "vrs2-memory": {
-      "command": "C:\\Users\\YOUR_NAME\\AppData\\Local\\SWEGCA\\VRS2-venv\\Scripts\\swegca-vrs2-mcp.exe",
+      "command": "C:\\Users\\YOUR_NAME\\AppData\\Local\\SWEGCA\\VRS2-venv\\Scripts\\python.exe",
       "args": [
+        "-m", "swegca_vrs2.server",
         "--state-dir", "C:\\Users\\YOUR_NAME\\AppData\\Local\\SWEGCA\\VRS2",
         "--allow-ingest"
-      ]
+      ],
+      "env": { "PYTHONPATH": "C:\\Users\\YOUR_NAME\\SWEGCA-VRS-MCP\\src" }
     }
   }
 }
@@ -42,8 +46,8 @@ To check the lifecycle in Claude:
 3. Close Claude Desktop, reopen it, and request the same memory again. Main's
    identity, source record and committed snapshot should persist.
 
-If startup fails, check `%APPDATA%\Claude\logs`. Confirm the exact executable
-exists, and run it once with `--help`. A manually started stdio server waiting
+If startup fails, check `%APPDATA%\Claude\logs`. Confirm the exact Python
+executable and source path exist, and run the module once with `--help`. A manually started stdio server waiting
 silently is normal; it is waiting for a client. A duplicate-owner error means
 another process is using that state directory; close that process normally.
 Never delete the native memory directory to fix an installation path.

@@ -10,8 +10,6 @@ import pytest
 
 from swegca_vrs2.layered import LayeredMCP
 from swegca_vrs2.loopback import ensure_daemon
-from swegca_vrs2.conversation_merge import run as merge_run
-from swegca_vrs2.runtime_upgrade import arm as arm_upgrade
 from swegca_vrs2.session_capture import SessionCapture, VRSClient, handle, transcript_record
 from swegca_vrs2.conversation_finalize import finalize
 from swegca_vrs2.resident import Resident
@@ -706,57 +704,6 @@ def test_merge_requires_end_and_preserves_original_address(tmp_path):
         with VRSClient(state, writes=False) as main:
             exported = main.export(0)
         assert [row['episode_id'] for row in exported['rows']] == addresses
-    finally:
-        stop(session_state, state)
-
-
-def test_armed_runtime_upgrade_waits_for_end_then_preserves_native_vrs_stores(tmp_path):
-    state, transcript = tmp_path / 'state', tmp_path / 'rollout.jsonl'
-    session = 'upgrade-session'
-    write_transcript(transcript, session, [
-        {'type': 'response_item', 'payload': {'type': 'message', 'role': 'user',
-            'content': [{'type': 'input_text', 'text': 'upgrade_unique_6262'}]}}])
-    capture = SessionCapture(state)
-    session_state = capture.session_root('codex', session)
-    try:
-        capture.scan_transcript('codex', session, transcript)
-        assert is_native_store(session_state) and not is_native_store(state)
-        arm_upgrade(state)
-        assert merge_run(state) == 0
-        assert not is_native_store(state)
-
-        # Keep a live durable-main resident before SessionEnd. After adoption it
-        # owns the linked session shard, so upgrade must release main first.
-        with VRSClient(state, writes=True) as main:
-            assert main.call('memory_status', {})['hot_episode_count'] == 0
-
-        capture.mark_ended('codex', session)
-        assert merge_run(state) == 0
-        # The complete session VRS is adopted in place.  Merge creates no
-        # duplicate primary experience rows. Runtime preparation opens the
-        # existing empty primary control store and keeps all experience linked.
-        assert is_native_store(state) and is_native_store(session_state)
-        registry = json.loads((state / 'linked-shards.json').read_text(encoding='utf-8'))
-        assert registry['shards'][0]['records'] == 2
-        assert (state / 'exact-replay' / 'capsules.vrs').is_file()
-        assert not (session_state / 'exact-replay').exists()
-        assert not (state / 'session-capture' / 'runtime-upgrade.json').exists()
-        receipts = list((state / 'session-capture' / 'runtime-upgrades').glob('*.json'))
-        assert len(receipts) == 1
-
-        receipt = json.loads(receipts[0].read_text(encoding='utf-8'))
-        assert receipt['exact']['complete'] and receipt['projections']['complete']
-        # Both old residents released ownership; the current runtime can open
-        # the preserved experiences from the rebuilt current exact directory.
-        with VRSClient(state, writes=False) as main:
-            status = main.call('memory_status', {})
-            exported = main.export(0)
-        assert status['hot_episode_count'] == 0
-        assert status['logical_episode_count'] == registry['shards'][0]['records']
-        assert 'upgrade_unique_6262' in {
-            row['observation']['text'] for row in exported['rows']}
-        assert len(exported['rows']) == registry['shards'][0]['records']
-        assert (state / 'exact-replay' / 'capsules.vrs').is_file()
     finally:
         stop(session_state, state)
 

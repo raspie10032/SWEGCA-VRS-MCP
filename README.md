@@ -1,6 +1,6 @@
 # SWEGCA VRS2 Memory MCP
 
-**v2.2.0 runs on one Windows or Linux machine.** The distribution includes its
+**v2.2.0 contains a local Windows/Linux memory MCP source implementation.** The source tree includes its
 local main owner, persistent observation store, hot memory activation, native
 VRS2 event arithmetic and overlapping connectivity regions. No Linux server,
 Unix socket, WSL, GPU, model download or API key is required.
@@ -8,55 +8,55 @@ Unix socket, WSL, GPU, model download or API key is required.
 The replaced external-agent and v0.3 code is absent. This repository provides
 the VRS2 main, memory MCP, live session layer, and their native runtime.
 
-## Windows installation
+## Windows source runtime
 
-Use Python 3.11 or newer. In **PowerShell 7**:
-
-```powershell
-py -3.12 -m venv "$env:LOCALAPPDATA\SWEGCA\VRS2-venv"
-& "$env:LOCALAPPDATA\SWEGCA\VRS2-venv\Scripts\python.exe" -m pip install "git+https://github.com/raspie10032/SWEGCA-VRS-MCP.git@main"
-& "$env:LOCALAPPDATA\SWEGCA\VRS2-venv\Scripts\swegca-vrs2-mcp.exe" --help
-```
-
-If your installed Python version differs, replace `-3.12` with that version.
-The included [Windows setup script](tools/install_windows.ps1) also creates an
-environment and generates a Claude configuration snippet with your actual paths.
-It leaves existing Claude configuration intact.
-
-Follow [Windows / Claude Desktop setup](docs/WINDOWS.md). The executable owns
-the local memory directory. Use one running server per directory.
+The previous Windows installer downloaded a product wheel and has been removed.
+The Python source requires NumPy and immutables; a Windows runtime built from
+their sources has not yet been verified under the no-prebuilt-wheel rule. The
+planned final implementation language is C++. [Windows / Claude Desktop
+setup](docs/WINDOWS.md) records the host configuration boundary; it is not a
+verified no-wheel Windows installation recipe yet.
 
 ## Linux installation
 
+From this source checkout, with NumPy and immutables already available from
+verified source builds in the selected Python environment:
+
 ```bash
-python3 -m venv .venv
-.venv/bin/python -m pip install git+https://github.com/raspie10032/SWEGCA-VRS-MCP.git@main
-.venv/bin/swegca-vrs2-mcp --state-dir "$HOME/.local/share/swegca-vrs2" --allow-ingest
+PYTHONPATH="$PWD/src" python -m swegca_vrs2.server \
+  --state-dir "$HOME/.local/share/swegca-vrs2" --allow-ingest
 ```
+
+The currently active isolated Linux runtime uses the source tree directly,
+but its third-party dependency source-build provenance is still unverified.
 
 The process waits for MCP messages on stdin. It does not print an interactive
 prompt. Normal stdout is reserved for MCP JSON messages; diagnostics use stderr.
 
 The command above is the direct persistent-main MCP for clients that explicitly
-call `memory_store`. Codex live-session use must run the session-first executable
+call `memory_store`. Codex live-session use must run the session-first module
 and lifecycle hooks below.
 
 ## Codex live-session installation
 
-Register the installed `swegca-vrs2-codex` executable as the MCP server named
+Register the source-run `swegca_vrs2.layered` module as the MCP server named
 `swegca-vrs`. The package normalizes that name to `swegca_vrs` in tool call IDs.
-For example, add the actual executable and state paths to Codex configuration:
+For example, add the actual Python, source and state paths to Codex configuration:
 
 ```toml
 [mcp_servers.swegca-vrs]
-command = "/absolute/path/to/venv/bin/swegca-vrs2-codex"
-args = ["--state-dir", "/absolute/path/to/swegca-vrs2-codex"]
+command = "/absolute/path/to/python"
+args = ["-m", "swegca_vrs2.layered", "--state-dir", "/absolute/path/to/swegca-vrs2-codex"]
+env = { PYTHONPATH = "/absolute/path/to/SWEGCA-VRS-MCP/src" }
 ```
 
-Generate the matching lifecycle hook file with the same installed Python:
+Generate the matching lifecycle hook file from the same source tree:
 
 ```bash
-/absolute/path/to/venv/bin/swegca-vrs2-codex-hooks \
+PYTHONPATH=/absolute/path/to/SWEGCA-VRS-MCP/src /absolute/path/to/python \
+  -m swegca_vrs2.codex_hooks \
+  --python /absolute/path/to/python \
+  --module-root /absolute/path/to/SWEGCA-VRS-MCP/src \
   --state-dir /absolute/path/to/swegca-vrs2-codex \
   --server-name swegca_vrs \
   --output "$HOME/.codex/hooks.json.new"
@@ -166,15 +166,10 @@ and validates the durable journal before serving hot queries.
 ## Development verification
 
 ```bash
-python -m pip install '.[test]' build
-python -m pytest -q tests/standalone
-python -m build
-python tools/verify_standalone.py
-python tools/smoke_mcp.py --server .venv/bin/swegca-vrs-mcp
-python tools/smoke_codex_mcp.py --server .venv/bin/swegca-vrs2-codex
+PYTHONPATH=src python -m pytest -q tests/standalone
 ```
 
 Repository GitHub Actions are disabled. Verification is run locally against the
-built source and actual stdio clients, including new memory, original-source
+source tree and actual stdio clients, including new memory, original-source
 retrieval, process restart, conflicts, transaction failure and authority.
 Actual host UI testing is separate from MCP SDK compatibility verification.

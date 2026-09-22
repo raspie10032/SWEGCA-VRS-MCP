@@ -29,8 +29,9 @@ stage from the named boundary without an explicit user correction.
   is not enough time to accumulate a replacement experience set.
 - Prebuilt wheels are forbidden for the repaired product and its dependencies.
   Deploy the product from its source tree; do not substitute a built or
-  downloaded product wheel in live routing or evaluation. A later lower-level
-  implementation must not depend on a prebuilt wheel artifact.
+  downloaded product wheel in live routing or evaluation. The final target
+  language is C++; the C++ port must preserve the complete SWEGCA/VRS memory
+  logic and must not depend on a prebuilt wheel artifact.
 - External runtime dependencies currently installed in the isolated Python
   environment still lack verified source-build provenance. This is an open
   compliance item, not evidence that the full environment is wheel-free.

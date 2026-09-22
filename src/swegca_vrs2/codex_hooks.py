@@ -52,6 +52,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--python', type=Path, default=Path(sys.executable))
     parser.add_argument('--state-dir', type=Path, required=True)
+    parser.add_argument('--module-root', type=Path)
     parser.add_argument('--server-name', default='swegca_vrs')
     parser.add_argument('--output', type=Path, required=True)
     args = parser.parse_args()
@@ -63,7 +64,8 @@ def main():
     if output.exists():
         parser.error(f'output already exists: {output}')
     output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(json.dumps(config(python, state, server_name=args.server_name),
+    output.write_text(json.dumps(config(python, state, module_root=args.module_root,
+                                        server_name=args.server_name),
                                  ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
     output.chmod(0o600)
     return 0

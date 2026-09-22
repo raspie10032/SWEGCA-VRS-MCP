@@ -40,7 +40,7 @@ FIELDS = ("input_tokens", "cached_input_tokens", "cache_write_input_tokens",
           "output_tokens", "reasoning_output_tokens")
 RUNTIME_PRODUCT_COMMIT = "0a4769f9ce25bb216f5173f817f7050404a0bccb"
 RUNTIME_REPOSITORY_COMMIT = "0a4769f9ce25bb216f5173f817f7050404a0bccb"
-RUNTIME_SOURCE_TREE_SHA256 = "6bfc1434f65648d9aeffd5b15bae7e098f074499b58e0983ca8f499b1f9ef099"
+RUNTIME_SOURCE_TREE_SHA256 = "2e9fbf8870f547bba7574c8b7d3c741535f9fa78bcf8fbddb250b52fbfc1a4f2"
 INITIAL_SHA256 = "a9249ca6fed86315b83cb96f89cc5d0936b2775468c3e450c3258b32abb49523"
 DISCOVERY_QUERY = "checkpoint"
 PRIVATE_PLAIN_ROOT = Path("/home/raspie/.local/share/vrs22-eval-runtime-v019/private")

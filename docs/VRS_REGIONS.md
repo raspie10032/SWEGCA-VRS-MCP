@@ -4,6 +4,10 @@ This document describes the runtime shipped by this repository. Historical
 implementations remain available in Git history; they are not runtime, test, or
 release inputs.
 
+The final implementation language is C++. The present Python source is the
+behavioral reference while that port is made. Prebuilt wheels are prohibited;
+third-party Python dependency source-build provenance remains unverified.
+
 ## Main ownership
 
 Rozephine main owns identity, accumulated experience, VRS state, revisions,
@@ -137,11 +141,11 @@ The local release must prove:
 - live transcript ingress, session first recall, complete miss fallback, and
   SessionEnd linked attachment through an installed stdio MCP;
 - exact original retrieval after restart and all four receipt stages;
-- full tests, source lineage hashes, wheel and sdist contents;
+- full tests and source lineage hashes, with no prebuilt wheel path;
 - resident RSS at or below 4 GiB and allocated storage at or below exactly
   500,000,000,000 bytes (500 GB);
-- wall clock lookup through Replay below 1 ms on the named current experience
-  benchmark, with Re-evidence reported separately;
+- the actual Déjà vu → Recall stage transition below 1 ms; whole MCP response
+  and Replay completion are separate diagnostics;
 - the 5 Gbit/s device assumption identified honestly until an actual kernel
   bandwidth constrained run is completed.
 

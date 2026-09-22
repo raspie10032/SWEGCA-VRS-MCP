@@ -19,8 +19,6 @@ def run(state_dir):
     try:
         capture = SessionCapture(root)
         capture.merge_ended()
-        from .runtime_upgrade import activate_if_ready
-        activate_if_ready(capture)
     finally:
         lock.release()
     return 0
