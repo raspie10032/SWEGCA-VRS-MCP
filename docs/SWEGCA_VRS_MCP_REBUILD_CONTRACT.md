@@ -225,6 +225,17 @@ and prepares the author's usage journal body, fingerprint, request ID,
 successor Graph metadata, and pair certificate. Source postings are streamed
 until a live original is found; the full list does not enter RAM. Usage remains
 provenance, not new evidence. This plan also awaits the Main coordinator.
+The current source `Graph.append_many` is the required ingress generation:
+new record and literal cue nodes in one observation batch see earlier nodes
+in that batch, resolved records receive their v0.2 direct value, and new
+edges retain base strength until later consolidation. Superseded records are
+marked unresolved, and the batch receives one graph snapshot ID and source
+receipt. `graph_batch_append.cpp` now prepares this detached batch delta.
+The older single-record `graph_append.cpp` event-signal settlement is not the
+product ingress path; its remaining users must be rebuilt or removed before
+publication. Physical Graph node storage, Main journal commit, and batch
+replay binding remain unfinished. This source path has not been built or
+parity-tested.
 This adapter currently reads physical address files on lookup. It is a
 source-bound correctness path, not accepted evidence for the author's
 `lookup_requires_io=False` hot property or the user-input-to-Recall <1 ms
