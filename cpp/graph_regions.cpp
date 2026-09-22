@@ -72,6 +72,40 @@ Json state_receipt_plain(const VRSStateUpdateReceipt& source) {
     return Json(std::move(value));
 }
 
+// SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_connectivity_regions.py@c06092a:213-229
+std::vector<std::pair<std::uint32_t, double>> cue_memberships(
+    const HotIndexEpisodeHeader& episode, std::uint32_t component,
+    const ConnectivityRegions& topology, const GraphNodeDirectory& nodes,
+    const GraphRegionDirectory& regions) {
+    std::set<std::uint32_t> local_cues;
+    for (const auto& cue : episode.cues) {
+        const auto name = "cue:" + cue;
+        if (!nodes.contains(name)) continue;
+        const auto address = nodes.address(name);
+        if (regions.component_for(address) != component) continue;
+        const auto local = regions.local_address(component, address);
+        if (local >= topology.terms().size() || topology.terms()[local] != address)
+            throw std::runtime_error("region cue address changed");
+        local_cues.insert(local);
+    }
+    std::map<std::uint32_t, double> masses;
+    std::vector<std::uint32_t> first_seen;
+    for (const auto local : local_cues)
+        for (const auto& [group, weight] : topology.memberships_for_term(local)) {
+            const auto [found, inserted] = masses.try_emplace(group, 0.0);
+            if (inserted) first_seen.push_back(group);
+            found->second += weight;
+        }
+    PythonFsum sum;
+    for (const auto group : first_seen) sum.add(masses.at(group));
+    const auto total = sum.finish();
+    std::vector<std::pair<std::uint32_t, double>> memberships;
+    if (total != 0)
+        for (const auto& [group, weight] : masses)
+            memberships.emplace_back(group, weight / total);
+    return memberships;
+}
+
 }  // namespace
 
 // SWEGCA: src/swegca_vrs2/store.py@7536139:282-298
@@ -138,6 +172,31 @@ graph_memberships(std::string_view identifier, const EventVrsInputView& inputs,
     return result;
 }
 
+// SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_connectivity_regions.py@c06092a:213-229
+std::vector<std::pair<std::uint32_t, double>> graph_episode_memberships(
+    std::string_view episode_id, const FullCurrentMemoryVrsSnapshot& pair,
+    const EventVrsInputView& inputs, const GraphNodeDirectory& nodes,
+    const GraphRegionDirectory& regions) {
+    if (pair.vrs_snapshot_id() != inputs.snapshot_id())
+        throw std::runtime_error("region topology belongs to a different VRS generation");
+    nodes.require_source(inputs);
+    regions.require_source(inputs);
+    regions.require_memory_source(pair.memory());
+    const auto header = pair.memory().episode_header(episode_id);
+    if (header.episode_id != episode_id)
+        throw std::runtime_error("graph original identity changed");
+    const auto center = nodes.address(episode_id);
+    const auto component = regions.component_for(center);
+    if (!component) throw std::runtime_error("graph original has no component");
+    const auto topology = regions.topology_for(*component);
+    if (!topology || topology->vrs_snapshot_id() != inputs.snapshot_id())
+        throw std::runtime_error("region topology belongs to a different VRS generation");
+    const auto center_local = regions.local_address(*component, center);
+    if (center_local >= topology->terms().size() || topology->terms()[center_local] != center)
+        throw std::runtime_error("region original address changed");
+    return cue_memberships(header, *component, *topology, nodes, regions);
+}
+
 // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_connectivity_regions.py@7536139:213-248
 std::optional<SharedExperienceBridge> graph_bridge_for_episode(
     std::string_view episode_id, const FullCurrentMemoryVrsSnapshot& pair,
@@ -160,32 +219,7 @@ std::optional<SharedExperienceBridge> graph_bridge_for_episode(
     const auto center_local = regions.local_address(*component, center);
     if (center_local >= topology->terms().size() || topology->terms()[center_local] != center)
         throw std::runtime_error("region original address changed");
-    std::set<std::uint32_t> local_cues;
-    for (const auto& cue : header.cues) {
-        const auto name = "cue:" + cue;
-        if (!nodes.contains(name)) continue;
-        const auto address = nodes.address(name);
-        if (regions.component_for(address) != component) continue;
-        const auto local = regions.local_address(*component, address);
-        if (local >= topology->terms().size() || topology->terms()[local] != address)
-            throw std::runtime_error("region cue address changed");
-        local_cues.insert(local);
-    }
-    std::map<std::uint32_t, double> masses;
-    std::vector<std::uint32_t> first_seen;
-    for (const auto local : local_cues)
-        for (const auto& [group, weight] : topology->memberships_for_term(local)) {
-            const auto [found, inserted] = masses.try_emplace(group, 0.0);
-            if (inserted) first_seen.push_back(group);
-            found->second += weight;
-        }
-    PythonFsum sum;
-    for (const auto group : first_seen) sum.add(masses.at(group));
-    const auto total = sum.finish();
-    std::vector<std::pair<std::uint32_t, double>> memberships;
-    if (total != 0)
-        for (const auto& [group, weight] : masses)
-            memberships.emplace_back(group, weight / total);
+    auto memberships = cue_memberships(header, *component, *topology, nodes, regions);
     if (memberships.size() < 2) return std::nullopt;
     return SharedExperienceBridge{pair.snapshot_id(), topology->topology_id(),
         header.episode_id, header.revision, header.source_addresses,

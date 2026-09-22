@@ -155,6 +155,14 @@ continuation. A Graph component also contains whole-original nodes; pages
 visit those indexed terms but pass only literal `cue:` names to Recall. Page
 completion does not claim complete memory or transitive graph search. Portal
 selection and a connected Main read route still remain to be written.
+The detached coactivation event now checks the opened Recall, Replay and
+Re-evidence rows against the pinned original episodes and records one event
+hyperedge, including failed, negative and pending outcomes. It makes no
+pairwise relation or usefulness score. Because the product Graph publishes a
+separate topology per disconnected component, each observed original carries
+its own topology ID; the event's single topology ID is present only when all
+opened originals share one. Main-owned durable event admission, delta postings
+and association query are not yet implemented.
 The C++ endpoint segment index now preserves the author's stable per-segment
 sort, segment-concatenation lookup order, source-generation binding and
 geometric tail merge. That lookup order is required by `math.fsum` in the
