@@ -554,7 +554,8 @@ void NativeOperationDirectory::publish(
     try {
         for (const auto& entry : std::filesystem::directory_iterator(directory_))
             if (entry.is_regular_file() &&
-                entry.path().filename() != publication_name)
+                entry.path().filename() !=
+                    std::filesystem::path(std::string(publication_name)))
                 sync_file(entry.path());
         Json::Object body;
         body.emplace("schema", Json(std::string(publication_schema)));
