@@ -20,7 +20,6 @@ from types import MappingProxyType
 
 from .engine.mosaic_memory_activation import (
     CurrentEvidenceVerdict,
-    DejaVuSignal,
     MemoryActivationReceipt,
     RecallCandidate,
     RecallResult,
@@ -72,6 +71,29 @@ class CompositeIndex:
     def episode_light(self, identifier):
         memory = self.owner_of(identifier)[1].memory
         return memory.episode_light(identifier) if hasattr(memory, 'episode_light') else memory.episode(identifier)
+
+
+class ExactAddressDejaVuIndex:
+    """Expose only exact-address familiarity to the author Déjà vu stage."""
+
+    def __init__(self, resident, snapshot_id):
+        self.resident = resident
+        self.snapshot_id = snapshot_id
+
+    def episode_ids_for_cue(self, cue):
+        return (cue,) if self.resident.exact.contains(cue) else ()
+
+
+class CueDirectoryDejaVuIndex:
+    """Recognize cue familiarity before opening shard Recall columns."""
+
+    def __init__(self, resident, snapshot_id):
+        self.resident = resident
+        self.snapshot_id = snapshot_id
+
+    def episode_ids_for_cue(self, cue):
+        return tuple(dict.fromkeys(identifier for _, identifier
+                                   in self.resident.cue_shards.matches_for(cue)))
 
 
 class ShardedMain:
@@ -225,14 +247,17 @@ class ShardedMain:
             raise ValueError('snapshot_mismatch')
         query = text_field(query, 'query', 4096)
         exact_match = re.fullmatch(r'\s*(memory:[0-9a-f]{64})\s*', query.casefold())
+        exact_signal = (detect_deja_vu(
+            ExactAddressDejaVuIndex(self.resident, pair_snapshot),
+            query=query, current_cues=(exact_match.group(1),))
+            if exact_match else None)
         columns = (self.resident.exact_recall_columns(exact_match.group(1))
-                   if exact_match else None)
+                   if exact_signal is not None and exact_signal.triggered else None)
         if columns is not None and columns['kind'] in tuple(exclude_kinds or ()):
             columns = None
         if columns is not None:
             identifier = columns['episode_id']
-            signal = DejaVuSignal(pair_snapshot, query, (identifier,),
-                                  (identifier,), 1.0, 1)
+            signal = exact_signal
             candidate = RecallCandidate(identifier, (identifier,), 1.0,
                                         columns['revision'], columns['verification_state'],
                                         columns['outcomes'])
@@ -256,6 +281,10 @@ class ShardedMain:
         if region_scope in ('all', 'auto', 'regions'):
             return projected_recall(self.resident, pair_snapshot, query, exclude_kinds, region_scope)
         query_cues = keys(query)
+        if not self.resident.read_directory_complete():
+            raise ValueError('cue_shard_directory_not_ready')
+        deja_vu = detect_deja_vu(CueDirectoryDejaVuIndex(self.resident, pair_snapshot),
+                                  query=query, current_cues=query_cues)
         routed = self.resident.shards_for_cues(query_cues)
 
         def activate(shard_ids):
@@ -282,14 +311,11 @@ class ShardedMain:
                         activated.add(proposition)
             activation_cues = (*cue_selected,
                                *('proposition:' + p for p in sorted(activated)))
-            signal0 = detect_deja_vu(composite, query=query, current_cues=activation_cues)
-            deja_vu = DejaVuSignal(snapshot_id=pair_snapshot, query=signal0.query,
-                current_cues=signal0.current_cues, matched_cues=signal0.matched_cues,
-                recognition_strength=signal0.recognition_strength,
-                candidate_count=signal0.candidate_count)
             return (owner_rows, view_rows, composite, cue_fanout, cue_selected,
                     cue_informative, activated, activation_cues, deja_vu,
-                    recall_memory(composite, deja_vu), global_total)
+                    recall_memory(composite, deja_vu,
+                                  navigation_cues=activation_cues[len(cue_selected):]),
+                    global_total)
 
         (owners, views, index, fanout, selected, informative, propositions,
          cues, signal, recalled, total) = activate(routed)

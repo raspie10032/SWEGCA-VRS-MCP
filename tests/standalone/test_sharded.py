@@ -330,6 +330,69 @@ def test_projected_natural_replay_starts_after_recall_result(tmp_path, monkeypat
         primary.close()
 
 
+def test_default_recall_enters_deja_vu_before_capsule_columns(tmp_path, monkeypatch):
+    import swegca_vrs2.projected_recall as projection
+    import swegca_vrs2.sharded as sharded_module
+
+    primary = Main(tmp_path / 'main', allow_ingest=True)
+    resident = Resident(primary, {}, hot_limit=0)
+    try:
+        identifier = resident.ingest(dict(request_id='stage-order',
+            text='deja first capsule later', source='probe:order', revision='1'))['episode_id']
+        real_columns = resident.exact_recall_columns
+        real_matches = resident.cue_shards.matches_for
+        real_contains = resident.exact.contains
+        stage = ['before_deja_vu']
+        reads = []
+        match_phases = []
+
+        def matches_during_deja_vu(cue):
+            match_phases.append(stage[0])
+            return real_matches(cue)
+
+        def contains_during_deja_vu(address):
+            assert stage[0] == 'deja_vu'
+            return real_contains(address)
+
+        def columns_after_deja_vu(address):
+            assert stage[0] == 'recall'
+            reads.append(address)
+            return real_columns(address)
+
+        def wrap_detect(real_detect):
+            def detect(*args, **kwargs):
+                assert stage[0] == 'before_deja_vu'
+                stage[0] = 'deja_vu'
+                signal = real_detect(*args, **kwargs)
+                stage[0] = 'recall'
+                return signal
+            return detect
+
+        monkeypatch.setattr(resident, 'exact_recall_columns', columns_after_deja_vu)
+        monkeypatch.setattr(resident.cue_shards, 'matches_for', matches_during_deja_vu)
+        monkeypatch.setattr(resident.exact, 'contains', contains_during_deja_vu)
+        monkeypatch.setattr(projection, 'detect_deja_vu',
+                            wrap_detect(projection.detect_deja_vu))
+        root = ShardedMain(primary, resident).recall('deja first',
+                                                      resident.logical_snapshot())
+        assert root['receipt']['activation'].deja_vu.triggered
+        assert identifier in reads
+        assert match_phases and match_phases[0] == 'deja_vu'
+
+        stage[0] = 'before_deja_vu'
+        reads.clear()
+        monkeypatch.setattr(resident.cue_shards, 'matches_for', real_matches)
+        monkeypatch.setattr(sharded_module, 'detect_deja_vu',
+                            wrap_detect(sharded_module.detect_deja_vu))
+        exact = ShardedMain(primary, resident).recall(identifier,
+                                                       resident.logical_snapshot())
+        assert exact['receipt']['activation'].deja_vu.triggered
+        assert reads == [identifier]
+    finally:
+        resident.close()
+        primary.close()
+
+
 def test_cold_projected_recall_preserves_local_shared_experience_portal(tmp_path, monkeypatch):
     topic_a = "루프백 데몬 체크포인트 저널 재생 락"
     topic_b = "정산 배치 엑셀 헤더 스프레드시트 매핑"

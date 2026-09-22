@@ -1475,10 +1475,11 @@ class Main:
         if expected_snapshot is not None and expected_snapshot != pair.snapshot_id:
             raise ValueError('snapshot_mismatch')
         query = text_field(query, 'query', 4096)
+        candidates = keys(query)
+        signal = detect_deja_vu(memory, query=query, current_cues=candidates)
         if exclude_kinds:
             memory = memory.masked(exclude_kinds)      # same generation, postings filtered by record kind
         full_memory = memory
-        candidates = keys(query)
         fanout = {c: len(memory.episode_ids_for_cue(c)) for c in candidates}
         selected = tuple(c for c in candidates if fanout[c])
         # Local adapter (2026-09-14): a cue carried by half the store or more is a
@@ -1600,9 +1601,12 @@ class Main:
                 else:
                     scope.update(fallback='fewer_than_floor', allowed_regions=sorted(allowed), excluded_rows=0,
                                  would_exclude=excluded)
-        signal = detect_deja_vu(memory, query=query, current_cues=cues)
-        # recall columns (2026-09-18): the engine's recall_memory on cue ids — same RecallResult, no episode builds
-        recalled = memory.recall_candidates(signal) if hasattr(memory, 'recall_candidates') else recall_memory(memory, signal)
+        # Proposition closure is Recall navigation from the first Déjà vu
+        # trigger. It must not move capsule/row work ahead of Déjà vu.
+        navigation_cues = cues[len(selected):]
+        recalled = (memory.recall_candidates(signal, navigation_cues=navigation_cues)
+                    if hasattr(memory, 'recall_candidates') else
+                    recall_memory(memory, signal, navigation_cues=navigation_cues))
         # G6 (vrs-regions): region preactivation after déjà vu — the matched cues' regions are active;
         # a candidate is 'local' when its record sits in an active region, 'portal' when it is reached
         # through a region pair with a promoted bridge (a candidate portal of the stable version), and

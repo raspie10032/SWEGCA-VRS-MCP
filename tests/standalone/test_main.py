@@ -330,6 +330,33 @@ def test_opposing_originals_are_read_only_after_recall_replay(main, monkeypatch)
     assert 'after_replay' in reads
 
 
+def test_main_deja_vu_precedes_derived_proposition_recall(main, monkeypatch):
+    record(main, 'first', cues=['uniquestagecue'], proposition='stage-claim',
+           polarity='support')
+    record(main, 'second')
+    record(main, 'third')
+    phase = ['before_deja_vu']
+    real_detect = store_module.detect_deja_vu
+    real_proposition = type(main.memory).proposition_of_row
+
+    def detect(*args, **kwargs):
+        assert phase[0] == 'before_deja_vu'
+        phase[0] = 'deja_vu'
+        signal = real_detect(*args, **kwargs)
+        phase[0] = 'recall'
+        return signal
+
+    def proposition(self, row):
+        assert phase[0] == 'recall'
+        return real_proposition(self, row)
+
+    monkeypatch.setattr(store_module, 'detect_deja_vu', detect)
+    monkeypatch.setattr(type(main.memory), 'proposition_of_row', proposition)
+    result = main.recall('uniquestagecue', main.pair.snapshot_id)
+    assert result['receipt']['activation'].deja_vu.triggered
+    assert result['receipt']['activation'].recall.candidates
+
+
 def test_hot_cognition_no_disk_json_hash_network_or_model(main, monkeypatch):
     record(main)
     pair = main.pair.snapshot_id

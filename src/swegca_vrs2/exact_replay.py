@@ -755,6 +755,11 @@ class ExactReplayStore:
         with self.lock:
             return self._peek_locked(identifier)
 
+    def contains(self, identifier):
+        """Test an exact VRS address without opening its Recall capsule."""
+        with self.lock:
+            return self._location_locked(identifier) is not None
+
     def _get_locked(self, identifier):
         located = self._location_locked(identifier)
         if located is None:

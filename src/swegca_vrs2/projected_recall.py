@@ -13,9 +13,9 @@ from types import MappingProxyType
 
 from . import vrs_refine
 from .engine.mosaic_memory_activation import (
-    CurrentEvidenceVerdict, DejaVuSignal, MemoryActivationReceipt,
+    CurrentEvidenceVerdict, MemoryActivationReceipt,
     RecallCandidate, RecallResult, ReplayedEpisode, ReplayResult,
-    current_experience_verdict, re_evidence_memory,
+    current_experience_verdict, detect_deja_vu, re_evidence_memory,
 )
 from .store import (
     ASK_GATE, ASK_GATE_MAX_HITS, ASK_GATE_RARE_SHARE, DESCRIPTION_GATE,
@@ -42,6 +42,19 @@ class ProjectedRecall:
         self.replays = {}
         self.current = {}
         self.postings = {}
+        self.raw_postings = {}
+
+    @property
+    def snapshot_id(self):
+        return self.pair_snapshot
+
+    def episode_ids_for_cue(self, cue):
+        """Déjà vu sees anonymous cue hits; capsule columns belong to Recall."""
+        cached = self.raw_postings.get(cue)
+        if cached is None:
+            cached = self.resident.cue_shards.matches_for(cue)
+            self.raw_postings[cue] = cached
+        return tuple(dict.fromkeys(identifier for _, identifier in cached))
 
     def _check_memory(self):
         self.resident.admit_read_resources()
@@ -83,7 +96,11 @@ class ProjectedRecall:
         if cached is not None:
             return cached
         rows = []
-        for shard, identifier in self.resident.cue_shards.matches_for(cue):
+        postings = self.raw_postings.get(cue)
+        if postings is None:
+            postings = self.resident.cue_shards.matches_for(cue)
+            self.raw_postings[cue] = postings
+        for shard, identifier in postings:
             exact = self._exact(identifier)
             if exact['shard'] != shard:
                 raise ValueError('cue_directory_shard_mismatch:' + identifier)
@@ -363,6 +380,7 @@ class ProjectedRecall:
     def run(self):
         self._check_memory()
         query_cues = keys(self.query)
+        signal = detect_deja_vu(self, query=self.query, current_cues=query_cues)
         fanout = {cue: len(self.matches(cue)) for cue in query_cues}
         selected = tuple(cue for cue in query_cues if fanout[cue])
         total = max(1, self.resident.logical_record_count())
@@ -373,12 +391,6 @@ class ProjectedRecall:
         matched_all = tuple(cue for cue in activation_cues if self.matches(cue))
         identifiers = {identifier for cue in matched_all for identifier in self.matches(cue)}
         lexical_ids = {identifier for cue in selected for identifier in self.matches(cue)}
-
-        # Déjà vu is the completed cue-to-original-address lookup. Recall
-        # builds candidate metadata from derived columns; original observation
-        # bytes are read only by Replay below.
-        signal = DejaVuSignal(self.pair_snapshot, self.query, tuple(activation_cues),
-            matched_all, len(matched_all) / max(1, len(activation_cues)), len(identifiers))
 
         candidates = []
         current_cues = set(activation_cues)
