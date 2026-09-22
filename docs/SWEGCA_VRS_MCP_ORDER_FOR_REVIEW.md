@@ -39,6 +39,9 @@ local-navigation page sit between Déjà vu and Recall. The <1 ms gate covers
 Déjà vu, navigation, and completion of Recall before Replay. First Recall
 entry, Replay, and MCP completion are separate diagnostics. Main fallback
 latency is reported separately and is not hidden by session timing.
+The target begins when the host receives the user input, including dispatch
+before the hook. Hook entry is an internal diagnostic start only. Without a
+host input timestamp, the full target remains unverified.
 
 The session-to-main miss is `matched_cues == ()` at Déjà vu. A zero-candidate
 Recall records an honest miss and no Replay. Navigation follows the author's
@@ -74,6 +77,9 @@ transfers ownership durably after SessionEnd; main generation integration
 then replays already admitted VRS observations through the author's append
 path in the background. Original session journals remain available. Neither
 step reads the transcript as a recall source or runs before SessionEnd.
+Visible tool results are admitted as ordered source-bound VRS observations as
+well. A result longer than one author observation field is split while
+preserving its byte/line spans, digest, role, revision, and part order.
 
 ## Authority and background work
 

@@ -23,6 +23,11 @@ ingress stream, never a recall store. During an active session, Déjà vu reads
 that session VRS first. Only empty session `matched_cues` at Déjà vu
 opens the long-term main. Session VRS shards become main-owned only after the
 host's real `SessionEnd`; idle time and `Interrupt` cannot attach them.
+Host-visible tool results are records too. Oversized records are split into
+ordered, source-bound observations within the author's field limits; their
+content enters the session VRS instead of remaining only as transcript
+addresses. The original byte and line spans, content digest, role, revision,
+and part order remain attached so Replay can open the exact original segment.
 
 ## One read path
 
@@ -44,12 +49,15 @@ The full result stays in `memory_selection` beside the four-stage receipt.
 Inside the receipt, Recall, Replay, and Re-evidence have the same opened
 original rows in the same order, preserving the author's identity checks.
 
-The measured latency boundary is **user input through completed Déjà vu,
+The required latency boundary is **user input through completed Déjà vu,
 navigation, and Recall < 1 ms**, with Déjà vu as the first memory-store
-operation. First Recall entry, whole MCP response, and Replay latency are
-separate diagnostics. A cold Replay read
-cannot be substituted for this boundary. The limit must be checked as main
-size grows; one small-source timing cannot prove it.
+operation. Host dispatch belongs in that boundary. Hook-process entry,
+first Recall entry, whole MCP response, and Replay latency are separate
+diagnostics. If the host does not expose a user-input timestamp, a
+hook-entry measurement cannot prove the user-input target; report the full
+target as unverified until it can be measured. A cold Replay read cannot be
+substituted for this boundary. The limit must be checked as main size grows;
+one small-source timing cannot prove it.
 
 ## Storage, scale, and implementation
 
@@ -80,6 +88,8 @@ the file and line span in the pinned tinylm, SWEGCA-Architecture, or VRS-MCP
 source. A `user@YYYY-MM-DD:<line>` tag points into the approved execution
 order for rules that come from the user rather than an author module. A tag is
 provenance for review, not evidence that the function is behaviorally equal.
+Product and architecture tags use the full repository-relative source path,
+because those repositories contain duplicate module basenames.
 
 The runtime has no SQLite, Hermes, prebuilt wheel, or external replacement
 memory logic. The implementation target is C++ source. Resource gates are

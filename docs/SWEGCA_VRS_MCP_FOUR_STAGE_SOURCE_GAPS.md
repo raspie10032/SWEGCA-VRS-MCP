@@ -90,6 +90,8 @@ the public `Main` stores `_generation`, `owner`, and `_region_binding`.
    The session-first branch is explicit. The user-input-through-Recall time
    still includes host hook dispatch, MCP transport, resident routing, and
    the old pre-Recall work above; source order alone cannot prove `<1 ms`.
+   Hook entry is only an internal diagnostic start. The user target includes
+   host dispatch; without a host input timestamp, it remains unverified.
 2. `session_capture.py:282-314` has an alternate command-hook prompt path that
    begins a recall lease and enters `VRSClient` before `hook_recall`.
    `VRSClient.__enter__` calls `ensure_daemon` at lines 157-169. The generated
@@ -103,6 +105,9 @@ the public `Main` stores `_generation`, `owner`, and `_region_binding`.
    records positions/counts and recent addresses, not recall content. The
    source audit cannot claim that an active host emits every desired item or
    that every emitted item is captured without a runtime end-to-end check.
+   The rebuild must admit visible tool results themselves through SWEGCA VRS,
+   splitting long results into ordered, source-bound observations within the
+   author's field limits. An address alone is not experience admission.
 4. The current hook path schedules `conversation_finalize.py:14-45` from a
    real `SessionEnd` event. The finalizer captures a stable transcript tail
    under the tailer's lock, then publishes an end marker.
