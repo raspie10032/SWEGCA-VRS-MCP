@@ -177,6 +177,16 @@ not a prebuilt numeric package. The policy's rational numerator and
 denominator are bounded to unsigned 64-bit storage and reject values outside
 that range; Python's arbitrary integer policy domain is wider. Numeric parity
 and the complete pre-Recall timing path remain unverified.
+The pre-Replay navigation prefix now accepts a completed Déjà vu signal,
+preactivates the matched graph components in first-seen cue order, queries
+observed associations, plans eligible source-bound portals, navigates at most
+one indexed cue page, and passes those cues to ordinary complete Recall.
+Unvisited origins remain explicit. Component order is a physical adaptation
+because the product Graph has separate connected-component topologies; it
+does not compare coefficient magnitudes across unrelated topologies. No
+Replay or Re-evidence occurs inside this prefix. Session-first selection,
+Main generation pinning, host hook dispatch and the full `<1 ms` measurement
+remain unfinished.
 The C++ endpoint segment index now preserves the author's stable per-segment
 sort, segment-concatenation lookup order, source-generation binding and
 geometric tail merge. That lookup order is required by `math.fsum` in the
