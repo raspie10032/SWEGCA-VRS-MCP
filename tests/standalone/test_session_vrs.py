@@ -8,7 +8,7 @@ import time
 
 import pytest
 
-from swegca_vrs2.layered import LayeredMCP
+from swegca_vrs2.layered import LAYERED_MEMORY_TOOLS, LayeredMCP
 from swegca_vrs2.loopback import ensure_daemon
 from swegca_vrs2.session_capture import SessionCapture, VRSClient, handle, transcript_record
 from swegca_vrs2.conversation_finalize import finalize
@@ -147,6 +147,13 @@ def test_codex_pretool_hook_injects_exact_session_id(tmp_path):
     output = result['hookSpecificOutput']
     assert output['permissionDecision'] == 'allow'
     assert output['updatedInput'] == {'session_id': 'exact-session'}
+
+
+def test_every_layered_mcp_tool_requires_exact_session_routing_argument():
+    for tool in LAYERED_MEMORY_TOOLS:
+        schema = tool['inputSchema']
+        assert 'session_id' in schema['properties']
+        assert 'session_id' in schema['required']
 
 
 def test_generated_codex_end_and_interrupt_hooks_fit_runtime_deadline(tmp_path):

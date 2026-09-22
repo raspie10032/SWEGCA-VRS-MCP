@@ -66,12 +66,16 @@ async def run(args):
         parameters = StdioServerParameters(
             command=str(args.server), args=['--state-dir', str(state)])
         async with Client(parameters, mode=args.mode, read_timeout_seconds=60) as client:
-            names = {tool.name for tool in (await client.list_tools()).tools}
+            catalog = (await client.list_tools()).tools
+            names = {tool.name for tool in catalog}
             expected = {'memory_context', 'memory_status', 'memory_recall',
                 'memory_continue', 'memory_resume', 'memory_read',
                 'memory_read_path', 'memory_release'}
             if names != expected:
                 raise RuntimeError(f'unexpected Codex tool catalog: {sorted(names)}')
+            for tool in catalog:
+                if 'session_id' not in tool.input_schema.get('required', []):
+                    raise RuntimeError(f'{tool.name} does not require exact session routing')
             status = (await client.call_tool('memory_status', {
                 'session_id': session})).structured_content
             local = await ready(client, session, 'local-smoke',

@@ -1,7 +1,7 @@
 """Session-first memory MCP with exact Codex-session routing.
 
-Codex lifecycle hooks add their authoritative ``session_id`` to every SWEGCA
-memory tool call. This server uses that value to select the small session VRS,
+Every SWEGCA memory tool call requires the exact Codex ``session_id``. The server
+uses that value to select the small session VRS,
 and opens durable main only after Recall has completed with zero candidates.
 The injected routing value is transport metadata; it is removed before the
 native four-stage memory tools are called.
@@ -27,7 +27,8 @@ def _tools():
     for item in result:
         item['inputSchema']['properties']['session_id'] = {
             'type': 'string', 'minLength': 1, 'maxLength': 512,
-            'description': 'Injected by the Codex lifecycle hook for exact session routing.'}
+            'description': 'Exact Codex session ID for session VRS routing.'}
+        item['inputSchema']['required'].append('session_id')
     return result
 
 
