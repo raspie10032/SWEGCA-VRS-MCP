@@ -63,6 +63,24 @@ VRS observations through the author's main `ingest`/`Graph.append` path then
 integrates them into the main generation. Original session journals remain.
 Neither step may run during an active session or use transcripts for Recall.
 
+The existing `VRS2JNL1` frame remains the canonical journal representation:
+little-endian payload length, zlib payload, SHA-256 payload checksum, and the
+five row fields (sequence, request ID, observation envelope, fingerprint,
+pair ID). This physical format comes from the current VRS 2.2 native journal,
+not from the author SWEGCA functions; keeping it preserves current experience
+without a separate migration reader. `checkpoint.vrsc` contains a Python
+pickle and is only a derived cache. The C++ product rebuilds derived state
+from the native journal and does not need a Python checkpoint reader. Codec
+and digest implementations sit behind small C++ modules and use no prebuilt
+wheel or external memory-decision logic.
+
+Every C++ function that implements an author rule carries a source tag of the
+form `// SWEGCA: <file.py>@<commit>:<first>-<last>`. The commit gate resolves
+the file and line span in the pinned tinylm, SWEGCA-Architecture, or VRS-MCP
+source. A `user@YYYY-MM-DD:<line>` tag points into the approved execution
+order for rules that come from the user rather than an author module. A tag is
+provenance for review, not evidence that the function is behaviorally equal.
+
 The runtime has no SQLite, Hermes, prebuilt wheel, or external replacement
 memory logic. The implementation target is C++ source. Resource gates are
 4 GB resident memory, 5 Gbit/s assumed SSD bandwidth, and exactly

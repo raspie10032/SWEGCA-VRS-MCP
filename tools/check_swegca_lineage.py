@@ -8,6 +8,9 @@ checks every tag against the author function and accepted user directive.
 from __future__ import annotations
 
 import argparse
+from functools import lru_cache
+import os
+from pathlib import Path
 import re
 import subprocess
 import sys
@@ -16,18 +19,78 @@ import sys
 PRODUCT_PREFIXES = ("native/", "include/", "cpp/")
 AUTHOR_NAMESPACES = ("src/swegca_vrs2/engine/mosaic_", "src/tinylm_slicer/mosaic_")
 CPP_SUFFIXES = (".cpp", ".cc", ".cxx", ".hpp", ".h")
-TAG = re.compile(r"^\s*//\s*SWEGCA:\s+\S+@\S+:\d+(?:-\d+)?\s*$", re.MULTILINE)
-FORBIDDEN = re.compile(r"\b(?:bm25|idf|embedding|cosine|hnsw|pagerank|torch|llm|http)\b", re.I)
+TAG = re.compile(
+    r"^\s*//\s*SWEGCA:\s+((?:[\w./-]+\.py@[0-9a-f]{7,40}|user@\d{4}-\d{2}-\d{2}):\d+(?:-\d+)?)\s*$",
+    re.MULTILINE,
+)
+FORBIDDEN = re.compile(
+    r"\b(?:bm25|idf|embedding|cosine|hnsw|pagerank|torch|llm|http|"
+    r"sqlite|tfidf|tf_idf|faiss|knn|rerank|softmax|logit|tokenizer|openai|"
+    r"anthropic|gpt)\b", re.I,
+)
 CONTROL = {"if", "for", "while", "switch", "catch", "sizeof", "alignof", "requires"}
+CODEX_ROOT = Path(__file__).resolve().parents[2]
+SOURCE_ROOTS = (
+    Path(os.environ.get("SWEGCA_TINYLM_SOURCE_ROOT", CODEX_ROOT / "tinylm-slicer-sanabi-bazzite")),
+    Path(os.environ.get("SWEGCA_ARCH_SOURCE_ROOT", CODEX_ROOT / "SWEGCA-Architecture")),
+    Path(os.environ.get("SWEGCA_VRS_SOURCE_ROOT", CODEX_ROOT / "SWEGCA-VRS-MCP")),
+)
 
 
-def git_bytes(*args: str) -> bytes:
-    return subprocess.check_output(("git", *args))
+def git_bytes(*args: str, root: Path | None = None) -> bytes:
+    command = ("git", "-C", str(root), *args) if root else ("git", *args)
+    return subprocess.check_output(command, stderr=subprocess.DEVNULL)
 
 
 def staged_paths() -> list[str]:
     raw = git_bytes("diff", "--cached", "--name-only", "--diff-filter=ACMR", "-z")
     return [item.decode("utf-8", "surrogateescape") for item in raw.split(b"\0") if item]
+
+
+def committed_paths(commit: str) -> list[str]:
+    raw = git_bytes("diff-tree", "--no-commit-id", "--name-only", "-r", "-z",
+                    "--diff-filter=ACMR", commit)
+    return [item.decode("utf-8", "surrogateescape") for item in raw.split(b"\0") if item]
+
+
+@lru_cache(maxsize=256)
+def author_blob(reference: str) -> bytes | None:
+    source, rest = reference.split("@", 1)
+    commit = rest.split(":", 1)[0]
+    for root in SOURCE_ROOTS:
+        try:
+            paths = git_bytes("ls-tree", "-r", "--name-only", commit, root=root).decode().splitlines()
+            matches = [path for path in paths if path == source or path.endswith("/" + source)]
+            if len(matches) == 1:
+                return git_bytes("show", f"{commit}:{matches[0]}", root=root)
+            if len(matches) > 1:
+                return None
+        except (OSError, subprocess.CalledProcessError, UnicodeDecodeError):
+            continue
+    return None
+
+
+def valid_tag(reference: str) -> bool:
+    source, rest = reference.split("@", 1)
+    revision, line_span = rest.split(":", 1)
+    first, _, last = line_span.partition("-")
+    start, end = int(first), int(last or first)
+    if start < 1 or end < start:
+        return False
+    if source == "user":
+        approved = Path(__file__).resolve().parents[1] / "docs" / "SWEGCA_VRS_MCP_ORDER_FOR_REVIEW.md"
+        if not approved.is_file():
+            return False
+        return end <= len(approved.read_text(encoding="utf-8").splitlines())
+    blob = author_blob(reference)
+    return blob is not None and end <= len(blob.splitlines())
+
+
+def protected_author_copy(path: str, staged: bytes) -> bool:
+    if not path.startswith(AUTHOR_NAMESPACES):
+        return True
+    original = author_blob(path.rsplit("/", 1)[-1] + "@3bddcb7:1")
+    return original is not None and original == staged
 
 
 def without_comments_and_strings(source: str) -> str:
@@ -121,13 +184,18 @@ def definition_positions(code: str) -> list[int]:
 def check_cpp(path: str, source: str) -> list[str]:
     issues: list[str] = []
     tags = list(TAG.finditer(source))
-    if not tags:
-        return [f"{path}: missing // SWEGCA: source@revision:lines tag"]
     clean = without_comments_and_strings(source)
+    definitions = definition_positions(clean)
+    if definitions and not tags:
+        return [f"{path}: missing // SWEGCA: source@revision:lines tag"]
+    for tag in tags:
+        if not valid_tag(tag.group(1)):
+            line = source.count("\n", 0, tag.start()) + 1
+            issues.append(f"{path}:{line}: SWEGCA source tag has no verified source span")
     if forbidden := FORBIDDEN.search(clean):
         issues.append(f"{path}: external memory vocabulary {forbidden.group(0)!r}")
     used = -1
-    for position in definition_positions(clean):
+    for position in definitions:
         line = source.count("\n", 0, position) + 1
         eligible = [i for i, tag in enumerate(tags) if tag.end() < position and i > used]
         if not eligible:
@@ -144,16 +212,20 @@ def check_cpp(path: str, source: str) -> list[str]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--staged", action="store_true", required=True)
-    parser.parse_args()
+    selection = parser.add_mutually_exclusive_group(required=True)
+    selection.add_argument("--staged", action="store_true")
+    selection.add_argument("--commit")
+    args = parser.parse_args()
     issues: list[str] = []
-    for path in staged_paths():
+    for path in staged_paths() if args.staged else committed_paths(args.commit):
+        blob = git_bytes("show", f":{path}" if args.staged else f"{args.commit}:{path}")
         if path.startswith(AUTHOR_NAMESPACES):
-            issues.append(f"{path}: author Python namespace is protected from edited copies")
+            if not protected_author_copy(path, blob):
+                issues.append(f"{path}: author Python copy differs from pinned source")
             continue
         if not path.startswith(PRODUCT_PREFIXES) or not path.endswith(CPP_SUFFIXES):
             continue
-        source = git_bytes("show", f":{path}").decode("utf-8", "strict")
+        source = blob.decode("utf-8", "strict")
         issues.extend(check_cpp(path, source))
     if issues:
         for issue in issues:
