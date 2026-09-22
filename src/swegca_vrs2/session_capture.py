@@ -529,6 +529,11 @@ def handle(host, state_dir, event, *, tool_prefix='mcp__swegca_vrs__memory_'):
         return {'hookSpecificOutput': {'hookEventName': 'PreToolUse',
             'permissionDecision': 'allow',
             'updatedInput': dict(arguments, session_id=session)}}
+    if host == 'codex' and name in ('SessionStart', 'UserPromptSubmit') \
+            and isinstance(session, str) and session:
+        return {'hookSpecificOutput': {'hookEventName': name,
+            'additionalContext': 'For mcp__swegca_vrs__memory_* calls in this '
+                'Codex task, set session_id to exactly ' + json.dumps(session) + '.'}}
     return None
 
 

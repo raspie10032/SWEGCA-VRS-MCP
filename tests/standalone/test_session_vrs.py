@@ -150,6 +150,16 @@ def test_codex_pretool_hook_injects_exact_session_id(tmp_path):
     assert output['updatedInput'] == {'session_id': 'exact-session'}
 
 
+def test_codex_prompt_and_resume_hooks_expose_exact_session_id(tmp_path, monkeypatch):
+    monkeypatch.setattr('swegca_vrs2.conversation_watch.schedule', lambda *args: 1)
+    for name in ('UserPromptSubmit', 'SessionStart'):
+        result = handle('codex', tmp_path / 'state', {
+            'hook_event_name': name, 'session_id': 'exact-session'})
+        output = result['hookSpecificOutput']
+        assert output['hookEventName'] == name
+        assert 'session_id to exactly "exact-session"' in output['additionalContext']
+
+
 def test_every_layered_mcp_tool_requires_exact_session_routing_argument():
     for tool in LAYERED_MEMORY_TOOLS:
         schema = tool['inputSchema']
