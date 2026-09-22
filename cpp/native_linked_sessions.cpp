@@ -5,14 +5,11 @@
 #include "native_journal.hpp"
 #include "owner_lock.hpp"
 
+#include <array>
 #include <chrono>
 #include <cstdint>
-#include <fstream>
-#include <iterator>
 #include <limits>
-#include <map>
 #include <set>
-#include <span>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -21,7 +18,7 @@
 namespace swegca::vrs {
 namespace {
 
-constexpr std::string_view schema = "swegca-vrs2-native-linked-shards-v1";
+constexpr std::string_view schema = "swegca-vrs2-native-session-link-v1";
 
 // SWEGCA: src/swegca_vrs2/session_capture.py@c06092a:194-210
 std::string host_name(SessionHost host) {
@@ -121,54 +118,86 @@ LinkedSessionShard parse_row(const std::filesystem::path& root,
     return linked;
 }
 
+// SWEGCA: src/swegca_vrs2/linked_shards.py@c06092a:97-138
+Json link_event(const std::filesystem::path& root, SessionHost host,
+                std::string_view key,
+                const std::vector<SessionShardSeal>& seals) {
+    Json::Array rows;
+    rows.reserve(seals.size());
+    for (const auto& seal : seals)
+        rows.push_back(serial_row(root, LinkedSessionShard{
+            host, std::string(key), seal}));
+    Json::Object body;
+    body.emplace("schema", Json(std::string(schema)));
+    body.emplace("host", Json(host_name(host)));
+    body.emplace("session_key", Json(std::string(key)));
+    body.emplace("shards", Json(std::move(rows)));
+    return Json(std::move(body));
+}
+
 // SWEGCA: src/swegca_vrs2/linked_shards.py@c06092a:70-94
-std::vector<LinkedSessionShard> read_registry(const std::filesystem::path& root) {
-    const auto path = root / "linked-shards.json";
-    if (!std::filesystem::exists(path)) return {};
-    if (!std::filesystem::is_regular_file(path))
-        throw std::runtime_error("linked_shard_registry_invalid");
-    std::ifstream stream(path, std::ios::binary);
-    if (!stream) throw std::runtime_error("linked_shard_registry_invalid");
-    const std::string bytes(std::istreambuf_iterator<char>{stream}, {});
-    if (stream.bad()) throw std::runtime_error("linked_shard_registry_invalid");
-    const auto body = Json::parse(bytes);
-    if (body.object().size() != 2 || body.at("schema").string() != schema)
-        throw std::runtime_error("linked_shard_registry_invalid");
+std::vector<LinkedSessionShard> parse_link_event(
+    const std::filesystem::path& root, const JournalRow& stored) {
+    const auto body = Json::parse(stored.body);
+    if (body.object().size() != 4 || body.at("schema").string() != schema ||
+        body.canonical() != stored.body ||
+        sha256_hex(stored.body) != stored.fingerprint ||
+        stored.pair_id != stored.fingerprint)
+        throw std::runtime_error("linked_shard_event_invalid");
+    const auto& name = body.at("host").string();
+    if (name != "codex" && name != "claude")
+        throw std::runtime_error("linked_shard_host_invalid");
+    const auto& key = body.at("session_key").string();
+    require_digest(key);
+    if (stored.request_id != "link:" + name + ":" + key)
+        throw std::runtime_error("linked_shard_event_source_invalid");
     std::vector<LinkedSessionShard> result;
     std::set<std::string> ids;
     std::set<std::filesystem::path> paths;
     for (const auto& raw : body.at("shards").array()) {
         auto linked = parse_row(root, raw);
-        if (!ids.insert(linked.seal.identifier).second ||
+        if (host_name(linked.host) != name || linked.session_key != key ||
+            !ids.insert(linked.seal.identifier).second ||
             !paths.insert(std::filesystem::canonical(
                 linked.seal.directory)).second)
-            throw std::runtime_error("linked_shard_registry_duplicate");
+            throw std::runtime_error("linked_shard_event_duplicate");
         result.push_back(std::move(linked));
     }
+    if (result.empty())
+        throw std::runtime_error("linked_shard_event_empty");
     return result;
 }
 
-// SWEGCA: src/swegca_vrs2/linked_shards.py@c06092a:97-138
-void publish_registry(const std::filesystem::path& root,
-                      const std::vector<LinkedSessionShard>& linked) {
-    Json::Array rows;
-    rows.reserve(linked.size());
-    for (const auto& shard : linked)
-        rows.push_back(serial_row(root, shard));
-    Json::Object body;
-    body.emplace("schema", Json(std::string(schema)));
-    body.emplace("shards", Json(std::move(rows)));
-    const auto bytes = Json(std::move(body)).canonical();
-    write_atomic_file(root / "linked-shards.json",
-                      std::as_bytes(std::span(bytes)));
+// SWEGCA: src/swegca_vrs2/linked_shards.py@c06092a:70-94
+void require_native_registry(const std::filesystem::path& root) {
+    if (std::filesystem::exists(root / "linked-shards.json"))
+        throw std::runtime_error("linked_shard_legacy_registry_present");
+}
+
+// SWEGCA: src/swegca_vrs2/linked_shards.py@c06092a:70-94
+std::filesystem::path registry_directory(const std::filesystem::path& root) {
+    return root / "linked-shards-native";
 }
 
 }  // namespace
 
 // SWEGCA: src/swegca_vrs2/linked_shards.py@c06092a:70-94
-std::vector<LinkedSessionShard> load_linked_sessions(
-    const std::filesystem::path& state_root) {
-    return read_registry(std::filesystem::weakly_canonical(state_root));
+void visit_linked_sessions(
+    const std::filesystem::path& state_root,
+    const std::function<void(const LinkedSessionShard&)>& visit) {
+    const auto root = std::filesystem::weakly_canonical(state_root);
+    require_native_registry(root);
+    const auto directory = registry_directory(root);
+    if (!std::filesystem::exists(directory)) return;
+    OwnerLock lock(directory / "owner.lock");
+    lock.acquire(std::chrono::milliseconds(-1));
+    require_native_registry(root);
+    NativeJournal journal(directory, false, false);
+    const auto limit = count(journal.row_count());
+    journal.visit_rows(0, limit, [&](JournalRow&& stored) {
+        for (const auto& linked : parse_link_event(root, stored))
+            visit(linked);
+    });
 }
 
 // SWEGCA: src/swegca_vrs2/linked_shards.py@c06092a:97-138
@@ -177,25 +206,32 @@ SessionLinkReceipt attach_ended_session(
     const std::filesystem::path& state_root, SessionHost host,
     std::string_view session_id) {
     const auto root = std::filesystem::weakly_canonical(state_root);
-    OwnerLock lock(root / "linked-shards.json.lock");
+    require_native_registry(root);
+    const auto directory = registry_directory(root);
+    OwnerLock lock(directory / "owner.lock");
     lock.acquire(std::chrono::milliseconds(-1));
+    require_native_registry(root);
+    const auto manifest = directory / "vrs-store.json";
+    const bool create = !std::filesystem::exists(manifest);
+    if (create) {
+        for (const auto& entry : std::filesystem::directory_iterator(directory))
+            if (entry.path().filename() != "owner.lock")
+                throw std::runtime_error("linked_shard_registry_incomplete");
+    }
+    NativeJournal journal(directory, create, true, &lock);
     const auto key = sha256_hex(session_id);
     const auto seals = read_verified_ended_session(root, host, session_id);
-    auto current = read_registry(root);
-    std::map<std::string, Json> ids;
-    std::map<std::filesystem::path, std::string> paths;
-    for (const auto& row : current) {
-        ids.emplace(row.seal.identifier, serial_row(root, row));
-        paths.emplace(std::filesystem::canonical(row.seal.directory),
-                      row.seal.identifier);
-    }
+    const auto event = link_event(root, host, key, seals);
+    const auto bytes = event.canonical();
+    const auto fingerprint = sha256_hex(bytes);
+    std::set<std::string> candidate_ids;
+    std::set<std::filesystem::path> candidate_paths;
     SessionLinkReceipt receipt{};
     receipt.shard_ids.reserve(seals.size());
     for (const auto& seal : seals) {
-        LinkedSessionShard linked{host, key, seal};
-        const auto serial = serial_row(root, linked);
-        const auto directory = std::filesystem::canonical(seal.directory);
         receipt.shard_ids.push_back(seal.identifier);
+        candidate_ids.insert(seal.identifier);
+        candidate_paths.insert(std::filesystem::canonical(seal.directory));
         if (receipt.original_count >
                 std::numeric_limits<std::uint64_t>::max() - seal.original_count ||
             receipt.cue_total >
@@ -203,21 +239,35 @@ SessionLinkReceipt attach_ended_session(
             throw std::runtime_error("linked_shard_count_overflow");
         receipt.original_count += seal.original_count;
         receipt.cue_total += seal.cue_total;
-        if (const auto prior = ids.find(seal.identifier);
-            prior != ids.end()) {
-            if (prior->second.canonical() != serial.canonical())
-                throw std::runtime_error("linked_shard_reassignment_rejected");
-            continue;
-        }
-        if (paths.contains(directory))
-            throw std::runtime_error("linked_shard_path_already_attached");
-        ids.emplace(seal.identifier, serial);
-        paths.emplace(directory, seal.identifier);
-        current.push_back(std::move(linked));
-        ++receipt.added;
     }
-    if (receipt.added != 0)
-        publish_registry(root, current);
+    bool already_attached = false;
+    journal.visit_rows(0, count(journal.row_count()),
+        [&](JournalRow&& stored) {
+            const auto previous = parse_link_event(root, stored);
+            if (stored.request_id ==
+                "link:" + host_name(host) + ":" + key) {
+                if (already_attached || stored.fingerprint != fingerprint ||
+                    stored.body != bytes)
+                    throw std::runtime_error("linked_shard_reassignment_rejected");
+                already_attached = true;
+            }
+            if (stored.fingerprint != fingerprint)
+                for (const auto& row : previous)
+                    if (candidate_ids.contains(row.seal.identifier) ||
+                        candidate_paths.contains(std::filesystem::canonical(
+                            row.seal.directory)))
+                        throw std::runtime_error(
+                            "linked_shard_reassignment_rejected");
+        });
+    if (!already_attached) {
+        std::array<PendingJournalRow, 1> rows{PendingJournalRow{
+            "link:" + host_name(host) + ":" + key,
+            bytes, fingerprint, fingerprint}};
+        const auto sequences = journal.append(rows);
+        if (sequences.size() != 1)
+            throw std::runtime_error("linked_shard_append_incomplete");
+        receipt.added = seals.size();
+    }
     return receipt;
 }
 

@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -24,9 +25,11 @@ struct SessionLinkReceipt {
 };
 
 // Main ownership contains native VRS locations, never transcript content.
+// The visitor streams complete session-link events in original attach order.
 // SWEGCA: src/swegca_vrs2/linked_shards.py@c06092a:70-94
-[[nodiscard]] std::vector<LinkedSessionShard> load_linked_sessions(
-    const std::filesystem::path& state_root);
+void visit_linked_sessions(
+    const std::filesystem::path& state_root,
+    const std::function<void(const LinkedSessionShard&)>& visit);
 
 // The whole ended-session shard batch is published atomically. Identical
 // retries are no-ops; ID, path or generation reassignment is rejected.

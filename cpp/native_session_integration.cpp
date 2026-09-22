@@ -122,8 +122,8 @@ void write_cursor(const std::filesystem::path& path,
 void require_registered(const std::filesystem::path& root,
                         const LinkedSessionShard& linked) {
     bool found = false;
-    for (const auto& registered : load_linked_sessions(root)) {
-        if (registered.seal.identifier != linked.seal.identifier) continue;
+    visit_linked_sessions(root, [&](const LinkedSessionShard& registered) {
+        if (registered.seal.identifier != linked.seal.identifier) return;
         if (registered.host != linked.host ||
             registered.session_key != linked.session_key ||
             registered.seal.directory != linked.seal.directory ||
@@ -136,8 +136,7 @@ void require_registered(const std::filesystem::path& root,
             registered.seal.cue_total != linked.seal.cue_total)
             throw std::runtime_error("session_integration_source_reassigned");
         found = true;
-        break;
-    }
+    });
     if (!found)
         throw std::runtime_error("session_integration_source_unlinked");
 }

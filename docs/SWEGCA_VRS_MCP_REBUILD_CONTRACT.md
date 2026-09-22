@@ -63,10 +63,14 @@ delivers each contiguous source pair group to a Main transaction sink. Its
 durable cursor advances only after a Main group commit, so a crash retries
 the same request IDs through the author's idempotence rule. The concrete
 Main transaction sink and scheduling of this walker remain unfinished; this
-code alone does not integrate experiences. The registry currently reads and
-rewrites one JSON file per attachment, so its large-shard memory and
-attachment throughput still need the planned partitioned physical
-representation before scale acceptance.
+code alone does not integrate experiences. The ownership registry now stores
+one complete SessionEnd link event per SWEGCA native journal row. Its
+checksummed journal preserves attachment order and streams one event at a
+time without loading all registered shards or rewriting a global JSON file.
+Attachment still scans prior link events to detect ID and path reassignment;
+a derived physical address directory is needed to remove that scale bottleneck.
+An existing old `linked-shards.json` makes the new registry fail closed rather
+than silently ignoring or migrating prior ownership records.
 
 ## One read path
 
