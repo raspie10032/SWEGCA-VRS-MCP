@@ -211,6 +211,13 @@ JournalRow NativeJournal::row_at(const JournalFrameAddress& address,
     return read_journal_row_at(path_, address, sequence);
 }
 
+// SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:136-177
+void NativeJournal::visit_frame_rows(
+    const JournalFrameAddress& address,
+    const std::function<void(JournalRow&&)>& visit) const {
+    visit_journal_rows_at_frame(path_, address, visit);
+}
+
 // SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:216-221
 std::optional<std::string> NativeJournal::pair(std::int64_t sequence) const {
     if (sequence <= 0) return std::nullopt;

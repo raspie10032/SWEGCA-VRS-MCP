@@ -76,6 +76,14 @@ void visit_journal_addressed_rows(
     const std::filesystem::path& generation_directory,
     const JournalFrameAddress& address, std::int64_t sequence);
 
+// Validate and visit every row of one addressed frame in a single read.
+// This is the batch-ingress counterpart to selected one-original Replay.
+// SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:136-177
+void visit_journal_rows_at_frame(
+    const std::filesystem::path& generation_directory,
+    const JournalFrameAddress& address,
+    const std::function<void(JournalRow&&)>& visit);
+
 // The caller holds the single-owner lock and has scanned the current head.
 // SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:223-257
 [[nodiscard]] std::vector<std::int64_t> append_journal_rows(

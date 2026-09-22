@@ -66,6 +66,9 @@ public:
     // SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:136-177
     [[nodiscard]] JournalRow row_at(const JournalFrameAddress& address,
                                     std::int64_t sequence) const;
+    // SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:136-177
+    void visit_frame_rows(const JournalFrameAddress& address,
+                          const std::function<void(JournalRow&&)>& visit) const;
     [[nodiscard]] std::optional<std::string> pair(std::int64_t sequence) const;
 
     // SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:223-247

@@ -161,6 +161,16 @@ an owner retry accepts it only after matching every original row and its
 single frame exactly. It does not publish the derived memory/Graph directories
 or advance the pinned read generation. The full Main commit and recovery
 coordinator is still required before this boundary is a product ingress path.
+The same durable batch can now be applied to derived original-ID, metadata,
+raw cue, proposition, successor, source, and request-ID directories. Each
+candidate row is checked against its journal frame before any projection
+write. A frame visitor validates the whole batch with one frame read; selected
+Replay still opens only its requested original. A retry verifies an already
+indexed original header and reuses the
+same first journal address; all postings and operation certificates retain
+their row sequence. This path only prepares row-limited derived state. The
+Graph node and numerical stores, publication coordinator, and crash rebuild
+remain necessary before any new Main read generation becomes visible.
 The pending view and the native HotIndex metadata projection now derive the
 same header from the author's episode. The checksummed projection frame binds
 that header and the distinct raw posting keys to a journal sequence and pair

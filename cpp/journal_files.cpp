@@ -367,17 +367,17 @@ void visit_journal_addressed_rows(
 }
 
 // SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:136-177
-JournalRow read_journal_row_at(
+static std::vector<std::byte> read_addressed_frame(
     const std::filesystem::path& generation_directory,
-    const JournalFrameAddress& address, std::int64_t sequence) {
+    const JournalFrameAddress& address) {
     const auto name = std::filesystem::path(address.file_name);
     const bool recognized = address.file_name == "head.vrsj" ||
         (address.file_name.starts_with("segment-") &&
          address.file_name.ends_with(".vrsj"));
     if (address.generation != generation_directory.filename().string() ||
         name.filename() != name || !recognized || address.byte_offset < magic_bytes ||
-        address.first_sequence < 1 || sequence < address.first_sequence ||
-        sequence > address.last_sequence)
+        address.first_sequence < 1 ||
+        address.last_sequence < address.first_sequence)
         throw std::runtime_error("native_vrs_frame_address_invalid");
     // Rotation renames head.vrsj into a segment. Sequence-ordered immutable
     // segment names recover the same frame for a reader pinned before rename.
@@ -419,6 +419,41 @@ JournalRow read_journal_row_at(
     stream.read(reinterpret_cast<char*>(frame.data() + header_bytes), remaining);
     if (stream.gcount() != remaining)
         throw std::runtime_error("native_vrs_journal_truncated");
+    return frame;
+}
+
+// SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:136-177
+void visit_journal_rows_at_frame(
+    const std::filesystem::path& generation_directory,
+    const JournalFrameAddress& address,
+    const std::function<void(JournalRow&&)>& visit) {
+    if (!visit) throw std::runtime_error("native_vrs_frame_visitor_missing");
+    const auto frame = read_addressed_frame(generation_directory, address);
+    std::uint64_t delivered = 0;
+    visit_journal_frame_with_span(frame,
+        [&](JournalRow&& row, std::int64_t first, std::int64_t last) {
+            if (first != address.first_sequence ||
+                last != address.last_sequence ||
+                delivered >= static_cast<std::uint64_t>(
+                    address.last_sequence - address.first_sequence) + 1 ||
+                row.sequence != address.first_sequence +
+                    static_cast<std::int64_t>(delivered))
+                throw std::runtime_error("native_vrs_frame_address_invalid");
+            ++delivered;
+            visit(std::move(row));
+        });
+    if (delivered != static_cast<std::uint64_t>(
+            address.last_sequence - address.first_sequence) + 1)
+        throw std::runtime_error("native_vrs_frame_address_invalid");
+}
+
+// SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:136-177
+JournalRow read_journal_row_at(
+    const std::filesystem::path& generation_directory,
+    const JournalFrameAddress& address, std::int64_t sequence) {
+    if (sequence < address.first_sequence || sequence > address.last_sequence)
+        throw std::runtime_error("native_vrs_frame_address_invalid");
+    const auto frame = read_addressed_frame(generation_directory, address);
     std::optional<JournalRow> found;
     std::int64_t expected = address.first_sequence;
     (void)visit_journal_frame_with_span_until(frame,
