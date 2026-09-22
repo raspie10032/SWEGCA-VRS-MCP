@@ -39,6 +39,21 @@ identity, sequence, request ID, body, fingerprint, pair, and source lineage
 before the final C++ runtime can rely on native journals alone. No SQLite
 reader or export path belongs in the final runtime.
 
+The two populated stores must remain distinct through the one-time export and
+their C++ generation rebuild. Each archive retains its original five-field
+rows and old pair certificates. The active generation for the same owner can
+receive newly derived pair certificates only after every observation body,
+fingerprint, request ID, sequence, source address, and revision is accounted
+for. The exporter records original and archive paths, matching SHA-256 digests
+of the ordered five-field rows in one SQLite read transaction (including rows
+in a WAL) and from the reread native archive, and per-file archive SHA-256.
+Each stream hashes, in sequence order, an unsigned little-endian 64-bit byte
+length followed by canonical UTF-8 JSON of the complete five-element row.
+No specific archive path or digest is claimed before those files exist. A
+merge order between the two owners is not established by this row inventory.
+SessionEnd and the validated link record are separate prerequisites for any
+session-to-main attachment.
+
 The current journal's `rewrite` operation in `native_journal.py:295-325`
 publishes a new generation and removes the old directory. The only product
 caller found is `store.Main.rebuild_from_journal` at `store.py:993-1075`, which
