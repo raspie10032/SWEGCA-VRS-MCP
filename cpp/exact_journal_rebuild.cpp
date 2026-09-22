@@ -22,11 +22,13 @@ namespace swegca::vrs {
 namespace {
 
 constexpr std::size_t rebuild_workers = 16;
-constexpr std::size_t queue_limit = 64;
+constexpr std::size_t queue_limit = 16;
 
 struct AddressWork {
     std::string episode_id;
     OriginalJournalAddress address;
+    Json row;
+    std::string pair_id;
 };
 
 struct AddressWorker {
@@ -56,8 +58,10 @@ std::size_t worker_for(std::string_view episode_id) {
 // SWEGCA: src/swegca_vrs2/exact_replay.py@c06092a:496-609
 // SWEGCA: user@2026-09-22:89-92
 ExactJournalRebuildCount rebuild_exact_journal_directory(
-    const NativeJournal& journal, ExactJournalDirectory& addresses) {
-    if (journal.generation() != addresses.journal_generation())
+    const NativeJournal& journal, ExactJournalDirectory& addresses,
+    HotIndexProjectionLog& headers) {
+    if (journal.generation() != addresses.journal_generation() ||
+        journal.generation() != headers.journal_generation())
         throw std::runtime_error("exact_journal_generation_changed");
     if (!addresses.fresh())
         throw std::runtime_error("exact_journal_rebuild_requires_fresh_directory");
@@ -100,7 +104,16 @@ ExactJournalRebuildCount rebuild_exact_journal_directory(
                         if (previous) {
                             ++worker.duplicates;
                         } else {
-                            addresses.put(work->episode_id, work->address);
+                            auto episode = episode_from_observation(work->row);
+                            if (episode.episode_id != work->episode_id)
+                                throw std::runtime_error("stored_observation_integrity_failed");
+                            auto projection = HotIndexProjectionRow{
+                                work->address.sequence, std::move(work->pair_id),
+                                hot_index_header_from_episode(episode),
+                                postings_cues_from_observation(work->row)};
+                            const auto header_address = headers.append(projection);
+                            addresses.put(work->episode_id, work->address,
+                                          header_address);
                             ++worker.distinct;
                         }
                     }
@@ -117,9 +130,9 @@ ExactJournalRebuildCount rebuild_exact_journal_directory(
             if (row.at("request_id").string() != stored.request_id ||
                 sha256_hex(row.canonical()) != stored.fingerprint)
                 throw std::runtime_error("stored_observation_integrity_failed");
-            auto episode = episode_from_observation(row);
+            auto episode_id = episode_id_from_observation(row);
             ++count.journal_rows;
-            auto& worker = workers[worker_for(episode.episode_id)];
+            auto& worker = workers[worker_for(episode_id)];
             std::unique_lock lock(worker.mutex);
             worker.ready.wait(lock, [&] {
                 return cancelled.load() || worker.queue.size() < queue_limit;
@@ -127,7 +140,9 @@ ExactJournalRebuildCount rebuild_exact_journal_directory(
             if (cancelled.load())
                 throw std::runtime_error("exact_journal_rebuild_cancelled");
             worker.queue.push_back(AddressWork{
-                std::move(episode.episode_id), OriginalJournalAddress{frame, stored.sequence}});
+                std::move(episode_id),
+                OriginalJournalAddress{frame, stored.sequence},
+                std::move(row), std::move(stored.pair_id)});
             lock.unlock();
             worker.ready.notify_one();
         });

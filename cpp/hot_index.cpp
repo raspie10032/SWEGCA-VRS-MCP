@@ -9,13 +9,6 @@
 namespace swegca::vrs {
 namespace {
 
-// SWEGCA: src/swegca_vrs2/store.py@7536139:146-146
-std::string observation_identifier(const Json& row) {
-    auto body = row.object();
-    body.erase("request_id");
-    return "memory:" + sha256_hex(Json(std::move(body)).canonical());
-}
-
 // SWEGCA: src/swegca_vrs2/store.py@7536139:172-172
 std::string next_snapshot_id(std::string_view previous, std::string_view identifier) {
     Json::Array values;
@@ -59,7 +52,7 @@ HotIndexSeed empty_hot_index(std::string_view identity) {
 
 // SWEGCA: src/swegca_vrs2/store.py@7536139:145-175
 HotIndexAppendPlan plan_hot_index_append(const HotIndexRead& index, const Json& row) {
-    const auto identifier = observation_identifier(row);
+    const auto identifier = episode_id_from_observation(row);
     if (index.contains_episode(identifier))
         return HotIndexAppendPlan{identifier};
 

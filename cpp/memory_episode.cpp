@@ -98,10 +98,15 @@ std::vector<std::string> postings_cues_from_observation(const Json& row) {
 }
 
 // SWEGCA: src/swegca_vrs2/store.py@7536139:145-166
-MemoryEpisode episode_from_observation(const Json& row) {
+std::string episode_id_from_observation(const Json& row) {
     auto identity = row.object();
     identity.erase("request_id");
-    const auto identifier = "memory:" + sha256_hex(Json(std::move(identity)).canonical());
+    return "memory:" + sha256_hex(Json(std::move(identity)).canonical());
+}
+
+// SWEGCA: src/swegca_vrs2/store.py@7536139:145-166
+MemoryEpisode episode_from_observation(const Json& row) {
+    const auto identifier = episode_id_from_observation(row);
     auto cues = postings_cues_from_observation(row);
     const auto& proposition = row.at("proposition");
     Json::Object evidence;

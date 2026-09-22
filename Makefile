@@ -137,13 +137,13 @@ build/native_journal.o: cpp/native_journal.cpp cpp/native_journal.hpp cpp/journa
 build/original_journal_replay.o: cpp/original_journal_replay.cpp cpp/original_journal_replay.hpp cpp/native_journal.hpp cpp/memory_episode.hpp cpp/observation.hpp cpp/digest.hpp | build
 	$(CXX) $(CXXFLAGS) -Icpp -c $< -o $@
 
-build/exact_journal_directory.o: cpp/exact_journal_directory.cpp cpp/exact_journal_directory.hpp cpp/original_journal_replay.hpp cpp/owner_lock.hpp cpp/journal_files.hpp | build
+build/exact_journal_directory.o: cpp/exact_journal_directory.cpp cpp/exact_journal_directory.hpp cpp/hot_index_projection_log.hpp cpp/original_journal_replay.hpp cpp/owner_lock.hpp cpp/journal_files.hpp | build
 	$(CXX) $(CXXFLAGS) -Icpp -c $< -o $@
 
 build/exact_journal_replay.o: cpp/exact_journal_replay.cpp cpp/exact_journal_replay.hpp cpp/exact_journal_directory.hpp cpp/original_journal_replay.hpp cpp/native_journal.hpp | build
 	$(CXX) $(CXXFLAGS) -Icpp -c $< -o $@
 
-build/exact_journal_rebuild.o: cpp/exact_journal_rebuild.cpp cpp/exact_journal_rebuild.hpp cpp/exact_journal_directory.hpp cpp/native_journal.hpp cpp/observation.hpp cpp/digest.hpp | build
+build/exact_journal_rebuild.o: cpp/exact_journal_rebuild.cpp cpp/exact_journal_rebuild.hpp cpp/exact_journal_directory.hpp cpp/hot_index_projection_log.hpp cpp/native_journal.hpp cpp/memory_episode.hpp cpp/observation.hpp cpp/digest.hpp | build
 	$(CXX) $(CXXFLAGS) -Icpp -c $< -o $@
 
 build/libswegca-vrs.a: $(CORE_OBJECTS)

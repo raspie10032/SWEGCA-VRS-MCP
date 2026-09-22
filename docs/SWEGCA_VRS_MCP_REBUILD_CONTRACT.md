@@ -116,6 +116,13 @@ limit, frame checksum and exact episode ID on an addressed read. Independent
 prefixes have separate locks. This log has no cue lookup or publication gate
 on its own; a derived address/posting directory and crash recovery still need
 to bind it to a published Main generation.
+The exact ID directory's v2 slots now bind both the journal frame address and
+the header-log address to the same original ID and journal sequence. Its
+16-worker rebuild validates each journal row once; workers construct headers
+only for the first occurrence of each original, then sync the header frame
+before writing that ID slot. A read of header metadata can therefore avoid
+opening the original body. Cue postings, proposition and family directories,
+and the concrete published HotIndex reader are still missing.
 The Main operation overlay now checks request ID and normalized observation
 fingerprint before any new HotIndex/Graph candidate is staged. Identical
 requests retain their original episode and pair certificate; conflicting

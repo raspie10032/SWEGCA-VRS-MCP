@@ -1,6 +1,7 @@
 #pragma once
 
 #include "original_journal_replay.hpp"
+#include "hot_index_projection_log.hpp"
 #include "owner_lock.hpp"
 
 #include <array>
@@ -37,12 +38,19 @@ public:
     // added=true, after the original row has been committed to the journal.
     // It must not publish the corresponding Main pair until put returns.
     // SWEGCA: src/swegca_vrs2/exact_replay.py@c06092a:496-609
-    void put(std::string_view episode_id, const OriginalJournalAddress& address);
+    void put(std::string_view episode_id, const OriginalJournalAddress& address,
+             const HotProjectionAddress& header);
 
     // Resolve one original ID without scanning transcript, journal, or shards.
     // Old readers cannot see a just-written row beyond their pair's row limit.
     // SWEGCA: src/swegca_vrs2/exact_replay.py@c06092a:691-713
     [[nodiscard]] std::optional<OriginalJournalAddress> find(
+        std::string_view episode_id, std::int64_t published_row_limit) const;
+
+    // Recall reads a source-bound metadata header from the same exact ID slot.
+    // The original journal body remains unopened until selected Replay.
+    // SWEGCA: src/swegca_vrs2/engine/mosaic_memory_activation.py@7536139:301-348
+    [[nodiscard]] std::optional<HotProjectionAddress> find_header(
         std::string_view episode_id, std::int64_t published_row_limit) const;
 
     // Rebuild starts only from a new unpublished directory.

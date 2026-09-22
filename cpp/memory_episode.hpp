@@ -40,6 +40,10 @@ struct MemoryEpisode {
 // SWEGCA: src/swegca_vrs2/store.py@7536139:145-166
 [[nodiscard]] MemoryEpisode episode_from_observation(const Json& row);
 
+// The request ID does not enter the original episode identifier.
+// SWEGCA: src/swegca_vrs2/store.py@7536139:145-148
+[[nodiscard]] std::string episode_id_from_observation(const Json& row);
+
 // Keep the author's pre-episode posting keys distinct from episode.cues.
 // SWEGCA: src/swegca_vrs2/store.py@7536139:154-158
 [[nodiscard]] std::vector<std::string> postings_cues_from_observation(const Json& row);

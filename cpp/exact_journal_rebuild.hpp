@@ -19,6 +19,7 @@ struct ExactJournalRebuildCount {
 // SWEGCA: src/swegca_vrs2/store.py@7536139:340-349
 // SWEGCA: src/swegca_vrs2/exact_replay.py@c06092a:496-609
 [[nodiscard]] ExactJournalRebuildCount rebuild_exact_journal_directory(
-    const NativeJournal& journal, ExactJournalDirectory& addresses);
+    const NativeJournal& journal, ExactJournalDirectory& addresses,
+    HotIndexProjectionLog& headers);
 
 }  // namespace swegca::vrs

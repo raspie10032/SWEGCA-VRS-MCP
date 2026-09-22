@@ -29,19 +29,24 @@
 namespace swegca::vrs {
 namespace {
 
-constexpr std::string_view magic = "VRS2JADDR1";
+constexpr std::string_view magic = "VRS2JADDR2";
 constexpr std::uint64_t header_bytes = 4096;
-constexpr std::uint64_t slot_bytes = 68;
+constexpr std::uint64_t slot_bytes = 80;
 constexpr std::uint64_t state_offset = 80;
 constexpr std::array<unsigned, 5> powers{16, 18, 20, 22, 23};
 constexpr std::string_view publication_name = "PUBLISHED.json";
-constexpr std::string_view publication_schema = "swegca-vrs2-exact-journal-address-v1";
+constexpr std::string_view publication_schema = "swegca-vrs2-exact-journal-address-v2";
 using Bytes = std::array<unsigned char, slot_bytes>;
 using Key = std::array<unsigned char, 32>;
 
 struct LevelState {
     std::uint64_t count;
     bool sealed;
+};
+
+struct SlotAddress {
+    OriginalJournalAddress original;
+    HotProjectionAddress header;
 };
 
 // SWEGCA: src/swegca_vrs2/exact_replay.py@c06092a:583-609
@@ -189,42 +194,56 @@ Bytes read_slot(std::istream& stream, std::uint64_t offset) {
     read_exact(stream, reinterpret_cast<char*>(bytes.data()), bytes.size());
     std::uint32_t expected = 0;
     for (unsigned bit = 0; bit < 4; ++bit)
-        expected |= static_cast<std::uint32_t>(bytes[64 + bit]) << (bit * 8);
-    const auto actual = crc32(0, reinterpret_cast<const Bytef*>(bytes.data()), 64);
+        expected |= static_cast<std::uint32_t>(bytes[76 + bit]) << (bit * 8);
+    const auto actual = crc32(0, reinterpret_cast<const Bytef*>(bytes.data()), 76);
     if (expected != actual)
         throw std::runtime_error("exact_journal_address_slot_corrupt");
     return bytes;
 }
 
 // SWEGCA: src/swegca_vrs2/exact_replay.py@c06092a:496-609
-Bytes encode_slot(const Key& key, const OriginalJournalAddress& address) {
+Bytes encode_slot(const Key& key, const OriginalJournalAddress& address,
+                  const HotProjectionAddress& header) {
     Bytes bytes{};
     std::copy(key.begin(), key.end(), bytes.begin());
     put_u64(bytes.data() + 32, static_cast<std::uint64_t>(address.sequence));
     put_u64(bytes.data() + 40, address.frame.byte_offset);
     put_u64(bytes.data() + 48, static_cast<std::uint64_t>(address.frame.first_sequence));
     put_u64(bytes.data() + 56, static_cast<std::uint64_t>(address.frame.last_sequence));
-    const auto checksum = crc32(0, reinterpret_cast<const Bytef*>(bytes.data()), 64);
+    put_u64(bytes.data() + 64, header.byte_offset);
     for (unsigned bit = 0; bit < 4; ++bit)
-        bytes[64 + bit] = static_cast<unsigned char>((checksum >> (bit * 8)) & 0xff);
+        bytes[72 + bit] = static_cast<unsigned char>((header.byte_length >> (bit * 8)) & 0xff);
+    const auto checksum = crc32(0, reinterpret_cast<const Bytef*>(bytes.data()), 76);
+    for (unsigned bit = 0; bit < 4; ++bit)
+        bytes[76 + bit] = static_cast<unsigned char>((checksum >> (bit * 8)) & 0xff);
     return bytes;
 }
 
 // SWEGCA: src/swegca_vrs2/exact_replay.py@c06092a:691-713
-OriginalJournalAddress decode_slot(const Bytes& bytes, std::string_view generation) {
+SlotAddress decode_slot(const Bytes& bytes, std::string_view generation,
+                        std::uint8_t prefix) {
     const auto sequence = little_u64(bytes.data() + 32);
     const auto offset = little_u64(bytes.data() + 40);
     const auto first = little_u64(bytes.data() + 48);
     const auto last = little_u64(bytes.data() + 56);
+    const auto header_offset = little_u64(bytes.data() + 64);
+    std::uint32_t header_length = 0;
+    for (unsigned bit = 0; bit < 4; ++bit)
+        header_length |= static_cast<std::uint32_t>(bytes[72 + bit]) << (bit * 8);
     if (sequence > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()) ||
         first > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()) ||
         last > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()) ||
-        first < 1 || first > sequence || sequence > last || offset < 8)
+        first < 1 || first > sequence || sequence > last || offset < 8 ||
+        header_offset < 64 || header_length < 80 ||
+        header_length > 16 * 1024 * 1024 + 80)
         throw std::runtime_error("exact_journal_address_slot_corrupt");
-    return OriginalJournalAddress{JournalFrameAddress{
-        std::string(generation), "head.vrsj", offset,
-        static_cast<std::int64_t>(first), static_cast<std::int64_t>(last)},
-        static_cast<std::int64_t>(sequence)};
+    return SlotAddress{
+        OriginalJournalAddress{JournalFrameAddress{
+            std::string(generation), "head.vrsj", offset,
+            static_cast<std::int64_t>(first), static_cast<std::int64_t>(last)},
+            static_cast<std::int64_t>(sequence)},
+        HotProjectionAddress{std::string(generation), prefix, header_offset,
+            header_length, static_cast<std::int64_t>(sequence)}};
 }
 
 }  // namespace
@@ -292,7 +311,8 @@ ExactJournalDirectory::ExactJournalDirectory(std::filesystem::path directory,
 
 // SWEGCA: src/swegca_vrs2/exact_replay.py@c06092a:496-609
 void ExactJournalDirectory::put(std::string_view episode_id,
-                                const OriginalJournalAddress& address) {
+                                const OriginalJournalAddress& address,
+                                const HotProjectionAddress& header) {
     const auto key = key_of(episode_id);
     std::lock_guard guard(prefix_mutex_[key[0]]);
     if (failed_.load())
@@ -303,7 +323,11 @@ void ExactJournalDirectory::put(std::string_view episode_id,
         address.frame.first_sequence < 1 ||
         address.frame.first_sequence > address.sequence ||
         address.sequence > address.frame.last_sequence ||
-        address.frame.byte_offset < 8)
+        address.frame.byte_offset < 8 ||
+        header.journal_generation != journal_generation_ ||
+        header.prefix != key[0] || header.journal_sequence != address.sequence ||
+        header.byte_offset < 64 || header.byte_length < 80 ||
+        header.byte_length > 16 * 1024 * 1024 + 80)
         throw std::runtime_error("exact_journal_address_invalid");
     try {
         for (const auto power : powers) {
@@ -315,16 +339,19 @@ void ExactJournalDirectory::put(std::string_view episode_id,
             auto state = read_header(stream, path, power, key[0], journal_generation_);
             const auto [offset, exists] = probe(stream, key, power);
             if (exists) {
-                const auto stored = decode_slot(read_slot(stream, offset), journal_generation_);
-                if (stored.sequence != address.sequence ||
-                    stored.frame.byte_offset != address.frame.byte_offset ||
-                    stored.frame.first_sequence != address.frame.first_sequence ||
-                    stored.frame.last_sequence != address.frame.last_sequence)
+                const auto stored = decode_slot(read_slot(stream, offset),
+                                                journal_generation_, key[0]);
+                if (stored.original.sequence != address.sequence ||
+                    stored.original.frame.byte_offset != address.frame.byte_offset ||
+                    stored.original.frame.first_sequence != address.frame.first_sequence ||
+                    stored.original.frame.last_sequence != address.frame.last_sequence ||
+                    stored.header.byte_offset != header.byte_offset ||
+                    stored.header.byte_length != header.byte_length)
                     throw std::runtime_error("exact_replay_address_reassigned");
                 return;
             }
             if (state.sealed) continue;
-            const auto bytes = encode_slot(key, address);
+            const auto bytes = encode_slot(key, address, header);
             stream.seekp(static_cast<std::streamoff>(offset + key.size()));
             write_exact(stream, reinterpret_cast<const char*>(bytes.data() + key.size()),
                         bytes.size() - key.size());
@@ -373,9 +400,42 @@ std::optional<OriginalJournalAddress> ExactJournalDirectory::find(
         const auto state = read_header(stream, path, power, key[0], journal_generation_);
         const auto [offset, exists] = probe(stream, key, power);
         if (exists) {
-            auto address = decode_slot(read_slot(stream, offset), journal_generation_);
-            if (address.sequence > published_row_limit) return std::nullopt;
-            return address;
+            auto address = decode_slot(read_slot(stream, offset),
+                                       journal_generation_, key[0]);
+            if (address.original.sequence > published_row_limit) return std::nullopt;
+            return address.original;
+        }
+        if (!state.sealed) return std::nullopt;
+    }
+    return std::nullopt;
+}
+
+// SWEGCA: src/swegca_vrs2/engine/mosaic_memory_activation.py@7536139:301-348
+// SWEGCA: src/swegca_vrs2/exact_replay.py@c06092a:691-713
+std::optional<HotProjectionAddress> ExactJournalDirectory::find_header(
+    std::string_view episode_id, std::int64_t published_row_limit) const {
+    const auto key = key_of(episode_id);
+    std::lock_guard guard(prefix_mutex_[key[0]]);
+    if (failed_.load()) throw std::runtime_error("exact_journal_address_directory_failed");
+    if (published_row_limit < 0)
+        throw std::runtime_error("exact_journal_published_limit_invalid");
+    if (!owner_lock_) {
+        std::lock_guard published(publication_mutex_);
+        if (!publication_ || published_row_limit > publication_->published_rows)
+            throw std::runtime_error("exact_journal_unpublished_read");
+    }
+    for (const auto power : powers) {
+        const auto path = segment_path(key, power);
+        if (!std::filesystem::exists(path)) return std::nullopt;
+        std::ifstream stream(path, std::ios::binary);
+        if (!stream) throw std::runtime_error("exact_journal_address_segment_invalid");
+        const auto state = read_header(stream, path, power, key[0], journal_generation_);
+        const auto [offset, exists] = probe(stream, key, power);
+        if (exists) {
+            auto address = decode_slot(read_slot(stream, offset),
+                                       journal_generation_, key[0]);
+            if (address.original.sequence > published_row_limit) return std::nullopt;
+            return address.header;
         }
         if (!state.sealed) return std::nullopt;
     }
