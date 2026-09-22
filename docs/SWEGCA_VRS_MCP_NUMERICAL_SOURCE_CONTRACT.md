@@ -116,7 +116,12 @@ multilevel collapse, overlapping membership coefficients, reverse membership
 directory, source-generation guard and topology receipt. Its C++ reductions
 have not been compared to NumPy's `reduceat`, `sum` and `bincount` order, so
 exact numeric parity and topology digest equivalence remain unverified.
-Shared-original bridging, region publication and Main commit remain unfinished.
+The detached graph-region replacement now binds the old component directory
+to the old input generation, builds the changed component's topology from the
+settled generation, refuses unconverged work and records which old component
+identities must be replaced. Its graph receipt retains the signal proposal,
+explicit Re-evidence updates and author authority flags. Shared-original
+bridging, actual region publication and Main commit remain unfinished.
 The C++ endpoint segment index now preserves the author's stable per-segment
 sort, segment-concatenation lookup order, source-generation binding and
 geometric tail merge. That lookup order is required by `math.fsum` in the
