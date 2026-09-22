@@ -105,6 +105,11 @@ pending view. A failed pending view is never reused. This preserves the author's
 allowing a bounded physical shard implementation later. The currently added
 C++ pending view implements the row visibility part only; product publication,
 physical sharding, and performance remain unverified.
+The pending view and the native HotIndex metadata projection now derive the
+same header from the author's episode. The checksummed projection frame binds
+that header and the distinct raw posting keys to a journal sequence and pair
+ID; it carries no original observation body. A physical header/posting
+directory and published HotIndex reader are still required.
 The Main operation overlay now checks request ID and normalized observation
 fingerprint before any new HotIndex/Graph candidate is staged. Identical
 requests retain their original episode and pair certificate; conflicting

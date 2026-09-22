@@ -4,28 +4,6 @@
 #include <utility>
 
 namespace swegca::vrs {
-namespace {
-
-// SWEGCA: src/swegca_vrs2/store.py@7536139:216-240
-HotIndexEpisodeHeader header_of(const MemoryEpisode& episode) {
-    const auto& observation = episode.steps.at(0).observation;
-    const auto optional_text = [&](std::string_view key) -> std::optional<std::string> {
-        const auto& value = observation.at(key);
-        if (std::holds_alternative<std::nullptr_t>(value.data)) return std::nullopt;
-        return value.string();
-    };
-    std::vector<std::string> outcomes;
-    outcomes.reserve(episode.steps.size());
-    for (const auto& step : episode.steps) outcomes.push_back(step.outcome);
-    return HotIndexEpisodeHeader{
-        episode.episode_id, episode.cues, episode.source_addresses,
-        episode.revision, episode.verification_state, std::move(outcomes),
-        optional_text("proposition_id"), optional_text("evidence_polarity"),
-        optional_text("supersedes")};
-}
-
-}  // namespace
-
 // SWEGCA: src/swegca_vrs2/store.py@7536139:342-348
 HotIndexPending::HotIndexPending(const HotIndexRead& published)
     : published_(published), snapshot_id_(published.snapshot_id()) {}
@@ -66,7 +44,8 @@ bool HotIndexPending::contains_episode(std::string_view identifier) const {
 HotIndexEpisodeHeader HotIndexPending::episode_header(std::string_view identifier) const {
     ensure_valid();
     const auto found = pending_ids_.find(std::string(identifier));
-    if (found != pending_ids_.end()) return header_of(*plans_[found->second].episode);
+    if (found != pending_ids_.end())
+        return hot_index_header_from_episode(*plans_[found->second].episode);
     return published_.episode_header(identifier);
 }
 

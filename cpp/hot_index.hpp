@@ -26,6 +26,12 @@ struct HotIndexEpisodeHeader {
     std::optional<std::string> supersedes;
 };
 
+// The unpublished view and the physical projection must derive identical
+// header fields from the author's one original episode.
+// SWEGCA: src/swegca_vrs2/store.py@7536139:158-175
+[[nodiscard]] HotIndexEpisodeHeader hot_index_header_from_episode(
+    const MemoryEpisode& episode);
+
 // The derived physical index supplies these reads. This surface does not
 // replace the main owner or create a second memory decision system.
 class HotIndexRead {

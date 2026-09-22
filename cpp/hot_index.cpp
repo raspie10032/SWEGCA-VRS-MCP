@@ -26,6 +26,24 @@ std::string next_snapshot_id(std::string_view previous, std::string_view identif
 
 }  // namespace
 
+// SWEGCA: src/swegca_vrs2/store.py@7536139:158-175
+HotIndexEpisodeHeader hot_index_header_from_episode(const MemoryEpisode& episode) {
+    const auto& observed = episode.steps.at(0).observation;
+    const auto optional_text = [&](std::string_view key) -> std::optional<std::string> {
+        const auto& value = observed.at(key);
+        if (std::holds_alternative<std::nullptr_t>(value.data)) return std::nullopt;
+        return value.string();
+    };
+    std::vector<std::string> outcomes;
+    outcomes.reserve(episode.steps.size());
+    for (const auto& step : episode.steps) outcomes.push_back(step.outcome);
+    return HotIndexEpisodeHeader{
+        episode.episode_id, episode.cues, episode.source_addresses,
+        episode.revision, episode.verification_state, std::move(outcomes),
+        optional_text("proposition_id"), optional_text("evidence_polarity"),
+        optional_text("supersedes")};
+}
+
 // SWEGCA: src/swegca_vrs2/store.py@7536139:336-336
 HotIndexSeed empty_hot_index(std::string_view identity) {
     Json::Array values;
