@@ -38,6 +38,12 @@ navigation cue page follow Déjà vu. Recall uses matched and navigation cues
 to retain every candidate address selected by the author's rules. The portal
 route is not a transitive graph sweep and deferred regions remain visible.
 No fixed top-K may remove Recall addresses.
+The current C++ `recall_memory` is a source-level reference for the complete
+posting union, one-step semantic-family closure, cue overlap, and author sort.
+It materializes candidate IDs and is not the bounded product read path.
+Before host integration, the derived physical index must represent the same
+complete address set within the 4 GB memory and pre-Replay timing gates; it
+may not turn a page limit into a candidate limit or omit family dependencies.
 The author `HotIndex.append` builds semantic cues from text, explicit cues,
 proposition, or source fallback. The later physical `CompactIndex.append` also
 put the episode ID into its cue vector (`compact_index.py:311-316`). The new

@@ -16,8 +16,11 @@ namespace swegca::vrs {
 // before Replay opens the original body.
 struct HotIndexEpisodeHeader {
     std::string episode_id;
+    std::vector<std::string> cues;
     std::vector<std::string> source_addresses;
     std::string revision;
+    std::string verification_state;
+    std::vector<std::string> historical_outcomes;
     std::optional<std::string> proposition_id;
     std::optional<std::string> evidence_polarity;
     std::optional<std::string> supersedes;
@@ -47,6 +50,19 @@ public:
 class PublishedHotIndex : public HotIndexRead {
 public:
     ~PublishedHotIndex() override = default;
+    // SWEGCA: src/swegca_vrs2/engine/mosaic_memory_activation.py@7536139:317-320
+    [[nodiscard]] virtual std::vector<std::string> episode_ids_for_cue(
+        std::string_view cue) const = 0;
+    // A recorded parent is returned for an ID that is itself a parent, and
+    // all recorded parents are returned for an ID that is a child.
+    // SWEGCA: src/swegca_vrs2/engine/mosaic_semantic_family_directory.py@7536139:12-19
+    [[nodiscard]] virtual std::vector<std::string> semantic_family_parents(
+        std::string_view identifier) const = 0;
+    // Return the complete recorded child span of this parent; Recall adds the
+    // parent itself as the first span.
+    // SWEGCA: src/swegca_vrs2/engine/mosaic_semantic_family_directory.py@7536139:22-27
+    [[nodiscard]] virtual std::vector<std::string> semantic_family_members(
+        std::string_view parent) const = 0;
     // SWEGCA: src/swegca_vrs2/engine/mosaic_memory_activation.py@7536139:254-259
     [[nodiscard]] virtual std::uint64_t posting_count(std::string_view cue) const = 0;
     // Exact distinct cardinality of the complete posting union. It is a

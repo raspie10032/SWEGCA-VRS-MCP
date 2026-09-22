@@ -14,8 +14,12 @@ HotIndexEpisodeHeader header_of(const MemoryEpisode& episode) {
         if (std::holds_alternative<std::nullptr_t>(value.data)) return std::nullopt;
         return value.string();
     };
+    std::vector<std::string> outcomes;
+    outcomes.reserve(episode.steps.size());
+    for (const auto& step : episode.steps) outcomes.push_back(step.outcome);
     return HotIndexEpisodeHeader{
-        episode.episode_id, episode.source_addresses, episode.revision,
+        episode.episode_id, episode.cues, episode.source_addresses,
+        episode.revision, episode.verification_state, std::move(outcomes),
         optional_text("proposition_id"), optional_text("evidence_polarity"),
         optional_text("supersedes")};
 }
