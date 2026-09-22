@@ -1,6 +1,7 @@
 #pragma once
 
 #include "event_delta.hpp"
+#include "hot_index.hpp"
 #include "json.hpp"
 #include "native_journal_entry.hpp"
 
@@ -8,6 +9,7 @@
 #include <cstdint>
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -52,5 +54,20 @@ prepare_graph_auxiliary_inputs(
     std::shared_ptr<const ValidatedEventVrsInputs> parent,
     const GraphAuxiliaryState& current,
     const GraphAuxiliaryState& successor);
+
+struct GraphAliasUpdatePlan {
+    Json body;
+    std::string fingerprint;
+    std::string request_id;
+    GraphAuxiliaryState successor;
+    std::string pair_snapshot_id;
+};
+
+// A declaration binds already known explicit proposition IDs. It is not
+// new evidence or an action authority. A no-op returns no journal candidate.
+// SWEGCA: src/swegca_vrs2/store.py@c06092a:1318-1347
+[[nodiscard]] std::optional<GraphAliasUpdatePlan> plan_graph_alias_update(
+    const HotIndexRead& memory, const GraphAuxiliaryState& current,
+    std::string canonical, const std::vector<std::string>& aliases);
 
 }  // namespace swegca::vrs

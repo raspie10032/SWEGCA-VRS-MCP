@@ -162,6 +162,12 @@ Main's pinned read generation now retains the auxiliary Graph state and
 requires its snapshot ID to equal both the validated numerical source and
 the pair's VRS snapshot. The initial auxiliary state uses Graph.empty's
 identity digest and empty alias, usage, and receipt maps.
+The alias ingress plan now strips Python whitespace, sorts unique aliases,
+requires every proposition to be known from the main index or current alias
+registry, skips unchanged bindings, and prepares the author's journal body,
+fingerprint, request ID, successor Graph metadata, and pair certificate.
+The plan remains unpublished until the missing Main journal coordinator
+commits its row. It does not turn alias declarations into evidence.
 This adapter currently reads physical address files on lookup. It is a
 source-bound correctness path, not accepted evidence for the author's
 `lookup_requires_io=False` hot property or the user-input-to-Recall <1 ms

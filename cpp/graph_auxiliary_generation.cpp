@@ -2,9 +2,12 @@
 
 #include "digest.hpp"
 #include "graph_append.hpp"
+#include "memory_vrs_pair.hpp"
+#include "unicode.hpp"
 
 #include <cstddef>
 #include <limits>
+#include <set>
 #include <stdexcept>
 #include <utility>
 
@@ -65,6 +68,35 @@ void set_receipt(Json::Object& receipt, std::string_view status,
                              Json(std::string(parent_snapshot_id)));
     receipt.insert_or_assign(std::string(count_key),
                              Json(static_cast<std::int64_t>(count)));
+}
+
+// SWEGCA: src/swegca_vrs2/store.py@c06092a:1326-1328
+std::string strip_python_space(std::string_view text) {
+    const auto points = decode_utf8(text);
+    std::size_t first = 0;
+    std::size_t last = points.size();
+    while (first < last && python_space(points[first])) ++first;
+    while (last > first && python_space(points[last - 1])) --last;
+    std::string trimmed;
+    for (auto at = first; at < last; ++at) append_utf8(trimmed, points[at]);
+    return trimmed;
+}
+
+// SWEGCA: src/swegca_vrs2/store.py@c06092a:1331-1332
+std::string first_python_characters(std::string_view text, std::size_t limit) {
+    const auto points = decode_utf8(text);
+    std::string prefix;
+    for (std::size_t at = 0; at < points.size() && at < limit; ++at)
+        append_utf8(prefix, points[at]);
+    return prefix;
+}
+
+// SWEGCA: src/swegca_vrs2/store.py@c06092a:1333-1334
+std::string alias_root(const GraphAuxiliaryState& state,
+                       std::string_view proposition) {
+    const auto found = state.aliases.find(std::string(proposition));
+    return found == state.aliases.end() ? std::string(proposition) :
+                                          found->second;
 }
 
 }  // namespace
@@ -154,6 +186,63 @@ std::shared_ptr<const ValidatedEventVrsInputs> prepare_graph_auxiliary_inputs(
         throw std::runtime_error("graph_auxiliary_parent_changed");
     return prepare_event_delta(std::move(parent), successor.snapshot_id,
                                EventDeltaChanges{});
+}
+
+// SWEGCA: src/swegca_vrs2/store.py@c06092a:1318-1347
+std::optional<GraphAliasUpdatePlan> plan_graph_alias_update(
+    const HotIndexRead& memory, const GraphAuxiliaryState& current,
+    std::string canonical, const std::vector<std::string>& aliases) {
+    canonical = strip_python_space(canonical);
+    std::set<std::string> distinct;
+    for (const auto& alias : aliases) {
+        auto cleaned = strip_python_space(alias);
+        if (!cleaned.empty() && cleaned != canonical)
+            distinct.insert(std::move(cleaned));
+    }
+    if (canonical.empty() || distinct.empty())
+        throw std::runtime_error("alias_binding_empty");
+    std::vector<std::string> prepared(distinct.begin(), distinct.end());
+    std::vector<std::string> unknown;
+    const auto check_known = [&](const std::string& proposition) {
+        if (memory.proposition_ids(proposition).empty() &&
+            !current.aliases.contains(proposition))
+            unknown.push_back(proposition);
+    };
+    check_known(canonical);
+    for (const auto& alias : prepared) check_known(alias);
+    if (!unknown.empty()) {
+        std::string joined;
+        for (const auto& proposition : unknown) {
+            if (!joined.empty()) joined += "; ";
+            joined += proposition;
+        }
+        throw std::runtime_error("unknown_proposition: " +
+                                 first_python_characters(joined, 300));
+    }
+    const auto target = alias_root(current, canonical);
+    bool unchanged = true;
+    for (const auto& alias : prepared)
+        if (alias_root(current, alias) != target) {
+            unchanged = false;
+            break;
+        }
+    if (unchanged) return std::nullopt;
+    Json::Array alias_rows;
+    alias_rows.reserve(prepared.size());
+    for (const auto& alias : prepared) alias_rows.emplace_back(alias);
+    Json::Object body;
+    body.emplace("kind", Json(std::string("alias")));
+    body.emplace("canonical", Json(canonical));
+    body.emplace("aliases", Json(std::move(alias_rows)));
+    Json journal_body(std::move(body));
+    auto fingerprint = sha256_hex(journal_body.canonical());
+    auto successor = graph_with_aliases(current, canonical, prepared);
+    auto pair = full_current_pair_snapshot_id(memory.snapshot_id(),
+                                              successor.snapshot_id);
+    return GraphAliasUpdatePlan{
+        std::move(journal_body), fingerprint,
+        "alias:" + fingerprint.substr(0, 40),
+        std::move(successor), std::move(pair)};
 }
 
 }  // namespace swegca::vrs
