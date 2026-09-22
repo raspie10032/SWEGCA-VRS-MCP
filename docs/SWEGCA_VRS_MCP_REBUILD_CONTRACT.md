@@ -138,6 +138,9 @@ sequence-ordered immutable segment name after rotation; the generation,
 frame span, checksum, and row sequence are checked on the cold read. The
 episode-to-frame address join, published HotIndex, and end-to-end selected
 Replay are still missing, so this does not yet prove bounded Replay cost.
+The addressed cold read validates the entire compressed frame first, then
+stops its second streaming pass at the chosen row; it does not construct the
+remaining originals in that frame during Replay.
 Given an exact address, the C++ Replay source now reconstructs one author
 `MemoryEpisode` from that original row only after verifying its request ID,
 observation fingerprint, and requested episode ID. This is a cold original

@@ -421,13 +421,22 @@ JournalRow read_journal_row_at(
         throw std::runtime_error("native_vrs_journal_truncated");
     std::optional<JournalRow> found;
     std::int64_t expected = address.first_sequence;
-    visit_journal_frame(frame, [&](JournalRow&& row) {
+    (void)visit_journal_frame_with_span_until(frame,
+        [&](JournalRow&& row, std::int64_t first, std::int64_t last) {
+        if (first != address.first_sequence || last != address.last_sequence)
+            throw std::runtime_error("native_vrs_frame_address_invalid");
         if (row.sequence != expected)
             throw std::runtime_error("native_vrs_sequence_invalid");
+        if (row.sequence == sequence) {
+            found = std::move(row);
+            return false;
+        }
+        if (expected == std::numeric_limits<std::int64_t>::max())
+            throw std::runtime_error("native_vrs_sequence_invalid");
         ++expected;
-        if (row.sequence == sequence) found = std::move(row);
+        return true;
     });
-    if (expected - 1 != address.last_sequence || !found)
+    if (!found)
         throw std::runtime_error("native_vrs_frame_address_invalid");
     return std::move(*found);
 }

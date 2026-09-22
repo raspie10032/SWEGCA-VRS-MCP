@@ -44,6 +44,13 @@ void visit_journal_frame_with_span(
     std::span<const std::byte> frame,
     const std::function<void(JournalRow&&, std::int64_t, std::int64_t)>& visit);
 
+// The first pass validates the complete frame and its sequence span. Stop the
+// second inflation pass as soon as the addressed original has been delivered.
+// SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:206-221
+[[nodiscard]] bool visit_journal_frame_with_span_until(
+    std::span<const std::byte> frame,
+    const std::function<bool(JournalRow&&, std::int64_t, std::int64_t)>& visit);
+
 // A complete frame is validated first. The second inflation pass can stop
 // after the requested row, as the author's rows(after, upto) generator does.
 // SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:206-221

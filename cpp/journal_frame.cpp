@@ -306,6 +306,17 @@ void visit_journal_frame(std::span<const std::byte> frame,
 void visit_journal_frame_with_span(
     std::span<const std::byte> frame,
     const std::function<void(JournalRow&&, std::int64_t, std::int64_t)>& visit) {
+    (void)visit_journal_frame_with_span_until(frame,
+        [&](JournalRow&& row, std::int64_t first, std::int64_t last) {
+            visit(std::move(row), first, last);
+            return true;
+        });
+}
+
+// SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:206-221
+bool visit_journal_frame_with_span_until(
+    std::span<const std::byte> frame,
+    const std::function<bool(JournalRow&&, std::int64_t, std::int64_t)>& visit) {
     const auto payload = checked_payload(frame);
     std::int64_t first = 0;
     std::int64_t last = 0;
@@ -320,11 +331,17 @@ void visit_journal_frame_with_span(
         last = row.sequence;
     };
     inflate_rows(payload, &inspect);
-    if (first == 0) return;
+    if (first == 0) return true;
+    struct StopVisit {};
     const std::function<void(JournalRow&&)> deliver = [&](JournalRow&& row) {
-        visit(std::move(row), first, last);
+        if (!visit(std::move(row), first, last)) throw StopVisit{};
     };
-    inflate_rows(payload, &deliver);
+    try {
+        inflate_rows(payload, &deliver);
+    } catch (const StopVisit&) {
+        return false;
+    }
+    return true;
 }
 
 // SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:206-221
