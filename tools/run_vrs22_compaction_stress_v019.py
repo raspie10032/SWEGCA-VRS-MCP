@@ -18,7 +18,6 @@ import shutil
 import subprocess
 import time
 import tomllib
-import zipfile
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -28,10 +27,9 @@ RUNTIME_ROOT = Path("/var/home/raspie/Documents/Codex/SWEGCA-VRS-MCP-vrs22-repai
 RUNTIME_PRODUCT_COMMIT = "0a4769f9ce25bb216f5173f817f7050404a0bccb"
 RUNTIME_REPOSITORY_COMMIT = "0a4769f9ce25bb216f5173f817f7050404a0bccb"
 RUNTIME_PYTHON = Path("/home/raspie/.local/share/swegca-vrs2-runtime-2.2-summary-ingress/venv/bin/python")
-RUNTIME_COMMAND = RUNTIME_PYTHON.with_name("swegca-vrs2-codex")
-RUNTIME_HOOK = RUNTIME_PYTHON.with_name("swegca-vrs2-hook")
-RUNTIME_WHEEL = Path("/home/raspie/.local/share/swegca-vrs2-runtime-2.2-summary-ingress/dist/swegca_vrs_mcp-2.2.0-py3-none-any.whl")
-RUNTIME_WHEEL_SHA256 = "b5064a41a64866b797b558c0edf4e34b96b810b66cb0d92e336c7c927d981078"
+RUNTIME_SOURCE = RUNTIME_PYTHON.parents[2] / "source/src"
+RUNTIME_PACKAGE = RUNTIME_SOURCE / "swegca_vrs2"
+RUNTIME_ENV = dict(os.environ, PYTHONDONTWRITEBYTECODE="1", PYTHONPATH=str(RUNTIME_SOURCE))
 PERFORMANCE_RECEIPT = ROOT / "evals/vrs22_context/results/first_ranked_original_replay_transport_r2_wheel_20260922.json"
 PERFORMANCE_RECEIPT_SHA256 = "48438c08725175138e9725fb1ecea1424abccef9b8bcde3ae227776f0dc4760d"
 REAL_CODEX_HOME = Path.home() / ".codex"
@@ -224,7 +222,7 @@ def runtime_json(code: str, *arguments: Path | str, timeout=300):
     result = subprocess.run([str(RUNTIME_PYTHON), "-c", code,
                              *(str(value) for value in arguments)],
                             capture_output=True, text=True, timeout=timeout,
-                            check=True, env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"))
+                            check=True, env=RUNTIME_ENV)
     return json.loads(result.stdout)
 
 
@@ -335,8 +333,8 @@ def live_handoff_audit():
     current_hooks = json.loads(hook_path.read_text(encoding="utf-8"))
     expected_hooks = runtime_json("""import json,sys
 from swegca_vrs2.codex_hooks import config
-print(json.dumps(config(sys.argv[1],sys.argv[2],server_name='swegca_vrs')))
-""", RUNTIME_PYTHON, LIVE_STATE)
+print(json.dumps(config(sys.argv[1],sys.argv[2],module_root=sys.argv[3],server_name='swegca_vrs')))
+""", RUNTIME_PYTHON, LIVE_STATE, RUNTIME_SOURCE)
     native = runtime_json("""import json,sys
 from swegca_vrs2.native_journal import is_native_store
 print(json.dumps({'native_main':is_native_store(sys.argv[1])}))
@@ -344,8 +342,9 @@ print(json.dumps({'native_main':is_native_store(sys.argv[1])}))
     checks = {
         "session_end_handoff_receipt": handoff_receipt_matches(receipt),
         "native_main": native,
-        "mcp_command": server.get("command") == str(RUNTIME_COMMAND),
-        "mcp_args": server.get("args") == ["--state-dir", str(LIVE_STATE)],
+        "mcp_command": server.get("command") == str(RUNTIME_PYTHON),
+        "mcp_args": server.get("args") == ["-m", "swegca_vrs2.layered", "--state-dir", str(LIVE_STATE)],
+        "mcp_source": server.get("env", {}).get("PYTHONPATH") == str(RUNTIME_SOURCE),
         "mcp_enabled": server.get("enabled") is True,
         "installed_hooks": current_hooks == expected_hooks,
         "old_database_absent": not (LIVE_STATE / "memory.sqlite3").exists(),
@@ -804,7 +803,7 @@ def start_watcher(workspace: Path, codex_home: Path):
     stop = Path(str(prefix) + "-live-supervisor.stop")
     stderr_path = Path(str(prefix) + "-live-supervisor.stderr")
     stderr = stderr_path.open("wb")
-    environment = dict(os.environ, PYTHONDONTWRITEBYTECODE="1")
+    environment = RUNTIME_ENV
     process = subprocess.Popen([str(RUNTIME_PYTHON), str(LIVE_SUPERVISOR),
         "--state-dir", str(state), "--codex-home", str(codex_home),
         "--status", str(status), "--stop", str(stop)],
@@ -905,7 +904,7 @@ for path in stores: shutdown_and_release(path)
 """
     subprocess.run([str(RUNTIME_PYTHON), "-c", code, str(state)],
                    cwd=workspace, capture_output=True, timeout=180,
-                   check=True)
+                   check=True, env=RUNTIME_ENV)
 
 
 def finalize_experience(workspace: Path, codex_home: Path, baseline=None):
@@ -925,7 +924,7 @@ print(json.dumps({'finalizers':'conversation_finalize.finalize',
 """
     result = subprocess.run([str(RUNTIME_PYTHON), "-c", code,
         str(state), str(codex_home)], cwd=workspace, capture_output=True,
-        text=True, timeout=7200, check=True)
+        text=True, timeout=7200, check=True, env=RUNTIME_ENV)
     telemetry = json.loads(result.stdout)
     telemetry["live_experience"] = wait_live_experience(
         state, codex_home, ended=True, baseline=baseline)
@@ -952,8 +951,9 @@ def command(model: str, arm: str, workspace: Path, codex_home: Path, guard_binar
     if arm == "short_vrs":
         root_state = workspace.parent / (workspace.name.removesuffix("-workspace") + "-vrs-state")
         state = root_state
-        args += ["-c", f'mcp_servers.vrs22.command="{RUNTIME_COMMAND}"',
-                 "-c", f'mcp_servers.vrs22.args=["--state-dir","{root_state}"]']
+        args += ["-c", f'mcp_servers.vrs22.command="{RUNTIME_PYTHON}"',
+                 "-c", f'mcp_servers.vrs22.args=["-m","swegca_vrs2.layered","--state-dir","{root_state}"]',
+                 "-c", f'mcp_servers.vrs22.env={{PYTHONPATH="{RUNTIME_SOURCE}"}}']
     if mode in ("resume", "fork"):
         args.append(thread_id)
     args.append("-")
@@ -1214,13 +1214,12 @@ def setup_workspace(path: Path, codex_home: Path, arm: str, main_seed: Path | No
 
 
 def install_cell_hooks(codex_home: Path, state: Path):
-    """Use installed product hooks, leaving SessionEnd to the cell finalizer."""
+    """Use source product hooks, leaving SessionEnd to the cell finalizer."""
     output = codex_home / "hooks.json"
-    subprocess.run([str(RUNTIME_PYTHON), "-m", "swegca_vrs2.codex_hooks",
-                    "--python", str(RUNTIME_PYTHON), "--state-dir", str(state),
-                    "--server-name", "vrs22", "--output", str(output)],
-                   capture_output=True, text=True, timeout=30, check=True)
-    config = json.loads(output.read_text(encoding="utf-8"))
+    config = runtime_json("""import json,sys
+from swegca_vrs2.codex_hooks import config
+print(json.dumps(config(sys.argv[1],sys.argv[2],module_root=sys.argv[3],server_name='vrs22')))
+""", RUNTIME_PYTHON, state, RUNTIME_SOURCE)
     hooks = config.get("hooks", {})
     required = {"SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse",
                 "PreCompact", "PostCompact", "Stop", "Interrupt", "SessionEnd"}
@@ -1382,7 +1381,7 @@ print(json.dumps({'created':True}))
 
 
 def installed_hook_selftest(root: Path):
-    """Exercise installed hook generation, ingress, routing injection and SessionEnd."""
+    """Exercise source hook generation, ingress, routing injection and SessionEnd."""
     root.mkdir(parents=True)
     state, transcript = root / "state", root / "rollout.jsonl"
     session = "v019-installed-hook-selftest"
@@ -1393,9 +1392,12 @@ def installed_hook_selftest(root: Path):
     ]
     transcript.write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
     hooks_path = root / "hooks.json"
-    subprocess.run([str(RUNTIME_PYTHON), "-m", "swegca_vrs2.codex_hooks",
-        "--state-dir", str(state), "--server-name", "vrs22", "--output", str(hooks_path)],
-        capture_output=True, text=True, timeout=30, check=True)
+    generated_config = runtime_json("""import json,sys
+from swegca_vrs2.codex_hooks import config
+print(json.dumps(config(sys.argv[1],sys.argv[2],module_root=sys.argv[3],server_name='vrs22')))
+""", RUNTIME_PYTHON, state, RUNTIME_SOURCE)
+    hooks_path.write_text(json.dumps(generated_config, ensure_ascii=False, indent=2) + "\n",
+                          encoding="utf-8")
     generated = json.loads(hooks_path.read_text(encoding="utf-8"))["hooks"]
     if ("matcher" in generated["SessionStart"][0]
             or "matcher" in generated["SessionEnd"][0]
@@ -1404,9 +1406,10 @@ def installed_hook_selftest(root: Path):
         raise RuntimeError("installed hook configuration contract failed")
 
     def invoke(event):
-        result = subprocess.run([str(RUNTIME_HOOK), "--host", "codex",
+        result = subprocess.run([str(RUNTIME_PYTHON), "-m", "swegca_vrs2.conversation_hooks", "--host", "codex",
             "--state-dir", str(state), "--tool-prefix", "mcp__vrs22__memory_"],
-            input=json.dumps(event), capture_output=True, text=True, timeout=30, check=True)
+            input=json.dumps(event), capture_output=True, text=True, timeout=30, check=True,
+            env=RUNTIME_ENV)
         return json.loads(result.stdout) if result.stdout.strip() else None
 
     capture = None
@@ -1474,7 +1477,7 @@ stores=sorted((p for p in (root/'session-vrs').rglob('*')
 for path in stores: shutdown_and_release(path)
 """
         subprocess.run([str(RUNTIME_PYTHON), "-c", code, str(state)],
-                       capture_output=True, timeout=180, check=True)
+                       capture_output=True, timeout=180, check=True, env=RUNTIME_ENV)
 
 
 def installed_generation_lease_selftest(root: Path):
@@ -1538,67 +1541,61 @@ finally:
     return receipt
 
 
-def audit_installed_runtime(wheel: Path):
+def audit_source_runtime():
+    """Require the deployed source tree byte-for-byte, with no product wheel."""
     installed = Path(subprocess.check_output(
         [str(RUNTIME_PYTHON), "-c",
          "import pathlib,swegca_vrs2; print(pathlib.Path(swegca_vrs2.__file__).parent)"],
-        text=True).strip())
+        text=True, env=RUNTIME_ENV).strip())
+    source = RUNTIME_ROOT / "src/swegca_vrs2"
     mismatches = []
     source_mismatches = []
     database_references = []
     retired_references = []
-    forbidden_dependencies = []
-    package_files = 0
-    wheel_files = set()
-    with zipfile.ZipFile(wheel) as archive:
-        for name in archive.namelist():
-            if name.endswith(".dist-info/METADATA"):
-                forbidden_dependencies.extend(
-                    line for line in archive.read(name).decode(
-                        "utf-8", errors="replace").splitlines()
-                    if line.lower().startswith("requires-dist:")
-                    and any(value in line.lower()
-                            for value in ("filelock", "sqlite", "hermes")))
-            if not name.startswith("swegca_vrs2/") or name.endswith("/"):
-                continue
-            package_files += 1
-            relative = Path(name).relative_to("swegca_vrs2")
-            wheel_files.add(relative.as_posix())
-            body = archive.read(name)
-            path = installed / relative
-            if not path.is_file() or path.read_bytes() != body:
-                mismatches.append(name)
-            source_path = RUNTIME_ROOT / "src/swegca_vrs2" / relative
-            if not source_path.is_file() or source_path.read_bytes() != body:
-                source_mismatches.append(name)
-            if path.suffix == ".py":
-                text = body.decode("utf-8", errors="replace").lower()
-                if (re.search(r"(^|\n)\s*(import\s+sqlite3|from\s+sqlite3\s+import)", text)
-                        or "memory.sqlite" in text or "dialogue_outbox" in text):
-                    database_references.append(name)
-                if (re.search(r"(^|\n)\s*(import\s+filelock|from\s+filelock\s+import)",
-                              text)
-                        or re.search(r"(^|\n)\s*(import\s+[^\n]*hermes|from\s+[^\n]*hermes)",
-                                     text)):
-                    retired_references.append(name)
-    unexpected = [str(path.relative_to(installed)) for path in installed.rglob("*")
-                  if path.is_file() and "__pycache__" not in path.parts
-                  and str(path.relative_to(installed)) not in wheel_files]
+    deployed_files = {path.relative_to(installed).as_posix(): path
+        for path in installed.rglob("*") if path.is_file() and "__pycache__" not in path.parts}
+    source_files = {path.relative_to(source).as_posix(): path
+        for path in source.rglob("*") if path.is_file() and "__pycache__" not in path.parts}
+    for relative, path in deployed_files.items():
+        reference = source_files.get(relative)
+        if reference is None or path.read_bytes() != reference.read_bytes():
+            mismatches.append(relative)
+        if path.suffix == ".py":
+            body = path.read_bytes()
+            code = body.decode("utf-8", errors="replace").lower()
+            if (re.search(r"(^|\n)\s*(import\s+sqlite3|from\s+sqlite3\s+import)", code)
+                    or "memory.sqlite" in code or "dialogue_outbox" in code):
+                database_references.append(relative)
+            if (re.search(r"(^|\n)\s*(import\s+filelock|from\s+filelock\s+import)", code)
+                    or re.search(r"(^|\n)\s*(import\s+[^\n]*hermes|from\s+[^\n]*hermes)", code)):
+                retired_references.append(relative)
+    source_mismatches.extend(sorted(set(source_files) - set(deployed_files)))
+    unexpected = sorted(set(deployed_files) - set(source_files))
+    runtime_base = RUNTIME_PYTHON.parents[2]
+    wheel_artifacts = sorted(str(path) for path in runtime_base.rglob("*.whl"))
+    no_source_import = subprocess.check_output(
+        [str(RUNTIME_PYTHON), "-c",
+         "import importlib.util; print(importlib.util.find_spec('swegca_vrs2') is None)"],
+        text=True, cwd="/var/tmp", env=dict(RUNTIME_ENV, PYTHONPATH="")).strip() == "True"
     process_audit = runtime_json("""import importlib.util,json,sys
+import swegca_vrs2
 from swegca_vrs2.session_capture import SessionCapture
 from swegca_vrs2.layered import LayeredMCP
 print(json.dumps({
+ 'source_module':swegca_vrs2.__file__,
  'retired_lock_available':importlib.util.find_spec('filelock') is not None,
  'database_module_loaded':any(name=='sqlite3' or name.startswith('sqlite3.')
                               for name in sys.modules)}))
 """)
-    return {"installed_package": str(installed), "wheel_package_files": package_files,
+    return {"source_package": str(installed), "source_package_files": len(deployed_files),
+            "source_tree_sha256": tree_sha(installed),
             "mismatches": mismatches, "source_mismatches": source_mismatches,
             "forbidden_database_references": database_references,
             "forbidden_retired_references": retired_references,
-            "forbidden_dependencies": forbidden_dependencies,
             "process_audit": process_audit,
-            "unexpected_non_source_files": unexpected}
+            "unexpected_non_source_files": unexpected,
+            "wheel_artifacts": wheel_artifacts,
+            "no_product_install_without_source_path": no_source_import}
 
 
 def isolation_selftest(root: Path, guard_binary: Path):
@@ -1801,14 +1798,10 @@ def main():
         parser.error("original objective changed")
     if tree_sha(SOURCE_ROOT) != SOURCE_COMMIT:
         parser.error("clean coding fixture changed")
-    wheel = RUNTIME_WHEEL
-    if (not RUNTIME_COMMAND.is_file() or not wheel.is_file()
-            or sha(wheel.read_bytes()) != RUNTIME_WHEEL_SHA256):
-        parser.error("native VRS 2.2 runtime wheel or install changed")
     prerequisites = {
         "codex": CODEX_BINARY, "code_mode_host": CODE_MODE_HOST, "rg": RG_BINARY,
-        "runtime_python": RUNTIME_PYTHON, "runtime_command": RUNTIME_COMMAND,
-        "runtime_hook": RUNTIME_HOOK,
+        "runtime_python": RUNTIME_PYTHON,
+        "runtime_source_init": RUNTIME_PACKAGE / "__init__.py",
         "test_python": TEST_VENV / "bin/python",
         "auth": REAL_CODEX_HOME / "auth.json",
         "models_cache": FROZEN_MODELS_CACHE,
@@ -1840,7 +1833,7 @@ def main():
     hash_failures = {name: sha(prerequisites[name].read_bytes())
                      for name, expected in expected_hashes.items()
                      if sha(prerequisites[name].read_bytes()) != expected}
-    runtime_audit = audit_installed_runtime(wheel)
+    runtime_audit = audit_source_runtime()
     test_environment_audit = json.loads(subprocess.check_output(
         [str(TEST_VENV / "bin/python"), "-c",
          "import importlib.util,json,sys; print(json.dumps({"
@@ -1849,14 +1842,16 @@ def main():
          "for n in sys.modules)}))"], text=True))
     if hash_failures or runtime_audit["mismatches"] or runtime_audit["source_mismatches"] \
             or runtime_audit["unexpected_non_source_files"] \
+            or runtime_audit["wheel_artifacts"] \
+            or not runtime_audit["no_product_install_without_source_path"] \
             or runtime_audit["forbidden_database_references"] \
             or runtime_audit["forbidden_retired_references"] \
-            or runtime_audit["forbidden_dependencies"] \
             or runtime_audit["process_audit"] != {
+                "source_module": str(RUNTIME_PACKAGE / "__init__.py"),
                 "retired_lock_available": False, "database_module_loaded": False} \
             or test_environment_audit != {
                 "retired_lock_available": False, "database_module_loaded": False}:
-        parser.error(f"frozen input or installed runtime changed: hashes={hash_failures} "
+        parser.error(f"frozen input or source runtime changed: hashes={hash_failures} "
                      f"runtime={runtime_audit}")
     live_audit = live_handoff_audit()
     try:
@@ -1870,7 +1865,7 @@ def main():
         print(json.dumps({"status": readiness, "coding_fixture_tree_sha256": SOURCE_COMMIT,
             "runtime_product_commit": RUNTIME_PRODUCT_COMMIT,
             "runtime_repository_commit": RUNTIME_REPOSITORY_COMMIT,
-            "runtime_wheel_sha256": RUNTIME_WHEEL_SHA256,
+            "runtime_source_tree_sha256": runtime_audit["source_tree_sha256"],
             "models": MODELS, "effort": "medium", "new_arms": ["short_vrs"],
             "reused_plain_arms": ["short_plain", "long_plain"],
             "minimum_compactions": 10, "planned_compactions": args.max_compactions,
@@ -1962,7 +1957,7 @@ def main():
             "schema_version": "vrs22-auto-compaction-stress-v13-retained-main",
             "runtime_product_commit": RUNTIME_PRODUCT_COMMIT,
             "runtime_repository_commit": RUNTIME_REPOSITORY_COMMIT,
-            "runtime_wheel_sha256": RUNTIME_WHEEL_SHA256,
+            "runtime_source_tree_sha256": runtime_audit["source_tree_sha256"],
             "retained_main_replay_selftest": main_replay,
             "retained_main_layer_selftest": retained_layer,
             "retained_main_seed": seed_receipt,

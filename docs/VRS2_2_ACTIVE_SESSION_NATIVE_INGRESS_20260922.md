@@ -409,3 +409,23 @@ It timestamps the first ranked original Replay constructor after natural
 metric is Déjà vu → Recall, so this receipt is diagnostic only. The evaluation
 grader now leaves the transition unmeasured instead of substituting either
 Replay or the whole MCP response. No model evaluation ran.
+
+## Source-only product deployment after the wheel prohibition
+
+The installed product distribution and the three task-owned product wheel
+artifacts were removed. The isolated active-session tailer and the persistent
+SessionEnd handoff supervisor now run `python -m` with `PYTHONPATH` pointing to
+`/home/raspie/.local/share/swegca-vrs2-runtime-2.2-summary-ingress/source/src`.
+All 48 deployed product Python files are byte-identical to the repair checkout;
+the runtime contains no `.whl` file and cannot import `swegca_vrs2` without its
+explicit source path. The earlier wheel receipts above remain historical
+diagnostics and are not acceptance evidence for the corrected latency gate.
+
+The source hook self-test passed: original user content was preserved, all
+cursor lines were accounted for, and the session attached only after the
+SessionEnd event. The source-runtime evaluation preflight reports
+`PENDING_LIVE_HANDOFF`; the desktop main is still the old store until the real
+session ends, and the actual Déjà vu → Recall transition remains unmeasured.
+The existing Python environment contains third-party distributions whose
+source-build provenance is not established. Therefore this report does not
+claim that the complete environment meets the prebuilt-wheel ban yet.

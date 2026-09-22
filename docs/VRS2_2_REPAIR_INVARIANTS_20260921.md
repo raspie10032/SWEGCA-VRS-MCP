@@ -27,6 +27,13 @@ stage from the named boundary without an explicit user correction.
   to meet these limits.
 - Existing current VRS experience is used for the repaired system because there
   is not enough time to accumulate a replacement experience set.
+- Prebuilt wheels are forbidden for the repaired product and its dependencies.
+  Deploy the product from its source tree; do not substitute a built or
+  downloaded product wheel in live routing or evaluation. A later lower-level
+  implementation must not depend on a prebuilt wheel artifact.
+- External runtime dependencies currently installed in the isolated Python
+  environment still lack verified source-build provenance. This is an open
+  compliance item, not evidence that the full environment is wheel-free.
 - User statements are not to be interpreted by guesswork. Unknowns stay
   unknown until an exact experience, source, code path, or user correction
   resolves them.
