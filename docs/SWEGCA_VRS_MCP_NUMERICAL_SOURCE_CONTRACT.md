@@ -75,6 +75,14 @@ including numeric underscores. Python's non-ASCII decimal digits and extreme
 string-float underflow still need exact cross-language treatment before parity
 can be claimed. These are explicit remaining source gaps, not silently accepted
 input changes.
+The C++ event-strength binder now checks the detached state-update receipt
+against the immutable VRS generation, one explicit connection namespace,
+original edge strengths, source verdict operation and promotion decision. It
+rounds changed strengths to the selected f32 or f16 storage format and rejects
+an f16 threshold crossing caused only by rounding. The bound strength map and
+target seeds are still detached work; event signal settlement, durable input
+equality, and publication remain unimplemented. The f16 conversion is a
+source-based binary16 translation, not a measured parity result.
 
 Existing VRS 2.2 pair certificates and numerical arrays are historical
 evidence. A new source implementation must account for their lineage and

@@ -3,7 +3,7 @@ AR ?= ar
 CXXFLAGS ?= -O2 -g -std=c++20 -Wall -Wextra -Wpedantic
 NUMERIC_CXXFLAGS = -ffp-contract=off -fno-fast-math
 
-CORE_OBJECTS = build/digest.o build/json.o build/unicode.o build/keys.o build/observation.o build/memory_episode.o build/memory_evidence.o build/memory_promotion.o build/vrs_state_update.o build/hot_index.o build/hot_index_pending.o build/memory_vrs_pair.o build/deja_vu.o build/memory_recall.o build/memory_receipt.o build/event_vrs_inputs.o build/python_fsum.o build/event_vrs_kernel.o build/journal_frame.o build/journal_files.o build/owner_lock.o build/native_journal.o
+CORE_OBJECTS = build/digest.o build/json.o build/unicode.o build/keys.o build/observation.o build/memory_episode.o build/memory_evidence.o build/memory_promotion.o build/vrs_state_update.o build/hot_index.o build/hot_index_pending.o build/memory_vrs_pair.o build/deja_vu.o build/memory_recall.o build/memory_receipt.o build/event_vrs_inputs.o build/python_fsum.o build/event_vrs_kernel.o build/event_signal_strength.o build/journal_frame.o build/journal_files.o build/owner_lock.o build/native_journal.o
 
 .PHONY: all clean
 all: build/libswegca-vrs.a
@@ -63,6 +63,9 @@ build/python_fsum.o: cpp/python_fsum.cpp cpp/python_fsum.hpp | build
 	$(CXX) $(CXXFLAGS) $(NUMERIC_CXXFLAGS) -Icpp -c $< -o $@
 
 build/event_vrs_kernel.o: cpp/event_vrs_kernel.cpp cpp/event_vrs_kernel.hpp cpp/event_vrs_inputs.hpp cpp/python_fsum.hpp cpp/json.hpp | build
+	$(CXX) $(CXXFLAGS) $(NUMERIC_CXXFLAGS) -Icpp -c $< -o $@
+
+build/event_signal_strength.o: cpp/event_signal_strength.cpp cpp/event_signal_strength.hpp cpp/event_vrs_inputs.hpp cpp/vrs_state_update.hpp cpp/memory_promotion.hpp | build
 	$(CXX) $(CXXFLAGS) $(NUMERIC_CXXFLAGS) -Icpp -c $< -o $@
 
 build/journal_frame.o: cpp/journal_frame.cpp cpp/journal_frame.hpp cpp/json.hpp cpp/digest.hpp | build
