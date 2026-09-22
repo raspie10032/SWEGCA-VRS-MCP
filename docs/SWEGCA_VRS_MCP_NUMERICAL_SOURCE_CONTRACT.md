@@ -64,6 +64,18 @@ disabled and fast-math disabled; otherwise fused or reassociated operations
 could change Python's separate binary64 steps before float32 rounding. These
 flags are a build contract, not a parity test.
 
+The C++ `plan_vrs_state_update` now follows the source's first replayed
+connection observation, one strength change per current verdict, first-seen
+alias grouping, conflict abstention and retained source judgments. Its receipt
+remains detached and denies action, write and semantic-promotion authority.
+It is not bound to the event signal proposal or a published VRS generation.
+The author calls Python `int()` and `float()` on observation fields; the C++
+numeric conversion covers JSON numbers, booleans and ASCII decimal strings,
+including numeric underscores. Python's non-ASCII decimal digits and extreme
+string-float underflow still need exact cross-language treatment before parity
+can be claimed. These are explicit remaining source gaps, not silently accepted
+input changes.
+
 Existing VRS 2.2 pair certificates and numerical arrays are historical
 evidence. A new source implementation must account for their lineage and
 explain numerical differences; copied originals alone do not prove numeric
