@@ -666,7 +666,7 @@ class Daemon:
                 self.bundles.refresh_pair('main', self.main)
                 return result
             if command == 'usage':
-                # usage re-evidence (2026-09-18): the Stop hook's ledger {source: [injected, opened]}
+                # Read provenance from the Stop hook's ledger: {source: [injected, opened]}.
                 result = self.main.usage_update(arguments.get('counts') or {})
                 self.bundles.refresh_pair('main', self.main)
                 return result

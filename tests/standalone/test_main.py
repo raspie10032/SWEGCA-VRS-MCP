@@ -509,19 +509,20 @@ def test_region_scope_restricts_candidates_only_when_asked_and_never_loses_addre
     assert [c.episode_id for c in direct['receipt']['activation'].recall.candidates]==[v['episode_id']]
 
 
-def test_usage_reevidence_grows_association_but_never_promotes_and_replays(main):
-    # a pending record (no declared proposition) that sessions opened after recall: its edges grow from
-    # use, capped below the promotion threshold (use makes a record reachable, never verified)
+def test_open_counts_remain_provenance_without_resolving_pending_experience(main):
+    # Opening a pending original is a read event, not a new support/refute result.
     used = record(main, 'used'); idle = record(main, 'idle')
     main.consolidate()
-    before_used, before_idle = main.graph.strength(used['episode_id']), main.graph.strength(idle['episode_id'])
+    labels = np.zeros(main.graph.flat.count, dtype=np.int64)
+    before = vrs_refine.build_inputs(main.graph, main.memory, labels)
+    before_strengths = (main.graph.strength(used['episode_id']), main.graph.strength(idle['episode_id']))
     assert main.usage_update({'test:used': [5, 3], 'test:nobody': [1, 1]})['sources'] == 1   # unknown source ignored
-    assert main.consolidation_stale()                      # usage changed since the last refinement
-    for _ in range(12):
-        main.consolidate(cycles=160)
-    assert main.graph.strength(used['episode_id']) > before_used
-    assert main.graph.strength(idle['episode_id']) <= before_idle
-    assert main.graph.strength(used['episode_id']) < 1.0 and not main.graph.vrs_of(used['episode_id'], 'test:used')['promoted']
+    after = vrs_refine.build_inputs(main.graph, main.memory, labels)
+    for name in ('direct', 'unresolved', 'base'):
+        np.testing.assert_array_equal(after[name], before[name])
+    assert after['unresolved'][main.graph.nodes.episode_node[used['episode_id']]]
+    assert not main.consolidation_stale()
+    assert (main.graph.strength(used['episode_id']), main.graph.strength(idle['episode_id'])) == before_strengths
     assert main.graph.vrs_of(used['episode_id'], 'test:used')['usage'] == [5, 3]
     assert main.usage_update({'test:used': [5, 3]})['status'] == 'unchanged'   # same counts: no journal row
     before = main.pair.snapshot_id; version = main.graph.stable.version_id

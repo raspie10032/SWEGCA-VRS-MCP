@@ -50,12 +50,6 @@ WEAKEN = np.float32(0.995)
 BASE = np.float32(0.75)   # legacy placeholder for an edge appended before its first consolidation
 BASE_FLOOR = np.float32(0.05)   # a record with no evidence weight still gets a tiny base so the clamp is defined
 PROMOTION = 1.0
-# usage re-evidence (2026-09-18): a record the sessions actually opened after it was recalled gets an
-# association base/direct from that use — capped so 4 x USAGE_CAP stays below PROMOTION: use makes a
-# record reachable, never verified (Memory != Truth; promotion needs evidence on a declared proposition)
-USAGE_CAP = np.float32(0.2)
-USAGE_STEP = np.float32(0.05)      # base = min(CAP, STEP * (1 + log2(1 + opened)))
-USAGE_DIRECT = np.float32(0.1)     # direct = tanh(USAGE_DIRECT * log2(1 + opened))
 CYCLES = 16               # shuffle cycles per consolidation — one refinement per generation, as the original
                           # organizer runs it (16-20); strengths carry over, so a connection's strength is how many
                           # generations it stayed stable, not a fixed point (running to convergence saturated every
@@ -145,7 +139,7 @@ class VRSVersion:
                  'prop_state', 'prop_pid', 'region_delta', 'delta', 'converged', 'promoted', 'reinforced', 'evaluations',
                  'resolved_count', 'seconds', 'regions', 'connector_edges', 'direct', 'unresolved', 'prop_direct', 'prop_unresolved',
                  'portals', 'portal_events', 'coarse_labels', 'fine_seconds', 'decisions', 'record_weight', 'evidence_counts',
-                 'usage_digest', 'usage_records', 'alias_digest',
+                 'alias_digest',
                  'member_ptr', 'member_region', 'member_weight', 'shared_count', 'memberships_digest', '_by_region')
 
     def __init__(self, **k):
@@ -170,7 +164,6 @@ class VRSVersion:
                     reinforced=self.reinforced, resolved_records=self.resolved_count, delta=self.delta,
                     converged=self.converged, seconds=self.seconds, evaluations=self.evaluations,
                     portals=self.portal_counts(), shared=self.shared_counts(), fine_seconds=getattr(self, 'fine_seconds', None),
-                    usage_records=getattr(self, 'usage_records', None),
                     evidence=getattr(self, 'evidence_counts', None))
 
     def proposition_strength(self, node):
@@ -474,10 +467,6 @@ def build_inputs(graph, memory, labels):
     evidence = vrs_evidence.build(graph, memory)
     direct = np.zeros(n, np.float32); unresolved = np.zeros(n, bool)
     weight = np.zeros(n, np.float32)
-    usage_base = np.zeros(n, np.float32)
-    usage = getattr(graph, 'usage', None) or {}
-    fetch = getattr(memory, 'episode_light', memory.episode)
-    usage_records = 0
     resolved_count = 0
     for node in np.flatnonzero(record_mask):
         eid = nodes.node_episode[int(node)]
@@ -490,18 +479,8 @@ def build_inputs(graph, memory, labels):
         weight[node] = w
         direct[node] = np.tanh(w)
         unresolved[node] = (not pol) or (h is not None and h.unresolved())
-        if not pol and usage and eid not in memory.superseded:
-            # pending record that sessions opened after recall: association from use (never truth)
-            counts = usage.get(fetch(eid).source_addresses[0])
-            opened = int(counts[1]) if counts else 0
-            if opened > 0:
-                grow = np.log2(1.0 + opened)
-                usage_base[node] = min(USAGE_CAP, USAGE_STEP * (1.0 + grow))
-                direct[node] = np.tanh(USAGE_DIRECT * grow)
-                unresolved[node] = False
-                usage_records += 1
     f_src, f_dst = src[forward], dst[forward]
-    base = np.maximum(np.maximum(weight[f_src], usage_base[f_src]), BASE_FLOOR).astype(np.float32)
+    base = np.maximum(weight[f_src], BASE_FLOOR).astype(np.float32)
     sign = np.ones(len(forward), np.int8)                      # association edges carry no polarity
     aliases = getattr(graph, 'aliases', None) or {}
     members = {}                                                # canonical pid -> episode ids (aliases merged)
@@ -536,8 +515,7 @@ def build_inputs(graph, memory, labels):
                 sign=np.concatenate([sign, np.asarray(p_sign, np.int8)]),
                 base=np.concatenate([base, np.asarray(p_base, np.float32)]),
                 proposition_ids=prop_ids, prop_edges=len(p_src), resolved_count=resolved_count,
-                decisions=decisions, record_weight=weight, usage_records=usage_records,
-                usage_digest=getattr(graph, 'usage_digest', ''), alias_digest=getattr(graph, 'alias_digest', ''),
+                decisions=decisions, record_weight=weight, alias_digest=getattr(graph, 'alias_digest', ''),
                 evidence_counts=dict(hypotheses=len(evidence.hypotheses), observations=evidence.observation_count,
                                      accepted=sum(1 for h in evidence.hypotheses.values() if h.decision.status == 'accept'),
                                      rejected=sum(1 for h in evidence.hypotheses.values() if h.decision.status == 'reject'),
@@ -598,8 +576,8 @@ def consolidate(graph, memory, previous, *, seed=SEED, cycles=CYCLES, labels=Non
         state[:m] = previous.state[:m]
         # a record is only ever a source in the kernel (record -> cue, record -> proposition), so the
         # kernel never rewrites its state: a record's state *is* its direct. Re-seed it every generation
-        # or a record whose evidence changed after its first consolidation (a later verdict, a supersede,
-        # usage re-evidence) would keep the state it had when it was pending (found 2026-09-18)
+        # or a record whose evidence changed after its first consolidation (a later verdict or supersede)
+        # would keep the state it had when it was pending (found 2026-09-18)
         rec = inp['record_mask'][:m]
         state[:m][rec] = inp['direct'][:m][rec]
         old_prop = {pid: i for i, pid in enumerate(previous.proposition_ids)}
@@ -705,7 +683,6 @@ def consolidate(graph, memory, previous, *, seed=SEED, cycles=CYCLES, labels=Non
                          region_delta=region_delta, delta=round(delta, 6), converged=bool(delta <= TOLERANCE),
                          promoted=promoted, reinforced=reinforced, evaluations=evaluations,
                          resolved_count=inp['resolved_count'], seconds=round(time.perf_counter() - started, 3),
-                         usage_digest=inp.get('usage_digest', ''), usage_records=inp.get('usage_records', 0),
                          alias_digest=inp.get('alias_digest', ''),
                          regions=len(region_ids), connector_edges=int((~same).sum()),
                          direct=inp['direct'][:n_real].astype(np.float32), unresolved=inp['unresolved'][:n_real].copy(),

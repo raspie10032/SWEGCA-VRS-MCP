@@ -184,7 +184,7 @@ def journal_entry(request_id, body, fingerprint):
             raise ValueError('stored_observation_integrity_failed')
         return 'alias', entry
     if isinstance(entry, dict) and entry.get('kind') == 'usage':
-        # usage re-evidence (2026-09-18): {source: [injected, opened]} counts from the hooks' ledger
+        # Read provenance: {source: [injected, opened]} counts from the hooks' ledger.
         if digest(entry) != fingerprint or not request_id.startswith('usage:'):
             raise ValueError('stored_observation_integrity_failed')
         return 'usage', entry
@@ -311,7 +311,7 @@ class Graph:
         self.components, self.regions, self.last_receipt = components, regions, last_receipt
         self._csr = csr
         self.stable = stable                 # vrs_refine.VRSVersion of the last consolidation, or None
-        self.usage = dict(usage or {})       # usage re-evidence: record source -> [injected, opened] (journaled)
+        self.usage = dict(usage or {})       # read provenance: record source -> [injected, opened] (journaled)
         self.aliases = dict(aliases or {})   # hypothesis registry: alias proposition -> canonical (journaled)
         self._labels = None                  # memory-only: core region label per node (see labels())
         self._row_labels = None              # memory-only: region label per memory row (see row_labels())
@@ -355,10 +355,6 @@ class Graph:
         receipt = dict(self.last_receipt, status='alias', parent_snapshot_id=self.snapshot_id, aliases=len(merged))
         return Graph(snapshot_id, self.flat, self.nodes, self.components, self.regions, freeze_view(receipt), self._csr,
                      self.stable, self.usage, merged)
-
-    @property
-    def usage_digest(self):
-        return digest(sorted((k, list(v)) for k, v in self.usage.items())) if self.usage else ''
 
     def with_usage(self, counts):
         """Successor generation with usage counts merged in (same topology, strengths, stable version).
@@ -1085,7 +1081,6 @@ class Main:
         if len(graph.flat.src) == 0:
             return False
         return (stable is None or stable.edge_count != len(graph.flat.src) or stable.node_count != graph.flat.count
-                or (getattr(stable, 'usage_digest', '') or '') != graph.usage_digest    # usage changed since last refinement
                 or (getattr(stable, 'alias_digest', '') or '') != graph.alias_digest)   # registry changed
 
     def consolidate_prepare(self):
@@ -1123,7 +1118,7 @@ class Main:
 
     def usage_update(self, counts):
         """Journal usage counts {source: [injected, opened]} (under the lock) and chain the graph through them.
-        Usage is association evidence for the next consolidation, never a promotion (see vrs_refine.USAGE_CAP)."""
+        Usage remains provenance for the read receipt; it is not new evidence for VRS consolidation."""
         self._check()
         if not self.allow_ingest:
             raise ValueError('observation_ingress_disabled')
