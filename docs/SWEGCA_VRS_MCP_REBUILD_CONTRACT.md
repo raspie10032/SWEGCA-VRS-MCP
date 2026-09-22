@@ -110,6 +110,12 @@ same header from the author's episode. The checksummed projection frame binds
 that header and the distinct raw posting keys to a journal sequence and pair
 ID; it carries no original observation body. A physical header/posting
 directory and published HotIndex reader are still required.
+The metadata log now assigns each frame to one of 256 original-ID prefixes,
+returns its durable byte offset after sync, and checks generation, source row
+limit, frame checksum and exact episode ID on an addressed read. Independent
+prefixes have separate locks. This log has no cue lookup or publication gate
+on its own; a derived address/posting directory and crash recovery still need
+to bind it to a published Main generation.
 The Main operation overlay now checks request ID and normalized observation
 fingerprint before any new HotIndex/Graph candidate is staged. Identical
 requests retain their original episode and pair certificate; conflicting
