@@ -276,14 +276,14 @@ print(json.dumps({'stopped':True}))
 """, state, session)
 
 
-def test_measured_replay_violation_blocks_model_evaluation():
+def test_replay_diagnostic_is_not_misgraded_as_stage_transition():
     audit = RUNNER.product_performance_audit()
-    assert audit["latency_metric"] == "first_ranked_original_experience_replayed_after_main_selection"
-    assert audit["sample_valid"] is True
-    assert audit["sampled_under_1ms"] is False
+    assert audit["latency_metric"] == "deja_vu_to_recall_stage_transition"
+    assert audit["transition_sample_valid"] is False
+    assert audit["replay_diagnostic_valid"] is True
     assert audit["ready"] is False
-    assert {100, 1008} <= {row["matches"] for row in audit["observed_violations"]}
-    assert audit["all_size_through_replay_proven"] is False
+    assert {100, 1008} <= {row["matches"] for row in audit["replay_diagnostic_violations"]}
+    assert audit["all_size_transition_proven"] is False
     assert audit["billion_parameter_unit_defined"] is False
 
 

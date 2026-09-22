@@ -38,9 +38,10 @@ The repair must identify and report the VRS architecture's actual parameter
 unit before claiming the one-billion target. It must not silently substitute a
 different unit.
 
-The `<1 ms through Replay` boundary includes every main-owned stage from lookup
-entry through Replay completion. Any later source-page transport must be named
-separately and cannot be excluded from that boundary by assumption.
+The user's 2026-09-22 correction sets the `<1 ms` boundary at the actual
+Déjà vu → Recall transition. Instrument that transition in the main-owned
+execution path. Whole MCP response time and first original Replay completion
+are separate measurements and must not be substituted for this gate.
 
 The repaired read capsule keeps the exact derived cue vector checksummed beside
 the original Replay body and decodes that vector when Re-evidence consumes it.

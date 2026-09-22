@@ -25,15 +25,15 @@ ROOT = Path(__file__).resolve().parents[1]
 SOURCE_ROOT = ROOT / "evals/vrs22_context/fixtures/checkpoint_v019"
 SOURCE_COMMIT = "6b35f73d7241620a43e30811b86811a8a1ec5a92e7ffa4e5f295054817cb7b0c"
 RUNTIME_ROOT = Path("/var/home/raspie/Documents/Codex/SWEGCA-VRS-MCP-vrs22-repair-20260921")
-RUNTIME_PRODUCT_COMMIT = "d5dea59dd94663dd017b4e7c7b15f9888d7d5fb5"
-RUNTIME_REPOSITORY_COMMIT = "d5dea59dd94663dd017b4e7c7b15f9888d7d5fb5"
+RUNTIME_PRODUCT_COMMIT = "0a4769f9ce25bb216f5173f817f7050404a0bccb"
+RUNTIME_REPOSITORY_COMMIT = "0a4769f9ce25bb216f5173f817f7050404a0bccb"
 RUNTIME_PYTHON = Path("/home/raspie/.local/share/swegca-vrs2-runtime-2.2-summary-ingress/venv/bin/python")
 RUNTIME_COMMAND = RUNTIME_PYTHON.with_name("swegca-vrs2-codex")
 RUNTIME_HOOK = RUNTIME_PYTHON.with_name("swegca-vrs2-hook")
 RUNTIME_WHEEL = Path("/home/raspie/.local/share/swegca-vrs2-runtime-2.2-summary-ingress/dist/swegca_vrs_mcp-2.2.0-py3-none-any.whl")
-RUNTIME_WHEEL_SHA256 = "c9ef791cd21ea71abfb280a51b4dcbedda55dfc76e1cb95ab66f3da96787c80e"
-PERFORMANCE_RECEIPT = ROOT / "evals/vrs22_context/results/first_ranked_original_replay_summary_ingress_wheel_20260922.json"
-PERFORMANCE_RECEIPT_SHA256 = "e30059d076fb21c47f956e5462f15df1497a0e7993b7874c7ad3444f1eabfc8e"
+RUNTIME_WHEEL_SHA256 = "b5064a41a64866b797b558c0edf4e34b96b810b66cb0d92e336c7c927d981078"
+PERFORMANCE_RECEIPT = ROOT / "evals/vrs22_context/results/first_ranked_original_replay_transport_r2_wheel_20260922.json"
+PERFORMANCE_RECEIPT_SHA256 = "48438c08725175138e9725fb1ecea1424abccef9b8bcde3ae227776f0dc4760d"
 REAL_CODEX_HOME = Path.home() / ".codex"
 LIVE_STATE = Path("/home/raspie/.local/share/swegca-vrs2-codex")
 USER_RUNTIME_DIR = Path("/run/user") / str(os.getuid())
@@ -369,7 +369,7 @@ print(json.dumps({'native_main':is_native_store(sys.argv[1])}))
 
 
 def product_performance_audit():
-    """Fail closed on the measured hard Replay and billion-parameter gates."""
+    """Keep Replay diagnostics separate from the user's stage-transition gate."""
     body = PERFORMANCE_RECEIPT.read_bytes()
     if sha(body) != PERFORMANCE_RECEIPT_SHA256:
         raise ValueError("frozen_natural_replay_receipt_changed")
@@ -386,23 +386,24 @@ def product_performance_audit():
         and limits.get("memory.swap.max") == "0"
         and "259:3 rbps=625000000 wbps=625000000" in limits.get("io.max", "")
         and receipt.get("sqlite_module_loaded") is False)
-    sampled_under_1ms = bool(sample_valid and all(
-        row["first_ranked_original_replay_at_or_above_1ms"] == 0 for row in cases))
-    # A finite sample cannot certify an all-size bound. The project also has
-    # no user-approved unit for a VRS parameter or a measured billion-unit run.
-    all_size_through_replay_proven = False
+    # This receipt timestamps original Replay construction. It does not time
+    # the Déjà vu → Recall boundary named by the user. Never turn these samples
+    # into a verdict about the 1 ms requirement.
+    transition_sample_valid = False
+    all_size_transition_proven = False
     billion_parameter_unit_defined = False
     billion_parameter_seconds_proven = False
-    return dict(ready=bool(sampled_under_1ms and all_size_through_replay_proven
+    return dict(ready=bool(transition_sample_valid and all_size_transition_proven
         and billion_parameter_unit_defined and billion_parameter_seconds_proven),
-        latency_metric="first_ranked_original_experience_replayed_after_main_selection",
+        latency_metric="deja_vu_to_recall_stage_transition",
+        transition_sample_valid=transition_sample_valid,
+        transition_status="not_yet_measured_at_actual_stage_boundary",
         receipt_sha256=PERFORMANCE_RECEIPT_SHA256,
-        sample_valid=sample_valid,
-        sampled_under_1ms=sampled_under_1ms,
-        observed_violations=[dict(matches=row.get("actual_fanout"),
+        replay_diagnostic_valid=sample_valid,
+        replay_diagnostic_violations=[dict(matches=row.get("actual_fanout"),
             calls_at_or_above_1ms=row.get("first_ranked_original_replay_at_or_above_1ms"))
             for row in cases if row.get("first_ranked_original_replay_at_or_above_1ms")],
-        all_size_through_replay_proven=all_size_through_replay_proven,
+        all_size_transition_proven=all_size_transition_proven,
         billion_parameter_unit_defined=billion_parameter_unit_defined,
         billion_parameter_seconds_proven=billion_parameter_seconds_proven)
 

@@ -363,8 +363,49 @@ has not switched.
 
 The wheel's 15,630-original natural Replay receipt is
 `evals/vrs22_context/results/first_ranked_original_replay_summary_ingress_wheel_20260922.json`.
-During concurrent system load, the first calls measured 3.037 ms for one
-match, 26.778 ms for 100 and 167.931 ms for 1,008. These samples fail the
-strict 1 ms gate. The evaluation grader now accepts additional observed
-violations instead of assuming only the broad two cases fail; all 20 grader
-regressions pass and no VRS model cell ran.
+During concurrent system load, the first Replay calls measured 3.037 ms for
+one match, 26.778 ms for 100 and 167.931 ms for 1,008. These are Replay
+diagnostics. The user's later correction puts the 1 ms gate at the actual
+Déjà vu → Recall transition, so those numbers do not grade that gate. The
+evaluation remains stopped.
+
+## Slow resident admission transport repair
+
+A broad active-session query exposed a transport fault. The five-second daemon
+probe connection was reused for Recall. When a response exceeded that socket
+timeout, `LoopbackClient` resent `cognitive_dialogue_start`; the original
+admission could already exist, so the duplicate was rejected. The repair
+separates the five-second probe from a 45-second request socket, never
+automatically resends a command that may have changed state, and recovers an
+existing resident view only when request ID, query and snapshot all match.
+Different admission inputs still fail closed.
+
+Product commit `0a4769f9ce25bb216f5173f817f7050404a0bccb` was built into an
+offline wheel (SHA-256
+`b5064a41a64866b797b558c0edf4e34b96b810b66cb0d92e336c7c927d981078`).
+All 48 packaged Python files match source. Three focused transport tests pass.
+The broader source run passed 34/35; the single SessionEnd checkpoint failure
+passed on isolated rerun with the focused tests (3/3), so its intermittent
+cause remains unresolved.
+
+The isolated native shadow tailer and the persistent post-SessionEnd watcher
+were restarted on this installed wheel within 4 GiB, zero swap and 625 MB/s
+I/O limits. No SessionEnd marker exists. A live `LayeredMCP.memory_context`
+call returned 9,726 session candidates, one complete original on its first
+page, a valid four-stage receipt, and no main fallback. Its 4,956.892 ms is
+the **whole MCP call duration**, including 117 evidence RPCs and preparation
+of the candidate receipt. It is not the first-Recall latency metric.
+
+The subsequent native transcript audit passed: 41,619 captured-prefix lines,
+37,521 expected originals, two authenticated concurrent originals, zero
+missing/unexpected/changed records, and no SQLite module loaded. Audit receipt:
+`/var/tmp/vrs22-native-shadow-transport-r2-audit-20260922.json`.
+
+The installed wheel's separate 15,630-original benchmark receipt is
+`evals/vrs22_context/results/first_ranked_original_replay_transport_r2_wheel_20260922.json`
+(SHA-256 `48438c08725175138e9725fb1ecea1424abccef9b8bcde3ae227776f0dc4760d`).
+It timestamps the first ranked original Replay constructor after natural
+`ShardedMain.recall` begins. The user has explicitly clarified that the 1 ms
+metric is Déjà vu → Recall, so this receipt is diagnostic only. The evaluation
+grader now leaves the transition unmeasured instead of substituting either
+Replay or the whole MCP response. No model evaluation ran.
