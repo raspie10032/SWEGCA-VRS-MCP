@@ -165,7 +165,12 @@ class MCPServer:
                 value = self.call_tool(params.get('name'), params.get('arguments', {}))
                 result = dict(content=[{'type':'text','text':encode(value).decode('utf-8')}],
                               structuredContent=value, isError=value.get('status') in self.error_statuses)
-            except (InterfaceError, KeyError, TypeError, RecursionError):
+            except InterfaceError as error:
+                reason = str(error).split(':', 1)[0]
+                if not re.fullmatch('[a-z][a-z0-9_]{0,79}', reason):
+                    reason = 'interface_error'
+                result = {'content':[{'type':'text','text':reason}], 'isError':True}
+            except (KeyError, TypeError, RecursionError):
                 result = {'content':[{'type':'text','text':'tool_request_failed'}], 'isError':True}
         else:
             return error(-32601, 'method_not_found')

@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import argparse
 from concurrent.futures import ThreadPoolExecutor
+import hashlib
 import os
 import socket
 import socketserver
@@ -42,6 +43,21 @@ HOST = '127.0.0.1'
 PORT_FILE = 'loopback.port'
 START_FILE = 'loopback.starting'   # G8 (2026-09-19): written by the spawner, removed by the daemon once it serves
 START_STALE = 300                    # seconds after which a start marker is ignored (a spawn that died)
+
+
+def _source_digest():
+    """Bind a resident to the package bytes present when its process started."""
+    root = Path(__file__).resolve().parent
+    digest = hashlib.sha256()
+    for path in sorted(root.rglob('*.py')):
+        digest.update(str(path.relative_to(root)).encode('utf-8'))
+        digest.update(b'\0')
+        digest.update(path.read_bytes())
+        digest.update(b'\0')
+    return digest.hexdigest()
+
+
+SOURCE_DIGEST = _source_digest()
 RESIDENT_COMMANDS = {'status', 'cognitive_dialogue_start', 'cognitive_dialogue_continue',
                      'cognitive_dialogue_evidence_open', 'cognitive_dialogue_evidence',
                      'cognitive_dialogue_release'}
@@ -142,12 +158,15 @@ def ensure_daemon(state_dir, *, allow_ingest=True, python=None, wait_seconds=30,
     if port is not None:
         client = LoopbackClient(port, 5)
         try:
-            client.request('ping')
-            client.close()
-            return LoopbackClient(port, 45)
+            reply = client.request('ping')
         except InterfaceError:
             client.close()
-            pass
+        else:
+            client.close()
+            if (reply.get('implementation') != str(Path(__file__).resolve())
+                    or reply.get('source_digest') != SOURCE_DIGEST):
+                raise InterfaceError('resident_implementation_mismatch')
+            return LoopbackClient(port, 45)
     if starting_since(state_dir) is not None:
         return _wait_for_daemon(state_dir, wait_seconds)
     command = [python or sys.executable, '-m', 'swegca_vrs2.loopback', '--state-dir', str(state_dir)]
@@ -161,6 +180,11 @@ def ensure_daemon(state_dir, *, allow_ingest=True, python=None, wait_seconds=30,
     if hot_bundles is not None:
         command += ['--hot-bundles', str(int(hot_bundles))]
     popen = dict(stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, close_fds=True)
+    source_root = str(Path(__file__).resolve().parents[1])
+    environment = os.environ.copy()
+    previous = environment.get('PYTHONPATH')
+    environment['PYTHONPATH'] = source_root + (os.pathsep + previous if previous else '')
+    popen['env'] = environment
     if os.name == 'nt':
         popen['creationflags'] = subprocess.CREATE_NEW_PROCESS_GROUP | getattr(subprocess, 'DETACHED_PROCESS', 0)
     else:
@@ -181,11 +205,16 @@ def _wait_for_daemon(state_dir, wait_seconds):
         if port is not None:
             client = LoopbackClient(port, 5)
             try:
-                client.request('ping')
+                reply = client.request('ping')
+                if (reply.get('implementation') != str(Path(__file__).resolve())
+                        or reply.get('source_digest') != SOURCE_DIGEST):
+                    raise InterfaceError('resident_implementation_mismatch')
                 client.close()
                 return LoopbackClient(port, 45)
-            except InterfaceError:
+            except InterfaceError as error:
                 client.close()
+                if str(error) == 'resident_implementation_mismatch':
+                    raise
                 continue
     if starting_since(state_dir) is not None:
         raise DaemonStarting('resident_daemon_starting')
@@ -610,7 +639,7 @@ class Daemon:
         if command == 'ping':
             return dict(status='ok', pid=os.getpid(), state_dir=str(self.state_dir),
                         writes_enabled=self.main.allow_ingest, bundles=self.bundles.ids(),
-                        implementation=str(Path(__file__).resolve()))
+                        implementation=str(Path(__file__).resolve()), source_digest=SOURCE_DIGEST)
         if command == 'hook_recall':
             return hook_recall(self.main, arguments, self.bundles)
         if command == 'bundles':

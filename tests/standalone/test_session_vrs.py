@@ -9,6 +9,7 @@ import time
 import pytest
 
 from swegca_vrs2.layered import LAYERED_MEMORY_TOOLS, LayeredMCP
+from swegca_vrs2 import loopback as loopback_module
 from swegca_vrs2.loopback import ensure_daemon
 from swegca_vrs2.session_capture import SessionCapture, VRSClient, handle, transcript_record
 from swegca_vrs2.conversation_finalize import finalize
@@ -154,6 +155,35 @@ def test_every_layered_mcp_tool_requires_exact_session_routing_argument():
         schema = tool['inputSchema']
         assert 'session_id' in schema['properties']
         assert 'session_id' in schema['required']
+
+
+def test_mcp_reports_missing_session_id_without_hiding_the_error(tmp_path):
+    server = LayeredMCP(tmp_path / 'state')
+    server.dispatch({'jsonrpc': '2.0', 'id': 1, 'method': 'initialize',
+                     'params': {'protocolVersion': '2025-06-18',
+                                'clientInfo': {}, 'capabilities': {}}})
+    server.dispatch({'jsonrpc': '2.0', 'method': 'notifications/initialized'})
+    result = server.dispatch({'jsonrpc': '2.0', 'id': 2, 'method': 'tools/call',
+                              'params': {'name': 'memory_status', 'arguments': {}}})
+    assert result['result']['isError'] is True
+    assert result['result']['content'][0]['text'] == 'codex_session_id_not_injected'
+
+
+def test_existing_resident_from_another_source_is_rejected(tmp_path, monkeypatch):
+    class OtherResident:
+        def __init__(self, port, timeout):
+            pass
+
+        def request(self, command):
+            return {'implementation': '/different/source/swegca_vrs2/loopback.py'}
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(loopback_module, 'port_of', lambda state: 12345)
+    monkeypatch.setattr(loopback_module, 'LoopbackClient', OtherResident)
+    with pytest.raises(InterfaceError, match='resident_implementation_mismatch'):
+        loopback_module.ensure_daemon(tmp_path / 'state')
 
 
 def test_generated_codex_end_and_interrupt_hooks_fit_runtime_deadline(tmp_path):
