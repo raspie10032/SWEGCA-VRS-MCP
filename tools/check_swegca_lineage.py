@@ -39,7 +39,14 @@ SOURCE_ROOTS = (
 
 def git_bytes(*args: str, root: Path | None = None) -> bytes:
     command = ("git", "-C", str(root), *args) if root else ("git", *args)
-    return subprocess.check_output(command, stderr=subprocess.DEVNULL)
+    environment = os.environ.copy()
+    if root is not None:
+        # A Git hook exports GIT_DIR/GIT_WORK_TREE for this worktree. Those
+        # variables would redirect even `git -C <author repo>` to this repo.
+        for name in tuple(environment):
+            if name.startswith("GIT_"):
+                environment.pop(name)
+    return subprocess.check_output(command, stderr=subprocess.DEVNULL, env=environment)
 
 
 def staged_paths() -> list[str]:
@@ -173,6 +180,13 @@ def definition_positions(code: str) -> list[int]:
             continue
         tail = prefix[close + 1:]
         if ";" in tail or "{" in tail or "}" in tail:
+            continue
+        # Reject braced value initializers such as std::byte{0} and
+        # Json(Json::Array{}); they follow a call but are not definitions.
+        if not re.fullmatch(
+            r"\s*(?:(?:const|noexcept|override|final)\s*)*"
+            r"(?:->\s*[\w:<>, *&]+\s*)?", tail
+        ):
             continue
         # Ignore macro declarations and class/namespace openers.
         if re.search(r"\b(?:class|struct|namespace|enum)\s+[^{};]*$", prefix):
