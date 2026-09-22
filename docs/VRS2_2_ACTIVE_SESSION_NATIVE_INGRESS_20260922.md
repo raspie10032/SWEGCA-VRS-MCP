@@ -229,7 +229,9 @@ on a user-manager restart. Its replacement is the enabled user unit
 and a task-owned deployment wrapper under the installed runtime's `deploy/`
 directory. `systemd-analyze --user verify` and Python syntax checks passed.
 The unit is active with a live wrapper and child handoff process, a 4 GiB
-memory limit and zero swap. `ConditionPathExists` binds startup to the armed
+memory limit, zero swap and an enforced 625 MB/s read/write cgroup limit on
+the state device (`io.max` reports `259:3 rbps=625000000 wbps=625000000`).
+`ConditionPathExists` binds startup to the armed
 handoff marker. The child still requires the durable SessionEnd marker before
 it can touch live main; there is currently no such marker, the old MCP config
 is unchanged and no native live main exists. After a successful handoff and
