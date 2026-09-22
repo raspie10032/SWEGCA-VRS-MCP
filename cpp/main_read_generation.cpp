@@ -25,6 +25,7 @@ MainReadGeneration::MainReadGeneration(
     std::shared_ptr<const NativeCueDirectory> proposition_addresses,
     std::shared_ptr<const NativeCueDirectory> successor_addresses,
     std::shared_ptr<const NativeCueDirectory> source_addresses,
+    std::shared_ptr<const NativeOperationDirectory> operations,
     std::int64_t published_row_limit)
     // SWEGCA: src/swegca_vrs2/store.py@7536139:371-405
     : pair_(std::move(pair)), inputs_(std::move(inputs)),
@@ -37,12 +38,14 @@ MainReadGeneration::MainReadGeneration(
       proposition_addresses_(std::move(proposition_addresses)),
       successor_addresses_(std::move(successor_addresses)),
       source_addresses_(std::move(source_addresses)),
+      operations_(std::move(operations)),
       // SWEGCA: src/swegca_vrs2/store.py@7536139:371-405
       published_row_limit_(published_row_limit) {
     if (!pair_ || !inputs_ || !nodes_ || !regions_ || !associations_ ||
         !auxiliary_ ||
         !journal_ || !original_addresses_ || !cue_addresses_ ||
-        !proposition_addresses_ || !successor_addresses_ || !source_addresses_)
+        !proposition_addresses_ || !successor_addresses_ ||
+        !source_addresses_ || !operations_)
         throw std::runtime_error("complete Main read generation required");
     const std::array<const NativeCueDirectory*, 4> directories{
         cue_addresses_.get(), proposition_addresses_.get(),
@@ -76,6 +79,7 @@ MainReadGeneration::MainReadGeneration(
     const auto proposition_publication = proposition_addresses_->publication();
     const auto successor_publication = successor_addresses_->publication();
     const auto source_publication = source_addresses_->publication();
+    const auto operation_publication = operations_->publication();
     if (!original_addresses_->published_reader() || published_row_limit_ < 0 ||
         static_cast<std::uint64_t>(published_row_limit_) > journal_->row_count() ||
         journal_->generation() != original_addresses_->journal_generation() ||
@@ -108,6 +112,12 @@ MainReadGeneration::MainReadGeneration(
         source_publication->published_rows != published_row_limit_ ||
         source_publication->pair_snapshot_id != pair_->snapshot_id())
         throw std::runtime_error("Main source read generation changed");
+    if (!operations_->published_reader() || !operation_publication ||
+        operations_->journal_generation() != journal_->generation() ||
+        operation_publication->journal_generation != journal_->generation() ||
+        operation_publication->published_rows != published_row_limit_ ||
+        operation_publication->pair_snapshot_id != pair_->snapshot_id())
+        throw std::runtime_error("Main operation read generation changed");
 }
 
 // SWEGCA: user@2026-09-22:13-21

@@ -190,14 +190,23 @@ sync so older published row limits keep a durable prior head.
 The Main operation overlay now checks request ID and normalized observation
 fingerprint before any new HotIndex/Graph candidate is staged. Identical
 requests retain their original episode and pair certificate; conflicting
-reuse invalidates the unpublished transaction. Its physical operation
-directory and the Main commit coordinator are still missing.
+reuse invalidates the unpublished transaction. A native operation directory
+now stores exact request keys, fingerprints, optional original addresses,
+historical pair certificates, and journal sequence in SWEGCA-style digest
+prefix and graduated slot tiers. A 16-worker, journal-ordered rebuild
+validates every typed row before deriving these certificates; duplicate
+request IDs fail closed. Main's pinned generation now requires the operation
+directory to share its journal generation, published row limit, and pair
+certificate. Publication still needs the Main commit/recovery coordinator
+to verify the final pair and bind it with the other directories.
+The directory code has not been built or product-tested.
 The pair ID is the author's SHA-256 of canonical schema version, memory
 snapshot ID, and VRS snapshot ID. The owner may replace that immutable pair
 only if its expected current ID still matches, and only after the corresponding
 journal commit. `MainReadGeneration` now retains the pair together with the
 validated numerical input, node and region directories, coactivation index,
-portal state, native journal read view, exact original address and four posting readers, and
+portal state, native journal read view, exact original address, four posting readers,
+the native operation directory, and
 published row limit. Construction rejects VRS and original-source binding
 mismatches before one CAS owner can expose the bundle. The four-stage path now
 opens the selected original through that exact native address; conflicting

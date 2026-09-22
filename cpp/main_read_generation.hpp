@@ -2,6 +2,7 @@
 
 #include "graph_auxiliary_generation.hpp"
 #include "native_cue_directory.hpp"
+#include "native_operation_directory.hpp"
 #include "session_first_read.hpp"
 
 #include <memory>
@@ -31,11 +32,16 @@ public:
         std::shared_ptr<const NativeCueDirectory> proposition_addresses,
         std::shared_ptr<const NativeCueDirectory> successor_addresses,
         std::shared_ptr<const NativeCueDirectory> source_addresses,
+        std::shared_ptr<const NativeOperationDirectory> operations,
         std::int64_t published_row_limit);
 
     // SWEGCA: src/swegca_vrs2/engine/mosaic_memory_activation.py@7536139:113-135
     [[nodiscard]] const FullCurrentMemoryVrsSnapshot& pair() const { return *pair_; }
     [[nodiscard]] PinnedReadLayer layer() const;
+    // SWEGCA: src/swegca_vrs2/store.py@7536139:378-399
+    [[nodiscard]] const NativeOperationDirectory& operations() const {
+        return *operations_;
+    }
 
 private:
     std::shared_ptr<const FullCurrentMemoryVrsSnapshot> pair_;
@@ -52,6 +58,7 @@ private:
     std::shared_ptr<const NativeCueDirectory> proposition_addresses_;
     std::shared_ptr<const NativeCueDirectory> successor_addresses_;
     std::shared_ptr<const NativeCueDirectory> source_addresses_;
+    std::shared_ptr<const NativeOperationDirectory> operations_;
     std::int64_t published_row_limit_;
 };
 
