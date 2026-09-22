@@ -1,0 +1,117 @@
+# SWEGCA VRS-MCP full rebuild contract
+
+This document is the implementation map for a new VRS-MCP runtime. It is not
+an acceptance report. The previous Python runtime remains a reference until
+the new runtime has replaced every product entry point. A passing old test is
+not evidence that the new architecture is complete.
+
+## Authority and experience
+
+The public SWEGCA specification at
+`SWEGCA-Architecture/paper/swegca/ARCHITECTURE_SPEC.md` defines one main owner,
+status-unfiltered addressable experience, evidence-gated decisions, explicit
+authority domains, and reversible persistent mutations. For this memory MCP,
+the main owner alone owns identity, VRS generations, original experiences,
+source/revision lineage, current evidence judgments, and attachment of ended
+sessions. MCP transport, host hooks, workers, and a language model are
+producers or readers; they cannot turn a retrieved record into truth or an
+action permission. No internal language-model call belongs in this runtime.
+
+Every admitted host-visible record is an observation in a native session VRS
+generation with its exact source address and uncertainty. The transcript is an
+ingress stream, never a recall store. During an active session, Déjà vu reads
+that session VRS first. Only empty session `matched_cues` at Déjà vu
+opens the long-term main. Session VRS shards become main-owned only after the
+host's real `SessionEnd`; idle time and `Interrupt` cannot attach them.
+
+## One read path
+
+The host input enters Déjà vu first. Déjà vu is the fast memory key and may
+expose familiarity but no original episode identity. The author's weighted
+region preactivation, coactivation witness query, portal plan, and first local
+navigation cue page follow Déjà vu. Recall uses matched and navigation cues
+to retain every candidate address selected by the author's rules. The portal
+route is not a transitive graph sweep and deferred regions remain visible.
+No fixed top-K may remove Recall addresses.
+
+Replay opens the first selected current original, preserving source, revision,
+historical outcome, uncertainty, and exact content. Re-evidence judges that
+Replay against the current VRS generation. Only a detected relevant conflict
+opens opposing original experiences. Unverified, negative, failed, and
+superseded records stay addressable; their availability grants no authority.
+The selected Replay set is smaller than the complete Recall candidate set.
+The full result stays in `memory_selection` beside the four-stage receipt.
+Inside the receipt, Recall, Replay, and Re-evidence have the same opened
+original rows in the same order, preserving the author's identity checks.
+
+The measured latency boundary is **user input through completed Déjà vu,
+navigation, and Recall < 1 ms**, with Déjà vu as the first memory-store
+operation. First Recall entry, whole MCP response, and Replay latency are
+separate diagnostics. A cold Replay read
+cannot be substituted for this boundary. The limit must be checked as main
+size grows; one small-source timing cannot prove it.
+
+## Storage, scale, and implementation
+
+The native journal is the source of truth, with checksummed frames and
+generation binding. A checkpoint and all cue/proposition/region/read indices
+are derived and rebuildable. Each shard must retain original addresses,
+numerical event state, evidence decisions, regions, memberships, portals,
+and coactivation lineage. After SessionEnd, an atomic native journal link
+transfers session-shard ownership; background replay of those already admitted
+VRS observations through the author's main `ingest`/`Graph.append` path then
+integrates them into the main generation. Original session journals remain.
+Neither step may run during an active session or use transcripts for Recall.
+
+The runtime has no SQLite, Hermes, prebuilt wheel, or external replacement
+memory logic. The implementation target is C++ source. Resource gates are
+4 GB resident memory, 5 Gbit/s assumed SSD bandwidth, and exactly
+500,000,000,000 bytes maximum allocated storage. Consolidation must use the
+available 16-thread CPU without serializing all independent shard work.
+The user's billion-parameter unit has not been defined in the current VRS
+code, so no record/edge/byte count may be reported as that target.
+
+## Replacement map
+
+| Current product area | New owner or boundary | Required preservation |
+| --- | --- | --- |
+| `session_capture`, `conversation_*`, `codex_hooks` | Host ingress and session lifecycle | Every host-visible record, stable addresses, live session VRS, real SessionEnd attachment |
+| `layered`, `server`, `native_memory`, `native_context`, `native_transport`, `loopback` | Thin MCP transport over one main read path | Session-first order, exact IDs, bounded output pages, no transport authority |
+| `store`, `native_journal`, `native_lock`, `resident`, `linked_shards` | One main owner and native generations | Original lineage, atomic publish, complete shards, journal recovery |
+| `compact_index`, `cue_shards`, `exact_replay`, `read_projection`, `projected_recall` | Derived address and read projections | No source-of-truth duplication; full Recall addresses; selected original Replay |
+| `flat_vrs`, `fast_regions`, `vrs_refine`, `vrs_evidence`, `engine/mosaic_vrs_*` | Main-owned numerical SWEGCA VRS | Event arithmetic, evidence, fine regions, memberships, shared-experience portals, parallel consolidation |
+| `engine/mosaic_memory_activation`, `engine/mosaic_proposition_directory`, `engine/mosaic_semantic_family_directory` | One four-stage activation | Déjà vu first, Recall closure, Replay selection, Re-evidence provenance and conflict |
+
+Every product entry point and every source file must be either replaced by a
+new implementation with the same required role or shown to be non-product
+historical material. No old implementation may remain reachable as a silent
+fallback. The new C++ sources will be introduced separately, then product
+entry points will switch together after this map is exhausted.
+
+## Confirmed defects in the old path
+
+1. The public `Main` uses `_generation`, `owner`, and `_region_binding`; the
+   copied author portal and coactivation controllers expect `_owner`,
+   `_runtime`, `_lock`, and `_vrs_region_binding`. Those controllers are not
+   wired to the public main. The author portal activator is not reached by
+   current product entry points.
+2. The normal product recall builds some region/portal path descriptions after
+   it has already built Recall candidates. That cannot prove these structures
+   selected the addresses.
+3. `mosaic_paper_vrs_generation_rebind` and
+   `mosaic_vrs_nodeset_membership_cache` are imported by product source but
+   absent. The first-party import verifier correctly fails.
+4. The current installed Codex hook configuration still uses an older prompt
+   command instead of the connected `memory_prompt` source path. Source code
+   and installed behavior are separate evidence.
+5. `native_context.memory_context` requires matching receipt Recall, Replay,
+   and judgment identities. The new path must preserve this check by keeping
+   only opened originals in the receipt and full Recall addresses in a
+   separate `memory_selection` result.
+6. An old hook test expects four original Replay rows for four packet slots.
+   The current rule opens one selected original unless conflict requires more.
+   The test must be reworked without weakening the receipt identity check.
+
+These are observed defects and design constraints, not a claim that all other
+defects have been found. Do not run the old or new test suite as an acceptance
+signal before the replacement map and code are complete.
