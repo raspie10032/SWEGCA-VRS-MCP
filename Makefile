@@ -3,7 +3,7 @@ AR ?= ar
 CXXFLAGS ?= -O2 -g -std=c++20 -Wall -Wextra -Wpedantic
 NUMERIC_CXXFLAGS = -ffp-contract=off -fno-fast-math
 
-CORE_OBJECTS = build/digest.o build/json.o build/unicode.o build/keys.o build/observation.o build/memory_episode.o build/memory_evidence.o build/memory_promotion.o build/vrs_state_update.o build/hot_index.o build/hot_index_pending.o build/memory_vrs_pair.o build/deja_vu.o build/memory_recall.o build/memory_receipt.o build/event_vrs_inputs.o build/endpoint_segments.o build/event_delta.o build/python_fsum.o build/event_vrs_kernel.o build/event_signal_strength.o build/event_signal.o build/graph_append.o build/connectivity_regions.o build/graph_regions.o build/journal_frame.o build/journal_files.o build/owner_lock.o build/native_journal.o
+CORE_OBJECTS = build/digest.o build/json.o build/unicode.o build/keys.o build/observation.o build/memory_episode.o build/memory_evidence.o build/memory_promotion.o build/vrs_state_update.o build/hot_index.o build/hot_index_pending.o build/memory_vrs_pair.o build/deja_vu.o build/memory_recall.o build/memory_receipt.o build/event_vrs_inputs.o build/endpoint_segments.o build/event_delta.o build/python_fsum.o build/event_vrs_kernel.o build/event_signal_strength.o build/event_signal.o build/graph_append.o build/connectivity_regions.o build/graph_regions.o build/region_preactivation.o build/region_navigation.o build/journal_frame.o build/journal_files.o build/owner_lock.o build/native_journal.o
 
 .PHONY: all clean
 all: build/libswegca-vrs.a
@@ -85,6 +85,12 @@ build/connectivity_regions.o: cpp/connectivity_regions.cpp cpp/connectivity_regi
 
 build/graph_regions.o: cpp/graph_regions.cpp cpp/graph_regions.hpp cpp/connectivity_regions.hpp cpp/graph_append.hpp cpp/memory_vrs_pair.hpp cpp/python_fsum.hpp cpp/json.hpp | build
 	$(CXX) $(CXXFLAGS) $(NUMERIC_CXXFLAGS) -Icpp -c $< -o $@
+
+build/region_preactivation.o: cpp/region_preactivation.cpp cpp/region_preactivation.hpp cpp/graph_regions.hpp cpp/deja_vu.hpp cpp/python_fsum.hpp | build
+	$(CXX) $(CXXFLAGS) $(NUMERIC_CXXFLAGS) -Icpp -c $< -o $@
+
+build/region_navigation.o: cpp/region_navigation.cpp cpp/region_navigation.hpp cpp/graph_regions.hpp cpp/connectivity_regions.hpp | build
+	$(CXX) $(CXXFLAGS) -Icpp -c $< -o $@
 
 build/journal_frame.o: cpp/journal_frame.cpp cpp/journal_frame.hpp cpp/json.hpp cpp/digest.hpp | build
 	$(CXX) $(CXXFLAGS) -Icpp -c $< -o $@

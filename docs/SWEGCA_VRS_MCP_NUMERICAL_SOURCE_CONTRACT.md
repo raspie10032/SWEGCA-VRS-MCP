@@ -59,7 +59,7 @@ work, and exhausted rounds return that work as pending. Its sparse maps and
 per-node edge lists still need a bounded physical representation for the
 4 GB product gate. It is not Graph.append, settlement publication, region
 construction, coactivation, or a timing result.
-The eight numeric translation units compile with floating-point contraction
+The nine numeric translation units compile with floating-point contraction
 disabled and fast-math disabled; otherwise fused or reassociated operations
 could change Python's separate binary64 steps before float32 rounding. These
 flags are a build contract, not a parity test.
@@ -135,6 +135,19 @@ multiple regions intersect, and the sorted result is only an address proposal
 for the ordinary four-stage read. The read directory must prove that the
 published memory and Graph belong to the same generation. This materializes
 candidate sets and has no demonstrated 4 GB bound or pre-Replay latency.
+The author portal activation at product revision `c06092a` begins with
+`preactivate_regions` after Déjà vu. The C++ component-local translation now
+maps matched literal cues to existing graph node addresses, sums overlapping
+memberships, normalizes with `fsum`, and ranks regions without reading an
+original body. It does not select a portal or measure the input-to-Recall
+boundary yet.
+The graph-adapted local navigator now validates a shared original against the
+current pair, leads with its destination-core cue nodes, and retains the
+author's seed-first cursor, bounded visits, skipped-seed accounting and
+continuation. A Graph component also contains whole-original nodes; pages
+visit those indexed terms but pass only literal `cue:` names to Recall. Page
+completion does not claim complete memory or transitive graph search. Portal
+selection and a connected Main read route still remain to be written.
 The C++ endpoint segment index now preserves the author's stable per-segment
 sort, segment-concatenation lookup order, source-generation binding and
 geometric tail merge. That lookup order is required by `math.fsum` in the
