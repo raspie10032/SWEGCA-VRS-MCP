@@ -66,7 +66,7 @@ work, and exhausted rounds return that work as pending. Its sparse maps and
 per-node edge lists still need a bounded physical representation for the
 4 GB product gate. It is not Graph.append, settlement publication, region
 construction, coactivation, or a timing result.
-The nine numeric translation units compile with floating-point contraction
+The ten numeric translation units compile with floating-point contraction
 disabled and fast-math disabled; otherwise fused or reassociated operations
 could change Python's separate binary64 steps before float32 rounding. These
 flags are a build contract, not a parity test.
@@ -168,6 +168,15 @@ destination proposals with explicit rejection reasons. It never turns request
 count, outcome or membership into a truth score. Main-owned durable event
 admission and generation-bound index publication are not yet implemented;
 the current ordered maps also lack a demonstrated 4 GB bound.
+The detached portal planner now retains source-bound keys and every witness,
+uses exact reduced request fractions `H/(H+age)`, converts each positive ratio
+to rounded binary64 before `fsum`, compares the resulting float against the
+rational minimum, keeps age and explicit revocation reasons, and selects the
+first eligible candidate in author order. This uses local C++ integer limbs,
+not a prebuilt numeric package. The policy's rational numerator and
+denominator are bounded to unsigned 64-bit storage and reject values outside
+that range; Python's arbitrary integer policy domain is wider. Numeric parity
+and the complete pre-Recall timing path remain unverified.
 The C++ endpoint segment index now preserves the author's stable per-segment
 sort, segment-concatenation lookup order, source-generation binding and
 geometric tail merge. That lookup order is required by `math.fsum` in the
