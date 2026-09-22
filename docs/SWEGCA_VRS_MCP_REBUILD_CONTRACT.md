@@ -38,6 +38,11 @@ navigation cue page follow Déjà vu. Recall uses matched and navigation cues
 to retain every candidate address selected by the author's rules. The portal
 route is not a transitive graph sweep and deferred regions remain visible.
 No fixed top-K may remove Recall addresses.
+The author `HotIndex.append` builds semantic cues from text, explicit cues,
+proposition, or source fallback. The later physical `CompactIndex.append` also
+put the episode ID into its cue vector (`compact_index.py:311-316`). The new
+ID-to-row address route stays a physical lookup, never an extra semantic cue
+in Déjà vu, navigation, Recall, or the returned original episode.
 
 Replay opens the first selected current original, preserving source, revision,
 historical outcome, uncertainty, and exact content. Re-evidence judges that
