@@ -103,6 +103,9 @@ def test_navigation_publication_uses_current_vrs_without_changing_numeric_graph(
     assert any(region.vrs_snapshot_id != numeric_graph.snapshot_id
                for region, _ in numeric_graph.regions.values())
     prepared = main.navigation_prepare()
+    repeated = main.navigation_prepare()
+    assert {component: region.topology_id for component, (region, _) in prepared.topology.items()} == {
+        component: region.topology_id for component, (region, _) in repeated.topology.items()}
     assert prepared.pair.snapshot_id == original_pair.snapshot_id
     assert prepared.pair.memory.episode(first['episode_id']) is main.memory.episode(first['episode_id'])
     assert main.graph is numeric_graph
