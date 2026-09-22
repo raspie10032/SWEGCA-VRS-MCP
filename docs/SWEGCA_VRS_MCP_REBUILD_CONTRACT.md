@@ -231,6 +231,13 @@ in that batch, resolved records receive their v0.2 direct value, and new
 edges retain base strength until later consolidation. Superseded records are
 marked unresolved, and the batch receives one graph snapshot ID and source
 receipt. `graph_batch_append.cpp` now prepares this detached batch delta.
+`main_observation_batch.cpp` now normalizes an entire observation batch,
+checks published and repeated request IDs, stages the author's HotIndex
+successor in input order, folds only newly added original fingerprints into
+that Graph batch, and calculates one pair certificate for every new journal
+row. Existing requests retain their historical pair. These are detached
+candidates: no journal append, physical index publication, or Main owner
+replacement occurs in this planner.
 The older single-record `graph_append.cpp` event-signal settlement is not the
 product ingress path; its remaining users must be rebuilt or removed before
 publication. Physical Graph node storage, Main journal commit, and batch

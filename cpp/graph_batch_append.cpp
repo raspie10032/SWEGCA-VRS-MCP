@@ -139,12 +139,12 @@ Json batch_receipt(std::string_view parent_snapshot,
 
 // SWEGCA: src/swegca_vrs2/store.py@c06092a:427-512
 GraphBatchAppendPlan plan_graph_batch_append(
-    std::span<const MemoryEpisode> episodes, std::string_view memory_snapshot,
+    std::span<const MemoryEpisode> episodes, std::string_view batch_snapshot,
     const HotIndexRead& memory, const GraphNodeDirectory& nodes,
     const ValidatedEventVrsInputs& current_inputs,
     std::string_view stable_version_id, std::uint64_t stable_edge_count,
     bool graph_substring_cues) {
-    if (episodes.empty() || memory_snapshot.empty() ||
+    if (episodes.empty() || batch_snapshot.empty() ||
         stable_version_id.empty())
         throw std::runtime_error("graph_batch_invalid");
     const auto& old = current_inputs.require_validated_immutable();
@@ -243,7 +243,7 @@ GraphBatchAppendPlan plan_graph_batch_append(
     }
     plan.changes.appended_score.assign(plan.new_nodes.size(), 0.0f);
     Json::Array identity;
-    identity.emplace_back(std::string(memory_snapshot));
+    identity.emplace_back(std::string(batch_snapshot));
     identity.emplace_back(std::string("append"));
     identity.emplace_back(episodes.size() == 1 ?
         Json(episodes.front().episode_id) : Json(std::move(identifiers)));

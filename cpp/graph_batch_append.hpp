@@ -29,7 +29,7 @@ struct GraphBatchAppendPlan {
 // Each episode sees nodes introduced by earlier episodes in this same batch.
 // SWEGCA: src/swegca_vrs2/store.py@c06092a:427-512
 [[nodiscard]] GraphBatchAppendPlan plan_graph_batch_append(
-    std::span<const MemoryEpisode> episodes, std::string_view memory_snapshot,
+    std::span<const MemoryEpisode> episodes, std::string_view batch_snapshot,
     const HotIndexRead& memory, const GraphNodeDirectory& nodes,
     const ValidatedEventVrsInputs& current_inputs,
     std::string_view stable_version_id, std::uint64_t stable_edge_count,
