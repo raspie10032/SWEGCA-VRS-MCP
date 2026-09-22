@@ -47,6 +47,14 @@ at the same path resets scanning even when the new file is not shorter. The
 session Main coordinator must implement the ingest interface before this
 scanner can commit a real experience. A streaming parser for larger single
 lines remains necessary for the full no-omission requirement.
+The C++ SessionEnd gate now records an explicit host end intent, waits for
+the live watcher to release its lock, captures a stable final tail, and asks
+the session Main owner to seal every VRS shard. It verifies each sealed
+native journal generation, published row count, last pair ID, ownership
+lock release, and in-session path before writing an ended marker. Interrupt
+has no path to this end intent. Main registry attachment and background
+integration remain separate unfinished stages; a sealed marker alone does
+not publish those experiences in Main.
 
 ## One read path
 
