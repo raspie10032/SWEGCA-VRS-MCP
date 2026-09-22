@@ -46,6 +46,14 @@ in Déjà vu, navigation, Recall, or the returned original episode.
 The author's explicit-cue posting key receives `casefold()` before insertion;
 the episode cue is then stripped and whitespace-normalized. Preserve those
 distinct values where they differ (`store.py@7536139:154-166`).
+Déjà vu normalizes and deduplicates current cues in their first-seen order,
+checks exact posting presence, and counts the exact distinct union of all
+matched posting addresses. Its signal exposes counts and matched cues, never
+experience identifiers. A compressed physical representation may calculate
+that union without decoding original bodies, but an estimate or truncated
+posting set would change the author's result. The current C++ code defines
+this read contract; no published physical index yet satisfies it, so the
+input-to-Recall latency target remains unverified.
 
 Replay opens the first selected current original, preserving source, revision,
 historical outcome, uncertainty, and exact content. Re-evidence judges that

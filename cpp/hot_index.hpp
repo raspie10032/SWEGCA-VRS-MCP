@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <map>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -46,6 +47,13 @@ public:
 class PublishedHotIndex : public HotIndexRead {
 public:
     ~PublishedHotIndex() override = default;
+    // SWEGCA: src/swegca_vrs2/engine/mosaic_memory_activation.py@7536139:254-259
+    [[nodiscard]] virtual std::uint64_t posting_count(std::string_view cue) const = 0;
+    // Exact distinct cardinality of the complete posting union. It is a
+    // physical representation of the author's set union, not a sample.
+    // SWEGCA: src/swegca_vrs2/engine/mosaic_memory_activation.py@7536139:257-259
+    [[nodiscard]] virtual std::uint64_t exact_union_count(
+        std::span<const std::string> cues) const = 0;
 };
 
 struct HotIndexSeed {
