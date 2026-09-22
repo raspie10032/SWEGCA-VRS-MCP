@@ -187,6 +187,14 @@ does not compare coefficient magnitudes across unrelated topologies. No
 Replay or Re-evidence occurs inside this prefix. Session-first selection,
 Main generation pinning, host hook dispatch and the full `<1 ms` measurement
 remain unfinished.
+The selected four-stage suffix now retains the full completed Recall in
+`memory_selection` while the activation receipt carries one selected original
+and any conflict-related opposing originals opened later. Its first Replay
+precedes the proposition opposition check and Re-evidence; a detected explicit
+conflict triggers only opposing-polarity Replay, then another Re-evidence pass.
+All three opened receipt stages retain identical episode order. This is a
+detached source path; current Main publication and host routing are still
+unfinished.
 The C++ endpoint segment index now preserves the author's stable per-segment
 sort, segment-concatenation lookup order, source-generation binding and
 geometric tail merge. That lookup order is required by `math.fsum` in the
