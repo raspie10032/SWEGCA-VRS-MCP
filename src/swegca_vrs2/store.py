@@ -1743,6 +1743,7 @@ class Main:
         ids = [c.episode_id for c in receipt.recall.candidates]
         selection = dict(candidate_counts={c: fanout[c] for c in candidates},
             selected_cues=cues, rejected_cues=tuple(c for c in candidates if c not in selected),
+            navigation_cues=navigation_cues,
             function_word_cues=tuple(c for c in selected if c not in informative),
             selection_method='all_matching_lexical_keys_and_explicit_proposition_closure',
             excluded_kinds=list(exclude_kinds or ()),

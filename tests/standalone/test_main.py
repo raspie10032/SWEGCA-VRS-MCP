@@ -355,6 +355,8 @@ def test_main_deja_vu_precedes_derived_proposition_recall(main, monkeypatch):
     result = main.recall('uniquestagecue', main.pair.snapshot_id)
     assert result['receipt']['activation'].deja_vu.triggered
     assert result['receipt']['activation'].recall.candidates
+    assert 'proposition:stage-claim' in result['memory_selection']['navigation_cues']
+    assert 'proposition:stage-claim' not in result['receipt']['activation'].deja_vu.current_cues
 
 
 def test_hot_cognition_no_disk_json_hash_network_or_model(main, monkeypatch):

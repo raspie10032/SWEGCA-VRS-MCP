@@ -494,6 +494,7 @@ class ProjectedRecall:
         ids = [row.episode_id for row in candidates]
         return dict(record_count=self.resident.logical_record_count(), receipt={'activation': receipt},
             memory_selection=dict(candidate_counts=fanout, selected_cues=activation_cues,
+                navigation_cues=activation_cues[len(selected):],
                 rejected_cues=tuple(cue for cue in query_cues if cue not in selected),
                 function_word_cues=tuple(cue for cue in selected if cue not in informative),
                 selection_method='disk_global_cues_and_proposition_closure_across_complete_vrs_shards',

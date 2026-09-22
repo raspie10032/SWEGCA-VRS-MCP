@@ -217,6 +217,7 @@ class ShardedMain:
         return dict(record_count=self.resident.logical_record_count(),
             receipt={'activation': receipt},
             memory_selection=dict(candidate_counts={identifier: 1}, selected_cues=(identifier,),
+                navigation_cues=(),
                 rejected_cues=(), function_word_cues=(),
                 selection_method='main_owned_exact_replay_capsule', excluded_kinds=list(exclude_kinds or ()),
                 closure_rule='direct original experience; proposition opponents evaluated by Re-evidence',
@@ -434,6 +435,7 @@ class ShardedMain:
                     break
         return dict(record_count=self.resident.logical_record_count(), receipt={'activation': receipt},
             memory_selection=dict(candidate_counts=fanout, selected_cues=cues,
+                navigation_cues=cues[len(selected):],
                 rejected_cues=tuple(cue for cue in query_cues if cue not in selected),
                 function_word_cues=tuple(cue for cue in selected if cue not in informative),
                 selection_method='global_cues_and_proposition_closure_across_complete_vrs_shards',
