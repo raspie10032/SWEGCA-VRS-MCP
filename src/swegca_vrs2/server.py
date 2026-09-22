@@ -29,7 +29,7 @@ INGEST = tool('memory_store',
 
 class LocalResident:
     def __init__(self, main):
-        self.main, self.sessions = main, {}
+        self.main, self.sessions, self.admissions = main, {}, {}
 
     def request(self, command, **args):
         try:
@@ -45,7 +45,11 @@ class LocalResident:
                 raise ValueError('model_profile_not_exported')
             identifier = args['request_id']
             if identifier in self.sessions:
-                raise ValueError('duplicate_memory_request')
+                if self.admissions[identifier] != (args['query'], args['expected_pair_snapshot_id']):
+                    raise ValueError('duplicate_memory_request')
+                view, pages = self.sessions[identifier]
+                return dict(status='queued', request_id=identifier, view_id=view,
+                            snapshot_id=pages.snapshot_id)
             if len(self.sessions) >= 64:
                 raise ValueError('release_existing_requests_before_admission')
             root = self.main.recall(args['query'], args['expected_pair_snapshot_id'])
@@ -55,6 +59,7 @@ class LocalResident:
                 guard=self.main._check, maximum_page_bytes=32768, maximum_page_items=16,
                 maximum_open_cursors=16)
             self.sessions[identifier] = (view, pages)
+            self.admissions[identifier] = (args['query'], args['expected_pair_snapshot_id'])
             return dict(status='queued', request_id=identifier, view_id=view, snapshot_id=pair)
         if command not in ('cognitive_dialogue_continue', 'cognitive_dialogue_evidence_open',
                            'cognitive_dialogue_evidence', 'cognitive_dialogue_release'):
@@ -66,6 +71,7 @@ class LocalResident:
         if command == 'cognitive_dialogue_release':
             pages.close()
             del self.sessions[identifier]
+            del self.admissions[identifier]
             return dict(status='released', experience_deleted=False)
         if command == 'cognitive_dialogue_continue':
             return dict(status='memory_not_pending')
@@ -85,6 +91,7 @@ class LocalResident:
         for _, pages in self.sessions.values():
             pages.close()
         self.sessions.clear()
+        self.admissions.clear()
 
 
 class StandaloneMCP(MemoryMCPServer):

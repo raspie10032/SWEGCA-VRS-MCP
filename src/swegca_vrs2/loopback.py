@@ -85,7 +85,10 @@ class LoopbackClient:
             raise InterfaceError('resident_operation_not_exported')
         payload = encode({'command': command, **arguments}) + b'\n'
         raw = b''
-        for attempt in (0, 1):
+        # A timed-out write may already have been committed by the resident.
+        # Only side-effect-free probes may be sent again automatically.
+        attempts = (0, 1) if command in ('ping', 'status') else (0,)
+        for attempt in attempts:
             try:
                 if self._connection is None:
                     self._open()
@@ -96,7 +99,7 @@ class LoopbackClient:
                 break
             except OSError:
                 self.close()
-                if attempt:
+                if attempt == attempts[-1]:
                     raise InterfaceError('resident_request_failed') from None
         result = decode(raw)
         if result.get('status') == 'rejected':
@@ -140,8 +143,10 @@ def ensure_daemon(state_dir, *, allow_ingest=True, python=None, wait_seconds=30,
         client = LoopbackClient(port, 5)
         try:
             client.request('ping')
-            return client
+            client.close()
+            return LoopbackClient(port, 45)
         except InterfaceError:
+            client.close()
             pass
     if starting_since(state_dir) is not None:
         return _wait_for_daemon(state_dir, wait_seconds)
@@ -177,8 +182,10 @@ def _wait_for_daemon(state_dir, wait_seconds):
             client = LoopbackClient(port, 5)
             try:
                 client.request('ping')
-                return client
+                client.close()
+                return LoopbackClient(port, 45)
             except InterfaceError:
+                client.close()
                 continue
     if starting_since(state_dir) is not None:
         raise DaemonStarting('resident_daemon_starting')
