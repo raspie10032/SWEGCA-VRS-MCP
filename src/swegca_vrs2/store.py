@@ -538,7 +538,10 @@ class Graph:
                     or np.any(members[local_source] != flat.src[edges])
                     or np.any(members[local_target] != flat.dst[edges])):
                 raise ValueError('component_edge_endpoint_changed')
-            source = SimpleNamespace(terms=LazyTerms(nodes, frozen(members, np.int64)),
+            if flat.count > np.iinfo(np.uint32).max:
+                raise ValueError('component_node_address_space_exhausted')
+            member_ids = frozen(members, np.uint32)
+            source = SimpleNamespace(terms=LazyTerms(nodes, member_ids),
                 edge_source=local_source, edge_target=local_target,
                 edge_sign=flat.sign[edges].astype(np.int8), vrs_strength=flat.strength[edges].astype(np.float64))
             regions, _ = build_regions(source, vrs_snapshot_id=self.snapshot_id, previous=previous)
@@ -549,7 +552,7 @@ class Graph:
             component_id = int(members[0])
             for n in members:
                 components = components.set(int(n), component_id)
-            positions = MemberPositions(frozen(members, np.uint32), flat.count)
+            positions = MemberPositions(member_ids, flat.count)
             bound_source = ComponentRegionSource(regions.terms, regions.edge_source,
                 regions.edge_target, regions.edge_sign, regions.strengths,
                 ComponentCueAddressIndex(nodes, positions))
