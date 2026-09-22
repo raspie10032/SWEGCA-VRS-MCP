@@ -13,19 +13,23 @@ from the author source at revision
 Only the directory and routing for public MCP index types were ported. Its
 source and port hashes are recorded in `NATIVE_VRS2_PORT.json`.
 
-Three first-party modules remain unresolved:
+The resident directory archive and its leaf, framed-header and header-stream
+dependencies were then ported byte-for-byte from the same source revision.
+An isolated archive round trip preserved snapshot, original observation,
+explicit proposition address and resident-size inspection.
+
+Two first-party modules remain unresolved:
 
 | Missing module | Public call site | Effect |
 | --- | --- | --- |
 | `mosaic_paper_vrs_generation_rebind` | `mosaic_compressed_memory.inherited_compression_policy`, `compress_hot_memory_index` | Generation-bound compression branches raise on import. |
-| `mosaic_resident_directory_archive` | `mosaic_compressed_memory.resident_python_bytes` | The resident-size diagnostic raises on import. |
 | `mosaic_vrs_nodeset_membership_cache` | `mosaic_vrs_membership_cache.configure_membership_cache(strategy='packed_nodes')` | Packed node membership configuration raises on import. |
 
-The author-source relative-import closure of these three modules reaches 63
+The author-source relative-import closure of these two modules reaches 59
 unported modules. That count is a dependency search result, not proof that all
 63 are required in the public product. It is unsafe to claim a complete port
 or copy the closure without tracing each public call path and its source
-contract. `tools/verify_standalone.py` now fails on the four unresolved import
+contract. `tools/verify_standalone.py` now fails on the three unresolved import
 sites instead of reporting a false PASS.
 
 The default session-first Recall route, the optional author engine/portal

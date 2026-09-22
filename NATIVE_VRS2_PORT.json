@@ -13,6 +13,38 @@
       "definitions": ["PropositionDirectory", "proposition_directories"]
     },
     {
+      "module": "mosaic_resident_directory_archive",
+      "source_commit": "3bddcb7adc8c07e21a57d8c921d312aed83270e5",
+      "source_path": "src/tinylm_slicer/mosaic_resident_directory_archive.py",
+      "source_sha256": "b35d38ea3e04784e3871c3d7318b9f63461fe26c27787db5c9627b94ed42459b",
+      "port_sha256": "b35d38ea3e04784e3871c3d7318b9f63461fe26c27787db5c9627b94ed42459b",
+      "definitions": "whole_module"
+    },
+    {
+      "module": "mosaic_resident_leaf_archive",
+      "source_commit": "3bddcb7adc8c07e21a57d8c921d312aed83270e5",
+      "source_path": "src/tinylm_slicer/mosaic_resident_leaf_archive.py",
+      "source_sha256": "efd97773639647384c00012cf613bbb2866d264f1b39f0d70374d9f28e6388db",
+      "port_sha256": "efd97773639647384c00012cf613bbb2866d264f1b39f0d70374d9f28e6388db",
+      "definitions": "whole_module"
+    },
+    {
+      "module": "mosaic_resident_framed_header",
+      "source_commit": "3bddcb7adc8c07e21a57d8c921d312aed83270e5",
+      "source_path": "src/tinylm_slicer/mosaic_resident_framed_header.py",
+      "source_sha256": "ccfce794d381b4b836cfafb73ed14a90a0c81768d3566a7bc2b4df9f62c9e99f",
+      "port_sha256": "ccfce794d381b4b836cfafb73ed14a90a0c81768d3566a7bc2b4df9f62c9e99f",
+      "definitions": "whole_module"
+    },
+    {
+      "module": "mosaic_resident_header_stream",
+      "source_commit": "3bddcb7adc8c07e21a57d8c921d312aed83270e5",
+      "source_path": "src/tinylm_slicer/mosaic_resident_header_stream.py",
+      "source_sha256": "5e944f7a234d5359efea6e87d245c8db2dcc638d437f12b0794604321e028cf5",
+      "port_sha256": "5e944f7a234d5359efea6e87d245c8db2dcc638d437f12b0794604321e028cf5",
+      "definitions": "whole_module"
+    },
+    {
       "module": "mosaic_vrs_address_index",
       "source_sha256": "7edceca917194419828845d7350f7b19a2747b19fbddd1a7ccfbf07a2be6cf56",
       "port_sha256": "7edceca917194419828845d7350f7b19a2747b19fbddd1a7ccfbf07a2be6cf56",

@@ -21,7 +21,7 @@ def verify(root):
     manifest = json.loads((root / 'NATIVE_VRS2_PORT.json').read_text(encoding='utf-8'))
     package = root / 'src/swegca_vrs2'
     files = sorted(package.rglob('*.py'))
-    assert len(files) == 61, f'product source count changed: {len(files)}'
+    assert len(files) == 65, f'product source count changed: {len(files)}'
     ported = {path.stem for path in (package / 'engine').glob('*.py')} - {'__init__'}
     declared = {row['module'] for row in manifest['records']}
     assert len(declared) == len(manifest['records'])
