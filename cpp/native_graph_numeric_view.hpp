@@ -34,6 +34,18 @@ public:
         std::vector<NativeEndpointSegment> endpoint_segments,
         OwnerLock* writer = nullptr);
 
+    // Rebase a just-prepared EventDelta successor onto its immutable pages
+    // and native endpoint segments. This prevents the sparse delta chain from
+    // becoming the resident Main representation.
+    // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_event_delta.py@7536139:170-180
+    [[nodiscard]] static std::shared_ptr<const ValidatedEventVrsInputs>
+    rebase_validated_successor(
+        NativeGraphNumericPageState state,
+        std::shared_ptr<const NativeGraphPageFile> node_file,
+        std::shared_ptr<const NativeGraphPageFile> edge_file,
+        const ValidatedEventVrsInputs& prepared_successor,
+        OwnerLock* writer = nullptr);
+
     // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_event_kernel.py@7536139:34-76
     [[nodiscard]] std::string snapshot_id() const override {
         return state_.graph_snapshot_id;

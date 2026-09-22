@@ -340,6 +340,11 @@ node and edge page files, and the disk endpoint index to the same exact
 the wrapper can escape. Reads currently open and verify a physical page on
 each field access; a generation-bound bounded page cache and manifest-driven
 recovery remain required before this view can enter the hot product path.
+After a committed batch is written, the prepared sparse successor can be
+reopened through those immutable pages and its native endpoint segments. This
+keeps the resident Main generation from retaining an ever-growing chain of
+old sparse deltas. The reopen remains unpublished until the missing Main
+coordinator certifies the corresponding map and endpoint manifest rows.
 This adapter currently reads physical address files on lookup. It is a
 source-bound correctness path, not accepted evidence for the author's
 `lookup_requires_io=False` hot property or the user-input-to-Recall <1 ms

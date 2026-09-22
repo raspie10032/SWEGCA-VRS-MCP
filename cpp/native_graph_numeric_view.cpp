@@ -64,6 +64,28 @@ NativeGraphNumericView::open_validated(
         std::shared_ptr<const EventVrsInputView>(std::move(view)));
 }
 
+// SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_event_delta.py@7536139:170-180
+std::shared_ptr<const ValidatedEventVrsInputs>
+NativeGraphNumericView::rebase_validated_successor(
+    NativeGraphNumericPageState state,
+    std::shared_ptr<const NativeGraphPageFile> node_file,
+    std::shared_ptr<const NativeGraphPageFile> edge_file,
+    const ValidatedEventVrsInputs& prepared_successor,
+    OwnerLock* writer) {
+    const auto& prepared = prepared_successor.require_validated_immutable();
+    const auto* endpoints = dynamic_cast<const NativeEndpointDependencyIndex*>(
+        &prepared.dependencies());
+    if (!endpoints || state.graph_snapshot_id != prepared.snapshot_id() ||
+        state.node_count != prepared.node_count() ||
+        state.edge_count != prepared.edge_count() ||
+        state.journal_generation != endpoints->journal_generation())
+        throw std::runtime_error("graph_numeric_rebase_source_changed");
+    return open_validated(
+        std::move(state), std::move(node_file), std::move(edge_file),
+        endpoints->directory(), endpoints->base_edge_count(),
+        endpoints->segments(), writer);
+}
+
 // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_event_kernel.py@7536139:34-76
 NativeGraphNodePage NativeGraphNumericView::node_page(
     std::uint32_t node) const {
