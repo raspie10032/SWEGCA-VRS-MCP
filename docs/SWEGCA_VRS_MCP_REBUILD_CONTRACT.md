@@ -131,6 +131,13 @@ The frame reader accepts the canonical JSON byte structure emitted by the
 sole native journal writer. It validates a complete frame before streaming
 its rows to a new main generation; it does not depend on the Python decoder's
 acceptance of alternative key order, whitespace, or extra fields.
+The C++ journal can now stream validated frame addresses and reopen one
+addressed frame for one exact sequence. These addresses are a derived read
+index, not an experience store. A renamed `head.vrsj` is resolved through the
+sequence-ordered immutable segment name after rotation; the generation,
+frame span, checksum, and row sequence are checked on the cold read. The
+episode-to-frame address join, published HotIndex, and end-to-end selected
+Replay are still missing, so this does not yet prove bounded Replay cost.
 
 The two populated SQLite stores have separate owner identities and sequence
 spaces. Export each to its own immutable native archive, recording the exact

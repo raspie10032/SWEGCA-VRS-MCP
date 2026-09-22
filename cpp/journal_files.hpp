@@ -18,6 +18,16 @@ struct JournalScan {
     std::string last_pair;
 };
 
+// A derived address into one validated native generation. It identifies a
+// frame, not a second copy of an experience or a semantic retrieval result.
+struct JournalFrameAddress {
+    std::string generation;
+    std::string file_name;
+    std::uint64_t byte_offset;
+    std::int64_t first_sequence;
+    std::int64_t last_sequence;
+};
+
 using JournalRowEmitter = std::function<void(JournalRow&&)>;
 // A producer invokes its emitter synchronously and never retains it.
 using JournalRowProducer = std::function<void(const JournalRowEmitter&)>;
@@ -38,6 +48,21 @@ void write_atomic_file(const std::filesystem::path& path,
 void visit_journal_rows_until(
     const std::filesystem::path& generation_directory,
     const std::function<bool(JournalRow&&)>& visit);
+
+// Rebuild derived frame addresses from the original journal. Each callback
+// follows validation of its frame and all preceding sequence values. The
+// caller publishes its derived index only after this entire walk succeeds.
+// SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:136-194
+void visit_journal_frame_addresses(
+    const std::filesystem::path& generation_directory,
+    const std::function<void(const JournalFrameAddress&)>& visit);
+
+// Open only the addressed frame and return exactly one original row. Its
+// generation, frame sequence span, checksum and original sequence are checked.
+// SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:136-177
+[[nodiscard]] JournalRow read_journal_row_at(
+    const std::filesystem::path& generation_directory,
+    const JournalFrameAddress& address, std::int64_t sequence);
 
 // The caller holds the single-owner lock and has scanned the current head.
 // SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:223-257

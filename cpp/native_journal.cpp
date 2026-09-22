@@ -172,6 +172,18 @@ void NativeJournal::visit_rows(std::int64_t after, std::optional<std::int64_t> u
     });
 }
 
+// SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:136-194
+void NativeJournal::visit_frame_addresses(
+    const std::function<void(const JournalFrameAddress&)>& visit) const {
+    visit_journal_frame_addresses(path_, visit);
+}
+
+// SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:136-177
+JournalRow NativeJournal::row_at(const JournalFrameAddress& address,
+                                 std::int64_t sequence) const {
+    return read_journal_row_at(path_, address, sequence);
+}
+
 // SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:216-221
 std::optional<std::string> NativeJournal::pair(std::int64_t sequence) const {
     if (sequence <= 0) return std::nullopt;

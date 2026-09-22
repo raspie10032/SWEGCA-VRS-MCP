@@ -28,6 +28,12 @@ public:
     [[nodiscard]] std::uint64_t row_count() const;
     void visit_rows(std::int64_t after, std::optional<std::int64_t> upto,
                     const std::function<void(JournalRow&&)>& visit) const;
+    // SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:136-194
+    void visit_frame_addresses(
+        const std::function<void(const JournalFrameAddress&)>& visit) const;
+    // SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:136-177
+    [[nodiscard]] JournalRow row_at(const JournalFrameAddress& address,
+                                    std::int64_t sequence) const;
     [[nodiscard]] std::optional<std::string> pair(std::int64_t sequence) const;
 
     // SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:223-247
