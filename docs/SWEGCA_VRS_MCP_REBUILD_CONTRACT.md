@@ -159,6 +159,11 @@ limit, so a newly inserted address cannot become visible through an older
 pair. This is not yet a published product index: startup recovery, journal
 head watermark reconciliation, disk quota enforcement, and Main ownership
 integration remain required before the directory may serve production reads.
+The selected-original primitive now joins the exact directory to the native
+journal and refuses a generation mismatch or a row newer than the caller's
+published limit. The concrete `PublishedHotIndex` and four-stage owner still
+need to call this primitive after their complete Recall has selected one
+original. Merely having the primitive in the library is not product wiring.
 
 The two populated SQLite stores have separate owner identities and sequence
 spaces. Export each to its own immutable native archive, recording the exact
