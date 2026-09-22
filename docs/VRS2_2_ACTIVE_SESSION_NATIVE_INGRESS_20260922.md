@@ -271,3 +271,22 @@ The measurement is
 `evals/vrs22_context/results/first_ranked_original_replay_portal_index_source_20260922.json`.
 The 1 ms all-size gate still fails. This source candidate is not the installed
 wheel or active Codex MCP, and no VRS model evaluation was started.
+
+## Natural Recall latency dissection
+
+On that same copied native state, a source `cProfile` run with 1,008 natural
+matches took 215 ms for the full four-stage call under instrumentation.
+Its cumulative hot paths were 1,008 exact capsule reads (43 ms), 1,008
+current VRS projections (42 ms), local region navigation (52 ms) and 3,024
+JSON decodes (59 ms). Cumulative figures overlap and are not additive. The
+normal uninstrumented first-ranked Replay measurement remains 98.692 ms.
+
+A separate diagnostic read the first posting for that same broad cue and then
+called the existing exact-address four-stage path. It did **not** perform
+natural Recall ranking and is not an acceptance measurement: first call
+1.728 ms, warm median 0.978 ms, warm p99 1.424 ms, and 47 of 101 calls at or
+above 1 ms under the same 4 GiB, zero-swap, 625 MB/s cgroup limits. Simply
+choosing an arbitrary first posting would therefore still fail the strict
+latency condition in this copy. The meaning of the first original relative
+to final Recall rank is pending explicit clarification; no ranking semantics
+were changed.
