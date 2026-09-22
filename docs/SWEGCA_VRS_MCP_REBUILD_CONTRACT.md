@@ -154,6 +154,13 @@ pending view. A failed pending view is never reused. This preserves the author's
 allowing a bounded physical shard implementation later. The currently added
 C++ pending view implements the row visibility part only; product publication,
 physical sharding, and performance remain unverified.
+The detached Main batch now has a native original-journal append boundary.
+It compares the parent pair and expected journal head before writing one
+checksummed batch frame. If the append became durable but rotation failed,
+an owner retry accepts it only after matching every original row and its
+single frame exactly. It does not publish the derived memory/Graph directories
+or advance the pinned read generation. The full Main commit and recovery
+coordinator is still required before this boundary is a product ingress path.
 The pending view and the native HotIndex metadata projection now derive the
 same header from the author's episode. The checksummed projection frame binds
 that header and the distinct raw posting keys to a journal sequence and pair
