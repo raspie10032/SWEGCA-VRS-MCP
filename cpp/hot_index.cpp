@@ -48,10 +48,10 @@ HotIndexAppendPlan plan_hot_index_append(const HotIndexRead& index, const Json& 
     std::optional<std::string> previous;
     if (!std::holds_alternative<std::nullptr_t>(row.at("supersedes").data)) {
         previous = row.at("supersedes").string();
-        const auto old = index.prior_episode(*previous);
+        const auto old = index.episode_header(*previous);
         if (old.source_addresses != std::vector<std::string>{row.at("source").string()} ||
             old.revision == row.at("revision").string() ||
-            index.contains_superseded(*previous))
+            index.successor_of(*previous).has_value())
             throw std::runtime_error("invalid_source_revision_successor");
     }
 
@@ -64,7 +64,8 @@ HotIndexAppendPlan plan_hot_index_append(const HotIndexRead& index, const Json& 
 
     return HotIndexAppendPlan{
         identifier, std::move(episode), std::move(posting_cues), std::move(proposition),
-        std::move(previous), next_snapshot_id(index.snapshot_id(), identifier),
+        std::move(previous), row.at("outcome").string(),
+        next_snapshot_id(index.snapshot_id(), identifier),
         index.outcome_count(row.at("outcome").string()) + 1};
 }
 

@@ -11,11 +11,15 @@
 
 namespace swegca::vrs {
 
-// Only the fields read by the author's supersedes check are needed before
-// Replay opens the original episode body.
-struct HotIndexPriorEpisode {
+// Main reads these fields for supersedes and explicit-proposition Graph updates
+// before Replay opens the original body.
+struct HotIndexEpisodeHeader {
+    std::string episode_id;
     std::vector<std::string> source_addresses;
     std::string revision;
+    std::optional<std::string> proposition_id;
+    std::optional<std::string> evidence_polarity;
+    std::optional<std::string> supersedes;
 };
 
 // The derived physical index supplies these reads. This surface does not
@@ -26,9 +30,11 @@ public:
     // SWEGCA: src/swegca_vrs2/store.py@7536139:146-153
     [[nodiscard]] virtual bool contains_episode(std::string_view identifier) const = 0;
     // SWEGCA: src/swegca_vrs2/store.py@7536139:149-153
-    [[nodiscard]] virtual HotIndexPriorEpisode prior_episode(std::string_view identifier) const = 0;
+    [[nodiscard]] virtual HotIndexEpisodeHeader episode_header(std::string_view identifier) const = 0;
+    // SWEGCA: src/swegca_vrs2/store.py@7536139:222-236
+    [[nodiscard]] virtual std::vector<std::string> proposition_ids(std::string_view proposition) const = 0;
     // SWEGCA: src/swegca_vrs2/store.py@7536139:149-153
-    [[nodiscard]] virtual bool contains_superseded(std::string_view identifier) const = 0;
+    [[nodiscard]] virtual std::optional<std::string> successor_of(std::string_view identifier) const = 0;
     // SWEGCA: src/swegca_vrs2/store.py@7536139:172-174
     [[nodiscard]] virtual std::string snapshot_id() const = 0;
     // SWEGCA: src/swegca_vrs2/store.py@7536139:174-174
@@ -51,6 +57,7 @@ struct HotIndexAppendPlan {
     std::vector<std::string> posting_cues;
     std::optional<std::string> proposition;
     std::optional<std::string> supersedes;
+    std::optional<std::string> outcome;
     std::optional<std::string> new_snapshot_id;
     std::optional<std::uint64_t> new_outcome_count;
 

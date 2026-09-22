@@ -79,6 +79,19 @@ VRS observations through the author's main `ingest`/`Graph.append` path then
 integrates them into the main generation. Original session journals remain.
 Neither step may run during an active session or use transcripts for Recall.
 
+The author's `HotIndex.append` successor is calculated against an unpublished
+view. For multiple rows, every next row sees preceding pending additions,
+deduplication, supersession links, proposition members, snapshot IDs, and
+outcome counts. `Graph.append` reads the same pending view and its original
+episode headers, including explicit proposition and polarity. A duplicate is
+a no-op for memory and Graph. Journal commit precedes public replacement of
+memory, Graph, and their bound pair; an aborted transaction discards the full
+pending view. A failed pending view is never reused. This preserves the author's
+`Main.ingest` state/commit/publication order (`store.py@7536139:371-405`) while
+allowing a bounded physical shard implementation later. The currently added
+C++ pending view implements the row visibility part only; product publication,
+physical sharding, and performance remain unverified.
+
 The existing `VRS2JNL1` frame remains the canonical journal representation:
 little-endian payload length, zlib payload, SHA-256 payload checksum, and the
 five row fields (sequence, request ID, observation envelope, fingerprint,
