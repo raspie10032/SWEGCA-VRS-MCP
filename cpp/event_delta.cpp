@@ -95,9 +95,7 @@ std::shared_ptr<const ValidatedEventVrsInputs> EventDeltaView::prepare(
     if (!generation_digest(snapshot_id))
         throw std::runtime_error("event inputs need a generation digest");
     validate_delta(original, changes);
-    const auto* old_index = dynamic_cast<const SegmentedEndpointDependencyIndex*>(
-        &original.dependencies());
-    if (!old_index) throw std::runtime_error("event dependency index type changed");
+    const auto& old_index = original.dependencies();
     auto successor = std::shared_ptr<EventDeltaView>(new EventDeltaView());
     successor->snapshot_id_ = std::move(snapshot_id);
     successor->node_count_ = original.node_count() + changes.appended_direct.size();
@@ -142,7 +140,7 @@ std::shared_ptr<const ValidatedEventVrsInputs> EventDeltaView::prepare(
         successor->strength_ = successor->strength_.with(address,
                                                           changes.appended_strength[at]);
     }
-    successor->dependencies_ = old_index->extend_verified(
+    successor->dependencies_ = old_index.extend_verified(
         *successor, std::span<const EventEdge>(changes.appended_edges));
     return std::shared_ptr<const ValidatedEventVrsInputs>(
         new ValidatedEventVrsInputs(std::move(successor), *parent,

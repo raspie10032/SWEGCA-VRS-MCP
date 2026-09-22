@@ -48,9 +48,9 @@ private:
     // endpoint/sign prefix by sharing the immutable parent, as in the author
     // prepare_event_delta path. Generic callers never bypass that check.
     // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_event_delta.py@7536139:162-169
-    [[nodiscard]] std::shared_ptr<const SegmentedEndpointDependencyIndex> extend_verified(
+    [[nodiscard]] std::shared_ptr<const EndpointDependencyIndex> extend_verified(
         const EventVrsInputView& successor,
-        std::span<const EventEdge> appended) const;
+        std::span<const EventEdge> appended) const override;
 
     // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_dependency_index.py@7536139:13-18
     [[nodiscard]] static std::shared_ptr<const Segment> make_segment(

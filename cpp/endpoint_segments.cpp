@@ -101,7 +101,7 @@ std::uint64_t SegmentedEndpointDependencyIndex::index_bytes() const {
 }
 
 // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_event_delta.py@7536139:162-169
-std::shared_ptr<const SegmentedEndpointDependencyIndex>
+std::shared_ptr<const EndpointDependencyIndex>
 SegmentedEndpointDependencyIndex::extend_verified(
     const EventVrsInputView& successor,
     std::span<const EventEdge> appended) const {

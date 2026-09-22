@@ -72,7 +72,7 @@ private:
     SparseEventRadix<std::uint8_t> unresolved_;
     SparseEventRadix<EventEdge> edge_;
     SparseEventRadix<float> strength_;
-    std::shared_ptr<const SegmentedEndpointDependencyIndex> dependencies_;
+    std::shared_ptr<const EndpointDependencyIndex> dependencies_;
 };
 
 // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_event_delta.py@7536139:117-180

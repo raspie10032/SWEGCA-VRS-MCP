@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <span>
 #include <string>
 #include <string_view>
 
@@ -36,6 +37,18 @@ public:
     // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_dependency_index.py@7536139:55-68
     virtual void visit_edges(std::uint32_t node, EndpointDirection direction,
                              const std::function<void(std::uint32_t)>& visit) const = 0;
+
+protected:
+    // Only EventDeltaView may advance a dependency directory: that constructor
+    // shares the immutable parent endpoint/sign prefix and has validated the
+    // appended edges. Physical directories can preserve the same source
+    // segment order without being a SegmentedEndpointDependencyIndex.
+    // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_event_delta.py@7536139:157-169
+    [[nodiscard]] virtual std::shared_ptr<const EndpointDependencyIndex> extend_verified(
+        const EventVrsInputView& successor,
+        std::span<const EventEdge> appended) const = 0;
+
+    friend class EventDeltaView;
 };
 
 // Published storage supplies immutable numeric reads. Exact file/mapping

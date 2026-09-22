@@ -285,9 +285,19 @@ candidates: no journal append, physical index publication, or Main owner
 replacement occurs in this planner.
 The older single-record `graph_append.cpp` event-signal settlement is not the
 product ingress path; its remaining users must be rebuilt or removed before
-publication. Physical Graph node storage, Main journal commit, and batch
-replay binding remain unfinished. This source path has not been built or
-parity-tested.
+publication. Main batch journal commit and source-bound Graph node application
+are present as separate primitives. The complete Main commit/recovery owner,
+physical Graph numerical and dependency stores, and batch replay publication
+remain unfinished. This source path has not been built or parity-tested.
+`EventDeltaView` now asks the source-bound dependency interface to advance its
+verified immutable endpoint/sign prefix. It no longer requires the in-memory
+`SegmentedEndpointDependencyIndex` concrete type. The source segment order
+remains the contract; a physical disk directory has not yet been installed.
+The native numerical node/edge record codec now fixes little-endian field
+widths, bit-preserved float32 values, separate edge base/current strengths,
+and record checksums. It rejects invalid values on both encode and decode.
+No page directory, versioned edit lookup, or publication exists yet, so this
+codec alone cannot serve a Graph generation or prove the 4 GB constraint.
 This adapter currently reads physical address files on lookup. It is a
 source-bound correctness path, not accepted evidence for the author's
 `lookup_requires_io=False` hot property or the user-input-to-Recall <1 ms
