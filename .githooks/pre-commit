@@ -1,0 +1,4 @@
+#!/bin/sh
+# Run with: git -c core.hooksPath=.githooks commit ...
+set -eu
+exec python3 tools/check_swegca_lineage.py --staged
