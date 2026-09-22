@@ -172,6 +172,53 @@ def test_codex_prompt_and_resume_hooks_expose_exact_session_id(tmp_path, monkeyp
         assert 'session_id to exactly "exact-session"' in output['additionalContext']
 
 
+def test_user_prompt_hook_recalls_session_experience_before_model_dispatch(tmp_path, monkeypatch):
+    state, transcript, session = tmp_path / 'state', tmp_path / 'rollout.jsonl', 'prompt-session'
+    write_transcript(transcript, session, [])
+    capture = SessionCapture(state)
+    session_state = capture.session_root('codex', session)
+    try:
+        with VRSClient(session_state, writes=True) as client:
+            client.ingest_many([dict(request_id='prior-experience',
+                text='데자뷰 훅 입력 즉시 과거 경험', source='session:prior',
+                revision='1', outcome='pending')])
+        monkeypatch.setattr('swegca_vrs2.conversation_watch.schedule', lambda *args: 1)
+        result = handle('codex', state, dict(hook_event_name='UserPromptSubmit',
+            session_id=session, transcript_path=str(transcript),
+            prompt='데자뷰 훅 입력'))
+        context = result['hookSpecificOutput']['additionalContext']
+        assert '"memory_layer":"session"' in context
+        assert 'session:prior' in context
+        assert '과거 경험' in context
+        assert '"fallback_used":false' in context
+        assert not engine_recall_active(session_state)
+    finally:
+        stop(session_state)
+
+
+def test_user_prompt_hook_falls_back_to_main_only_after_session_miss(tmp_path, monkeypatch):
+    state, transcript, session = tmp_path / 'state', tmp_path / 'rollout.jsonl', 'prompt-fallback'
+    write_transcript(transcript, session, [])
+    main = Main(state, allow_ingest=True)
+    main.ingest(dict(request_id='durable-experience', text='고유 메인 기억 경로',
+                     source='main:prior', revision='1', outcome='pending'))
+    main.close()
+    capture = SessionCapture(state)
+    session_state = capture.session_root('codex', session)
+    try:
+        monkeypatch.setattr('swegca_vrs2.conversation_watch.schedule', lambda *args: 1)
+        result = handle('codex', state, dict(hook_event_name='UserPromptSubmit',
+            session_id=session, transcript_path=str(transcript),
+            prompt='고유 메인 기억'))
+        context = result['hookSpecificOutput']['additionalContext']
+        assert '"memory_layer":"main"' in context
+        assert 'main:prior' in context
+        assert '"fallback_used":true' in context
+        assert not engine_recall_active(session_state)
+    finally:
+        stop(session_state, state)
+
+
 def test_every_layered_mcp_tool_requires_exact_session_routing_argument():
     for tool in LAYERED_MEMORY_TOOLS:
         schema = tool['inputSchema']
