@@ -46,6 +46,12 @@ float32 rounding, pending rounds, Graph.append, regions, coactivation and
 portal lifecycle are not implemented by that boundary. A future physical
 view must prove immutable backing and preserve the packed native edge layout;
 `EventEdge` is a logical value, not an on-disk `sizeof` format.
+The event kernel's two incoming sums use Python `math.fsum`, so the C++
+arithmetic helper follows CPython 3.12.7 `Modules/mathmodule.c:1289-1363`
+(partial expansion and final half-even correction) for finite event terms.
+That source port is not numerical-parity evidence until the complete graph
+path can be built and checked against pinned author cases. Ordinary `double`
+accumulation would not preserve the author's specified rounding order.
 
 Existing VRS 2.2 pair certificates and numerical arrays are historical
 evidence. A new source implementation must account for their lineage and
