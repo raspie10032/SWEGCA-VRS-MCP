@@ -296,4 +296,18 @@ void visit_journal_frame(std::span<const std::byte> frame,
     inflate_rows(payload, &visit);
 }
 
+// SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:206-221
+bool visit_journal_frame_until(std::span<const std::byte> frame,
+                               const std::function<bool(JournalRow&&)>& visit) {
+    struct StopVisit {};
+    try {
+        visit_journal_frame(frame, [&](JournalRow&& row) {
+            if (!visit(std::move(row))) throw StopVisit{};
+        });
+    } catch (const StopVisit&) {
+        return false;
+    }
+    return true;
+}
+
 }  // namespace swegca::vrs

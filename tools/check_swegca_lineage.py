@@ -67,6 +67,8 @@ def author_blob(reference: str) -> bytes | None:
     for root in SOURCE_ROOTS:
         try:
             paths = git_bytes("ls-tree", "-r", "--name-only", commit, root=root).decode().splitlines()
+            if source in paths:
+                return git_bytes("show", f"{commit}:{source}", root=root)
             matches = [path for path in paths if path == source or path.endswith("/" + source)]
             if len(matches) == 1:
                 return git_bytes("show", f"{commit}:{matches[0]}", root=root)

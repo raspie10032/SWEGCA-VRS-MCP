@@ -130,8 +130,15 @@ private:
     int descriptor_;
 };
 
+}  // namespace
+
 // SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:49-62
-void atomic_head_magic(const std::filesystem::path& path) {
+void write_atomic_file(const std::filesystem::path& path,
+                       std::span<const std::byte> bytes) {
+    if (std::filesystem::create_directories(path.parent_path()))
+        std::filesystem::permissions(path.parent_path(),
+            std::filesystem::perms::owner_all,
+            std::filesystem::perm_options::replace);
     std::random_device random;
     const auto temporary = path.parent_path() /
         ("." + path.filename().string() + "-" + std::to_string(random()) +
@@ -145,7 +152,7 @@ void atomic_head_magic(const std::filesystem::path& path) {
     if (raw_descriptor < 0) throw std::runtime_error("native_vrs_head_create_failed");
     NativeDescriptor descriptor(raw_descriptor);
     try {
-        write_all(descriptor.get(), std::as_bytes(std::span(file_magic)));
+        write_all(descriptor.get(), bytes);
         descriptor.sync();
         descriptor.close_now();
         std::filesystem::rename(temporary, path);
@@ -155,6 +162,13 @@ void atomic_head_magic(const std::filesystem::path& path) {
         std::filesystem::remove(temporary, ignored);
         throw;
     }
+}
+
+namespace {
+
+// SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:49-62
+void atomic_head_magic(const std::filesystem::path& path) {
+    write_atomic_file(path, std::as_bytes(std::span(file_magic)));
 }
 
 // SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:235-242
@@ -191,8 +205,8 @@ std::uint64_t frame_length(const std::array<char, header_bytes>& header) {
 }
 
 // SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:137-177
-void visit_file(const std::filesystem::path& path, bool repair,
-                const std::function<void(JournalRow&&)>& visit) {
+bool visit_file(const std::filesystem::path& path, bool repair,
+                const std::function<bool(JournalRow&&)>& visit) {
     std::ifstream stream(path, std::ios::binary);
     if (!stream) throw std::runtime_error("native_vrs_journal_magic_invalid");
     std::array<char, magic_bytes> magic{};
@@ -228,9 +242,10 @@ void visit_file(const std::filesystem::path& path, bool repair,
             durable_truncate(path, valid_end);
             break;
         }
-        visit_journal_frame(frame, visit);
+        if (!visit_journal_frame_until(frame, visit)) return false;
         valid_end += frame.size();
     }
+    return true;
 }
 
 // SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:179-181
@@ -257,7 +272,7 @@ JournalScan visit_journal_files(const std::filesystem::path& generation_director
     const auto files = ordered_files(generation_directory);
     for (std::size_t i = 0; i < files.size(); ++i) {
         const bool repair = repair_head_tail && i + 1 == files.size();
-        visit_file(files[i], repair, [&](JournalRow&& row) {
+        (void)visit_file(files[i], repair, [&](JournalRow&& row) {
             if (row.sequence != expected)
                 throw std::runtime_error("native_vrs_sequence_invalid");
             ++expected;
@@ -265,9 +280,26 @@ JournalScan visit_journal_files(const std::filesystem::path& generation_director
             scan.last_sequence = row.sequence;
             scan.last_pair = row.pair_id;
             visit(std::move(row));
+            return true;
         });
     }
     return scan;
+}
+
+// SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:179-221
+void visit_journal_rows_until(
+    const std::filesystem::path& generation_directory,
+    const std::function<bool(JournalRow&&)>& visit) {
+    std::int64_t expected = 1;
+    for (const auto& file : ordered_files(generation_directory)) {
+        const bool completed = visit_file(file, false, [&](JournalRow&& row) {
+            if (row.sequence != expected)
+                throw std::runtime_error("native_vrs_sequence_invalid");
+            ++expected;
+            return visit(std::move(row));
+        });
+        if (!completed) return;
+    }
 }
 
 // SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:223-257

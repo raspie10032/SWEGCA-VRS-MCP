@@ -37,4 +37,11 @@ struct PendingJournalRow {
 void visit_journal_frame(std::span<const std::byte> frame,
                          const std::function<void(JournalRow&&)>& visit);
 
+// A complete frame is validated first. The second inflation pass can stop
+// after the requested row, as the author's rows(after, upto) generator does.
+// SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:206-221
+[[nodiscard]] bool visit_journal_frame_until(
+    std::span<const std::byte> frame,
+    const std::function<bool(JournalRow&&)>& visit);
+
 }  // namespace swegca::vrs
