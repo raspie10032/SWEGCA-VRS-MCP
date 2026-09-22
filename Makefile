@@ -2,7 +2,7 @@ CXX ?= g++
 AR ?= ar
 CXXFLAGS ?= -O2 -g -std=c++20 -Wall -Wextra -Wpedantic
 
-CORE_OBJECTS = build/digest.o build/json.o build/unicode.o build/keys.o build/observation.o build/memory_episode.o build/journal_frame.o build/journal_files.o build/owner_lock.o build/native_journal.o
+CORE_OBJECTS = build/digest.o build/json.o build/unicode.o build/keys.o build/observation.o build/memory_episode.o build/memory_evidence.o build/journal_frame.o build/journal_files.o build/owner_lock.o build/native_journal.o
 
 .PHONY: all clean
 all: build/libswegca-vrs.a
@@ -26,6 +26,9 @@ build/observation.o: cpp/observation.cpp cpp/observation.hpp cpp/json.hpp cpp/un
 	$(CXX) $(CXXFLAGS) -Icpp -c $< -o $@
 
 build/memory_episode.o: cpp/memory_episode.cpp cpp/memory_episode.hpp cpp/keys.hpp cpp/unicode.hpp cpp/json.hpp cpp/digest.hpp | build
+	$(CXX) $(CXXFLAGS) -Icpp -c $< -o $@
+
+build/memory_evidence.o: cpp/memory_evidence.cpp cpp/memory_evidence.hpp cpp/memory_episode.hpp cpp/unicode.hpp | build
 	$(CXX) $(CXXFLAGS) -Icpp -c $< -o $@
 
 build/journal_frame.o: cpp/journal_frame.cpp cpp/journal_frame.hpp cpp/json.hpp cpp/digest.hpp | build
