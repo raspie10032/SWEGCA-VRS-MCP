@@ -18,6 +18,12 @@ struct MainMemoryProjectionAppendCount {
     std::uint64_t duplicate_originals;
 };
 
+// Fold only added originals through the author's HotIndex snapshot and
+// outcome-count recurrence. A duplicate original changes neither value.
+// SWEGCA: src/swegca_vrs2/store.py@7536139:145-175
+[[nodiscard]] HotIndexSeed prepare_main_memory_seed(
+    const MainObservationBatchPlan& plan, const HotIndexRead& published_memory);
+
 // Apply one already durable observation frame to unpublished or row-limited
 // derived directories. Each original, raw posting, and request certificate
 // stays bound to its exact journal row. Main publishes no reader here.

@@ -171,6 +171,11 @@ same first journal address; all postings and operation certificates retain
 their row sequence. This path only prepares row-limited derived state. The
 Graph node and numerical stores, publication coordinator, and crash rebuild
 remain necessary before any new Main read generation becomes visible.
+The live Main memory seed now folds only newly added originals through the
+author's snapshot recurrence and six outcome counts, checking every planned
+successor against the pinned parent pair. Duplicate originals leave both
+values unchanged. This seed is prepared for the future published HotIndex;
+it does not itself publish the incomplete Main generation.
 The pending view and the native HotIndex metadata projection now derive the
 same header from the author's episode. The checksummed projection frame binds
 that header and the distinct raw posting keys to a journal sequence and pair

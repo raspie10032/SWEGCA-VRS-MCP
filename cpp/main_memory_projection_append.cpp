@@ -8,6 +8,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -114,6 +115,42 @@ void append_original_postings(const HotIndexProjectionRow& projection,
 }
 
 }  // namespace
+
+// SWEGCA: src/swegca_vrs2/store.py@7536139:145-175
+HotIndexSeed prepare_main_memory_seed(
+    const MainObservationBatchPlan& plan, const HotIndexRead& published_memory) {
+    const auto& parent_graph = plan.graph ?
+        plan.graph->parent_snapshot_id : plan.graph_snapshot_id;
+    if (published_memory.snapshot_id().empty() ||
+        full_current_pair_snapshot_id(published_memory.snapshot_id(),
+                                      parent_graph) != plan.parent_pair_id)
+        throw std::runtime_error("main_memory_seed_parent_changed");
+    constexpr std::array<std::string_view, 6> outcomes{
+        "success", "failure", "negative", "uncertain", "conflict", "pending"};
+    HotIndexSeed seed;
+    seed.snapshot_id = published_memory.snapshot_id();
+    for (const auto outcome : outcomes)
+        seed.outcome_counts.emplace(
+            std::string(outcome), published_memory.outcome_count(outcome));
+    for (const auto& added : plan.memory_additions) {
+        if (!added.added() || !added.outcome || !added.new_snapshot_id ||
+            !added.new_outcome_count ||
+            !seed.outcome_counts.contains(*added.outcome) ||
+            added.identifier != added.episode->episode_id ||
+            seed.outcome_counts.at(*added.outcome) ==
+                std::numeric_limits<std::uint64_t>::max() ||
+            *added.new_snapshot_id != next_hot_index_snapshot_id(
+                seed.snapshot_id, added.identifier) ||
+            *added.new_outcome_count !=
+                seed.outcome_counts.at(*added.outcome) + 1)
+            throw std::runtime_error("main_memory_seed_plan_changed");
+        seed.snapshot_id = *added.new_snapshot_id;
+        seed.outcome_counts.at(*added.outcome) = *added.new_outcome_count;
+    }
+    if (seed.snapshot_id != plan.memory_snapshot_id)
+        throw std::runtime_error("main_memory_seed_plan_changed");
+    return seed;
+}
 
 // SWEGCA: src/swegca_vrs2/store.py@c06092a:1416-1452
 // SWEGCA: src/swegca_vrs2/exact_replay.py@c06092a:496-609
