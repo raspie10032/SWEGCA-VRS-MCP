@@ -109,7 +109,7 @@ Their through-Re-evidence maxima were 1.5398 ms and 2.5573 ms.
 
 One earlier 5,000-sample focused run observed one 1.3532 ms wall-clock outlier
 while its other 4,999 samples were faster. This Replay outlier does not
-measure the corrected Déjà vu → Recall transition.
+measure the corrected user-input → first-Recall route.
 
 An initial cgroup-limited run exposed a restart-cold defect: one of 256 first
 prefixes took 12.0775 ms and one later low-level exact call took 1.5181 ms.

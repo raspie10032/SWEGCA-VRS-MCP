@@ -156,17 +156,25 @@ class VRSClient:
 
     def __enter__(self):
         self.client = ensure_daemon(self.state_dir, allow_ingest=self.writes)
-        enabled = bool(self.client.request('ping').get('writes_enabled'))
+        # ensure_daemon already authenticated the resident implementation and
+        # returned this ping. A second round trip delays prompt activation.
+        enabled = bool(self.client.verified_ping.get('writes_enabled'))
         if self.writes and not enabled:
             self.client.close()
             raise ValueError('session_vrs_write_disabled')
-        self.server = LoopbackMCP(self.client, writes_enabled=self.writes and enabled)
+        self.writes_enabled = self.writes and enabled
+        self.server = None
         return self
 
     def __exit__(self, *_):
-        self.server.close()
+        if self.server is None:
+            self.client.close()
+        else:
+            self.server.close()
 
     def call(self, name, arguments):
+        if self.server is None:
+            self.server = LoopbackMCP(self.client, writes_enabled=self.writes_enabled)
         return self.server.call_tool(name, arguments)
 
     def ingest_many(self, rows):

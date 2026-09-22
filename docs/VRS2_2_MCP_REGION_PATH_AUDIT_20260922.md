@@ -92,5 +92,5 @@ code cause. No VRS model-performance evaluation should use this state.
 3. Prove the Codex app's nested MCP call receives the exact session ID through
    the trusted hook, then verify a session-first recall and release in that
    same task. Direct stdio success is a separate, narrower result.
-4. Only after those proofs, measure the user's actual Déjà vu -> Recall
-   transition and continue the resource and compression tests.
+4. Only after those proofs, measure the actual user input -> first Recall work
+   route and continue the resource and compression tests.

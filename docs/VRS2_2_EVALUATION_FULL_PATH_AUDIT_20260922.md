@@ -54,7 +54,7 @@ plain controls remain historical evidence; no model was called for this audit.
   the resident state still has the legacy database and old hook/config. The
   VRS-only model run remains blocked by the live preflight. No live migration
   or model comparison is claimed here.
-- The <1 ms Déjà vu → Recall transition and 1B-parameter seconds goals are
+- The <1 ms user-input → first-Recall route and 1B-parameter seconds goals are
   separate product checks; this evaluation-path audit does not establish them.
 - Automated answer/code text scores are preliminary. Final quality judgment
   requires review of raw answers, diffs and executable test evidence.
@@ -166,7 +166,7 @@ config/hook/database are still active. The one-shot post-SessionEnd watcher is
 running. The three new VRS model cells must remain unrun until that handoff,
 then the same full-path gates and manual answer/diff review must pass. This
 source and isolated evaluation evidence does not establish the unconditional
-all-size <1 ms Déjà vu → Recall transition or one-billion-parameter seconds goals.
+all-size <1 ms user-input → first-Recall route or one-billion-parameter seconds goals.
 
 ## Fourth pass: read-path total and current wheel
 
@@ -197,7 +197,7 @@ the former `0db5817` watcher is inactive. The live marker remains absent,
 so no active legacy state was converted and no VRS model cell was run.
 
 The cached aggregate removes one identified shard-count-dependent operation.
-It does not measure the all-size <1 ms Déjà vu → Recall transition or define
+It does not measure the all-size <1 ms user-input → first-Recall route or define
 the user's one-billion-parameter unit. Replay can scale with matched candidate
 count, but its timing is a separate diagnostic.
 
@@ -239,7 +239,7 @@ The cue tells the VRS arm the broad topic and is absent from the historical
 plain probes. That difference must be disclosed with any comparison; the
 rubric still requires the detailed instruction, diagnostic, scope and revision
 to come from the original experience. Natural Recall at all main sizes remains
-not measured here at the corrected Déjà vu → Recall transition boundary.
+not measured here at the corrected user-input → first-Recall route boundary.
 
 ## Sixth pass: measured natural Replay and updated runtime
 
@@ -250,7 +250,7 @@ specified 4 GiB RAM and 625 MB/s SSD read/write limits. The installed
 Source commit `7e35fb8` defers only per-cue strengths until cross-shard portal
 construction; the same query took 15.152 ms. A single-match warm median was
 0.196 ms, but its first call was 9.112 ms. These Replay diagnostics do not
-measure the corrected <1 ms Déjà vu → Recall transition. Measurements are in
+measure the corrected <1 ms user-input → first-Recall route. Measurements are in
 `docs/VRS2_2_NATURAL_REPLAY_BOTTLENECK_20260922.md`.
 
 The new offline wheel SHA-256 is

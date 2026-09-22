@@ -50,7 +50,7 @@ The full standalone source regression suite passed **130/130 in 182.36 s**
 after the fixes.
 This proves content integrity for one isolated, currently active session
 prefix. It does not prove live hook installation, current main migration,
-temporary-first/main-second live reads, the Déjà vu → Recall transition
+temporary-first/main-second live reads, the user-input → first-Recall route
 at the required scale, or the user-defined one-billion VRS-parameter seconds
 target. Those remain separate checks before VRS model evaluation.
 
@@ -121,7 +121,7 @@ On the same copied 15,630-experience native state, under 4 GiB memory, zero
 swap and 625 MB/s SSD cgroup limits on the state device, first calls took
 0.695 ms with one match, 19.159 ms with 100 matches, and 118.131 ms with
 1,008 matches. This Replay diagnostic does not grade the all-size
-Déjà vu → Recall transition. Model evaluation remained disabled.
+user-input → first-Recall route. Model evaluation remained disabled.
 
 The new installed wheel's whole-path selftest passed. Its private receipt is
 `/var/tmp/vrs22-whole-path-selftest-projection-close-20260922/receipt.json`
@@ -309,7 +309,7 @@ receipt is
 `evals/vrs22_context/results/first_ranked_original_replay_storage_audit_wheel_20260922.json`:
 0.715 ms for one match, 15.736 ms for 100 and 95.699 ms for 1,008 under
 4 GiB, zero swap and 625 MB/s I/O limits. These Replay times do not
-measure the all-size Déjà vu → Recall requirement.
+measure the all-size user-input → first-Recall requirement.
 
 The installed-wheel whole-path selftest passed at
 `/var/tmp/vrs22-whole-path-selftest-storage-audit-r2-20260922/receipt.json`
@@ -367,7 +367,7 @@ The wheel's 15,630-original natural Replay receipt is
 During concurrent system load, the first Replay calls measured 3.037 ms for
 one match, 26.778 ms for 100 and 167.931 ms for 1,008. These are Replay
 diagnostics. The user's later correction puts the 1 ms gate at the actual
-Déjà vu → Recall transition, so those numbers do not grade that gate. The
+user-input → first-Recall route, so those numbers do not grade that gate. The
 evaluation remains stopped.
 
 ## Slow resident admission transport repair
@@ -407,7 +407,7 @@ The installed wheel's separate 15,630-original benchmark receipt is
 (SHA-256 `6d622fc53c069fc78419048afc5e34ca7ea6eb589af492c110ae6d34e675467e`).
 It timestamps the first ranked original Replay constructor after natural
 `ShardedMain.recall` begins. The user has explicitly clarified that the 1 ms
-metric is Déjà vu → Recall, so this receipt is diagnostic only. The evaluation
+metric is user input → first Recall work, so this receipt is diagnostic only. The evaluation
 grader now leaves the transition unmeasured instead of substituting either
 Replay or the whole MCP response. No model evaluation ran.
 
@@ -426,7 +426,7 @@ The source hook self-test passed: original user content was preserved, all
 cursor lines were accounted for, and the session attached only after the
 SessionEnd event. The source-runtime evaluation preflight reports
 `PENDING_LIVE_HANDOFF`; the desktop main is still the old store until the real
-session ends, and the actual Déjà vu → Recall transition remains unmeasured.
+session ends, and the actual user-input → first-Recall route remains unmeasured.
 The existing Python environment contains third-party distributions whose
 source-build provenance is not established. Therefore this report does not
 claim that the complete environment meets the prebuilt-wheel ban yet.

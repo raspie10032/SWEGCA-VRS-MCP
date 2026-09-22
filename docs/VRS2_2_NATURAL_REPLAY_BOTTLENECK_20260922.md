@@ -35,7 +35,7 @@ projections, and the cross-shard portal/conflict suite passes.
 
 The source change reduces Replay diagnostic time. First calls and queries
 matching 100 or more records still spend measurable time in Replay. That
-measurement is outside the corrected Déjà vu → Recall acceptance boundary.
+measurement is outside the corrected user-input → first-Recall acceptance boundary.
 The existing API materializes every matched original Replay before
 returning; its work and output therefore grow with matched-candidate count.
 The next repair must retain full access to originals, graph, regions, shared
@@ -134,7 +134,7 @@ natural-query receipt is
 (SHA-256 `3407f80cafb574b6787bd1058c4066842e6f93ec90f52171e6da45a0e7442e51`).
 On the copied existing main, Replay times rose with match count. The
 evaluation runner retains these times as diagnostics only; they do not decide
-the corrected Déjà vu → Recall 1 ms criterion.
+the corrected user-input → first-Recall 1 ms criterion.
 
 ## Historical first-original Replay diagnostic
 
@@ -165,7 +165,7 @@ caller receives a usable row: current main still computes all candidates and
 Re-evidence before returning. The first ranked candidate itself is selected
 only after full candidate scoring and VRS navigation, which explains why
 Replay latency rises for wider matches. This says nothing about whether the
-corrected Déjà vu → Recall transition meets its 1 ms requirement.
+corrected user-input → first-Recall route meets its 1 ms requirement.
 
 An independent call-count probe on that installed wheel wrapped
 `Resident.exact_replay` and recorded the count when the first ranked

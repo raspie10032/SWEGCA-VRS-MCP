@@ -118,7 +118,9 @@ def test_automatic_split_preserves_source_and_supersedes_lineage(tmp_path):
             status = sharded.status()
         root = sharded.recall("자동 분할 경험", status["pair_snapshot_id"])
         assert root["record_count"] == 8
-        assert len(root["receipt"]["activation"].replay.episodes) == 8
+        activation = root["receipt"]["activation"]
+        assert len(activation.recall.candidates) == 8
+        assert len(activation.replay.episodes) == 1
         exact_id = receipt["results"][-1]["episode_id"]
         exact = sharded.recall(exact_id, status["pair_snapshot_id"])
         assert exact["receipt"]["activation"].stage_order == (
@@ -321,6 +323,39 @@ def test_projected_natural_replay_starts_after_recall_result(tmp_path, monkeypat
                                                       resident.logical_snapshot())
         assert replayed
         assert {row.episode_id for row in root['receipt']['activation'].replay.episodes} == set(replayed)
+    finally:
+        resident.close()
+        primary.close()
+
+
+def test_projected_recall_opens_one_original_without_conflict(tmp_path, monkeypatch):
+    from swegca_vrs2.loopback import hook_recall
+
+    primary = Main(tmp_path / 'main', allow_ingest=True)
+    resident = Resident(primary, {}, hot_limit=0)
+    try:
+        for index in range(5):
+            resident.ingest(dict(request_id=f'candidate-{index}',
+                text=f'shared_anchor distinct_{index}', source=f'original:{index}',
+                revision='1'))
+        opened = []
+        real_replay = resident.exact_replay
+
+        def record_replay(identifier):
+            opened.append(identifier)
+            return real_replay(identifier)
+
+        monkeypatch.setattr(resident, 'exact_replay', record_replay)
+        activation = ShardedMain(primary, resident).recall(
+            'shared_anchor', resident.logical_snapshot())['receipt']['activation']
+        assert len(activation.recall.candidates) == 5
+        assert len(activation.replay.episodes) == 1
+        assert opened == [activation.replay.episodes[0].episode_id]
+        opened.clear()
+        packet = hook_recall(primary, {'query': 'shared_anchor'}, resident)
+        assert packet['candidate_count'] == 5
+        assert packet['returned'] == 1
+        assert opened == [packet['memories'][0]['episode_id']]
     finally:
         resident.close()
         primary.close()

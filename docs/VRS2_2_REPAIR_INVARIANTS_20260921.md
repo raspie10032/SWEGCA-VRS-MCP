@@ -17,11 +17,16 @@ stage from the named boundary without an explicit user correction.
 - Original experience and temporary experience both remain usable, with exact
   addresses and provenance.
 - Déjà vu -> Recall -> Replay -> Re-evidence remains the memory path.
+- Recall retains all candidate addresses and their VRS navigation. Replay opens
+  the first selected current original experience. Re-evidence checks that
+  experience against current VRS; only a detected conflict opens the relevant
+  opposing original experiences. No arbitrary candidate count truncation may
+  replace this selection.
 - "너무 커지면 오래 걸리니까 분할하고 연결선 넣자."
 - "vrs의 메모리 사용 제한은 4GB로 한다."
 - "SSD속도는 5Gbps로 한정한다."
 - "SSD의 최대 용량은 500GB로 한정한다."
-- The corrected latency requirement is Déjà vu completion to first Recall work under 1 ms at any main size.
+- The corrected latency requirement is user input to first Recall work under 1 ms at any main size. Déjà vu runs immediately on that input, with no separate selection or recall work ahead of it.
 - "10억 파라미터 경험도 초단위로 끝나야 함."
 - The existing VRS architecture and main logic may not be deleted or bypassed
   to meet these limits.
@@ -46,14 +51,14 @@ The repair must identify and report the VRS architecture's actual parameter
 unit before claiming the one-billion target. It must not silently substitute a
 different unit.
 
-The user's 2026-09-22 correction sets the `<1 ms` boundary at the actual
-Déjà vu → Recall transition. Instrument that transition in the main-owned
-execution path. Whole MCP response time and first original Replay completion
-are separate measurements and must not be substituted for this gate.
-An isolated source run on 401 retained observations measured approximately
-1.7 µs from Déjà vu completion to first Recall work, within that boundary.
-This is source-copy evidence; scale independence and live installation remain
-separate verification tasks.
+The user's 2026-09-22 correction sets the `<1 ms` boundary from **user input
+to first Recall work**. Déjà vu must be the first memory operation on the input.
+Instrument the complete input → Déjà vu → Recall route. Whole MCP response,
+Replay completion, and the internal Déjà vu-end → Recall-start interval are
+separate measurements and must not be substituted for this gate.
+An isolated source run on 401 retained observations measured about 1.7 µs
+only for that internal interval. It does not establish the input-to-Recall
+requirement, scale independence, or live installation.
 
 The repaired read capsule keeps the exact derived cue vector checksummed beside
 the original Replay body and decodes that vector when Re-evidence consumes it.

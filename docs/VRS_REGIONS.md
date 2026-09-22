@@ -144,7 +144,7 @@ The local release must prove:
 - full tests and source lineage hashes, with no prebuilt wheel path;
 - resident RSS at or below 4 GiB and allocated storage at or below exactly
   500,000,000,000 bytes (500 GB);
-- the actual Déjà vu → Recall stage transition below 1 ms; whole MCP response
+- the actual user input → Déjà vu → first Recall work route below 1 ms; whole MCP response
   and Replay completion are separate diagnostics;
 - the 5 Gbit/s device assumption identified honestly until an actual kernel
   bandwidth constrained run is completed.

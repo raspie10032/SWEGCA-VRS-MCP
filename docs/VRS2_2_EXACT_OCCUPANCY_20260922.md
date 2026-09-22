@@ -43,7 +43,7 @@ The installed runtime was the `f1ea47a` product wheel,
 `ade989360646b009d40031e45091d2043b3af8ee4ca0854cdd08817fba5ee285`.
 
 This measurement covers one high-occupancy prefix and a sample of exact
-addresses. It does not establish the requested unconditional <1 ms Déjà vu → Recall transition for
+addresses. It does not establish the requested unconditional <1 ms user-input → first-Recall route for
 every main size or natural query, a billion distinct experiences, or processing
 of one billion VRS parameters. The VRS parameter unit remains undefined by the
 available product state and must not be replaced with an address count.

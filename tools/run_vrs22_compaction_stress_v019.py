@@ -333,7 +333,7 @@ def live_handoff_audit():
     current_hooks = json.loads(hook_path.read_text(encoding="utf-8"))
     expected_hooks = runtime_json("""import json,sys
 from swegca_vrs2.codex_hooks import config
-print(json.dumps(config(sys.argv[1],sys.argv[2],module_root=sys.argv[3],server_name='swegca_vrs')))
+print(json.dumps(config(sys.argv[1],sys.argv[2],module_root=sys.argv[3],server_name='swegca-vrs')))
 """, RUNTIME_PYTHON, LIVE_STATE, RUNTIME_SOURCE)
     native = runtime_json("""import json,sys
 from swegca_vrs2.native_journal import is_native_store
@@ -386,16 +386,16 @@ def product_performance_audit():
         and "259:3 rbps=625000000 wbps=625000000" in limits.get("io.max", "")
         and receipt.get("sqlite_module_loaded") is False)
     # This receipt timestamps original Replay construction. It does not time
-    # the Déjà vu → Recall boundary named by the user.
+    # user-input receipt through first Recall work, the user's 1 ms boundary.
     transition_sample_valid = False
     all_size_transition_proven = False
     billion_parameter_unit_defined = False
     billion_parameter_seconds_proven = False
     return dict(ready=bool(transition_sample_valid and all_size_transition_proven
         and billion_parameter_unit_defined and billion_parameter_seconds_proven),
-        latency_metric="deja_vu_to_recall_stage_transition",
+        latency_metric="user_input_to_first_recall_work",
         transition_sample_valid=transition_sample_valid,
-        transition_status="not_yet_measured_at_actual_stage_boundary",
+        transition_status="not_yet_measured_from_user_input",
         receipt_sha256=PERFORMANCE_RECEIPT_SHA256,
         replay_diagnostic_valid=sample_valid,
         replay_diagnostic_ms=[dict(matches=row.get("actual_fanout"),

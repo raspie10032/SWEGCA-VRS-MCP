@@ -91,7 +91,7 @@ Current native package suite: 127 passed. An earlier exact-address run under
 4 GiB and 625 MB/s per NVMe read/write limits made 50,000 four-stage Replay
 calls with a maximum of 0.157172 ms
 for 15,630 existing experience records. This exact-address diagnostic does
-not measure the corrected Déjà vu → Recall transition. Maximum configured route depth had 50,000 synthetic exact
+not measure the corrected user-input → first-Recall route. Maximum configured route depth had 50,000 synthetic exact
 lookups with a 0.075921 ms maximum. These measured bounds do **not** establish
 an all-size hard real-time guarantee or performance for one billion VRS
 parameters; the repository does not yet define a mapping from parameters to
@@ -137,5 +137,5 @@ All 48 installed files match that source and wheel; native tests passed
 127/127, grader regressions 20/20, and the installed-wheel whole-path
 self-test passed. The current performance receipt records 10/10 natural
 100-match and natural 1,008-match Replay times separately from the
-Déjà vu → Recall gate. The live performance gate was not established. The live SessionEnd handoff has not
+user-input → first-Recall gate. The live performance gate was not established. The live SessionEnd handoff has not
 occurred, and no new VRS model cell has been run.

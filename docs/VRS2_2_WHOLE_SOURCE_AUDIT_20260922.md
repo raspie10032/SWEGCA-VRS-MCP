@@ -52,7 +52,7 @@ does not prove behavior of every branch. Historical reports remain history.
 - Removed the wheel-installing Windows script and changed active README/Windows
   instructions to describe source execution and its unverified dependency
   prerequisite. The current architecture release gate now uses the actual
-  Déjà vu → Recall metric, with Replay and whole MCP timing separate.
+  user-input → first-Recall metric, with Replay and whole MCP timing separate.
 - Replaced wheel/archive release verification with source/entry-point/native-port
   verification. Removed one ignored product `.whl` artifact found in `dist/`.
 - Moved the MCP SDK out of product runtime dependencies into the test extra;

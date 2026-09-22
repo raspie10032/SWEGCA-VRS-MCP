@@ -224,7 +224,8 @@ def test_six_outcomes_real_native_vrs_and_original_receipts(main):
     activation = root['receipt']['activation']
     assert activation.stage_order == ('deja_vu', 'recall', 'replay', 're_evidence')
     assert len(activation.recall.candidates) == 6
-    assert {e.steps[0].outcome for e in activation.replay.episodes} == OUTCOMES
+    assert {c.historical_outcomes[0] for c in activation.recall.candidates} == OUTCOMES
+    assert len(activation.replay.episodes) == 1
     assert all(j.verdict == 'available' for j in activation.re_evidence.judgments)
     assert not activation.re_evidence.should_abstain
     assert not any(root['region_memberships'].values())

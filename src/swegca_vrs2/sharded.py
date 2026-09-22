@@ -23,6 +23,7 @@ from .engine.mosaic_memory_activation import (
     MemoryActivationReceipt,
     RecallCandidate,
     RecallResult,
+    ReplayedEpisode,
     ReplayResult,
     current_experience_verdict,
     detect_deja_vu,
@@ -184,15 +185,16 @@ class ShardedMain:
         if proposition:
             active = []
             for _, identifier in self.resident.exact.proposition_experiences(proposition):
-                candidate = self.resident.exact_replay(identifier)
+                candidate = self.resident.exact_recall_columns(identifier)
+                if candidate is None:
+                    raise ValueError('exact_proposition_address_missing:' + identifier)
                 candidate_current = self.resident.current_vrs(candidate)
                 if candidate_current is None:
                     raise ValueError('read_projection_not_ready:' + candidate['shard'])
                 if candidate_current['superseded_by'] is None:
-                    active.append(candidate['replay'])
-            if {self.resident.exact_replay(item.episode_id)['polarity']
-                    for item in active} == {'support', 'refute'}:
-                opponents = tuple(sorted(item.episode_id for item in active))
+                    active.append(candidate)
+            if {item['polarity'] for item in active} == {'support', 'refute'}:
+                opponents = tuple(sorted(item['episode_id'] for item in active))
 
         graph_snapshot = digest(('sharded-vrs-re-evidence-v1', pair_snapshot,
                                  current['graph_snapshot_id']))
@@ -207,6 +209,22 @@ class ShardedMain:
                 proposition=proposition or 'experience:' + item.episode_id)
 
         re_evidenced = re_evidence_memory(replayed, judge=judge)
+        if re_evidenced.conflicting_propositions:
+            episodes = list(replayed.episodes)
+            for identifier in opponents:
+                if identifier == episode.episode_id:
+                    continue
+                columns = self.resident.exact_recall_columns(identifier)
+                if columns['polarity'] == exact['polarity']:
+                    continue
+                opposite = self.resident.exact_replay(identifier)
+                if (opposite is None or opposite['polarity'] != columns['polarity']
+                        or opposite['proposition'] != proposition
+                        or opposite['replay'].source_addresses != columns['source_addresses']):
+                    raise ValueError('exact_opponent_replay_mismatch')
+                episodes.append(opposite['replay'])
+            replayed = ReplayResult(query, tuple(episodes))
+            re_evidenced = re_evidence_memory(replayed, judge=judge)
         receipt = MemoryActivationReceipt('rozephine-memory-activation-v1', pair_snapshot,
             signal, recalled, replayed, re_evidenced)
         identifier = episode.episode_id
@@ -378,10 +396,17 @@ class ShardedMain:
 
         recalled = RecallResult(query, tuple(sorted(recalled.candidates, key=order)), pair_snapshot,
                                 source_dependencies=recalled.source_dependencies)
-        replayed = replay_memory(index, recalled)
+        chosen = next((row for row in recalled.candidates
+            if row.episode_id not in index.owner_of(row.episode_id)[1].memory.superseded),
+            recalled.candidates[0] if recalled.candidates else None)
+        selected_recall = RecallResult(query, (chosen,) if chosen is not None else (),
+            pair_snapshot, source_dependencies=recalled.source_dependencies)
+        replayed = replay_memory(index, selected_recall)
 
         opponents = {}
-        for proposition in activated_propositions:
+        selected_propositions = {episode.steps[0].observation.get('proposition_id')
+                                 for episode in replayed.episodes} - {None}
+        for proposition in selected_propositions:
             active = []
             for _, owner, _ in views:
                 for identifier in owner.memory.propositions.get(proposition, ()):
@@ -405,6 +430,23 @@ class ShardedMain:
                 proposition=proposition or 'experience:' + episode.episode_id)
 
         re_evidenced = re_evidence_memory(replayed, judge=judge)
+        if re_evidenced.conflicting_propositions:
+            episodes = list(replayed.episodes)
+            for episode in replayed.episodes:
+                proposition = episode.steps[0].observation.get('proposition_id')
+                if proposition not in re_evidenced.conflicting_propositions:
+                    continue
+                selected_polarity = episode.steps[0].observation.get('evidence_polarity')
+                for identifier in opponents[proposition]:
+                    if identifier == episode.episode_id:
+                        continue
+                    source = index.episode(identifier)
+                    if source.steps[0].observation.get('evidence_polarity') == selected_polarity:
+                        continue
+                    episodes.append(ReplayedEpisode(identifier, (), source.steps,
+                        source.source_addresses, source.verification_state))
+            replayed = ReplayResult(query, tuple(episodes))
+            re_evidenced = re_evidence_memory(replayed, judge=judge)
         receipt = MemoryActivationReceipt('rozephine-memory-activation-v1', pair_snapshot,
             signal, recalled, replayed, re_evidenced)
         identifiers = [candidate.episode_id for candidate in recalled.candidates]

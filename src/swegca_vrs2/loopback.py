@@ -79,8 +79,9 @@ def port_of(state_dir):
 class LoopbackClient:
     """Drop-in for ``native_transport.ResidentClient`` over loopback TCP."""
 
-    def __init__(self, port, timeout_seconds=45):
+    def __init__(self, port, timeout_seconds=45, verified_ping=None):
         self.port, self.timeout_seconds = int(port), float(timeout_seconds)
+        self.verified_ping = verified_ping
         self._connection = self._stream = None      # reused across requests (line protocol)
 
     def _open(self):
@@ -166,7 +167,7 @@ def ensure_daemon(state_dir, *, allow_ingest=True, python=None, wait_seconds=30,
             if (reply.get('implementation') != str(Path(__file__).resolve())
                     or reply.get('source_digest') != SOURCE_DIGEST):
                 raise InterfaceError('resident_implementation_mismatch')
-            return LoopbackClient(port, 45)
+            return LoopbackClient(port, 45, verified_ping=reply)
     if starting_since(state_dir) is not None:
         return _wait_for_daemon(state_dir, wait_seconds)
     command = [python or sys.executable, '-m', 'swegca_vrs2.loopback', '--state-dir', str(state_dir)]
@@ -210,7 +211,7 @@ def _wait_for_daemon(state_dir, wait_seconds):
                         or reply.get('source_digest') != SOURCE_DIGEST):
                     raise InterfaceError('resident_implementation_mismatch')
                 client.close()
-                return LoopbackClient(port, 45)
+                return LoopbackClient(port, 45, verified_ping=reply)
             except InterfaceError as error:
                 client.close()
                 if str(error) == 'resident_implementation_mismatch':
@@ -354,25 +355,28 @@ def hook_recall(main, arguments, resident=None):
     judgments = {j.episode_id: j for j in activation.re_evidence.judgments}
     rows = []
     superseded_skipped = 0
-    for candidate in activation.recall.candidates:
+    candidates = {row.episode_id: row for row in activation.recall.candidates}
+    for episode in activation.replay.episodes:
         if len(rows) >= limit:
             break
         # live candidates fill the packet (2026-09-19): an older revision of a source stays recallable in the
         # store, but the hook never shows it, so it must not take a slot — measured on 8 prompts: 63/80 live,
         # one prompt 2/10 (a doc with 7 revisions took 6 slots). `superseded_by` stays in the row schema.
-        if candidate.episode_id in main.memory.superseded:
+        if episode.episode_id in main.memory.superseded:
             superseded_skipped += 1
             continue
-        episode = _light(main.memory, candidate.episode_id)      # G8: the packet needs no cue strings — light, prefetched
+        candidate = candidates.get(episode.episode_id)
         obs = episode.steps[0].observation
-        judgment = judgments.get(candidate.episode_id)
+        judgment = judgments.get(episode.episode_id)
         rows.append(dict(
-            episode_id=candidate.episode_id, source=episode.source_addresses[0], revision=episode.revision,
-            outcome=episode.steps[0].outcome, matched=len(candidate.matched_cues),
-            matched_cues=list(candidate.matched_cues)[:64], cue_overlap=candidate.cue_overlap,   # 12 undercounted 9% of rows (2026-09-14)
+            episode_id=episode.episode_id, source=episode.source_addresses[0],
+            revision=candidate.revision if candidate else _light(main.memory, episode.episode_id).revision,
+            outcome=episode.steps[0].outcome, matched=len(episode.matched_cues),
+            matched_cues=list(episode.matched_cues)[:64],
+            cue_overlap=candidate.cue_overlap if candidate else 0.0,
             proposition=obs.get('proposition_id'), polarity=obs.get('evidence_polarity'),
             verdict=judgment.verdict if judgment else None,
-            superseded_by=main.memory.superseded.get(candidate.episode_id),
+            superseded_by=main.memory.superseded.get(episode.episode_id),
             metadata=_plain(obs.get('metadata') or {}),      # nested maps (origin) are frozen in the store: plain for JSON
             text=obs.get('text', '')[:snippet], text_chars=len(obs.get('text', '')),
             # G3 origin binding (2026-09-19): rows ingested before it carry no origin; the hook verifies the
@@ -383,9 +387,9 @@ def hook_recall(main, arguments, resident=None):
             # verdict records end with their asks line; hooks match query cues against it
             asks=_asks_of(obs.get('text', '')),
             # vrs-regions: refined strength, promotion, state/stability, pending (not yet consolidated)
-            vrs=main.graph.vrs_of(candidate.episode_id, episode.source_addresses[0]),
+            vrs=main.graph.vrs_of(episode.episode_id, episode.source_addresses[0]),
             # G6: how this candidate was reached — local region, via a candidate portal, or unbridged
-            region=root['region_navigation']['paths'].get(candidate.episode_id)))
+            region=root['region_navigation']['paths'].get(episode.episode_id)))
     # repeat counter (2026-09-18): how often the sessions repeated a verdict's mistake — observations from
     # producer 'gate' (a guard blocked the attempt) or a manual repeat note, one per session
     repeats = {}
@@ -436,20 +440,22 @@ def hook_recall(main, arguments, resident=None):
     conflicts = []
     for proposition in controls.conflicting_propositions:
         sides = dict(support=[], refute=[])
-        for candidate in activation.recall.candidates:
-            if candidate.episode_id in main.memory.superseded:
+        for episode in activation.replay.episodes:
+            if episode.episode_id in main.memory.superseded:
                 continue
-            episode = _light(main.memory, candidate.episode_id)
             obs = episode.steps[0].observation
             if obs.get('proposition_id') != proposition:
                 continue
             meta = obs.get('metadata') or {}
             polarity = obs.get('evidence_polarity')
             if polarity in sides:
+                revision = (candidates[episode.episode_id].revision
+                            if episode.episode_id in candidates
+                            else _light(main.memory, episode.episode_id).revision)
                 sides[polarity].append(dict(source=episode.source_addresses[0][:120], producer=meta.get('producer'),
-                                            date=meta.get('date') or (str(episode.revision)[:10] if str(episode.revision)[:4].isdigit() else ''),
+                                            date=meta.get('date') or (str(revision)[:10] if str(revision)[:4].isdigit() else ''),
                                             outcome=episode.steps[0].outcome,
-                                            episode_id=candidate.episode_id))
+                                            episode_id=episode.episode_id))
         decision = (stable.decisions or {}).get(proposition) if stable is not None and getattr(stable, 'decisions', None) else None
         conflicts.append(dict(proposition=proposition, support=sides['support'][:4], refute=sides['refute'][:4],
                               decision=None if decision is None else {k: decision.get(k) for k in ('status', 'reason', 'unresolved', 'source_diversity')}))
@@ -488,28 +494,30 @@ def _hook_recall_sharded(main, resident, arguments):
     activation = root['receipt']['activation']
     judgments = {row.episode_id: row for row in activation.re_evidence.judgments}
     rows, superseded_skipped = [], 0
-    for candidate in activation.recall.candidates:
+    candidates = {row.episode_id: row for row in activation.recall.candidates}
+    for episode in activation.replay.episodes:
         if len(rows) >= limit:
             break
-        exact = resident.exact_replay(candidate.episode_id)
+        candidate = candidates.get(episode.episode_id)
+        exact = resident.exact_recall_columns(episode.episode_id)
         if exact is None:
-            raise ValueError('hook_exact_replay_missing:' + candidate.episode_id)
+            raise ValueError('hook_exact_recall_missing:' + episode.episode_id)
         current = resident.current_vrs(exact)
         if current is None:
             raise ValueError('read_projection_not_ready:' + exact['shard'])
         if current['superseded_by'] is not None:
             superseded_skipped += 1
             continue
-        episode = exact['replay']
         observation = episode.steps[0].observation
-        judgment = judgments.get(candidate.episode_id)
+        judgment = judgments.get(episode.episode_id)
         owner, state = (main, 'hot') if exact['shard'] == 'main' else resident.peek_ready(exact['shard'])
         if exact['shard'] != 'main' and owner is None:
             state = 'cold'
-        rows.append(dict(episode_id=candidate.episode_id,
+        rows.append(dict(episode_id=episode.episode_id,
             source=episode.source_addresses[0], revision=exact['revision'],
-            outcome=episode.steps[0].outcome, matched=len(candidate.matched_cues),
-            matched_cues=list(candidate.matched_cues)[:64], cue_overlap=candidate.cue_overlap,
+            outcome=episode.steps[0].outcome, matched=len(episode.matched_cues),
+            matched_cues=list(episode.matched_cues)[:64],
+            cue_overlap=candidate.cue_overlap if candidate is not None else 0.0,
             proposition=observation.get('proposition_id'),
             polarity=observation.get('evidence_polarity'),
             verdict=judgment.verdict if judgment else None,
@@ -527,7 +535,7 @@ def _hook_recall_sharded(main, resident, arguments):
                 state=None if current['state'] is None else round(current['state'], 4),
                 stability=None if current['stability'] is None else round(current['stability'], 4),
                 pending=current['pending'], usage=current['usage']),
-            region=root['region_navigation']['paths'].get(candidate.episode_id),
+            region=root['region_navigation']['paths'].get(episode.episode_id),
             bundle=exact['shard'], bundle_state=state))
 
     decisions, repeats = {}, {}
@@ -559,12 +567,11 @@ def _hook_recall_sharded(main, resident, arguments):
     conflicts = []
     for proposition in activation.re_evidence.conflicting_propositions:
         sides = dict(support=[], refute=[])
-        for candidate in activation.recall.candidates:
-            exact = resident.exact_replay(candidate.episode_id)
+        for episode in activation.replay.episodes:
+            exact = resident.exact_recall_columns(episode.episode_id)
             current = None if exact is None else resident.current_vrs(exact)
             if exact is None or current is None or current['superseded_by'] is not None:
                 continue
-            episode = exact['replay']
             observation = episode.steps[0].observation
             if observation.get('proposition_id') != proposition:
                 continue
@@ -575,7 +582,7 @@ def _hook_recall_sharded(main, resident, arguments):
                     producer=metadata.get('producer'),
                     date=metadata.get('date') or (str(exact['revision'])[:10]
                         if str(exact['revision'])[:4].isdigit() else ''),
-                    outcome=episode.steps[0].outcome, episode_id=candidate.episode_id,
+                    outcome=episode.steps[0].outcome, episode_id=episode.episode_id,
                     shard=exact['shard']))
         conflicts.append(dict(proposition=proposition, support=sides['support'][:4],
                               refute=sides['refute'][:4], decision=None))

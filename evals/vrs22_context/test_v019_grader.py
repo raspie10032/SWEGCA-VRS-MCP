@@ -278,7 +278,7 @@ print(json.dumps({'stopped':True}))
 
 def test_replay_diagnostic_is_not_misgraded_as_stage_transition():
     audit = RUNNER.product_performance_audit()
-    assert audit["latency_metric"] == "deja_vu_to_recall_stage_transition"
+    assert audit["latency_metric"] == "user_input_to_first_recall_work"
     assert audit["transition_sample_valid"] is False
     assert audit["replay_diagnostic_valid"] is True
     assert audit["ready"] is False

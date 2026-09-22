@@ -24,7 +24,7 @@ import numpy as np
 from .engine.mosaic_memory_activation import (
     OUTCOMES, FullCurrentMemoryVrsSnapshot,
     AtomicFullCurrentMemoryVrsOwner, current_experience_verdict,
-    CurrentEvidenceVerdict, MemoryActivationReceipt, RecallResult,
+    CurrentEvidenceVerdict, MemoryActivationReceipt, RecallResult, ReplayedEpisode, ReplayResult,
     detect_deja_vu, recall_memory, replay_memory, re_evidence_memory,
 )
 import math
@@ -1716,11 +1716,19 @@ class Main:
             return (-sum(idf[c] for c in matched_words) * norm * gate, -row.cue_overlap, row.episode_id)
         recalled = RecallResult(recalled.query, tuple(sorted(recalled.candidates, key=order)),
                                 recalled.snapshot_id, source_dependencies=recalled.source_dependencies)
-        replayed = replay_memory(LightView(memory) if hasattr(memory, 'episode_light') else memory, recalled)
+        chosen = next((row for row in recalled.candidates
+                       if row.episode_id not in full_memory.superseded),
+                      recalled.candidates[0] if recalled.candidates else None)
+        selected_recall = RecallResult(recalled.query, (chosen,) if chosen is not None else (),
+            recalled.snapshot_id, source_dependencies=recalled.source_dependencies)
+        replayed = replay_memory(LightView(memory) if hasattr(memory, 'episode_light') else memory,
+                                 selected_recall)
         # Opposing original claims are evidence work. Keep the same complete
         # kind-filtered snapshot, but read them only after Recall and Replay.
         opponents = {}
-        for p in propositions:
+        selected_propositions = {episode.steps[0].observation.get('proposition_id')
+                                 for episode in replayed.episodes} - {None}
+        for p in selected_propositions:
             fetch = getattr(full_memory, 'episode_light', full_memory.episode)
             active = [fetch(i) for i in full_memory.propositions[p]
                       if i not in full_memory.superseded]
@@ -1737,6 +1745,24 @@ class Main:
                 vrs_snapshot_id=graph.snapshot_id, current_strength=graph.strength(episode.episode_id),
                 proposition=p or 'experience:' + episode.episode_id)
         re_evidenced = re_evidence_memory(replayed, judge=judge)
+        if re_evidenced.conflicting_propositions:
+            episodes = list(replayed.episodes)
+            fetch = getattr(full_memory, 'episode_light', full_memory.episode)
+            for episode in replayed.episodes:
+                p = episode.steps[0].observation.get('proposition_id')
+                if p not in re_evidenced.conflicting_propositions:
+                    continue
+                selected_polarity = episode.steps[0].observation.get('evidence_polarity')
+                for identifier in opponents[p]:
+                    if identifier == episode.episode_id:
+                        continue
+                    source = fetch(identifier)
+                    if source.steps[0].observation.get('evidence_polarity') == selected_polarity:
+                        continue
+                    episodes.append(ReplayedEpisode(identifier, (), source.steps,
+                        source.source_addresses, source.verification_state))
+            replayed = ReplayResult(recalled.query, tuple(episodes))
+            re_evidenced = re_evidence_memory(replayed, judge=judge)
         receipt = MemoryActivationReceipt(schema_version='rozephine-memory-activation-v1',
             snapshot_id=memory.snapshot_id, deja_vu=signal, recall=recalled,
             replay=replayed, re_evidence=re_evidenced)

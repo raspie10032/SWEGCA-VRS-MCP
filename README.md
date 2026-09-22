@@ -58,14 +58,17 @@ PYTHONPATH=/absolute/path/to/SWEGCA-VRS-MCP/src /absolute/path/to/python \
   --python /absolute/path/to/python \
   --module-root /absolute/path/to/SWEGCA-VRS-MCP/src \
   --state-dir /absolute/path/to/swegca-vrs2-codex \
-  --server-name swegca_vrs \
+  --server-name swegca-vrs \
   --output "$HOME/.codex/hooks.json.new"
 ```
 
 Review and place the generated `hooks` object in Codex's hook configuration.
 The generator refuses to overwrite an existing file. Every `SessionStart` and
 `SessionEnd` is registered without guessing the host's reason string. Tool
-input injection is limited to `mcp__swegca_vrs__memory_*`.
+input injection is limited to `mcp__swegca_vrs__memory_*`. `UserPromptSubmit`
+calls `memory_prompt` on the already connected `swegca-vrs` MCP server; the
+remaining lifecycle capture hooks use commands. The configured server name
+must match the `--server-name` value exactly.
 
 ## Memory workflow
 

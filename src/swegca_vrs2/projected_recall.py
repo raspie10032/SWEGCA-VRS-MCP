@@ -437,24 +437,28 @@ class ProjectedRecall:
         candidates = tuple(sorted(candidates, key=order))
         recalled = RecallResult(self.query, candidates, self.pair_snapshot)
         episodes = []
-        for candidate in candidates:
+        chosen = next((row for row in candidates
+                       if self._current(row.episode_id)['superseded_by'] is None),
+                      candidates[0] if candidates else None)
+        if chosen is not None:
+            candidate = chosen
             source = self._replay(candidate.episode_id)
             episodes.append(ReplayedEpisode(candidate.episode_id, candidate.matched_cues,
                 source.steps, source.source_addresses, source.verification_state))
-        replayed = ReplayResult(self.query, tuple(episodes))
 
-        active_propositions = set(propositions)
-        active_propositions.update(self._proposition(self._exact(row.episode_id))
-                                   for row in candidates)
-        active_propositions.discard(None)
         opponents = {}
-        for proposition in active_propositions:
+        # Inspect current VRS columns for the selected claim without opening
+        # every Recall candidate's original capsule.
+        for episode in tuple(episodes):
+            proposition = self._proposition(self._exact(episode.episode_id))
+            if proposition is None:
+                continue
             active = [identifier for identifier in self._proposition_ids(proposition)
                       if self._current(identifier)['superseded_by'] is None]
-            polarities = {self._replay(identifier).steps[0].observation.get('evidence_polarity')
-                          for identifier in active}
+            polarities = {self._exact(identifier)['polarity'] for identifier in active}
             if polarities == {'support', 'refute'}:
                 opponents[proposition] = tuple(sorted(active))
+        replayed = ReplayResult(self.query, tuple(episodes))
         graph_snapshot = digest(('sharded-vrs-projection-v1', sorted(
             {(self._exact(identifier)['shard'], self._current(identifier)['graph_snapshot_id'])
              for identifier in scoped_ids})))
@@ -472,6 +476,21 @@ class ProjectedRecall:
                 proposition=proposition or 'experience:' + episode.episode_id)
 
         re_evidenced = re_evidence_memory(replayed, judge=judge)
+        if re_evidenced.conflicting_propositions:
+            matches = {row.episode_id: row.matched_cues for row in candidates}
+            for episode in tuple(episodes):
+                proposition = self._proposition(self._exact(episode.episode_id))
+                if proposition not in re_evidenced.conflicting_propositions:
+                    continue
+                selected_polarity = self._exact(episode.episode_id)['polarity']
+                for identifier in opponents[proposition]:
+                    if identifier == episode.episode_id or self._exact(identifier)['polarity'] == selected_polarity:
+                        continue
+                    source = self._replay(identifier)
+                    episodes.append(ReplayedEpisode(identifier, matches.get(identifier, ()),
+                        source.steps, source.source_addresses, source.verification_state))
+            replayed = ReplayResult(self.query, tuple(episodes))
+            re_evidenced = re_evidence_memory(replayed, judge=judge)
         receipt = MemoryActivationReceipt('rozephine-memory-activation-v1', self.pair_snapshot,
                                            signal, recalled, replayed, re_evidenced)
         shards = sorted(roots)

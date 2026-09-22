@@ -293,6 +293,52 @@ def test_generated_codex_end_and_interrupt_hooks_fit_runtime_deadline(tmp_path):
     assert hooks['Interrupt'][0]['hooks'][0]['timeout'] == 3
 
 
+def test_generated_prompt_hook_uses_connected_mcp_and_exact_session(tmp_path):
+    hooks = codex_hook_config(Path('/python'), tmp_path,
+        server_name='memory_prod')['hooks']
+    prompt_hook = hooks['UserPromptSubmit'][0]['hooks'][0]
+    assert prompt_hook['type'] == 'mcp_tool'
+    assert prompt_hook['server'] == 'memory_prod'
+    assert prompt_hook['tool'] == 'memory_prompt'
+    assert prompt_hook['input'] == {
+        'session_id': '${session_id}', 'prompt': '${prompt}'}
+    production = codex_hook_config(Path('/python'), tmp_path,
+        server_name='swegca-vrs')['hooks']
+    assert production['UserPromptSubmit'][0]['hooks'][0]['server'] == 'swegca-vrs'
+    assert production['PreToolUse'][0]['matcher'] == '^mcp__swegca_vrs__memory_'
+
+
+def test_connected_prompt_hook_recalls_session_first(tmp_path):
+    state, transcript, session = tmp_path / 'state', tmp_path / 'rollout.jsonl', 'prompt-mcp'
+    write_transcript(transcript, session, [{
+        'type': 'response_item', 'payload': {'type': 'message', 'role': 'user',
+            'content': [{'type': 'input_text', 'text': 'session_anchor original'}]}}])
+    capture = SessionCapture(state)
+    session_state = capture.session_root('codex', session)
+    server = LayeredMCP(state)
+    try:
+        capture.scan_transcript('codex', session, transcript)
+        result = server.call_tool('memory_prompt', dict(session_id=session,
+            prompt='session_anchor'))['hookSpecificOutput']
+        assert result['hookEventName'] == 'UserPromptSubmit'
+        packet = json.loads(result['additionalContext'].split('receipt follows: ', 1)[1])
+        assert packet['status'] == 'ok'
+        assert packet['memory_layer'] == 'session'
+        assert packet['fallback_used'] is False
+        assert packet['candidate_count'] >= 1
+        assert packet['memories'][0]['text'] == 'session_anchor original'
+        assert server.main is None
+        missing = server.call_tool('memory_prompt', dict(session_id=session,
+            prompt='unmatched_unique_991'))['hookSpecificOutput']
+        failure = json.loads(missing['additionalContext'].split('receipt follows: ', 1)[1])
+        assert failure['status'] == 'vrs_prompt_recall_failed'
+        assert failure['reason'] == 'durable_main_vrs_not_ready'
+        assert server.main is None
+    finally:
+        server.close()
+        stop(session_state)
+
+
 def test_generated_hook_preserves_virtualenv_python_symlink(tmp_path):
     base = tmp_path / 'base-python'
     base.write_text('', encoding='utf-8')
@@ -884,7 +930,8 @@ def test_ended_partitioned_session_attaches_every_vrs_shard_and_recalls_cold(tmp
         root = sharded.recall('linked_partition_anchor', resident.logical_snapshot())
         activation = root['receipt']['activation']
         assert activation.stage_order == ('deja_vu', 'recall', 'replay', 're_evidence')
-        assert {row.episode_id for row in activation.replay.episodes} == set(addresses)
+        assert {row.episode_id for row in activation.recall.candidates} == set(addresses)
+        assert len(activation.replay.episodes) == 1
         direct = sharded.recall(addresses[-1], resident.logical_snapshot())
         assert direct['receipt']['activation'].replay.episodes[0].episode_id == addresses[-1]
     finally:

@@ -68,21 +68,20 @@ def test_resident_recalls_every_ready_shard_through_all_four_stages(tmp_path):
 
         packet = hook_recall(primary, dict(query="정산 기록", limit=10, snippet=80), resident)
         assert not packet["misses"]
-        by_bundle = {}
-        for recalled in packet["memories"]:
-            by_bundle.setdefault(recalled["bundle"], []).append(recalled)
-        assert set(by_bundle) == {"main", "t2m", "sq"}
-        assert len(by_bundle["main"]) == 3 and len(by_bundle["t2m"]) == 4 and len(by_bundle["sq"]) == 1
-        assert {r["bundle_state"] for r in by_bundle["t2m"]} == {"cold"}
-        assert all(r["vrs"] is not None and r["verdict"] in {"available", "retained"}
-                   for r in by_bundle["t2m"])
+        recalled = ShardedMain(primary, resident).recall("정산 기록", resident.logical_snapshot())
+        candidates = recalled["receipt"]["activation"].recall.candidates
+        assert len(candidates) == packet["candidate_count"] == 8
+        assert {resident.lookup(row.episode_id) for row in candidates} == {"main", "t2m", "sq"}
+        assert packet["returned"] == 1
+        assert packet["memories"][0]["vrs"] is not None
+        assert packet["memories"][0]["verdict"] in {"available", "retained"}
         t2m_status = next(b for b in packet["bundles"] if b["bundle"] == "t2m")
         assert t2m_status["complete_vrs"] is True and t2m_status["read_projection_ready"] is True
         assert t2m_status["stage_order"] == ["deja_vu", "recall", "replay", "re_evidence"]
 
-        t2m_id = by_bundle["t2m"][0]["episode_id"]
+        t2m_id = next(iter(t2m.memory.iter_episode_ids()))
         assert resident.lookup(t2m_id) == "t2m"
-        assert resident.lookup(by_bundle["main"][0]["episode_id"]) == "main"
+        assert resident.lookup(next(iter(primary.memory.iter_episode_ids()))) == "main"
         states = {b["id"]: b["state"] for b in resident.status()}
         assert states == {"main": "hot", "t2m": "cold", "sq": "hot"}
     finally:
