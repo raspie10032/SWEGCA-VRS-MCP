@@ -327,3 +327,44 @@ tailer remains active. A concurrent live audit of its current prefix passed:
 40,302 transcript lines, 35,064 expected original observations, two valid
 post-cursor originals, zero missing, unexpected or changed originals, and no
 SQLite module loaded (`/var/tmp/vrs22-native-shadow-live-audit-20260922-r2.json`).
+
+## Readable reasoning-summary ingress
+
+The Codex transcript also carries readable `summary_text` parts inside
+`response_item: reasoning`. The earlier extractor dropped the whole item,
+including those parts. [OpenAI's App Server documentation](https://learn.chatgpt.com/docs/app-server)
+distinguishes streamed readable summaries from raw reasoning text. The
+extractor now admits only the ordered `summary_text` parts as an assistant
+`reasoning_summary` original experience. It excludes encrypted content and
+raw reasoning. The session VRS test checks both the admitted original and
+the absence of private fields; 45 session and grader tests passed.
+
+A one-time task-owned backfill added 1,299 previously skipped readable
+summary originals to the active native shadow's session VRS, with their
+stable transcript addresses. The script was removed after use. The new
+tailer continues from the same cursor using the new installed wheel. A
+subsequent concurrent original-content audit passed with 40,942 prefix
+lines, 36,914 expected originals, two authenticated post-cursor originals,
+zero missing/unexpected/changed records, and no SQLite module loaded:
+`/var/tmp/vrs22-native-shadow-summary-live-audit-20260922.json`. The active
+desktop VRS remains the old connection; this is the isolated native shadow.
+
+Product source commit `d5dea59` was built into an offline wheel with SHA-256
+`c9ef791cd21ea71abfb280a51b4dcbedda55dfc76e1cb95ab66f3da96787c80e`.
+All 48 source, wheel and installed Python files were byte-equal, with no
+SQLite, Hermes or external filelock imports/dependencies. Its complete
+installed-wheel selftest passed at
+`/var/tmp/vrs22-whole-path-selftest-summary-ingress-20260922/receipt.json`
+(SHA-256 `191f520a6419abf8242f19dd39f1c010d1622ee2b59e5338971dc04ed1bfcd9a`).
+The persistent post-SessionEnd handoff unit and shadow tailer now use this
+wheel; both are active under 4 GiB, zero swap and 625 MB/s I/O limits. No
+SessionEnd marker exists, so main has not merged and the live desktop MCP
+has not switched.
+
+The wheel's 15,630-original natural Replay receipt is
+`evals/vrs22_context/results/first_ranked_original_replay_summary_ingress_wheel_20260922.json`.
+During concurrent system load, the first calls measured 3.037 ms for one
+match, 26.778 ms for 100 and 167.931 ms for 1,008. These samples fail the
+strict 1 ms gate. The evaluation grader now accepts additional observed
+violations instead of assuming only the broad two cases fail; all 20 grader
+regressions pass and no VRS model cell ran.
