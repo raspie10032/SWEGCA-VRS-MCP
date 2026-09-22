@@ -57,6 +57,13 @@ void visit_journal_frame_addresses(
     const std::filesystem::path& generation_directory,
     const std::function<void(const JournalFrameAddress&)>& visit);
 
+// Stream verified originals and their exact frame addresses together. A
+// caller may construct a derived ID directory without reopening every frame.
+// SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:136-194
+void visit_journal_addressed_rows(
+    const std::filesystem::path& generation_directory,
+    const std::function<void(JournalRow&&, const JournalFrameAddress&)>& visit);
+
 // Open only the addressed frame and return exactly one original row. Its
 // generation, frame sequence span, checksum and original sequence are checked.
 // SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:136-177

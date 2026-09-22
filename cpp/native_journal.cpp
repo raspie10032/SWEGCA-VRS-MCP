@@ -178,6 +178,12 @@ void NativeJournal::visit_frame_addresses(
     visit_journal_frame_addresses(path_, visit);
 }
 
+// SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:136-194
+void NativeJournal::visit_addressed_rows(
+    const std::function<void(JournalRow&&, const JournalFrameAddress&)>& visit) const {
+    visit_journal_addressed_rows(path_, visit);
+}
+
 // SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:136-177
 JournalRow NativeJournal::row_at(const JournalFrameAddress& address,
                                  std::int64_t sequence) const {

@@ -31,6 +31,9 @@ public:
     // SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:136-194
     void visit_frame_addresses(
         const std::function<void(const JournalFrameAddress&)>& visit) const;
+    // SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:136-194
+    void visit_addressed_rows(
+        const std::function<void(JournalRow&&, const JournalFrameAddress&)>& visit) const;
     // SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:136-177
     [[nodiscard]] JournalRow row_at(const JournalFrameAddress& address,
                                     std::int64_t sequence) const;

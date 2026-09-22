@@ -144,6 +144,10 @@ observation fingerprint, and requested episode ID. This is a cold original
 read for selected Replay, not a Recall-time transcript or capsule scan. Its
 address must still come from a generation-bound derived directory, not from
 searching journal bodies during a user read.
+The address-directory builder can stream each verified original row together
+with its frame address in one journal walk. It validates the complete frame
+and its sequence span before delivering any row from that frame. This is a
+rebuild/ingest path; it does not run on a user Recall or Replay request.
 
 The two populated SQLite stores have separate owner identities and sequence
 spaces. Export each to its own immutable native archive, recording the exact

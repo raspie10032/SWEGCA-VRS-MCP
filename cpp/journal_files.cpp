@@ -209,7 +209,10 @@ std::uint64_t frame_length(const std::array<char, header_bytes>& header) {
 bool visit_file(const std::filesystem::path& path, bool repair,
                 const std::function<bool(JournalRow&&)>& visit,
                 const std::function<void(std::uint64_t, std::int64_t, std::int64_t)>*
-                    frame_visitor = nullptr) {
+                    frame_visitor = nullptr,
+                const std::function<void(JournalRow&&, std::uint64_t,
+                                         std::int64_t, std::int64_t)>*
+                    addressed_visitor = nullptr) {
     std::ifstream stream(path, std::ios::binary);
     if (!stream) throw std::runtime_error("native_vrs_journal_magic_invalid");
     std::array<char, magic_bytes> magic{};
@@ -245,15 +248,22 @@ bool visit_file(const std::filesystem::path& path, bool repair,
             durable_truncate(path, valid_end);
             break;
         }
-        std::optional<std::int64_t> first_sequence;
-        std::int64_t last_sequence = 0;
-        if (!visit_journal_frame_until(frame, [&](JournalRow&& row) {
-                if (!first_sequence) first_sequence = row.sequence;
-                last_sequence = row.sequence;
-                return visit(std::move(row));
-            })) return false;
-        if (frame_visitor && first_sequence)
-            (*frame_visitor)(valid_end, *first_sequence, last_sequence);
+        if (addressed_visitor) {
+            visit_journal_frame_with_span(frame,
+                [&](JournalRow&& row, std::int64_t first, std::int64_t last) {
+                    (*addressed_visitor)(std::move(row), valid_end, first, last);
+                });
+        } else {
+            std::optional<std::int64_t> first_sequence;
+            std::int64_t last_sequence = 0;
+            if (!visit_journal_frame_until(frame, [&](JournalRow&& row) {
+                    if (!first_sequence) first_sequence = row.sequence;
+                    last_sequence = row.sequence;
+                    return visit(std::move(row));
+                })) return false;
+            if (frame_visitor && first_sequence)
+                (*frame_visitor)(valid_end, *first_sequence, last_sequence);
+        }
         valid_end += frame.size();
     }
     return true;
@@ -331,6 +341,28 @@ void visit_journal_frame_addresses(
             ++expected;
             return true;
         }, &frame_visitor);
+    }
+}
+
+// SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:136-194
+void visit_journal_addressed_rows(
+    const std::filesystem::path& generation_directory,
+    const std::function<void(JournalRow&&, const JournalFrameAddress&)>& visit) {
+    std::int64_t expected = 1;
+    const auto generation = generation_directory.filename().string();
+    for (const auto& file : ordered_files(generation_directory)) {
+        const std::function<void(JournalRow&&, std::uint64_t,
+                                 std::int64_t, std::int64_t)> addressed_visitor =
+            [&](JournalRow&& row, std::uint64_t offset,
+                std::int64_t first, std::int64_t last) {
+                if (row.sequence != expected)
+                    throw std::runtime_error("native_vrs_sequence_invalid");
+                ++expected;
+                visit(std::move(row), JournalFrameAddress{
+                    generation, file.filename().string(), offset, first, last});
+            };
+        (void)visit_file(file, false, [](JournalRow&&) { return true; },
+                         nullptr, &addressed_visitor);
     }
 }
 

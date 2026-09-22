@@ -238,6 +238,21 @@ void inflate_rows(std::span<const std::byte> compressed,
     inflateEnd(&stream);
 }
 
+// SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:153-177
+std::span<const std::byte> checked_payload(std::span<const std::byte> frame) {
+    const auto length = little_endian_length(frame);
+    if (length > maximum_payload_bytes) throw std::runtime_error("native_vrs_frame_too_large");
+    if (frame.size() != header_bytes + length + checksum_bytes)
+        throw std::runtime_error("native_vrs_journal_truncated");
+    const auto payload = frame.subspan(header_bytes, static_cast<std::size_t>(length));
+    Sha256 hash;
+    hash.update(payload);
+    const auto digest = hash.finish();
+    if (!std::equal(digest.begin(), digest.end(), frame.begin() + header_bytes + length))
+        throw std::runtime_error("native_vrs_frame_integrity_failed");
+    return payload;
+}
+
 }  // namespace
 
 // SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:129-134
@@ -280,20 +295,36 @@ std::vector<std::byte> encode_journal_frame(
 // SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:136-177
 void visit_journal_frame(std::span<const std::byte> frame,
                          const std::function<void(JournalRow&&)>& visit) {
-    const auto length = little_endian_length(frame);
-    if (length > maximum_payload_bytes) throw std::runtime_error("native_vrs_frame_too_large");
-    if (frame.size() != header_bytes + length + checksum_bytes)
-        throw std::runtime_error("native_vrs_journal_truncated");
-    const auto payload = frame.subspan(header_bytes, static_cast<std::size_t>(length));
-    Sha256 hash;
-    hash.update(payload);
-    const auto digest = hash.finish();
-    if (!std::equal(digest.begin(), digest.end(), frame.begin() + header_bytes + length))
-        throw std::runtime_error("native_vrs_frame_integrity_failed");
+    const auto payload = checked_payload(frame);
     // The schema follows the rows in the canonical frame. Validate every row
     // and the final schema before exposing any row to a main-generation caller.
     inflate_rows(payload, nullptr);
     inflate_rows(payload, &visit);
+}
+
+// SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:136-177
+void visit_journal_frame_with_span(
+    std::span<const std::byte> frame,
+    const std::function<void(JournalRow&&, std::int64_t, std::int64_t)>& visit) {
+    const auto payload = checked_payload(frame);
+    std::int64_t first = 0;
+    std::int64_t last = 0;
+    const std::function<void(JournalRow&&)> inspect = [&](JournalRow&& row) {
+        if (first == 0) {
+            if (row.sequence < 1) throw std::runtime_error("native_vrs_sequence_invalid");
+            first = row.sequence;
+        } else if (last == std::numeric_limits<std::int64_t>::max() ||
+                   row.sequence != last + 1) {
+            throw std::runtime_error("native_vrs_sequence_invalid");
+        }
+        last = row.sequence;
+    };
+    inflate_rows(payload, &inspect);
+    if (first == 0) return;
+    const std::function<void(JournalRow&&)> deliver = [&](JournalRow&& row) {
+        visit(std::move(row), first, last);
+    };
+    inflate_rows(payload, &deliver);
 }
 
 // SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:206-221
