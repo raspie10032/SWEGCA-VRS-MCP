@@ -75,12 +75,17 @@ The existing `VRS2JNL1` frame remains the canonical journal representation:
 little-endian payload length, zlib payload, SHA-256 payload checksum, and the
 five row fields (sequence, request ID, observation envelope, fingerprint,
 pair ID). This physical format comes from the current VRS 2.2 native journal,
-not from the author SWEGCA functions; keeping it preserves current experience
-without a separate migration reader. `checkpoint.vrsc` contains a Python
-pickle and is only a derived cache. The C++ product rebuilds derived state
-from the native journal and does not need a Python checkpoint reader. Codec
-and digest implementations sit behind small C++ modules and use no prebuilt
-wheel or external memory-decision logic.
+not from the author SWEGCA functions. A read-only 2026-09-22 inventory found
+47,566 current journal rows in two SQLite session/shard originals while the
+session native head holds only its eight-byte magic. Preserving current
+experience therefore requires a separate, one-time verified export of the
+original rows and their fingerprint/pair/source lineage into this canonical
+native format. The original files stay untouched during the rebuild; no
+SQLite reader or export path remains in the final runtime. `checkpoint.vrsc`
+contains a Python pickle and is only a derived cache. The C++ product
+rebuilds derived state from the native journal and does not need a Python
+checkpoint reader. Codec and digest implementations sit behind small C++
+modules and use no prebuilt wheel or external memory-decision logic.
 The frame reader accepts the canonical JSON byte structure emitted by the
 sole native journal writer. It validates a complete frame before streaming
 its rows to a new main generation; it does not depend on the Python decoder's
