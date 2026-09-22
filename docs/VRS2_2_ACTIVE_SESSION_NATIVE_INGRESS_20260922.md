@@ -204,3 +204,18 @@ or a missing hook injection on this connection, but it does not identify which
 one; the app call still fails even when this agent supplies an ID. A fresh
 app MCP connection after the authorized SessionEnd handoff must be checked
 before claiming live integration.
+
+## Concurrent active-session integrity audit
+
+The native-capture auditor now authenticates journal rows newer than its
+frozen cursor against complete transcript lines after that cursor. It still
+fails if any cursor-covered original is missing or changed, or if an extra
+native original has no matching transcript line. A targeted regression passed
+both the valid in-flight writer case and an unrelated injected record case.
+The active native shadow tailer stayed running during the audit, which passed:
+39,093 cursor-covered transcript lines, 34,023 expected original observations,
+34,025 native originals, two authenticated post-cursor originals, zero
+missing, unexpected or changed records, and zero post-cursor pending originals.
+The private counts-only receipt is
+`/var/tmp/vrs22-native-shadow-live-tail-audit-r1-20260922.json`
+(SHA-256 `7d372c3198888efe8146874bba6c398068c6becd276d86bc2142a2a9a5e502da`).

@@ -22,6 +22,7 @@ from swegca_vrs2.native_transport import InterfaceError
 from swegca_vrs2.read_lease import engine_recall_active
 from swegca_vrs2.codex_hooks import config as codex_hook_config
 from swegca_vrs2.conversation_watch import watch
+from tools.audit_vrs22_session_native_capture import audit as audit_native_capture
 
 
 def stop(*states):
@@ -46,6 +47,37 @@ def append_message(path, value):
             'type': 'message', 'role': 'user',
             'content': [{'type': 'input_text', 'text': value}]}}
             , ensure_ascii=False) + '\n')
+
+
+def test_live_native_audit_accepts_verified_post_cursor_rows_but_rejects_injection(tmp_path):
+    state, transcript, session = tmp_path / 'state', tmp_path / 'rollout.jsonl', 'audit-live'
+    write_transcript(transcript, session, [
+        {'type': 'response_item', 'payload': {'type': 'message', 'role': 'user',
+            'content': [{'type': 'input_text', 'text': 'first recorded experience'}]}}])
+    capture = SessionCapture(state)
+    session_state = capture.session_root('codex', session)
+    try:
+        capture.scan_transcript('codex', session, transcript)
+        cursor_path = capture.cursor_path('codex', session, transcript)
+        first_cursor = cursor_path.read_bytes()
+        append_message(transcript, 'second recorded experience')
+        capture.scan_transcript('codex', session, transcript)
+        # A live audit can snapshot the cursor just before the writer commits
+        # more valid transcript experiences to the native journal.
+        cursor_path.write_bytes(first_cursor)
+        valid = audit_native_capture(state, transcript, session)
+        assert valid['status'] == 'PASS'
+        assert valid['post_cursor_original_observations'] > 0
+        assert valid['missing_requests'] == valid['unexpected_requests'] == 0
+
+        with VRSClient(session_state, writes=True) as client:
+            client.ingest_many([dict(request_id='not-in-transcript', text='unrelated extra',
+                source='test:injected', revision='1', outcome='pending')])
+        contaminated = audit_native_capture(state, transcript, session)
+        assert contaminated['status'] == 'FAIL'
+        assert contaminated['unexpected_requests'] == 1
+    finally:
+        stop(session_state)
 
 
 def finish(server, session, packet):

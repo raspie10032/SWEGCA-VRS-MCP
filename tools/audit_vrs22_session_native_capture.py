@@ -65,16 +65,52 @@ def audit(state: Path, transcript: Path, session: str) -> dict:
                 actual[request_id] = hashlib.sha256(canonical(row).encode('utf-8')).digest()
         finally:
             journal.close()
+
+    # The writer can append complete native observations after the cursor was
+    # frozen above. Authenticate those extra rows against complete transcript
+    # lines beyond the frozen cursor instead of calling them contamination.
+    # Read the tail after the journal snapshot so every row seen in the journal
+    # must already have its authoritative transcript line available here.
+    post_cursor = {}
+    post_cursor_lines = 0
+    tail_offset = cutoff
+    with transcript.open('rb') as stream:
+        stream.seek(tail_offset)
+        while raw := stream.readline():
+            if not raw.endswith(b'\n'):
+                break
+            start = tail_offset
+            tail_offset += len(raw)
+            post_cursor_lines += 1
+            normalized = transcript_record('codex', json.loads(raw))
+            if normalized is None:
+                continue
+            role, value, kind = normalized
+            source_key = f'{digest(str(transcript.resolve()))}:{start}:{digest(raw.decode("utf-8"))}'
+            for payload in capture.payloads('codex', key, source_key, role, value, kind,
+                                            lines + post_cursor_lines):
+                row = observation(payload)
+                identifier = row['request_id']
+                if identifier in expected or identifier in post_cursor:
+                    raise ValueError('duplicate_transcript_experience_request')
+                post_cursor[identifier] = hashlib.sha256(canonical(row).encode('utf-8')).digest()
     missing = expected.keys() - actual.keys()
-    unexpected = actual.keys() - expected.keys()
+    unexpected = actual.keys() - expected.keys() - post_cursor.keys()
     changed = sum(expected[key] != actual[key] for key in expected.keys() & actual.keys())
+    changed += sum(post_cursor[key] != actual[key]
+                   for key in post_cursor.keys() & actual.keys())
+    post_cursor_present = len(post_cursor.keys() & actual.keys())
     accounted = (lines == captured + excluded == int(cursor['line'])
                  and captured == int(cursor['captured'])
-                 and excluded == int(cursor['excluded']) and offset == cutoff)
+                 and excluded == int(cursor['excluded'])
+                 and offset == int(cursor['offset']))
     return dict(status='PASS' if accounted and not (missing or unexpected or changed) else 'FAIL',
-                scope='one active-session captured transcript prefix versus native VRS journals',
+                scope='captured transcript prefix plus authenticated concurrent native tail',
                 transcript_lines=lines, captured_lines=captured, excluded_private_or_control_lines=excluded,
                 expected_original_observations=len(expected), native_original_observations=len(actual),
+                post_cursor_transcript_lines=post_cursor_lines,
+                post_cursor_original_observations=post_cursor_present,
+                post_cursor_pending_observations=len(post_cursor) - post_cursor_present,
                 native_stores=native_stores, missing_requests=len(missing),
                 unexpected_requests=len(unexpected), changed_originals=changed,
                 cursor_accounted=accounted, sqlite_module_loaded='sqlite3' in sys.modules)
