@@ -81,7 +81,7 @@ Only main-owned SWEGCA evidence accumulation and judgment can change a
 persistent belief. A read receipt and an observation admission grant no World,
 action, semantic promotion, model-update, distribution, or P3 authority.
 Consolidation and derived-index publication are background generation work;
-independent regions can use the 16-thread CPU. They cannot stand in front of
+independent preparation can use the 16-thread CPU. They cannot stand in front of
 the input → Déjà vu → navigation → Recall path. Memory and disk budgets remain hard
 limits without deleting experiences, regions, portals, or evidence logic.
 

@@ -3,8 +3,8 @@
 This maps the public `SWEGCA-Architecture` revision
 `5901a5aa2dcbd0ac7ad12ac6dd745699f72288a8` to the memory-facing
 VRS-MCP at `c06092a`. It is a source audit, not a claim that the old MCP
-enforces the whole architecture. The user's execution-order review remains
-pending; this document makes no new read-order decision.
+enforces the whole architecture. The reviewed execution order is recorded in
+`SWEGCA_VRS_MCP_ORDER_FOR_REVIEW.md`; this map makes no new read-order decision.
 
 | SWEGCA rule | Authoritative source | VRS-MCP boundary and current evidence |
 | --- | --- | --- |

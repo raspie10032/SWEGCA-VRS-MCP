@@ -76,10 +76,10 @@ code, so no record/edge/byte count may be reported as that target.
 | Current product area | New owner or boundary | Required preservation |
 | --- | --- | --- |
 | `session_capture`, `conversation_*`, `codex_hooks` | Host ingress and session lifecycle | Every host-visible record, stable addresses, live session VRS, real SessionEnd attachment |
-| `layered`, `server`, `native_memory`, `native_context`, `native_transport`, `loopback` | Thin MCP transport over one main read path | Session-first order, exact IDs, bounded output pages, no transport authority |
+| `layered`, `server`, `native_memory`, `native_context`, `native_transport`, `loopback` | MCP transport and author evidence pages over one owner | Full source tool catalog, handle and cursor contracts, session-first routing, exact IDs, bounded output pages, no transport authority |
 | `store`, `native_journal`, `native_lock`, `resident`, `linked_shards` | One main owner and native generations | Original lineage, atomic publish, complete shards, journal recovery |
 | `compact_index`, `cue_shards`, `exact_replay`, `read_projection`, `projected_recall` | Derived address and read projections | No source-of-truth duplication; full Recall addresses; selected original Replay |
-| `flat_vrs`, `fast_regions`, `vrs_refine`, `vrs_evidence`, `engine/mosaic_vrs_*` | Main-owned numerical SWEGCA VRS | Event arithmetic, evidence, fine regions, memberships, shared-experience portals, parallel consolidation |
+| `flat_vrs`, `fast_regions`, `vrs_refine`, `vrs_evidence`, `engine/mosaic_vrs_*` | Main-owned numerical SWEGCA VRS | Author event settlement and refinement, accumulator, overlapping memberships, coactivation witnesses, shared-original portal lifecycle, generation binding; physical splitting and bounded parallel preparation |
 | `engine/mosaic_memory_activation`, `engine/mosaic_proposition_directory`, `engine/mosaic_semantic_family_directory` | One four-stage activation | Déjà vu first, Recall closure, Replay selection, Re-evidence provenance and conflict |
 
 Every product entry point and every source file must be either replaced by a
