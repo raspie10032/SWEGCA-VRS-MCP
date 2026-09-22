@@ -88,9 +88,10 @@ CurrentEvidenceVerdict::CurrentEvidenceVerdict(
     if (!nonblank(proposition)) throw std::runtime_error("re-evidence proposition must not be empty");
     if (!valid_verdict(verdict)) throw std::runtime_error("unsupported re-evidence verdict");
     if (!nonblank(rationale)) throw std::runtime_error("re-evidence rationale must not be empty");
-    if ((verdict == "support" || verdict == "refute" ||
-         verdict == "available" || verdict == "retained") && current_evidence_refs.empty())
-        throw std::runtime_error("current evidence provenance required");
+    if ((verdict == "support" || verdict == "refute") && current_evidence_refs.empty())
+        throw std::runtime_error("support or refute requires current evidence");
+    if ((verdict == "available" || verdict == "retained") && current_evidence_refs.empty())
+        throw std::runtime_error("experience availability requires current snapshot provenance");
     if (verdict == "conflict" && current_evidence_refs.empty() &&
         contradiction_refs.empty())
         throw std::runtime_error("conflict requires current or contradiction evidence");

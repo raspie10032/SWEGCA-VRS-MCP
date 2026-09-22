@@ -28,7 +28,7 @@ build/observation.o: cpp/observation.cpp cpp/observation.hpp cpp/json.hpp cpp/un
 build/memory_episode.o: cpp/memory_episode.cpp cpp/memory_episode.hpp cpp/keys.hpp cpp/unicode.hpp cpp/json.hpp cpp/digest.hpp | build
 	$(CXX) $(CXXFLAGS) -Icpp -c $< -o $@
 
-build/memory_evidence.o: cpp/memory_evidence.cpp cpp/memory_evidence.hpp cpp/memory_episode.hpp cpp/unicode.hpp | build
+build/memory_evidence.o: cpp/memory_evidence.cpp cpp/memory_evidence.hpp cpp/memory_episode.hpp cpp/json.hpp cpp/unicode.hpp | build
 	$(CXX) $(CXXFLAGS) -Icpp -c $< -o $@
 
 build/journal_frame.o: cpp/journal_frame.cpp cpp/journal_frame.hpp cpp/json.hpp cpp/digest.hpp | build
