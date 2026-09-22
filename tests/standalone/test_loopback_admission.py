@@ -1,7 +1,11 @@
 """A slow resident reply must never create a second memory activation."""
 
+import json
+from pathlib import Path
+
 import pytest
 
+from swegca_vrs2 import loopback
 from swegca_vrs2.loopback import LoopbackClient, ensure_daemon
 from swegca_vrs2.native_transport import InterfaceError
 from swegca_vrs2.server import LocalResident
@@ -51,7 +55,9 @@ def test_daemon_probe_uses_separate_long_lived_request_socket(tmp_path, monkeypa
             return self
 
         def readline(self, maximum):
-            return b'{"status":"ok"}\n'
+            return (json.dumps(dict(status='ok',
+                implementation=str(Path(loopback.__file__).resolve()),
+                source_digest=loopback.SOURCE_DIGEST)) + '\n').encode('utf-8')
 
         def close(self):
             pass
