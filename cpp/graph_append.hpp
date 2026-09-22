@@ -18,6 +18,8 @@ namespace swegca::vrs {
 class GraphNodeDirectory {
 public:
     virtual ~GraphNodeDirectory() = default;
+    // SWEGCA: src/swegca_vrs2/store.py@7536139:178-193
+    virtual void require_source(const EventVrsInputView& source) const = 0;
     // SWEGCA: src/swegca_vrs2/store.py@7536139:196-202
     [[nodiscard]] virtual std::uint64_t node_count() const = 0;
     // SWEGCA: src/swegca_vrs2/store.py@7536139:196-202
@@ -30,6 +32,7 @@ public:
 // publishes no memory, graph or pair from this plan before journal commit.
 // SWEGCA: src/swegca_vrs2/store.py@7536139:193-251
 struct GraphAppendPlan {
+    std::string parent_snapshot_id;
     std::string snapshot_id;
     std::vector<std::pair<std::string, std::uint32_t>> new_nodes;
     std::vector<float> appended_direct;

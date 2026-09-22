@@ -41,7 +41,9 @@ GraphAppendPlan plan_graph_append(
     const HotIndexRead& memory, const GraphNodeDirectory& nodes,
     const ValidatedEventVrsInputs& current_inputs) {
     const auto& graph = current_inputs.require_validated_immutable();
-    if (nodes.node_count() != graph.node_count() || nodes.contains(episode.episode_id) ||
+    nodes.require_source(graph);
+    if (nodes.node_count() >= std::uint64_t{0x100000000ULL} ||
+        nodes.node_count() != graph.node_count() || nodes.contains(episode.episode_id) ||
         !memory.contains_episode(episode.episode_id))
         throw std::runtime_error("graph append generation or episode changed");
 
@@ -164,7 +166,7 @@ GraphAppendPlan plan_graph_append(
     changed_nodes.push_back(center);
     changed_nodes.insert(changed_nodes.end(), endpoints.begin(), endpoints.end());
     return GraphAppendPlan{
-        snapshot_id, std::move(new_nodes), std::move(direct), std::move(scores),
+        graph.snapshot_id(), snapshot_id, std::move(new_nodes), std::move(direct), std::move(scores),
         std::move(unresolved), std::move(appended_edges), std::move(strengths),
         std::move(changed_nodes), VRSStateUpdateReceipt(snapshot_id, std::move(updates))};
 }
