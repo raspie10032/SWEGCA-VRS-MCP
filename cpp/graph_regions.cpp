@@ -1,5 +1,6 @@
 #include "graph_regions.hpp"
 
+#include <algorithm>
 #include <set>
 #include <stdexcept>
 #include <tuple>
@@ -109,6 +110,42 @@ GraphRegionPlan prepare_graph_regions(
     return GraphRegionPlan{std::move(source), std::move(topology),
                            std::vector<std::uint32_t>(obsolete.begin(), obsolete.end()),
                            Json(std::move(receipt))};
+}
+
+// SWEGCA: src/swegca_vrs2/store.py@7536139:299-302
+std::vector<std::tuple<std::string, std::uint32_t, double>>
+graph_memberships(std::string_view identifier, const EventVrsInputView& inputs,
+                  const GraphNodeDirectory& nodes,
+                  const GraphRegionDirectory& regions) {
+    nodes.require_source(inputs);
+    regions.require_source(inputs);
+    const auto address = nodes.address(identifier);
+    const auto component = regions.component_for(address);
+    if (!component) throw std::runtime_error("graph node has no component");
+    const auto topology = regions.topology_for(*component);
+    if (!topology || topology->vrs_snapshot_id() != inputs.snapshot_id())
+        throw std::runtime_error("region topology belongs to a different VRS generation");
+    const auto local = regions.local_address(*component, address);
+    if (local >= topology->terms().size() || topology->terms()[local] != address)
+        throw std::runtime_error("region node address changed");
+    std::vector<std::tuple<std::string, std::uint32_t, double>> result;
+    for (const auto& [group, weight] : topology->memberships_for_term(local))
+        result.emplace_back(topology->topology_id(), group, weight);
+    return result;
+}
+
+// SWEGCA: src/swegca_vrs2/store.py@7536139:304-306
+double graph_strength(std::string_view identifier,
+                      const EventVrsInputView& inputs,
+                      const GraphNodeDirectory& nodes) {
+    nodes.require_source(inputs);
+    const auto address = nodes.address(identifier);
+    double strength = 0;
+    inputs.dependencies().visit_edges(address, EndpointDirection::outgoing,
+        [&](std::uint32_t edge) {
+            strength = std::max(strength, static_cast<double>(inputs.strength(edge)));
+        });
+    return strength;
 }
 
 }  // namespace swegca::vrs

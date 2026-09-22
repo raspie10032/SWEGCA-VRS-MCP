@@ -7,6 +7,9 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <string>
+#include <string_view>
+#include <tuple>
 #include <vector>
 
 namespace swegca::vrs {
@@ -21,6 +24,12 @@ public:
     // SWEGCA: src/swegca_vrs2/store.py@7536139:282-291
     [[nodiscard]] virtual std::optional<std::uint32_t> component_for(
         std::uint32_t node) const = 0;
+    // SWEGCA: src/swegca_vrs2/store.py@7536139:299-302
+    [[nodiscard]] virtual std::shared_ptr<const ConnectivityRegions> topology_for(
+        std::uint32_t component) const = 0;
+    // SWEGCA: src/swegca_vrs2/store.py@7536139:299-302
+    [[nodiscard]] virtual std::uint32_t local_address(
+        std::uint32_t component, std::uint32_t node) const = 0;
 };
 
 // A detached replacement of one affected component: remove old component
@@ -40,5 +49,16 @@ struct GraphRegionPlan {
     const GraphNumericalCandidate& candidate,
     const ValidatedEventVrsInputs& parent,
     const GraphRegionDirectory& previous_regions);
+
+// SWEGCA: src/swegca_vrs2/store.py@7536139:299-302
+[[nodiscard]] std::vector<std::tuple<std::string, std::uint32_t, double>>
+graph_memberships(std::string_view identifier, const EventVrsInputView& inputs,
+                  const GraphNodeDirectory& nodes,
+                  const GraphRegionDirectory& regions);
+
+// SWEGCA: src/swegca_vrs2/store.py@7536139:304-306
+[[nodiscard]] double graph_strength(std::string_view identifier,
+                                    const EventVrsInputView& inputs,
+                                    const GraphNodeDirectory& nodes);
 
 }  // namespace swegca::vrs
