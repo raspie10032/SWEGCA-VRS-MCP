@@ -121,8 +121,14 @@ the header-log address to the same original ID and journal sequence. Its
 16-worker rebuild validates each journal row once; workers construct headers
 only for the first occurrence of each original, then sync the header frame
 before writing that ID slot. A read of header metadata can therefore avoid
-opening the original body. Cue postings, proposition and family directories,
-and the concrete published HotIndex reader are still missing.
+opening the original body. The new native cue directory adapts the existing
+VRS hash-prefix tiers, exact cue-byte verification, dual checksummed heads,
+and append-only posting chains. Nodes name first original journal sequences;
+published row limits hide future nodes from older readers. A descending
+sequence merge counts the exact distinct posting union without holding all
+candidate IDs in RAM. It still needs a journal-ordered rebuild and Main
+publication binding. Proposition and family directories and the concrete
+published HotIndex reader are still missing.
 The Main operation overlay now checks request ID and normalized observation
 fingerprint before any new HotIndex/Graph candidate is staged. Identical
 requests retain their original episode and pair certificate; conflicting
