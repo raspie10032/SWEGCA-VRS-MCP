@@ -294,20 +294,34 @@ class LazyTerms:
 
 
 @dataclass(frozen=True)
+class MemberPositions:
+    """Sorted global members to local positions without a graph-wide array."""
+
+    members: np.ndarray
+    universe_size: int
+
+    def local_of(self, node):
+        node = int(node)
+        if node < 0 or node >= self.universe_size:
+            return -1
+        position = int(np.searchsorted(self.members, node))
+        return position if (position < len(self.members)
+                            and int(self.members[position]) == node) else -1
+
+
+@dataclass(frozen=True)
 class ComponentCueAddressIndex:
     """A component-local view of the existing original cue addresses."""
 
     directory: NodeDirectory
-    positions: np.ndarray
+    positions: MemberPositions
 
     def term_ids(self, cue):
         cue_id = self.directory.vocab.id_of(cue)
         if cue_id is None:
             return ()
         node = self.directory.cue(cue_id)
-        if node < 0 or node >= len(self.positions):
-            return ()
-        local = int(self.positions[node])
+        local = self.positions.local_of(node)
         return (local,) if local >= 0 else ()
 
 
@@ -515,10 +529,17 @@ class Graph:
             previous_ids = {components[node] for node in members if node in components}
             previous = directory.get(next(iter(previous_ids))) if len(previous_ids) == 1 else None
             edges = np.flatnonzero(np.isin(flat.src, members))
-            local = np.full(flat.count, -1, dtype=np.int64)
-            local[members] = np.arange(len(members))
+            # Members are sorted global node IDs. Resolve only the endpoints
+            # used by this component instead of allocating one int64 position
+            # slot for every node in the whole graph for every component.
+            local_source = np.searchsorted(members, flat.src[edges])
+            local_target = np.searchsorted(members, flat.dst[edges])
+            if (np.any(local_source >= len(members)) or np.any(local_target >= len(members))
+                    or np.any(members[local_source] != flat.src[edges])
+                    or np.any(members[local_target] != flat.dst[edges])):
+                raise ValueError('component_edge_endpoint_changed')
             source = SimpleNamespace(terms=LazyTerms(nodes, frozen(members, np.int64)),
-                edge_source=local[flat.src[edges].astype(np.int64)], edge_target=local[flat.dst[edges].astype(np.int64)],
+                edge_source=local_source, edge_target=local_target,
                 edge_sign=flat.sign[edges].astype(np.int8), vrs_strength=flat.strength[edges].astype(np.float64))
             regions, _ = build_regions(source, vrs_snapshot_id=self.snapshot_id, previous=previous)
             if not regions.converged:
@@ -528,7 +549,7 @@ class Graph:
             component_id = int(members[0])
             for n in members:
                 components = components.set(int(n), component_id)
-            positions = frozen(local, np.int32)
+            positions = MemberPositions(frozen(members, np.uint32), flat.count)
             bound_source = ComponentRegionSource(regions.terms, regions.edge_source,
                 regions.edge_target, regions.edge_sign, regions.strengths,
                 ComponentCueAddressIndex(nodes, positions))
@@ -561,7 +582,8 @@ class Graph:
         if node not in self.components:
             return ()
         region, positions = self.regions[self.components[node]]
-        return tuple((region.topology_id, n, w) for n, w in region.memberships_for_term(positions[node]))
+        return tuple((region.topology_id, n, w) for n, w in
+                     region.memberships_for_term(positions.local_of(node)))
 
     def strength(self, identifier):
         """Max refined strength over the record's edges (cue edges, and its proposition edge if any)."""
@@ -938,6 +960,7 @@ class Main:
         for _, (region, positions) in state['graph'].regions.items():
             source = region.source
             if (not isinstance(source, ComponentRegionSource)
+                    or not isinstance(positions, MemberPositions)
                     or source.address_index.positions is not positions
                     or source.terms is not region.terms
                     or source.vrs_strength is not region.strengths):

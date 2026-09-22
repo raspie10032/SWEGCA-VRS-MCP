@@ -36,6 +36,20 @@ still raised `region topology belongs to a different VRS generation`. The
 source binding is therefore only one required part of the repair. No live
 state was changed by either probe.
 
+The repair next replaced each component's permanently stored graph-wide
+`positions` array with a sorted array containing that component's global node
+IDs. Each region still uses the same local node order and numerical algorithm;
+lookup maps a global cue node to its local position by indexed search. For
+disjoint components, stored position bytes now scale with the total number of
+member nodes instead of component count times all graph nodes. A two-component
+test observed 24 stored member bytes rather than 48 dense position bytes, and
+the main's 32 tests plus two session read/reload tests passed. The cold builder
+also maps only the current component's edge endpoints instead of allocating
+an `int64` position slot for every graph node; it still scans the edge array
+to select a component. This is a source-level bound on one array family, not a
+live 4 GB proof. Other graph/index arrays still need a complete resident
+measurement.
+
 ## Evidence semantics that an integration must preserve
 
 The product graph connects original records to literal cues for numerical

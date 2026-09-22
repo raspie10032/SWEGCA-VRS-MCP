@@ -64,6 +64,17 @@ def test_component_region_source_uses_original_cues_and_stays_generation_bound(m
         matches[0][0].require_pair(main.pair)
 
 
+def test_disconnected_components_store_only_their_own_node_positions(main):
+    main.ingest(dict(request_id='disjoint-a', text='zzzzq', source='probe:a', revision='1'))
+    main.ingest(dict(request_id='disjoint-b', text='xxxxr', source='probe:b', revision='1'))
+    graph = main.graph.rebuild_regions()
+    assert len(graph.regions) == 2
+    stored = sum(positions.members.nbytes for _, positions in graph.regions.values())
+    assert stored == graph.flat.count * np.dtype(np.uint32).itemsize
+    assert stored < len(graph.regions) * graph.flat.count * np.dtype(np.int32).itemsize
+    assert np.all(graph.labels() >= 0)
+
+
 def test_checkpoint_rejects_region_without_generation_bound_cue_source(main):
     record(main, 'checkpoint-region-source')
     main.consolidate()

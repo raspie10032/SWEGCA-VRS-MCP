@@ -228,9 +228,10 @@ def region_labels(graph):
     for component, entry in sorted(graph.regions.items()):
         regions, local = entry
         core = np.asarray(regions.core_labels, np.int64)
-        local = np.asarray(local)                       # node -> local position (-1 outside); may be shorter than n
-        members = np.flatnonzero(local >= 0)
-        labels[members] = base + core[local[members]]
+        members = np.asarray(local.members, np.int64)
+        if len(members) != len(core) or np.any(members >= n):
+            raise ValueError('region_member_positions_changed')
+        labels[members] = base + core
         base += int(core.max()) + 1 if len(core) else 1
     return labels
 
