@@ -91,6 +91,12 @@ pending view. A failed pending view is never reused. This preserves the author's
 allowing a bounded physical shard implementation later. The currently added
 C++ pending view implements the row visibility part only; product publication,
 physical sharding, and performance remain unverified.
+The pair ID is the author's SHA-256 of canonical schema version, memory
+snapshot ID, and VRS snapshot ID. The owner may replace that immutable pair
+only if its expected current ID still matches, and only after the corresponding
+journal commit. Main must retain and pin the numerical Graph generation named
+by the pair's VRS ID while readers use that pair; the C++ pair/CAS primitive
+alone does not provide this Graph binding or a complete product transaction.
 
 The existing `VRS2JNL1` frame remains the canonical journal representation:
 little-endian payload length, zlib payload, SHA-256 payload checksum, and the

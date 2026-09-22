@@ -41,6 +41,13 @@ public:
     [[nodiscard]] virtual std::uint64_t outcome_count(std::string_view outcome) const = 0;
 };
 
+// Only a committed immutable physical generation can be published in the
+// full-current pair. HotIndexPending is deliberately not a published index.
+class PublishedHotIndex : public HotIndexRead {
+public:
+    ~PublishedHotIndex() override = default;
+};
+
 struct HotIndexSeed {
     std::string snapshot_id;
     std::map<std::string, std::uint64_t> outcome_counts;
