@@ -59,7 +59,7 @@ def without_private_reasoning(value):
 
 
 def transcript_record(host, row):
-    """Extract host-visible session content; encrypted/private reasoning is excluded."""
+    """Extract host-visible content; never admit encrypted or raw reasoning."""
     if not isinstance(row, dict):
         raise ValueError('transcript_record_invalid')
     kind = row.get('type')
@@ -77,7 +77,14 @@ def transcript_record(host, row):
             raise ValueError('transcript_record_invalid')
         item_kind = item.get('type')
         if item_kind == 'reasoning':
-            return None
+            summary = item.get('summary')
+            if not isinstance(summary, list):
+                return None
+            public = [dict(type='summary_text', text=part['text'])
+                      for part in summary if isinstance(part, dict)
+                      and part.get('type') == 'summary_text'
+                      and isinstance(part.get('text'), str) and part['text']]
+            return ('assistant', serialized_content(public), 'reasoning_summary') if public else None
         if item_kind == 'message':
             role = item.get('role')
             if role not in ('user', 'assistant', 'system', 'developer'):

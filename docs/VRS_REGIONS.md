@@ -33,8 +33,9 @@ position, counts, recent exact addresses, and the current pair ID. It contains
 no dialogue text and cannot answer recall.
 
 The capture path keeps user, assistant, system, developer, tool, compaction,
-usage, and other host visible records. Encrypted or private reasoning fields are
-excluded because they are not host visible session content. Each long record is
+usage, readable reasoning summaries, and other host visible records. It takes
+only `summary_text` from a reasoning item; encrypted and raw reasoning fields
+are excluded. Each long record is
 split into ordered parts with stable source addresses; retries are idempotent.
 
 The layered Codex MCP injects the exact host session ID into each VRS tool call.

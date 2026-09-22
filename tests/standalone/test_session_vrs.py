@@ -12,7 +12,7 @@ from swegca_vrs2.layered import LayeredMCP
 from swegca_vrs2.loopback import ensure_daemon
 from swegca_vrs2.conversation_merge import run as merge_run
 from swegca_vrs2.runtime_upgrade import arm as arm_upgrade
-from swegca_vrs2.session_capture import SessionCapture, VRSClient, handle
+from swegca_vrs2.session_capture import SessionCapture, VRSClient, handle, transcript_record
 from swegca_vrs2.conversation_finalize import finalize
 from swegca_vrs2.resident import Resident
 from swegca_vrs2.sharded import ShardedMain
@@ -112,6 +112,34 @@ def test_transcript_enters_only_session_vrs_without_sqlite_outbox(tmp_path):
         assert status['hot_episode_count'] == 3
     finally:
         stop(capture.session_root('codex', session))
+
+
+def test_readable_reasoning_summary_enters_session_vrs_without_private_reasoning(tmp_path):
+    state, transcript, session = tmp_path / 'state', tmp_path / 'rollout.jsonl', 'summary-session'
+    summary = {'type': 'response_item', 'payload': {'type': 'reasoning',
+        'summary': [{'type': 'summary_text', 'text': 'public summary one'},
+                    {'type': 'summary_text', 'text': 'public summary two'}],
+        'encrypted_content': 'private encrypted reasoning',
+        'content': [{'type': 'reasoning_text', 'text': 'private raw reasoning'}]}}
+    role, value, kind = transcript_record('codex', summary)
+    assert (role, kind) == ('assistant', 'reasoning_summary')
+    assert 'public summary one' in value and 'public summary two' in value
+    assert 'private encrypted reasoning' not in value
+    assert 'private raw reasoning' not in value
+    write_transcript(transcript, session, [summary])
+    capture = SessionCapture(state)
+    session_state = capture.session_root('codex', session)
+    try:
+        receipt = capture.scan_transcript('codex', session, transcript)
+        assert receipt['captured'] == 2 and receipt['excluded'] == 0
+        with VRSClient(session_state, writes=False) as local:
+            originals = local.export(0)['rows']
+        admitted = [row['observation'] for row in originals
+                    if row['observation']['metadata']['record_type'] == 'reasoning_summary']
+        assert len(admitted) == 1 and admitted[0]['text'] == value
+        assert admitted[0]['metadata']['role'] == 'assistant'
+    finally:
+        stop(session_state)
 
 
 def test_codex_pretool_hook_injects_exact_session_id(tmp_path):
