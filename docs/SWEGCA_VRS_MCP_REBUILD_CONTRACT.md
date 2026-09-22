@@ -126,8 +126,11 @@ VRS hash-prefix tiers, exact cue-byte verification, dual checksummed heads,
 and append-only posting chains. Nodes name first original journal sequences;
 published row limits hide future nodes from older readers. A descending
 sequence merge counts the exact distinct posting union without holding all
-candidate IDs in RAM. It still needs a journal-ordered rebuild and Main
-publication binding. Proposition and family directories and the concrete
+candidate IDs in RAM. A second journal-ordered pass now validates source
+observations, resolves the first original and its header projection, and
+routes raw posting cues to 16 bounded worker queues by digest prefix. Each
+cue reaches one worker in journal order. The cue publication still needs to
+bind to Main's pinned read generation. Proposition and family directories and the concrete
 published HotIndex reader are still missing.
 The Main operation overlay now checks request ID and normalized observation
 fingerprint before any new HotIndex/Graph candidate is staged. Identical

@@ -60,6 +60,10 @@ public:
     // SWEGCA: src/swegca_vrs2/cue_shards.py@c06092a:1-22
     [[nodiscard]] std::optional<CueDirectoryPublication> publication() const;
 
+    // Rebuild accepts only a new unpublished derived directory.
+    // SWEGCA: src/swegca_vrs2/cue_shards.py@c06092a:59-91
+    [[nodiscard]] bool fresh() const;
+
     // SWEGCA: src/swegca_vrs2/cue_shards.py@c06092a:1-22
     [[nodiscard]] bool published_reader() const { return owner_lock_ == nullptr; }
 

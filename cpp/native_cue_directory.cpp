@@ -818,4 +818,10 @@ std::optional<CueDirectoryPublication> NativeCueDirectory::publication() const {
     return publication_;
 }
 
+// SWEGCA: src/swegca_vrs2/cue_shards.py@c06092a:59-91
+bool NativeCueDirectory::fresh() const {
+    if (failed_.load()) throw std::runtime_error("native_cue_rebuild_required");
+    return std::filesystem::is_empty(directory_);
+}
+
 }  // namespace swegca::vrs
