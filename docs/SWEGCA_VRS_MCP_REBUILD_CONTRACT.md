@@ -57,9 +57,16 @@ reopens the ended marker and its intent, rechecks every sealed journal, and
 atomically attaches the whole session batch. Identical retries are accepted;
 ID, path, or generation reassignment is rejected. This ownership link does
 not yet run the background SWEGCA Main append or publish a Main read
-generation. The registry currently reads and rewrites one JSON file per
-attachment, so its large-shard memory and attachment throughput still need
-the planned partitioned physical representation before scale acceptance.
+generation. A native background journal walker now checks that a shard is
+linked, pins its sealed source journal, validates every typed row, and
+delivers each contiguous source pair group to a Main transaction sink. Its
+durable cursor advances only after a Main group commit, so a crash retries
+the same request IDs through the author's idempotence rule. The concrete
+Main transaction sink and scheduling of this walker remain unfinished; this
+code alone does not integrate experiences. The registry currently reads and
+rewrites one JSON file per attachment, so its large-shard memory and
+attachment throughput still need the planned partitioned physical
+representation before scale acceptance.
 
 ## One read path
 
