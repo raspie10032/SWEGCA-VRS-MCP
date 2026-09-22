@@ -57,6 +57,10 @@
       "source_sha256": "b05cf0d1be31ec00a44bd04af647f7f52b20110e9121cf61fe8f1c966bc5ab2d",
       "port_sha256": "369e94387a1628d7ad7d7dc03defb54117035438e0ddc0c71a919058e02153f3",
       "definitions": [
+        "OUTCOMES",
+        "VERDICTS",
+        "_FULL_CURRENT_MEMORY_VRS_SCHEMA",
+        "EvidenceJudge",
         "_text",
         "_cue",
         "_freeze_json",
