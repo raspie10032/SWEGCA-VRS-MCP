@@ -73,6 +73,10 @@ public:
     [[nodiscard]] const std::string& journal_generation() const {
         return journal_generation_;
     }
+    // SWEGCA: src/swegca_vrs2/exact_replay.py@c06092a:190-223
+    [[nodiscard]] const std::filesystem::path& directory() const {
+        return directory_;
+    }
 
 private:
     using Key = std::array<unsigned char, 32>;

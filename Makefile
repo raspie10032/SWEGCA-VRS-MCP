@@ -9,6 +9,7 @@ CORE_OBJECTS += build/graph_batch_append.o
 CORE_OBJECTS += build/main_observation_batch.o
 CORE_OBJECTS += build/main_journal_append.o
 CORE_OBJECTS += build/main_memory_projection_append.o
+CORE_OBJECTS += build/native_graph_node_directory.o
 
 .PHONY: all clean
 all: build/libswegca-vrs.a
@@ -129,6 +130,9 @@ build/graph_append.o: cpp/graph_append.cpp cpp/graph_append.hpp cpp/event_delta.
 
 build/graph_batch_append.o: cpp/graph_batch_append.cpp cpp/graph_batch_append.hpp cpp/graph_append.hpp cpp/event_delta.hpp cpp/hot_index.hpp cpp/memory_episode.hpp cpp/digest.hpp | build
 	$(CXX) $(CXXFLAGS) $(NUMERIC_CXXFLAGS) -Icpp -c $< -o $@
+
+build/native_graph_node_directory.o: cpp/native_graph_node_directory.cpp cpp/native_graph_node_directory.hpp cpp/graph_append.hpp cpp/event_vrs_inputs.hpp cpp/owner_lock.hpp cpp/journal_files.hpp cpp/digest.hpp cpp/json.hpp | build
+	$(CXX) $(CXXFLAGS) -Icpp -c $< -o $@
 
 build/main_observation_batch.o: cpp/main_observation_batch.cpp cpp/main_observation_batch.hpp cpp/graph_batch_append.hpp cpp/hot_index_pending.hpp cpp/main_operations.hpp cpp/memory_vrs_pair.hpp cpp/observation.hpp cpp/digest.hpp | build
 	$(CXX) $(CXXFLAGS) $(NUMERIC_CXXFLAGS) -Icpp -c $< -o $@

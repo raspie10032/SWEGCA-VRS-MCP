@@ -176,6 +176,19 @@ author's snapshot recurrence and six outcome counts, checking every planned
 successor against the pinned parent pair. Duplicate originals leave both
 values unchanged. This seed is prepared for the future published HotIndex;
 it does not itself publish the incomplete Main generation.
+Graph now has a native node-address directory candidate. It records the
+author's continuous record-then-fresh-cue node order in append-only name and
+reverse-address files, with a tiered exact name index instead of a resident
+string map. Sixteen prefix workers can prepare independent name slots. Old
+readers hide later addresses by their pinned node count. The indexed cursor
+advances only after the affected name tables are synced, so a node-file tail
+without completed name lookup cannot receive a publication certificate.
+Main's read owner
+requires the node directory's journal generation, Graph snapshot, pair,
+published row limit, and count to match its other pinned state. This is a
+physical node directory only: bounded Graph numeric, regions, dependency
+and coactivation stores, full publication/recovery, and <1 ms acceptance
+remain unfinished.
 The pending view and the native HotIndex metadata projection now derive the
 same header from the author's episode. The checksummed projection frame binds
 that header and the distinct raw posting keys to a journal sequence and pair

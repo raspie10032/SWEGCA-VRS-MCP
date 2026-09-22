@@ -1,6 +1,7 @@
 #include "main_read_generation.hpp"
 
 #include "native_published_hot_index.hpp"
+#include "native_graph_node_directory.hpp"
 
 #include <array>
 #include <filesystem>
@@ -72,6 +73,31 @@ MainReadGeneration::MainReadGeneration(
     if (auxiliary_->snapshot_id != pair_->vrs_snapshot_id())
         throw std::runtime_error("Main auxiliary Graph generation changed");
     nodes_->require_source(source);
+    const auto* native_nodes =
+        dynamic_cast<const NativeGraphNodeDirectory*>(nodes_.get());
+    std::optional<GraphNodePublication> node_publication;
+    if (native_nodes) node_publication = native_nodes->publication();
+    if (!native_nodes || !native_nodes->published_reader() ||
+        !node_publication ||
+        node_publication->journal_generation != journal_->generation() ||
+        node_publication->graph_snapshot_id != pair_->vrs_snapshot_id() ||
+        node_publication->pair_snapshot_id != pair_->snapshot_id() ||
+        node_publication->published_rows != published_row_limit_ ||
+        node_publication->node_count != source.node_count())
+        throw std::runtime_error("Main Graph node read generation changed");
+    if (std::filesystem::equivalent(native_nodes->directory(),
+                                    original_addresses_->directory()) ||
+        std::filesystem::equivalent(native_nodes->directory(),
+                                    cue_addresses_->directory()) ||
+        std::filesystem::equivalent(native_nodes->directory(),
+                                    proposition_addresses_->directory()) ||
+        std::filesystem::equivalent(native_nodes->directory(),
+                                    successor_addresses_->directory()) ||
+        std::filesystem::equivalent(native_nodes->directory(),
+                                    source_addresses_->directory()) ||
+        std::filesystem::equivalent(native_nodes->directory(),
+                                    operations_->directory()))
+        throw std::runtime_error("Main Graph node directory aliases memory");
     regions_->require_source(source);
     regions_->require_memory_source(pair_->memory());
     const auto publication = original_addresses_->publication();
