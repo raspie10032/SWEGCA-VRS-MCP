@@ -5,7 +5,7 @@ No model, HTTP client, subprocess, external-agent store or action executor is us
 """
 from __future__ import annotations
 
-from dataclasses import fields, is_dataclass, replace
+from dataclasses import dataclass, fields, is_dataclass, replace
 import copyreg
 import hashlib
 import json
@@ -278,11 +278,49 @@ class LazyTerms:
     def __getitem__(self, index):
         if isinstance(index, slice):
             return tuple(self[i] for i in range(*index.indices(len(self))))
-        return self.directory.name(int(self.members[index]))
+        node = int(self.members[index])
+        cue_id = int(self.directory.node_cue[node])
+        # Region navigation emits literal memory cues. ``cue:`` is only the
+        # graph-directory namespace and is not an original episode cue.
+        return (self.directory.vocab.string_of(cue_id) if cue_id >= 0
+                else self.directory.node_episode[node])
 
     def __iter__(self):
         for member in self.members:
-            yield self.directory.name(int(member))
+            node = int(member)
+            cue_id = int(self.directory.node_cue[node])
+            yield (self.directory.vocab.string_of(cue_id) if cue_id >= 0
+                   else self.directory.node_episode[node])
+
+
+@dataclass(frozen=True)
+class ComponentCueAddressIndex:
+    """A component-local view of the existing original cue addresses."""
+
+    directory: NodeDirectory
+    positions: np.ndarray
+
+    def term_ids(self, cue):
+        cue_id = self.directory.vocab.id_of(cue)
+        if cue_id is None:
+            return ()
+        node = self.directory.cue(cue_id)
+        if node < 0 or node >= len(self.positions):
+            return ()
+        local = int(self.positions[node])
+        return (local,) if local >= 0 else ()
+
+
+@dataclass(frozen=True)
+class ComponentRegionSource:
+    """Numerical region source with no synthetic experience or truth claim."""
+
+    terms: object
+    edge_source: np.ndarray
+    edge_target: np.ndarray
+    edge_sign: np.ndarray
+    vrs_strength: np.ndarray
+    address_index: ComponentCueAddressIndex
 
 
 class Graph:
@@ -490,7 +528,12 @@ class Graph:
             component_id = int(members[0])
             for n in members:
                 components = components.set(int(n), component_id)
-            directory = directory.set(component_id, (regions, frozen(local, np.int32)))
+            positions = frozen(local, np.int32)
+            bound_source = ComponentRegionSource(regions.terms, regions.edge_source,
+                regions.edge_target, regions.edge_sign, regions.strengths,
+                ComponentCueAddressIndex(nodes, positions))
+            regions = replace(regions, source=bound_source)
+            directory = directory.set(component_id, (regions, positions))
         return Graph(self.snapshot_id, flat, nodes, components, directory, self.last_receipt, None, self.stable,
                      self.usage, self.aliases)
 
@@ -639,6 +682,51 @@ class Graph:
         return {k: plain(v) for k, v in self.last_receipt.items() if k != 're_evidence_updates'}
 
 
+@dataclass(frozen=True)
+class GraphBoundHotMemory:
+    """The original hot episodes and this VRS generation's structural sources.
+
+    Region sources are navigation addresses, never episodes. The original
+    memory digest remains the pair's memory digest; the graph generation is
+    bound separately by FullCurrentMemoryVrsSnapshot.vrs_snapshot_id.
+    """
+
+    originals: CompactIndex
+    sources: tuple[ComponentRegionSource, ...]
+    lookup_requires_io = False
+
+    @property
+    def snapshot_id(self):
+        return self.originals.snapshot_id
+
+    @property
+    def episode_count(self):
+        return self.originals.episode_count
+
+    @property
+    def outcome_counts(self):
+        return self.originals.outcome_counts
+
+    @property
+    def semantic_families(self):
+        return self.originals.semantic_families
+
+    def episode(self, episode_id):
+        return self.originals.episode(episode_id)
+
+    def episode_ids_for_cue(self, cue):
+        return self.originals.episode_ids_for_cue(cue)
+
+    def iter_episode_ids(self):
+        return self.originals.iter_episode_ids()
+
+
+def full_current_pair(memory, graph):
+    """Bind one graph generation to whole original memory without new episodes."""
+    sources = tuple(region.source for _, (region, _) in graph.regions.items())
+    return FullCurrentMemoryVrsSnapshot(GraphBoundHotMemory(memory, sources), graph.snapshot_id)
+
+
 def _mapping_proxy(data):
     return MappingProxyType(data)
 
@@ -751,7 +839,7 @@ class Main:
             self.identity = self.journal.identity
             memory = CompactIndex.empty(self.identity)
             graph = Graph.empty(self.identity, memory._store['vocab'])
-            self._set_generation(memory, graph, FullCurrentMemoryVrsSnapshot(memory, graph.snapshot_id), Map())
+            self._set_generation(memory, graph, full_current_pair(memory, graph), Map())
             started = perf_counter_ns()
             after = self._load_checkpoint()
             # The journal stays the source of truth: every row the checkpoint claims to
@@ -774,7 +862,7 @@ class Main:
                     memory = memory2
                     operations = operations.set(req, (fingerprint, identifier, expected))
                 graph = self.graph.append_many(episodes, snapshot, memory) if episodes else self.graph
-                pair = FullCurrentMemoryVrsSnapshot(memory, graph.snapshot_id)
+                pair = full_current_pair(memory, graph)
                 if pair.snapshot_id != expected:
                     raise ValueError('stored_generation_integrity_failed')
                 self._set_generation(memory, graph, pair, operations)
@@ -793,7 +881,7 @@ class Main:
                         graph = self.graph.consolidate(memory, seed=row['seed'], cycles=row['cycles'])
                         if graph.stable.version_id != row['version_id']:
                             raise ValueError('stored_generation_integrity_failed')
-                    pair = FullCurrentMemoryVrsSnapshot(memory, graph.snapshot_id)
+                    pair = full_current_pair(memory, graph)
                     if pair.snapshot_id != expected:
                         raise ValueError('stored_generation_integrity_failed')
                     self._set_generation(memory, graph, pair, self.operations.set(req, (fingerprint, identifier, pair.snapshot_id)))
@@ -827,7 +915,7 @@ class Main:
             self.restore['checkpoint'] = 'unreadable_ignored: ' + type(error).__name__
             return 0
         self._set_generation(state['memory'], state['graph'], self.pair, state['operations'])
-        self._set_generation(self.memory, self.graph, FullCurrentMemoryVrsSnapshot(self.memory, self.graph.snapshot_id), self.operations)
+        self._set_generation(self.memory, self.graph, full_current_pair(self.memory, self.graph), self.operations)
         if self.pair.snapshot_id != pair:
             raise ValueError('checkpoint_generation_integrity_failed')
         self.restore['checkpoint'] = f'loaded seq {seq}'
@@ -860,7 +948,7 @@ class Main:
         memory = CompactIndex.empty(self.identity)
         graph = Graph.empty(self.identity, memory._store['vocab'])
         operations = Map()
-        pair = FullCurrentMemoryVrsSnapshot(memory, graph.snapshot_id)
+        pair = full_current_pair(memory, graph)
         pairs = {}
         rows = 0
         bodies = {}
@@ -880,7 +968,7 @@ class Main:
                 recorded.append((seq, req, fingerprint, identifier))
             if episodes:
                 graph = graph.append_many(episodes, graph_snapshot, memory)
-            pair = FullCurrentMemoryVrsSnapshot(memory, graph.snapshot_id)
+            pair = full_current_pair(memory, graph)
             for seq, req, fingerprint, identifier in recorded:
                 pairs[seq] = pair.snapshot_id
                 operations = operations.set(req, (fingerprint, identifier, pair.snapshot_id))
@@ -913,7 +1001,7 @@ class Main:
                 fingerprint = digest(row)
                 bodies[seq] = (canonical(row), fingerprint)
                 identifier = None
-            pair = FullCurrentMemoryVrsSnapshot(memory, graph.snapshot_id)
+            pair = full_current_pair(memory, graph)
             pairs[seq] = pair.snapshot_id
             operations = operations.set(req, (fingerprint, identifier, pair.snapshot_id))
             rows += 1
@@ -1108,7 +1196,7 @@ class Main:
                     parent_id=version.parent_id)
         fingerprint = digest(body)
         request_id = 'consolidation:' + version.version_id[:40]
-        pair = FullCurrentMemoryVrsSnapshot(prepared.memory, graph.snapshot_id)
+        pair = full_current_pair(prepared.memory, graph)
         operations = self.operations.set(request_id, (fingerprint, None, pair.snapshot_id))
         self.journal.append([(request_id, canonical(body), fingerprint, pair.snapshot_id)])
         self.owner.replace(self.pair.snapshot_id, pair)
@@ -1134,7 +1222,7 @@ class Main:
         fingerprint = digest(body)
         request_id = 'usage:' + fingerprint[:40]
         memory, graph = self.memory, self.graph.with_usage(known)
-        pair = FullCurrentMemoryVrsSnapshot(memory, graph.snapshot_id)
+        pair = full_current_pair(memory, graph)
         operations = self.operations.set(request_id, (fingerprint, None, pair.snapshot_id))
         self.journal.append([(request_id, canonical(body), fingerprint, pair.snapshot_id)])
         self.owner.replace(self.pair.snapshot_id, pair)
@@ -1165,7 +1253,7 @@ class Main:
         fingerprint = digest(body)
         request_id = 'alias:' + fingerprint[:40]
         memory, graph = self.memory, self.graph.with_aliases(canonical, aliases)
-        pair = FullCurrentMemoryVrsSnapshot(memory, graph.snapshot_id)
+        pair = full_current_pair(memory, graph)
         operations = self.operations.set(request_id, (fingerprint, None, pair.snapshot_id))
         self.journal.append([(request_id, _canonical_json(body), fingerprint, pair.snapshot_id)])
         self.owner.replace(self.pair.snapshot_id, pair)
@@ -1253,7 +1341,7 @@ class Main:
             memory = memory2
             fresh.append((row, fingerprint, identifier))
         graph = self.graph.append_many(episodes, graph_snapshot, memory) if episodes else self.graph
-        pair = FullCurrentMemoryVrsSnapshot(memory, graph.snapshot_id)
+        pair = full_current_pair(memory, graph)
         operations = self.operations
         for row, fingerprint, identifier in fresh:
             operations = operations.set(row['request_id'], (fingerprint, identifier, pair.snapshot_id))

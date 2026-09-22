@@ -10,15 +10,17 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from swegca_vrs2.store import Main, OUTCOMES, EDGE, frozen
+from swegca_vrs2.store import Main, OUTCOMES, EDGE, frozen, full_current_pair
 from swegca_vrs2 import store as store_module
 from swegca_vrs2.server import StandaloneMCP
 from swegca_vrs2.engine.mosaic_vrs_event_kernel import EventVrsInputs
 from swegca_vrs2.engine.mosaic_vrs_event_signal import settle_event_signal
 from swegca_vrs2.engine.mosaic_vrs_dependency_index import EndpointDependencyIndex
 from swegca_vrs2.engine.mosaic_memory_promotion import assess_vrs_experience_promotion
-from swegca_vrs2.engine.mosaic_memory_activation import current_experience_verdict
-from swegca_vrs2.engine.mosaic_vrs_portal_activation import activate_with_portals
+from swegca_vrs2.engine.mosaic_memory_activation import (
+    FullCurrentMemoryVrsSnapshot, current_experience_verdict, detect_deja_vu)
+from swegca_vrs2.engine.mosaic_vrs_portal_activation import (
+    activate_with_portals, preactivate_regions)
 from swegca_vrs2.engine.mosaic_vrs_portal_lifecycle import PortalPolicy
 from swegca_vrs2 import vrs_evidence, vrs_refine
 
@@ -26,6 +28,39 @@ from swegca_vrs2 import vrs_evidence, vrs_refine
 def record(main, i='one', **kwargs):
     return main.ingest(dict(request_id=i, text='한국어 기억 원문 ' + i,
         source='test:' + i, revision='r1', **kwargs))
+
+
+def test_component_region_source_uses_original_cues_and_stays_generation_bound(main):
+    first = record(main, 'component-first', cues=['component-first-anchor'])
+    graph = main.graph.rebuild_regions()
+    pair = full_current_pair(main.memory, graph)
+    assert pair.snapshot_id == FullCurrentMemoryVrsSnapshot(
+        main.memory, graph.snapshot_id).snapshot_id
+    assert pair.memory.episode(first['episode_id']) is main.memory.episode(first['episode_id'])
+    matches = []
+    for _, (region, _) in graph.regions.items():
+        region.require_pair(pair)
+        source = region.source
+        for node in source.address_index.term_ids('component-first-anchor'):
+            matches.append((region, node))
+            assert region.terms[node] == 'component-first-anchor'
+            assert source.terms is region.terms
+            assert source.vrs_strength is region.strengths
+            assert not hasattr(source, 'episode')
+    assert matches
+    assert 'component-first-anchor' in main.memory.episode(first['episode_id']).cues
+    region, _ = matches[0]
+    signal = detect_deja_vu(pair.memory, query='component-first-anchor',
+                            current_cues=('component-first-anchor',))
+    activated = preactivate_regions(pair, topology=region, signal=signal)
+    assert activated.matched_term_count == 1 and activated.regions
+    assert activated.memory_identifiers_exposed is False
+
+    record(main, 'component-second', cues=['component-second-anchor'])
+    assert all(not region.source.address_index.term_ids('component-second-anchor')
+               for region, _ in matches)
+    with pytest.raises(ValueError, match='different VRS generation'):
+        matches[0][0].require_pair(main.pair)
 
 
 def test_light_evidence_inputs_equal_full_original_episodes(main):
