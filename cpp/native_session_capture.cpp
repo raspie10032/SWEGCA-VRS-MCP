@@ -20,13 +20,18 @@
 #if !defined(_WIN32)
 #include <sys/stat.h>
 #include <unistd.h>
+#else
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
 #endif
 
 namespace swegca::vrs {
 namespace {
 
 constexpr std::string_view cursor_schema =
-    "swegca-vrs2-session-capture-cursor-v1";
+    "swegca-vrs2-session-capture-cursor-v2";
 constexpr std::uint64_t max_line_bytes = 16 * 1024 * 1024;
 constexpr std::uint64_t frame_budget = 1'048'576 - 128 * 1024;
 constexpr std::uint64_t max_cursor_bytes = 8192;
@@ -38,6 +43,11 @@ struct CaptureCursor {
     std::uint64_t excluded = 0;
     std::vector<std::string> recent_user;
     std::string pair_snapshot_id;
+};
+
+struct TranscriptIdentity {
+    std::string device;
+    std::string file;
 };
 
 // SWEGCA: src/swegca_vrs2/session_capture.py@c06092a:189-207
@@ -73,7 +83,8 @@ void require_digest(std::string_view digest) {
 // SWEGCA: src/swegca_vrs2/session_capture.py@c06092a:145-150
 CaptureCursor read_cursor(const std::filesystem::path& path,
                           SessionHost host, std::string_view session_key,
-                          std::string_view path_digest) {
+                          std::string_view path_digest,
+                          const TranscriptIdentity& identity) {
     if (!std::filesystem::exists(path)) return {};
     if (!std::filesystem::is_regular_file(path) ||
         std::filesystem::file_size(path) > max_cursor_bytes)
@@ -88,6 +99,9 @@ CaptureCursor read_cursor(const std::filesystem::path& path,
         value.at("session_key").string() != session_key ||
         value.at("path_digest").string() != path_digest)
         throw std::runtime_error("session_cursor_source_changed");
+    if (value.at("source_device").string() != identity.device ||
+        value.at("source_file").string() != identity.file)
+        return {};
     CaptureCursor cursor;
     cursor.offset = nonnegative(value.at("offset"));
     cursor.line = nonnegative(value.at("line"));
@@ -115,7 +129,9 @@ CaptureCursor read_cursor(const std::filesystem::path& path,
 // SWEGCA: src/swegca_vrs2/session_capture.py@c06092a:123-143
 void write_cursor(const std::filesystem::path& path,
                   SessionHost host, std::string_view session_key,
-                  std::string_view path_digest, const CaptureCursor& cursor) {
+                  std::string_view path_digest,
+                  const TranscriptIdentity& identity,
+                  const CaptureCursor& cursor) {
     Json::Array recent;
     for (const auto& identifier : cursor.recent_user)
         recent.emplace_back(identifier);
@@ -124,6 +140,8 @@ void write_cursor(const std::filesystem::path& path,
     body.emplace("host", Json(host_name(host)));
     body.emplace("session_key", Json(std::string(session_key)));
     body.emplace("path_digest", Json(std::string(path_digest)));
+    body.emplace("source_device", Json(identity.device));
+    body.emplace("source_file", Json(identity.file));
     body.emplace("offset", Json(checked_integer(cursor.offset)));
     body.emplace("line", Json(checked_integer(cursor.line)));
     body.emplace("captured", Json(checked_integer(cursor.captured)));
@@ -137,7 +155,7 @@ void write_cursor(const std::filesystem::path& path,
 }
 
 // SWEGCA: src/swegca_vrs2/session_capture.py@c06092a:330-359
-void require_transcript_source(const std::filesystem::path& path) {
+TranscriptIdentity require_transcript_source(const std::filesystem::path& path) {
     if (path.extension() != ".jsonl" ||
         !std::filesystem::is_regular_file(path))
         throw std::runtime_error("transcript_not_regular");
@@ -146,6 +164,26 @@ void require_transcript_source(const std::filesystem::path& path) {
     if (::stat(path.c_str(), &info) != 0 ||
         info.st_uid != ::getuid())
         throw std::runtime_error("transcript_not_owned");
+    return TranscriptIdentity{
+        std::to_string(static_cast<std::uint64_t>(info.st_dev)),
+        std::to_string(static_cast<std::uint64_t>(info.st_ino))};
+#else
+    const auto handle = ::CreateFileW(
+        path.c_str(), FILE_READ_ATTRIBUTES,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (handle == INVALID_HANDLE_VALUE)
+        throw std::runtime_error("transcript_file_identity_unavailable");
+    BY_HANDLE_FILE_INFORMATION info{};
+    const auto success = ::GetFileInformationByHandle(handle, &info);
+    ::CloseHandle(handle);
+    if (!success)
+        throw std::runtime_error("transcript_file_identity_unavailable");
+    const auto index =
+        (static_cast<std::uint64_t>(info.nFileIndexHigh) << 32) |
+        info.nFileIndexLow;
+    return TranscriptIdentity{
+        std::to_string(info.dwVolumeSerialNumber), std::to_string(index)};
 #endif
 }
 
@@ -190,7 +228,7 @@ SessionCaptureResult capture_session_transcript(
     const auto session_key = sha256_hex(session_id);
     session_vrs.require_session(host, session_key);
     const auto path = std::filesystem::canonical(transcript_path);
-    require_transcript_source(path);
+    const auto identity = require_transcript_source(path);
     const auto path_text = path.string();
     const auto path_digest = sha256_hex(path_text);
     const auto root = std::filesystem::weakly_canonical(state_root);
@@ -198,7 +236,8 @@ SessionCaptureResult capture_session_transcript(
         host_name(host) / session_key / (path_digest + ".json");
     OwnerLock lock(cursor_path.string() + ".lock");
     lock.acquire(std::chrono::milliseconds(0));
-    auto cursor = read_cursor(cursor_path, host, session_key, path_digest);
+    auto cursor = read_cursor(cursor_path, host, session_key, path_digest,
+                              identity);
     if (std::filesystem::file_size(path) < cursor.offset)
         cursor = {};
     std::ifstream stream(path, std::ios::binary);
@@ -236,7 +275,8 @@ SessionCaptureResult capture_session_transcript(
         safe.line = checkpoint.line;
         safe.captured = checkpoint.captured;
         safe.excluded = checkpoint.excluded;
-        write_cursor(cursor_path, host, session_key, path_digest, safe);
+        write_cursor(cursor_path, host, session_key, path_digest,
+                     identity, safe);
     };
     bool partial = false;
     for (;;) {

@@ -42,6 +42,8 @@ transport frame budget, and advances its content-free cursor only after the
 session VRS ingest interface returns the exact original IDs and pair
 certificate. A partial line stays unread. A line above the current 16 MiB
 parser bound stops at the previous safe cursor; no line is discarded. The
+cursor also binds the host file's device and file identity, so replacement
+at the same path resets scanning even when the new file is not shorter. The
 session Main coordinator must implement the ingest interface before this
 scanner can commit a real experience. A streaming parser for larger single
 lines remains necessary for the full no-omission requirement.
