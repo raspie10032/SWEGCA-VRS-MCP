@@ -67,8 +67,14 @@ code alone does not integrate experiences. The ownership registry now stores
 one complete SessionEnd link event per SWEGCA native journal row. Its
 checksummed journal preserves attachment order and streams one event at a
 time without loading all registered shards or rewriting a global JSON file.
-Attachment still scans prior link events to detect ID and path reassignment;
-a derived physical address directory is needed to remove that scale bottleneck.
+The link journal now has a derived native exact-key directory for session,
+shard ID, and shard path. Normal attachment uses those keys to reject
+reassignment without walking prior link events. A journal/index publication
+gap is replayed from the original journal; an invalid derived directory is
+quarantined and rebuilt while preserving the original link journal. Opening
+the native journal still scans its full generation, so the live resident
+registry owner and fast trusted-open/recovery boundary remain necessary for
+large-journal attachment throughput. No latency acceptance is claimed here.
 An existing old `linked-shards.json` makes the new registry fail closed rather
 than silently ignoring or migrating prior ownership records.
 

@@ -3,12 +3,15 @@
 #include "digest.hpp"
 #include "journal_files.hpp"
 #include "native_journal.hpp"
+#include "native_operation_directory.hpp"
 #include "owner_lock.hpp"
 
 #include <array>
 #include <chrono>
 #include <cstdint>
 #include <limits>
+#include <memory>
+#include <optional>
 #include <set>
 #include <stdexcept>
 #include <string>
@@ -179,6 +182,120 @@ std::filesystem::path registry_directory(const std::filesystem::path& root) {
     return root / "linked-shards-native";
 }
 
+// SWEGCA: src/swegca_vrs2/exact_replay.py@c06092a:311-390
+std::filesystem::path link_index_path(const std::filesystem::path& root) {
+    return registry_directory(root) / "keys";
+}
+
+// SWEGCA: src/swegca_vrs2/linked_shards.py@c06092a:97-138
+std::vector<std::string> link_keys(
+    const std::filesystem::path& root,
+    const std::vector<LinkedSessionShard>& linked) {
+    if (linked.empty()) throw std::runtime_error("linked_shard_batch_empty");
+    std::vector<std::string> keys;
+    keys.reserve(1 + linked.size() * 2);
+    keys.push_back("session:" + host_name(linked.front().host) + ":" +
+                   linked.front().session_key);
+    for (const auto& row : linked) {
+        if (row.host != linked.front().host ||
+            row.session_key != linked.front().session_key)
+            throw std::runtime_error("linked_shard_batch_source_changed");
+        keys.push_back("id:" + row.seal.identifier);
+        keys.push_back("path:" + std::filesystem::relative(
+            std::filesystem::canonical(row.seal.directory), root)
+            .generic_string());
+    }
+    return keys;
+}
+
+// SWEGCA: src/swegca_vrs2/store.py@7536139:378-399
+MainOperation link_certificate(std::string_view fingerprint) {
+    return MainOperation{std::string(fingerprint), {},
+                         std::string(fingerprint)};
+}
+
+// SWEGCA: src/swegca_vrs2/exact_replay.py@c06092a:496-609
+void index_link_event(const std::filesystem::path& root,
+                      NativeOperationDirectory& index,
+                      const JournalRow& row) {
+    const auto linked = parse_link_event(root, row);
+    for (const auto& key : link_keys(root, linked))
+        index.put(key, link_certificate(row.fingerprint), row.sequence);
+}
+
+// SWEGCA: src/swegca_vrs2/exact_replay.py@c06092a:583-609
+void quarantine_index(const std::filesystem::path& root) {
+    const auto path = link_index_path(root);
+    if (!std::filesystem::exists(path)) return;
+    for (unsigned number = 0; number < 1000; ++number) {
+        const auto target = registry_directory(root) /
+            ("keys-orphan-" + std::to_string(number));
+        if (!std::filesystem::exists(target)) {
+            std::filesystem::rename(path, target);
+            return;
+        }
+    }
+    throw std::runtime_error("linked_shard_index_quarantine_full");
+}
+
+// SWEGCA: src/swegca_vrs2/exact_replay.py@c06092a:496-609
+std::unique_ptr<NativeOperationDirectory> rebuild_link_index(
+    const std::filesystem::path& root, const NativeJournal& journal,
+    OwnerLock& lock) {
+    auto index = std::make_unique<NativeOperationDirectory>(
+        link_index_path(root), journal.generation(), 0, &lock);
+    if (!index->fresh())
+        throw std::runtime_error("linked_shard_index_not_fresh");
+    const auto rows = count(journal.row_count());
+    journal.visit_rows(0, rows, [&](JournalRow&& row) {
+        index_link_event(root, *index, row);
+    });
+    if (const auto head = journal.head())
+        index->publish(rows, head->second);
+    return index;
+}
+
+// SWEGCA: src/swegca_vrs2/exact_replay.py@c06092a:583-609
+std::unique_ptr<NativeOperationDirectory> linked_index(
+    const std::filesystem::path& root, const NativeJournal& journal,
+    OwnerLock& lock) {
+    const auto path = link_index_path(root);
+    const auto marker = path / "PUBLISHED.json";
+    if (!std::filesystem::exists(path))
+        return rebuild_link_index(root, journal, lock);
+    if (!std::filesystem::exists(marker)) {
+        if (!std::filesystem::is_empty(path)) quarantine_index(root);
+        return rebuild_link_index(root, journal, lock);
+    }
+    try {
+        NativeOperationDirectory probe(path, journal.generation(), 0);
+        const auto publication = probe.publication();
+        if (!publication || publication->published_rows < 1 ||
+            static_cast<std::uint64_t>(publication->published_rows) >
+                journal.row_count())
+            throw std::runtime_error("linked_shard_index_publication_invalid");
+        auto index = std::make_unique<NativeOperationDirectory>(
+            path, journal.generation(), publication->published_rows, &lock);
+        const auto rows = count(journal.row_count());
+        if (publication->published_rows != rows) {
+            journal.visit_rows(publication->published_rows, rows,
+                [&](JournalRow&& row) { index_link_event(root, *index, row); });
+            const auto head = journal.head();
+            if (!head) throw std::runtime_error("linked_shard_index_head_missing");
+            index->publish(rows, head->second);
+        }
+        const auto current = index->publication();
+        const auto head = journal.head();
+        if (!current || !head || current->published_rows != rows ||
+            current->pair_snapshot_id != head->second)
+            throw std::runtime_error("linked_shard_index_head_changed");
+        return index;
+    } catch (...) {
+        quarantine_index(root);
+        return rebuild_link_index(root, journal, lock);
+    }
+}
+
 }  // namespace
 
 // SWEGCA: src/swegca_vrs2/linked_shards.py@c06092a:70-94
@@ -224,14 +341,13 @@ SessionLinkReceipt attach_ended_session(
     const auto event = link_event(root, host, key, seals);
     const auto bytes = event.canonical();
     const auto fingerprint = sha256_hex(bytes);
-    std::set<std::string> candidate_ids;
-    std::set<std::filesystem::path> candidate_paths;
+    std::vector<LinkedSessionShard> candidates;
+    candidates.reserve(seals.size());
     SessionLinkReceipt receipt{};
     receipt.shard_ids.reserve(seals.size());
     for (const auto& seal : seals) {
         receipt.shard_ids.push_back(seal.identifier);
-        candidate_ids.insert(seal.identifier);
-        candidate_paths.insert(std::filesystem::canonical(seal.directory));
+        candidates.push_back(LinkedSessionShard{host, key, seal});
         if (receipt.original_count >
                 std::numeric_limits<std::uint64_t>::max() - seal.original_count ||
             receipt.cue_total >
@@ -240,32 +356,33 @@ SessionLinkReceipt attach_ended_session(
         receipt.original_count += seal.original_count;
         receipt.cue_total += seal.cue_total;
     }
-    bool already_attached = false;
-    journal.visit_rows(0, count(journal.row_count()),
-        [&](JournalRow&& stored) {
-            const auto previous = parse_link_event(root, stored);
-            if (stored.request_id ==
-                "link:" + host_name(host) + ":" + key) {
-                if (already_attached || stored.fingerprint != fingerprint ||
-                    stored.body != bytes)
-                    throw std::runtime_error("linked_shard_reassignment_rejected");
-                already_attached = true;
-            }
-            if (stored.fingerprint != fingerprint)
-                for (const auto& row : previous)
-                    if (candidate_ids.contains(row.seal.identifier) ||
-                        candidate_paths.contains(std::filesystem::canonical(
-                            row.seal.directory)))
-                        throw std::runtime_error(
-                            "linked_shard_reassignment_rejected");
-        });
-    if (!already_attached) {
+    auto index = linked_index(root, journal, lock);
+    const auto keys = link_keys(root, candidates);
+    const auto prior_session = index->find_operation(keys.front());
+    if (prior_session && prior_session->fingerprint != fingerprint)
+        throw std::runtime_error("linked_shard_reassignment_rejected");
+    for (std::size_t at = 1; at < keys.size(); ++at) {
+        const auto prior = index->find_operation(keys[at]);
+        if (prior && prior->fingerprint != fingerprint)
+            throw std::runtime_error("linked_shard_reassignment_rejected");
+        if (prior.has_value() != prior_session.has_value())
+            throw std::runtime_error("linked_shard_index_incomplete");
+    }
+    if (!prior_session) {
         std::array<PendingJournalRow, 1> rows{PendingJournalRow{
             "link:" + host_name(host) + ":" + key,
             bytes, fingerprint, fingerprint}};
         const auto sequences = journal.append(rows);
         if (sequences.size() != 1)
             throw std::runtime_error("linked_shard_append_incomplete");
+        const auto head = journal.head();
+        if (!head || head->first != sequences.front() ||
+            head->second != fingerprint)
+            throw std::runtime_error("linked_shard_head_changed");
+        const JournalRow stored{sequences.front(), rows.front().request_id,
+                                bytes, fingerprint, fingerprint};
+        index_link_event(root, *index, stored);
+        index->publish(count(journal.row_count()), fingerprint);
         receipt.added = seals.size();
     }
     return receipt;

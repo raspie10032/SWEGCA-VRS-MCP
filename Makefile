@@ -35,7 +35,7 @@ build/native_session_capture.o: cpp/native_session_capture.cpp cpp/native_sessio
 build/native_session_lifecycle.o: cpp/native_session_lifecycle.cpp cpp/native_session_lifecycle.hpp cpp/native_session_capture.hpp cpp/native_journal.hpp cpp/owner_lock.hpp cpp/journal_files.hpp cpp/digest.hpp | build
 	$(CXX) $(CXXFLAGS) -Icpp -c $< -o $@
 
-build/native_linked_sessions.o: cpp/native_linked_sessions.cpp cpp/native_linked_sessions.hpp cpp/native_session_lifecycle.hpp cpp/native_journal.hpp cpp/owner_lock.hpp cpp/journal_files.hpp cpp/digest.hpp | build
+build/native_linked_sessions.o: cpp/native_linked_sessions.cpp cpp/native_linked_sessions.hpp cpp/native_session_lifecycle.hpp cpp/native_journal.hpp cpp/native_operation_directory.hpp cpp/owner_lock.hpp cpp/journal_files.hpp cpp/digest.hpp | build
 	$(CXX) $(CXXFLAGS) -Icpp -c $< -o $@
 
 build/native_session_integration.o: cpp/native_session_integration.cpp cpp/native_session_integration.hpp cpp/native_linked_sessions.hpp cpp/native_journal.hpp cpp/native_journal_entry.hpp cpp/owner_lock.hpp cpp/journal_files.hpp cpp/digest.hpp | build
