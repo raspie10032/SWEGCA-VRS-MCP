@@ -81,6 +81,10 @@ pickle and is only a derived cache. The C++ product rebuilds derived state
 from the native journal and does not need a Python checkpoint reader. Codec
 and digest implementations sit behind small C++ modules and use no prebuilt
 wheel or external memory-decision logic.
+The frame reader accepts the canonical JSON byte structure emitted by the
+sole native journal writer. It validates a complete frame before streaming
+its rows to a new main generation; it does not depend on the Python decoder's
+acceptance of alternative key order, whitespace, or extra fields.
 
 Every C++ function that implements an author rule carries a source tag of the
 form `// SWEGCA: <file.py>@<commit>:<first>-<last>`. The commit gate resolves

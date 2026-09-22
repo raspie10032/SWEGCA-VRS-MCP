@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <span>
 #include <string>
 #include <vector>
@@ -19,7 +20,10 @@ struct JournalRow {
 // SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:129-134
 [[nodiscard]] std::vector<std::byte> encode_journal_frame(std::span<const JournalRow> rows);
 
+// Validate the complete frame before delivering rows. Rows are then streamed
+// from a second inflation pass, so a batch does not require one large JSON tree.
 // SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:136-177
-[[nodiscard]] std::vector<JournalRow> decode_journal_frame(std::span<const std::byte> frame);
+void visit_journal_frame(std::span<const std::byte> frame,
+                         const std::function<void(JournalRow&&)>& visit);
 
 }  // namespace swegca::vrs

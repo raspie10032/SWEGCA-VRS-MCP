@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <array>
+#include <exception>
 #include <limits>
 #include <stdexcept>
 #include <string>
@@ -93,13 +94,127 @@ private:
     }
 };
 
-// SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:166-169
-std::string inflate_payload(std::span<const std::byte> compressed) {
+// SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:166-176
+JournalRow parse_journal_row(std::string_view encoded) {
+    Json value;
+    try {
+        value = Json::parse(encoded);
+    } catch (const std::exception&) {
+        throw std::runtime_error("native_vrs_frame_invalid");
+    }
+    const auto* fields = std::get_if<Json::Array>(&value.data);
+    if (!fields || fields->size() != 5)
+        throw std::runtime_error("native_vrs_row_invalid");
+    try {
+        return JournalRow{fields->at(0).integer(), fields->at(1).string(),
+            fields->at(2).string(), fields->at(3).string(), fields->at(4).string()};
+    } catch (const std::exception&) {
+        throw std::runtime_error("native_vrs_row_invalid");
+    }
+}
+
+class FrameRowParser {
+public:
+    // SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:166-177
+    explicit FrameRowParser(const std::function<void(JournalRow&&)>* visitor)
+        : visitor_(visitor) {}
+
+    // SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:166-177
+    void feed(std::string_view bytes) {
+        for (const char byte : bytes) consume(byte);
+    }
+
+    // SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:166-177
+    void finish() const {
+        if (state_ != State::complete)
+            throw std::runtime_error("native_vrs_frame_invalid");
+    }
+
+private:
+    enum class State { prefix, row_or_close, row, after_row, suffix, complete };
+    static constexpr std::string_view prefix = "{\"rows\":[";
+    static constexpr std::string_view suffix = "],\"schema\":\"swegca-vrs2-frame-v1\"}";
+    State state_ = State::prefix;
+    const std::function<void(JournalRow&&)>* visitor_;
+    std::size_t position_ = 0;
+    std::size_t bracket_depth_ = 0;
+    bool allow_close_ = true;
+    bool in_string_ = false;
+    bool escaped_ = false;
+    std::string row_;
+
+    // SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:166-177
+    void consume(char byte) {
+        switch (state_) {
+            case State::prefix:
+                if (byte != prefix[position_++])
+                    throw std::runtime_error("native_vrs_frame_invalid");
+                if (position_ == prefix.size()) {
+                    position_ = 0;
+                    state_ = State::row_or_close;
+                }
+                return;
+            case State::row_or_close:
+                if (byte == ']' && allow_close_) {
+                    state_ = State::suffix;
+                    position_ = 1;
+                    return;
+                }
+                if (byte != '[') throw std::runtime_error("native_vrs_frame_invalid");
+                row_.clear();
+                row_.push_back(byte);
+                bracket_depth_ = 1;
+                in_string_ = false;
+                escaped_ = false;
+                state_ = State::row;
+                return;
+            case State::row:
+                row_.push_back(byte);
+                if (in_string_) {
+                    if (escaped_) escaped_ = false;
+                    else if (byte == '\\') escaped_ = true;
+                    else if (byte == '"') in_string_ = false;
+                } else if (byte == '"') {
+                    in_string_ = true;
+                } else if (byte == '[') {
+                    ++bracket_depth_;
+                } else if (byte == ']') {
+                    if (--bracket_depth_ == 0) {
+                        auto row = parse_journal_row(row_);
+                        if (visitor_) (*visitor_)(std::move(row));
+                        row_.clear();
+                        state_ = State::after_row;
+                    }
+                }
+                return;
+            case State::after_row:
+                if (byte == ',') {
+                    allow_close_ = false;
+                    state_ = State::row_or_close;
+                } else if (byte == ']') {
+                    state_ = State::suffix;
+                    position_ = 1;
+                } else throw std::runtime_error("native_vrs_frame_invalid");
+                return;
+            case State::suffix:
+                if (position_ >= suffix.size() || byte != suffix[position_++])
+                    throw std::runtime_error("native_vrs_frame_invalid");
+                if (position_ == suffix.size()) state_ = State::complete;
+                return;
+            case State::complete:
+                throw std::runtime_error("native_vrs_frame_invalid");
+        }
+    }
+};
+
+// SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:166-177
+void inflate_rows(std::span<const std::byte> compressed,
+                  const std::function<void(JournalRow&&)>* visitor) {
     z_stream stream{};
     if (inflateInit(&stream) != Z_OK) throw std::runtime_error("native_vrs_frame_invalid");
     stream.next_in = reinterpret_cast<Bytef*>(const_cast<std::byte*>(compressed.data()));
     stream.avail_in = static_cast<uInt>(compressed.size());
-    std::string output;
+    FrameRowParser parser(visitor);
     std::array<char, 65536> buffer{};
     int result = Z_OK;
     try {
@@ -110,17 +225,17 @@ std::string inflate_payload(std::span<const std::byte> compressed) {
             result = inflate(&stream, Z_NO_FLUSH);
             if (result != Z_OK && result != Z_STREAM_END)
                 throw std::runtime_error("native_vrs_frame_invalid");
-            const auto made = buffer.size() - stream.avail_out;
-            output.append(buffer.data(), made);
-            if (result == Z_OK && made == 0 && stream.avail_in == prior_input)
+            parser.feed(std::string_view(buffer.data(), buffer.size() - stream.avail_out));
+            if (result == Z_OK && stream.avail_out == buffer.size() &&
+                stream.avail_in == prior_input)
                 throw std::runtime_error("native_vrs_frame_invalid");
         } while (result != Z_STREAM_END);
+        parser.finish();
     } catch (...) {
         inflateEnd(&stream);
         throw;
     }
     inflateEnd(&stream);
-    return output;
 }
 
 }  // namespace
@@ -143,7 +258,8 @@ std::vector<std::byte> encode_journal_frame(std::span<const JournalRow> rows) {
 }
 
 // SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:136-177
-std::vector<JournalRow> decode_journal_frame(std::span<const std::byte> frame) {
+void visit_journal_frame(std::span<const std::byte> frame,
+                         const std::function<void(JournalRow&&)>& visit) {
     const auto length = little_endian_length(frame);
     if (length > maximum_payload_bytes) throw std::runtime_error("native_vrs_frame_too_large");
     if (frame.size() != header_bytes + length + checksum_bytes)
@@ -154,35 +270,10 @@ std::vector<JournalRow> decode_journal_frame(std::span<const std::byte> frame) {
     const auto digest = hash.finish();
     if (!std::equal(digest.begin(), digest.end(), frame.begin() + header_bytes + length))
         throw std::runtime_error("native_vrs_frame_integrity_failed");
-    Json decoded;
-    try {
-        decoded = Json::parse(inflate_payload(payload));
-    } catch (const std::exception&) {
-        throw std::runtime_error("native_vrs_frame_invalid");
-    }
-    const auto* object = std::get_if<Json::Object>(&decoded.data);
-    if (!object || !decoded.contains("schema") ||
-        !decoded.contains("rows"))
-        throw std::runtime_error("native_vrs_frame_invalid");
-    const auto* schema = std::get_if<std::string>(&decoded.at("schema").data);
-    if (!schema || *schema != "swegca-vrs2-frame-v1")
-        throw std::runtime_error("native_vrs_frame_invalid");
-    const auto* values = std::get_if<Json::Array>(&decoded.at("rows").data);
-    if (!values) throw std::runtime_error("native_vrs_frame_invalid");
-    std::vector<JournalRow> rows;
-    rows.reserve(values->size());
-    for (const auto& value : *values) {
-        const auto* fields = std::get_if<Json::Array>(&value.data);
-        if (!fields || fields->size() != 5)
-            throw std::runtime_error("native_vrs_row_invalid");
-        try {
-            rows.push_back(JournalRow{fields->at(0).integer(), fields->at(1).string(),
-                fields->at(2).string(), fields->at(3).string(), fields->at(4).string()});
-        } catch (const std::exception&) {
-            throw std::runtime_error("native_vrs_row_invalid");
-        }
-    }
-    return rows;
+    // The schema follows the rows in the canonical frame. Validate every row
+    // and the final schema before exposing any row to a main-generation caller.
+    inflate_rows(payload, nullptr);
+    inflate_rows(payload, &visit);
 }
 
 }  // namespace swegca::vrs
