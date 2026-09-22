@@ -92,6 +92,15 @@ binding. The current ordered maps and per-node topology vectors still lack
 a bounded physical representation under the 4 GB limit, and no production
 Main generation publishes their result. The translated path has not been
 compiled or compared numerically with the author implementation.
+The C++ `plan_graph_append` now prepares the source's record/cue node order,
+bidirectional positive edge additions, 0.1 record-presence direct signal,
+unresolved new nodes, changed-node seeds and explicit-proposition strength
+receipt against the unpublished HotIndex view. An opposing original causes
+all same-claim strength proposals to abstain. This is the front of
+`Graph.append`, not a published Graph: `prepare_event_delta`, signal settlement
+binding, affected-component region recomputation and Main journal commit/CAS
+must still follow in the source order. The plan does not infer truth from a
+shared cue or historical outcome.
 
 Existing VRS 2.2 pair certificates and numerical arrays are historical
 evidence. A new source implementation must account for their lineage and
