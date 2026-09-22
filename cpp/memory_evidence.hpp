@@ -1,6 +1,7 @@
 #pragma once
 
 #include "memory_episode.hpp"
+#include "memory_recall.hpp"
 
 #include <functional>
 #include <optional>
@@ -33,6 +34,12 @@ struct ReplayResult {
     ReplayResult(std::string query, std::vector<ReplayedEpisode> episodes,
                  bool action_authorized = false, bool persistent_write_authorized = false);
 };
+
+// The accepted read path passes a one-original RecallResult here. A detected
+// conflict can invoke the same function for each relevant opposing original.
+// SWEGCA: src/swegca_vrs2/engine/mosaic_memory_activation.py@7536139:378-398
+[[nodiscard]] ReplayResult replay_memory(const PublishedHotIndex& index,
+                                         const RecallResult& selected);
 
 struct CurrentEvidenceVerdict {
     std::string episode_id;

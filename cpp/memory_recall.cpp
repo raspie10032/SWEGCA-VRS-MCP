@@ -101,4 +101,23 @@ RecallResult recall_memory(const PublishedHotIndex& index, const DejaVuSignal& s
                             dependencies.begin(), dependencies.end()));
 }
 
+// SWEGCA: src/swegca_vrs2/store.py@c06092a:1719-1723
+RecallResult select_replay_original(const PublishedHotIndex& index,
+                                    const RecallResult& complete) {
+    if (complete.snapshot_id != index.snapshot_id())
+        throw std::runtime_error("recall snapshot changed before replay");
+    const RecallCandidate* selected = nullptr;
+    for (const auto& candidate : complete.candidates) {
+        if (!index.successor_of(candidate.episode_id)) {
+            selected = &candidate;
+            break;
+        }
+    }
+    if (!selected && !complete.candidates.empty()) selected = &complete.candidates.front();
+    std::vector<RecallCandidate> opened;
+    if (selected) opened.push_back(*selected);
+    return RecallResult(complete.query, std::move(opened), complete.snapshot_id,
+                        complete.source_dependencies);
+}
+
 }  // namespace swegca::vrs

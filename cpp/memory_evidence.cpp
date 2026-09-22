@@ -74,6 +74,23 @@ ReplayResult::ReplayResult(std::string new_query,
         throw std::runtime_error("replay grants no authority");
 }
 
+// SWEGCA: src/swegca_vrs2/engine/mosaic_memory_activation.py@7536139:378-398
+ReplayResult replay_memory(const PublishedHotIndex& index, const RecallResult& selected) {
+    if (selected.snapshot_id != index.snapshot_id())
+        throw std::runtime_error("recall snapshot changed before replay");
+    // SWEGCA: user@2026-09-22:24-29
+    if (selected.candidates.size() > 1)
+        throw std::runtime_error("replay requires one selected original");
+    std::vector<ReplayedEpisode> episodes;
+    for (const auto& candidate : selected.candidates) {
+        const auto source = index.episode(candidate.episode_id);
+        episodes.emplace_back(candidate.episode_id, candidate.matched_cues,
+                              source.steps, source.source_addresses,
+                              source.verification_state);
+    }
+    return ReplayResult(selected.query, std::move(episodes));
+}
+
 // SWEGCA: src/swegca_vrs2/engine/mosaic_memory_activation.py@7536139:401-429
 CurrentEvidenceVerdict::CurrentEvidenceVerdict(
     std::string new_episode_id, std::string new_proposition,

@@ -50,6 +50,9 @@ public:
 class PublishedHotIndex : public HotIndexRead {
 public:
     ~PublishedHotIndex() override = default;
+    // Original content is opened only by selected Replay, after Recall.
+    // SWEGCA: src/swegca_vrs2/engine/mosaic_memory_activation.py@7536139:384-395
+    [[nodiscard]] virtual MemoryEpisode episode(std::string_view identifier) const = 0;
     // SWEGCA: src/swegca_vrs2/engine/mosaic_memory_activation.py@7536139:317-320
     [[nodiscard]] virtual std::vector<std::string> episode_ids_for_cue(
         std::string_view cue) const = 0;
