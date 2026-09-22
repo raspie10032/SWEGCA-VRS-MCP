@@ -336,4 +336,43 @@ std::vector<std::int64_t> append_journal_rows(
     return sequences;
 }
 
+// SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:295-312
+void write_generation_head(
+    const std::filesystem::path& generation_directory,
+    const JournalRowProducer& produce_rows) {
+    const auto path = generation_directory / "head.vrsj";
+#if defined(_WIN32)
+    const auto raw_descriptor = _wopen(path.c_str(),
+        _O_BINARY | _O_WRONLY | _O_CREAT | _O_EXCL,
+        _S_IREAD | _S_IWRITE);
+#else
+    const auto raw_descriptor = open(path.c_str(), O_WRONLY | O_CREAT | O_EXCL, 0600);
+#endif
+    if (raw_descriptor < 0) throw std::runtime_error("native_vrs_head_create_failed");
+    NativeDescriptor descriptor(raw_descriptor);
+    write_all(descriptor.get(), std::as_bytes(std::span(file_magic)));
+    std::vector<JournalRow> batch;
+    batch.reserve(512);
+    std::uint64_t expected = 1;
+    produce_rows([&](JournalRow&& row) {
+        if (row.sequence < 1 || static_cast<std::uint64_t>(row.sequence) != expected)
+            throw std::runtime_error("native_vrs_sequence_invalid");
+        ++expected;
+        batch.push_back(std::move(row));
+        if (batch.size() == 512) {
+            const auto frame = encode_journal_frame(batch);
+            write_all(descriptor.get(), frame);
+            batch.clear();
+        }
+    });
+    if (!batch.empty()) {
+        const auto frame = encode_journal_frame(batch);
+        write_all(descriptor.get(), frame);
+    }
+    descriptor.sync();
+    descriptor.close_now();
+    fsync_directory(generation_directory);
+    fsync_directory(generation_directory.parent_path());
+}
+
 }  // namespace swegca::vrs

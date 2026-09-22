@@ -33,6 +33,11 @@ public:
     // SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:223-247
     [[nodiscard]] std::vector<std::int64_t> append(std::span<const PendingJournalRow> rows);
 
+    // The producer emits complete five-field rows in sequence order. It can
+    // stream the old journal into the new one without holding all rows in RAM.
+    // SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:295-325
+    void rewrite(const JournalRowProducer& produce_rows);
+
     // SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:109-127
     [[nodiscard]] const std::string& identity() const { return identity_; }
     // SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:109-127

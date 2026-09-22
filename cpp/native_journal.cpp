@@ -52,6 +52,16 @@ std::string uuid4(bool hyphenated) {
     return out;
 }
 
+// SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:99-117
+bool valid_generation_name(std::string_view name) {
+    if (name.size() != 34 || name[0] != 'g' || name[1] != '-') return false;
+    for (const char digit : name.substr(2)) {
+        if (!((digit >= '0' && digit <= '9') || (digit >= 'a' && digit <= 'f')))
+            return false;
+    }
+    return true;
+}
+
 // SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:70-81
 Json read_manifest(const std::filesystem::path& path) {
     std::ifstream stream(path, std::ios::binary);
@@ -116,7 +126,8 @@ NativeJournal::NativeJournal(std::filesystem::path directory, bool create,
     const auto manifest = read_manifest(manifest_path);
     if (!has_schema_and_identity(manifest) ||
         !manifest.contains("generation") ||
-        !std::holds_alternative<std::string>(manifest.at("generation").data))
+        !std::holds_alternative<std::string>(manifest.at("generation").data) ||
+        !valid_generation_name(manifest.at("generation").string()))
         throw std::runtime_error("native_vrs_manifest_invalid");
     identity_ = manifest.at("identity").string();
     generation_ = manifest.at("generation").string();
@@ -178,6 +189,39 @@ std::vector<std::int64_t> NativeJournal::append(std::span<const PendingJournalRo
     if (!writable_) throw std::runtime_error("native_vrs_journal_read_only");
     require_write_owner();
     return append_journal_rows(path_, scan_, rows);
+}
+
+// SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:295-325
+void NativeJournal::rewrite(const JournalRowProducer& produce_rows) {
+    if (!writable_) throw std::runtime_error("native_vrs_journal_read_only");
+    require_write_owner();
+    const auto next_generation = "g-" + uuid4(false);
+    const auto target = directory_ / journal_name / next_generation;
+    make_private_directory(target, true);
+    const auto manifest_path = directory_ / manifest_name;
+    try {
+        write_generation_head(target, produce_rows);
+        write_new_manifest(manifest_path, identity_, next_generation);
+        const auto old = path_;
+        generation_ = next_generation;
+        path_ = target;
+        scan_ = visit_journal_files(path_, false, [](JournalRow&&) {});
+        std::filesystem::remove_all(old);
+    } catch (...) {
+        // If the new manifest became visible, it owns this generation even if
+        // the following directory sync or scan failed. Preserve both copies.
+        bool manifest_confirms_other_generation = false;
+        try {
+            const auto manifest = read_manifest(manifest_path);
+            manifest_confirms_other_generation =
+                manifest.at("generation").string() != next_generation;
+        } catch (...) {}
+        if (manifest_confirms_other_generation) {
+            std::error_code ignored;
+            std::filesystem::remove_all(target, ignored);
+        }
+        throw;
+    }
 }
 
 }  // namespace swegca::vrs

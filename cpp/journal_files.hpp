@@ -18,6 +18,10 @@ struct JournalScan {
     std::string last_pair;
 };
 
+using JournalRowEmitter = std::function<void(JournalRow&&)>;
+// A producer invokes its emitter synchronously and never retains it.
+using JournalRowProducer = std::function<void(const JournalRowEmitter&)>;
+
 // SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:49-62
 void write_atomic_file(const std::filesystem::path& path,
                        std::span<const std::byte> bytes);
@@ -41,5 +45,11 @@ void visit_journal_rows_until(
     const std::filesystem::path& generation_directory,
     JournalScan& current,
     std::span<const PendingJournalRow> rows);
+
+// Write a complete replacement generation in bounded 512-row frames.
+// SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:295-312
+void write_generation_head(
+    const std::filesystem::path& generation_directory,
+    const JournalRowProducer& produce_rows);
 
 }  // namespace swegca::vrs
