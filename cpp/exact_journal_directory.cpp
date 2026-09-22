@@ -1,6 +1,7 @@
 #include "exact_journal_directory.hpp"
 
 #include "journal_files.hpp"
+#include "json.hpp"
 
 #include <algorithm>
 #include <array>
@@ -8,6 +9,7 @@
 #include <cstdint>
 #include <fstream>
 #include <iomanip>
+#include <iterator>
 #include <limits>
 #include <sstream>
 #include <stdexcept>
@@ -32,6 +34,8 @@ constexpr std::uint64_t header_bytes = 4096;
 constexpr std::uint64_t slot_bytes = 68;
 constexpr std::uint64_t state_offset = 80;
 constexpr std::array<unsigned, 5> powers{16, 18, 20, 22, 23};
+constexpr std::string_view publication_name = "PUBLISHED.json";
+constexpr std::string_view publication_schema = "swegca-vrs2-exact-journal-address-v1";
 using Bytes = std::array<unsigned char, slot_bytes>;
 using Key = std::array<unsigned char, 32>;
 
@@ -39,6 +43,33 @@ struct LevelState {
     std::uint64_t count;
     bool sealed;
 };
+
+// SWEGCA: src/swegca_vrs2/exact_replay.py@c06092a:583-609
+std::optional<ExactAddressPublication> read_publication(
+    const std::filesystem::path& directory) {
+    const auto path = directory / publication_name;
+    if (!std::filesystem::exists(path)) return std::nullopt;
+    if (std::filesystem::file_size(path) > 4096)
+        throw std::runtime_error("exact_journal_publication_invalid");
+    std::ifstream stream(path, std::ios::binary);
+    if (!stream) throw std::runtime_error("exact_journal_publication_invalid");
+    const std::string bytes(std::istreambuf_iterator<char>{stream}, {});
+    if (stream.bad()) throw std::runtime_error("exact_journal_publication_invalid");
+    try {
+        const auto value = Json::parse(bytes);
+        if (value.at("schema").string() != publication_schema)
+            throw std::runtime_error("exact_journal_publication_invalid");
+        auto generation = value.at("journal_generation").string();
+        const auto rows = value.at("published_rows").integer();
+        auto pair = value.at("pair_snapshot_id").string();
+        if (generation.size() != 34 || !generation.starts_with("g-") ||
+            rows < 0 || pair.empty())
+            throw std::runtime_error("exact_journal_publication_invalid");
+        return ExactAddressPublication{std::move(generation), rows, std::move(pair)};
+    } catch (const std::exception&) {
+        throw std::runtime_error("exact_journal_publication_invalid");
+    }
+}
 
 // SWEGCA: src/swegca_vrs2/exact_replay.py@c06092a:592-606
 void sync_file(const std::filesystem::path& path) {
@@ -250,6 +281,13 @@ ExactJournalDirectory::ExactJournalDirectory(std::filesystem::path directory,
     } else if (!std::filesystem::is_directory(directory_)) {
         throw std::runtime_error("exact_journal_address_directory_missing");
     }
+    publication_ = read_publication(directory_);
+    if (publication_) {
+        if (publication_->journal_generation != journal_generation_)
+            throw std::runtime_error("exact_journal_generation_changed");
+    } else if (!owner_lock_ || !std::filesystem::is_empty(directory_)) {
+        throw std::runtime_error("exact_journal_address_unpublished_directory");
+    }
 }
 
 // SWEGCA: src/swegca_vrs2/exact_replay.py@c06092a:496-609
@@ -322,6 +360,11 @@ std::optional<OriginalJournalAddress> ExactJournalDirectory::find(
     if (failed_.load()) throw std::runtime_error("exact_journal_address_directory_failed");
     if (published_row_limit < 0)
         throw std::runtime_error("exact_journal_published_limit_invalid");
+    if (!owner_lock_) {
+        std::lock_guard published(publication_mutex_);
+        if (!publication_ || published_row_limit > publication_->published_rows)
+            throw std::runtime_error("exact_journal_unpublished_read");
+    }
     for (const auto power : powers) {
         const auto path = segment_path(key, power);
         if (!std::filesystem::exists(path)) return std::nullopt;
@@ -343,6 +386,43 @@ std::optional<OriginalJournalAddress> ExactJournalDirectory::find(
 bool ExactJournalDirectory::fresh() const {
     if (failed_.load()) throw std::runtime_error("exact_journal_address_directory_failed");
     return std::filesystem::is_empty(directory_);
+}
+
+// SWEGCA: src/swegca_vrs2/exact_replay.py@c06092a:583-609
+void ExactJournalDirectory::publish(std::int64_t journal_rows,
+                                    std::string_view pair_snapshot_id) {
+    if (!owner_lock_ || !owner_lock_->locked())
+        throw std::runtime_error("native_vrs_owner_lock_required");
+    if (journal_rows < 0 || pair_snapshot_id.empty())
+        throw std::runtime_error("exact_journal_publication_invalid");
+    std::vector<std::unique_lock<std::mutex>> prefix_locks;
+    prefix_locks.reserve(prefix_mutex_.size());
+    for (auto& mutex : prefix_mutex_) prefix_locks.emplace_back(mutex);
+    if (failed_.load()) throw std::runtime_error("exact_journal_address_directory_failed");
+    std::lock_guard published(publication_mutex_);
+    if (publication_ && journal_rows < publication_->published_rows)
+        throw std::runtime_error("exact_journal_publication_regressed");
+    Json::Object body;
+    body.emplace("schema", Json(std::string(publication_schema)));
+    body.emplace("journal_generation", Json(journal_generation_));
+    body.emplace("published_rows", Json(journal_rows));
+    body.emplace("pair_snapshot_id", Json(std::string(pair_snapshot_id)));
+    const auto bytes = Json(std::move(body)).canonical();
+    try {
+        write_atomic_file(directory_ / publication_name,
+                          std::as_bytes(std::span(bytes)));
+        publication_ = ExactAddressPublication{
+            journal_generation_, journal_rows, std::string(pair_snapshot_id)};
+    } catch (...) {
+        failed_.store(true);
+        throw;
+    }
+}
+
+// SWEGCA: src/swegca_vrs2/exact_replay.py@c06092a:583-609
+std::optional<ExactAddressPublication> ExactJournalDirectory::publication() const {
+    std::lock_guard guard(publication_mutex_);
+    return publication_;
 }
 
 }  // namespace swegca::vrs

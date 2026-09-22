@@ -157,9 +157,12 @@ prefix, odd-step, and sealed-level physical lookup rule. A slot stores only
 the original journal sequence and frame offset/span; the observation body is
 not copied into an external capsule. Readers carry the published Main row
 limit, so a newly inserted address cannot become visible through an older
-pair. This is not yet a published product index: startup recovery, journal
-head watermark reconciliation, disk quota enforcement, and Main ownership
-integration remain required before the directory may serve production reads.
+pair. A complete owner may atomically write `PUBLISHED.json` with the journal
+generation, row limit, and pair ID after the corresponding address writes are
+durable; read-only directory opens reject an unpublished or mismatched
+generation. This is not yet a published product index: startup recovery,
+journal head watermark reconciliation, disk quota enforcement, and Main
+ownership integration remain required before production reads.
 The selected-original primitive now joins the exact directory to the native
 journal and refuses a generation mismatch or a row newer than the caller's
 published limit. The concrete `PublishedHotIndex` and four-stage owner still

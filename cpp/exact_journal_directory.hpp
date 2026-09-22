@@ -14,6 +14,12 @@
 
 namespace swegca::vrs {
 
+struct ExactAddressPublication {
+    std::string journal_generation;
+    std::int64_t published_rows;
+    std::string pair_snapshot_id;
+};
+
 // Main owns this derived exact-address directory. Its source of truth is the
 // bound native journal generation; values name original frames, not capsules.
 // Level, prefix, and odd-step probing follow the existing VRS address route.
@@ -43,6 +49,14 @@ public:
     // SWEGCA: src/swegca_vrs2/exact_replay.py@c06092a:190-223
     [[nodiscard]] bool fresh() const;
 
+    // The owner publishes this derived generation only after all addresses
+    // through the stated journal row and its Main pair are committed.
+    // SWEGCA: src/swegca_vrs2/exact_replay.py@c06092a:583-609
+    void publish(std::int64_t journal_rows, std::string_view pair_snapshot_id);
+
+    // SWEGCA: src/swegca_vrs2/exact_replay.py@c06092a:583-609
+    [[nodiscard]] std::optional<ExactAddressPublication> publication() const;
+
     // SWEGCA: src/swegca_vrs2/exact_replay.py@c06092a:190-223
     [[nodiscard]] const std::string& journal_generation() const {
         return journal_generation_;
@@ -62,6 +76,8 @@ private:
     OwnerLock* owner_lock_;
     mutable std::array<std::mutex, 256> prefix_mutex_;
     std::atomic<bool> failed_{false};
+    mutable std::mutex publication_mutex_;
+    std::optional<ExactAddressPublication> publication_;
 };
 
 }  // namespace swegca::vrs
