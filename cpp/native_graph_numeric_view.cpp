@@ -86,6 +86,27 @@ NativeGraphNumericView::rebase_validated_successor(
         endpoints->segments(), writer);
 }
 
+// SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:136-194
+std::shared_ptr<const ValidatedEventVrsInputs>
+NativeGraphNumericView::open_recovered(
+    const NativeGraphMapCursor& numeric,
+    const NativeEndpointManifestCursor& endpoints,
+    std::shared_ptr<const NativeGraphPageFile> node_file,
+    std::shared_ptr<const NativeGraphPageFile> edge_file,
+    OwnerLock* writer) {
+    if (numeric.pages.journal_generation != endpoints.journal_generation ||
+        numeric.pages.graph_snapshot_id != endpoints.graph_snapshot_id ||
+        numeric.pair_snapshot_id != endpoints.pair_snapshot_id ||
+        numeric.pages.edge_count != endpoints.edge_count ||
+        numeric.map_rows != endpoints.manifest_rows ||
+        numeric.last_source_sequence != endpoints.last_source_sequence)
+        throw std::runtime_error("graph_numeric_recovery_generations_disagree");
+    return open_validated(
+        numeric.pages, std::move(node_file), std::move(edge_file),
+        endpoints.endpoint_directory, endpoints.base_edge_count,
+        endpoints.segments, writer);
+}
+
 // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_event_kernel.py@7536139:34-76
 NativeGraphNodePage NativeGraphNumericView::node_page(
     std::uint32_t node) const {

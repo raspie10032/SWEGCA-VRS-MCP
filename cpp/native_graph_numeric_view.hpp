@@ -1,7 +1,9 @@
 #pragma once
 
 #include "event_vrs_inputs.hpp"
+#include "native_endpoint_manifest.hpp"
 #include "native_endpoint_index.hpp"
+#include "native_graph_map_journal.hpp"
 #include "native_graph_numeric_append.hpp"
 #include "native_graph_page_file.hpp"
 
@@ -44,6 +46,17 @@ public:
         std::shared_ptr<const NativeGraphPageFile> node_file,
         std::shared_ptr<const NativeGraphPageFile> edge_file,
         const ValidatedEventVrsInputs& prepared_successor,
+        OwnerLock* writer = nullptr);
+
+    // Recovery may expose a numerical generation only when both independent
+    // derived journals identify the same original boundary and pair.
+    // SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:136-194
+    [[nodiscard]] static std::shared_ptr<const ValidatedEventVrsInputs>
+    open_recovered(
+        const NativeGraphMapCursor& numeric,
+        const NativeEndpointManifestCursor& endpoints,
+        std::shared_ptr<const NativeGraphPageFile> node_file,
+        std::shared_ptr<const NativeGraphPageFile> edge_file,
         OwnerLock* writer = nullptr);
 
     // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_event_kernel.py@7536139:34-76

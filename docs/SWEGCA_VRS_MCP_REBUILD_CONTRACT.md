@@ -353,6 +353,12 @@ chain but requires physical files only for the final active row, allowing
 files used solely by released historical generations to be reclaimed later.
 Final endpoint-to-source validation still occurs when the numerical view is
 cold-opened; the manifest alone never authorizes a numerical value.
+The recovery opening gate now requires the numerical-map and endpoint
+manifest cursors to agree on journal generation, Graph ID, pair ID, original
+last row, derived row count, and total edge count before constructing that
+view. This closes cross-journal generation mixing at the read boundary. The
+larger Main publication transaction still must couple this view with memory,
+nodes, regions, portals, coactivation and operation directories.
 This adapter currently reads physical address files on lookup. It is a
 source-bound correctness path, not accepted evidence for the author's
 `lookup_requires_io=False` hot property or the user-input-to-Recall <1 ms
