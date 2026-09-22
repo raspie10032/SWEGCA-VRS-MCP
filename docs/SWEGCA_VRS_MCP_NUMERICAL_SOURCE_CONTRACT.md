@@ -38,6 +38,14 @@ and a 4 GB memory limit. The implementation must meet those requirements
 using author rules or obtain an explicit decision for any new rule. A split
 storage representation cannot change source addresses or bypass `Graph.append`
 when session VRS experience enters a main generation.
+The C++ `ValidatedEventVrsInputs` introduced for the rebuild is only the
+author's cold validation and immutable generation-binding boundary expressed
+over a storage view. It scans finite direct, score, edge and strength values,
+signs, endpoints and source-bound dependencies once. Event advancement,
+float32 rounding, pending rounds, Graph.append, regions, coactivation and
+portal lifecycle are not implemented by that boundary. A future physical
+view must prove immutable backing and preserve the packed native edge layout;
+`EventEdge` is a logical value, not an on-disk `sizeof` format.
 
 Existing VRS 2.2 pair certificates and numerical arrays are historical
 evidence. A new source implementation must account for their lineage and

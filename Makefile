@@ -2,7 +2,7 @@ CXX ?= g++
 AR ?= ar
 CXXFLAGS ?= -O2 -g -std=c++20 -Wall -Wextra -Wpedantic
 
-CORE_OBJECTS = build/digest.o build/json.o build/unicode.o build/keys.o build/observation.o build/memory_episode.o build/memory_evidence.o build/hot_index.o build/hot_index_pending.o build/memory_vrs_pair.o build/deja_vu.o build/memory_recall.o build/memory_receipt.o build/journal_frame.o build/journal_files.o build/owner_lock.o build/native_journal.o
+CORE_OBJECTS = build/digest.o build/json.o build/unicode.o build/keys.o build/observation.o build/memory_episode.o build/memory_evidence.o build/hot_index.o build/hot_index_pending.o build/memory_vrs_pair.o build/deja_vu.o build/memory_recall.o build/memory_receipt.o build/event_vrs_inputs.o build/journal_frame.o build/journal_files.o build/owner_lock.o build/native_journal.o
 
 .PHONY: all clean
 all: build/libswegca-vrs.a
@@ -47,6 +47,9 @@ build/memory_recall.o: cpp/memory_recall.cpp cpp/memory_recall.hpp cpp/deja_vu.h
 	$(CXX) $(CXXFLAGS) -Icpp -c $< -o $@
 
 build/memory_receipt.o: cpp/memory_receipt.cpp cpp/memory_receipt.hpp cpp/deja_vu.hpp cpp/memory_recall.hpp cpp/memory_evidence.hpp | build
+	$(CXX) $(CXXFLAGS) -Icpp -c $< -o $@
+
+build/event_vrs_inputs.o: cpp/event_vrs_inputs.cpp cpp/event_vrs_inputs.hpp | build
 	$(CXX) $(CXXFLAGS) -Icpp -c $< -o $@
 
 build/journal_frame.o: cpp/journal_frame.cpp cpp/journal_frame.hpp cpp/json.hpp cpp/digest.hpp | build
