@@ -151,6 +151,14 @@ The address-directory builder can stream each verified original row together
 with its frame address in one journal walk. It validates the complete frame
 and its sequence span before delivering any row from that frame. This is a
 rebuild/ingest path; it does not run on a user Recall or Replay request.
+The C++ exact-address directory under construction uses the existing VRS
+prefix, odd-step, and sealed-level physical lookup rule. A slot stores only
+the original journal sequence and frame offset/span; the observation body is
+not copied into an external capsule. Readers carry the published Main row
+limit, so a newly inserted address cannot become visible through an older
+pair. This is not yet a published product index: startup recovery, journal
+head watermark reconciliation, disk quota enforcement, and Main ownership
+integration remain required before the directory may serve production reads.
 
 The two populated SQLite stores have separate owner identities and sequence
 spaces. Export each to its own immutable native archive, recording the exact
