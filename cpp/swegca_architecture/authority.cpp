@@ -7,6 +7,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <new>
 #include <stdexcept>
 #include <utility>
 
@@ -16,18 +17,32 @@ namespace detail {
 
 class AuthorityRegistry final {
 public:
-    explicit AuthorityRegistry(std::uint64_t issuer_instance);
+    using RangeEntry = std::pair<const std::uint64_t, std::uint64_t>;
+    using Ranges = std::map<std::uint64_t, std::uint64_t, std::less<>,
+                           MemoryLedger::Allocator<RangeEntry>>;
+    struct LiveToken {
+        std::weak_ptr<CapabilityToken> token;
+        Ranges::node_type retirement;
+    };
+    using LiveEntry = std::pair<const std::uint64_t, LiveToken>;
 
+    AuthorityRegistry(const MemoryLedger::Account& memory, std::uint64_t issuer_instance);
+
+    MemoryLedger::Account memory;
     std::mutex mutex;
     std::uint64_t issuer_instance;
     std::uint64_t next_nonce = 1;
-    std::map<std::uint64_t, std::weak_ptr<CapabilityToken>> live;
-    std::map<std::uint64_t, std::uint64_t> spent_ranges;
+    std::map<std::uint64_t, LiveToken, std::less<>,
+             MemoryLedger::Allocator<LiveEntry>> live;
+    Ranges spent_ranges;
 };
 
 // SWEGCA: src/swegca/mosaic_evidence_accumulator.py@5901a5a:28-45
-AuthorityRegistry::AuthorityRegistry(std::uint64_t issuer_instance_value)
-    : issuer_instance(issuer_instance_value) {}
+AuthorityRegistry::AuthorityRegistry(const MemoryLedger::Account& account,
+                                     std::uint64_t issuer_instance_value)
+    : memory(account), issuer_instance(issuer_instance_value),
+      live(std::less<>{}, account.allocator<LiveEntry>()),
+      spent_ranges(std::less<>{}, account.allocator<RangeEntry>()) {}
 
 }  // namespace detail
 
@@ -59,7 +74,8 @@ bool was_spent_locked(const detail::AuthorityRegistry& registry,
 // not with the number of successfully consumed capabilities.
 // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:232-241
 void mark_spent_locked(detail::AuthorityRegistry& registry,
-                       std::uint64_t nonce) {
+                       std::uint64_t nonce,
+                       detail::AuthorityRegistry::Ranges::node_type retirement) {
     if (was_spent_locked(registry, nonce))
         throw std::logic_error("authority_capability_already_spent");
 
@@ -80,7 +96,11 @@ void mark_spent_locked(detail::AuthorityRegistry& registry,
         last = following->second;
         registry.spent_ranges.erase(following);
     }
-    registry.spent_ranges.emplace(first, last);
+    // The node was allocated before issuance, so retiring at the budget limit
+    // never needs another allocation. Preserve the same merged nonce ranges.
+    retirement.key() = first;
+    retirement.mapped() = last;
+    registry.spent_ranges.insert(std::move(retirement));
 }
 
 // Re-created (user@2026-09-23): dropping an unused capability immediately
@@ -91,10 +111,11 @@ void retire_abandoned_token(detail::AuthorityRegistry& registry,
     std::lock_guard guard(registry.mutex);
     const auto found = registry.live.find(nonce);
     if (found == registry.live.end()) return;
-    if (!found->second.expired()) return;
+    if (!found->second.token.expired()) return;
+    auto retirement = std::move(found->second.retirement);
     registry.live.erase(found);
     try {
-        mark_spent_locked(registry, nonce);
+        mark_spent_locked(registry, nonce, std::move(retirement));
     } catch (...) {
         std::terminate();
     }
@@ -114,9 +135,9 @@ CapabilityToken::~CapabilityToken() {
 }  // namespace detail
 
 // SWEGCA: src/swegca/mosaic_evidence_accumulator.py@5901a5a:28-45
-MainAuthorityLedger::MainAuthorityLedger()
-    : registry_(std::make_shared<detail::AuthorityRegistry>(
-          allocate_issuer_instance())) {}
+MainAuthorityLedger::MainAuthorityLedger(const MemoryLedger::Account& memory)
+    : registry_(std::allocate_shared<detail::AuthorityRegistry>(
+          memory.allocator<detail::AuthorityRegistry>(), memory, allocate_issuer_instance())) {}
 
 // SWEGCA: src/swegca/mosaic_evidence_accumulator.py@5901a5a:37-45
 MainAuthorityLedger::~MainAuthorityLedger() {
@@ -140,12 +161,32 @@ std::shared_ptr<detail::CapabilityToken> MainAuthorityLedger::issue_token(
         registry_->next_nonce == std::numeric_limits<std::uint64_t>::max())
         throw std::overflow_error("authority_nonce_space_exhausted");
     const auto nonce = registry_->next_nonce++;
+    // Reserve retirement storage now; abandoning or consuming a live token
+    // must remain possible when Main has no spare allocation budget.
+    detail::AuthorityRegistry::Ranges prepared(
+        std::less<>{}, registry_->memory.allocator<detail::AuthorityRegistry::RangeEntry>());
+    prepared.emplace(nonce, nonce);
+    auto retirement = prepared.extract(prepared.begin());
     CapabilityDescriptor descriptor{
         domain, registry_->issuer_instance, nonce, owner, generation, operation};
-    auto token = std::shared_ptr<detail::CapabilityToken>(
-        new detail::CapabilityToken(std::move(descriptor), registry_));
-    const auto [position, inserted] = registry_->live.emplace(nonce, token);
-    if (!inserted || position->second.lock() != token)
+    auto allocator = registry_->memory.allocator<detail::CapabilityToken>();
+    auto* raw = allocator.allocate(1);
+    try {
+        // MainAuthorityLedger itself retains private construction authority.
+        ::new (static_cast<void*>(raw)) detail::CapabilityToken(std::move(descriptor), registry_);
+    } catch (...) {
+        allocator.deallocate(raw, 1);
+        throw;
+    }
+    // shared_ptr invokes this deleter if allocating its control block fails.
+    auto token = std::shared_ptr<detail::CapabilityToken>(raw,
+        [allocator](detail::CapabilityToken* value) mutable noexcept {
+            value->~CapabilityToken();
+            allocator.deallocate(value, 1);
+        }, registry_->memory.allocator<detail::CapabilityToken>());
+    const auto [position, inserted] = registry_->live.emplace(
+        nonce, detail::AuthorityRegistry::LiveToken{token, std::move(retirement)});
+    if (!inserted || position->second.token.lock() != token)
         throw std::logic_error("authority_nonce_reused");
     token->retired_ = false;
     return token;
@@ -173,10 +214,11 @@ CapabilityDescriptor MainAuthorityLedger::consume_token(
             throw std::invalid_argument("authority_capability_already_spent");
         const auto found = registry_->live.find(descriptor.nonce);
         if (found == registry_->live.end() ||
-            found->second.lock() != capability)
+            found->second.token.lock() != capability)
             throw std::invalid_argument("authority_capability_unknown");
+        auto retirement = std::move(found->second.retirement);
         registry_->live.erase(found);
-        mark_spent_locked(*registry_, descriptor.nonce);
+        mark_spent_locked(*registry_, descriptor.nonce, std::move(retirement));
         capability->retired_ = true;
     }
     capability.reset();

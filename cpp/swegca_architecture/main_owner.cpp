@@ -53,8 +53,8 @@ struct detail::MainOwnerState final {
 MainOwner::MainOwner(MainInitialState initial, std::uint64_t memory_limit) {
     auto memory = std::unique_ptr<MemoryLedger>(
         new MemoryLedger(memory_limit, std::make_shared<MainLifetime>()));
-    auto authority = std::unique_ptr<MainAuthorityLedger>(new MainAuthorityLedger());
     const auto account = memory->account();
+    auto authority = std::unique_ptr<MainAuthorityLedger>(new MainAuthorityLedger(account));
     RoleRegistry roles(account, initial.roles);
     EvidenceReferences evidence(account.allocator<ExperienceAddress>());
     if (!initial.evidence_references.empty())

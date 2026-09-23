@@ -1,6 +1,7 @@
 #pragma once
 
 #include "swegca_architecture/authority_roles.hpp"
+#include "swegca_architecture/memory_ledger.hpp"
 #include "swegca_architecture/strong_types.hpp"
 
 #include <compare>
@@ -299,7 +300,7 @@ private:
     friend class MainOwner;
 
     // SWEGCA: src/swegca/mosaic_evidence_accumulator.py@5901a5a:28-45
-    MainAuthorityLedger();
+    explicit MainAuthorityLedger(const MemoryLedger::Account& memory);
 
     [[nodiscard]] std::shared_ptr<detail::CapabilityToken> issue_token(
         AuthorityDomain domain, const OwnerId& owner,
