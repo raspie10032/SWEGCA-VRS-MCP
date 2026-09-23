@@ -46,12 +46,14 @@ add_library(swegca_vrs_candidate STATIC
     cpp/swegca_architecture/role_registry.cpp
     cpp/swegca_architecture/scalar_codec.cpp
     cpp/swegca_architecture/vrs_strength_compile.cpp
+    cpp/swegca_vrs/resource_budget.cpp
 )
 target_link_libraries(swegca_vrs_candidate PUBLIC swegca_core)
 set_target_properties(swegca_vrs_candidate PROPERTIES CXX_EXTENSIONS OFF)
 
 file(GLOB architecture_sources CONFIGURE_DEPENDS
-    "${CMAKE_CURRENT_SOURCE_DIR}/cpp/swegca_architecture/*.cpp")
+    "${CMAKE_CURRENT_SOURCE_DIR}/cpp/swegca_architecture/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/cpp/swegca_vrs/*.cpp")
 get_target_property(core_sources swegca_core SOURCES)
 get_target_property(vrs_sources swegca_vrs_candidate SOURCES)
 list(APPEND core_sources ${vrs_sources})
@@ -59,7 +61,7 @@ list(TRANSFORM core_sources PREPEND "${CMAKE_CURRENT_SOURCE_DIR}/")
 list(SORT core_sources)
 list(SORT architecture_sources)
 if(NOT core_sources STREQUAL architecture_sources)
-    message(FATAL_ERROR "Every cpp/swegca_architecture source must be assigned to a CMake target")
+    message(FATAL_ERROR "Every SWEGCA core and VRS source must be assigned to a CMake target")
 endif()
 
 include(CTest)
