@@ -9,7 +9,7 @@
 
 namespace swegca::architecture {
 
-// Startup input only. Main copies tensor bytes through its Account during
+// Startup input only. Main copies tensor and payload bytes through its Account during
 // construction; input spans must remain valid for that constructor call.
 // No field is a capability or an accepted evidence decision.
 // Rule: reconstruction board §3A, §4 CognitiveState, §10.1.
@@ -25,11 +25,12 @@ struct MainInitialState final {
     TensorInput semantic;
     TensorInput executive;
     TensorInput scratch;
-    StructuredWorldGraph world_graph;
+    std::span<const WorldEntityInput> entities;
+    std::span<const WorldRelationInput> relations;
     std::vector<ExperienceAddress> evidence_references;
-    GoalState goals;
-    ValueState values;
-    SelfState self;
+    std::span<const std::byte> goals;
+    std::span<const std::byte> values;
+    std::span<const std::byte> self;
 };
 
 }  // namespace swegca::architecture

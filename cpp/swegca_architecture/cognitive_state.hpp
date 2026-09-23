@@ -44,7 +44,8 @@ private:
 
 class CanonicalPayload final {
 public:
-    explicit CanonicalPayload(std::vector<std::byte> bytes);
+    CanonicalPayload(const MemoryLedger::Account& account,
+                     std::span<const std::byte> bytes);
 
     // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:83-93
     [[nodiscard]] std::span<const std::byte> bytes() const noexcept {
@@ -54,7 +55,7 @@ public:
     auto operator<=>(const CanonicalPayload&) const = default;
 
 private:
-    std::vector<std::byte> bytes_;
+    std::vector<std::byte, MemoryLedger::Allocator<std::byte>> bytes_;
 };
 
 struct WorldEntity final {
@@ -75,23 +76,40 @@ struct WorldRelation final {
     auto operator<=>(const WorldRelation&) const = default;
 };
 
+// Borrowed construction inputs; graph-owned payloads and arrays are copied
+// only after Main's allocator has reserved their bytes.
+struct WorldEntityInput final {
+    EntityId id;
+    EntityKind kind;
+    std::span<const std::byte> attributes;
+};
+
+struct WorldRelationInput final {
+    RelationId id;
+    RelationKind kind;
+    EntityId source;
+    EntityId target;
+    std::span<const std::byte> attributes;
+};
+
 class StructuredWorldGraph final {
 public:
-    StructuredWorldGraph(std::vector<WorldEntity> entities,
-                         std::vector<WorldRelation> relations);
+    StructuredWorldGraph(const MemoryLedger::Account& account,
+                         std::span<const WorldEntityInput> entities,
+                         std::span<const WorldRelationInput> relations);
 
     // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:83-93
-    [[nodiscard]] const std::vector<WorldEntity>& entities() const noexcept {
+    [[nodiscard]] std::span<const WorldEntity> entities() const noexcept {
         return entities_;
     }
     // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:83-93
-    [[nodiscard]] const std::vector<WorldRelation>& relations() const noexcept {
+    [[nodiscard]] std::span<const WorldRelation> relations() const noexcept {
         return relations_;
     }
 
 private:
-    std::vector<WorldEntity> entities_;
-    std::vector<WorldRelation> relations_;
+    std::vector<WorldEntity, MemoryLedger::Allocator<WorldEntity>> entities_;
+    std::vector<WorldRelation, MemoryLedger::Allocator<WorldRelation>> relations_;
 };
 
 template <class Tag>

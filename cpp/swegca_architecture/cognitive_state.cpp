@@ -136,17 +136,28 @@ void SuccessorStateKey::consume() {
 // Callers define the schema of each payload and must supply its already
 // canonical bytes. This type bounds and preserves those bytes exactly.
 // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:83-93
-CanonicalPayload::CanonicalPayload(std::vector<std::byte> bytes)
-    : bytes_(std::move(bytes)) {
-    if (bytes_.size() > ResourceLimits::max_resident_bytes)
+CanonicalPayload::CanonicalPayload(const MemoryLedger::Account& account,
+                                   std::span<const std::byte> bytes)
+    : bytes_(account.allocator<std::byte>()) {
+    if (bytes.size() > ResourceLimits::max_resident_bytes)
         throw std::length_error("canonical_payload_exceeds_resident_limit");
+    if (!bytes.empty()) bytes_.assign(bytes.begin(), bytes.end());
 }
 
 // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:83-93
 StructuredWorldGraph::StructuredWorldGraph(
-    std::vector<WorldEntity> entities,
-    std::vector<WorldRelation> relations)
-    : entities_(std::move(entities)), relations_(std::move(relations)) {
+    const MemoryLedger::Account& account,
+    std::span<const WorldEntityInput> entities,
+    std::span<const WorldRelationInput> relations)
+    : entities_(account.allocator<WorldEntity>()),
+      relations_(account.allocator<WorldRelation>()) {
+    entities_.reserve(entities.size());
+    relations_.reserve(relations.size());
+    for (const auto& input : entities)
+        entities_.push_back({input.id, input.kind, CanonicalPayload(account, input.attributes)});
+    for (const auto& input : relations)
+        relations_.push_back({input.id, input.kind, input.source, input.target,
+                              CanonicalPayload(account, input.attributes)});
     std::sort(entities_.begin(), entities_.end(),
               [](const WorldEntity& left, const WorldEntity& right) {
                   return left.id.value() < right.id.value();

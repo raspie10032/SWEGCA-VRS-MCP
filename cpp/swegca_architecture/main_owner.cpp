@@ -37,8 +37,9 @@ public:
 
 // Initialization/ownership only: guarded successor publication, experience,
 // evidence and action roles are integrated in their later architecture steps.
-// Tensor allocations and state/control-block requests share one account.
-// Graph/identity/payload allocations, allocator overhead, stacks and mappings
+// Tensor/graph-array/payload allocations and state/control-block requests
+// share one account. Identity strings, role and evidence-reference containers,
+// bootstrap allocations, allocator overhead, stacks and mappings
 // still require integration; memory_requested() is not an RSS guarantee.
 struct detail::MainOwnerState final {
     std::unique_ptr<MemoryLedger> memory;
@@ -60,12 +61,16 @@ MainOwner::MainOwner(MainInitialState initial, std::uint64_t memory_limit) {
                               initial.executive.shape, initial.executive.canonical_bytes);
     CognitiveTensor scratch(account, initial.scratch.scalar_type,
                             initial.scratch.shape, initial.scratch.canonical_bytes);
+    StructuredWorldGraph graph(account, initial.entities, initial.relations);
+    GoalState goals(CanonicalPayload(account, initial.goals));
+    ValueState values(CanonicalPayload(account, initial.values));
+    SelfState self(CanonicalPayload(account, initial.self));
     auto current = std::allocate_shared<CognitiveState>(
         account.allocator<CognitiveState>(), InitialStateKey{},
         std::move(initial.owner), std::move(initial.roles),
         std::move(semantic), std::move(executive), std::move(scratch),
-        std::move(initial.world_graph), std::move(initial.evidence_references),
-        std::move(initial.goals), std::move(initial.values), std::move(initial.self));
+        std::move(graph), std::move(initial.evidence_references),
+        std::move(goals), std::move(values), std::move(self));
 
     // Allocate storage before transferring the fully constructed ownership.
     // The three moves below do not allocate and cannot throw.
