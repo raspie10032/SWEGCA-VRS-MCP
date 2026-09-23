@@ -391,6 +391,16 @@ void append_parts_at_published_end(const fs::path& path, std::uint64_t published
 // SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:39-41
 void make_entries_durable(const fs::path& directory) { (void)directory; }
 
+// Lineage: direct — the author's attempt.mkdir refuses an existing name.
+// SWEGCA: src/tinylm_slicer/mosaic_paper_resident_assimilation.py@3bddcb7:476
+bool create_directory_new(const fs::path& path) {
+    if (::CreateDirectoryW(path.c_str(), nullptr)) return true;
+    const auto error = ::GetLastError();
+    if (error == ERROR_ALREADY_EXISTS || error == ERROR_FILE_EXISTS) return false;
+    ::SetLastError(error);
+    fail_last_error("journal_attempt_create_failed");
+}
+
 // Lineage: weak analogy — the author refuses an existing generation via mkdir; here a built one moves to a free name.
 // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:587-588
 // SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:103-104
@@ -587,6 +597,14 @@ void make_entries_durable(const fs::path& directory) {
     if (descriptor.get() < 0) fail_errno("journal_directory_open_failed");
     flush(descriptor, "journal_directory_fsync_failed");
     descriptor.close_checked("journal_directory_close_failed");
+}
+
+// Lineage: direct — the author's attempt.mkdir(mode=0o700) refuses an existing name.
+// SWEGCA: src/tinylm_slicer/mosaic_paper_resident_assimilation.py@3bddcb7:476
+bool create_directory_new(const fs::path& path) {
+    if (::mkdir(path.c_str(), 0700) == 0) return true;
+    if (errno == EEXIST) return false;
+    fail_errno("journal_attempt_create_failed");
 }
 
 // Lineage: weak analogy — the author refuses an existing generation via mkdir; here a built one moves to a free name.

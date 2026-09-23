@@ -111,6 +111,13 @@ void append_parts_at_published_end(const std::filesystem::path& path, std::uint6
 // above for what each platform needs here.
 void make_entries_durable(const std::filesystem::path& directory);
 
+// Creates Main's unique attempt directory only when the name is free. False
+// leaves an existing path untouched (including a non-directory). POSIX uses
+// mode 0700; Windows creates with the parent's ACL. No marker is selected by
+// this operation. Main keeps the directory outside the lower journal tree.
+// SWEGCA: src/tinylm_slicer/mosaic_paper_resident_assimilation.py@3bddcb7:476
+[[nodiscard]] bool create_directory_new(const std::filesystem::path& path);
+
 // Renames a directory only if `to` does not exist. Returns false (leaving
 // both untouched) when `to` exists. Durable per the protocol above.
 [[nodiscard]] bool rename_directory_no_replace(const std::filesystem::path& from,
