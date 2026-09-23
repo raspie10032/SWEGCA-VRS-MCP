@@ -393,6 +393,17 @@ def check_cpp(path: str, source: str) -> list[str]:
     return issues
 
 
+def check_layering(path: str, source: str) -> list[str]:
+    if not path.startswith("cpp/swegca_architecture/"):
+        return []
+    issues: list[str] = []
+    if re.search(r'^\s*#\s*include\s*[<"]swegca_vrs/', source, re.MULTILINE):
+        issues.append(f"{path}: SWEGCA verifier includes VRS")
+    if re.search(r'\bswegca\s*::\s*vrs\b', without_comments_and_strings(source)):
+        issues.append(f"{path}: SWEGCA verifier references VRS")
+    return issues
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     selection = parser.add_mutually_exclusive_group(required=True)
@@ -427,6 +438,7 @@ def main() -> int:
             issues.append(f"{path}: unrecognized product source suffix")
             continue
         source = blob.decode("utf-8", "strict")
+        issues.extend(check_layering(path, source))
         issues.extend(check_cpp(path, source))
     if issues:
         for issue in issues:
