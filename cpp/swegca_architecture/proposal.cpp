@@ -13,13 +13,32 @@ namespace {
 
 // The candidate delta has exactly the detached state's partition shapes.
 // Its scalar dtype is independent of the state, as in SynapseProposal.validate.
-// The tensor constructor separately checks byte count, finite
-// values, and canonical signed zero for every supported scalar format.
+// Tensor storage checks byte count and preserves every scalar bit. Proposal
+// validation separately enforces the source's finite-delta rule.
 // SWEGCA: src/swegca/mosaic_synapse_arbiter.py@5901a5a:65-93
 void require_matching_delta_shape(const CognitiveTensor& delta,
                                   const CognitiveTensor& state) {
     if (delta.shape() != state.shape())
         throw std::invalid_argument("proposal_delta_state_shape_mismatch");
+}
+
+// SWEGCA: src/swegca/mosaic_synapse_arbiter.py@5901a5a:83-89
+void require_finite_delta(const CognitiveTensor& delta) {
+    const auto type = delta.scalar_type();
+    const auto width = scalar_width(type);
+    delta.for_each_chunk([type, width](std::span<const std::byte> bytes) {
+        for (std::size_t at = 0; at < bytes.size(); at += width) {
+            const auto scalar = bytes.subspan(at, width);
+            try {
+                if (type == ScalarType::float64)
+                    (void)read_scalar64(type, scalar);
+                else
+                    (void)read_scalar32(type, scalar);
+            } catch (const std::invalid_argument&) {
+                throw std::invalid_argument("proposal_delta_nonfinite");
+            }
+        }
+    });
 }
 
 // SWEGCA: src/swegca/mosaic_synapse_arbiter.py@5901a5a:73-93
@@ -96,6 +115,9 @@ SynapseProposal::SynapseProposal(const AllocationContext& memory,
     require_matching_delta_shape(semantic_delta_, state.semantic());
     require_matching_delta_shape(executive_delta_, state.executive());
     require_matching_delta_shape(scratch_delta_, state.scratch());
+    require_finite_delta(semantic_delta_);
+    require_finite_delta(executive_delta_);
+    require_finite_delta(scratch_delta_);
     // One original delta_candidate is split across these three partitions.
     if (semantic_delta_.scalar_type() != executive_delta_.scalar_type() ||
         semantic_delta_.scalar_type() != scratch_delta_.scalar_type())

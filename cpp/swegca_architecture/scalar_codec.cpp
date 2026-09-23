@@ -16,7 +16,7 @@ static_assert(std::numeric_limits<float>::is_iec559 &&
 static_assert(std::numeric_limits<float>::radix == 2 &&
               std::numeric_limits<double>::radix == 2);
 
-// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:269-277
+// SWEGCA: src/swegca/mosaic_synapse_arbiter.py@5901a5a:263-321
 std::uint64_t read_le(std::span<const std::byte> bytes) noexcept {
     std::uint64_t bits = 0;
     for (std::size_t at = 0; at < bytes.size(); ++at)
@@ -24,20 +24,20 @@ std::uint64_t read_le(std::span<const std::byte> bytes) noexcept {
     return bits;
 }
 
-// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:269-277
+// SWEGCA: src/swegca/mosaic_synapse_arbiter.py@5901a5a:263-321
 void write_le(std::uint64_t bits, std::span<std::byte> bytes) noexcept {
     for (std::size_t at = 0; at < bytes.size(); ++at)
         bytes[at] = static_cast<std::byte>((bits >> (8 * at)) & 0xff);
 }
 
 // Every finite IEEE binary16 value is exactly representable as binary32.
-// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:269-277
+// SWEGCA: src/swegca/mosaic_synapse_arbiter.py@5901a5a:263-321
 float half_to_float(std::uint16_t bits) noexcept {
     const std::uint32_t sign = std::uint32_t(bits & 0x8000u) << 16;
     const std::uint32_t exponent = (bits >> 10) & 0x1fu;
     std::uint32_t fraction = bits & 0x3ffu;
     // A direct codec caller must not turn a half infinity or NaN into a
-    // finite arbitration value. CognitiveTensor also rejects these bytes.
+    // finite arbitration value. Proposal validation rejects them after read.
     if (exponent == 31) return std::bit_cast<float>(
         sign | (0xffu << 23) | (fraction << 13));
     if (exponent == 0 && fraction == 0) return std::bit_cast<float>(sign);
@@ -56,7 +56,7 @@ float half_to_float(std::uint16_t bits) noexcept {
 }
 
 // Integer round-to-nearest-even; shift is 1..24 on the binary16 path.
-// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:269-277
+// SWEGCA: src/swegca/mosaic_synapse_arbiter.py@5901a5a:263-321
 std::uint32_t round_shift_even(std::uint32_t value, unsigned shift) noexcept {
     const auto kept = value >> shift;
     const auto remainder = value & ((std::uint32_t{1} << shift) - 1);
@@ -66,21 +66,21 @@ std::uint32_t round_shift_even(std::uint32_t value, unsigned shift) noexcept {
 
 // Finite binary32 -> binary16, with one ties-to-even rounding. A result that
 // rounds to infinity is refused rather than published as a state value.
-// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:269-277
+// SWEGCA: src/swegca/mosaic_synapse_arbiter.py@5901a5a:263-321
 std::uint16_t float_to_half(float value) {
     const auto bits = std::bit_cast<std::uint32_t>(value);
     const auto sign = std::uint16_t((bits >> 16) & 0x8000u);
     const auto exponent = (bits >> 23) & 0xffu;
     const auto fraction = bits & 0x7fffffu;
-    if (exponent == 0) return 0;  // binary32 subnormals are below half's tie
+    if (exponent == 0) return sign;  // binary32 subnormals are below half's tie
     const int power = int(exponent) - 127;
     if (power > 15) throw std::overflow_error("scalar_half_overflow");
-    if (power < -25) return 0;
+    if (power < -25) return sign;
     if (power < -14) {
         const auto rounded = round_shift_even(0x800000u | fraction,
                                                unsigned(-power - 1));
-        // 0x400 carries into min normal; zero has one canonical sign.
-        return rounded == 0 ? 0 : sign | std::uint16_t(rounded);
+        // 0x400 carries into min normal; underflow retains the input sign.
+        return sign | std::uint16_t(rounded);
     }
     std::uint32_t rounded = round_shift_even(fraction, 13);
     std::uint32_t half_exponent = std::uint32_t(power + 15);
@@ -92,7 +92,7 @@ std::uint16_t float_to_half(float value) {
     return sign | std::uint16_t((half_exponent << 10) | rounded);
 }
 
-// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:269-277
+// SWEGCA: src/swegca/mosaic_synapse_arbiter.py@5901a5a:263-321
 std::uint16_t float_to_bfloat(float value) {
     const auto bits = std::bit_cast<std::uint32_t>(value);
     const auto upper = bits >> 16;
@@ -101,10 +101,10 @@ std::uint16_t float_to_bfloat(float value) {
                                   (lower == 0x8000u && (upper & 1u)));
     if ((rounded & 0x7f80u) == 0x7f80u)
         throw std::overflow_error("scalar_bfloat_overflow");
-    return (rounded & 0x7fffu) == 0 ? 0 : std::uint16_t(rounded);
+    return std::uint16_t(rounded);
 }
 
-// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:269-277
+// SWEGCA: src/swegca/mosaic_synapse_arbiter.py@5901a5a:263-321
 void require_width(ScalarType type, std::size_t length) {
     if (length != scalar_width(type))
         throw std::invalid_argument("scalar_codec_width_mismatch");
@@ -133,7 +133,7 @@ float read_scalar32(ScalarType type, std::span<const std::byte> bytes) {
             throw std::invalid_argument("scalar_codec_f64_requires_binary64");
     }
     if (!std::isfinite(value)) throw std::invalid_argument("scalar_codec_nonfinite");
-    return value == 0 ? 0.0f : value;
+    return value;
 }
 
 // SWEGCA: src/swegca/mosaic_synapse_arbiter.py@5901a5a:263-321
@@ -143,7 +143,7 @@ double read_scalar64(ScalarType type, std::span<const std::byte> bytes) {
     require_width(type, bytes.size());
     const double value = std::bit_cast<double>(read_le(bytes));
     if (!std::isfinite(value)) throw std::invalid_argument("scalar_codec_nonfinite");
-    return value == 0 ? 0.0 : value;
+    return value;
 }
 
 // SWEGCA: src/swegca/mosaic_synapse_arbiter.py@5901a5a:238-262
@@ -180,13 +180,12 @@ bool try_read_scalar64(const CognitiveTensor& tensor, std::size_t element,
     }
 }
 
-// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:269-277
+// SWEGCA: src/swegca/mosaic_synapse_arbiter.py@5901a5a:263-321
 void write_scalar32(ScalarType type, float value, std::span<std::byte> bytes) {
     if (type == ScalarType::float64)
         throw std::invalid_argument("scalar_codec_f64_requires_binary64");
     require_width(type, bytes.size());
     if (!std::isfinite(value)) throw std::invalid_argument("scalar_codec_nonfinite");
-    if (value == 0) value = 0;  // canonical positive zero
     switch (type) {
         case ScalarType::bfloat16:
             write_le(float_to_bfloat(value), bytes);
@@ -203,13 +202,12 @@ void write_scalar32(ScalarType type, float value, std::span<std::byte> bytes) {
     throw std::invalid_argument("scalar_codec_type_invalid");
 }
 
-// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:269-277
+// SWEGCA: src/swegca/mosaic_synapse_arbiter.py@5901a5a:263-321
 void write_scalar64(ScalarType type, double value, std::span<std::byte> bytes) {
     if (type != ScalarType::float64)
         throw std::invalid_argument("scalar_codec_binary64_requires_f64");
     require_width(type, bytes.size());
     if (!std::isfinite(value)) throw std::invalid_argument("scalar_codec_nonfinite");
-    if (value == 0) value = 0;
     write_le(std::bit_cast<std::uint64_t>(value), bytes);
 }
 

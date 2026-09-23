@@ -44,8 +44,9 @@ public:
         std::uint64_t offset, std::span<std::byte> destination) const = 0;
 };
 
-// Owned canonical storage for a fixed-rank [batch, slot, width] tensor. Bytes
-// are always little-endian and expose no mutable view. Immutable bounded
+// Owned storage for a fixed-rank [batch, slot, width] tensor. Input scalar
+// bits, including signed zero, are retained. Bytes are little-endian and
+// expose no mutable view. Immutable bounded
 // chunks can be shared by successive states; a verification-slot update
 // copies only chunks intersecting that slot.
 // Rule: native tensor value, reconstruction board@7c0b62f:243-251.
@@ -62,16 +63,16 @@ public:
                                                 ScalarType scalar_type,
                                                 TensorShape3 shape);
 
-    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:243-251
+    // SWEGCA: src/swegca/mosaic_cognitive_kernel.py@5901a5a:175-254
     [[nodiscard]] ScalarType scalar_type() const noexcept { return scalar_type_; }
-    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:243-251
+    // SWEGCA: src/swegca/mosaic_cognitive_kernel.py@5901a5a:175-254
     [[nodiscard]] ByteOrder byte_order() const noexcept {
         return ByteOrder::little_endian;
     }
-    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:243-251
+    // SWEGCA: src/swegca/mosaic_cognitive_kernel.py@5901a5a:175-254
     [[nodiscard]] const TensorShape3& shape() const noexcept { return shape_; }
     [[nodiscard]] std::uint64_t element_count() const noexcept;
-    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:243-251
+    // SWEGCA: src/swegca/mosaic_cognitive_kernel.py@5901a5a:175-254
     [[nodiscard]] std::uint64_t byte_count() const noexcept {
         return byte_count_;
     }
@@ -85,8 +86,8 @@ public:
     void copy_bytes(std::uint64_t offset, std::span<std::byte> destination) const;
 
     // Batch-one persistent-state operation. The value has one full slot's
-    // canonical bytes; it is validated and normalized by the same rules as
-    // construction. Other chunks are shared without mutation.
+    // bytes; its length is validated by the same rules as construction and
+    // its scalar bits are retained. Other chunks are shared without mutation.
     [[nodiscard]] CognitiveTensor with_replaced_slot(
         const AllocationContext& account, std::uint64_t slot,
         std::span<const std::byte> value) const;
