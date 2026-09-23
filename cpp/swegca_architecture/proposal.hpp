@@ -2,6 +2,8 @@
 
 #include "swegca_architecture/cognitive_state.hpp"
 #include "swegca_architecture/memory_ledger.hpp"
+#include "swegca_architecture/native_tensor.hpp"
+#include "swegca_architecture/role_registry.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -13,6 +15,8 @@
 // A producer's transient proposal over a detached Main snapshot. This type
 // carries no decision, binding receipt, or authority. Its source and cited
 // addresses are observations until Main binds them to admitted evidence.
+// Target indices refer to named roles; unregistered spare tensor slots are
+// capacity only and cannot be targeted by a producer proposal.
 // Rule: ARCHITECTURE_SPEC.md@5901a5a:64-69,117-123,155-174;
 // reconstruction board §3D, §4, §10.5.
 namespace swegca::architecture {
@@ -28,8 +32,10 @@ struct SynapseProposalInput final {
     std::string_view claim;
     std::uint64_t claim_revision;
     StateGeneration based_on;
+    // Untrusted citation text. Main's Bind verifies address form, publication,
+    // original-experience kind, and equality with the decision's admitted set.
     std::span<const std::string_view> evidence_addresses;
-    std::span<const std::size_t> target_role_indices;
+    std::span<const std::size_t> target_role_indices;  // indices in snapshot.state().roles()
     TensorDeltaInput semantic_delta;
     TensorDeltaInput executive_delta;
     TensorDeltaInput scratch_delta;
