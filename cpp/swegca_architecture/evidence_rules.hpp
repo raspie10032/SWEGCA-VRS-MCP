@@ -1,13 +1,13 @@
 #pragma once
 
-#include "swegca_architecture/judgment_kernel.hpp"
+#include "swegca_architecture/evidence_kernel.hpp"
 #include "swegca_architecture/strong_types.hpp"
 
 #include <cstdint>
 
 // Shell side of the nano-core: validates Main's policy once and produces the
 // prevalidated rule values the kernels read. Validation may throw; kernels
-// never do. Rules: ARCHITECTURE_SPEC.md@5901a5a §4.4-4.6.
+// never do. Rules: ARCHITECTURE_SPEC.md@5901a5a §4.4.
 namespace swegca::architecture {
 
 struct EvidencePolicy {
@@ -26,22 +26,8 @@ struct EvidencePolicy {
     std::uint32_t axis_count = 4;  // observational, counterfactual, intervention, cross-context
 };
 
-struct GatePolicy {
-    double minimum_causal_lower_bound = 0.55;
-    std::uint32_t minimum_source_diversity = 2;
-    std::uint32_t minimum_context_diversity = 4;
-};
-
-struct ArbiterPolicy {
-    double maximum_slot_delta = 0.02;
-    double maximum_world_delta = 0.5;
-    double minimum_weight = 0.5;
-};
-
 // Throws `std::invalid_argument("<policy>_invalid:<field>")`.
 [[nodiscard]] kernel::EvidenceRules make_evidence_rules(const EvidencePolicy& policy);
-[[nodiscard]] kernel::GateRules make_gate_rules(const GatePolicy& policy);
-[[nodiscard]] kernel::ArbiterRules make_arbiter_rules(const ArbiterPolicy& policy);
 
 // Digest of the canonical encoding of an evidence policy (tag, then every
 // field in declaration order: doubles as IEEE-754 bits, all little-endian),

@@ -2,8 +2,8 @@
 
 #include "swegca_architecture/authority_roles.hpp"
 #include "swegca_architecture/digest_bytes.hpp"
-#include "swegca_architecture/judgment_kernel.hpp"
-#include "swegca_architecture/judgment_rules.hpp"
+#include "swegca_architecture/evidence_kernel.hpp"
+#include "swegca_architecture/evidence_rules.hpp"
 #include "swegca_architecture/allocation.hpp"
 #include "swegca_architecture/strong_types.hpp"
 
