@@ -109,7 +109,7 @@ enum class AdmissionResult : std::uint8_t {
     expired = 2,
     insufficient = 3,
     duplicate = 4,
-    stale = 5,  // judged on a generation other than the one HEAD names
+    stale = 5,  // judged on state content other than the one HEAD names
 };
 
 template <class T>
@@ -328,7 +328,7 @@ public:
     }
 
     // Spec :142 from metadata only: every admitted original is unexpired at
-    // `current_step` and current at `generation` — observed on it, or
+    // `current_step` and current at `generation`'s state content — observed on it, or
     // re-evidenced on it with the original's outcome — and no Re-evidence
     // result at `generation` conflicts with its original. O(log n).
     [[nodiscard]] bool evidence_current(const StateGeneration& generation,
@@ -356,7 +356,7 @@ private:
     // for another address. A duplicate (the address already admitted: the
     // address is the digest of the experience's identity, so the same
     // experience recorded twice counts once, user 2026-09-23), stale
-    // (judged on another generation than `current`), expired or insufficient
+    // (judged on different state content than `current`), expired or insufficient
     // observation leaves the tally unchanged and is recorded as rejected. Any
     // throw leaves the accumulator exactly as it was.
     AdmissionResult admit(const EvidenceObservation& observation, const ReplayedOriginal& replayed,
@@ -411,27 +411,29 @@ private:
         ExactSum support = 0;
         ExactSum refute = 0;
     };
-    // Per (original, re-evidence generation): whether a consistent result
-    // was counted and whether any result conflicted.
+    // Per (original, state content): whether a consistent result was counted
+    // and whether any result conflicted. A bit-exact rollback restores the
+    // same content under a different publication identity.
     struct CoverKey {
         std::size_t original = 0;
-        StateGeneration generation;
+        Digest256 content_digest;
         auto operator<=>(const CoverKey&) const = default;
     };
     struct Cover {
         bool consistent = false;
         bool conflicted = false;
     };
-    // Per generation: originals observed on it, originals (observed on
-    // another generation) re-evidenced on it consistently, and originals with
-    // a conflicting result on it.
+    // Per state content: originals observed on it, originals (observed on
+    // other content) re-evidenced on it consistently, and originals with a
+    // conflicting result on it.
     struct Coverage {
         std::uint64_t observed = 0;
         std::uint64_t re_evidenced = 0;
         std::uint64_t conflicted = 0;
     };
-    // One result per (original, generation, re-evidencer, outcome): an exact
-    // repeat is refused (and kept as refused); a changed outcome is recorded.
+    // Re-evidence events keep their publication identity. A new publication
+    // of the same content is still a distinct event, while CoverKey below
+    // counts each original at that content only once.
     struct ResultKey {
         std::size_t original = 0;
         StateGeneration generation;
@@ -480,7 +482,7 @@ private:
     // Positions in re_evidence_ of results that were submitted again exactly.
     Set<std::size_t> repeated_results_{memory_.allocator<char>()};
     Map<CoverKey, Cover> covers_{memory_.allocator<char>()};
-    Map<StateGeneration, Coverage> coverage_{memory_.allocator<char>()};
+    Map<Digest256, Coverage> coverage_{memory_.allocator<char>()};
     kernel::EvidenceTally tally_;
 };
 

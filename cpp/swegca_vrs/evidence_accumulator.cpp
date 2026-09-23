@@ -262,10 +262,10 @@ AdmissionResult EvidenceAccumulator::admit(const EvidenceObservation& observatio
         return reject(observation.address, AdmissionResult::insufficient);
     if (originals_.contains(observation.address))
         return reject(observation.address, AdmissionResult::duplicate);
-    // Author: every audit row's world hash is the current state's. The
-    // author binds it in the audit row after the update, so it is checked
-    // after the author's own rejections.
-    if (observation.judged_against != current)
+    // Author: every audit row's world hash is the current state's. Compare
+    // content, not the provisional publication ordinal: bit-exact rollback
+    // can publish the same state content under another head.
+    if (observation.judged_against.digest() != current.digest())
         return reject(observation.address, AdmissionResult::stale);
     if (tally_.revision == std::numeric_limits<std::uint64_t>::max())
         throw std::overflow_error("evidence_revision_exhausted");
@@ -347,10 +347,10 @@ AdmissionResult EvidenceAccumulator::admit(const EvidenceObservation& observatio
     if (!context_set.contains(context)) context_node = detached(context_set, context);
     Set<std::uint32_t>::node_type producer_node;
     if (!producers_.contains(producer)) producer_node = detached(producers_, producer);
-    const auto coverage_found = coverage_.find(observation.judged_against);
-    Map<StateGeneration, Coverage>::node_type coverage_node;
+    const auto coverage_found = coverage_.find(observation.judged_against.digest());
+    Map<Digest256, Coverage>::node_type coverage_node;
     if (coverage_found == coverage_.end())
-        coverage_node = detached(coverage_, observation.judged_against, Coverage{});
+        coverage_node = detached(coverage_, observation.judged_against.digest(), Coverage{});
     reserve_one_more(admitted_evidence_);
     AdmittedEvidence kept{ExperienceAddress(memory_, observation.address),
                           replayed.record_digest,
@@ -378,7 +378,7 @@ AdmissionResult EvidenceAccumulator::admit(const EvidenceObservation& observatio
     splice(context_set, context_node);
     splice(producers_, producer_node);
     splice(coverage_, coverage_node);
-    coverage_.find(observation.judged_against)->second.observed += 1;
+    coverage_.find(observation.judged_against.digest())->second.observed += 1;
     admitted_evidence_.push_back(std::move(kept));
     if (observation.expires_at)
         earliest_expiry_ = std::min(earliest_expiry_.value_or(*observation.expires_at),
@@ -522,12 +522,12 @@ AdmissionResult EvidenceAccumulator::record(ReEvidenceResult result) {
         return AdmissionResult::duplicate;
     }
 
-    const CoverKey cover_key{original, result.generation()};
+    const CoverKey cover_key{original, result.generation().digest()};
     const auto cover_found = covers_.find(cover_key);
     const Cover before = cover_found == covers_.end() ? Cover{} : cover_found->second;
     Cover after = before;
     (result.outcome() == admitted.outcome ? after.consistent : after.conflicted) = true;
-    const bool observed_here = admitted.judged_against == result.generation();
+    const bool observed_here = admitted.judged_against.digest() == result.generation().digest();
     const bool newly_re_evidenced = !observed_here && after.consistent && !before.consistent;
     const bool newly_conflicted = after.conflicted && !before.conflicted;
 
@@ -537,12 +537,12 @@ AdmissionResult EvidenceAccumulator::record(ReEvidenceResult result) {
     auto result_node = detached(results_, result_key, re_evidence_.size());
     Map<CoverKey, Cover>::node_type cover_node;
     if (cover_found == covers_.end()) cover_node = detached(covers_, cover_key, after);
-    const auto coverage_found = coverage_.find(result.generation());
-    Map<StateGeneration, Coverage>::node_type coverage_node;
+    const auto coverage_found = coverage_.find(result.generation().digest());
+    Map<Digest256, Coverage>::node_type coverage_node;
     if (coverage_found == coverage_.end())
-        coverage_node = detached(coverage_, result.generation(), Coverage{});
+        coverage_node = detached(coverage_, result.generation().digest(), Coverage{});
     reserve_one_more(re_evidence_);
-    const auto generation = result.generation();
+    const auto content_digest = result.generation().digest();
 
     // Commit phase.
     const auto splice = [](auto& container, auto& node) {
@@ -553,7 +553,7 @@ AdmissionResult EvidenceAccumulator::record(ReEvidenceResult result) {
     if (cover_node.empty()) cover_found->second = after;
     splice(covers_, cover_node);
     splice(coverage_, coverage_node);
-    auto& coverage = coverage_.find(generation)->second;
+    auto& coverage = coverage_.find(content_digest)->second;
     if (newly_re_evidenced) coverage.re_evidenced += 1;
     if (newly_conflicted) coverage.conflicted += 1;
     re_evidence_.push_back(std::move(result));
@@ -565,7 +565,7 @@ AdmissionResult EvidenceAccumulator::record(ReEvidenceResult result) {
 bool EvidenceAccumulator::evidence_current(const StateGeneration& generation,
                                            std::uint64_t current_step) const {
     if (earliest_expiry_ && current_step > *earliest_expiry_) return false;
-    const auto found = coverage_.find(generation);
+    const auto found = coverage_.find(generation.digest());
     const Coverage coverage = found == coverage_.end() ? Coverage{} : found->second;
     return coverage.conflicted == 0 &&
            coverage.observed + coverage.re_evidenced == admitted_evidence_.size();
