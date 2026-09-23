@@ -220,6 +220,13 @@ remain owned by the source-bound numerical Graph pages, and topology
 directory publication, generation manifest, bounded block cache, retirement
 and Main atomic ownership are still unimplemented. Therefore this primitive
 is neither a complete topology publication nor a 4 GB or latency result.
+The region node-binding primitive stores the author's global-node to
+component and component-local position addresses as copy-on-write immutable
+pages. A pending Graph node has an explicit absent record, matching the
+source behavior that nodes appended since the last region rebuild do not
+silently inherit an old component. A generation manifest must still bind the
+page-map root, exact topology files, source numerical Graph, memory owner and
+pair certificate before this data can implement `GraphRegionDirectory`.
 
 Existing VRS 2.2 pair certificates and numerical arrays are historical
 evidence. A new source implementation must account for their lineage and
