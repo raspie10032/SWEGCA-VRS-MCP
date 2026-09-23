@@ -84,6 +84,57 @@ struct SourceSpan {
     std::uint64_t length = 0;
 };
 
+// Reads bytes an observation holds outside memory: `read(offset, out)`
+// fills `out` exactly with the bytes at `offset`. Borrowed like a function
+// reference (pass a callable object, never keep one); it must stay valid
+// until the append it was given to is done.
+class BlobReader final {
+public:
+    // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:23-60
+    template <class F>
+        requires(!std::is_same_v<std::remove_cvref_t<F>, BlobReader> &&
+                 std::is_object_v<std::remove_reference_t<F>> &&
+                 std::is_invocable_v<std::remove_reference_t<F>&, std::uint64_t, std::span<std::byte>>)
+    BlobReader(F&& read) noexcept  // NOLINT(google-explicit-constructor)
+        : target_(static_cast<const void*>(std::addressof(read))),
+          call_(&invoke<std::remove_reference_t<F>>) {}
+
+    // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:23-60
+    void operator()(std::uint64_t offset, std::span<std::byte> out) const { call_(target_, offset, out); }
+
+private:
+    using Call = void (*)(const void*, std::uint64_t, std::span<std::byte>);
+    // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:23-60
+    template <class T>
+    static void invoke(const void* target, std::uint64_t offset, std::span<std::byte> out) {
+        auto& read = *static_cast<T*>(const_cast<void*>(target));
+        read(offset, out);
+    }
+
+    const void* target_;
+    Call call_;
+};
+
+// Observed bytes of any size the storage holds: in memory, or `size` bytes
+// read on demand through `reader` (bytes larger than memory). Read ones are
+// read twice: in full to hash them when staged, and part by part when
+// each part's generation is staged, checked against the first reading
+// (`experience_source_changed`). Memory held is one part at a time, the
+// part generation being staged, and the digest lists (1/262144 of the
+// bytes).
+struct BlobInput {
+    BlobInput() = default;
+    // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:23-60
+    BlobInput(std::span<const std::byte> in_memory) noexcept  // NOLINT(google-explicit-constructor)
+        : bytes(in_memory), size(in_memory.size()) {}
+    // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:23-60
+    BlobInput(std::uint64_t total, BlobReader read) noexcept : size(total), reader(read) {}
+
+    std::span<const std::byte> bytes;
+    std::uint64_t size = 0;
+    std::optional<BlobReader> reader;
+};
+
 // One complete observation: the producer's borrowed input. Nothing is
 // filtered (no success, verification or file-type test) and every field is
 // kept. Before Main appends it, it has no address; appending gives it one
@@ -104,8 +155,8 @@ struct Observation {
     std::optional<SourceSpan> source_span;
     std::optional<std::string_view> name_space;   // the namespace it belongs to
     std::span<const std::string_view> resources;  // the resources it concerns, each once
-    std::span<const std::byte> raw;         // the exact bytes observed, any size the storage holds
-    std::span<const std::byte> structured;  // canonical structured form; empty when none
+    BlobInput raw;         // the exact bytes observed
+    BlobInput structured;  // canonical structured form; empty when none
     // Rozephine-authored cues (author: semantic keys by address): each must
     // be exactly one token under the cue rule (`experience_cue_not_a_token`
     // otherwise), so a query finds it by the same rule. The tokens of the
@@ -176,9 +227,9 @@ private:
 // Consecutive chunks of a blob's bytes, in order: an inline blob in one
 // chunk, a parted one part by part.
 using ChunkVisitor = ExperienceVisitor<std::span<const std::byte>>;
-// The root sources of an experience, as SHA-256 digests of the source texts,
-// in increasing order.
-using RootSourceVisitor = ExperienceVisitor<const DigestBytes&>;
+// Digests in increasing order: the root sources of an experience (SHA-256
+// of each source text) or its root contexts.
+using DigestVisitor = ExperienceVisitor<const DigestBytes&>;
 
 // One blob of an experience record as the record holds it. Views the
 // record's bytes. Inline (depth 0): `inline_bytes` holds all `size` bytes.
@@ -283,7 +334,20 @@ public:
     // own source for an original; for a derived one, the union of the root
     // sources of what it was derived from, fixed when it was appended.
     // SWEGCA: paper/swegca/journal_submission_2026-08-25/COMPONENT_LEDGER.md@5901a5a:44-50
-    void for_each_root_source(RootSourceVisitor visit) const;
+    void for_each_root_source(DigestVisitor visit) const;
+    // The contexts the observations it rests on were made in: its own for
+    // an original (none when it has none); for a derived one, the union of
+    // the root contexts of what it was derived from. A derived experience's
+    // own context is what it was derived in, never evidence context.
+    // SWEGCA: paper/swegca/journal_submission_2026-08-25/COMPONENT_LEDGER.md@5901a5a:44-50
+    void for_each_root_context(DigestVisitor visit) const;
+    // Reads every parted blob (raw, structured, root sources, root
+    // contexts) to its end, checking each part, the order of every digest
+    // set and each whole digest, as `for_each_raw_chunk` does; one part per
+    // level is held. Evidence admission and Re-evidence run it before an
+    // experience counts, so a missing or damaged part fails there.
+    // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:137-155
+    void verify_parts() const;
 
 private:
     ExperienceRecord(journal::PublishedRecord record, const MemoryLedger::Account& memory,
@@ -291,6 +355,7 @@ private:
                      journal::LedgerVector<std::string_view> resources,
                      journal::LedgerVector<std::string_view> index);
     void for_each_chunk(const ExperienceBlob& blob, ChunkVisitor visit) const;
+    void for_each_digest(const ExperienceBlob& blob, DigestVisitor visit) const;
 
     journal::PublishedRecord record_;
     const journal::JournalStore* journal_;
@@ -306,7 +371,8 @@ private:
     journal::LedgerVector<std::string_view> index_;          // views the record's bytes
     ExperienceBlob raw_;
     ExperienceBlob structured_;
-    ExperienceBlob roots_;  // derived only: the root-source digests, 32 bytes each
+    ExperienceBlob roots_;     // derived only: the root-source digests, 32 bytes each
+    ExperienceBlob contexts_;  // derived only: the root-context digests, 32 bytes each
 };
 
 class ExperienceJournal;
@@ -317,8 +383,9 @@ class ExperienceJournal;
 // a crash in between leaves only unreferenced parts, which an append-only
 // journal keeps harmlessly and a retry reuses (equal parts are one record).
 // `next` stages the next generation on the state and views Main passes;
-// Main publishes it before calling `next` again. An experience record whose
-// parts are not all published fails with `experience_parts_unpublished`.
+// Main publishes it before calling `next` again. A generation that was not
+// published (its publication failed) is staged again by the next call, so
+// `done` means every record is in the journal.
 // Every experience is appended whole in one generation; experiences are
 // spread over as many generations as the journal's generation limit needs.
 // Borrows every input `ExperienceJournal::stage` was given until `done`.
@@ -356,7 +423,13 @@ private:
     struct Part {
         DigestBytes digest{};
         std::array<char, experience_part_address_bytes> address{};
-        std::span<const std::byte> bytes;  // the caller's bytes or `owned_`
+        std::span<const std::byte> bytes;  // the caller's bytes or `owned_`, or
+        const BlobReader* reader = nullptr;  // read at `offset` when staged
+        std::uint64_t offset = 0;
+        std::uint64_t length = 0;
+        // Its address resolves to this very part: staged by this append,
+        // or found in the journal and checked record for record.
+        bool known = false;
 
         // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:31-35
         auto operator<=>(const Part& other) const noexcept { return digest <=> other.digest; }
@@ -378,6 +451,10 @@ private:
     journal::LedgerVector<journal::LedgerBytes> owned_;  // bytes parts view that the caller did not give
     journal::LedgerVector<ExperienceAddress> addresses_;
     std::size_t next_part_ = 0;
+    // The generation `next` last returned: 1 parts, 2 records, 0 none, and
+    // where it began. The next call rewinds to it unless all of it is published.
+    std::uint8_t pending_ = 0;
+    std::size_t pending_from_ = 0;
     std::size_t next_head_ = 0;
     bool parts_checked_ = false;
     bool done_ = false;
@@ -560,6 +637,11 @@ struct SelectedExperience {
     std::uint64_t byte_count = 0;  // raw bytes of the experience
     DigestBytes raw_digest{};      // SHA-256 of those bytes (author raw_sha256)
     DigestBytes record_digest{};
+    // Parted raw bytes: `byte_count` and `raw_digest` are the record's, bound
+    // to its address; the parts are checked when the bytes are replayed
+    // (`for_each_raw_chunk`), not by the selection, which stays within the
+    // Recall time bound.
+    bool raw_parted = false;
     VerificationState verification_state;
     RevisionText revision;
 };

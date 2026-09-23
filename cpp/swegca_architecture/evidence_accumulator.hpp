@@ -67,8 +67,8 @@ enum class EvidenceOutcome : std::uint8_t { support = 1, refute = 2, insufficien
 // observation generation, which Re-evidence never rewrites.
 // Provenance is the replayed experience's (COMPONENT_LEDGER.md@5901a5a:
 // 44-50, codex 15:40): `source_family` must be the family (SourceFamilies)
-// of one of the experience's root sources, `context` its context and
-// `observed_at` its step. `producer` is the judge, which no experience
+// of one of the experience's root sources, `context` one of its root
+// contexts and `observed_at` its step. `producer` is the judge, which no experience
 // names; it cannot raise diversity above what the experiences bear out,
 // since source and context diversity are each the smaller of the verified
 // count and the producer count.
@@ -90,8 +90,9 @@ struct EvidenceObservation {
 // Main's grouping of sources into families (COMPONENT_LEDGER.md@5901a5a:
 // 44-50: results sharing a source family must be grouped). A source Main
 // has not grouped is its own family. A source's family is fixed once Main
-// sets it or once evidence is admitted under it, so no source is ever
-// counted under two families. Sources are kept by the SHA-256 of their
+// sets it or once evidence is applied under it, so no source is ever
+// counted under two families; an observation that is rejected or fails
+// fixes nothing. Sources are kept by the SHA-256 of their
 // text, as experiences record their root sources.
 class SourceFamilies final {
 public:
@@ -112,14 +113,20 @@ private:
     explicit SourceFamilies(const MemoryLedger::Account& memory)
         : memory_(memory), families_(memory.allocator<std::pair<const DigestBytes, Text>>()) {}
 
-    // Whether one of the experience's root sources is in `family`; the
-    // family of the root that matched as its own is fixed.
-    [[nodiscard]] bool admits(const ExperienceRecord& experience, std::string_view family);
-
     using Text = std::basic_string<char, std::char_traits<char>, MemoryLedger::Allocator<char>>;
+    using Map = std::map<DigestBytes, Text, std::less<>,
+                         MemoryLedger::Allocator<std::pair<const DigestBytes, Text>>>;
+
+    // Whether one of the experience's root sources is in `family`, changing
+    // nothing. When the root that matched is ungrouped (its own name), the
+    // entry fixing it is prepared in `fix`, for `commit` once applied.
+    [[nodiscard]] bool matches(const ExperienceRecord& experience, std::string_view family,
+                               Map::node_type& fix) const;
+    // Records a prepared entry; allocates nothing.
+    void commit(Map::node_type fix) noexcept;
+
     MemoryLedger::Account memory_;
-    std::map<DigestBytes, Text, std::less<>, MemoryLedger::Allocator<std::pair<const DigestBytes, Text>>>
-        families_;
+    Map families_;
 };
 
 enum class AdmissionResult : std::uint8_t {
@@ -464,9 +471,8 @@ public:
     // or step that is not the experience's fails
     // `evidence_provenance_mismatch:source_family|context|observed_at`) and
     // admits the observation into `accumulator` as its admission step
-    // describes, at `current_step`. Fixing a family as its source's own
-    // (SourceFamilies) happens before the accumulator's step and stays even
-    // when that step rejects or throws: it only records what already holds.
+    // describes, at `current_step`. A family is fixed as its source's own
+    // (SourceFamilies) only when the observation is applied.
     AdmissionResult admit(EvidenceAccumulator& accumulator, const EvidenceObservation& observation,
                           std::uint64_t current_step);
 

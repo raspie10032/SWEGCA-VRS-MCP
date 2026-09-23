@@ -544,6 +544,7 @@ ReEvidenceRecorded ReEvidence::apply(EvidenceAccumulator& accumulator,
     if (state.generation() != at_head.state)
         throw std::invalid_argument("re_evidence_state_not_current");
     const auto experience = ExperienceRecord::decode(std::move(at_head.record), memory_, journal_);
+    experience.verify_parts();  // codex 16:32: fail closed before it counts
     const auto& view = experience.record();
     if (view.address != address.value())
         throw std::invalid_argument("re_evidence_replay_address_mismatch");
@@ -567,15 +568,25 @@ AdmissionResult EvidenceAdmission::admit(EvidenceAccumulator& accumulator,
         journal_.replay_at_head(ExperienceAddress(accumulator.memory_, observation.address));
     const auto experience =
         ExperienceRecord::decode(std::move(at_head.record), accumulator.memory_, journal_);
+    experience.verify_parts();  // codex 16:32: fail closed before it counts
     // Provenance is the experience's (COMPONENT_LEDGER.md@5901a5a:44-50).
-    if (!experience.context()) throw std::invalid_argument("evidence_context_unbound");
-    if (*experience.context() != observation.context)
-        throw std::invalid_argument("evidence_provenance_mismatch:context");
+    bool any_context = false;
+    bool context_found = false;
+    experience.for_each_root_context([&](const DigestBytes& context) {
+        any_context = true;
+        context_found = context == observation.context.bytes();
+        return !context_found;
+    });
+    if (!any_context) throw std::invalid_argument("evidence_context_unbound");
+    if (!context_found) throw std::invalid_argument("evidence_provenance_mismatch:context");
     if (experience.observed_at() != observation.observed_at)
         throw std::invalid_argument("evidence_provenance_mismatch:observed_at");
-    if (!families_.admits(experience, observation.source_family))
+    SourceFamilies::Map::node_type fix;
+    if (!families_.matches(experience, observation.source_family, fix))
         throw std::invalid_argument("evidence_provenance_mismatch:source_family");
-    return accumulator.admit(observation, experience, at_head.state, current_step);
+    const auto result = accumulator.admit(observation, experience, at_head.state, current_step);
+    if (result == AdmissionResult::applied && fix) families_.commit(std::move(fix));
+    return result;
 }
 
 // SWEGCA: paper/swegca/journal_submission_2026-08-25/COMPONENT_LEDGER.md@5901a5a:44-50
@@ -592,9 +603,11 @@ void SourceFamilies::assign(std::string_view source, std::string_view family) {
 }
 
 // A grouped root matches its family; an ungrouped one matches only its
-// own name, which is then fixed as its family. One pass over the roots.
+// own name, and the entry fixing it is prepared (the only allocation)
+// before the accumulator's step. One pass over the roots.
 // SWEGCA: paper/swegca/journal_submission_2026-08-25/COMPONENT_LEDGER.md@5901a5a:44-50
-bool SourceFamilies::admits(const ExperienceRecord& experience, std::string_view family) {
+bool SourceFamilies::matches(const ExperienceRecord& experience, std::string_view family,
+                             Map::node_type& fix) const {
     const auto own_name = Sha256::of(std::as_bytes(std::span(family.data(), family.size())));
     bool found = false;
     bool own = false;
@@ -607,8 +620,17 @@ bool SourceFamilies::admits(const ExperienceRecord& experience, std::string_view
         }
         return !found;
     });
-    if (own) families_.emplace(own_name, Text(family, memory_.allocator<char>()));
+    if (own) {
+        Map staging(families_.get_allocator());
+        staging.emplace(own_name, Text(family, memory_.allocator<char>()));
+        fix = staging.extract(staging.begin());
+    }
     return found;
 }
+
+// Inserting a prepared node allocates nothing and the key comparison
+// cannot throw.
+// SWEGCA: paper/swegca/journal_submission_2026-08-25/COMPONENT_LEDGER.md@5901a5a:44-50
+void SourceFamilies::commit(Map::node_type fix) noexcept { (void)families_.insert(std::move(fix)); }
 
 }  // namespace swegca::architecture
