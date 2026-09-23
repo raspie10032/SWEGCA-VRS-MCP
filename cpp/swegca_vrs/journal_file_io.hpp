@@ -1,11 +1,11 @@
 #pragma once
 
+#include "swegca_vrs/allocation.hpp"
 
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <span>
-#include <vector>
 
 // Durable file primitives of the native journal, one implementation per
 // platform (POSIX and Windows) behind the same contract, so the journal's
@@ -96,7 +96,9 @@ void remove_file(const std::filesystem::path& path);
 
 // Allocation granularity of the file system holding `directory` in bytes
 // (the cluster or fundamental block size), used to charge on-disk use.
-[[nodiscard]] std::uint64_t allocation_unit(const std::filesystem::path& directory);
+// Windows' volume-path query buffer uses the VRS host's memory allocator.
+[[nodiscard]] std::uint64_t allocation_unit(const std::filesystem::path& directory,
+                                            const AllocationContext& memory);
 
 [[nodiscard]] std::uint64_t process_id() noexcept;
 

@@ -5,6 +5,7 @@
 #include <stdexcept>
 #include <system_error>
 #include <utility>
+#include <vector>
 
 #if defined(_WIN32)
 #ifndef NOMINMAX
@@ -388,8 +389,9 @@ void remove_file(const fs::path& path) {
 
 // Lineage: native mechanism — file-system allocation unit, so the host's budget sees disk use.
 // SWEGCA: docs/SWEGCA_CPP_VRS_LAYER_PLAN.md@472d23225c973fa0a33581afd6bd9026df6fc98a:170-173
-std::uint64_t allocation_unit(const fs::path& directory) {
-    std::vector<wchar_t> volume(32768);
+std::uint64_t allocation_unit(const fs::path& directory, const AllocationContext& memory) {
+    std::vector<wchar_t, AllocationAdapter<wchar_t>> volume(
+        32768, wchar_t{}, memory.allocator<wchar_t>());
     if (!::GetVolumePathNameW(directory.c_str(), volume.data(),
                               static_cast<DWORD>(volume.size())))
         fail_last_error("journal_volume_query_failed");
@@ -563,7 +565,8 @@ void remove_file(const fs::path& path) {
 
 // Lineage: native mechanism — file-system allocation unit, so the host's budget sees disk use.
 // SWEGCA: docs/SWEGCA_CPP_VRS_LAYER_PLAN.md@472d23225c973fa0a33581afd6bd9026df6fc98a:170-173
-std::uint64_t allocation_unit(const fs::path& directory) {
+std::uint64_t allocation_unit(const fs::path& directory, const AllocationContext& memory) {
+    (void)memory;
     struct statvfs status {};
     if (::statvfs(directory.c_str(), &status) != 0) fail_errno("journal_volume_query_failed");
     const auto unit = std::max<std::uint64_t>(status.f_frsize, status.f_bsize);

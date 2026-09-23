@@ -1259,7 +1259,7 @@ JournalStoreOwner JournalStore::open(const fs::path& directory,
     JournalIdentity owned(memory, identity);  // checked before anything is created
     if (!fs::exists(directory)) create_initial(directory, identity, memory);
     auto lock = std::allocate_shared<io::OwnerLock>(memory.allocator<io::OwnerLock>(), directory);
-    const auto unit = io::allocation_unit(directory);
+    const auto unit = io::allocation_unit(directory, memory);
     JournalStoreOwner store = make_owned(directory, std::move(owned), std::move(storage), memory, unit,
                                          std::move(lock), page_cache, page_cache_shards);
     store->load_published_head();
@@ -1547,7 +1547,7 @@ JournalStoreOwner JournalStore::open_at_root(const fs::path& directory,
         fail("journal_root_lock_missing");
     auto lock = std::allocate_shared<io::OwnerLock>(memory.allocator<io::OwnerLock>(),
                                                     directory, io::existing_lock);
-    const auto unit = io::allocation_unit(directory);
+    const auto unit = io::allocation_unit(directory, memory);
     JournalStoreOwner store = make_owned(directory, std::move(owned), std::move(storage), memory, unit,
                                          std::move(lock), page_cache, page_cache_shards);
     store->load_root_generation(root);
