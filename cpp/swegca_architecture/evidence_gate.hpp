@@ -3,8 +3,9 @@
 #include "swegca_architecture/authority.hpp"
 #include "swegca_architecture/cognitive_state.hpp"
 #include "swegca_architecture/evidence_accumulator.hpp"
-#include "swegca_architecture/judgment_kernel.hpp"
-#include "swegca_architecture/judgment_rules.hpp"
+#include "swegca_architecture/gate_kernel.hpp"
+#include "swegca_architecture/evidence_rules.hpp"
+#include "swegca_architecture/gate_rules.hpp"
 #include "swegca_architecture/allocation.hpp"
 #include "swegca_architecture/strong_types.hpp"
 

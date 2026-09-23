@@ -1,4 +1,4 @@
-#include "swegca_architecture/judgment_rules.hpp"
+#include "swegca_architecture/evidence_rules.hpp"
 
 #include "swegca_architecture/sha256.hpp"
 
@@ -76,41 +76,6 @@ kernel::EvidenceRules make_evidence_rules(const EvidencePolicy& p) {
     rules.regime_change_threshold_ = p.regime_change_threshold;
     rules.axis_count_ = p.axis_count;
     if (!kernel::rules_valid(rules)) invalid(name, "derived_rules");
-    return rules;
-}
-
-// SWEGCA: src/swegca/mosaic_bounded_world_write.py@5901a5a:35-55
-kernel::GateRules make_gate_rules(const GatePolicy& p) {
-    constexpr const char* name = "gate_policy";
-    if (!unit(p.minimum_causal_lower_bound)) invalid(name, "minimum_causal_lower_bound");
-    if (p.minimum_source_diversity == 0 || p.minimum_context_diversity == 0)
-        invalid(name, "diversity_minima");
-    kernel::GateRules rules;
-    rules.minimum_causal_lower_bound_ = p.minimum_causal_lower_bound;
-    rules.minimum_source_diversity_ = p.minimum_source_diversity;
-    rules.minimum_context_diversity_ = p.minimum_context_diversity;
-    return rules;
-}
-
-// Limits are bounded by `kernel::max_delta_limit`, so the float conversion is
-// exact in range and every arbiter sum stays finite (codex KJ4).
-// SWEGCA: src/swegca/mosaic_synapse_arbiter.py@5901a5a:222-236
-kernel::ArbiterRules make_arbiter_rules(const ArbiterPolicy& p) {
-    constexpr const char* name = "arbiter_policy";
-    const auto bounded = [](double value) {
-        return std::isfinite(value) && value > 0 && value <= kernel::max_delta_limit;
-    };
-    if (!bounded(p.maximum_slot_delta)) invalid(name, "maximum_slot_delta");
-    if (!bounded(p.maximum_world_delta)) invalid(name, "maximum_world_delta");
-    if (!unit(p.minimum_weight)) invalid(name, "minimum_weight");
-    kernel::ArbiterRules rules;
-    rules.maximum_slot_delta_ = static_cast<float>(p.maximum_slot_delta);
-    rules.maximum_world_delta_ = static_cast<float>(p.maximum_world_delta);
-    rules.minimum_weight_ = static_cast<float>(p.minimum_weight);
-    if (!(std::isfinite(rules.maximum_slot_delta_) && rules.maximum_slot_delta_ > 0 &&
-          std::isfinite(rules.maximum_world_delta_) && rules.maximum_world_delta_ > 0 &&
-          std::isfinite(rules.minimum_weight_)))
-        invalid(name, "float_conversion");
     return rules;
 }
 

@@ -38,11 +38,11 @@ journal or index, counts no resource, and writes no state.
 |---|---|---|
 | digest_bytes, sha256, strong_types | core | values and identity rules the verifier uses |
 | allocation (codex 408d4e2/3923503) | core | the abstract allocator the host supplies |
-| byte codec (`ByteReader`, `ByteWriter`, buffer aliases, now in journal_format.hpp) | core | canonical encoding of what the verifier binds (decision digests); split out of journal_format |
-| judgment_kernel: EvidenceStatus, EvidenceReason, EvidenceTally, EvidenceJudgment, columns, EvidenceRules, wilson_interval, judge_evidence(_batch); judgment_rules: EvidencePolicy, make_evidence_rules, evidence_policy_digest, standard_normal_quantile | core | the ternary judgment itself (accept, reject, abstain) and its configuration |
-| judgment_kernel: GateCondition, GateInput, GateFailure, GateRules, authorize_target(_batch), GateColumns; ArbiterRules, ProposalScores, ArbiterShape, ArbiterBuffers, stable_norm, arbiter_input_valid, arbitrate; judgment_rules: GatePolicy, ArbiterPolicy and their make_ functions | VRS | the gate's output is a write-authorization failure mask and the arbiter's a proposal weight and delta, not a verdict (codex 16:55); both stay pure batch kernels, every condition bit and check kept |
-| evidence_accumulator: tally, admit step, record step, decide, EvidenceDecision, ReEvidenceResult | core | the verifier's input and verdict (spec §4.4): the tally the kernel judges; see question 5.4 |
-| evidence_accumulator: EvidenceAdmission, ReEvidence, SourceFamilies | VRS | Replay then admission, and Re-evidence: stages feeding the verifier |
+| byte codec (`ByteReader`, `ByteWriter`, buffer aliases, in journal_format.hpp) | VRS | the core does not use it: the accumulator hashes its own length-prefixed fields; it encodes records, envelopes and cognition |
+| evidence_kernel (was judgment_kernel): EvidenceStatus, EvidenceReason, EvidenceTally, EvidenceJudgment, columns, EvidenceRules, wilson_interval, judge_evidence(_batch); evidence_rules (was judgment_rules): EvidencePolicy, make_evidence_rules, evidence_policy_digest, standard_normal_quantile | core | the ternary judgment itself (accept, reject, abstain) and its configuration |
+| gate_kernel (from judgment_kernel): GateCondition, GateInput, GateFailure, GateRules, authorize_target(_batch), GateColumns; arbiter_kernel: ArbiterRules, ProposalScores, ArbiterShape, ArbiterBuffers, stable_norm, arbiter_input_valid, arbitrate; gate_rules, arbiter_rules (from judgment_rules): GatePolicy, ArbiterPolicy and their make_ functions | VRS | the gate's output is a write-authorization failure mask and the arbiter's a proposal weight and delta, not a verdict (codex 16:55); both stay pure batch kernels, every condition bit and check kept |
+| evidence_accumulator: tally, admit step, record step, decide, EvidenceDecision, ReEvidenceResult, ReplayedOriginal | VRS | Main-owned state around the judgment (allocation, sets, friends of Main's stages); it builds the tally the core judges and carries the core's verdict in a decision (codex 17:24: a stateful accumulator in the core reopens friend-by-name spoofing; the core is the pure judgment) |
+| evidence_stages: EvidenceAdmission, ReEvidence, ReEvidenceJudge, SourceFamilies | VRS | Replay then admission, and Re-evidence: stages feeding the verifier |
 | journal_file_io, journal_position, journal_format (record, manifest, page formats), journal_store | VRS | storage and lookup |
 | experience (envelope, part tree, ExperienceJournal, views, CueTokens, ExperienceAppend, ExperienceSelector, receipts) | VRS | experience storage, Déjà vu and Recall |
 | proposal, evidence_gate / Bind, arbiter, writer (codex) | VRS | strengthening a connection from a verdict (spec §4.5-4.6) |
@@ -77,26 +77,33 @@ stages are VRS, and each ends in the core verifier or feeds it.
 
 ## 3. Boundary types (minimal, from current dependencies)
 
-With strengthening in VRS, the only core boundary is the verifier's input
-and output (3.1, 3.2). 3.3 and 3.4 are now choices inside VRS, kept here
-because they were open.
+The core boundary is the kernel's own: `EvidenceRules` and an
+`EvidenceTally` in, an `EvidenceJudgment` (accept, reject, abstain and
+its reasons) out, with no allocation, lock, exception or I/O. 3.1 to 3.4
+are choices inside VRS (codex 17:24 moved the accumulator there), kept
+here because they were open.
 
-Only what the current code already passes across is turned into a core type;
+Only what the current code already passes across is turned into a boundary type;
 nothing new is invented.
 
 3.1 Replayed original for admission. Today `EvidenceAccumulator::admit`
 takes `const ExperienceRecord&` and reads only `record().address` and
 `record().record_digest`, plus the root family and root context digests
 admission computed (sorted spans; the correlation groups, codex 16:41).
-Core type: `ReplayedOriginal { std::string_view address; DigestBytes
-record_digest; std::span<const DigestBytes> root_families, root_contexts; }`.
+Type (VRS, the accumulator's input): `ReplayedOriginal { std::string_view
+address; DigestBytes record_digest; DigestBytes content; std::span<const
+DigestBytes> root_families, root_contexts; }`; `content` is the digest of
+the experience's raw and structured bytes, and equal content is one
+experience (user 2026-09-23).
 The provenance checks (context, step, source family over root sources) and
 the family registry stay in EvidenceAdmission (VRS), which alone may call
 `admit` (friend, as today); grouping by what evidence shares is the
-verifier's rule and stays in the core.
+accumulator's rule. The friends are complete wherever the accumulator
+is visible: MainOwner from authority_roles.hpp, the stages from
+evidence_stages.hpp included at the accumulator header's end.
 
 3.2 Re-evidence. `ReEvidenceResult` and `EvidenceAccumulator::record` stay
-core; `ReEvidence` (VRS) replays and constructs the result, as today
+with the accumulator; `ReEvidence` (VRS) replays and constructs the result, as today
 (friend). `ReEvidenceJudge` takes the VRS `ExperienceRecord`, so it moves to
 VRS with ReEvidence.
 
@@ -132,29 +139,96 @@ storage budget port. As built (claude, step 2): `StorageBudget::allows(used)`
 is asked with the journal's whole use (published generation, logs a
 rewrite left, what a write in progress adds) at open, stage, publish,
 rebuild and compaction; `storage_charged()` reports the use; the host
-counts and judges, the journal fixes no limit.
+counts and judges, the journal fixes no limit. The store shares
+ownership of the budget (`std::shared_ptr<const StorageBudget>`), so no
+teardown order can leave it dangling (codex 17:04).
 
-## 4. Order (each step a pure move or a mechanical change, reviewed alone)
+3.6 The write path (codex 17:08-17:13, claude 17:1x). One authorized write
+is one proposal, as the author's registered route is:
+`bounded_verification_write` takes one proposal targeting only the
+verification slot, previews the arbiter on that proposal alone and
+commits with a receipt (mosaic_bounded_world_write.py@5901a5a:332-421);
+multi-proposal arbitration is preview-only on the registered route
+(COMPONENT_LEDGER.md@5901a5a:20). The order is Bind -> Arbiter preview ->
+Gate -> Writer, with no other entry:
 
+- Bind (codex): replays each exact admitted address and yields a
+  `BoundProposal` (3.3).
+- Arbiter: `ArbitrationResult` of that single proposal (weight, bounds,
+  accepted, the changed verification role, generation and step).
+- Gate: `GateOutcome EvidenceGate::authorize(const EvidenceDecision&,
+  const EvidenceAccumulator&, const BoundProposal&, const
+  ArbitrationResult& single_preview, const MainGateEvaluation&, const
+  CognitiveState&, std::uint64_t step) const`. It checks the
+  BoundProposal's decision, binding and step against the preview's
+  single-input binding receipt, accepted flag, changed verification role
+  and generation/step, then sends every existing condition bit to
+  `authorize_target` (none removed). The capability's operation binds the
+  decision, binding, bound receipt, preview receipt, verification role,
+  role registry and generation. The separate `VerificationProposal`
+  entry is gone, so no capability is issued without Bind.
+- Writer (codex, not built): verifies the capability names the same
+  results, commits, and keeps every field of the author's receipt
+  (receipt id over before-state hash, delta hash, revision, evidence
+  refs; before/after state and slot hashes, applied delta hash, prior
+  write metadata). The guarded verification write keeps the state's
+  tensor type: the author assigns the new slot into a clone of the
+  existing scratch tensor, casting to its stored type
+  (mosaic_bounded_world_write.py@5901a5a:317-330; codex 17:16). Promotion
+  of state and delta happens only in the arbiter's own `commit=True`
+  successor, which is not a registered route. A rollback or retraction
+  restores the prior type and bytes exactly (codex 16:58). Proposals accepted together
+  are written one at a time, each through this path on the state the
+  previous one produced; no receipt spans several proposals.
+
+## 4. Order (user 2026-09-23 17:2x: the core, then tests, then VRS)
+
+The user's order was always architecture, then tests, then VRS, and "the
+SWEGCA architecture" is the core ("swegca 아키텍처 구현이 코어 구현이었다는
+말"). Steps 1-2 below mixed VRS modules into the core work; from here the
+core is closed and tested first, and VRS waits.
+
+Done:
 1. Codex: allocation.hpp and MainOwner/base types on AllocationContext
-   (in progress, codex/swegca-allocation-integration).
+   (codex/swegca-allocation-integration).
 2. Claude: journal/experience/evidence/cognition on AllocationContext;
-   storage budget port; PageCache on its own resource. No relocation yet.
+   storage budget port; PageCache on its own resource (581f9b2, 6642262).
+   VRS work stops here until the core is tested.
+
+Core (claude/core-close):
 3. Claude: split judgment_kernel/judgment_rules into core
    `evidence_kernel.hpp`/`evidence_rules.*` and VRS `gate_kernel.hpp`,
    `arbiter_kernel.hpp` with their policies (pure moves, tags kept, no
-   condition bit or check removed). Claude: split the byte codec out of journal_format.hpp into core
-   `byte_codec.hpp` (cognition and envelopes use it). Pure move.
-4. `git mv` into `cpp/swegca_vrs/`, namespace `swegca::vrs`, includes and
+   condition bit or check removed). The core is then
+   `evidence_kernel.hpp` and `evidence_rules.*` over digest_bytes,
+   sha256, strong_types and allocation's types. Also, in VRS: split
+   evidence_accumulator from the stages feeding it (`evidence_stages.*`:
+   SourceFamilies, EvidenceAdmission, ReEvidenceJudge, ReEvidence), the
+   accumulator taking `ReplayedOriginal` (3.1) and counting an experience
+   once by its content (user 17:0x), its friends complete wherever it is
+   visible (codex 17:24). The byte codec stays in journal_format: the
+   core does not use it, so it is VRS.
+4. Codex: a C++-only build of the core alone (no Python), with the
+   arithmetic flags of evidence_kernel.hpp (-ffp-contract=off, no fast
+   math), and its tests: A for core types, D8 (each negative condition
+   alone), D8p and D9 on the kernel, rule validation and the policy
+   digest, the kernel's batch and item paths equal, one judgment in
+   nanoseconds on the baseline profile. Claude cross-reviews. Board
+   section 10 steps 9-10 open for the core here. D1-D7, D8s, D10-D16 and
+   the duplicate rule test the accumulator and stages: VRS tests.
+
+VRS (after the core passes):
+5. `git mv` into `cpp/swegca_vrs/`, namespace `swegca::vrs`, includes and
    qualifiers only; the lineage gate checks every moved definition keeps
-   its tag. Claude: journal_*, experience.*, and EvidenceAdmission,
-   ReEvidence, SourceFamilies into `evidence_stages.*`. Codex: proposal,
-   evidence_gate, arbiter, writer, cognitive_state, native_tensor,
-   authority*, role_registry, main_owner. Claude: cognition.
-5. Claude: 3.1 (`ReplayedOriginal`), 3.2. Codex: 3.3, 3.4.
-6. Both: a layering check in the lineage gate (no `swegca_architecture/`
-   file includes `swegca_vrs/`), test conditions regrouped by layer (A, D1-D9
-   core; B, C, D10-D13 VRS), and the design board's module inventory updated.
+   its tag. Claude: journal_*, experience.*, evidence_stages.*,
+   gate/arbiter kernels and rules. Codex: proposal, evidence_gate, arbiter,
+   writer, cognitive_state, native_tensor, authority*, role_registry,
+   main_owner. Claude: cognition.
+6. Claude: 3.2. Codex: 3.3, 3.4, the Main composition and the writer (3.6).
+7. Both: a layering check in the lineage gate (no `swegca_architecture/`
+   file includes `swegca_vrs/`), test conditions regrouped by layer (A,
+   D8, D8p, D9 core; B, C and the other D items VRS), the design board's module inventory
+   updated; then the synapse (section 6).
 
 ## 5. Open questions for codex
 
@@ -162,8 +236,9 @@ counts and judges, the journal fixes no limit.
 - 3.4: private `publish` with the Main composition as its only friend
   (above); codex to confirm.
 - SourceFamilies: the registry is VRS; the grouping rule (families and
-  contexts linked by shared roots) is the core accumulator's.
-- 5.4: accumulation stays in the core (codex 16:37, spec §4.4).
+  contexts linked by shared roots) is the accumulator's.
+- 5.4: accumulation was kept in the core (codex 16:37, spec §4.4), then
+  moved to VRS (codex 17:24): the core is the pure judgment.
 
 ## 6. VRS composition (user 2026-09-23 16:4x)
 

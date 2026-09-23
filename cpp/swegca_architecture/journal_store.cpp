@@ -1119,11 +1119,11 @@ StagedGeneration::StagedGeneration(StagedGeneration&& other) noexcept
 
 // SWEGCA: user@2026-09-22:72-79
 JournalStore::JournalStore(fs::path directory, JournalIdentity identity,
-                           const StorageBudget& storage, const AllocationContext& memory,
+                           std::shared_ptr<const StorageBudget> storage, const AllocationContext& memory,
                            std::uint64_t allocation_unit, std::unique_ptr<io::OwnerLock> lock,
                            const std::optional<AllocationContext>& page_cache, std::size_t page_cache_shards)
     : directory_(std::move(directory)), identity_(std::move(identity)),
-      storage_(&storage), memory_(memory), allocation_unit_(allocation_unit),
+      storage_(std::move(storage)), memory_(memory), allocation_unit_(allocation_unit),
       lock_(std::move(lock)),
       cache_(page_cache ? std::make_unique<PageCache>(*page_cache, page_cache_shards) : nullptr),
       retired_(memory.allocator<RetiredLogs>()) {}
@@ -1134,16 +1134,17 @@ JournalStore::~JournalStore() = default;
 // SWEGCA: user@2026-09-22:72-79
 std::unique_ptr<JournalStore> JournalStore::open(const fs::path& directory,
                                                  std::string_view identity,
-                                                 const StorageBudget& storage,
+                                                 std::shared_ptr<const StorageBudget> storage,
                                                  const AllocationContext& memory,
                                                  const std::optional<AllocationContext>& page_cache,
                                                  std::size_t page_cache_shards) {
+    if (!storage) fail("journal_budget_missing");
     if (page_cache && page_cache_shards == 0) fail("journal_page_cache_invalid");
     JournalIdentity owned(memory, identity);  // checked before anything is created
     if (!fs::exists(directory)) create_initial(directory, identity, memory);
     auto lock = std::make_unique<io::OwnerLock>(directory);
     const auto unit = io::allocation_unit(directory);
-    std::unique_ptr<JournalStore> store(new JournalStore(directory, std::move(owned), storage, memory, unit,
+    std::unique_ptr<JournalStore> store(new JournalStore(directory, std::move(owned), std::move(storage), memory, unit,
                                                          std::move(lock), page_cache, page_cache_shards));
     store->load_published_head();
     return store;

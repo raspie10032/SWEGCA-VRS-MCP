@@ -1154,7 +1154,12 @@ std::optional<journal::StagedGeneration> ExperienceAppend::next(const StateGener
     // (its record digest); anything else there (another writer's record,
     // published while ours was not) is replayed once and must be exactly the
     // part (kind, no authority, claim or index entry, the digest and length)
-    // or fails `experience_part_invalid`.
+    // or fails `experience_part_invalid`. Confirming proves identity only:
+    // byte integrity is checked where bytes are consumed (the chain digests
+    // on replay, verify_parts before evidence, Re-evidence and Bind, the
+    // whole digest when parts are streamed), so a part damaged on disk is
+    // never counted or bound. Select reads only the envelope: it may still
+    // name such an experience as a no-authority candidate (codex 17:10).
     const auto published_part = [&](Part& part) {
         const ExperienceAddress address(memory_, view_of(part.address));
         const auto position = store.resolve(address);
@@ -1184,6 +1189,7 @@ std::optional<journal::StagedGeneration> ExperienceAppend::next(const StateGener
         // record published at its address is the one staged; another
         // writer's record there must carry the same index entries
         // (`experience_index_conflict`), as a head appended meanwhile must.
+        // As for parts, this confirms identity; reads check the bytes.
         for (auto at = pending_from_; at < next_head_; ++at) {
             auto& head = heads_[at];
             if (!head.staged) continue;  // skipped, or already in the journal when staged
