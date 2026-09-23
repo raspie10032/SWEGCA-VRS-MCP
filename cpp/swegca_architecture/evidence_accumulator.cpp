@@ -543,7 +543,7 @@ ReEvidenceRecorded ReEvidence::apply(EvidenceAccumulator& accumulator,
     auto at_head = journal_.replay_at_head(address);
     if (state.generation() != at_head.state)
         throw std::invalid_argument("re_evidence_state_not_current");
-    const auto experience = ExperienceRecord::decode(std::move(at_head.record), memory_);
+    const auto experience = ExperienceRecord::decode(std::move(at_head.record), memory_, journal_);
     const auto& view = experience.record();
     if (view.address != address.value())
         throw std::invalid_argument("re_evidence_replay_address_mismatch");
@@ -560,12 +560,55 @@ ReEvidenceRecorded ReEvidence::apply(EvidenceAccumulator& accumulator,
 // SWEGCA: docs/SWEGCA_VRS_MCP_ORDER_FOR_REVIEW.md@30b73e7:24-29
 AdmissionResult EvidenceAdmission::admit(EvidenceAccumulator& accumulator,
                                          const EvidenceObservation& observation,
-                                         std::uint64_t current_step) const {
+                                         std::uint64_t current_step) {
     detail::require_identity_text(observation.address, ExperienceAddressTag::name);
+    detail::require_identity_text(observation.source_family, SourceFamilyTag::name);
     auto at_head =
         journal_.replay_at_head(ExperienceAddress(accumulator.memory_, observation.address));
-    const auto experience = ExperienceRecord::decode(std::move(at_head.record), accumulator.memory_);
+    const auto experience =
+        ExperienceRecord::decode(std::move(at_head.record), accumulator.memory_, journal_);
+    // Provenance is the experience's (COMPONENT_LEDGER.md@5901a5a:44-50).
+    if (!experience.context()) throw std::invalid_argument("evidence_context_unbound");
+    if (*experience.context() != observation.context)
+        throw std::invalid_argument("evidence_provenance_mismatch:context");
+    if (experience.observed_at() != observation.observed_at)
+        throw std::invalid_argument("evidence_provenance_mismatch:observed_at");
+    if (!families_.admits(experience, observation.source_family))
+        throw std::invalid_argument("evidence_provenance_mismatch:source_family");
     return accumulator.admit(observation, experience, at_head.state, current_step);
+}
+
+// SWEGCA: paper/swegca/journal_submission_2026-08-25/COMPONENT_LEDGER.md@5901a5a:44-50
+void SourceFamilies::assign(std::string_view source, std::string_view family) {
+    detail::require_identity_text(source, ProducerIdTag::name);
+    detail::require_identity_text(family, SourceFamilyTag::name);
+    const auto root = Sha256::of(std::as_bytes(std::span(source.data(), source.size())));
+    const auto found = families_.find(root);
+    if (found != families_.end()) {
+        if (found->second != family) throw std::invalid_argument("source_family_reassigned");
+        return;
+    }
+    families_.emplace(root, Text(family, memory_.allocator<char>()));
+}
+
+// A grouped root matches its family; an ungrouped one matches only its
+// own name, which is then fixed as its family. One pass over the roots.
+// SWEGCA: paper/swegca/journal_submission_2026-08-25/COMPONENT_LEDGER.md@5901a5a:44-50
+bool SourceFamilies::admits(const ExperienceRecord& experience, std::string_view family) {
+    const auto own_name = Sha256::of(std::as_bytes(std::span(family.data(), family.size())));
+    bool found = false;
+    bool own = false;
+    experience.for_each_root_source([&](const DigestBytes& root) {
+        const auto grouped = families_.find(root);
+        if (grouped != families_.end()) {
+            found = grouped->second == family;
+        } else {
+            found = own = root == own_name;
+        }
+        return !found;
+    });
+    if (own) families_.emplace(own_name, Text(family, memory_.allocator<char>()));
+    return found;
 }
 
 }  // namespace swegca::architecture

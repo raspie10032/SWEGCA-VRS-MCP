@@ -65,6 +65,13 @@ enum class EvidenceOutcome : std::uint8_t { support = 1, refute = 2, insufficien
 // when it is the generation Main's journal HEAD names (the author's audit row
 // requires the world hash to be the current state's), and then it is the
 // observation generation, which Re-evidence never rewrites.
+// Provenance is the replayed experience's (COMPONENT_LEDGER.md@5901a5a:
+// 44-50, codex 15:40): `source_family` must be the family (SourceFamilies)
+// of one of the experience's root sources, `context` its context and
+// `observed_at` its step. `producer` is the judge, which no experience
+// names; it cannot raise diversity above what the experiences bear out,
+// since source and context diversity are each the smaller of the verified
+// count and the producer count.
 struct EvidenceObservation {
     std::string_view claim;  // claim id of the revision judged
     std::uint64_t claim_revision = 0;
@@ -78,6 +85,41 @@ struct EvidenceObservation {
     std::optional<std::uint64_t> expires_at;
     std::string_view producer;
     double producer_confidence = 0;
+};
+
+// Main's grouping of sources into families (COMPONENT_LEDGER.md@5901a5a:
+// 44-50: results sharing a source family must be grouped). A source Main
+// has not grouped is its own family. A source's family is fixed once Main
+// sets it or once evidence is admitted under it, so no source is ever
+// counted under two families. Sources are kept by the SHA-256 of their
+// text, as experiences record their root sources.
+class SourceFamilies final {
+public:
+    SourceFamilies(const SourceFamilies&) = delete;
+    SourceFamilies& operator=(const SourceFamilies&) = delete;
+    SourceFamilies(SourceFamilies&&) = delete;
+    SourceFamilies& operator=(SourceFamilies&&) = delete;
+    ~SourceFamilies() = default;
+
+    // Groups `source` under `family` (both identity texts). A source whose
+    // family is already another fails with `source_family_reassigned`.
+    void assign(std::string_view source, std::string_view family);
+
+private:
+    friend class MainOwner;
+    friend class EvidenceAdmission;
+    // SWEGCA: paper/swegca/journal_submission_2026-08-25/COMPONENT_LEDGER.md@5901a5a:44-50
+    explicit SourceFamilies(const MemoryLedger::Account& memory)
+        : memory_(memory), families_(memory.allocator<std::pair<const DigestBytes, Text>>()) {}
+
+    // Whether one of the experience's root sources is in `family`; the
+    // family of the root that matched as its own is fixed.
+    [[nodiscard]] bool admits(const ExperienceRecord& experience, std::string_view family);
+
+    using Text = std::basic_string<char, std::char_traits<char>, MemoryLedger::Allocator<char>>;
+    MemoryLedger::Account memory_;
+    std::map<DigestBytes, Text, std::less<>, MemoryLedger::Allocator<std::pair<const DigestBytes, Text>>>
+        families_;
 };
 
 enum class AdmissionResult : std::uint8_t {
@@ -417,17 +459,25 @@ public:
     ~EvidenceAdmission() = default;
 
     // Replays `observation.address` (throws if the journal cannot confirm
-    // it) and admits the observation into `accumulator` as its admission step
-    // describes, at `current_step`.
+    // it), requires its provenance to be the experience's (an experience
+    // without a context fails `evidence_context_unbound`; a family, context
+    // or step that is not the experience's fails
+    // `evidence_provenance_mismatch:source_family|context|observed_at`) and
+    // admits the observation into `accumulator` as its admission step
+    // describes, at `current_step`. Fixing a family as its source's own
+    // (SourceFamilies) happens before the accumulator's step and stays even
+    // when that step rejects or throws: it only records what already holds.
     AdmissionResult admit(EvidenceAccumulator& accumulator, const EvidenceObservation& observation,
-                          std::uint64_t current_step) const;
+                          std::uint64_t current_step);
 
 private:
     friend class MainOwner;
     // SWEGCA: docs/SWEGCA_VRS_MCP_ORDER_FOR_REVIEW.md@30b73e7:24-29
-    explicit EvidenceAdmission(const journal::JournalStore& journal) noexcept : journal_(journal) {}
+    EvidenceAdmission(const journal::JournalStore& journal, SourceFamilies& families) noexcept
+        : journal_(journal), families_(families) {}
 
     const journal::JournalStore& journal_;  // Main's journal; originals are replayed here
+    SourceFamilies& families_;              // Main's grouping of sources
 };
 
 // The judgment Main runs on a replayed original: it receives the replayed

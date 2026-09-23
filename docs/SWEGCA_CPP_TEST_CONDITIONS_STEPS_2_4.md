@@ -11,14 +11,22 @@ Sources: board `docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md`
 `ARCHITECTURE_SPEC.md@5901a5a` (I01-I08, I10); author L3
 `mosaic_unrestricted_experience.py@5901a5a`, `mosaic_external_memory.py`,
 `mosaic_versioned_memory.py`, L2 `mosaic_evidence_accumulator.py`.
-Code under test: `claude/arch-integrate` @ac097ba.
+Code under test: `claude/arch-integrate` @ac097ba and the provenance and parted-experience change after it.
 
-The architecture fixes no product budget: memory, storage and the worker
-count are injected by the host (user 2026-09-23 via codex 16:01). Every run
-here uses the SWEGCA-VRS host frame: 16 workers, Main ledger 4 GB, journal
-storage 500 GB, input to Recall within 1 ms (board §1 nano-core, user
-2026-09-22). A condition that states a bound is checked against that bound,
-not a smaller convenient one; A0 checks that the core has no such constant.
+The architecture fixes no product budget and keeps no usage counter:
+memory, storage and the worker count are the host's, which counts and
+judges them (user 2026-09-23 via codex 16:01, 16:10). Two host profiles:
+
+- Baseline (SWEGCA-VRS minimum): 16 workers, 4 GB memory, 500 GB storage,
+  5 Gbps storage bandwidth, input to Recall within 1 ms (board §1
+  nano-core, user 2026-09-22). Every condition must hold here: the system
+  must run within it (user 16:13).
+- Scaled: a larger configuration for larger use, with more of any
+  resource (user 16:13). The same conditions hold with the scaled budgets;
+  no condition may depend on the baseline figures being ceilings.
+
+A condition that states a bound is checked against its profile's bound, not
+a smaller convenient one; A0 checks that the core has no such constant.
 
 ## A. Compile-rejection cases (must not compile)
 
@@ -71,12 +79,12 @@ Budgets (board §11 limits):
 
 | # | Setup | Expected |
 |---|---|---|
-| B21 | Storage use would pass `storage_bytes` (the host's budget; 500 GB in the VRS frame) | stage and publish fail `journal_storage_budget_exhausted` with nothing written; a directory whose published use already exceeds `storage_bytes` fails `open` with `journal_storage_budget_exceeded` |
+| B21 | Storage use would pass `storage_bytes` (the host's budget; 500 GB in the baseline profile) | stage and publish fail `journal_storage_budget_exhausted` with nothing written; a directory whose published use already exceeds `storage_bytes` fails `open` with `journal_storage_budget_exceeded` |
 | B22 | Recovery chain over `max_recovery_bytes` | `journal_recovery_over_budget` |
 | B23 | Main ledger usage during stage, publish, lookup, compaction, rebuild at full scale | never above the ledger limit; every buffer charged; after each call Main's `used()` equals its prior value (the page-cache carve is a constant part of it, charged at open) |
 | B24 | Page cache with a carve of C bytes under a lookup storm | carve usage never above C; cached pages stay until evicted and are charged to the carve only; when a read needs carve budget, a page no reader holds is evicted and its bytes return to the carve; with every cached page held by a reader, the read is served on Main's account and not kept |
 | B25 | Main ledger smaller than the requested carve | `open` fails `memory_budget_exhausted`; with 0, no cache and every lookup still correct |
-| B26 | User input to first Recall, end to end (query tokenization, every index lookup including page-cache misses that read page logs, candidate judgment hand-off, replay of selected records), largest tested journal, the host's workers (16 in the VRS frame) | within 1 ms; measured only at step 10. A single lookup's time is not this measure |
+| B26 | User input to first Recall, end to end (query tokenization, every index lookup including page-cache misses that read page logs, candidate judgment hand-off, replay of selected records), largest tested journal, the host's workers (16 in the baseline profile) | within 1 ms; measured only at step 10. A single lookup's time is not this measure |
 
 ## C. Experience (step 3; board §3B, §4, §5)
 
@@ -95,6 +103,13 @@ Append and replay (invariant 3, failure 1):
 | C9 | Resources repeated; lineage repeated | `experience_resource_duplicate` / `experience_lineage_duplicate` |
 | C10 | Record with an index entry removed, added (non-cue), or altered | decode fails `experience_index_incomplete` / `experience_index_invalid` |
 | C11 | Maximum sizes: 4096-byte source and revision of alternating classes, 4096 authored cues, 1024 lineage, 1024 resources | Staged and decoded; entry count within `max_record_index_entries` |
+| C11a | Raw and structured bytes at 0, the inline size, one byte over it, one byte under and over each part-count boundary (1, 2, 65536, 65537 parts: depth 1 and 2), and a depth-3 size | Each stages and replays byte for byte through `for_each_raw_chunk` / `for_each_structured_chunk`; the envelope stays under `max_payload_bytes`; depth and top count are the ones the size gives; `raw()` on a parted blob fails `experience_blob_parted` |
+| C11b | Every generation `next` stages | Parts before the experience record; no generation over either journal generation limit; the append is `done` only after its last record; memory held is at most one part per level while replaying |
+| C11c | Crash (B2) after any part generation, then the same append again | Only unreferenced parts remain after the crash; the retry appends no part twice (equal parts are one record) and ends with the same addresses |
+| C11d | `next` called after a generation it returned was not published | `experience_parts_unpublished`; no experience record staged |
+| C11e | A part replaced, truncated, extended, reordered, with another kind, an index entry or authority; a top digest altered | reading fails `experience_part_invalid`, or decode fails `experience_address_mismatch` (the head's digest binds every top digest) |
+| C11f | Two observations whose bytes share parts; one already in the journal | Each shared part is appended once; the parts of the existing one are not appended |
+| C11g | A derived experience, its lineage original, derived and parted in root sources | Root sources are the sorted union of its lineage's; an original's is its source; a record whose root sources are not increasing fails `experience_root_sources_invalid` (parted) or decode (inline) |
 
 Views (board §3B :122-123):
 
@@ -136,6 +151,10 @@ Selection `Select(q, U) -> (C, J, rho)` (invariants 3, 11; failure 2):
 | D8p | Positive: supporting evidence with enough effective samples, sources, per-axis sources and contexts, no regime change | `accept` with `causal_lower_bound`, lower bound above the threshold |
 | D8s | Stale, duplicate, claim-mismatched evidence (D3, D4, `evidence_claim_mismatch`) | not counted: the decision equals the one made without them |
 | D9 | High producer confidence with no admitted evidence | no `accept` (I05) |
+| D10 | Observation whose source family is not the family of any root source of its experience; whose context or step is not the experience's; an experience with no context | `evidence_provenance_mismatch:source_family` / `:context` / `:observed_at`, `evidence_context_unbound`; accumulator unchanged |
+| D11 | Many experiences of one source, admitted under one family each time; then Main groups two sources under one family | source diversity counts the family once; an ungrouped source matches only its own name, and after one admission under it `assign` to another family fails `source_family_reassigned` |
+| D12 | Many producers labelling experiences of one source and one context | source and context diversity stay 1 (each is the smaller of the verified count and the producer count) |
+| D13 | A derived experience cited as evidence | its family may be that of any root source it rests on, never of a source outside them |
 
 ## E. Failure-model and invariant coverage map (steps 2-4 share)
 
@@ -147,8 +166,8 @@ Selection `Select(q, U) -> (C, J, rho)` (invariants 3, 11; failure 2):
 | I04 | D5, D8 |
 | I05 | A5, D9 |
 | I06 | B8-B11, B13-B14, B21-B25, C6-C10, C21-C24, D2-D8 |
-| I07 | B1-B7, C1, C5 |
-| I08 | D8 (source diversity is a proxy, no producer rank) |
+| I07 | B1-B7, C1, C5, C11a-C11f |
+| I08 | D8, D10-D13 (source diversity is a proxy, no producer rank; provenance from the experience) |
 | I10 | A3, C25 |
 | Experience-authority separation | A3, C25 |
 | Failure 1 | A1, C1 |

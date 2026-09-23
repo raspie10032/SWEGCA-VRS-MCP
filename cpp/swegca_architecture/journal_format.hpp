@@ -75,6 +75,9 @@ inline constexpr std::size_t max_record_index_entries = 16384;
 inline constexpr char index_separator = '\x1f';
 inline constexpr std::uint16_t original_experience_record_kind = 1;
 inline constexpr std::uint16_t derived_experience_record_kind = 2;
+// One slice of an experience's bytes too large for its record
+// (experience.hpp); it carries no index entries.
+inline constexpr std::uint16_t experience_part_record_kind = 3;
 // ordinal, first sequence, record count, byte length, last record digest.
 inline constexpr std::size_t encoded_extent_bytes = 4 * 8 + 32;
 // As many segments as one manifest can list (a checkpoint lists them all).
