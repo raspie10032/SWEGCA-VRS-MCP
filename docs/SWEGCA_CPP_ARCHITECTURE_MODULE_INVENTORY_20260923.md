@@ -749,9 +749,17 @@ architecture and its test-condition list have passed static review
 - Stage 7 reference slice (codex, 2026-09-24; not Stage 7 complete):
   `memory_candidate_reference.hpp` distinguishes original-experience
   addresses from write-receipt links and checks the author's required-ref
-  set inclusion without changing order or repeats. Candidate field validation,
-  Main's current receipt/state/journal checks, promotion authority, and a
+  set inclusion without changing order or repeats. Main's current
+  receipt/state/journal checks, promotion authority, and a
   persistent reference codec remain open.
+- Stage 7 candidate-value slice (codex, 2026-09-24; not Stage 7 complete):
+  `memory_candidate.hpp/.cpp` now owns the source's eight required text fields,
+  nonempty typed provenance references and first-seen retrieval aliases on
+  the caller's allocator. Its generalized UTF-8 nonblank check uses the
+  Python 3.14.7 strip-space set already fixed in `identity_types.cpp`.
+  A candidate is still only proposed data: Main's
+  receipt/state/journal checks, promotion decision authority, mutation and
+  persistent codec remain open.
 - `MainStateWriter` publication: it returns an immutable successor and its
   receipt; Main's current-state replacement (synchronized with snapshot
   reads) waits for the Main experience/evidence integration. Main must build
