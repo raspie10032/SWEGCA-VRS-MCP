@@ -1,7 +1,5 @@
 #pragma once
 
-#include "swegca_vrs/allocation.hpp"
-
 #include "swegca_vrs/journal_file_io.hpp"
 #include "swegca_vrs/journal_extent_index.hpp"
 #include "swegca_vrs/journal_format.hpp"
@@ -37,13 +35,25 @@
 // before it is written, and every buffer and container the journal
 // allocates goes through the host's AllocationContext, which sees its exact
 // requested size. Not reached: path strings, exception objects, OS
-// handles, the store object itself, and the caller's own inputs (drafts,
+// handles and the caller's own inputs (drafts,
 // views); Main integration closes those.
 namespace swegca::vrs {
 class ExperienceAppend;
 }
 
 namespace swegca::vrs::journal {
+
+class JournalStore;
+
+// The unique owner keeps the host allocator alive through the store's
+// destruction, including when construction or opening fails.
+struct JournalStoreDeleter {
+    AllocationAdapter<JournalStore> allocation;
+    // Lineage: native mechanism — host-owned storage for the journal object.
+    // SWEGCA: user@2026-09-22:89-92
+    void operator()(JournalStore* store) noexcept;
+};
+using JournalStoreOwner = std::unique_ptr<JournalStore, JournalStoreDeleter>;
 
 // One published generation as readers see it. Immutable once published; the
 // object and its control block are allocated through the host's allocator.
@@ -434,7 +444,7 @@ public:
     // the budget lives as long as the store whatever order the host tears
     // down in (codex 17:04). The cache is bounded only by `page_cache`: the
     // host must refuse (AllocationRefused) past the budget it gives it.
-    [[nodiscard]] static std::unique_ptr<JournalStore> open(
+    [[nodiscard]] static JournalStoreOwner open(
         const std::filesystem::path& directory, std::string_view identity,
         std::shared_ptr<const StorageBudget> storage, const AllocationContext& memory,
         const std::optional<AllocationContext>& page_cache, std::size_t page_cache_shards);
@@ -466,7 +476,7 @@ public:
     // bytes (reconciling them, sealed logs) is not decided yet (codex 22:53);
     // until then this refuses writes the way the user's commit path refuses
     // them while an unreconciled marker is retained.
-    [[nodiscard]] static std::unique_ptr<JournalStore> open_at_root(
+    [[nodiscard]] static JournalStoreOwner open_at_root(
         const std::filesystem::path& directory, std::string_view identity,
         std::shared_ptr<const StorageBudget> storage, const AllocationContext& memory,
         const std::optional<AllocationContext>& page_cache, std::size_t page_cache_shards,
@@ -541,6 +551,11 @@ public:
     // allocated here from the data; any I/O failure poisons the store, which
     // must then be reopened, and reopening removes unpublished leftovers.
 private:
+    [[nodiscard]] static JournalStoreOwner make_owned(
+        std::filesystem::path directory, JournalIdentity identity,
+        std::shared_ptr<const StorageBudget> storage, const AllocationContext& memory,
+        std::uint64_t allocation_unit, std::shared_ptr<io::OwnerLock> lock,
+        const std::optional<AllocationContext>& page_cache, std::size_t page_cache_shards);
     void publish(StagedGeneration&& staged);
 
 public:

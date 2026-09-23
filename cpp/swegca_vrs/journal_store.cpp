@@ -1214,10 +1214,41 @@ JournalStore::JournalStore(fs::path directory, JournalIdentity identity,
 // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:50
 JournalStore::~JournalStore() = default;
 
+// Lineage: native mechanism — release the store through the same host
+// resource that supplied its storage, after destroying its members.
+// SWEGCA: user@2026-09-22:89-92
+void JournalStoreDeleter::operator()(JournalStore* store) noexcept {
+    if (!store) return;
+    store->~JournalStore();
+    allocation.deallocate(store, 1);
+}
+
+// Lineage: native mechanism — the journal object is charged to the VRS host
+// and remains uniquely owned; failure returns its allocation to that host.
+// SWEGCA: user@2026-09-22:89-92
+JournalStoreOwner JournalStore::make_owned(fs::path directory, JournalIdentity identity,
+                                          std::shared_ptr<const StorageBudget> storage,
+                                          const AllocationContext& memory, std::uint64_t allocation_unit,
+                                          std::shared_ptr<io::OwnerLock> lock,
+                                          const std::optional<AllocationContext>& page_cache,
+                                          std::size_t page_cache_shards) {
+    auto allocation = memory.allocator<JournalStore>();
+    JournalStore* raw = allocation.allocate(1);
+    try {
+        ::new (static_cast<void*>(raw)) JournalStore(std::move(directory), std::move(identity),
+                                                     std::move(storage), memory, allocation_unit,
+                                                     std::move(lock), page_cache, page_cache_shards);
+    } catch (...) {
+        allocation.deallocate(raw, 1);
+        throw;
+    }
+    return JournalStoreOwner(raw, JournalStoreDeleter{allocation});
+}
+
 // Lineage: weak analogy — the author opens or creates and repairs its head file; here recovery from HEAD.
 // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:577-578
 // SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:91-127
-std::unique_ptr<JournalStore> JournalStore::open(const fs::path& directory,
+JournalStoreOwner JournalStore::open(const fs::path& directory,
                                                  std::string_view identity,
                                                  std::shared_ptr<const StorageBudget> storage,
                                                  const AllocationContext& memory,
@@ -1229,8 +1260,8 @@ std::unique_ptr<JournalStore> JournalStore::open(const fs::path& directory,
     if (!fs::exists(directory)) create_initial(directory, identity, memory);
     auto lock = std::allocate_shared<io::OwnerLock>(memory.allocator<io::OwnerLock>(), directory);
     const auto unit = io::allocation_unit(directory);
-    std::unique_ptr<JournalStore> store(new JournalStore(directory, std::move(owned), std::move(storage), memory, unit,
-                                                         std::move(lock), page_cache, page_cache_shards));
+    JournalStoreOwner store = make_owned(directory, std::move(owned), std::move(storage), memory, unit,
+                                         std::move(lock), page_cache, page_cache_shards);
     store->load_published_head();
     return store;
 }
@@ -1496,7 +1527,7 @@ std::shared_ptr<PublishedSnapshot> JournalStore::load_generation(const HeadPoint
 // Lineage: weak analogy — the author restores the event report main selects, discovering none; here the journal generation.
 // SWEGCA: src/tinylm_slicer/mosaic_vrs_event_durable.py@3bddcb7:3-5
 // SWEGCA: src/tinylm_slicer/mosaic_vrs_event_durable.py@3bddcb7:152
-std::unique_ptr<JournalStore> JournalStore::open_at_root(const fs::path& directory,
+JournalStoreOwner JournalStore::open_at_root(const fs::path& directory,
                                                          std::string_view identity,
                                                          std::shared_ptr<const StorageBudget> storage,
                                                          const AllocationContext& memory,
@@ -1517,8 +1548,8 @@ std::unique_ptr<JournalStore> JournalStore::open_at_root(const fs::path& directo
     auto lock = std::allocate_shared<io::OwnerLock>(memory.allocator<io::OwnerLock>(),
                                                     directory, io::existing_lock);
     const auto unit = io::allocation_unit(directory);
-    std::unique_ptr<JournalStore> store(new JournalStore(directory, std::move(owned), std::move(storage), memory, unit,
-                                                         std::move(lock), page_cache, page_cache_shards));
+    JournalStoreOwner store = make_owned(directory, std::move(owned), std::move(storage), memory, unit,
+                                         std::move(lock), page_cache, page_cache_shards);
     store->load_root_generation(root);
     store->root_selected_ = true;
     return store;
