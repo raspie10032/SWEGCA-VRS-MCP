@@ -240,6 +240,7 @@ class Utf8Count final {
 public:
     // SWEGCA: user@2026-09-22:91-92
     void feed(std::span<const std::byte> chunk) noexcept {
+        if (chunk.empty()) return;  // nothing to count; a held sequence stays held
         std::size_t at = 0;
         if (held_ != 0) {
             const auto need = sequence_width(carry_[0]) - held_;
@@ -1090,8 +1091,8 @@ bool read_section(BlobCursor& in, std::span<const std::string_view> resources,
         do {
             const auto piece = left == 0 ? std::span<const std::byte>() : in.next(left);
             left -= piece.size();
-            if (text) text->feed(piece);
-            if (hash) hash->update(piece);
+            if (text && !piece.empty()) text->feed(piece);
+            if (hash && !piece.empty()) hash->update(piece);
             event.piece = piece;
             event.last = left == 0;
             if (!emit(event)) return false;
@@ -1224,8 +1225,8 @@ bool read_section(BlobCursor& in, std::span<const std::string_view> resources,
             do {
                 const auto piece = left == 0 ? std::span<const std::byte>() : in.next(left);
                 left -= piece.size();
-                hash.update(piece);
-                text.feed(piece);
+                if (!piece.empty()) hash.update(piece);
+                if (!piece.empty()) text.feed(piece);
                 event.piece = piece;
                 event.last = left == 0;
                 if (!emit(event)) return false;
