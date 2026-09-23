@@ -192,6 +192,28 @@ system is divided by ownership and authority.
 - Keeps real-time internal LLM calls at zero. A replaceable language model may
   only express Main-owned content.
 
+The request-local producer runner is still missing. The author's
+`run_dynamic_cognition` (`mosaic_synapse_arbiter.py@5901a5a:365-455`)
+runs the first route member before optional fanout,
+validates each proposal and its source identity, joins workers even when a
+worker fails, checks that Main's state stayed unchanged, and returns the
+proposals with a trace of operation type, executed cores, fanout decision,
+elapsed time, primary weights, and false manager/worker retention flags.
+The current C++ proposal is batch-one, so the author's all-batch decisive
+check reduces to its one score; `fanout_used` records that additional route
+members ran, not how many threads ran simultaneously. The VRS host owns any
+CPU worker cap, including the headroom reserved for the Palworld server.
+No numeric cap is fixed in SWEGCA.
+
+The author's preview covers every executed proposal. The approved C++
+authority sequence first binds each proposal to Main's evidence decision,
+then passes only `BoundProposal` values to `ProposalArbiter` for the
+multi-proposal no-commit preview. A failed Bind prevents that preview. The
+elapsed-time trace must be finalized after the preview to cover the same
+request interval as the author path. `MainOwner` does not yet own the
+experience/evidence objects needed to connect these stages; a producer-run
+intermediate result must not be presented as a completed cognition result.
+
 ## 4. C++ type, ownership, and lifetime design
 
 The epistemic objects are different C++ types. They are never represented by a
