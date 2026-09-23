@@ -9,7 +9,7 @@
 
 namespace swegca::vrs {
 
-// SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_local_navigation.py@c06092a:13-21
+// SWEGCA: src/tinylm_slicer/mosaic_vrs_local_navigation.py@3bddcb7:13-21
 struct RegionNavigationCursor {
     SharedExperienceBridge bridge;
     std::uint32_t origin_region;
@@ -22,7 +22,7 @@ struct RegionNavigationCursor {
 
 // Term IDs are component-local node addresses. Only literal cue nodes enter
 // navigation_cues; whole-original graph nodes remain addressable elsewhere.
-// SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_local_navigation.py@c06092a:24-34
+// SWEGCA: src/tinylm_slicer/mosaic_vrs_local_navigation.py@3bddcb7:24-34
 struct RegionNavigationPage {
     RegionNavigationCursor cursor;
     std::optional<RegionNavigationCursor> next_cursor;
@@ -35,14 +35,14 @@ struct RegionNavigationPage {
     bool grants_authority = false;
 };
 
-// SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_local_navigation.py@c06092a:37-59
+// SWEGCA: src/tinylm_slicer/mosaic_vrs_local_navigation.py@3bddcb7:37-59
 [[nodiscard]] RegionNavigationCursor start_graph_region_navigation(
     const FullCurrentMemoryVrsSnapshot& pair, const EventVrsInputView& inputs,
     const GraphNodeDirectory& nodes, const GraphRegionDirectory& regions,
     const SharedExperienceBridge& bridge, std::uint32_t origin_region,
     std::uint32_t destination_region);
 
-// SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_local_navigation.py@c06092a:62-107
+// SWEGCA: src/tinylm_slicer/mosaic_vrs_local_navigation.py@3bddcb7:62-107
 [[nodiscard]] RegionNavigationPage next_graph_region_cues(
     const FullCurrentMemoryVrsSnapshot& pair, const EventVrsInputView& inputs,
     const GraphNodeDirectory& nodes, const GraphRegionDirectory& regions,

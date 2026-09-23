@@ -7,7 +7,7 @@
 
 namespace swegca::vrs {
 
-// SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_portal_activation.py@c06092a:81-122
+// SWEGCA: src/tinylm_slicer/mosaic_vrs_portal_activation.py@3bddcb7:81-122
 PortalNavigationRecall recall_after_deja_vu_navigation(
     const FullCurrentMemoryVrsSnapshot& pair, const DejaVuSignal& signal,
     const EventVrsInputView& inputs, const GraphNodeDirectory& nodes,

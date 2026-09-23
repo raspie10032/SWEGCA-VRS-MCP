@@ -73,7 +73,7 @@ graph_memberships(std::string_view identifier, const EventVrsInputView& inputs,
                   const GraphNodeDirectory& nodes,
                   const GraphRegionDirectory& regions);
 
-// SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_connectivity_regions.py@c06092a:213-229
+// SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_connectivity_regions.py@7536139:213-226
 [[nodiscard]] std::vector<std::pair<std::uint32_t, double>> graph_episode_memberships(
     std::string_view episode_id, const FullCurrentMemoryVrsSnapshot& pair,
     const EventVrsInputView& inputs, const GraphNodeDirectory& nodes,
@@ -94,7 +94,7 @@ graph_memberships(std::string_view identifier, const EventVrsInputView& inputs,
     const EventVrsInputView& inputs, const GraphNodeDirectory& nodes,
     const GraphRegionDirectory& regions);
 
-// SWEGCA: src/swegca_vrs2/store.py@7536139:304-306
+// SWEGCA: src/swegca_vrs2/store.py@7536139:305-307
 [[nodiscard]] double graph_strength(std::string_view identifier,
                                     const EventVrsInputView& inputs,
                                     const GraphNodeDirectory& nodes);

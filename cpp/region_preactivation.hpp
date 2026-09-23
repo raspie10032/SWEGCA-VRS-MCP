@@ -12,7 +12,7 @@ namespace swegca::vrs {
 
 // A component-local, anonymous navigation signal. Multiple disconnected
 // components retain separate topology identities and source bindings.
-// SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_portal_activation.py@c06092a:19-27
+// SWEGCA: src/tinylm_slicer/mosaic_vrs_portal_activation.py@3bddcb7:19-27
 struct RegionPreactivation {
     std::string pair_snapshot_id;
     std::string topology_id;
@@ -25,7 +25,7 @@ struct RegionPreactivation {
 
 // Only exact cue addresses and membership weights are read. Call after the
 // already-computed Déjà vu signal, before Recall or original Replay.
-// SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_portal_activation.py@c06092a:29-47
+// SWEGCA: src/tinylm_slicer/mosaic_vrs_portal_activation.py@3bddcb7:29-47
 [[nodiscard]] RegionPreactivation preactivate_graph_regions(
     const FullCurrentMemoryVrsSnapshot& pair, const DejaVuSignal& signal,
     std::uint32_t component, const EventVrsInputView& inputs,

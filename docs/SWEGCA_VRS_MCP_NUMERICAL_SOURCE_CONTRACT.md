@@ -134,15 +134,20 @@ outgoing strength without opening or copying original episodes. A shared-
 experience bridge derives overlapping memberships from the original's existing
 cue addresses and hot episode header. It keeps one original episode identity,
 revision, source addresses and historical outcomes; it does not manufacture a
-region-specific episode. The old generic Python region's `address_index`
-contract maps to the Graph's literal `cue:` node directory here. Numerical
+region-specific episode. The author topology stores cue strings and maps each
+term to one cue. The product Graph instead stores numeric nodes for originals
+and literal `cue:` names. The C++ adapter therefore resolves a literal cue
+only through its existing `cue:<text>` node, never emits an original node as a
+cue, and can return fewer cue strings than visited topology terms. This is the
+explicit mapping of the old generic region's `address_index` contract onto the
+product Graph; it does not create another address or membership rule. Numerical
 parity for this bridge has not been established. Region candidate lookup now
 uses the existing hot cue postings: each region unions its cue originals,
 multiple regions intersect, and the sorted result is only an address proposal
 for the ordinary four-stage read. The read directory must prove that the
 published memory and Graph belong to the same generation. This materializes
 candidate sets and has no demonstrated 4 GB bound or pre-Replay latency.
-The author portal activation at product revision `c06092a` begins with
+The author portal activation at tinylm revision `3bddcb7` begins with
 `preactivate_regions` after Déjà vu. The C++ component-local translation now
 maps matched literal cues to existing graph node addresses, sums overlapping
 memberships, normalizes with `fsum`, and ranks regions without reading an

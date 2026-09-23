@@ -30,7 +30,7 @@ struct PortalNavigationFailure {
 
 // A completed pre-Replay read. Recall retains all author-selected addresses;
 // page work only adds navigation cues and cannot act as an allowlist.
-// SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_portal_activation.py@c06092a:50-68
+// SWEGCA: src/tinylm_slicer/mosaic_vrs_portal_activation.py@3bddcb7:50-68
 struct PortalNavigationRecall {
     DejaVuSignal signal;
     std::vector<RegionPreactivation> preactivations;
@@ -49,7 +49,7 @@ struct PortalNavigationRecall {
 // The caller obtained signal directly from user input before any other memory
 // operation. This ports only the author's navigation and Recall prefix;
 // selected-original Replay and Re-evidence follow in Main's four-stage path.
-// SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_portal_activation.py@c06092a:81-122
+// SWEGCA: src/tinylm_slicer/mosaic_vrs_portal_activation.py@3bddcb7:81-122
 [[nodiscard]] PortalNavigationRecall recall_after_deja_vu_navigation(
     const FullCurrentMemoryVrsSnapshot& pair, const DejaVuSignal& signal,
     const EventVrsInputView& inputs, const GraphNodeDirectory& nodes,

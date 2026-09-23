@@ -8,7 +8,7 @@
 namespace swegca::vrs {
 namespace {
 
-// SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_local_navigation.py@c06092a:44-46
+// SWEGCA: src/tinylm_slicer/mosaic_vrs_local_navigation.py@3bddcb7:44-46
 bool same_bridge(const SharedExperienceBridge& left,
                  const SharedExperienceBridge& right) {
     return left.pair_snapshot_id == right.pair_snapshot_id &&
@@ -26,7 +26,7 @@ struct NavigationSeeds {
     std::vector<std::uint32_t> nodes;
 };
 
-// SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_local_navigation.py@c06092a:37-54
+// SWEGCA: src/tinylm_slicer/mosaic_vrs_local_navigation.py@3bddcb7:37-54
 NavigationSeeds seeds(const FullCurrentMemoryVrsSnapshot& pair,
                       const EventVrsInputView& inputs,
                       const GraphNodeDirectory& nodes,
@@ -70,7 +70,7 @@ NavigationSeeds seeds(const FullCurrentMemoryVrsSnapshot& pair,
 
 }  // namespace
 
-// SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_local_navigation.py@c06092a:57-59
+// SWEGCA: src/tinylm_slicer/mosaic_vrs_local_navigation.py@3bddcb7:57-59
 RegionNavigationCursor start_graph_region_navigation(
     const FullCurrentMemoryVrsSnapshot& pair, const EventVrsInputView& inputs,
     const GraphNodeDirectory& nodes, const GraphRegionDirectory& regions,
@@ -82,7 +82,7 @@ RegionNavigationCursor start_graph_region_navigation(
                                   std::move(seeded.nodes)};
 }
 
-// SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_local_navigation.py@c06092a:62-107
+// SWEGCA: src/tinylm_slicer/mosaic_vrs_local_navigation.py@3bddcb7:62-107
 RegionNavigationPage next_graph_region_cues(
     const FullCurrentMemoryVrsSnapshot& pair, const EventVrsInputView& inputs,
     const GraphNodeDirectory& nodes, const GraphRegionDirectory& regions,

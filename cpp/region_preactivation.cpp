@@ -9,7 +9,7 @@
 
 namespace swegca::vrs {
 
-// SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_portal_activation.py@c06092a:29-47
+// SWEGCA: src/tinylm_slicer/mosaic_vrs_portal_activation.py@3bddcb7:29-47
 RegionPreactivation preactivate_graph_regions(
     const FullCurrentMemoryVrsSnapshot& pair, const DejaVuSignal& signal,
     std::uint32_t component, const EventVrsInputView& inputs,
