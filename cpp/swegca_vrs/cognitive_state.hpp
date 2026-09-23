@@ -311,14 +311,11 @@ public:
     // SWEGCA: src/swegca/mosaic_cognitive_kernel.py@5901a5a:220-254
     [[nodiscard]] const OwnerId& owner() const noexcept { return owner_; }
     // SWEGCA: src/swegca/mosaic_cognitive_kernel.py@5901a5a:220-254
-    [[nodiscard]] const StateGeneration& generation() const noexcept {
-        return generation_;
-    }
-    // Content only. The provisional StateGeneration wrapper is removed when
-    // Main's journal-backed StateSnapshot can carry PublishedStateId.
+    // Content identity belongs to this immutable state. Main keeps its
+    // publication identity in StateSnapshot after the journal publishes it.
     // SWEGCA: src/swegca/mosaic_bounded_world_write.py@5901a5a:262-283
     [[nodiscard]] const Digest256& content_digest() const noexcept {
-        return generation_.digest();
+        return content_digest_;
     }
     // The same bytes, in the same order, that content_digest hashes. Each
     // borrowed span lives only through this call and must be copied or hashed
@@ -362,7 +359,7 @@ public:
 
 private:
     void validate() const;
-    [[nodiscard]] StateGeneration validated_generation(
+    [[nodiscard]] Digest256 validated_content_digest(
         const CognitiveState* prior) const;
 
     OwnerId owner_;
@@ -375,7 +372,7 @@ private:
     GoalState goals_;
     ValueState values_;
     SelfState self_;
-    StateGeneration generation_;
+    Digest256 content_digest_;
 };
 
 class StateSnapshot final {

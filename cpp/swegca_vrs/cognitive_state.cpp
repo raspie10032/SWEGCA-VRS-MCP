@@ -16,7 +16,7 @@ namespace {
 // Weak source analogy: the author's hash includes tensors and metadata. This
 // native binary stream uses fixed order, little-endian integers and explicit
 // lengths, so its bytes and digest differ from the Python JSON hash. The
-// provisional generation ordinal is outside this C++ content digest.
+// publication identity is outside this C++ content digest.
 // SWEGCA: src/swegca/mosaic_bounded_world_write.py@5901a5a:262-283
 void emit_u8(StateContentSink write, std::uint8_t value) {
     const std::array bytes{static_cast<std::byte>(value)};
@@ -151,16 +151,6 @@ Digest256 state_digest(
     return Digest256(hash.finish());
 }
 
-// Weak source analogy: the author requires one authoritative state, but has
-// no matching numeric successor ordinal. This counter is C++ infrastructure.
-// SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:103-107
-std::uint64_t next_ordinal(const CognitiveState& prior) {
-    if (prior.generation().ordinal() ==
-        std::numeric_limits<std::uint64_t>::max())
-        throw std::overflow_error("successor_state_generation_exhausted");
-    return prior.generation().ordinal() + 1;
-}
-
 }  // namespace
 
 // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:103-107
@@ -237,7 +227,7 @@ CognitiveState::CognitiveState(
       // SWEGCA: src/swegca/mosaic_cognitive_kernel.py@5901a5a:220-254
       goals_(std::move(goals)), values_(std::move(values)),
       self_(std::move(self)),
-      generation_((key.consume(), validated_generation(nullptr))) {}
+      content_digest_((key.consume(), validated_content_digest(nullptr))) {}
 
 // SWEGCA: src/swegca/mosaic_cognitive_kernel.py@5901a5a:220-254
 CognitiveState::CognitiveState(
@@ -255,13 +245,13 @@ CognitiveState::CognitiveState(
       // SWEGCA: src/swegca/mosaic_cognitive_kernel.py@5901a5a:220-254
       goals_(std::move(goals)), values_(std::move(values)),
       self_(std::move(self)),
-      generation_((key.consume(), validated_generation(&prior))) {}
+      content_digest_((key.consume(), validated_content_digest(&prior))) {}
 
-// All members read here precede generation_ in declaration order. Validate
-// before hashing. Ordinal continuity and append-only roles are C++ successor
-// rules, not checks in the original CognitiveState constructor.
+// All members read here precede content_digest_ in declaration order.
+// Validate before hashing; append-only roles are a C++ successor rule, not
+// a check in the original CognitiveState constructor.
 // SWEGCA: src/swegca/mosaic_cognitive_kernel.py@5901a5a:220-254
-StateGeneration CognitiveState::validated_generation(
+Digest256 CognitiveState::validated_content_digest(
     const CognitiveState* prior) const {
     validate();
     if (prior == nullptr) {
@@ -285,10 +275,9 @@ StateGeneration CognitiveState::validated_generation(
             !std::equal(previous_roles.begin(), previous_roles.end(), next_roles.begin()))
             throw std::invalid_argument("successor_role_registry_not_append_only");
     }
-    const auto ordinal = prior == nullptr ? 0 : next_ordinal(*prior);
-    return StateGeneration(ordinal, state_digest(
+    return state_digest(
         owner_, roles_, semantic_, executive_, scratch_, world_graph_,
-        evidence_references_, goals_, values_, self_));
+        evidence_references_, goals_, values_, self_);
 }
 
 // This C++ stream is the same canonical preimage used above to compute the
