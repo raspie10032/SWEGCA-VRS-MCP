@@ -1546,7 +1546,7 @@ ExperienceRecord::ExperienceRecord(journal::PublishedRecord record, const Alloca
 // Lineage: native mechanism — moving a record keeps every view into its buffers valid.
 // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:50
 ExperienceRecord::ExperienceRecord(ExperienceRecord&& other) noexcept : record_(std::move(other.record_)),
-      journal_(other.journal_), pinned_(std::move(other.pinned_)), memory_(other.memory_),
+      journal_(other.journal_), pinned_(std::exchange(other.pinned_, std::nullopt)), memory_(other.memory_),
       observed_at_(other.observed_at_), context_(other.context_),
       uncertainty_(other.uncertainty_), contradiction_(other.contradiction_), span_(other.span_),
       derived_from_(std::move(other.derived_from_)), name_space_(std::exchange(other.name_space_, std::nullopt)),
