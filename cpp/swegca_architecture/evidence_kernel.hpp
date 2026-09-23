@@ -11,7 +11,7 @@
 
 // SWEGCA nano-core: the pure ternary judgment of evidence (accept, reject,
 // abstain), the verifier the core is (user 2026-09-23). Gate and arbiter
-// kernels are VRS (gate_kernel.hpp, arbiter_kernel.hpp; codex 16:55).
+// kernels belong to the host layer (gate_kernel.hpp, arbiter_kernel.hpp; codex 16:55).
 //
 // Kernel rules (user@2026-09-23 nano-core directive; design board nano-core
 // boundary): no allocation, lock, exception, I/O, string, virtual call or

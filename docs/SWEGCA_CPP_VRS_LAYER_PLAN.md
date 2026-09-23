@@ -85,8 +85,9 @@ stages are VRS, and each ends in the core verifier or feeds it.
 Corrected by the user on 2026-09-23 18:0x (6.2 governs): Recall yields
 addresses only; the first Replay selects the highest-strength originals
 with the tie rule in 6.2; Re-evidence runs only when the current and replayed
-states differ, and may additionally Replay relevant opposing originals
-as the approved order requires. "The
+states differ; if Re-evidence then finds relevant opposing evidence or a
+conflict, it Replays only the relevant opposing originals as the approved
+order requires. "The
 author's Recall order" above is the prior engine's (-cue_overlap, address)
 order (mosaic_memory_activation.py@7536139:301-348), not the author's
 (SWEGCA-Architecture@5901a5a has no such order), and cue overlap is
@@ -419,7 +420,7 @@ originals, separately from the first Replay set's five-original limit
 | Déjà vu | reacts first to the input's keys: which caller keys hit, and how many addresses each key holds | build a union of postings; open any record | none (exact key lookup, no verdict) | user 18:0x; author `HotExperienceIndex.lookup_semantic_key` (mosaic_unrestricted_experience.py@5901a5a:294-320: prebuilt, no I/O or hashing on lookup, "Building the index is deliberately separate from lookup") |
 | Recall | yields the complete original-address set; transport pages do not discard addresses | open content; judge | none | user 18:0x ("리콜이 원경험 주소"); approved order :20-23 |
 | Replay | opens the highest-strength current original; up to five when the top strength ties | open every candidate | digest check of each exact record on read | user 18:0x, 18:3x; author exact `lookup_address` (:314-318) |
-| Re-evidence | re-judges when the current and replayed states differ among accept, reject and abstain; if relevant opposing evidence or conflict is found, additionally Replays only relevant opposing originals and preserves unresolved conflict; the verdict updates strength (6.1 parts 5, 6, 8) | run on every read | evidence kernel and accumulator (tally, decide) | user 18:0x, 18:3x; approved order :26-29, :101-102; author accumulator (mosaic_evidence_accumulator.py@5901a5a:285-428) |
+| Re-evidence | re-judges when the current and replayed states differ among accept, reject and abstain; if relevant opposing evidence or conflict is found, additionally Replays only relevant opposing originals, judges both sides again and preserves unresolved conflict; the verdict updates strength (6.1 parts 5, 6, 8) | run on every read | evidence kernel and accumulator (tally, decide) | user 18:0x, 18:3x; approved order :26-29, :101-102; author accumulator (mosaic_evidence_accumulator.py@5901a5a:285-428) |
 
 Budget: Déjà vu to Recall together under 1 ms, at the store's scale; the
 budget does not extend to Replay or Re-evidence. Neither the author nor the
@@ -528,5 +529,8 @@ as another (codex 18:18); the stage receipt counts Replays per original.
 Rebuild changes this implies: `ExperienceSelector::select` (judges every
 candidate and replays each selected) splits into Recall (addresses) and
 Replay (one original per opened row, up to five on a top-strength tie);
-Re-evidence is called only on a state mismatch. Regions, portals and
+Re-evidence is called only on a state mismatch, then additionally Replays
+only relevant opposing originals when it finds opposing evidence or a
+conflict, judges both sides again and preserves unresolved conflict. This
+opposing set is separate from the first set's five-original limit. Regions, portals and
 coactivation (6.1 parts 1-4) come after this read path.

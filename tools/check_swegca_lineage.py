@@ -38,8 +38,10 @@ CORE_STANDARD_HEADERS = frozenset({
     "cstring", "limits", "span", "stdexcept", "string", "string_view",
 })
 CORE_LOCAL_INCLUDE = re.compile(r'"swegca_architecture/[a-z0-9_]+\.hpp"\Z')
-CORE_INCLUDE_DIRECTIVE = re.compile(r'^[ \t]*(?:#|%:)[ \t]*(include|include_next|import)\b')
 CORE_INCLUDE_OPERAND = re.compile(r'^[ \t]*(?:#|%:)[ \t]*include[ \t]+(\S+)[ \t]*\Z')
+CORE_PRAGMA_ONCE = re.compile(r'^[ \t]*(?:#|%:)[ \t]*pragma[ \t]+once[ \t]*\Z')
+CORE_UNSAFE_SEPARATOR = re.compile(r'[\x00\r\f\v\u2028\u2029]')
+CORE_LINE_SPLICE = re.compile(r'\\[ \t]*\n')
 CODEX_ROOT = Path(__file__).resolve().parents[2]
 SOURCE_ROOTS = (
     Path(__file__).resolve().parents[1],
@@ -417,18 +419,22 @@ def check_layering(path: str, source: str) -> list[str]:
     if not path.startswith("cpp/swegca_architecture/"):
         return []
     issues: list[str] = []
-    code = without_comments_and_strings(source)
-    # C++ joins backslash-newline before recognizing preprocessing directives.
-    # The verifier currently needs none; reject it so a split directive cannot
-    # evade the line-based include check.
-    if "\\\n" in source or "\\\r\n" in source:
+    # Keep this check independent of the general C++ comment/string masker.
+    # A malformed raw string or a digit separator can otherwise hide a live
+    # directive or namespace reference from a token-based scan.
+    if CORE_UNSAFE_SEPARATOR.search(source):
+        issues.append(f"{path}: SWEGCA verifier contains an unsafe line separator")
+    if CORE_LINE_SPLICE.search(source):
         issues.append(f"{path}: SWEGCA verifier line splice is forbidden")
-    # The masked source identifies actual directives without mistaking comments
-    # or strings for code. Validate the original operand, including its quotes.
-    for line_number, (masked, original) in enumerate(
-        zip(code.splitlines(), source.splitlines()), 1
-    ):
-        if not CORE_INCLUDE_DIRECTIVE.match(masked):
+    if "/*" in source:
+        issues.append(f"{path}: SWEGCA verifier block comments are forbidden")
+    # With alternate line separators, continuations and block comments
+    # forbidden, every directive begins on one physical LF-delimited line.
+    for line_number, original in enumerate(source.split("\n"), 1):
+        stripped = original.lstrip(" \t")
+        if not stripped.startswith(("#", "%:")):
+            continue
+        if CORE_PRAGMA_ONCE.fullmatch(original):
             continue
         match = CORE_INCLUDE_OPERAND.fullmatch(original)
         operand = match.group(1) if match else ""
@@ -436,8 +442,10 @@ def check_layering(path: str, source: str) -> list[str]:
             operand[1:-1] in CORE_STANDARD_HEADERS
         )
         if not (CORE_LOCAL_INCLUDE.fullmatch(operand) or standard):
-            issues.append(f"{path}:{line_number}: SWEGCA verifier include is outside core allowlist")
-    if re.search(r'\bvrs\b', code):
+            issues.append(f"{path}:{line_number}: SWEGCA verifier directive is outside core allowlist")
+    # With macro definitions forbidden, raw spelling is a conservative
+    # boundary: comments and strings may cause false positives, never misses.
+    if re.search(r'vrs', source, re.IGNORECASE):
         issues.append(f"{path}: SWEGCA verifier references VRS")
     return issues
 
