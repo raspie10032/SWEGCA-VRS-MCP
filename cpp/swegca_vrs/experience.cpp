@@ -2750,7 +2750,7 @@ Digest256 SelectionReceipt<NoAuthority>::compute_digest() const {
 // U is read first; retrieval keeps only entries of records in U (the index
 // view may already hold later ones). Every retrieved entry is kept until the
 // policy bound, which fails closed instead of cutting.
-// Lineage: weak analogy — the author falls back to the whole universe when no cue matches; the approved four stages replace that full scan: a zero-candidate Recall is an honest miss with no Replay, and only the receipt's zero-authority audit contract survives.
+// Lineage: weak analogy — the author falls back to the whole universe when no cue matches; the approved four stages replace that full scan, and only the receipt's zero-authority audit contract survives. This old selector records no miss: with no candidate it throws. The four-stage Recall, not this function, must emit the honest-miss receipt with no Replay.
 // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:475-537
 // SWEGCA: docs/SWEGCA_CPP_VRS_LAYER_PLAN.md@472d23225c973fa0a33581afd6bd9026df6fc98a:434-439
 // SWEGCA: user@2026-09-22:46-47

@@ -106,7 +106,9 @@ struct SourceSpan {
 // until the append it was given to is done.
 class BlobReader final {
 public:
-    // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:23-60
+    // Lineage: native mechanism — stores any reader of blob bytes by reference, without allocating; the author reads whole files.
+    // SWEGCA: docs/SWEGCA_CPP_VRS_LAYER_PLAN.md@472d23225c973fa0a33581afd6bd9026df6fc98a:522-526
+    // SWEGCA: user@2026-09-22:91-92
     template <class F>
         requires(!std::is_same_v<std::remove_cvref_t<F>, BlobReader> &&
                  std::is_object_v<std::remove_reference_t<F>> &&
@@ -115,12 +117,16 @@ public:
         : target_(static_cast<const void*>(std::addressof(read))),
           call_(&invoke<std::remove_reference_t<F>>) {}
 
-    // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:23-60
+    // Lineage: native mechanism — reads the bytes at an offset through the stored reader; the author reads whole files.
+    // SWEGCA: docs/SWEGCA_CPP_VRS_LAYER_PLAN.md@472d23225c973fa0a33581afd6bd9026df6fc98a:522-526
+    // SWEGCA: user@2026-09-22:91-92
     void operator()(std::uint64_t offset, std::span<std::byte> out) const { call_(target_, offset, out); }
 
 private:
     using Call = void (*)(const void*, std::uint64_t, std::span<std::byte>);
-    // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:23-60
+    // Lineage: native mechanism — calls the stored reader through its erased type; the author reads whole files.
+    // SWEGCA: docs/SWEGCA_CPP_VRS_LAYER_PLAN.md@472d23225c973fa0a33581afd6bd9026df6fc98a:522-526
+    // SWEGCA: user@2026-09-22:91-92
     template <class T>
     static void invoke(const void* target, std::uint64_t offset, std::span<std::byte> out) {
         auto& read = *static_cast<T*>(const_cast<void*>(target));
@@ -140,10 +146,14 @@ private:
 // bytes).
 struct BlobInput {
     BlobInput() = default;
-    // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:23-60
+    // Lineage: native mechanism — a blob given as bytes already in memory; the author reads whole files.
+    // SWEGCA: docs/SWEGCA_CPP_VRS_LAYER_PLAN.md@472d23225c973fa0a33581afd6bd9026df6fc98a:522-526
+    // SWEGCA: user@2026-09-22:91-92
     BlobInput(std::span<const std::byte> in_memory) noexcept  // NOLINT(google-explicit-constructor)
         : bytes(in_memory), size(in_memory.size()) {}
-    // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:23-60
+    // Lineage: native mechanism — a blob given as its size and a reader, so a blob larger than memory is read part by part; the author reads whole files.
+    // SWEGCA: docs/SWEGCA_CPP_VRS_LAYER_PLAN.md@472d23225c973fa0a33581afd6bd9026df6fc98a:522-526
+    // SWEGCA: user@2026-09-22:91-92
     BlobInput(std::uint64_t total, BlobReader read) noexcept : size(total), reader(read) {}
 
     std::span<const std::byte> bytes;

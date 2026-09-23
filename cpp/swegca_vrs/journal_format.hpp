@@ -226,7 +226,8 @@ private:
 
 // Visits a decoded record's index entries in their increasing order; each
 // text views the record's bytes.
-// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:398-437
+// Lineage: weak analogy — the author's postings map each key to its sorted addresses; here one record's index entries are visited in increasing order.
+// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:428-430
 template <class Visit>
 void for_each_index_entry(const RecordView& record, Visit&& visit) {
     ByteReader reader(record.index);
@@ -243,7 +244,8 @@ void for_each_index_entry(const RecordView& record, Visit&& visit) {
 [[nodiscard]] bool index_entry_allowed(std::uint16_t record_kind, std::string_view index_entry) noexcept;
 
 // Size of the index-view key (entry, separator, address).
-// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:398-437
+// Lineage: native mechanism — the fixed byte layout of an index-view key; the author keeps postings in a dict and has no key encoding.
+// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:567-568
 [[nodiscard]] constexpr std::size_t index_key_size(std::string_view index_entry,
                                                  std::string_view address) noexcept {
     return index_entry.size() + 1 + address.size();
