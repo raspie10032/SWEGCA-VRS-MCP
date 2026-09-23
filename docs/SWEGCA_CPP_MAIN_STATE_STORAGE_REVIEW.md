@@ -682,12 +682,14 @@ one published state snapshot, Main's own configuration, and an event read from
 an addressed experience. A caller-supplied `AutonomyTransition` or
 `AutonomyEventView` cannot establish that the event fields came from the
 experience: the author event is an in-memory value with no address, and the
-current C++ view has no experience-record parser. The event record must hold
-the **complete event**, including identity, kind, hypothesis, evidence
+current F2 C++ parser reads a complete event byte stream but has no caller
+that binds the stream to an addressed experience record. The event record
+must hold the **complete event**, including identity, kind, hypothesis, evidence
 references, source_family, context, confidence and payload. Main must parse those
 fields from the record it replayed on a pinned journal read lease and verify
-the record's own integrity before running the kernel. The exact native event
-byte encoding remains to be specified; no new record kind is implied.
+the record's own integrity before running the kernel. The native event byte
+encoding is F2 (`SWGAEVNT`, version 1), with a streaming parser and a
+self-checking encoder. Its existence does not imply a new record kind.
 An event interpreted from a user's input cannot share that input's original
 record under one source: the input and the producer's event need separate
 addresses and provenance. Whether the event record is original or derived
@@ -743,6 +745,10 @@ still materializes in account-charged memory, so VRS may refuse it under its
 runtime budget; segmented state publication and its cold verification remain
 the storage boundary. Version 1 control bytes are not accepted as migration
 input.
+The event parser and control codec now share a generalized UTF-8 rule for
+payload strings: shortest-form code points through U+10FFFF, including lone
+surrogates. Control axes and optional memory strings are checked on both
+encoding and decoding; identity-typed fields retain their stricter rule.
 `split_state_content` still visits the complete canonical stream when it
 materializes a state root; incremental disk publication and its verification
 remain open and must be reviewed separately before any end-to-end speed claim.
