@@ -271,11 +271,11 @@ four-stage VRS path is already implemented.
   distinct from experience kinds 1–3. Reuse the existing bounded part-tree
   *mechanism*; do not inherit an old VRS ranking or reinforcement policy.
   These state records carry no experience search index entries, and the
-  experience decoder must reject their kinds. Kinds 5–7 are reserved and the
-  experience decoder rejects them now, but generic `JournalStore::stage`
-  currently refuses only kinds 1–4. Add a Main-only state staging key and
-  reject 5–7 in the generic staging route in the same change, so no caller
-  can publish state records without Main authority.
+  experience decoder must reject their kinds. Kinds 5–7 are reserved, the
+  experience decoder rejects them, and generic `JournalStore::stage` now
+  rejects them too. `stage_state_records` requires a Main-only key. The
+  state payload codec and Main-owned writer remain to be implemented before
+  these records can be published as a state transition.
 - Derive the state-root exact address from the state digest with a reserved
   prefix. The manifest must name the content digest and the latest state-head
   publication record position/digest, so recovery can use the same verified
