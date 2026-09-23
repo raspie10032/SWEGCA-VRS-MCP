@@ -3,7 +3,7 @@
 #include "swegca_vrs/core_imports.hpp"
 
 #include "swegca_architecture/allocation.hpp"
-#include "swegca_architecture/strong_types.hpp"
+#include "swegca_vrs/identity_types.hpp"
 
 #include <compare>
 #include <cstddef>

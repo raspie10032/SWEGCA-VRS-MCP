@@ -9,7 +9,7 @@
 #include "swegca_architecture/evidence_rules.hpp"
 #include "swegca_vrs/gate_rules.hpp"
 #include "swegca_architecture/allocation.hpp"
-#include "swegca_architecture/strong_types.hpp"
+#include "swegca_vrs/identity_types.hpp"
 #include "swegca_vrs/proposal.hpp"
 #include "swegca_vrs/proposal_arbiter.hpp"
 

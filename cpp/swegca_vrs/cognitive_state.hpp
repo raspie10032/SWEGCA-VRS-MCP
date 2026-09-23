@@ -6,7 +6,7 @@
 #include "swegca_vrs/native_tensor.hpp"
 #include "swegca_vrs/published_state_id.hpp"
 #include "swegca_vrs/role_registry.hpp"
-#include "swegca_architecture/strong_types.hpp"
+#include "swegca_vrs/identity_types.hpp"
 
 #include <compare>
 #include <cstddef>

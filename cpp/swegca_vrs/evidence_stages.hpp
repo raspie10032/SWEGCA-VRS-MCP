@@ -5,7 +5,7 @@
 #include "swegca_vrs/evidence_accumulator.hpp"
 #include "swegca_architecture/allocation.hpp"
 #include "swegca_architecture/digest_bytes.hpp"
-#include "swegca_architecture/strong_types.hpp"
+#include "swegca_vrs/identity_types.hpp"
 
 #include <map>
 #include <memory>

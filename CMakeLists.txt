@@ -39,6 +39,7 @@ add_library(swegca_vrs_candidate STATIC
     cpp/swegca_vrs/journal_file_io.cpp
     cpp/swegca_vrs/journal_format.cpp
     cpp/swegca_vrs/journal_store.cpp
+    cpp/swegca_vrs/identity_types.cpp
     cpp/swegca_vrs/main_owner.cpp
     cpp/swegca_vrs/native_tensor.cpp
     cpp/swegca_vrs/proposal.cpp

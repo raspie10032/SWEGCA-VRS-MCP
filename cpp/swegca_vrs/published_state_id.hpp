@@ -3,7 +3,7 @@
 #include "swegca_vrs/core_imports.hpp"
 
 #include "swegca_vrs/journal_position.hpp"
-#include "swegca_architecture/strong_types.hpp"
+#include "swegca_vrs/identity_types.hpp"
 
 #include <cstdint>
 #include <stdexcept>

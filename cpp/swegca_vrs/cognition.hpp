@@ -6,7 +6,7 @@
 #include "swegca_vrs/journal_format.hpp"
 #include "swegca_architecture/evidence_kernel.hpp"
 #include "swegca_architecture/allocation.hpp"
-#include "swegca_architecture/strong_types.hpp"
+#include "swegca_vrs/identity_types.hpp"
 
 #include <cstddef>
 #include <cstdint>
