@@ -89,6 +89,13 @@ public:
     public:
         // Fails with `memory_budget_exhausted` when `bytes` do not fit.
         [[nodiscard]] Hold reserve(std::uint64_t bytes) const;
+        // A budget carved out of this ledger: `bytes` are charged here now
+        // (`memory_budget_exhausted` when they do not fit) and stay charged
+        // while any Account, Hold or Allocator on the carved budget lives.
+        // Charges on the carved budget count against `bytes` only, so a
+        // component given one can never take more of this ledger, and no
+        // other component can take the part it was given.
+        [[nodiscard]] Account carve(std::uint64_t bytes) const;
         // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3f:638-640
         [[nodiscard]] std::uint64_t used() const noexcept { return state_->used.load(); }
         // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3f:638-640

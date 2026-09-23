@@ -17,6 +17,7 @@
 #include <span>
 #include <stdexcept>
 #include <string_view>
+#include <type_traits>
 
 // Main-owned native journal directory (v5): exclusive owner lock, detached
 // staging, one serialized publisher, snapshot readers (each read holds one
@@ -67,7 +68,9 @@ struct PublishedSnapshot {
 
 // What one published generation holds, from one snapshot: its number and
 // manifest digest, and its records' count and bytes (the universe a read
-// ran over).
+// ran over). Both counts cover the whole journal, every record kind:
+// `record_count` is the tail sequence (sequences run 1..record_count) and
+// `record_bytes` the bytes of every segment extent, headers included.
 struct PublishedUniverse {
     std::uint64_t generation = 0;
     Digest manifest_digest{};
@@ -178,6 +181,39 @@ private:
 
 // Pages of the derived views kept for the read path (journal_store.cpp).
 class PageCache;
+
+// The visitor of one index lookup, borrowed like a function reference: pass
+// a callable object directly (a lambda or functor, not a plain function) and
+// never keep one; nothing is allocated for it. It returns false to stop.
+class IndexVisitor final {
+public:
+    // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:475-507
+    template <class F>
+        requires(!std::is_same_v<std::remove_cvref_t<F>, IndexVisitor> &&
+                 std::is_object_v<std::remove_reference_t<F>> &&
+                 std::is_invocable_r_v<bool, std::remove_reference_t<F>&, std::string_view,
+                                       const RecordPosition&>)
+    IndexVisitor(F&& visit) noexcept  // NOLINT(google-explicit-constructor)
+        : target_(static_cast<const void*>(std::addressof(visit))),
+          call_(&invoke<std::remove_reference_t<F>>) {}
+
+    // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:475-507
+    bool operator()(std::string_view address, const RecordPosition& position) const {
+        return call_(target_, address, position);
+    }
+
+private:
+    using Call = bool (*)(const void*, std::string_view, const RecordPosition&);
+    // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:475-507
+    template <class T>
+    static bool invoke(const void* target, std::string_view address, const RecordPosition& position) {
+        auto& visit = *static_cast<T*>(const_cast<void*>(target));
+        return static_cast<bool>(visit(address, position));
+    }
+
+    const void* target_;
+    Call call_;
+};
 inline constexpr std::uint64_t default_page_cache_bytes = 256u << 20;
 
 class JournalStore final {
@@ -204,8 +240,9 @@ public:
     // digest the view names; `for_each_record` and `rebuild_view` check the
     // whole record chain.
     // `identity` must satisfy the identity rule; the store keeps its own copy
-    // on `memory`. Up to `page_cache_bytes` of verified view pages stay in
-    // memory for lookups (see PageCache); 0 keeps none.
+    // on `memory`. `page_cache_bytes` of `memory` are carved out for the
+    // verified view pages lookups keep (see PageCache; failing with
+    // `memory_budget_exhausted` when they do not fit); 0 keeps none.
     [[nodiscard]] static std::unique_ptr<JournalStore> open(
         const std::filesystem::path& directory, std::string_view identity,
         std::uint64_t storage_bytes, const MemoryLedger::Account& memory,
@@ -271,15 +308,15 @@ public:
     // verifying the whole record chain. No lock is held while `visit` runs.
     void for_each_record(const std::function<void(const RecordView&, const RecordPosition&)>& visit) const;
 
-    // Cue navigation (board §9 :592; L3 cue lookup): visits every published
-    // record that carries `cue`, in address order, with its address and exact
-    // position, over one snapshot, until `visit` returns false. Reads one page
-    // per level down to the first match, then the leaves in order, verifying
-    // every page digest; the address views a page that lives only for the
-    // call. Fails with `journal_cue_invalid` or `journal_view_unavailable`.
-    void for_each_cue_match(
-        std::string_view cue,
-        const std::function<bool(std::string_view address, const RecordPosition&)>& visit) const;
+    // Index navigation (board §3B :122-123, §9 :592; L3 hot cue lookup):
+    // visits every published record that carries the index entry (`kind`,
+    // `value`), in address order, with its address and exact position, over
+    // one snapshot, until `visit` returns false. Reads one page per level
+    // down to the first match, then the leaves in order, verifying every page
+    // digest; the address views a page that lives only for the call. Fails
+    // with `journal_index_invalid` (not an index entry) or
+    // `journal_view_unavailable`.
+    void for_each_index_match(char kind, std::string_view value, IndexVisitor visit) const;
 
     // Copy on write leaves replaced pages in the page logs. Compaction is due
     // when their bytes exceed the live pages' bytes (both trees) plus one
@@ -297,7 +334,7 @@ public:
     void compact_view();
 
     // Rebuilds both views from the records alone, never reading the old
-    // ones: every record chain is verified while addresses and cue keys are
+    // ones: every record chain is verified while addresses and index keys are
     // collected in batches of bounded memory; each sorted batch is written as
     // a run of leaf pages in new logs, each tree's runs are merged in one
     // k-way pass into its final tree (reading one page per level per run),

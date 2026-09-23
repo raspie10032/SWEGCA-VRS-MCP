@@ -19,22 +19,49 @@
 
 // Main-owned original experience (board §3B, §4, §5): complete observations
 // appended unfiltered to Main's journal under stable digest-bound addresses,
-// decoded back exactly, and selected for cognition through the cue view with
-// a receipt whose authority is statically none. Nothing here grants
-// authority: a record documents, a receipt audits, and neither converts to
-// a capability. Main publishes what is staged here; only Main does.
+// decoded back exactly, found through the typed index views (cue, source,
+// content digest, lineage, validity, namespace, resource, transaction), and
+// selected for cognition through the cue view with a receipt whose
+// authority is statically none. Nothing here grants authority: a record
+// documents, a receipt audits, and neither converts to a capability. Main
+// publishes what is staged here; only Main does.
 // Rules: board @cefdc3f §3B :116-126, §4 :200-212, §5 :282-286, §9 :592-595;
 // L3 mosaic_unrestricted_experience.py@5901a5a (artifacts 23-155, selection
-// receipts 158-290, hot index 293-339, discovery/index/selection 342-537).
+// receipts 158-290, hot index 293-339, discovery/index/selection 342-537);
+// mosaic_external_memory.py:15-42,164-221 (resource, content, namespace
+// views) and mosaic_versioned_memory.py:36-44,139-202 (validity and
+// supersession) at the same revision.
 namespace swegca::architecture {
 
 class MainOwner;
 
 // Journal record kinds this module owns: an original experience, and one
-// derived from earlier experience (it names what it was derived from).
-inline constexpr std::uint16_t original_experience_kind = 1;
-inline constexpr std::uint16_t derived_experience_kind = 2;
+// derived from earlier experience (it names what it was derived from). Only
+// these records may carry lowercase index kinds (journal_format.hpp).
+inline constexpr std::uint16_t original_experience_kind = journal::original_experience_record_kind;
+inline constexpr std::uint16_t derived_experience_kind = journal::derived_experience_record_kind;
 inline constexpr std::string_view experience_address_prefix = "experience:";
+
+// The index views of experience (board §3B :122-123). Each record carries
+// its entries; the journal's index tree answers a lookup by kind and value.
+// - cue: every token of the source and its revision under the cue rule, and
+//   every Rozephine-authored cue (L3 hot cue index);
+// - source: the exact source; content: the SHA-256 of the raw bytes;
+// - lineage: each address the experience was derived from (its derivations);
+// - successor: the address it revises (validity and supersession: the
+//   experience that supersedes an address is found here);
+// - name_space, resource, transaction: the observation's namespace, each of
+//   its resources, and the transaction it was appended in.
+enum class ExperienceView : char {
+    cue = 'c',
+    source = 's',
+    content = 'd',
+    lineage = 'l',
+    successor = 'v',
+    name_space = 'n',
+    resource = 'r',
+    transaction = 't',
+};
 
 // Where in its source the raw bytes came from.
 struct SourceSpan {
@@ -50,27 +77,33 @@ struct Observation {
     std::string_view source;  // producer id
     std::string_view source_revision;
     std::uint64_t observed_at = 0;  // Main step it was observed at
-    std::optional<std::string_view> previous_revision_address;  // revision lineage
-    std::span<const std::string_view> derived_from;  // published addresses; empty for an original
+    std::optional<std::string_view> previous_revision_address;  // the experience this revises
+    std::span<const std::string_view> derived_from;  // published experience addresses; empty for an original
     std::optional<std::string_view> outcome;
     double uncertainty = 0;    // [0, 1]
     double contradiction = 0;  // [0, 1]
     std::optional<SourceSpan> source_span;
+    std::optional<std::string_view> name_space;   // the namespace it belongs to
+    std::span<const std::string_view> resources;  // the resources it concerns, each once
     std::span<const std::byte> raw;         // the exact bytes observed
     std::span<const std::byte> structured;  // canonical structured form; empty when none
-    // Rozephine-authored cues (author: semantic keys by address), each a cue
-    // text (journal_format.hpp); the source and its revision, and their
-    // tokens under the cue rule, are added automatically.
+    // Rozephine-authored cues (author: semantic keys by address): each must
+    // be exactly one token under the cue rule (`experience_cue_not_a_token`
+    // otherwise), so a query finds it by the same rule. The tokens of the
+    // source and its revision are added automatically.
     std::span<const std::string_view> semantic_cues;
 };
 
 // The cue rule (author regex `n\d+|r\d+|[a-z]+|\d+|[^\W\d_]+` over lowered
-// text, re-created natively rather than emulated): ASCII letters are
-// lowered; a token is `n` or `r` followed by digits, a run of ASCII letters,
-// a run of ASCII digits, or a run of letters starting with a non-ASCII
-// letter (which continues through ASCII letters). A non-ASCII letter is any
-// code point from U+00C0 outside the listed punctuation and symbol blocks;
-// everything else separates tokens. Tokens view the lowered copy it keeps.
+// text), re-created natively as this module's own rule rather than
+// emulating Python's `\w`: ASCII letters are lowered; a token is `n` or `r`
+// followed by digits, a run of ASCII letters, a run of ASCII digits, or a run
+// of letters starting with a non-ASCII letter (which continues through ASCII
+// letters). A non-ASCII letter is any code point from U+00C0 outside the
+// listed mark, punctuation, symbol, byte-order-mark and private blocks, so
+// non-ASCII digits and marks count as letters or separators by that list,
+// not by Unicode categories. Everything else separates tokens. Tokens view
+// the lowered copy it keeps.
 class CueTokens final {
 public:
     // `source` must be strict UTF-8 (every identity text is).
@@ -96,8 +129,9 @@ private:
 class ExperienceRecord final {
 public:
     // Requires an experience kind without authority or claim, a well-formed
-    // payload, and an address that is the digest of the record's identity.
-    // Its lineage list is kept on `memory`.
+    // payload, an address that is the digest of the record's identity, and
+    // index entries that are exactly the automatic ones plus authored cues.
+    // Its lists are kept on `memory`.
     [[nodiscard]] static ExperienceRecord decode(journal::PublishedRecord record,
                                                  const MemoryLedger::Account& memory);
 
@@ -129,13 +163,26 @@ public:
     [[nodiscard]] std::span<const std::string_view> derived_from() const noexcept {
         return derived_from_;
     }
+    // SWEGCA: src/swegca/mosaic_external_memory.py@5901a5a:15-26
+    [[nodiscard]] const std::optional<std::string_view>& name_space() const noexcept { return name_space_; }
+    // In increasing order.
+    // SWEGCA: src/swegca/mosaic_external_memory.py@5901a5a:34-42
+    [[nodiscard]] std::span<const std::string_view> resources() const noexcept { return resources_; }
     // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:23-60
     [[nodiscard]] std::span<const std::byte> raw() const noexcept { return raw_; }
+    // SHA-256 of `raw()` (the author's raw_sha256; the content view's key).
+    // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:520-529
+    [[nodiscard]] const DigestBytes& raw_digest() const noexcept { return raw_digest_; }
     // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:23-60
     [[nodiscard]] std::span<const std::byte> structured() const noexcept { return structured_; }
+    // The record's index entries (kind letter and value), increasing.
+    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3f:122-123
+    [[nodiscard]] std::span<const std::string_view> index_entries() const noexcept { return index_; }
 
 private:
-    ExperienceRecord(journal::PublishedRecord record, journal::LedgerVector<std::string_view> derived);
+    ExperienceRecord(journal::PublishedRecord record, journal::LedgerVector<std::string_view> derived,
+                     journal::LedgerVector<std::string_view> resources,
+                     journal::LedgerVector<std::string_view> index);
 
     journal::PublishedRecord record_;
     std::uint64_t observed_at_ = 0;
@@ -143,7 +190,11 @@ private:
     double contradiction_ = 0;
     std::optional<SourceSpan> span_;
     journal::LedgerVector<std::string_view> derived_from_;  // views the record's bytes
+    std::optional<std::string_view> name_space_;             // views the record's bytes
+    journal::LedgerVector<std::string_view> resources_;      // views the record's bytes
+    journal::LedgerVector<std::string_view> index_;          // views the record's bytes
     std::span<const std::byte> raw_;
+    DigestBytes raw_digest_{};
     std::span<const std::byte> structured_;
 };
 
@@ -156,10 +207,14 @@ struct ExperienceAppend {
 };
 
 // Main's original-experience journal (board §5 :282-283): stages complete
-// observations as records under digest-bound addresses and replays them.
-// The address is the digest of the record's identity (kind, source,
-// revision, lineage, outcome and payload digest), so the same observation
-// appended twice has one address and one record.
+// observations as records under digest-bound addresses, replays them, and
+// answers the index views. The address is the digest of the record's
+// identity (kind, source, revision, revised address, outcome and payload
+// digest; the payload holds every other observed field), so the same
+// observation appended twice has one address and one record. Index entries
+// are not identity: appending an existing observation with other authored
+// cues fails with `experience_index_conflict`, and one appended again in
+// another transaction keeps the transaction it was first appended in.
 class ExperienceJournal final {
 public:
     ExperienceJournal(const ExperienceJournal&) = delete;
@@ -169,15 +224,27 @@ public:
     ~ExperienceJournal() = default;
 
     // Validates every observation (texts by the identity rule, uncertainty
-    // and contradiction finite in [0, 1], every lineage address published),
-    // encodes it, and stages the new ones as one generation on `state` with
-    // `views`, under Main's `operation_id`. Stages nothing when all exist.
+    // and contradiction finite in [0, 1], resources unique, authored cues
+    // single tokens, every lineage address a published experience), encodes
+    // it with its index entries, and stages the new ones as one generation
+    // on `state` with `views`, under Main's `operation_id` and, when given,
+    // `transaction_id`. Stages nothing when all exist.
     [[nodiscard]] ExperienceAppend stage(std::span<const Observation> observations,
-                                         std::string_view operation_id, const StateGeneration& state,
+                                         std::string_view operation_id,
+                                         std::optional<std::string_view> transaction_id,
+                                         const StateGeneration& state,
                                          std::span<const journal::ViewGeneration> views) const;
 
     // Replays one exact experience (`journal_address_unknown` when absent).
     [[nodiscard]] ExperienceRecord replay(const ExperienceAddress& address) const;
+
+    // Visits, in address order over one published snapshot, every experience
+    // `view` names for `key` until `visit` returns false: for `cue` a single
+    // cue token; for `source`, `name_space`, `resource` and `transaction` the
+    // exact text; for `content` the 64 lowercase hex digits of the raw
+    // bytes' SHA-256; for `lineage` and `successor` an experience address.
+    // Another key fails with `experience_view_key_invalid`.
+    void for_each_in_view(ExperienceView view, std::string_view key, journal::IndexVisitor visit) const;
 
 private:
     friend class MainOwner;
@@ -206,7 +273,7 @@ struct SelectionCandidate {
 };
 
 // One judgment of a retrieved candidate (author ExperienceCandidateJudgment
-// :179-205), as the judge returns it: borrowed, and copied at once.
+// :179-205), as the judge hands it to the sink: borrowed for that call.
 struct CandidateVerdict {
     std::string_view address;
     bool selected = false;
@@ -216,39 +283,6 @@ struct CandidateVerdict {
     std::string_view revision;
     std::string_view rationale;
     std::span<const std::string_view> rejection_evidence;  // each nonempty
-};
-
-// The runtime cognition judgment over one candidate, borrowed for one
-// selection like a function reference (pass it directly; never keep one).
-class SelectionJudge final {
-public:
-    // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:475-512
-    template <class F>
-        requires(!std::is_same_v<std::remove_cvref_t<F>, SelectionJudge> &&
-                 std::is_invocable_r_v<CandidateVerdict, std::remove_reference_t<F>&,
-                                       const SelectionCandidate&, const SelectionQuery&>)
-    SelectionJudge(F&& judge) noexcept  // NOLINT(google-explicit-constructor)
-        : target_(static_cast<const void*>(std::addressof(judge))),
-          call_(&invoke<std::remove_reference_t<F>>) {}
-
-    // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:508-512
-    CandidateVerdict operator()(const SelectionCandidate& candidate,
-                                const SelectionQuery& query) const {
-        return call_(target_, candidate, query);
-    }
-
-private:
-    using Call = CandidateVerdict (*)(const void*, const SelectionCandidate&, const SelectionQuery&);
-    // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:508-512
-    template <class T>
-    static CandidateVerdict invoke(const void* target, const SelectionCandidate& candidate,
-                                   const SelectionQuery& query) {
-        auto& judge = *static_cast<T*>(const_cast<void*>(target));
-        return static_cast<CandidateVerdict>(judge(candidate, query));
-    }
-
-    const void* target_;
-    Call call_;
 };
 
 struct VerificationStateTag { static constexpr std::string_view name = "verification_state"; };
@@ -276,12 +310,76 @@ struct CandidateJudgment {
     journal::LedgerVector<EvidenceText> rejection_evidence;
 };
 
+// Where the judge puts its verdict on one candidate. `record` copies every
+// text onto Main's ledger before it returns, so nothing the judge hands over
+// has to outlive that call. A judge records exactly one verdict per
+// candidate: none fails with `experience_judgment_missing`, a second with
+// `experience_judgment_repeated`, another address with
+// `experience_judgment_address_changed`.
+class VerdictSink final {
+public:
+    VerdictSink(const VerdictSink&) = delete;
+    VerdictSink& operator=(const VerdictSink&) = delete;
+    VerdictSink(VerdictSink&&) = delete;
+    VerdictSink& operator=(VerdictSink&&) = delete;
+    ~VerdictSink() = default;
+
+    void record(const CandidateVerdict& verdict);
+
+private:
+    friend class ExperienceSelector;
+    // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:179-205
+    VerdictSink(const MemoryLedger::Account& memory, const SelectionCandidate& candidate) noexcept
+        : memory_(memory), candidate_(candidate) {}
+
+    const MemoryLedger::Account& memory_;
+    const SelectionCandidate& candidate_;
+    std::optional<CandidateJudgment> judgment_;
+};
+
+// The runtime cognition judgment over one candidate, borrowed for one
+// selection like a function reference: pass a callable object directly (a
+// lambda or functor, not a plain function) and never keep one. It is called
+// as judge(candidate, query, sink) and records its verdict in `sink`.
+class SelectionJudge final {
+public:
+    // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:475-512
+    template <class F>
+        requires(!std::is_same_v<std::remove_cvref_t<F>, SelectionJudge> &&
+                 std::is_object_v<std::remove_reference_t<F>> &&
+                 std::is_invocable_v<std::remove_reference_t<F>&, const SelectionCandidate&,
+                                     const SelectionQuery&, VerdictSink&>)
+    SelectionJudge(F&& judge) noexcept  // NOLINT(google-explicit-constructor)
+        : target_(static_cast<const void*>(std::addressof(judge))),
+          call_(&invoke<std::remove_reference_t<F>>) {}
+
+    // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:508-512
+    void operator()(const SelectionCandidate& candidate, const SelectionQuery& query,
+                    VerdictSink& sink) const {
+        call_(target_, candidate, query, sink);
+    }
+
+private:
+    using Call = void (*)(const void*, const SelectionCandidate&, const SelectionQuery&, VerdictSink&);
+    // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:508-512
+    template <class T>
+    static void invoke(const void* target, const SelectionCandidate& candidate,
+                       const SelectionQuery& query, VerdictSink& sink) {
+        auto& judge = *static_cast<T*>(const_cast<void*>(target));
+        judge(candidate, query, sink);
+    }
+
+    const void* target_;
+    Call call_;
+};
+
 // C: one selected experience with its replay handle (exact position) and
 // what Replay verified of it (author selected artifact :520-529).
 struct SelectedExperience {
     ExperienceAddress address;
     journal::RecordPosition position;
     std::uint64_t byte_count = 0;  // raw bytes of the experience
+    DigestBytes raw_digest{};      // SHA-256 of those bytes (author raw_sha256)
     DigestBytes record_digest{};
     VerificationState verification_state;
     RevisionText revision;
@@ -290,28 +388,25 @@ struct SelectedExperience {
 // U: the published journal generation a selection ran over.
 using SelectionUniverse = journal::PublishedUniverse;
 
-// The static authority of a selection receipt: none. It is the only
-// authority a receipt is defined for, and nothing converts it to another.
-struct NoAuthority final {
-    static constexpr bool external_action_authorized = false;
-    static constexpr bool memory_write_authorized = false;
-    static constexpr bool world_write_authorized = false;
-    static constexpr bool training_write_authorized = false;
-    static constexpr bool p3_promotion_authorized = false;
-};
-
 template <class Authority>
 class SelectionReceipt;  // defined for NoAuthority only (board §4 :207-210)
 
 class ExperienceSelector;
 
 // rho: the replayable receipt of Rozephine judging every retrieved candidate
-// (author RuntimeExperienceSelectionReceipt :208-290). It audits; it
-// authorizes nothing, and its digest covers every field.
+// (author RuntimeExperienceSelectionReceipt :208-290). Its static authority
+// is NoAuthority (strong_types.hpp), the only one a receipt is defined for,
+// and nothing converts it to another: it audits, it authorizes nothing, and
+// its digest covers every field and the flags below.
 template <>
 class SelectionReceipt<NoAuthority> final {
 public:
     using Authority = NoAuthority;
+    static constexpr bool external_action_authorized = false;
+    static constexpr bool memory_write_authorized = false;
+    static constexpr bool world_write_authorized = false;
+    static constexpr bool training_write_authorized = false;
+    static constexpr bool p3_promotion_authorized = false;
 
     SelectionReceipt(SelectionReceipt&&) noexcept = default;
     SelectionReceipt& operator=(SelectionReceipt&&) = delete;
@@ -363,12 +458,13 @@ struct SelectionPolicy {
 };
 
 // Select(q, U) -> (C, J, rho) (board §3B :124-126). Retrieval derives
-// candidates from the query's cues through the cue view of the published
-// journal U (never by scanning every experience, board §9 :592-595); the
-// judge, Main's runtime cognition, judges every candidate; each selected one
-// is replayed exactly and verified. There is no fallback to the whole
-// universe: no candidate fails with `experience_select_no_candidates`, and
-// no selection with `experience_select_nothing_selected`, as the author's.
+// candidates from the query's cue tokens through the cue view of the
+// published journal U (never by scanning every experience, board §9
+// :592-595); the judge, Main's runtime cognition, judges every candidate;
+// each selected one is replayed exactly and verified. There is no fallback
+// to the whole universe: no candidate fails with
+// `experience_select_no_candidates`, and no selection with
+// `experience_select_nothing_selected`, as the author's.
 class ExperienceSelector final {
 public:
     ExperienceSelector(const ExperienceSelector&) = delete;

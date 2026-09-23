@@ -35,6 +35,24 @@ MemoryLedger::Hold MemoryLedger::Account::reserve(std::uint64_t bytes) const {
     return Hold(state_, bytes);
 }
 
+// The carved state keeps the parent's charge (and Main's lifetime) until the
+// last Account, Hold or Allocator on it is gone. Both objects are charged to
+// the parent.
+// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3f:638-640
+MemoryLedger::Account MemoryLedger::Account::carve(std::uint64_t bytes) const {
+    struct Carved {
+        Hold charge;
+        std::shared_ptr<const void> owner_lifetime;
+    };
+    auto charge = reserve(bytes);
+    auto carved = std::allocate_shared<Carved>(Allocator<Carved>(state_),
+                                               Carved{std::move(charge), state_->owner_lifetime});
+    auto state = std::allocate_shared<State>(Allocator<State>(state_));
+    state->owner_lifetime = std::move(carved);
+    state->limit = bytes;
+    return Account(std::move(state));
+}
+
 // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3f:638-640
 MemoryLedger::Hold::Hold(Hold&& other) noexcept
     : state_(std::move(other.state_)), bytes_(std::exchange(other.bytes_, 0)) {}

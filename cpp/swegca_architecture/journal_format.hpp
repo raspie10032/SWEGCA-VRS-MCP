@@ -16,9 +16,9 @@
 #include <string_view>
 #include <vector>
 
-// Byte format of the Main-owned native journal (v6): append-only record
+// Byte format of the Main-owned native journal (v7): append-only record
 // segments, an append-only manifest log, checkpoint manifests, append-only
-// page logs of the derived exact-address and cue views, and a fixed-size HEAD
+// page logs of the derived exact-address and index views, and a fixed-size HEAD
 // pointer, all as flat files in one directory. Storage format only; no record grants
 // authority.
 // Rules: SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md §3B, §9;
@@ -60,20 +60,28 @@ inline constexpr std::size_t segment_header_bytes = 4 + 2 + 8 + 8;
 inline constexpr std::size_t manifest_log_header_bytes = 4 + 2 + 8;
 inline constexpr std::size_t record_prefix_bytes = 4 + 2 + 4;
 // magic, version, length, kind, authority, reserved, sequence, 8 text lengths,
-// cue count, payload length, payload/previous/record digests.
+// index entry count, payload length, payload/previous/record digests.
 inline constexpr std::size_t minimum_record_bytes =
     4 + 2 + 4 + 2 + 1 + 1 + 8 + 8 * 4 + 4 + 4 + 3 * 32;
-// Cues one record carries. A cue is an identity text without the cue
-// separator; its cue-view key is (cue, separator, address), which must itself
-// be an identity text, so the separator splits every key exactly.
-inline constexpr std::size_t max_record_cues = 16384;
-inline constexpr char cue_separator = '\x1f';
+// Index entries one record carries (J18). An entry is a kind letter (ASCII
+// a-z or A-Z) followed by a nonempty value, an identity text without the
+// index separator; its index-view key is (entry, separator, address), which
+// must itself be an identity text, so the separator splits every key exactly
+// and the keys of one kind and value are contiguous. Lowercase kinds belong
+// to experience records (the two kinds below, experience.hpp); a record of
+// any other kind may carry only uppercase kinds, so no other owner's record
+// can answer an experience lookup.
+inline constexpr std::size_t max_record_index_entries = 16384;
+inline constexpr char index_separator = '\x1f';
+inline constexpr std::uint16_t original_experience_record_kind = 1;
+inline constexpr std::uint16_t derived_experience_record_kind = 2;
 // ordinal, first sequence, record count, byte length, last record digest.
 inline constexpr std::size_t encoded_extent_bytes = 4 * 8 + 32;
 
 // Derived views (board §3B :122, §9 :569-592): the exact-address tree (one
-// entry per record, keyed by address) and the cue tree (one entry per cue of
-// every record, keyed by cue, separator, address; L3 hot cue lookup). Main
+// entry per record, keyed by address) and the index tree (one entry per
+// index entry of every record, keyed by entry, separator, address; L3 hot
+// cue and index lookup). Main
 // builds both in the same detached generation as the records they index, as
 // immutable pages in shared append-only page logs; the manifest names each
 // root page by location and digest, so one HEAD publishes records and views
@@ -112,9 +120,10 @@ struct RecordDraft {
     std::optional<std::string_view> outcome;
     std::string_view operation_id;
     std::optional<std::string_view> transaction_id;
-    // Strictly increasing cues (see `is_cue_text`); each with the address
-    // forms one cue-view key.
-    std::span<const std::string_view> cues;
+    // Strictly increasing index entries (see `is_index_entry`), each allowed
+    // for `kind` (`index_entry_allowed`); each with the address forms one
+    // index-view key.
+    std::span<const std::string_view> index;
     std::span<const std::byte> payload;  // canonical owner bytes
 };
 
@@ -133,8 +142,8 @@ struct RecordView {
     std::string_view outcome;
     std::string_view operation_id;
     std::string_view transaction_id;
-    std::uint32_t cue_count = 0;
-    std::span<const std::byte> cues;  // `cue_count` length-prefixed texts, increasing
+    std::uint32_t index_count = 0;
+    std::span<const std::byte> index;  // `index_count` length-prefixed entries, increasing
     std::span<const std::byte> payload;
     Digest payload_digest{};
     Digest previous_record_digest{};
@@ -194,24 +203,29 @@ private:
     std::size_t offset_ = 0;
 };
 
-// Visits a decoded record's cues in their increasing order; each text views
-// the record's bytes.
+// Visits a decoded record's index entries in their increasing order; each
+// text views the record's bytes.
 // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:398-437
 template <class Visit>
-void for_each_cue(const RecordView& record, Visit&& visit) {
-    ByteReader reader(record.cues);
-    for (std::uint32_t at = 0; at < record.cue_count; ++at)
+void for_each_index_entry(const RecordView& record, Visit&& visit) {
+    ByteReader reader(record.index);
+    for (std::uint32_t at = 0; at < record.index_count; ++at)
         visit(reader.text_view(detail::identity_text_max_bytes));
 }
 
-// An identity text without the cue separator.
-[[nodiscard]] bool is_cue_text(std::string_view cue) noexcept;
+// A kind letter and a nonempty value: an identity text without the index
+// separator.
+[[nodiscard]] bool is_index_entry(std::string_view index_entry) noexcept;
 
-// Size of the cue-view key (cue, separator, address).
+// Whether a record of `record_kind` may carry `index_entry`: lowercase kinds
+// only on experience records.
+[[nodiscard]] bool index_entry_allowed(std::uint16_t record_kind, std::string_view index_entry) noexcept;
+
+// Size of the index-view key (entry, separator, address).
 // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:398-437
-[[nodiscard]] constexpr std::size_t cue_key_size(std::string_view cue,
+[[nodiscard]] constexpr std::size_t index_key_size(std::string_view index_entry,
                                                  std::string_view address) noexcept {
-    return cue.size() + 1 + address.size();
+    return index_entry.size() + 1 + address.size();
 }
 
 // Exact encoded size of `draft` as a record. Validates every limit, so a
@@ -273,10 +287,10 @@ struct ViewTree {
 
 // The derived views of one generation and the page logs they share. The
 // address tree holds one entry per record, so its `entry_count` equals the
-// manifest's `tail_sequence`; the cue tree holds one per cue.
+// manifest's `tail_sequence`; the index tree holds one per index entry.
 struct ViewPages {
     ViewTree addresses;
-    ViewTree cues;
+    ViewTree index;
     std::uint64_t first_page_log = 0;    // oldest page log a tree reaches; 0 without logs
     std::uint64_t page_log_ordinal = 0;  // current page log; 0 without logs
     std::uint64_t page_log_end = 0;      // published length of the current page log
@@ -284,13 +298,13 @@ struct ViewPages {
 
     // SWEGCA: user@2026-09-22:72-79
     [[nodiscard]] std::uint64_t live_page_bytes() const noexcept {
-        return addresses.live_page_bytes + cues.live_page_bytes;
+        return addresses.live_page_bytes + index.live_page_bytes;
     }
     auto operator<=>(const ViewPages&) const = default;
 };
 
-// One leaf entry: a view key (an address in the address tree; cue,
-// separator, address in the cue tree) and the exact position of its record.
+// One leaf entry: a view key (an address in the address tree; entry,
+// separator, address in the index tree) and the exact position of its record.
 struct AddressLeafItem {
     std::string_view address;
     RecordPosition position;
