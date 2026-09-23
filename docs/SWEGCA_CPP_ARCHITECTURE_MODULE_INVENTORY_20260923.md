@@ -772,10 +772,11 @@ architecture and its test-condition list have passed static review
   but `ManifestFields` has no strength-root position and the journal has no
   strength-record codec. A digest with no published record cannot verify the
   Main-owned synapse strengths after restart. The architecture phase must
-  define and publish a canonical empty f32 root, its bounded-part locator,
-  and the marker-to-manifest binding before Main selects genesis. The VRS
-  strength update and four-stage read behavior remain in step 11. This
-  follows the primary durable experience rule in
-  `SWEGCA_CPP_VRS_LAYER_PLAN.md` lines 23-32 and the Main storage contract
-  in `SWEGCA_CPP_MAIN_STATE_STORAGE_REVIEW.md` lines 164-181; it does not
-  declare a placeholder strength table to be a verified publication.
+  define the durable strength-root locator, bounded parts and
+  marker-to-manifest binding before Main selects genesis. The initial-root
+  content remains unresolved: the author's canonical lineage rejects an
+  empty member set (`mosaic_vrs_canonicalization.py@3bddcb7:18-30`), while
+  the later C++ memory decision starts a new store rather than decoding the
+  old one (`SWEGCA_CPP_MULTIMODAL_MEMORY_PLAN.md` lines 95-97). Neither an
+  empty-root exception nor an import of old VRS data is implied by those
+  rules. The VRS update and four-stage read behavior remain in step 11.
