@@ -1,0 +1,173 @@
+#pragma once
+
+#include "swegca_architecture/authority_roles.hpp"
+#include "swegca_architecture/resource_limits.hpp"
+
+#include <atomic>
+#include <cstddef>
+#include <cstdint>
+#include <limits>
+#include <memory>
+#include <new>
+
+// Main's one resident-memory ledger. MainOwner creates exactly one, with a
+// limit no larger than ResourceLimits::max_resident_bytes, and hands each
+// Main-owned component an Account on it; no component can make a ledger of
+// its own, so every charge in the process lands on the same limit.
+//
+// What a charge counts: the bytes a component asks an allocator for, before
+// it asks. A Hold covers memory the component sizes itself (reserve before
+// building); an Allocator charges each allocation it performs with its exact
+// requested size (containers and shared-object control blocks, so no
+// per-node or per-block constant is guessed). Allocator bookkeeping below
+// the requested size (heap headers, rounding) is not counted here; the
+// ledger is exact for requested bytes, not a resident-set measurement.
+//
+// Lifetime contract: the counter lives as long as any Account, Hold or
+// Allocator on it, so a charge released after MainOwner dropped its ledger
+// still returns to the same counter. A Hold must outlive the memory it
+// covers: declare it before that memory (members are destroyed in reverse
+// order), and never assign over a Hold, which would release its charge
+// while the memory still exists (move assignment is deleted for that reason).
+namespace swegca::architecture {
+
+class MemoryLedger final {
+    struct State {
+        std::atomic<std::uint64_t> used{0};
+        std::uint64_t limit = 0;
+    };
+
+public:
+    class Hold;
+    class Account;
+    template <class T>
+    class Allocator;
+
+    // A charge of a fixed number of bytes, returned when the Hold is destroyed.
+    class Hold final {
+    public:
+        // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3f:638-640
+        Hold() noexcept = default;
+        Hold(Hold&& other) noexcept;
+        Hold& operator=(Hold&&) = delete;
+        Hold(const Hold&) = delete;
+        Hold& operator=(const Hold&) = delete;
+        ~Hold();
+
+        // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3f:638-640
+        [[nodiscard]] std::uint64_t bytes() const noexcept { return bytes_; }
+        // Takes over `other`'s charge. Both must be on the same ledger (or
+        // one of them empty); otherwise `memory_hold_ledger_mismatch`.
+        void merge(Hold&& other);
+        // Moves `bytes` of this charge into a new Hold, for memory that
+        // changes owner; more than this Hold carries is
+        // `memory_hold_split_invalid`.
+        [[nodiscard]] Hold split(std::uint64_t bytes);
+
+    private:
+        friend class MemoryLedger;
+        friend class Account;
+        // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3f:638-640
+        Hold(std::shared_ptr<State> state, std::uint64_t bytes) noexcept
+            : state_(std::move(state)), bytes_(bytes) {}
+
+        std::shared_ptr<State> state_;
+        std::uint64_t bytes_ = 0;
+    };
+
+    // What a Main-owned component keeps: it can charge the ledger, never
+    // change its limit or make another ledger.
+    class Account final {
+    public:
+        // Fails with `memory_budget_exhausted` when `bytes` do not fit.
+        [[nodiscard]] Hold reserve(std::uint64_t bytes) const;
+        // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3f:638-640
+        [[nodiscard]] std::uint64_t used() const noexcept { return state_->used.load(); }
+        // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3f:638-640
+        template <class T>
+        [[nodiscard]] Allocator<T> allocator() const noexcept {
+            return Allocator<T>(state_);
+        }
+
+    private:
+        friend class MemoryLedger;
+        // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3f:638-640
+        explicit Account(std::shared_ptr<State> state) noexcept : state_(std::move(state)) {}
+
+        std::shared_ptr<State> state_;
+    };
+
+    // Standard allocator that charges each allocation's exact requested size
+    // before allocating and returns it after deallocating.
+    template <class T>
+    class Allocator final {
+    public:
+        using value_type = T;
+
+        // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3f:638-640
+        template <class U>
+        Allocator(const Allocator<U>& other) noexcept : state_(other.state_) {}
+
+        // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3f:638-640
+        [[nodiscard]] T* allocate(std::size_t count) {
+            if (count > std::numeric_limits<std::size_t>::max() / sizeof(T))
+                throw std::bad_array_new_length();
+            const auto bytes = static_cast<std::uint64_t>(count * sizeof(T));
+            charge(*state_, bytes);
+            try {
+                return std::allocator<T>{}.allocate(count);
+            } catch (...) {
+                discharge(*state_, bytes);
+                throw;
+            }
+        }
+
+        // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3f:638-640
+        void deallocate(T* pointer, std::size_t count) noexcept {
+            std::allocator<T>{}.deallocate(pointer, count);
+            discharge(*state_, static_cast<std::uint64_t>(count * sizeof(T)));
+        }
+
+        // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3f:638-640
+        template <class U>
+        [[nodiscard]] bool operator==(const Allocator<U>& other) const noexcept {
+            return state_ == other.state_;
+        }
+
+    private:
+        template <class>
+        friend class Allocator;
+        friend class Account;
+        // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3f:638-640
+        explicit Allocator(std::shared_ptr<State> state) noexcept : state_(std::move(state)) {}
+
+        std::shared_ptr<State> state_;
+    };
+
+    MemoryLedger(const MemoryLedger&) = delete;
+    MemoryLedger& operator=(const MemoryLedger&) = delete;
+    MemoryLedger(MemoryLedger&&) = delete;
+    MemoryLedger& operator=(MemoryLedger&&) = delete;
+    ~MemoryLedger() = default;
+
+    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3f:638-640
+    [[nodiscard]] Account account() const noexcept { return Account(state_); }
+    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3f:638-640
+    [[nodiscard]] std::uint64_t used() const noexcept { return state_->used.load(); }
+    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3f:638-640
+    [[nodiscard]] std::uint64_t limit() const noexcept { return state_->limit; }
+
+private:
+    friend class MainOwner;
+    // `limit` must be nonzero and at most ResourceLimits::max_resident_bytes
+    // (`memory_ledger_limit_invalid`).
+    explicit MemoryLedger(std::uint64_t limit);
+
+    // Cap before add: `used` never passes `limit`, even transiently.
+    static void charge(State& state, std::uint64_t bytes);
+    static void discharge(State& state, std::uint64_t bytes) noexcept;
+
+    std::shared_ptr<State> state_;
+};
+
+}  // namespace swegca::architecture
