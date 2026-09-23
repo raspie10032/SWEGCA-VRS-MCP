@@ -14,6 +14,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <utility>
 #include <span>
 #include <stdexcept>
 #include <string_view>
@@ -542,17 +543,20 @@ public:
     // Main alone may stage the reserved state kinds. This key excludes other
     // callers, but does not narrow MainOwner's existing JournalStore friend
     // rights or grant a state-write capability. State codecs and final
-    // publication remain Main storage work.
+    // publication remain Main storage work. With no override, part and
+    // candidate-publication generations keep their parent's state head;
+    // only the final Main publication supplies a replacement head.
     // Lineage: native mechanism — reserved state staging follows the sole Main-owned state rule; kind numbers and this key are C++ storage choices.
     // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:17
     [[nodiscard]] StagedGeneration stage_state_records(
         const StateStageKey&, std::span<const RecordDraft> drafts,
-        const StateHeadReference& state, std::span<const ViewGeneration> views) const {
+        std::optional<StateHeadReference> state_override,
+        std::span<const ViewGeneration> views) const {
         for (const auto& draft : drafts)
             if (draft.kind != state_part_record_kind && draft.kind != state_root_record_kind &&
                 draft.kind != state_publication_record_kind)
                 throw std::invalid_argument("journal_state_kind_required");
-        return stage_records(drafts, views, std::optional<StateHeadReference>{state});
+        return stage_records(drafts, views, std::move(state_override));
     }
 
     // Publishes `staged` only if the head is still its parent. Order: segment
