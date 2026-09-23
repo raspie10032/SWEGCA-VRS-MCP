@@ -11,7 +11,6 @@
 #include <atomic>
 #include <cstdint>
 #include <filesystem>
-#include <functional>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -443,7 +442,18 @@ public:
 
     // Visits every published record in sequence order over one snapshot,
     // verifying the whole record chain. No lock is held while `visit` runs.
-    void for_each_record(const std::function<void(const RecordView&, const RecordPosition&)>& visit) const;
+    // SWEGCA: user@2026-09-22:72-79
+    template <class F>
+        requires std::is_invocable_v<F&, const RecordView&, const RecordPosition&>
+    void for_each_record(F& visit) const {
+        const auto invoke = [](const void* target, const RecordView& record,
+                               const RecordPosition& position) {
+            (*static_cast<F*>(const_cast<void*>(target)))(record, position);
+        };
+        for_each_record_impl(std::addressof(visit), invoke);
+    }
+    template <class F>
+    void for_each_record(const F&&) const = delete;
 
     // Index navigation (board §3B :122-123, §9 :592; L3 hot cue lookup):
     // visits every published record that carries the index entry (`kind`,
@@ -514,6 +524,9 @@ private:
     };
 
     void load_published_head();
+    void for_each_record_impl(
+        const void* target,
+        void (*visit)(const void*, const RecordView&, const RecordPosition&)) const;
     void require_usable() const;
     [[nodiscard]] std::shared_ptr<const PublishedSnapshot> snapshot() const;
     [[nodiscard]] std::uint64_t storage_of(const ExtentIndex& extents, const ManifestFields& head,

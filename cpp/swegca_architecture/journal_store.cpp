@@ -1865,8 +1865,9 @@ PublishedRecord JournalStore::read_in(const PublishedSnapshot& current,
 }
 
 // SWEGCA: user@2026-09-22:72-79
-void JournalStore::for_each_record(
-    const std::function<void(const RecordView&, const RecordPosition&)>& visit) const {
+void JournalStore::for_each_record_impl(
+    const void* target,
+    void (*visit)(const void*, const RecordView&, const RecordPosition&)) const {
     require_usable();
     const auto current = snapshot();
     Digest entering = zero_digest;
@@ -1876,9 +1877,10 @@ void JournalStore::for_each_record(
         io::read_range(segment_path(directory_, ordinal), extent.byte_length, 0, bytes,
                        "journal_published_segment_missing");
         const std::uint64_t segment = ordinal;
-        const auto forward_record = [&visit, segment](const RecordView& record,
-                                                       std::uint64_t offset) {
-            visit(record, RecordPosition{segment, offset, record.sequence, record.record_digest});
+        const auto forward_record = [target, visit, segment](const RecordView& record,
+                                                              std::uint64_t offset) {
+            visit(target, record,
+                  RecordPosition{segment, offset, record.sequence, record.record_digest});
         };
         const RecordVisitor forward(forward_record);
         decode_segment_range(bytes, 0, extent, extent.first_sequence, extent.record_count,
