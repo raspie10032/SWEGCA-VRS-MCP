@@ -1,6 +1,6 @@
 #pragma once
 
-#include "swegca_vrs/identity_types.hpp"
+#include "swegca_vrs/main_state_writer.hpp"
 
 #include <span>
 #include <variant>
@@ -27,27 +27,29 @@ using MemoryCandidateReferences =
 // references. An empty candidate has no valid MemoryCandidate source form.
 // This predicate does not authenticate the receipt, check Main's current
 // state/journal heads, or issue semantic-promotion authority.
+// It takes one receipt so its evidence references and id cannot be paired
+// from different receipts. The allocation-free scan takes
+// O(receipt.evidence_references.size() * candidate.size()) time.
 // Lineage: direct — the source's set-inclusion predicate; native mechanism —
 // the two reference kinds cannot impersonate one another.
 // SWEGCA: src/tinylm_slicer/mosaic_memory_promotion.py@3bddcb7:37-71
 // SWEGCA: src/tinylm_slicer/mosaic_world_memory_transaction.py@3bddcb7:234-239
 [[nodiscard]] inline bool memory_candidate_covers_write_receipt(
     std::span<const MemoryCandidateReference> candidate,
-    std::span<const ExperienceAddress> receipt_evidence,
-    const Digest256& receipt_id) noexcept {
+    const BoundedWriteReceipt& receipt) noexcept {
     if (candidate.empty()) return false;
 
     bool linked = false;
     for (const auto& reference : candidate) {
         const auto* link = std::get_if<WriteReceiptLink>(&reference);
-        if (link != nullptr && link->receipt_id == receipt_id) {
+        if (link != nullptr && link->receipt_id == receipt.receipt_id) {
             linked = true;
             break;
         }
     }
     if (!linked) return false;
 
-    for (const auto& required : receipt_evidence) {
+    for (const auto& required : receipt.evidence_references) {
         bool found = false;
         for (const auto& reference : candidate) {
             const auto* address = std::get_if<ExperienceAddress>(&reference);

@@ -163,9 +163,10 @@ system is divided by ownership and authority.
 
 - Maintains episodic, quarantined, semantic, retracted, and superseded records
   as journaled states over original experience addresses.
-- Semantic promotion requires the authoritative decision, exact state-write
-  receipt, its evidence references and receipt-id link, and current native
-  journal heads. The linked-promotion source and SWEGCA spec §4.8 do not
+- Semantic promotion requires the authoritative accepted decision and its
+  separate causal/source/context minima, exact state-write receipt, its
+  evidence references and receipt-id link, and current native journal heads.
+  The linked-promotion source and SWEGCA spec §4.8 do not
   compare the candidate's `hypothesis_id` with the receipt's claim; that
   additional check is not silently added here.
 - The user's linked-promotion source
