@@ -305,7 +305,7 @@ public:
     // with the view pages, before anything is written. Fails with
     // `journal_generation_too_large`, `journal_address_duplicate`,
     // `journal_storage_budget_exhausted`, or the host's allocation refusal.
-    // Records of the experience kinds (original, derived, part) are staged
+    // Records of the memory/cue kinds (original, derived, part, cue binding) are staged
     // only through ExperienceJournal, which derives a derived record's root
     // sources and contexts from its published lineage; here they fail
     // `journal_experience_kind_reserved`, so no record's provenance is
@@ -319,6 +319,12 @@ public:
     [[nodiscard]] StagedGeneration stage_experience_records(
         const ExperienceStageKey&, std::span<const RecordDraft> drafts,
         const StateGeneration& state, std::span<const ViewGeneration> views) const {
+        for (const auto& draft : drafts)
+            if (draft.kind != original_experience_record_kind &&
+                draft.kind != derived_experience_record_kind &&
+                draft.kind != experience_part_record_kind &&
+                draft.kind != cue_binding_record_kind)
+                throw std::invalid_argument("journal_memory_kind_required");
         return stage_records(drafts, state, views);
     }
 

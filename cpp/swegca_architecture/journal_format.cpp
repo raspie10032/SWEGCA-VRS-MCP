@@ -235,9 +235,14 @@ bool is_index_entry(std::string_view index_entry) noexcept {
 
 // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3f:122-123
 bool index_entry_allowed(std::uint16_t record_kind, std::string_view index_entry) noexcept {
+    if (record_kind == state_part_record_kind ||
+        record_kind == state_root_record_kind ||
+        record_kind == state_publication_record_kind)
+        return false;
     const bool lowercase = !index_entry.empty() && index_entry.front() >= 'a' && index_entry.front() <= 'z';
     return !lowercase || record_kind == original_experience_record_kind ||
-           record_kind == derived_experience_record_kind;
+           record_kind == derived_experience_record_kind ||
+           record_kind == cue_binding_record_kind;
 }
 
 // SWEGCA: user@2026-09-22:60-61
