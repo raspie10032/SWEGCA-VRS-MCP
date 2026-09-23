@@ -39,7 +39,7 @@ build/digest.o: cpp/digest.cpp cpp/digest.hpp | build
 build/json.o: cpp/json.cpp cpp/json.hpp cpp/digest.hpp | build
 	$(CXX) $(CXXFLAGS) -Icpp -c $< -o $@
 
-build/unicode.o: cpp/unicode.cpp cpp/unicode.hpp | build
+build/unicode.o: cpp/unicode.cpp cpp/unicode.hpp cpp/python_printable_ranges.hpp | build
 	$(CXX) $(CXXFLAGS) -Icpp -c $< -o $@
 
 build/keys.o: cpp/keys.cpp cpp/keys.hpp cpp/unicode.hpp cpp/unicode_tables.hpp | build

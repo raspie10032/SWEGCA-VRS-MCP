@@ -1,5 +1,7 @@
 #include "native_published_hot_index.hpp"
 
+#include "unicode.hpp"
+
 #include <array>
 #include <filesystem>
 #include <set>
@@ -108,7 +110,7 @@ HotIndexEpisodeHeader NativePublishedHotIndex::episode_header(
     const auto address = originals_->find_header(identifier,
                                                   published_row_limit_);
     if (!address)
-        throw std::out_of_range("'" + std::string(identifier) + "'");
+        throw std::out_of_range(python_key_error_text(identifier));
     return headers_->read_at(*address, identifier, published_row_limit_).header;
 }
 

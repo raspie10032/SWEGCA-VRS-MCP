@@ -1,5 +1,10 @@
 #include "unicode.hpp"
 
+#include "python_printable_ranges.hpp"
+
+#include <algorithm>
+#include <array>
+#include <iterator>
 #include <stdexcept>
 
 namespace swegca::vrs {
@@ -70,6 +75,59 @@ bool python_space(std::uint32_t point) {
            (point >= 0x2000 && point <= 0x200a) ||
            point == 0x2028 || point == 0x2029 || point == 0x202f ||
            point == 0x205f || point == 0x3000;
+}
+
+namespace {
+
+// SWEGCA: src/swegca_vrs2/store.py@7536139:149-153
+bool python_printable(std::uint32_t point) {
+    const auto* first = std::begin(unicode_table::printable_ranges);
+    const auto* last = std::end(unicode_table::printable_ranges);
+    const auto* found = std::lower_bound(
+        first, last, point,
+        [](const auto& range, std::uint32_t key) {
+            return range.last < key;
+        });
+    return found != last && found->first <= point;
+}
+
+// SWEGCA: src/swegca_vrs2/store.py@7536139:149-153
+void append_hex_escape(std::string& result, char prefix,
+                       std::uint32_t point, std::size_t digits) {
+    static constexpr std::array<char, 16> hex{
+        '0', '1', '2', '3', '4', '5', '6', '7',
+        '8', '9', 'a', 'b', 'c', 'd', 'e', 'f'};
+    result.push_back('\\');
+    result.push_back(prefix);
+    for (std::size_t shift = digits; shift-- > 0;)
+        result.push_back(hex[(point >> (shift * 4)) & 0xf]);
+}
+
+}  // namespace
+
+// SWEGCA: src/swegca_vrs2/store.py@7536139:149-153
+std::string python_key_error_text(std::string_view identifier) {
+    const auto points = decode_utf8(identifier);
+    const auto single = std::find(points.begin(), points.end(), '\'') !=
+        points.end();
+    const auto double_quote = std::find(points.begin(), points.end(), '"') !=
+        points.end();
+    const char quote = single && !double_quote ? '"' : '\'';
+    std::string result(1, quote);
+    for (const auto point : points) {
+        if (point == '\\' || point == static_cast<std::uint32_t>(quote)) {
+            result.push_back('\\');
+            result.push_back(static_cast<char>(point));
+        } else if (point == '\t') result += "\\t";
+        else if (point == '\n') result += "\\n";
+        else if (point == '\r') result += "\\r";
+        else if (python_printable(point)) append_utf8(result, point);
+        else if (point <= 0xff) append_hex_escape(result, 'x', point, 2);
+        else if (point <= 0xffff) append_hex_escape(result, 'u', point, 4);
+        else append_hex_escape(result, 'U', point, 8);
+    }
+    result.push_back(quote);
+    return result;
 }
 
 }  // namespace swegca::vrs

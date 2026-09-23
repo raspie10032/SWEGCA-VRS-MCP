@@ -1,5 +1,6 @@
 #include "portal_navigation.hpp"
 
+#include <algorithm>
 #include <cstddef>
 #include <set>
 #include <stdexcept>
@@ -46,8 +47,23 @@ PortalNavigationRecall recall_after_deja_vu_navigation(
         } catch (const std::runtime_error& error) {
             failures.push_back(PortalNavigationFailure{component, std::nullopt,
                                                        error.what()});
+        } catch (const std::out_of_range& error) {
+            failures.push_back(PortalNavigationFailure{component, std::nullopt,
+                                                       error.what()});
         }
     }
+    // The author compares all region masses in one normalized topology. The
+    // product stores disconnected components separately, so compare their
+    // already normalized masses globally and use component only as the stable
+    // adaptation tie break.
+    // SWEGCA: src/tinylm_slicer/mosaic_vrs_portal_activation.py@3bddcb7:33-47
+    std::sort(origins.begin(), origins.end(), [](const auto& left,
+                                                  const auto& right) {
+        if (left.weight != right.weight) return left.weight > right.weight;
+        if (left.component != right.component)
+            return left.component < right.component;
+        return left.region < right.region;
+    });
     std::vector<PortalPlan> plans;
     std::optional<PortalCandidate> selected;
     std::optional<RegionNavigationPage> page;
@@ -76,6 +92,9 @@ PortalNavigationRecall recall_after_deja_vu_navigation(
                             origins.end());
             break;
         } catch (const std::runtime_error& error) {
+            failures.push_back(PortalNavigationFailure{
+                origin.component, origin.region, error.what()});
+        } catch (const std::out_of_range& error) {
             failures.push_back(PortalNavigationFailure{
                 origin.component, origin.region, error.what()});
         }

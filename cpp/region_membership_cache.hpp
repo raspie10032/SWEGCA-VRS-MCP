@@ -23,10 +23,24 @@ struct CachedGraphMemberships {
     std::vector<std::pair<std::uint32_t, double>> memberships;
 };
 
+struct GraphMembershipCacheStatus {
+    std::uint64_t entries;
+    std::uint64_t estimated_bytes;
+    std::uint64_t maximum_entries;
+    std::uint64_t maximum_estimated_bytes;
+    std::uint64_t hits;
+    std::uint64_t misses;
+    std::uint64_t evictions;
+    std::uint64_t oversized;
+    std::string pair_snapshot_id;
+    std::string graph_snapshot_id;
+    bool grants_authority = false;
+};
+
 // Main-owned memo of pure, derived episode membership. It is bound to one
 // exact pair, numerical source, node directory and region directory. Eviction
 // removes only derived tuples and never an original or evidence relation.
-// SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_membership_cache.py@0dc716a:14-67
+// SWEGCA: src/tinylm_slicer/mosaic_vrs_membership_cache.py@3bddcb7:14-74
 class GraphMembershipCache {
 public:
     GraphMembershipCache(
@@ -37,34 +51,38 @@ public:
         std::uint64_t maximum_entries,
         std::uint64_t maximum_estimated_bytes);
 
-    // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_membership_cache.py@0dc716a:27-30
+    // SWEGCA: src/tinylm_slicer/mosaic_vrs_membership_cache.py@3bddcb7:27-30
     void require(const FullCurrentMemoryVrsSnapshot& pair,
                  const EventVrsInputView& inputs,
                  const GraphNodeDirectory& nodes,
                  const GraphRegionDirectory& regions) const;
 
-    // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_membership_cache.py@0dc716a:32-57
+    // SWEGCA: src/tinylm_slicer/mosaic_vrs_membership_cache.py@3bddcb7:31-58
     [[nodiscard]] CachedGraphMemberships memberships(
         const HotIndexEpisodeHeader& episode,
         const FullCurrentMemoryVrsSnapshot& pair);
 
-    // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_membership_cache.py@0dc716a:59-67
+    // SWEGCA: src/tinylm_slicer/mosaic_vrs_membership_cache.py@3bddcb7:60-66
     [[nodiscard]] std::optional<SharedExperienceBridge> bridge(
         const HotIndexEpisodeHeader& episode,
         const FullCurrentMemoryVrsSnapshot& pair);
 
-    // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_membership_cache.py@0dc716a:70-71
+    // SWEGCA: src/tinylm_slicer/mosaic_vrs_membership_cache.py@3bddcb7:68-74
     [[nodiscard]] std::uint64_t maximum_entries() const {
         return maximum_entries_;
     }
-    // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_membership_cache.py@0dc716a:70-71
+    // SWEGCA: src/tinylm_slicer/mosaic_vrs_membership_cache.py@3bddcb7:68-74
     [[nodiscard]] std::uint64_t maximum_estimated_bytes() const {
         return maximum_estimated_bytes_;
     }
-    // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_membership_cache.py@0dc716a:68-74
+    // SWEGCA: src/tinylm_slicer/mosaic_vrs_membership_cache.py@3bddcb7:68-74
     [[nodiscard]] std::uint64_t estimated_bytes() const;
-    // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_membership_cache.py@0dc716a:68-74
+    // SWEGCA: src/tinylm_slicer/mosaic_vrs_membership_cache.py@3bddcb7:68-74
     [[nodiscard]] std::uint64_t entry_count() const;
+    // The product graph is split into immutable components, so the source's
+    // one topology_id becomes the exact graph generation binding here.
+    // SWEGCA: src/tinylm_slicer/mosaic_vrs_membership_cache.py@3bddcb7:68-74
+    [[nodiscard]] GraphMembershipCacheStatus status() const;
 
 private:
     struct Key {
@@ -95,6 +113,10 @@ private:
     std::list<Row> rows_;
     std::map<Key, std::list<Row>::iterator> index_;
     std::uint64_t estimated_bytes_ = 0;
+    std::uint64_t hits_ = 0;
+    std::uint64_t misses_ = 0;
+    std::uint64_t evictions_ = 0;
+    std::uint64_t oversized_ = 0;
 };
 
 }  // namespace swegca::vrs

@@ -208,10 +208,15 @@ and literal cues; a hit cannot bypass generation validation. Eviction removes
 only derived membership tuples, never an original or evidence relation. The
 entry byte charge anticipates both C++ key copies, but remains a conservative
 estimate rather than allocator or process RSS. It therefore cannot enforce
-the 4 GiB product limit by itself. The source-only packed-node strategy is not
-implemented because its dynamically imported module is absent from the
-author checkout; no substitute algorithm is invented. Main generation
-configuration, counter/status parity and coactivation wiring remain pending.
+the 4 GiB product limit by itself. Lookup, derivation, counter updates and LRU
+mutation share the source's one lock; hit, miss, eviction, oversized and
+generation-bound status values are retained. The product's split component
+topologies use their common immutable Graph snapshot in the status field and
+retain the exact component topology ID in each cached value. The source-only
+packed-node strategy is not implemented because its dynamically imported
+module is absent from the author checkout; no substitute algorithm is
+invented. Main generation configuration and coactivation wiring remain
+pending.
 The selected four-stage suffix now retains the full completed Recall in
 `memory_selection` while the activation receipt carries one selected original
 and any conflict-related opposing originals opened later. Its first Replay

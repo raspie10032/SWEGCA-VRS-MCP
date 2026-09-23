@@ -1,5 +1,7 @@
 #include "four_stage_read.hpp"
 
+#include "keys.hpp"
+
 #include <algorithm>
 #include <map>
 #include <optional>
@@ -9,6 +11,7 @@
 #include <string_view>
 #include <utility>
 #include <vector>
+#include <unordered_set>
 
 namespace swegca::vrs {
 namespace {
@@ -77,6 +80,38 @@ CurrentEvidenceVerdict judge_selected_original(
         proposition);
 }
 
+// Reuse the complete Recall row whenever it already contains the opposing
+// original. If proposition discovery opens an address outside that row,
+// reconstruct exactly the author's Recall fields from the same current cues.
+// SWEGCA: src/swegca_vrs2/engine/mosaic_memory_activation.py@7536139:335-341
+RecallCandidate opposing_recall_candidate(
+    const PortalNavigationRecall& navigation,
+    const HotIndexEpisodeHeader& header) {
+    const auto found = std::find_if(
+        navigation.recall.candidates.begin(), navigation.recall.candidates.end(),
+        [&](const auto& candidate) {
+            return candidate.episode_id == header.episode_id;
+        });
+    if (found != navigation.recall.candidates.end()) return *found;
+    std::unordered_set<std::string> current(
+        navigation.signal.current_cues.begin(),
+        navigation.signal.current_cues.end());
+    for (const auto& cue : navigation.navigation_cues)
+        current.insert(normalize_cue(cue));
+    std::vector<std::string> matched;
+    std::unordered_set<std::string> union_cues = current;
+    for (const auto& cue : header.cues) {
+        if (current.contains(cue)) matched.push_back(cue);
+        union_cues.insert(cue);
+    }
+    const auto overlap = static_cast<double>(matched.size()) /
+        static_cast<double>(union_cues.size());
+    return RecallCandidate{
+        header.episode_id, std::move(matched), overlap,
+        header.revision, header.verification_state,
+        header.historical_outcomes};
+}
+
 }  // namespace
 
 // SWEGCA: src/swegca_vrs2/store.py@c06092a:1719-1768
@@ -126,8 +161,7 @@ FullFourStageRead finish_selected_four_stage_read(
                 if (opened_ids.contains(identifier)) continue;
                 const auto header = memory.episode_header(identifier);
                 if (header.evidence_polarity == selected_polarity) continue;
-                RecallCandidate candidate{identifier, {}, 0.0, header.revision,
-                                          header.verification_state, header.historical_outcomes};
+                auto candidate = opposing_recall_candidate(navigation, header);
                 auto one = RecallResult(opened.query, {candidate}, opened.snapshot_id,
                                         opened.source_dependencies);
                 auto one_replay = replay_memory(memory, one, read_original);
