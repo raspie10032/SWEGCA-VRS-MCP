@@ -578,14 +578,19 @@ manifest files and fsyncs them. Main's durable commit then records the exact
 manifest location and digest and the state publication in a new, append-only
 receipt: create the pending receipt exclusively, fsync it, compare-and-swap
 Main's in-memory owner pair, rename that new receipt to its committed name,
-and fsync its directory. No mutable current pointer is written on disk. The
-committed receipt Main selects is the authoritative recovery root; its
-predecessor chain must verify. A pending receipt has no recovery authority,
-is retained, and blocks further writes until reconciliation. The exact cold
+and fsync its directory. Main writes no mutable current pointer; the lower
+journal's HEAD is a native standalone pointer that Main does not read for
+recovery. The committed receipt Main selects is the authoritative recovery
+root. Verifying its predecessor chain is a native C++ requirement, beyond
+the author's existing receipt fields. A pending marker, or a committed name
+whose directory fsync failed, is not a proven durable commit marker; it is
+retained and blocks further writes until reconciliation. The exact cold
 selection rule among committed receipts remains to be defined.
 
-The lower journal's own HEAD may support standalone use but cannot override a
-generation named by Main's committed receipt. Under Main-selected recovery,
+Once Main owns a journal, it opens that journal only through its selected
+root (`open_at_root`), never through standalone `open`. The lower journal's
+own HEAD may support standalone use but cannot override a generation named
+by Main's committed receipt. Under Main-selected recovery,
 readers ignore detached files outside the selected generation while retaining
 and charging their bytes until explicit reconciliation. Standalone `open`
 still removes or truncates bytes past its own HEAD; it is not Main's recovery
@@ -598,7 +603,11 @@ unbounded Main file. Segmented manifests and append-only commit receipts are
 **re-created (user@2026-09-23)** to implement the one-current-generation,
 recoverable publication requirements of I01, I07, and §4.8. The native Main
 receipt writer, restart selection, and write resumption after an older selected
-generation remain implementation work.
+generation remain implementation work. After Main's in-memory owner swap, a
+failed marker rename or directory fsync keeps the new pair live for reads and
+refuses later writes until reconciliation; it does not roll the live pair
+back. A failure before that swap leaves the prior pair current and retains
+any partial pending marker.
 
 Main prepares records and derived pages in a detached generation. The selected
 manifest names the journal tail, state generation, view generations, and exact

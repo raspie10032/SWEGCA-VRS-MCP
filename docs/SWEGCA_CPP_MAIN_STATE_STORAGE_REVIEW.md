@@ -61,10 +61,13 @@ crash cases before code uses it.
   digest selected by Main and writes no mutable current pointer.
   `mosaic_paper_resident_assimilation.py@3bddcb7:491-535` creates a new
   exclusive pending receipt, fsyncs it, swaps Main's in-memory owner pair,
-  renames that receipt to committed, and fsyncs its directory. Its receipt
-  names the previous and replacement pair IDs. The native C++ receipt must
-  additionally bind its exact journal manifest and state publication; its
-  restart selection rule remains undecided.
+  renames that receipt to committed, and fsyncs its directory. If rename or
+  directory fsync fails after the swap, the new pair remains live for reads;
+  `_require_commit_ready` (`:447-449`) blocks later writes until the marker
+  is reconciled. Its receipt names the previous and replacement pair IDs;
+  the earlier author code does not verify a restart predecessor chain. The
+  native C++ receipt must additionally bind its exact journal manifest and
+  state publication; its restart selection rule remains undecided.
 - The user's earlier bounded writer keeps prior write metadata in `self_state`.
   C++ candidate `SelfState` now holds an opaque caller payload alongside an
   optional typed `BoundedWriteHead` (policy version, receipt digest, revision,
@@ -122,8 +125,9 @@ crash cases before code uses it.
    durable authority. Following the author's commit order, Main writes and
    fsyncs a pending receipt, swaps its in-memory owner pair by compare-and-swap,
    renames the new receipt to its committed name, then fsyncs the directory.
-   A failed final marker leaves the pending marker and blocks further writes
-   until reconciliation.
+   A failed final rename or directory fsync leaves a pending or unconfirmed
+   committed marker. It keeps the replacement pair live for reads and blocks
+   further writes until reconciliation, following the author's commit path.
 5. Intermediate part publication, if necessary to respect the 64 MiB
    generation limit, keeps the prior state-head publication identity. Part
    records confer no decision or write authority. A crash before the final
@@ -132,10 +136,13 @@ crash cases before code uses it.
    The final stage must be built on the latest journal HEAD while comparing
    the state-head publication identity with the one read before preparation,
    since unrelated experience appends may advance the journal generation.
-   If publication throws, Main cannot infer durable state from its in-memory
-   pointer or the lower journal HEAD. It retains any pending marker, stops
-   guarded work, and recovers from Main's selected committed receipt before
-   another write.
+   A lower journal publication failure or a pending-receipt write failure
+   before Main's owner swap leaves the prior pair current. Main cannot infer
+   durable state from the lower journal HEAD; it retains any partial pending
+   marker and stops guarded work until reconciliation. After Main's owner
+   swap, a failed marker rename or directory fsync does not roll the live
+   pair back: reads keep using it while further writes are refused. Cold
+   recovery must choose only a proven committed Main receipt.
 6. Initialization, cold recovery, and guarded writes must fit the VRS host's
    configured memory profile and preserve the canonical state content byte
    stream. Its content digest excludes generation ordinal, as the user's earlier
@@ -220,8 +227,11 @@ crash cases before code uses it.
   changing the state identity, so the final stage is rebuilt from the latest
   lower HEAD. Main then follows the append-only pending/committed receipt
   protocol above. No staged object manufactures a published `StateSnapshot`.
-  Failure after either lower publication starts requires recovery from
-  Main's committed receipt before guarded work resumes.
+  Main-owned recovery must use `open_at_root`, never standalone `open`, so
+  the lower HEAD cannot expose either uncommitted candidate as Main's state.
+  Failure before Main's owner swap keeps the prior pair current; a later
+  marker failure keeps the replacement pair live for reads and blocks writes
+  until reconciliation.
 - A candidate receipt in a published record is not itself a committed-write
   receipt. Recovery, rollback eligibility, and audit count it only if a
   Main committed receipt selects the final manifest that names its exact
@@ -355,7 +365,8 @@ four-stage VRS path is already implemented.
 - List crash points around part publication, final lower HEAD publication,
   pending Main receipt fsync, Main owner compare-and-swap, committed receipt
   rename, and directory fsync; assert the selected durable state is always
-  recoverable and a pending receipt blocks further writes.
+  recoverable and a pending or unconfirmed committed marker blocks further
+  writes without rolling back an already swapped live pair.
 - Decide how to reclaim published parts that no state root uses. The
   semantic-memory `prepared` protocol does not itself free their storage
   and is not a source-backed prerequisite for staging state parts.
