@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <span>
 
 // SWEGCA nano-core: the pure ternary judgment of evidence (accept, reject,
@@ -218,14 +219,23 @@ struct Interval {
     }
     const double samples = supports + refutes;
     if (!std::isfinite(samples)) return out;
-    out.posterior_mean =
-        (supports + r.prior_alpha_) / (samples + r.prior_alpha_ + r.prior_beta_);
-    out.causal_lower_bound = causal_lower;
-    out.overall_upper_bound = wilson_interval(supports, refutes, r.z_, r.z_squared_).upper;
-    out.effective_sample_size = samples;
+    const double posterior_numerator = supports + r.prior_alpha_;
+    const double posterior_denominator = samples + r.prior_alpha_ + r.prior_beta_;
+    if (!std::isfinite(posterior_numerator) || !std::isfinite(posterior_denominator))
+        return out;
+    const double posterior_mean = posterior_numerator / posterior_denominator;
+    const double overall_upper = wilson_interval(supports, refutes, r.z_, r.z_squared_).upper;
     const bool measured = t.recent_count >= r.minimum_recent_samples_;
-    out.regime_change_score =
-        measured ? std::fabs(t.recent_sum / t.recent_count - out.posterior_mean) : 0.0;
+    const double regime_score =
+        measured ? std::fabs(t.recent_sum / t.recent_count - posterior_mean) : 0.0;
+    if (!std::isfinite(posterior_mean) || !std::isfinite(causal_lower) ||
+        !std::isfinite(overall_upper) || !std::isfinite(regime_score))
+        return out;
+    out.posterior_mean = posterior_mean;
+    out.causal_lower_bound = causal_lower;
+    out.overall_upper_bound = overall_upper;
+    out.effective_sample_size = samples;
+    out.regime_change_score = regime_score;
 
     using S = EvidenceStatus;
     using R = EvidenceReason;
@@ -249,8 +259,35 @@ struct Interval {
     return out;
 }
 
+struct EvidenceByteRange {
+    std::uintptr_t begin = 0;
+    std::uintptr_t end = 0;
+};
+
+template <class T>
+[[nodiscard]] inline bool evidence_byte_range(std::span<T> column,
+                                              EvidenceByteRange& range) noexcept {
+    if (column.empty()) {
+        range = {};
+        return true;
+    }
+    constexpr auto max_address = std::numeric_limits<std::uintptr_t>::max();
+    if (column.size() > max_address / sizeof(T)) return false;
+    const auto bytes = column.size() * sizeof(T);
+    const auto begin = reinterpret_cast<std::uintptr_t>(column.data());
+    if (begin > max_address - bytes) return false;
+    range = {begin, begin + bytes};
+    return true;
+}
+
+[[nodiscard]] inline bool evidence_ranges_overlap(EvidenceByteRange a,
+                                                  EvidenceByteRange b) noexcept {
+    return a.begin < a.end && b.begin < b.end && a.begin < b.end && b.begin < a.end;
+}
+
 // Judges items [first, last) of a batch; disjoint ranges may run on different
-// workers. Returns false (and writes nothing) when a column does not fit.
+// workers. Returns false (and writes nothing) when a column does not fit or
+// any output column overlaps an input or another output column.
 // SWEGCA: src/swegca/mosaic_evidence_accumulator.py@5901a5a:285-357
 [[nodiscard]] inline bool judge_evidence_batch(const EvidenceRules& rules,
                                                const EvidenceColumns& in,
@@ -269,6 +306,31 @@ struct Interval {
         out.causal_lower_bound.size() != n || out.overall_upper_bound.size() != n ||
         out.effective_sample_size.size() != n || out.regime_change_score.size() != n)
         return false;
+    std::array<EvidenceByteRange, 8> inputs;
+    if (!evidence_byte_range(in.axis_support, inputs[0]) ||
+        !evidence_byte_range(in.axis_refute, inputs[1]) ||
+        !evidence_byte_range(in.axis_source_diversity, inputs[2]) ||
+        !evidence_byte_range(in.source_diversity, inputs[3]) ||
+        !evidence_byte_range(in.context_diversity, inputs[4]) ||
+        !evidence_byte_range(in.recent_count, inputs[5]) ||
+        !evidence_byte_range(in.recent_sum, inputs[6]) ||
+        !evidence_byte_range(in.revision, inputs[7]))
+        return false;
+    std::array<EvidenceByteRange, 7> outputs;
+    if (!evidence_byte_range(out.status, outputs[0]) ||
+        !evidence_byte_range(out.reason, outputs[1]) ||
+        !evidence_byte_range(out.posterior_mean, outputs[2]) ||
+        !evidence_byte_range(out.causal_lower_bound, outputs[3]) ||
+        !evidence_byte_range(out.overall_upper_bound, outputs[4]) ||
+        !evidence_byte_range(out.effective_sample_size, outputs[5]) ||
+        !evidence_byte_range(out.regime_change_score, outputs[6]))
+        return false;
+    for (std::size_t output = 0; output < outputs.size(); ++output) {
+        for (const auto input : inputs)
+            if (evidence_ranges_overlap(outputs[output], input)) return false;
+        for (std::size_t earlier = 0; earlier < output; ++earlier)
+            if (evidence_ranges_overlap(outputs[output], outputs[earlier])) return false;
+    }
     for (std::size_t item = first; item < last; ++item) {
         EvidenceTally tally;
         for (std::size_t axis = 0; axis < axis_count; ++axis) {
