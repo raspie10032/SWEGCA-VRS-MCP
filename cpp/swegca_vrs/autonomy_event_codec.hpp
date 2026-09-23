@@ -13,10 +13,10 @@
 #include <span>
 #include <string_view>
 
-// The native byte form of one complete autonomy event, and its streaming
-// reader. The author keeps an event as an in-memory value (AutonomyEvent,
+// The native byte form of one complete autonomy event, its streaming reader
+// and its self-checking writer. The author keeps an event as an in-memory value (AutonomyEvent,
 // mosaic_autonomous_cognition.py@5901a5a:89-120) and normalizes only its
-// payload, through a JSON round trip (:113-119); a byte form of the whole
+// payload, through a JSON round trip (:114-120); a byte form of the whole
 // event, its tags and its order are native. The reader establishes that the
 // fields a Main route hands to the kernel are the reading of one stream of
 // bytes. It does not decide record kind, lineage, how the event's context
@@ -73,7 +73,7 @@ public:
     // SHA-256 of the domain field `swegca.autonomy_event.context.v1` and the
     // exact context_hash text, each as a u64 length and its bytes. It is the
     // view's context: neither a hex parse nor an experience record's context.
-    // SWEGCA: src/swegca/mosaic_autonomous_cognition.py@5901a5a:101-106
+    // SWEGCA: src/swegca/mosaic_autonomous_cognition.py@5901a5a:101-107
     [[nodiscard]] const Digest256& context_digest() const noexcept { return context_; }
 
 private:
@@ -107,10 +107,8 @@ private:
 // what the event keeps; every other payload byte is checked, hashed and
 // released. A malformed byte throws `autonomy_event_encoding_invalid:<rule>`;
 // an envelope field the author rejects throws `autonomy_event_invalid:<field>`.
-// A kept payload string longer than the typed control can store
-// (`journal::max_payload_bytes`), or more than 2^32-1 requested axes, throws
-// `autonomy_event_unstorable:<key>`. That is the control's current storage
-// limit, not an author bound, and nothing is truncated.
+// A kept value has no length or count cap of its own; the account's
+// allocation is its limit, and nothing is truncated.
 class AutonomyEventParser final {
 public:
     // SWEGCA: src/swegca/mosaic_autonomous_cognition.py@5901a5a:89-120
@@ -178,7 +176,6 @@ private:
     void value_done();
     [[nodiscard]] Target next_target() const noexcept;
     [[nodiscard]] static Target target_of(std::span<const std::byte> key) noexcept;
-    [[nodiscard]] static std::string_view target_name(Target target) noexcept;
     [[nodiscard]] static std::string_view field_name(Field field) noexcept;
     [[nodiscard]] static std::size_t fixed_width(Step step) noexcept;
     // True when a code point completed; throws on an invalid sequence.
@@ -188,7 +185,7 @@ private:
     AllocationContext memory_;
     std::optional<ParsedAutonomyEvent> out_;
     Step step_ = Step::magic;
-    bool broken_ = false;  // a throw left the stream mid-byte
+    bool broken_ = false;  // feed or finish failed; this parser cannot resume
     std::array<std::byte, 8> fixed_{};
     std::size_t fixed_have_ = 0;
     std::uint64_t run_left_ = 0;
@@ -203,13 +200,52 @@ private:
     std::uint64_t payload_left_ = 0;
     Sha256 payload_hash_;
     journal::LedgerVector<Frame> frames_;
-    // The value being read: its target and, for a kept string, its buffer.
-    Target target_ = Target::none;
+    // The buffer of the kept string being read, if any.
     ParsedAutonomyEvent::Text* keep_ = nullptr;
     std::uint8_t pending_tag_ = 0;
     bool pending_axes_ = false;
     bool integer_negative_ = false;
     bool integer_first_ = false;
 };
+
+// One value of a complete normalized payload, in pre-order: a container is
+// followed by its members, and each object member by a key and its value.
+// The payload is what the author's JSON round trip leaves (:114-120).
+struct AutonomyPayloadToken {
+    enum class Kind : std::uint8_t {
+        null_value = 0, false_value = 1, true_value = 2, integer = 3,
+        real = 4, string = 5, array = 6, object = 7, key = 8,
+    };
+    Kind kind = Kind::null_value;
+    bool negative = false;             // an integer below zero
+    std::span<const std::byte> bytes;  // integer magnitude (big-endian); string or key (generalized UTF-8)
+    std::uint64_t count = 0;           // array or object members
+    double real = 0;
+};
+
+// A complete event as its producer holds it, borrowed for one encoding.
+struct AutonomyEventInput {
+    AutonomyEventKind kind = AutonomyEventKind::observation;
+    std::string_view event_id;
+    std::optional<std::string_view> hypothesis_id;
+    std::span<const std::string_view> evidence_refs;
+    std::string_view source_family;
+    std::string_view context_hash;  // generalized UTF-8
+    double confidence = 0;
+    std::span<const AutonomyPayloadToken> payload;  // pre-order, an object first
+};
+
+// Writes the event's native bytes on `memory`, then reads them back with
+// AutonomyEventParser, so it returns only bytes that parser accepts. Tokens
+// out of shape (a key where a value belongs, a count its members do not fill,
+// anything after the payload) throw `autonomy_event_tokens_invalid:<rule>`;
+// keys out of order, invalid UTF-8 or a field the author rejects throw as the
+// parser does. It writes minimal integer magnitudes (zero is never negative)
+// and one native F2 NaN pattern. It does not sort keys: the payload must
+// already be in F2 code-point order. It never encodes from
+// an AutonomyEventView, whose six projected keys cannot give back the rest.
+// SWEGCA: src/swegca/mosaic_autonomous_cognition.py@5901a5a:89-120
+[[nodiscard]] journal::LedgerBytes encode_autonomy_event(const AllocationContext& memory,
+                                                         const AutonomyEventInput& event);
 
 }  // namespace swegca::vrs

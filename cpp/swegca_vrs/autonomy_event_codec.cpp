@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <bit>
-#include <limits>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -52,6 +51,111 @@ void mark(PayloadField<T>& field, bool expected_type) noexcept {
 constexpr std::array<std::string_view, 5> field_names{
     "event_id", "hypothesis_id", "evidence_refs", "source_family", "context_hash"};
 
+constexpr std::uint64_t canonical_nan_bits = 0x7ff8000000000000ull;
+
+// Lineage: native mechanism — a token list that cannot be the payload.
+// SWEGCA: user@2026-09-22:60-61
+[[noreturn]] void bad_tokens(std::string_view rule) {
+    fail("autonomy_event_tokens_invalid:" + std::string(rule));
+}
+
+// SWEGCA: user@2026-09-22:60-61
+void append_raw(journal::LedgerBytes& out, std::span<const std::byte> bytes) {
+    out.insert(out.end(), bytes.begin(), bytes.end());
+}
+
+// Little-endian, `width` bytes.
+// SWEGCA: user@2026-09-22:60-61
+void append_uint(journal::LedgerBytes& out, std::uint64_t value, std::size_t width) {
+    for (std::size_t at = 0; at < width; ++at)
+        out.push_back(static_cast<std::byte>((value >> (8 * at)) & 0xff));
+}
+
+// SWEGCA: user@2026-09-22:60-61
+void append_text(journal::LedgerBytes& out, std::string_view text) {
+    append_uint(out, text.size(), 8);
+    append_raw(out, std::as_bytes(std::span<const char>(text.data(), text.size())));
+}
+
+// Writes the payload tokens, checking only their shape; the parser that
+// reads the result back checks everything else.
+// Lineage: native mechanism — pre-order tokens to the layout's tags.
+// SWEGCA: src/swegca/mosaic_autonomous_cognition.py@5901a5a:114-120
+void append_payload(journal::LedgerBytes& out, const AllocationContext& memory,
+                    std::span<const AutonomyPayloadToken> tokens) {
+    using Kind = AutonomyPayloadToken::Kind;
+    struct Open {
+        bool object = false;
+        std::uint64_t remaining = 0;
+        bool key_next = false;
+    };
+    journal::LedgerVector<Open> open(memory.allocator<Open>());
+    if (tokens.empty() || tokens.front().kind != Kind::object) bad_tokens("payload_not_object");
+    bool root_done = false;
+    for (const auto& token : tokens) {
+        if (root_done) bad_tokens("trailing_tokens");
+        const bool key_expected = !open.empty() && open.back().object && open.back().key_next;
+        if (key_expected != (token.kind == Kind::key)) bad_tokens("key_position");
+        if (token.kind == Kind::key) {
+            append_uint(out, token.bytes.size(), 8);
+            append_raw(out, token.bytes);
+            open.back().key_next = false;
+            continue;
+        }
+        append_uint(out, static_cast<std::uint8_t>(token.kind), 1);
+        switch (token.kind) {
+        case Kind::null_value:
+        case Kind::false_value:
+        case Kind::true_value:
+            break;
+        case Kind::integer: {
+            auto magnitude = token.bytes;
+            while (!magnitude.empty() && magnitude.front() == std::byte{0}) magnitude = magnitude.subspan(1);
+            append_uint(out, token.negative && !magnitude.empty() ? 1 : 0, 1);
+            append_uint(out, magnitude.size(), 8);
+            append_raw(out, magnitude);
+            break;
+        }
+        case Kind::real: {
+            auto bits = std::bit_cast<std::uint64_t>(token.real);
+            if ((bits & 0x7ff0000000000000ull) == 0x7ff0000000000000ull && (bits & 0x000fffffffffffffull) != 0)
+                bits = canonical_nan_bits;
+            append_uint(out, bits, 8);
+            break;
+        }
+        case Kind::string:
+            append_uint(out, token.bytes.size(), 8);
+            append_raw(out, token.bytes);
+            break;
+        case Kind::array:
+        case Kind::object:
+            append_uint(out, token.count, 8);
+            if (token.count != 0) {
+                const bool object = token.kind == Kind::object;
+                open.push_back(Open{object, token.count, object});
+                continue;
+            }
+            break;
+        default:
+            bad_tokens("kind");
+        }
+        // A value completed: close every container it filled.
+        while (true) {
+            if (open.empty()) {
+                root_done = true;
+                break;
+            }
+            auto& top = open.back();
+            if (--top.remaining != 0) {
+                top.key_next = top.object;
+                break;
+            }
+            open.pop_back();
+        }
+    }
+    if (!root_done) bad_tokens("truncated");
+}
+
 }  // namespace
 
 // SWEGCA: src/swegca/mosaic_autonomous_cognition.py@5901a5a:89-120
@@ -96,7 +200,7 @@ AutonomyEventParser::AutonomyEventParser(const AllocationContext& memory)
 
 // Only payload bytes enter the payload digest: those after the payload
 // length, up to the end of the payload value.
-// SWEGCA: src/swegca/mosaic_autonomous_cognition.py@5901a5a:113-119
+// SWEGCA: src/swegca/mosaic_autonomous_cognition.py@5901a5a:114-120
 void AutonomyEventParser::feed(std::span<const std::byte> bytes) {
     if (broken_) fail("autonomy_event_parser_failed");
     if (step_ == Step::spent) fail("autonomy_event_parser_spent");
@@ -126,6 +230,7 @@ void AutonomyEventParser::feed(std::span<const std::byte> bytes) {
 ParsedAutonomyEvent AutonomyEventParser::finish() {
     if (broken_) fail("autonomy_event_parser_failed");
     if (step_ == Step::spent) fail("autonomy_event_parser_spent");
+    broken_ = true;
     if (step_ != Step::done) malformed("truncated");
     auto& out = *out_;
     out.payload_.digest = payload_hash_.finish();
@@ -137,6 +242,7 @@ ParsedAutonomyEvent AutonomyEventParser::finish() {
     step_ = Step::spent;
     ParsedAutonomyEvent result(std::move(out));
     out_.reset();
+    broken_ = false;
     return result;
 }
 
@@ -249,11 +355,10 @@ void AutonomyEventParser::on_fixed() {
         step_ = Step::integer_bytes;
         return;
     case Step::float_bits:
-        // One NaN pattern, assumed to be the one json.loads returns (CPython's
-        // float("nan"), not measured here); -0.0 and the
-        // infinities are kept as they are.
+        // F2 uses one native NaN bit pattern. Signed zero and infinities keep
+        // their binary64 bits; no CPython NaN representation is assumed.
         if ((value & 0x7ff0000000000000ull) == 0x7ff0000000000000ull &&
-            (value & 0x000fffffffffffffull) != 0 && value != 0x7ff8000000000000ull)
+            (value & 0x000fffffffffffffull) != 0 && value != canonical_nan_bits)
             malformed("float_nan");
         value_done();
         return;
@@ -319,7 +424,7 @@ void AutonomyEventParser::text_byte(std::byte value) {
 }
 
 // The context text must hold something str.strip keeps (the author's
-// `not value.strip()` check, :101-106).
+// `not value.strip()` check, :101-107).
 // SWEGCA: src/swegca/mosaic_autonomous_cognition.py@5901a5a:100-110
 void AutonomyEventParser::end_text() {
     text_ = nullptr;
@@ -368,14 +473,13 @@ void AutonomyEventParser::on_tag(std::uint8_t tag) {
     const auto target = next_target();
     if (frames_.empty()) {
         if (root_started_) malformed("state");
-        // The author's payload is a mapping (:113-119).
+        // The author's payload is a mapping (:114-120).
         if (tag != 7) malformed("payload_not_object");
         root_started_ = true;
     }
     auto& out = *out_;
     auto& payload = out.payload_;
     keep_ = nullptr;
-    target_ = target;
     switch (target) {
     case Target::none:
         break;
@@ -439,12 +543,10 @@ void AutonomyEventParser::on_tag(std::uint8_t tag) {
     }
 }
 
-// A kept string the typed control cannot store fails rather than being cut
-// (AutonomyControl::encode bounds each text by journal::max_payload_bytes).
+// A kept string grows as its bytes arrive; the account's allocation is its
+// only limit, as for the typed control that stores it.
 // SWEGCA: src/swegca/mosaic_autonomous_cognition.py@5901a5a:267-380
 void AutonomyEventParser::begin_string(std::uint64_t length) {
-    if (keep_ && length > journal::max_payload_bytes)
-        fail("autonomy_event_unstorable:" + std::string(target_name(target_)));
     utf8_ = Utf8{};
     run_left_ = length;
     if (length == 0) {
@@ -460,8 +562,6 @@ void AutonomyEventParser::begin_string(std::uint64_t length) {
 // never reserved.
 // SWEGCA: user@2026-09-22:60-61
 void AutonomyEventParser::begin_container(std::uint64_t count) {
-    if (pending_axes_ && count > std::numeric_limits<std::uint32_t>::max())
-        fail("autonomy_event_unstorable:requested_axes");
     if (count == 0) {
         value_done();
         return;
@@ -473,10 +573,10 @@ void AutonomyEventParser::begin_container(std::uint64_t count) {
     step_ = frame.object ? Step::key_length : Step::tag;
 }
 
-// Keys strictly increase, so a key cannot repeat and a mapping has one byte
-// form (the author's normalized mapping, :113-119, sorted as json.dumps
-// sort_keys orders it by code point).
-// SWEGCA: src/swegca/mosaic_autonomous_cognition.py@5901a5a:113-119
+// F2 keys strictly increase by code point, so a key cannot repeat and one
+// normalized mapping has one native byte form. This order is the native
+// encoding rule; source normalization may convert non-string input keys.
+// SWEGCA: src/swegca/mosaic_autonomous_cognition.py@5901a5a:114-120
 void AutonomyEventParser::end_key() {
     auto& frame = frames_.back();
     if (frame.has_previous_key &&
@@ -532,21 +632,6 @@ AutonomyEventParser::Target AutonomyEventParser::target_of(std::span<const std::
     return Target::none;
 }
 
-// SWEGCA: src/swegca/mosaic_autonomous_cognition.py@5901a5a:267-380
-std::string_view AutonomyEventParser::target_name(Target target) noexcept {
-    switch (target) {
-    case Target::requested_axes:
-    case Target::axis: return "requested_axes";
-    case Target::collect_with_tool: return "collect_with_tool";
-    case Target::action: return "action";
-    case Target::success: return "success";
-    case Target::memory_ref: return "memory_ref";
-    case Target::content_hash: return "content_hash";
-    case Target::none: break;
-    }
-    return "none";
-}
-
 // SWEGCA: src/swegca/mosaic_autonomous_cognition.py@5901a5a:100-120
 std::string_view AutonomyEventParser::field_name(Field field) noexcept {
     return field_names[static_cast<std::size_t>(field)];
@@ -576,7 +661,7 @@ std::size_t AutonomyEventParser::fixed_width(Step step) noexcept {
 
 // Lineage: native mechanism — generalized UTF-8: shortest form, at most
 // U+10FFFF, surrogate code points allowed, since a Python str may hold them.
-// SWEGCA: src/swegca/mosaic_autonomous_cognition.py@5901a5a:113-119
+// SWEGCA: src/swegca/mosaic_autonomous_cognition.py@5901a5a:114-120
 bool AutonomyEventParser::utf8_push(Utf8& state, std::byte value) {
     const auto byte = std::to_integer<std::uint32_t>(value);
     if (state.pending == 0) {
@@ -615,6 +700,37 @@ std::uint64_t AutonomyEventParser::fixed_u64() const noexcept {
     for (std::size_t at = 0; at < width; ++at)
         value |= std::to_integer<std::uint64_t>(fixed_[at]) << (8 * at);
     return value;
+}
+
+// The payload length is written after the payload; the parser then reads the
+// whole result, so what returns is exactly what it accepts.
+// Lineage: native mechanism — the envelope in the layout's order.
+// SWEGCA: src/swegca/mosaic_autonomous_cognition.py@5901a5a:89-120
+journal::LedgerBytes encode_autonomy_event(const AllocationContext& memory,
+                                           const AutonomyEventInput& event) {
+    journal::LedgerBytes out(memory.allocator<std::byte>());
+    append_raw(out, std::as_bytes(std::span<const char>(autonomy_event_magic.data(), autonomy_event_magic.size())));
+    append_uint(out, autonomy_event_version, 2);
+    append_uint(out, static_cast<std::uint8_t>(event.kind), 1);
+    append_text(out, event.event_id);
+    append_uint(out, event.hypothesis_id ? 1 : 0, 1);
+    if (event.hypothesis_id) append_text(out, *event.hypothesis_id);
+    append_uint(out, event.evidence_refs.size(), 8);
+    for (const auto reference : event.evidence_refs) append_text(out, reference);
+    append_text(out, event.source_family);
+    append_text(out, event.context_hash);
+    append_uint(out, std::bit_cast<std::uint64_t>(event.confidence), 8);
+    const auto length_at = out.size();
+    append_uint(out, 0, 8);
+    const auto payload_at = out.size();
+    append_payload(out, memory, event.payload);
+    const std::uint64_t length = out.size() - payload_at;
+    for (std::size_t at = 0; at < 8; ++at)
+        out[length_at + at] = static_cast<std::byte>((length >> (8 * at)) & 0xff);
+    AutonomyEventParser check(memory);
+    check.feed(out);
+    (void)check.finish();
+    return out;
 }
 
 }  // namespace swegca::vrs
