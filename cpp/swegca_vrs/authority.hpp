@@ -5,6 +5,7 @@
 #include "swegca_vrs/authority_roles.hpp"
 #include "swegca_vrs/allocation.hpp"
 #include "swegca_vrs/identity_types.hpp"
+#include "swegca_vrs/published_state_id.hpp"
 
 #include <compare>
 #include <cstddef>
@@ -167,7 +168,7 @@ struct CapabilityDescriptor final {
     std::uint64_t issuer_instance;
     std::uint64_t nonce;
     OwnerId owner;
-    StateGeneration generation;
+    PublishedStateId head;
     Digest256 operation;
 
     auto operator<=>(const CapabilityDescriptor&) const = default;
@@ -290,21 +291,21 @@ public:
     template <AuthorityDomain Domain>
     [[nodiscard]] AuthorityCapability<Domain> issue(
         IssueKey<Domain>, const OwnerId& owner,
-        const StateGeneration& generation, const Digest256& operation);
+        const PublishedStateId& head, const Digest256& operation);
 
     template <AuthorityDomain Domain>
     [[nodiscard]] CapabilityDescriptor consume(
         ConsumeKey<Domain>, AuthorityCapability<Domain>&& capability,
-        const StateGeneration& current_generation,
+        const PublishedStateId& current_head,
         const Digest256& actual_operation);
 
     // The checks of `consume` without spending: this ledger issued the
     // capability in this domain, it is live and unspent, and it names this
-    // generation and operation. Throws as `consume` does. A guarded dry run
+    // publication and operation. Throws as `consume` does. A guarded dry run
     // must hold genuine authority for the exact write it previews.
     template <AuthorityDomain Domain>
     void verify(const ConsumeKey<Domain>&, const AuthorityCapability<Domain>& capability,
-                const StateGeneration& current_generation,
+                const PublishedStateId& current_head,
                 const Digest256& expected_operation) const;
 
 private:
@@ -315,15 +316,15 @@ private:
 
     [[nodiscard]] std::shared_ptr<detail::CapabilityToken> issue_token(
         AuthorityDomain domain, const OwnerId& owner,
-        const StateGeneration& generation, const Digest256& operation);
+        const PublishedStateId& head, const Digest256& operation);
     [[nodiscard]] CapabilityDescriptor consume_token(
         AuthorityDomain expected,
         std::shared_ptr<detail::CapabilityToken>&& capability,
-        const StateGeneration& current_generation,
+        const PublishedStateId& current_head,
         const Digest256& actual_operation);
     void verify_token(AuthorityDomain expected,
                       const std::shared_ptr<detail::CapabilityToken>& capability,
-                      const StateGeneration& current_generation,
+                      const PublishedStateId& current_head,
                       const Digest256& expected_operation) const;
 
     std::shared_ptr<detail::AuthorityRegistry> registry_;
@@ -341,28 +342,28 @@ template <AuthorityDomain Domain>
 // SWEGCA: src/swegca/mosaic_evidence_accumulator.py@5901a5a:28-45
 AuthorityCapability<Domain> MainAuthorityLedger::issue(
     IssueKey<Domain>, const OwnerId& owner,
-    const StateGeneration& generation, const Digest256& operation) {
+    const PublishedStateId& head, const Digest256& operation) {
     return AuthorityCapability<Domain>(
-        issue_token(Domain, owner, generation, operation));
+        issue_token(Domain, owner, head, operation));
 }
 
 template <AuthorityDomain Domain>
 // SWEGCA: src/swegca/mosaic_bounded_world_write.py@5901a5a:153-172
 CapabilityDescriptor MainAuthorityLedger::consume(
     ConsumeKey<Domain>, AuthorityCapability<Domain>&& capability,
-    const StateGeneration& current_generation,
+    const PublishedStateId& current_head,
     const Digest256& actual_operation) {
     return consume_token(Domain, std::move(capability.token_),
-                         current_generation, actual_operation);
+                         current_head, actual_operation);
 }
 
 template <AuthorityDomain Domain>
 // SWEGCA: src/tinylm_slicer/mosaic_bounded_world_write.py@3bddcb7:413-423
 void MainAuthorityLedger::verify(
     const ConsumeKey<Domain>&, const AuthorityCapability<Domain>& capability,
-    const StateGeneration& current_generation,
+    const PublishedStateId& current_head,
     const Digest256& expected_operation) const {
-    verify_token(Domain, capability.token_, current_generation, expected_operation);
+    verify_token(Domain, capability.token_, current_head, expected_operation);
 }
 
 }  // namespace swegca::vrs

@@ -117,8 +117,8 @@ SynapseProposal::SynapseProposal(const AllocationContext& memory,
     // SWEGCA: src/swegca/mosaic_synapse_arbiter.py@5901a5a:65-93
     if (state.semantic().shape().batches != 1)
         throw std::invalid_argument("proposal_batch_not_representable");
-    if (based_on_ != state.generation())
-        throw std::invalid_argument("proposal_snapshot_generation_mismatch");
+    if (based_on_ != snapshot.head())
+        throw std::invalid_argument("proposal_snapshot_head_mismatch");
     require_matching_delta_shape(semantic_delta_, state.semantic());
     require_matching_delta_shape(executive_delta_, state.executive());
     require_matching_delta_shape(scratch_delta_, state.scratch());
@@ -169,17 +169,21 @@ Digest256 proposal_mask_digest(const SynapseProposal& proposal) {
 // field the Bind gate and conflict arbiter may inspect. Every score's own
 // tensor dtype and stored bits are part of its identity. This native digest
 // also binds based_on; the author's 2026-08-25 _proposal_digest has no state
-// generation because its SynapseProposal has no such field. It is therefore
+// publication because its SynapseProposal has no such field. It is therefore
 // not byte-equivalent to the Python digest.
 // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:154-162
 Digest256 proposal_content_digest(const SynapseProposal& proposal) {
     Sha256 hash;
-    hash_text(hash, "swegca.proposal_content.v1");
+    hash_text(hash, "swegca.proposal_content.v2");
     hash_text(hash, proposal.source().value());
     hash_text(hash, proposal.claim().claim().value());
     hash_u64(hash, proposal.claim().revision());
-    hash_u64(hash, proposal.based_on().ordinal());
-    hash.update(proposal.based_on().digest().bytes());
+    const auto& head = proposal.based_on();
+    hash.update(head.content_digest().bytes());
+    hash_u64(hash, head.publication().segment_ordinal);
+    hash_u64(hash, head.publication().byte_offset);
+    hash_u64(hash, head.publication().sequence);
+    hash.update(head.publication().record_digest);
     hash_u64(hash, proposal.evidence_addresses().size());
     for (const auto& address : proposal.evidence_addresses()) hash_text(hash, address);
     hash.update(proposal_delta_digest(proposal).bytes());

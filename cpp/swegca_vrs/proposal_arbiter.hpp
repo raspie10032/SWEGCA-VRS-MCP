@@ -36,7 +36,7 @@ public:
     ~ArbitrationResult() = default;
 
     // SWEGCA: src/swegca/mosaic_synapse_arbiter.py@5901a5a:96-122
-    [[nodiscard]] const StateGeneration& based_on() const;
+    [[nodiscard]] const PublishedStateId& based_on() const;
     // SWEGCA: src/swegca/mosaic_synapse_arbiter.py@5901a5a:96-122
     [[nodiscard]] std::uint64_t validated_at_step() const;
     // SWEGCA: src/swegca/mosaic_synapse_arbiter.py@5901a5a:96-122
@@ -65,13 +65,13 @@ private:
     friend class ProposalArbiter;
     using Bytes = std::vector<std::byte, AllocationAdapter<std::byte>>;
     using Flags = std::vector<std::uint8_t, AllocationAdapter<std::uint8_t>>;
-    ArbitrationResult(StateGeneration based_on, std::uint64_t step, RoleMask changed,
+    ArbitrationResult(PublishedStateId based_on, std::uint64_t step, RoleMask changed,
                       ScalarType type, std::uint64_t width, Bytes delta, Flags accepted,
                       Flags conflict, Digest256 receipt,
                       std::optional<Digest256> single_binding_receipt);
     void require_live() const;
 
-    StateGeneration based_on_;
+    PublishedStateId based_on_;
     std::uint64_t step_;
     RoleMask changed_;
     ScalarType type_;
@@ -102,7 +102,7 @@ public:
     // no-commit receipt; capacity exhaustion throws before any state change.
     // SWEGCA: src/swegca/mosaic_synapse_arbiter.py@5901a5a:238-321
     [[nodiscard]] ArbitrationOutcome arbitrate(
-        const CognitiveState& state, std::uint64_t current_step,
+        const StateSnapshot& snapshot, std::uint64_t current_step,
         std::span<const BoundProposal> proposals) const;
 
 private:
@@ -112,7 +112,7 @@ private:
     ProposalArbiter(const AllocationContext& memory, ArbiterPolicy policy);
     template <class T, class R>
     [[nodiscard]] ArbitrationOutcome arbitrate_typed(
-        const CognitiveState& state, std::uint64_t current_step,
+        const StateSnapshot& snapshot, std::uint64_t current_step,
         std::span<const BoundProposal> proposals) const;
 
     AllocationContext memory_;

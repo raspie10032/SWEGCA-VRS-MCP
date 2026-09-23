@@ -49,7 +49,7 @@ const CognitiveTensor& partition_delta(const SynapseProposal& proposal,
 }  // namespace
 
 // SWEGCA: src/swegca/mosaic_synapse_arbiter.py@5901a5a:96-122
-ArbitrationResult::ArbitrationResult(StateGeneration based_on, std::uint64_t step,
+ArbitrationResult::ArbitrationResult(PublishedStateId based_on, std::uint64_t step,
                                      RoleMask changed, ScalarType type, std::uint64_t width,
                                      Bytes delta, Flags accepted, Flags conflict,
                                      Digest256 receipt,
@@ -74,7 +74,7 @@ void ArbitrationResult::require_live() const {
 }
 
 // SWEGCA: src/swegca/mosaic_synapse_arbiter.py@5901a5a:96-122
-const StateGeneration& ArbitrationResult::based_on() const {
+const PublishedStateId& ArbitrationResult::based_on() const {
     require_live();
     return based_on_;
 }
@@ -139,8 +139,9 @@ ProposalArbiter::ProposalArbiter(const AllocationContext& memory, ArbiterPolicy 
 
 // SWEGCA: src/swegca/mosaic_synapse_arbiter.py@5901a5a:238-321
 ArbitrationOutcome ProposalArbiter::arbitrate(
-    const CognitiveState& state, std::uint64_t current_step,
+    const StateSnapshot& snapshot, std::uint64_t current_step,
     std::span<const BoundProposal> proposals) const {
+    const auto& state = snapshot.state();
     // torch.stack promotes the proposal weight tensors before the weighted
     // delta multiplication; that result may be wider than the state tensor.
     ScalarType weight_type = ScalarType::float16;
@@ -157,10 +158,10 @@ ArbitrationOutcome ProposalArbiter::arbitrate(
                                               p.semantic_delta().scalar_type());
     }
     if (delta_type == ScalarType::float64)
-        return arbitrate_typed<double, double>(state, current_step, proposals);
+        return arbitrate_typed<double, double>(snapshot, current_step, proposals);
     if (weight_type == ScalarType::float64)
-        return arbitrate_typed<float, double>(state, current_step, proposals);
-    return arbitrate_typed<float, float>(state, current_step, proposals);
+        return arbitrate_typed<float, double>(snapshot, current_step, proposals);
+    return arbitrate_typed<float, float>(snapshot, current_step, proposals);
 }
 
 // Mask first, then slot clipping, directional conflict, weighted reduction,
@@ -170,8 +171,10 @@ ArbitrationOutcome ProposalArbiter::arbitrate(
 // SWEGCA: src/swegca/mosaic_synapse_arbiter.py@5901a5a:238-321
 template <class T, class R>
 ArbitrationOutcome ProposalArbiter::arbitrate_typed(
-    const CognitiveState& state, std::uint64_t current_step,
+    const StateSnapshot& snapshot, std::uint64_t current_step,
     std::span<const BoundProposal> proposals) const {
+    const auto& state = snapshot.state();
+    const auto& head = snapshot.head();
     using Scores = kernel::ProposalScoresOf<T>;
     using ScoreList = std::vector<Scores, AllocationAdapter<Scores>>;
     using Values = std::vector<T, AllocationAdapter<T>>;
@@ -212,7 +215,7 @@ ArbitrationOutcome ProposalArbiter::arbitrate_typed(
         state.semantic().shape().width > std::numeric_limits<std::size_t>::max())
         failures |= arbitration_invalid_shape;
     for (const auto& bound : proposals) {
-        if (bound.proposal().based_on() != state.generation())
+        if (bound.proposal().based_on() != head)
             failures |= arbitration_stale_generation;
         if (bound.validated_at_step() != current_step)
             failures |= arbitration_stale_step;
@@ -221,9 +224,12 @@ ArbitrationOutcome ProposalArbiter::arbitrate_typed(
     }
 
     Sha256 receipt;
-    receipt.update("swegca.arbitration_receipt.v1");
-    hash_u64(receipt, state.generation().ordinal());
-    receipt.update(state.generation().digest().bytes());
+    receipt.update("swegca.arbitration_receipt.v2");
+    receipt.update(head.content_digest().bytes());
+    hash_u64(receipt, head.publication().segment_ordinal);
+    hash_u64(receipt, head.publication().byte_offset);
+    hash_u64(receipt, head.publication().sequence);
+    receipt.update(head.publication().record_digest);
     receipt.update(registry.digest().bytes());
     hash_u64(receipt, current_step);
     hash_u64(receipt, static_cast<std::uint8_t>(state_type));
@@ -363,7 +369,7 @@ ArbitrationOutcome ProposalArbiter::arbitrate_typed(
         out.receipt = digest;  // explicit no-commit, no candidate
         return out;
     }
-    ArbitrationResult result(state.generation(), current_step, std::move(changed_mask),
+    ArbitrationResult result(head, current_step, std::move(changed_mask),
                              result_type, W, std::move(encoded), std::move(accepted),
                              std::move(conflict), digest,
                              P == 1 ? std::optional<Digest256>(proposals.front().binding_receipt())

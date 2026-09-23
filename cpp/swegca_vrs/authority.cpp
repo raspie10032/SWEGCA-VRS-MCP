@@ -162,7 +162,7 @@ std::size_t MainAuthorityLedger::live_capability_count() const {
 // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:88-99
 std::shared_ptr<detail::CapabilityToken> MainAuthorityLedger::issue_token(
     AuthorityDomain domain, const OwnerId& owner,
-    const StateGeneration& generation, const Digest256& operation) {
+    const PublishedStateId& head, const Digest256& operation) {
     std::lock_guard guard(registry_->mutex);
     if (registry_->next_nonce == 0 ||
         registry_->next_nonce == std::numeric_limits<std::uint64_t>::max())
@@ -175,7 +175,7 @@ std::shared_ptr<detail::CapabilityToken> MainAuthorityLedger::issue_token(
     prepared.emplace(nonce, nonce);
     auto retirement = prepared.extract(prepared.begin());
     CapabilityDescriptor descriptor{
-        domain, registry_->issuer_instance, nonce, owner, generation, operation};
+        domain, registry_->issuer_instance, nonce, owner, head, operation};
     auto allocator = registry_->memory.allocator<detail::CapabilityToken>();
     auto* raw = allocator.allocate(1);
     try {
@@ -205,7 +205,7 @@ std::shared_ptr<detail::CapabilityToken> MainAuthorityLedger::issue_token(
 CapabilityDescriptor MainAuthorityLedger::consume_token(
     AuthorityDomain expected,
     std::shared_ptr<detail::CapabilityToken>&& capability,
-    const StateGeneration& current_generation,
+    const PublishedStateId& current_head,
     const Digest256& actual_operation) {
     if (!capability)
         throw std::invalid_argument("authority_capability_not_live");
@@ -230,7 +230,7 @@ CapabilityDescriptor MainAuthorityLedger::consume_token(
     }
     auto consumed = std::move(capability->descriptor_);
     capability.reset();
-    if (consumed.generation != current_generation ||
+    if (consumed.head != current_head ||
         consumed.operation != actual_operation)
         throw std::invalid_argument("authority_capability_binding_mismatch");
     return consumed;
@@ -243,7 +243,7 @@ CapabilityDescriptor MainAuthorityLedger::consume_token(
 void MainAuthorityLedger::verify_token(
     AuthorityDomain expected,
     const std::shared_ptr<detail::CapabilityToken>& capability,
-    const StateGeneration& current_generation,
+    const PublishedStateId& current_head,
     const Digest256& expected_operation) const {
     if (!capability)
         throw std::invalid_argument("authority_capability_not_live");
@@ -258,7 +258,7 @@ void MainAuthorityLedger::verify_token(
     const auto found = registry_->live.find(descriptor.nonce);
     if (found == registry_->live.end() || found->second.token.lock() != capability)
         throw std::invalid_argument("authority_capability_unknown");
-    if (descriptor.generation != current_generation ||
+    if (descriptor.head != current_head ||
         descriptor.operation != expected_operation)
         throw std::invalid_argument("authority_capability_binding_mismatch");
 }

@@ -48,7 +48,7 @@ struct SynapseProposalInput final {
     std::string_view source;
     std::string_view claim;
     std::uint64_t claim_revision;
-    StateGeneration based_on;
+    PublishedStateId based_on;
     // Untrusted citation text. Main's Bind verifies address form, publication,
     // experience kind (original or derived), and equality with the decision's
     // admitted set.
@@ -84,7 +84,7 @@ public:
     // SWEGCA: src/swegca/mosaic_synapse_arbiter.py@5901a5a:54-93
     [[nodiscard]] const ClaimRevision& claim() const noexcept { return claim_; }
     // SWEGCA: src/swegca/mosaic_synapse_arbiter.py@5901a5a:54-93
-    [[nodiscard]] const StateGeneration& based_on() const noexcept { return based_on_; }
+    [[nodiscard]] const PublishedStateId& based_on() const noexcept { return based_on_; }
     // SWEGCA: src/swegca/mosaic_synapse_arbiter.py@5901a5a:54-93
     [[nodiscard]] std::span<const std::basic_string<char, std::char_traits<char>,
                                                      AllocationAdapter<char>>>
@@ -110,7 +110,7 @@ private:
 
     ProducerId source_;
     ClaimRevision claim_;
-    StateGeneration based_on_;
+    PublishedStateId based_on_;
     Addresses evidence_addresses_;
     RoleMask targets_;
     CognitiveTensor semantic_delta_;
