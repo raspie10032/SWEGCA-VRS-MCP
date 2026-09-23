@@ -44,9 +44,25 @@ endif()
 # command: dependency modes that leave out system headers or skip missing
 # files, options passed straight to the preprocessor, and response files,
 # whose contents this launcher does not read.
+# Also options that bring in arguments or compiler parts this launcher does
+# not see: configuration and specs files, another directory for the
+# compiler's own programs, a wrapper around them, arguments passed straight
+# to Clang's front end or to one architecture's compilation (-Xarch_), and
+# plugins. Also precompiled headers and modules, whose own inputs need not
+# appear in the listing, and the long GNU spellings of the dependency modes.
+# (CMake itself passes -Xclang to a GNU-style Clang targeting the MSVC ABI,
+# and -Xarch_ with per-architecture Apple SDKs; CMakeLists.txt refuses both
+# for the core.)
 foreach(argument IN LISTS command)
     if(argument MATCHES "^-(M|MM|MMD|MG)$" OR argument MATCHES "^-Wp," OR
-       argument STREQUAL "-Xpreprocessor" OR argument MATCHES "^@")
+       argument STREQUAL "-Xpreprocessor" OR argument MATCHES "^@" OR
+       argument MATCHES "^--?config" OR argument MATCHES "^--?specs" OR
+       argument MATCHES "^-B" OR argument MATCHES "^--?wrapper" OR
+       argument MATCHES "^-Xclang" OR argument MATCHES "^-Xarch_" OR
+       argument MATCHES "^-f(pass-)?plugin" OR
+       argument MATCHES "^--(write-)?(user-)?dependencies" OR
+       argument MATCHES "^--print-missing-file-dependencies" OR
+       argument MATCHES "^-include-pch" OR argument MATCHES "^-f(implicit-|prebuilt-)?module")
         message(FATAL_ERROR "core isolation check: `${argument}` is not allowed when compiling the core")
     endif()
 endforeach()
@@ -74,6 +90,19 @@ endforeach()
 if(NOT object)
     message(FATAL_ERROR "core isolation check: the compiler command names no object")
 endif()
+
+function(core_isolation_fail reason)
+    file(REMOVE "${object}")
+    message(FATAL_ERROR "core isolation check: ${reason}\n"
+        "The SWEGCA core must not depend on the VRS; ${object} was removed.")
+endfunction()
+
+# The compiler runs in the clean environment the include roots were asked in.
+if(NOT CORE_COMPILER_KIND STREQUAL "msvc")
+    include("${CMAKE_CURRENT_LIST_DIR}/SwegcaCoreEnvironment.cmake")
+    swegca_core_clean_environment(core_isolation_fail)
+endif()
+
 if(CORE_COMPILER_KIND STREQUAL "msvc")
     # Not exercised on the development host (no MSVC there).
     set(dependency_file "${object}.swegca_dependencies.json")
@@ -81,6 +110,13 @@ if(CORE_COMPILER_KIND STREQUAL "msvc")
 elseif(NOT dependency_file)
     set(dependency_file "${object}.swegca.d")
     list(APPEND command -MD -MF "${dependency_file}")
+else()
+    # A rule that names -MF without a mode still gets a listing. The mode
+    # added here does not override one before it: GCC and Clang both prefer
+    # -MMD to -MD wherever it stands. System headers stay listed because
+    # every spelling of -MMD (and -Wp, -Xpreprocessor, -Xclang, -Xarch_,
+    # which could pass it on) is refused above.
+    list(APPEND command -MD)
 endif()
 file(REMOVE "${dependency_file}")
 
@@ -92,12 +128,6 @@ if(NOT result EQUAL 0)
     endif()
     message(FATAL_ERROR "core isolation check: the compilation failed")
 endif()
-
-function(core_isolation_fail reason)
-    file(REMOVE "${object}")
-    message(FATAL_ERROR "core isolation check: ${reason}\n"
-        "The SWEGCA core must not depend on the VRS; ${object} was removed.")
-endfunction()
 
 if(NOT EXISTS "${dependency_file}")
     core_isolation_fail("the compilation wrote no dependency listing ${dependency_file}")
@@ -118,6 +148,31 @@ foreach(allowed_file IN LISTS allowed_files)
         file(REAL_PATH "${allowed_file}" real_file)
         list(APPEND real_files "${real_file}")
     endif()
+endforeach()
+# A directory holding isolated copies holds nothing else: a precompiled
+# header put beside a copy (`sha256.hpp.gch`, a file or a directory) would be
+# used in the copy's place, and not every compiler lists it. The directories
+# are the ones the compiler searches, taken before links are resolved: a
+# copy made a link to its core file must not move the check to the core
+# directory.
+set(copy_directories)
+foreach(allowed_file IN LISTS allowed_files)
+    get_filename_component(copy_directory "${allowed_file}" DIRECTORY)
+    list(APPEND copy_directories "${copy_directory}")
+endforeach()
+list(REMOVE_DUPLICATES copy_directories)
+foreach(copy_directory IN LISTS copy_directories)
+    file(GLOB copy_entries LIST_DIRECTORIES true "${copy_directory}/*" "${copy_directory}/.*")
+    foreach(copy_entry IN LISTS copy_entries)
+        get_filename_component(entry_name "${copy_entry}" NAME)
+        if(entry_name STREQUAL "." OR entry_name STREQUAL "..")
+            continue()
+        endif()
+        file(REAL_PATH "${copy_entry}" real_entry)
+        if(NOT real_entry IN_LIST real_files)
+            core_isolation_fail("${copy_entry} was added beside the isolated core files; reconfigure")
+        endif()
+    endforeach()
 endforeach()
 
 # Relative paths in the listing are relative to the compiler's working
@@ -152,7 +207,7 @@ function(core_isolation_check_file dependency)
             return()
         endif()
     endforeach()
-    core_isolation_fail("the compilation of ${object} opens ${dependency}, which is neither an isolated core file nor under the compiler's include directories")
+    core_isolation_fail("the compilation of ${object} opens ${dependency}, which is neither an isolated core file nor under the compiler's include directories (${CORE_ALLOWED_ROOTS}). These are what the compiler reports with no project flag but -stdlib= and CMake's toolchain arguments (the compiler command's own, sysroot, target, external toolchain, Apple SDK), plus the toolchain's standard include directories; reconfigure after changing the compiler")
 endfunction()
 
 file(READ "${dependency_file}" listing)

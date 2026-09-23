@@ -232,8 +232,129 @@ add_dependencies(swegca_core swegca_core_isolation)
 # /tmp, would turn VRS files into "compiler" headers. Of the isolation
 # directory only the exact files made here are allowed, so a file added to
 # it after configure (e.g. forced in with -include) is refused.
+# For a GNU-style compiler the directories are asked of the compiler itself,
+# run in the clean environment with no project flag (SwegcaCoreCompilerRoots
+# says why CMake's implicit list is not used); the launcher and the link
+# check run it in that environment too.
+if(NOT MSVC AND CMAKE_CXX_SIMULATE_ID STREQUAL "MSVC")
+    # CMake passes -Xclang options to a GNU-style Clang targeting the MSVC
+    # ABI, and the launcher refuses -Xclang (SwegcaCoreCompile.cmake).
+    message(FATAL_ERROR "The core isolation check does not support ${CMAKE_CXX_COMPILER} (GNU-style driver for the MSVC ABI); use clang-cl or MSVC")
+endif()
+if(CMAKE_CXX_COMPILER_ID STREQUAL "QCC")
+    # QCC writes its dependency listing through -Wp,-MD, which the launcher
+    # refuses (it could pass any preprocessor option unseen).
+    message(FATAL_ERROR "The core isolation check does not support QCC (${CMAKE_CXX_COMPILER})")
+endif()
+if(CMAKE_APPLE_ARCH_SYSROOTS)
+    # One Apple SDK per architecture is passed with -Xarch_, which the
+    # launcher refuses, and one -isysroot cannot stand for them in the checks.
+    message(FATAL_ERROR "The core isolation check does not support per-architecture Apple SDKs (CMAKE_APPLE_ARCH_SYSROOTS); build one architecture at a time")
+endif()
+
+# The toolchain arguments CMake gives every compilation (COMPILE) or link
+# (LINK) of the core: the extra arguments of the compiler command
+# (CMAKE_CXX_COMPILER_ARG1), CMake's sysroot, target and external toolchain,
+# each spelled as this compiler's CMake module spells it and left out when
+# the module defines no spelling (CMake ignores it then too), and on Apple
+# the SDK and, for the link, the architectures.
+function(swegca_core_toolchain_flags out which)
+    set(flags)
+    if(CMAKE_CXX_COMPILER_ARG1)
+        separate_arguments(arg1 NATIVE_COMMAND "${CMAKE_CXX_COMPILER_ARG1}")
+        list(APPEND flags ${arg1})
+    endif()
+    set(sysroot "${CMAKE_SYSROOT_${which}}")
+    if(NOT sysroot)
+        set(sysroot "${CMAKE_SYSROOT}")
+    endif()
+    foreach(setting IN ITEMS SYSROOT TARGET EXTERNAL_TOOLCHAIN)
+        if(setting STREQUAL "SYSROOT")
+            set(value "${sysroot}")
+        else()
+            set(value "${CMAKE_CXX_COMPILER_${setting}}")
+        endif()
+        set(option "${CMAKE_CXX_COMPILE_OPTIONS_${setting}}")
+        if(value AND option)
+            if(option MATCHES "^(.*[^ ]) +$")
+                # "-target ": the value is a separate argument.
+                list(APPEND flags "${CMAKE_MATCH_1}" "${value}")
+            else()
+                list(APPEND flags "${option}${value}")
+            endif()
+        endif()
+    endforeach()
+    if(APPLE AND CMAKE_CXX_SYSROOT_FLAG)
+        # With no SDK named, CMake still passes the one `xcrun
+        # --show-sdk-path` printed (Darwin-Initialize.cmake) to a Clang that
+        # has no default SDK (CMAKE_CXX_COMPILER_APPLE_SYSROOT_REQUIRED).
+        set(osx_sysroot "${CMAKE_OSX_SYSROOT}")
+        if(NOT osx_sysroot AND CMAKE_CXX_COMPILER_APPLE_SYSROOT_REQUIRED)
+            set(osx_sysroot "${_CMAKE_OSX_SYSROOT_PATH}")
+        endif()
+        if(osx_sysroot)
+            list(APPEND flags "${CMAKE_CXX_SYSROOT_FLAG}" "${osx_sysroot}")
+        endif()
+    endif()
+    if(APPLE AND which STREQUAL "LINK")
+        # The archive holds CMAKE_OSX_ARCHITECTURES; a program for another
+        # architecture would skip it and link nothing. (Not in the include
+        # probe: -E refuses more than one -arch.)
+        foreach(arch IN LISTS CMAKE_OSX_ARCHITECTURES)
+            list(APPEND flags -arch "${arch}")
+        endforeach()
+    endif()
+    foreach(flag IN LISTS flags)
+        if(flag MATCHES "[|]")
+            message(FATAL_ERROR "The core isolation check cannot pass the toolchain argument `${flag}`, which holds `|`")
+        endif()
+    endforeach()
+    string(REPLACE ";" "|" flags "${flags}")
+    set(${out} "${flags}" PARENT_SCOPE)
+endfunction()
+
+if(MSVC)
+    set(core_compiler_roots ${CMAKE_CXX_IMPLICIT_INCLUDE_DIRECTORIES})
+else()
+    # Only the flags that choose the toolchain's own headers reach the
+    # probe: a -stdlib= choice and the toolchain arguments CMake passes to
+    # every compilation.
+    separate_arguments(core_cxx_flags NATIVE_COMMAND "${CMAKE_CXX_FLAGS}")
+    set(core_probe_flags)
+    foreach(core_cxx_flag IN LISTS core_cxx_flags)
+        if(core_cxx_flag MATCHES "^-stdlib=")
+            if(core_cxx_flag MATCHES "[|]")
+                message(FATAL_ERROR "The core isolation check cannot pass `${core_cxx_flag}`, which holds `|`")
+            endif()
+            list(APPEND core_probe_flags "${core_cxx_flag}")
+        endif()
+    endforeach()
+    string(REPLACE ";" "|" core_probe_flags "${core_probe_flags}")
+    swegca_core_toolchain_flags(core_compile_toolchain_flags COMPILE)
+    if(core_compile_toolchain_flags)
+        if(core_probe_flags)
+            string(APPEND core_probe_flags "|")
+        endif()
+        string(APPEND core_probe_flags "${core_compile_toolchain_flags}")
+    endif()
+    file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/swegca_core_probe.cpp" "")
+    execute_process(COMMAND "${CMAKE_COMMAND}"
+            "-DCORE_COMPILER=${CMAKE_CXX_COMPILER}"
+            "-DCORE_PROBE_FLAGS=${core_probe_flags}"
+            "-DCORE_PROBE_SOURCE=${CMAKE_CURRENT_BINARY_DIR}/swegca_core_probe.cpp"
+            "-DCORE_ROOTS_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/swegca_core_roots.txt"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/SwegcaCoreCompilerRoots.cmake"
+        RESULT_VARIABLE core_probe_result)
+    if(NOT core_probe_result EQUAL 0)
+        message(FATAL_ERROR "The core isolation check could not ask ${CMAKE_CXX_COMPILER} for its include directories")
+    endif()
+    file(STRINGS "${CMAKE_CURRENT_BINARY_DIR}/swegca_core_roots.txt" core_compiler_roots)
+endif()
+# A toolchain's standard include directories (e.g. Android's), which CMake
+# adds to every compilation, are the toolchain's own headers too.
+list(APPEND core_compiler_roots ${CMAKE_CXX_STANDARD_INCLUDE_DIRECTORIES})
 set(core_allowed_roots)
-foreach(implicit_directory IN LISTS CMAKE_CXX_IMPLICIT_INCLUDE_DIRECTORIES)
+foreach(implicit_directory IN LISTS core_compiler_roots)
     file(REAL_PATH "${implicit_directory}" implicit_real)
     foreach(project_directory IN ITEMS "${CMAKE_SOURCE_DIR}" "${CMAKE_BINARY_DIR}")
         file(REAL_PATH "${project_directory}" project_real)
@@ -282,6 +403,11 @@ foreach(core_link_config IN LISTS core_link_configs)
     string(APPEND core_link_flags
         "$<$<CONFIG:${core_link_config}>: ${CMAKE_CXX_FLAGS_${core_link_config_upper}}>")
 endforeach()
+if(MSVC)
+    set(core_link_toolchain_flags)
+else()
+    swegca_core_toolchain_flags(core_link_toolchain_flags LINK)
+endif()
 add_custom_command(TARGET swegca_core POST_BUILD
     COMMAND "${CMAKE_COMMAND}"
         "-DCORE_ARCHIVE=$<TARGET_FILE:swegca_core>"
@@ -289,6 +415,7 @@ add_custom_command(TARGET swegca_core POST_BUILD
         "-DCORE_SYMBOL_TOOL=${core_symbol_tool}"
         "-DCORE_COMPILER=${CMAKE_CXX_COMPILER}"
         "-DCORE_LINK_FLAGS=${core_link_flags}"
+        "-DCORE_TOOLCHAIN_FLAGS=${core_link_toolchain_flags}"
         "-DCORE_WORK_DIR=${core_isolation_dir}"
         "-DCORE_APPLE=$<BOOL:${APPLE}>"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/SwegcaCoreIsolationCheck.cmake"

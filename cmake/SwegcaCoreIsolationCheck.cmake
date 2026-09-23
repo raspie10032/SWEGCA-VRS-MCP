@@ -15,7 +15,8 @@
 # SwegcaCoreCompile.cmake.
 #
 # Inputs: CORE_ARCHIVE, CORE_COMPILER_KIND (gnu or msvc), CORE_SYMBOL_TOOL,
-# CORE_COMPILER, CORE_WORK_DIR, CORE_APPLE (0 or 1).
+# CORE_COMPILER, CORE_WORK_DIR, CORE_APPLE (0 or 1), CORE_TOOLCHAIN_FLAGS
+# ("|"-joined, may be empty).
 cmake_minimum_required(VERSION 3.20)
 
 foreach(input IN ITEMS CORE_ARCHIVE CORE_COMPILER_KIND CORE_SYMBOL_TOOL CORE_COMPILER
@@ -30,6 +31,12 @@ function(core_isolation_fail reason)
     message(FATAL_ERROR "core isolation check: ${reason}\n"
         "The SWEGCA core must not depend on the VRS; ${CORE_ARCHIVE} was removed.")
 endfunction()
+
+# The link runs the compiler, so it runs in the clean environment too.
+if(NOT CORE_COMPILER_KIND STREQUAL "msvc")
+    include("${CMAKE_CURRENT_LIST_DIR}/SwegcaCoreEnvironment.cmake")
+    swegca_core_clean_environment(core_isolation_fail)
+endif()
 
 if(CORE_COMPILER_KIND STREQUAL "msvc")
     # Not exercised on the development host (no MSVC there).
@@ -97,12 +104,16 @@ endforeach()
 # its runtime); one that changes what the link resolves (a linker option, a
 # library or its path, a specs file, another linker, an undefined-symbol or
 # script option, a response file) is refused rather than passed.
+# CMake's own toolchain settings for the link (CORE_TOOLCHAIN_FLAGS: the
+# compiler's extra arguments, sysroot, target, external toolchain, Apple
+# architectures) come first and are trusted, as for every link CMake runs.
 separate_arguments(link_flags NATIVE_COMMAND "${CORE_LINK_FLAGS}")
 foreach(link_flag IN LISTS link_flags)
     if(link_flag MATCHES "^(-Wl,|-Xlinker$|-l|-L|-B|-specs|--specs|-fuse-ld|-nostdlib|-nodefaultlibs|-nostartfiles|-shared$|-r$|-u$|-T|@|-z$|--sysroot|-isysroot|/link$|-link$|/DEFAULTLIB|/NODEFAULTLIB)")
         core_isolation_fail("the core compile flag `${link_flag}` could change what the link check resolves")
     endif()
 endforeach()
+string(REPLACE "|" ";" toolchain_flags "${CORE_TOOLCHAIN_FLAGS}")
 set(link_main "${CORE_WORK_DIR}/link_check_main.cpp")
 file(WRITE "${link_main}" "int main() { return 0; }\n")
 if(CORE_COMPILER_KIND STREQUAL "msvc")
@@ -111,10 +122,10 @@ if(CORE_COMPILER_KIND STREQUAL "msvc")
         "/Fe${CORE_WORK_DIR}/link_check.exe" "/Fo${CORE_WORK_DIR}/link_check_main.obj"
         /link "/WHOLEARCHIVE:${CORE_ARCHIVE}")
 elseif(CORE_APPLE)
-    set(link_command "${CORE_COMPILER}" ${link_flags} "${link_main}"
+    set(link_command "${CORE_COMPILER}" ${toolchain_flags} ${link_flags} "${link_main}"
         "-Wl,-force_load,${CORE_ARCHIVE}" -o "${CORE_WORK_DIR}/link_check")
 else()
-    set(link_command "${CORE_COMPILER}" ${link_flags} "${link_main}" -Wl,--whole-archive
+    set(link_command "${CORE_COMPILER}" ${toolchain_flags} ${link_flags} "${link_main}" -Wl,--whole-archive
         "${CORE_ARCHIVE}" -Wl,--no-whole-archive -o "${CORE_WORK_DIR}/link_check")
 endif()
 execute_process(COMMAND ${link_command} WORKING_DIRECTORY "${CORE_WORK_DIR}"
