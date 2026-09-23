@@ -448,6 +448,10 @@ supplies the Main commit ordering.
 
 ## Decisions before implementation
 
+- Enumerate every Main-owned state-changing transition before fixing the
+  kind-7 body variants and their cold-recovery checks. Retraction preserves
+  later unrelated cognition; the records that published those later changes
+  cannot be silently omitted from the predecessor chain.
 - Confirm that intermediate part HEADs with an unchanged state generation
   preserve §9's rule that one Main committed receipt exposes a state successor.
 - Reconcile the reserved kind-7 name `state_publication_record_kind` with
