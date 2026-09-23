@@ -298,7 +298,10 @@ four-stage VRS path is already implemented.
   the slot while the root links unchanged chunks. Use a tree per tensor:
   the canonical stream emits the role list before tensor bytes, so appending
   a role shifts the 8 MiB boundaries of a whole-stream tree. Tensor chunks
-  are already 8 MiB. A separate state address prefix and record kind prevent
+  are already 8 MiB, and the current public constructors make only the final
+  chunk short. With a live immutable state snapshot, the level-0 digest list
+  can consume each borrowed tensor chunk directly. A separate state address
+  prefix and record kind prevent
   identical experience/state part bytes from colliding in the journal;
   raw SHA-256 part digests can stay shared. Recompute the canonical state
   content digest from the root's reconstructed stream rather than assuming
@@ -306,6 +309,11 @@ four-stage VRS path is already implemented.
   without simultaneous whole-tensor copies. Hashing the canonical stream
   may still take time on a write, but it does not belong to the
   input-to-Recall latency budget.
+- A zeroed tensor may repeat the same 8 MiB chunk throughout its level-0
+  digest list; shared chunks can also recur across tensors or generations.
+  Preserve every digest in each ordered list, but stage a content address at
+  most once per generation and resolve already published state parts before
+  staging. Otherwise duplicate-address checks would reject a valid tensor.
 - `CognitiveState::for_each_content_chunk` and `content_digest()` now use one
   canonical byte emitter, so a future bounded state-part writer can consume
   exactly the digest preimage. The experience `plan_blob` pulls from a span
@@ -329,9 +337,13 @@ four-stage VRS path is already implemented.
 - Define exact state-root and receipt payloads and how a root larger than
   16 MiB is parted without a second unrelated codec.
 - Decide where the canonical stream's non-tensor prefix (domain, owner and
-  appendable role list) lives. If it is embedded in the root, define how
-  that root is parted when the prefix grows past one record while preserving
+  appendable role list), each tensor's scalar/shape/length header, and the
+  later graph/payload sections live. If any are embedded in the root, define
+  how that root is parted when they grow past one record while preserving
   the per-tensor copy-on-write boundaries.
+- Define the inline and empty-tensor representation. `part_levels(0)` gives
+  a zero level-0 count and depth 1, while experience stores small blobs
+  inline; a state tensor codec must state which rule it uses before writing.
 - Define restart behavior when genesis or intermediate HEAD still has a
   zero state digest, including what initial input may be accepted.
 - Verify that all tensor readers and digest users can read a chunked

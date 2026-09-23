@@ -107,6 +107,9 @@ private:
     using ChunkPtr = std::shared_ptr<const Chunk>;
     using Chunks = std::vector<ChunkPtr, AllocationAdapter<ChunkPtr>>;
     static constexpr std::size_t chunk_bytes = 8u * 1024u * 1024u;
+    // Every constructor that supplies Chunks keeps all non-final chunks full
+    // and their sum equal to byte_count. The private constructor relies on
+    // that invariant; a future caller must preserve it.
     CognitiveTensor(ScalarType scalar_type, TensorShape3 shape,
                     std::uint64_t byte_count, Chunks chunks) noexcept;
 
