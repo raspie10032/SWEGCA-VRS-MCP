@@ -893,36 +893,6 @@ struct Run {
     StreamWriter writer;
 };
 
-// Feeds `builder` the union of `runs` in address order with a binary heap of
-// cursors: O(log k) per item, one page per level per run in memory. An
-// address in two runs fails as a duplicate.
-// SWEGCA: user@2026-09-22:72-79
-void merge_runs(TreeBuilder& builder, const PageSource& pages, std::span<const Run> runs) {
-    LedgerVector<LeafCursor> cursors(pages.memory.allocator<LeafCursor>());
-    cursors.reserve(runs.size());
-    for (const auto& run : runs) cursors.emplace_back(pages, run.tree);
-    LedgerVector<std::size_t> heap(pages.memory.allocator<std::size_t>());
-    heap.reserve(cursors.size());
-    const auto later = [&cursors](std::size_t left, std::size_t right) {
-        return cursors[right].item().address < cursors[left].item().address;
-    };
-    for (std::size_t at = 0; at < cursors.size(); ++at) {
-        if (!cursors[at].valid()) continue;
-        heap.push_back(at);
-        std::push_heap(heap.begin(), heap.end(), later);
-    }
-    while (!heap.empty()) {
-        std::pop_heap(heap.begin(), heap.end(), later);
-        const auto at = heap.back();
-        builder.add(cursors[at].item());  // copies the key before the cursor moves
-        cursors[at].next();
-        if (cursors[at].valid())
-            std::push_heap(heap.begin(), heap.end(), later);
-        else
-            heap.pop_back();
-    }
-}
-
 // Builds a view tree bottom-up from leaf items in strictly increasing address
 // order, writing each page as soon as it is full, so memory holds one open
 // page per level whatever the tree size. Keys are copied into each level's
@@ -1044,6 +1014,36 @@ private:
     LedgerBytes last_;
     std::uint64_t count_ = 0;
 };
+
+// Feeds `builder` the union of `runs` in address order with a binary heap of
+// cursors: O(log k) per item, one page per level per run in memory. An
+// address in two runs fails as a duplicate.
+// SWEGCA: user@2026-09-22:72-79
+void merge_runs(TreeBuilder& builder, const PageSource& pages, std::span<const Run> runs) {
+    LedgerVector<LeafCursor> cursors(pages.memory.allocator<LeafCursor>());
+    cursors.reserve(runs.size());
+    for (const auto& run : runs) cursors.emplace_back(pages, run.tree);
+    LedgerVector<std::size_t> heap(pages.memory.allocator<std::size_t>());
+    heap.reserve(cursors.size());
+    const auto later = [&cursors](std::size_t left, std::size_t right) {
+        return cursors[right].item().address < cursors[left].item().address;
+    };
+    for (std::size_t at = 0; at < cursors.size(); ++at) {
+        if (!cursors[at].valid()) continue;
+        heap.push_back(at);
+        std::push_heap(heap.begin(), heap.end(), later);
+    }
+    while (!heap.empty()) {
+        std::pop_heap(heap.begin(), heap.end(), later);
+        const auto at = heap.back();
+        builder.add(cursors[at].item());  // copies the key before the cursor moves
+        cursors[at].next();
+        if (cursors[at].valid())
+            std::push_heap(heap.begin(), heap.end(), later);
+        else
+            heap.pop_back();
+    }
+}
 
 // Visits the leaf items of the tree at `ref` in address order, holding one
 // verified page per level.
