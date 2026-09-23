@@ -224,7 +224,9 @@ private:
 template <class Arg>
 class ExperienceVisitor final {
 public:
-    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3f:116-126
+    // C++ infrastructure for reading the derived views (approved flow :62);
+    // no direct Python counterpart.
+    // SWEGCA: user@2026-09-22:62
     template <class F>
         requires(!std::is_same_v<std::remove_cvref_t<F>, ExperienceVisitor> &&
                  std::is_object_v<std::remove_reference_t<F>> &&
@@ -233,12 +235,12 @@ public:
         : target_(static_cast<const void*>(std::addressof(visit))),
           call_(&invoke<std::remove_reference_t<F>>) {}
 
-    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3f:116-126
+    // SWEGCA: user@2026-09-22:62
     bool operator()(Arg value) const { return call_(target_, value); }
 
 private:
     using Call = bool (*)(const void*, Arg);
-    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3f:116-126
+    // SWEGCA: user@2026-09-22:62
     template <class T>
     static bool invoke(const void* target, Arg value) {
         auto& visit = *static_cast<T*>(const_cast<void*>(target));
@@ -341,7 +343,9 @@ public:
     // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:23-60
     [[nodiscard]] std::span<const std::byte> structured() const;
     // The record's index entries (kind letter and value), increasing.
-    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3f:122-123
+    // Weak: the user's postings per key, automatic and supplied; the kind
+    // letters are C++'s.
+    // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:410-431
     [[nodiscard]] std::span<const std::string_view> index_entries() const noexcept { return index_; }
 
     // Streams the blob's bytes: each part is replayed, checked against its
@@ -466,7 +470,9 @@ public:
     // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:31-35
     [[nodiscard]] std::span<const ExperienceAddress> addresses() const noexcept { return addresses_; }
     // True once nothing is left to stage.
-    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3f:282-283
+    // C++ infrastructure for admitting observations (approved flow :61);
+    // no direct Python counterpart.
+    // SWEGCA: user@2026-09-22:61
     [[nodiscard]] bool done() const noexcept { return done_; }
     // The next generation, or none once everything is staged (an
     // observation already in the journal is not appended again; one found
@@ -519,7 +525,9 @@ private:
         bool skip = false;  // equal to an earlier binding of this append, or already bound
         std::optional<DigestBytes> staged;  // as for heads
     };
-    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3f:282-283
+    // C++ infrastructure for admitting observations (approved flow :61);
+    // no direct Python counterpart.
+    // SWEGCA: user@2026-09-22:61
     ExperienceAppend(const ExperienceJournal& journal, const AllocationContext& memory,
                      std::span<const Observation> observations, std::span<const CueBinding> bindings,
                      std::string_view operation_id, std::optional<std::string_view> transaction_id);
@@ -608,7 +616,9 @@ private:
     friend class MainOwner;
     friend class ExperienceSelector;
     friend class ExperienceAppend;
-    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3f:116-126
+    // C++ infrastructure for admitting observations (approved flow :61);
+    // no direct Python counterpart.
+    // SWEGCA: user@2026-09-22:61
     ExperienceJournal(const journal::JournalStore& journal, const AllocationContext& memory) noexcept
         : journal_(journal), memory_(memory) {}
 
@@ -844,7 +854,9 @@ public:
 
 private:
     friend class MainOwner;
-    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3f:116-126
+    // C++ infrastructure for the read route (approved flow :20-24);
+    // no direct Python counterpart.
+    // SWEGCA: user@2026-09-22:20-24
     ExperienceSelector(const ExperienceJournal& experience, SelectionPolicy policy) noexcept
         : experience_(experience), policy_(policy) {}
 

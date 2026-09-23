@@ -391,7 +391,9 @@ void with_cue_lookup(std::string_view token, Visit&& visit) {
 // viewed, sorted and unique, once complete.
 class IndexEntries final {
 public:
-    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3f:122-123
+    // C++ infrastructure for the derived addresses (approved flow :62);
+    // no direct Python counterpart.
+    // SWEGCA: user@2026-09-22:62
     explicit IndexEntries(const AllocationContext& memory)
         : bytes_(memory.allocator<std::byte>()),
           spans_(memory.allocator<std::pair<std::size_t, std::size_t>>()),
@@ -402,7 +404,7 @@ public:
     IndexEntries& operator=(const IndexEntries&) = delete;
     ~IndexEntries() = default;
 
-    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3f:122-123
+    // SWEGCA: user@2026-09-22:62
     void add(char kind, std::string_view value) {
         const auto at = bytes_.size();
         bytes_.push_back(static_cast<std::byte>(kind));
@@ -411,7 +413,7 @@ public:
         spans_.emplace_back(at, value.size() + 1);
     }
 
-    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3f:122-123
+    // SWEGCA: user@2026-09-22:62
     void add_digest(char kind, const DigestBytes& digest) {
         const auto hex = hex_of(digest);
         add(kind, std::string_view(hex.data(), hex.size()));
@@ -423,7 +425,9 @@ public:
     }
 
     // Views every entry, sorted and unique; nothing is added after this.
-    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3f:122-123
+    // Weak: the user's postings are sorted per key; sorting and dropping
+    // repeats of whole entries is C++'s.
+    // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:428-430
     std::span<const std::string_view> finish() {
         entries_.reserve(spans_.size());
         for (const auto& [at, size] : spans_)
@@ -433,15 +437,15 @@ public:
         return entries_;
     }
 
-    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3f:122-123
+    // SWEGCA: user@2026-09-22:62
     [[nodiscard]] std::span<const std::string_view> entries() const noexcept { return entries_; }
 
     // Hand the finished entries and the bytes they view to a new owner. Both
     // are moved by construction, which keeps each buffer, so the views stay
     // valid; this object is empty afterwards.
-    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3f:122-123
+    // SWEGCA: user@2026-09-22:62
     [[nodiscard]] LedgerVector<std::string_view> take_entries() noexcept { return std::move(entries_); }
-    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3f:122-123
+    // SWEGCA: user@2026-09-22:62
     [[nodiscard]] LedgerBytes take_bytes() noexcept { return std::move(bytes_); }
 
 private:
@@ -465,7 +469,9 @@ struct IndexFields {
 // The entries every experience carries, derived from its fields alone: the
 // cue tokens of its source and revision, and its source, content, lineage,
 // revised address, namespace, resources and transaction.
-// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3f:122-123
+// The user's automatic keys: derived from the observation, never supplied;
+// here from its source, revision and fields rather than a file path.
+// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:410-431
 void add_automatic(IndexEntries& index, const AllocationContext& memory, const IndexFields& fields) {
     for (const auto text : {fields.source, fields.source_revision}) {
         const CueTokens tokens(memory, text);
@@ -485,7 +491,9 @@ void add_automatic(IndexEntries& index, const AllocationContext& memory, const I
 
 // Equal index entries apart from the transaction, which records where an
 // observation was first appended and is not part of what was observed.
-// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3f:122-123
+// C++ infrastructure for admitting an observation once (approved flow :61);
+// no direct Python counterpart.
+// SWEGCA: user@2026-09-22:61
 bool same_observed_index(std::span<const std::string_view> left, std::span<const std::string_view> right) noexcept {
     const auto skip = [](std::span<const std::string_view> entries, std::size_t& at) {
         while (at < entries.size() && entries[at].front() == static_cast<char>(ExperienceView::transaction))
@@ -794,7 +802,9 @@ LedgerVector<std::string_view> read_sorted_texts(ByteReader& reader, std::uint32
 class GenerationBudget final {
 public:
     // False, taking nothing, when `draft` does not fit.
-    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3f:282-283
+    // C++ infrastructure: memory and disk budgets stay hard limits (approved
+    // flow :91-92); no direct Python counterpart.
+    // SWEGCA: user@2026-09-22:91-92
     bool add(const journal::RecordDraft& draft) {
         const std::uint64_t size = journal::encoded_record_size(draft);
         std::uint64_t items = 0;
@@ -1135,7 +1145,9 @@ CueBindingRecord CueBindingRecord::decode(journal::PublishedRecord published, co
 // second record, and must carry the same index entries apart from the
 // transaction; its parts are not appended. A cue binding equal to one the
 // journal holds (or an earlier one here) is not appended again.
-// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3f:282-283
+// C++ infrastructure for admitting observations (approved flow :61);
+// no direct Python counterpart.
+// SWEGCA: user@2026-09-22:61
 ExperienceAppend::ExperienceAppend(const ExperienceJournal& journal, const AllocationContext& memory,
                                    std::span<const Observation> observations, std::span<const CueBinding> bindings,
                                    std::string_view operation_id, std::optional<std::string_view> transaction_id)
@@ -1398,7 +1410,7 @@ journal::RecordDraft ExperienceAppend::binding_draft(const Binding& binding) con
     return draft;
 }
 
-// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3f:282-283
+// SWEGCA: user@2026-09-22:61
 journal::RecordDraft ExperienceAppend::head_draft(const Head& head) const {
     const auto& observation = observations_[head.observation];
     journal::RecordDraft draft;
@@ -1423,7 +1435,7 @@ journal::RecordDraft ExperienceAppend::head_draft(const Head& head) const {
 // journal staged, so a failure leaves them where they were. A part read
 // through a reader is read into a buffer held until the journal has copied
 // it, and must hash to what staging read (`experience_source_changed`).
-// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3f:282-283
+// SWEGCA: user@2026-09-22:61
 std::optional<journal::StagedGeneration> ExperienceAppend::next(const StateGeneration& state,
                                                                 std::span<const journal::ViewGeneration> views) {
     if (done_) return std::nullopt;
@@ -1628,7 +1640,7 @@ std::optional<journal::StagedGeneration> ExperienceAppend::next(const StateGener
     return staged;
 }
 
-// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3f:282-283
+// SWEGCA: user@2026-09-22:61
 ExperienceAppend ExperienceJournal::stage(std::span<const Observation> observations, std::string_view operation_id,
                                           std::optional<std::string_view> transaction_id) const {
     return ExperienceAppend(*this, memory_, observations, {}, operation_id, transaction_id);
@@ -1649,7 +1661,9 @@ ExperienceRecord ExperienceJournal::replay(const ExperienceAddress& address) con
 // Each view's key becomes its entry value exactly as `add_automatic` wrote
 // it: a cue token as its cue entry, a text by its SHA-256, a digest or an
 // address as itself.
-// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3f:122-123
+// Weak: the user's cold-path address/semantic-key index serving hot
+// lookups; the per-view key rules are C++'s.
+// SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:113
 void ExperienceJournal::for_each_in_view(ExperienceView view, std::string_view key,
                                          journal::IndexVisitor visit) const {
     const auto kind = static_cast<char>(view);
