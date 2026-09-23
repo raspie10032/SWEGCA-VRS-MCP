@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <optional>
 #include <span>
+#include <string>
 #include <string_view>
 #include <utility>
 
@@ -126,9 +127,12 @@ struct AutonomyEventView {
 };
 
 // Validates an event as the author's AutonomyEvent does: identity texts for
-// ids, family and every reference, confidence finite in [0, 1], every
-// present text field and axis an identity text. Throws
-// `autonomy_event_invalid:<field>`.
+// the event id, source family, hypothesis id and every reference, and
+// confidence finite in [0, 1]; the kind in range. Payload values are not
+// validated here: the phase that reads one rejects it by the author's reason.
+// Throws `autonomy_event_invalid:<field>`. The payload view is the caller's
+// reading of the payload `digest` names; binding the two is the adapter's
+// duty (the complete payload is original experience).
 // SWEGCA: src/swegca/mosaic_autonomous_cognition.py@5901a5a:89-120
 void validate_autonomy_event(const AutonomyEventView& event);
 
@@ -151,7 +155,9 @@ public:
         std::uint32_t maximum_evidence_action_failures = 2;
     };
 
-    // Throws `autonomy_config_invalid:<rule>` as the author's __post_init__.
+    // Checks in the author's __post_init__ order; throws
+    // `autonomy_config_invalid:<rule>`, or the identity-rule code of an
+    // action that is not an identity text.
     AutonomyConfig(const MemoryLedger::Account& memory, const Input& input);
 
     // SWEGCA: src/swegca/mosaic_autonomous_cognition.py@5901a5a:41-86
@@ -191,19 +197,16 @@ private:
     std::uint32_t maximum_action_failures_ = 2;
     double minimum_evidence_action_confidence_ = 0.8;
     std::uint32_t maximum_evidence_action_failures_ = 2;
-    Digest256 digest_;
+    Digest256 digest_{DigestBytes{}};
 };
 
 struct HypothesisIdTag { static constexpr std::string_view name = "hypothesis_id"; };
 struct AutonomyEventIdTag { static constexpr std::string_view name = "autonomy_event_id"; };
-struct EvidenceAxisTag { static constexpr std::string_view name = "evidence_axis"; };
-struct MemoryRefTag { static constexpr std::string_view name = "memory_ref"; };
-struct ContentHashTag { static constexpr std::string_view name = "content_hash"; };
 using HypothesisId = TextIdentity<HypothesisIdTag>;
 using AutonomyEventId = TextIdentity<AutonomyEventIdTag>;
-using EvidenceAxisText = TextIdentity<EvidenceAxisTag>;
-using MemoryRef = TextIdentity<MemoryRefTag>;
-using ContentHash = TextIdentity<ContentHashTag>;
+// A payload string kept as the producer sent it (the author accepts any
+// nonempty string), on Main's account.
+using PayloadText = std::basic_string<char, std::char_traits<char>, MemoryLedger::Allocator<char>>;
 
 // The part of Main's goal and self state the machine owns (the author's
 // `autonomy_*`, hypothesis, verification, memory and pending-action keys),
@@ -227,20 +230,20 @@ public:
     std::optional<HypothesisId> active_hypothesis_id;
     std::optional<HypothesisId> verified_hypothesis_id;
     std::optional<double> hypothesis_confidence;
-    journal::LedgerVector<EvidenceAxisText> requested_axes;  // in the requester's order
+    journal::LedgerVector<PayloadText> requested_axes;  // in the requester's order
     VerificationStatus verification_status = VerificationStatus::none;
     std::optional<double> verification_lower_bound;
-    std::optional<MemoryRef> memory_ref;
-    std::optional<ContentHash> memory_content_hash;
+    std::optional<PayloadText> memory_ref;
+    std::optional<PayloadText> memory_content_hash;
     std::optional<ToolAction> pending_tool_action;
     std::optional<ToolAction> pending_evidence_tool_action;
-    std::uint32_t action_failures = 0;
-    std::uint32_t evidence_action_failures = 0;
+    std::uint64_t action_failures = 0;
+    std::uint64_t evidence_action_failures = 0;
 
 private:
     // SWEGCA: src/swegca/mosaic_autonomous_cognition.py@5901a5a:151-152
     explicit AutonomyControl(const MemoryLedger::Account& memory)
-        : requested_axes(memory.allocator<EvidenceAxisText>()) {}
+        : requested_axes(memory.allocator<PayloadText>()) {}
 };
 
 // What one accepted step changes in the control state besides phase, step
@@ -258,8 +261,8 @@ struct AutonomyUpdate {
     std::optional<std::string_view> memory_content_hash;
     std::optional<std::optional<std::string_view>> pending_tool_action;
     std::optional<std::optional<std::string_view>> pending_evidence_tool_action;
-    std::optional<std::uint32_t> action_failures;
-    std::optional<std::uint32_t> evidence_action_failures;
+    std::optional<std::uint64_t> action_failures;
+    std::optional<std::uint64_t> evidence_action_failures;
 };
 
 // The kernel's result. Intents are what the step proposes, never
@@ -338,7 +341,7 @@ private:
     std::optional<ToolAction> tool_action_intent_;
     std::optional<ToolAction> evidence_tool_action_intent_;
     AutonomyControl successor_;
-    Digest256 digest_;
+    Digest256 digest_{DigestBytes{}};
 };
 
 // The shell around `advance_autonomy`: validates the event, runs the kernel

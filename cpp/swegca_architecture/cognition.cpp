@@ -7,6 +7,7 @@
 #include <array>
 #include <bit>
 #include <cmath>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -21,7 +22,7 @@ using journal::LedgerVector;
 
 constexpr std::uint16_t control_version = 1;
 constexpr auto text_limit = detail::identity_text_max_bytes;
-constexpr std::size_t max_requested_axes = 4096;
+constexpr auto payload_limit = journal::max_payload_bytes;
 
 // SWEGCA: user@2026-09-22:60-61
 [[noreturn]] void fail(const std::string& code) { throw std::invalid_argument(code); }
@@ -157,13 +158,23 @@ std::optional<double> read_optional_double(ByteReader& reader) {
     return value;
 }
 
-// Requires an event text field: absent, empty (the kernel rejects it by
-// the author's reason) or an identity text.
-// SWEGCA: src/swegca/mosaic_autonomous_cognition.py@5901a5a:89-120
-void check_payload_text(const PayloadField<std::string_view>& field, const char* name) {
-    if (field.state == PayloadField<std::string_view>::State::present && !field.value.empty() &&
-        !detail::is_identity_text(field.value))
-        fail(std::string("autonomy_event_invalid:") + name);
+// SWEGCA: src/swegca/mosaic_autonomous_cognition.py@5901a5a:167-186
+void write_optional(ByteWriter& writer, const std::optional<PayloadText>& text) {
+    writer.u8(text ? 1 : 0);
+    if (text) writer.bytes(std::as_bytes(std::span<const char>(text->data(), text->size())), payload_limit);
+}
+
+// SWEGCA: src/swegca/mosaic_autonomous_cognition.py@5901a5a:167-186
+PayloadText payload_text(const MemoryLedger::Account& memory, std::span<const std::byte> bytes) {
+    return PayloadText(reinterpret_cast<const char*>(bytes.data()), bytes.size(), memory.allocator<char>());
+}
+
+// SWEGCA: src/swegca/mosaic_autonomous_cognition.py@5901a5a:167-186
+std::optional<PayloadText> read_optional_payload(ByteReader& reader, const MemoryLedger::Account& memory) {
+    const auto flag = reader.u8();
+    if (flag > 1) fail("autonomy_control_invalid");
+    if (flag == 0) return std::nullopt;
+    return payload_text(memory, reader.bytes_view(payload_limit));
 }
 
 }  // namespace
@@ -216,32 +227,26 @@ void validate_autonomy_event(const AutonomyEventView& event) {
     if (!unit_interval(event.confidence)) fail("autonomy_event_invalid:confidence");
     const auto kind = static_cast<std::uint8_t>(event.kind);
     if (kind < 1 || kind > 10) fail("autonomy_event_invalid:kind");
-    const auto& payload = event.payload;
-    if (payload.requested_axes.state == PayloadField<std::span<const std::string_view>>::State::present) {
-        if (payload.requested_axes.value.size() > max_requested_axes)
-            fail("autonomy_event_invalid:requested_axes");
-        for (const auto axis : payload.requested_axes.value)
-            if (!axis.empty() && !detail::is_identity_text(axis)) fail("autonomy_event_invalid:requested_axes");
-    }
-    check_payload_text(payload.action, "action");
-    check_payload_text(payload.memory_ref, "memory_ref");
-    check_payload_text(payload.content_hash, "content_hash");
 }
 
 // SWEGCA: src/swegca/mosaic_autonomous_cognition.py@5901a5a:52-86
 AutonomyConfig::AutonomyConfig(const MemoryLedger::Account& memory, const Input& input)
-    : allowed_(action_set(memory, input.allowed_tool_actions)),
-      reversible_(action_set(memory, input.reversible_tool_actions)),
-      evidence_allowed_(action_set(memory, input.allowed_evidence_tool_actions)),
-      evidence_reversible_(action_set(memory, input.reversible_evidence_tool_actions)),
+    : allowed_(memory.allocator<ToolAction>()),
+      reversible_(memory.allocator<ToolAction>()),
+      evidence_allowed_(memory.allocator<ToolAction>()),
+      evidence_reversible_(memory.allocator<ToolAction>()),
       minimum_action_confidence_(input.minimum_action_confidence),
       maximum_action_failures_(input.maximum_action_failures),
       minimum_evidence_action_confidence_(input.minimum_evidence_action_confidence),
       maximum_evidence_action_failures_(input.maximum_evidence_action_failures) {
+    allowed_ = action_set(memory, input.allowed_tool_actions);
+    reversible_ = action_set(memory, input.reversible_tool_actions);
     if (allowed_.empty()) fail("autonomy_config_invalid:allowed_tool_actions");
     if (!subset(reversible_, allowed_)) fail("autonomy_config_invalid:reversible_tool_actions");
     if (!unit_interval(minimum_action_confidence_)) fail("autonomy_config_invalid:minimum_action_confidence");
     if (maximum_action_failures_ == 0) fail("autonomy_config_invalid:maximum_action_failures");
+    evidence_allowed_ = action_set(memory, input.allowed_evidence_tool_actions);
+    evidence_reversible_ = action_set(memory, input.reversible_evidence_tool_actions);
     if (!subset(evidence_reversible_, evidence_allowed_))
         fail("autonomy_config_invalid:reversible_evidence_tool_actions");
     if (!unit_interval(minimum_evidence_action_confidence_))
@@ -283,23 +288,31 @@ AutonomyControl AutonomyControl::initial(const MemoryLedger::Account& memory) { 
 LedgerBytes AutonomyControl::encode(const MemoryLedger::Account& memory) const {
     LedgerBytes out(memory.allocator<std::byte>());
     ByteWriter writer(out);
+    const auto phase_value = static_cast<std::uint8_t>(phase);
+    const auto status_value = static_cast<std::uint8_t>(verification_status);
+    if (phase_value < 1 || phase_value > 10 || status_value > 4 ||
+        (hypothesis_confidence && !std::isfinite(*hypothesis_confidence)) ||
+        (verification_lower_bound && !std::isfinite(*verification_lower_bound)))
+        fail("autonomy_control_invalid");
     writer.u16(control_version);
-    writer.u8(static_cast<std::uint8_t>(phase));
+    writer.u8(phase_value);
     writer.u64(step);
     write_optional(writer, last_event_id);
     write_optional(writer, active_hypothesis_id);
     write_optional(writer, verified_hypothesis_id);
     write_optional(writer, hypothesis_confidence);
+    if (requested_axes.size() > std::numeric_limits<std::uint32_t>::max()) fail("autonomy_control_invalid");
     writer.u32(static_cast<std::uint32_t>(requested_axes.size()));
-    for (const auto& axis : requested_axes) writer.text(axis.value(), text_limit);
+    for (const auto& axis : requested_axes)
+        writer.bytes(std::as_bytes(std::span<const char>(axis.data(), axis.size())), payload_limit);
     writer.u8(static_cast<std::uint8_t>(verification_status));
     write_optional(writer, verification_lower_bound);
     write_optional(writer, memory_ref);
     write_optional(writer, memory_content_hash);
     write_optional(writer, pending_tool_action);
     write_optional(writer, pending_evidence_tool_action);
-    writer.u32(action_failures);
-    writer.u32(evidence_action_failures);
+    writer.u64(action_failures);
+    writer.u64(evidence_action_failures);
     return out;
 }
 
@@ -308,28 +321,32 @@ AutonomyControl AutonomyControl::decode(const MemoryLedger::Account& memory, std
     ByteReader reader(bytes);
     if (reader.u16() != control_version) fail("autonomy_control_invalid");
     AutonomyControl out(memory);
-    const auto phase = reader.u8();
-    if (phase < 1 || phase > 10) fail("autonomy_control_invalid");
-    out.phase = static_cast<AutonomyPhase>(phase);
+    const auto phase_value = reader.u8();
+    if (phase_value < 1 || phase_value > 10) fail("autonomy_control_invalid");
+    out.phase = static_cast<AutonomyPhase>(phase_value);
     out.step = reader.u64();
     out.last_event_id = read_optional<AutonomyEventId>(reader, memory);
     out.active_hypothesis_id = read_optional<HypothesisId>(reader, memory);
     out.verified_hypothesis_id = read_optional<HypothesisId>(reader, memory);
     out.hypothesis_confidence = read_optional_double(reader);
     const auto axes = reader.u32();
-    if (axes > max_requested_axes) fail("autonomy_control_invalid");
+    if (axes > reader.remaining() / 4) fail("autonomy_control_invalid");
     out.requested_axes.reserve(axes);
-    for (std::uint32_t at = 0; at < axes; ++at) out.requested_axes.emplace_back(memory, reader.text_view(text_limit));
+    for (std::uint32_t at = 0; at < axes; ++at) {
+        auto axis = payload_text(memory, reader.bytes_view(payload_limit));
+        if (axis.empty()) fail("autonomy_control_invalid");
+        out.requested_axes.push_back(std::move(axis));
+    }
     const auto status = reader.u8();
     if (status > 4) fail("autonomy_control_invalid");
     out.verification_status = static_cast<VerificationStatus>(status);
     out.verification_lower_bound = read_optional_double(reader);
-    out.memory_ref = read_optional<MemoryRef>(reader, memory);
-    out.memory_content_hash = read_optional<ContentHash>(reader, memory);
+    out.memory_ref = read_optional_payload(reader, memory);
+    out.memory_content_hash = read_optional_payload(reader, memory);
     out.pending_tool_action = read_optional<ToolAction>(reader, memory);
     out.pending_evidence_tool_action = read_optional<ToolAction>(reader, memory);
-    out.action_failures = reader.u32();
-    out.evidence_action_failures = reader.u32();
+    out.action_failures = reader.u64();
+    out.evidence_action_failures = reader.u64();
     if (reader.remaining() != 0) fail("autonomy_control_invalid");
     return out;
 }
@@ -501,7 +518,7 @@ namespace {
 // SWEGCA: src/swegca/mosaic_autonomous_cognition.py@5901a5a:167-186
 AutonomyControl successor_of(const MemoryLedger::Account& memory, const AutonomyControl& control,
                              const AutonomyStep& step, const AutonomyEventView& event) {
-    AutonomyControl next = control;
+    auto next = AutonomyControl::decode(memory, control.encode(memory));  // every field on `memory`
     const auto& update = step.update;
     const auto text = [&memory]<class T>(std::optional<T>& into, const std::optional<std::string_view>& value) {
         if (value) {
@@ -522,13 +539,16 @@ AutonomyControl successor_of(const MemoryLedger::Account& memory, const Autonomy
     if (update.requested_axes) {
         next.requested_axes.clear();
         next.requested_axes.reserve(update.requested_axes->size());
-        for (const auto axis : *update.requested_axes) next.requested_axes.emplace_back(memory, axis);
+        for (const auto axis : *update.requested_axes)
+            next.requested_axes.emplace_back(axis.data(), axis.size(), memory.allocator<char>());
     }
     if (update.verification_status) next.verification_status = *update.verification_status;
     if (update.verified_hypothesis_id) text(next.verified_hypothesis_id, *update.verified_hypothesis_id);
     if (update.verification_lower_bound) next.verification_lower_bound = *update.verification_lower_bound;
-    if (update.memory_ref) text(next.memory_ref, update.memory_ref);
-    if (update.memory_content_hash) text(next.memory_content_hash, update.memory_content_hash);
+    if (update.memory_ref) next.memory_ref.emplace(update.memory_ref->data(), update.memory_ref->size(), memory.allocator<char>());
+    if (update.memory_content_hash)
+        next.memory_content_hash.emplace(update.memory_content_hash->data(), update.memory_content_hash->size(),
+                                         memory.allocator<char>());
     if (update.pending_tool_action) text(next.pending_tool_action, *update.pending_tool_action);
     if (update.pending_evidence_tool_action)
         text(next.pending_evidence_tool_action, *update.pending_evidence_tool_action);
@@ -547,8 +567,11 @@ AutonomyTransition advance_autonomous_cognition(const MemoryLedger::Account& mem
                                                 const AutonomyEventView& event, const AutonomyConfig& config,
                                                 const EvidenceDecision* decision) {
     validate_autonomy_event(event);
+    const auto phase_value = static_cast<std::uint8_t>(control.phase);
+    if (phase_value < 1 || phase_value > 10) fail("autonomy_control_invalid");
     const auto step = advance_autonomy(control, event, config, decision ? &decision->judgment() : nullptr);
-    AutonomyTransition out(step.accepted ? successor_of(memory, control, step, event) : AutonomyControl(control));
+    AutonomyTransition out(step.accepted ? successor_of(memory, control, step, event)
+                                         : AutonomyControl::decode(memory, control.encode(memory)));
     out.accepted_ = step.accepted;
     out.reason_ = step.reason;
     out.prior_phase_ = step.prior_phase;
