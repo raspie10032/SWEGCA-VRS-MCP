@@ -57,8 +57,7 @@ struct ExperienceAddressTag {
 struct RoleIdTag { static constexpr std::string_view name = "role_id"; };
 struct EntityIdTag { static constexpr std::string_view name = "entity_id"; };
 struct EntityKindTag { static constexpr std::string_view name = "entity_kind"; };
-struct RelationIdTag { static constexpr std::string_view name = "relation_id"; };
-struct RelationKindTag { static constexpr std::string_view name = "relation_kind"; };
+struct RelationPredicateTag { static constexpr std::string_view name = "relation_predicate"; };
 struct TransactionIdTag {
     static constexpr std::string_view name = "transaction_id";
 };
@@ -73,8 +72,7 @@ using ExperienceAddress = TextIdentity<ExperienceAddressTag>;
 using RoleId = TextIdentity<RoleIdTag>;
 using EntityId = TextIdentity<EntityIdTag>;
 using EntityKind = TextIdentity<EntityKindTag>;
-using RelationId = TextIdentity<RelationIdTag>;
-using RelationKind = TextIdentity<RelationKindTag>;
+using RelationPredicate = TextIdentity<RelationPredicateTag>;
 using TransactionId = TextIdentity<TransactionIdTag>;
 using PolicyVersion = TextIdentity<PolicyVersionTag>;
 

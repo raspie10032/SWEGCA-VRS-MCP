@@ -20,7 +20,8 @@ namespace swegca::architecture {
 class InitialStateKey final {
 public:
     InitialStateKey(const InitialStateKey&) = delete;
-    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:222-230
+    // C++ one-use construction gate for the source's single Main owner.
+    // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:103-107
     InitialStateKey(InitialStateKey&& other) noexcept
         : valid_(std::exchange(other.valid_, false)) {}
     ~InitialStateKey() = default;
@@ -34,7 +35,8 @@ private:
 class SuccessorStateKey final {
 public:
     SuccessorStateKey(const SuccessorStateKey&) = delete;
-    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:222-230
+    // C++ one-use construction gate; no matching Python key type exists.
+    // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:103-107
     SuccessorStateKey(SuccessorStateKey&& other) noexcept
         : valid_(std::exchange(other.valid_, false)) {}
     ~SuccessorStateKey() = default;
@@ -47,10 +49,13 @@ private:
 
 class CanonicalPayload final {
 public:
+    // Native byte representation of the source's state metadata mappings.
+    // A caller supplies its schema and canonical encoding; this type does
+    // not parse or validate the original Python JSON mapping.
     CanonicalPayload(const AllocationContext& account,
                      std::span<const std::byte> bytes);
 
-    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:83-93
+    // SWEGCA: src/swegca/mosaic_cognitive_kernel.py@5901a5a:220-254
     [[nodiscard]] std::span<const std::byte> bytes() const noexcept {
         return bytes_;
     }
@@ -61,20 +66,27 @@ private:
     std::vector<std::byte, AllocationAdapter<std::byte>> bytes_;
 };
 
+using EvidenceReferences =
+    std::vector<ExperienceAddress, AllocationAdapter<ExperienceAddress>>;
+
+// The author graph keeps properties, spatial data and per-entity provenance
+// separate. CanonicalPayload is their native byte representation; the caller
+// supplies each payload's schema and canonical encoding.
 struct WorldEntity final {
     EntityId id;
     EntityKind kind;
-    CanonicalPayload attributes;
+    CanonicalPayload properties;
+    CanonicalPayload spatial;
+    EvidenceReferences evidence_references;
 
     auto operator<=>(const WorldEntity&) const = default;
 };
 
 struct WorldRelation final {
-    RelationId id;
-    RelationKind kind;
-    EntityId source;
-    EntityId target;
-    CanonicalPayload attributes;
+    EntityId subject;
+    RelationPredicate predicate;
+    EntityId object;
+    CanonicalPayload properties;
 
     auto operator<=>(const WorldRelation&) const = default;
 };
@@ -84,28 +96,32 @@ struct WorldRelation final {
 struct WorldEntityInput final {
     std::string_view id;
     std::string_view kind;
-    std::span<const std::byte> attributes;
+    std::span<const std::byte> properties;
+    std::span<const std::byte> spatial;
+    std::span<const std::string_view> evidence_references;
 };
 
 struct WorldRelationInput final {
-    std::string_view id;
-    std::string_view kind;
-    std::string_view source;
-    std::string_view target;
-    std::span<const std::byte> attributes;
+    std::string_view subject;
+    std::string_view predicate;
+    std::string_view object;
+    std::span<const std::byte> properties;
 };
 
 class StructuredWorldGraph final {
 public:
+    // Preserve source tuple order, per-entity provenance, and relation
+    // endpoints. The original permits repeated relation triples.
+    // SWEGCA: src/swegca/mosaic_cognitive_kernel.py@5901a5a:107-160
     StructuredWorldGraph(const AllocationContext& account,
                          std::span<const WorldEntityInput> entities,
                          std::span<const WorldRelationInput> relations);
 
-    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:83-93
+    // SWEGCA: src/swegca/mosaic_cognitive_kernel.py@5901a5a:107-160
     [[nodiscard]] std::span<const WorldEntity> entities() const noexcept {
         return entities_;
     }
-    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:83-93
+    // SWEGCA: src/swegca/mosaic_cognitive_kernel.py@5901a5a:107-160
     [[nodiscard]] std::span<const WorldRelation> relations() const noexcept {
         return relations_;
     }
@@ -118,11 +134,11 @@ private:
 template <class Tag>
 class StateSection final {
 public:
-    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:83-93
+    // SWEGCA: src/swegca/mosaic_cognitive_kernel.py@5901a5a:220-254
     explicit StateSection(CanonicalPayload payload)
         : payload_(std::move(payload)) {}
 
-    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:83-93
+    // SWEGCA: src/swegca/mosaic_cognitive_kernel.py@5901a5a:220-254
     [[nodiscard]] const CanonicalPayload& payload() const noexcept {
         return payload_;
     }
@@ -139,15 +155,12 @@ struct ValueStateTag;
 using GoalState = StateSection<GoalStateTag>;
 using ValueState = StateSection<ValueStateTag>;
 
-using EvidenceReferences =
-    std::vector<ExperienceAddress, AllocationAdapter<ExperienceAddress>>;
-
-// C++ storage adapter for the user's state content; the prior Python source
-// has no corresponding type. Main can write bounded persistent parts from
-// this exact canonical stream without a whole-state copy.
+// Weak source analogy: the author's state hash binds tensor and metadata
+// content. This bounded sink and its binary preimage are additional C++
+// storage infrastructure; they do not reproduce the Python JSON hash bytes.
 class StateContentSink final {
 public:
-    // SWEGCA: docs/SWEGCA_CPP_MAIN_STATE_STORAGE_REVIEW.md@9da0813:232-239
+    // SWEGCA: src/swegca/mosaic_bounded_world_write.py@5901a5a:262-283
     template <class F>
         requires(!std::is_same_v<std::remove_cvref_t<F>, StateContentSink> &&
                  std::is_object_v<F> &&
@@ -159,12 +172,12 @@ public:
     template <class F>
     StateContentSink(const F&&) = delete;
 
-    // SWEGCA: docs/SWEGCA_CPP_MAIN_STATE_STORAGE_REVIEW.md@9da0813:232-239
+    // SWEGCA: src/swegca/mosaic_bounded_world_write.py@5901a5a:262-283
     void operator()(std::span<const std::byte> bytes) const { call_(target_, bytes); }
 
 private:
     using Call = void (*)(const void*, std::span<const std::byte>);
-    // SWEGCA: docs/SWEGCA_CPP_MAIN_STATE_STORAGE_REVIEW.md@9da0813:232-239
+    // SWEGCA: src/swegca/mosaic_bounded_world_write.py@5901a5a:262-283
     template <class F>
     static void invoke(const void* target, std::span<const std::byte> bytes) {
         auto& write = *static_cast<F*>(const_cast<void*>(target));
@@ -215,7 +228,11 @@ private:
 
 // The only persistent state type. Construction requires either Main's initial
 // key or the guarded writer's successor key; producers receive StateSnapshot.
-// Rule: Single-World state, reconstruction board@7c0b62f:83-93,199-200,222-230.
+// The keys, registry, binary content digest and batch-one restriction are
+// current C++ rules; the original general CognitiveState accepts any common
+// batch dimension. The guarded verification write alone requires batch one.
+// SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:103-107
+// SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:139-152
 class CognitiveState final {
 public:
     CognitiveState(InitialStateKey, OwnerId owner,
@@ -238,9 +255,9 @@ public:
     CognitiveState& operator=(CognitiveState&&) = delete;
     ~CognitiveState() = default;
 
-    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:83-93
+    // SWEGCA: src/swegca/mosaic_cognitive_kernel.py@5901a5a:220-254
     [[nodiscard]] const OwnerId& owner() const noexcept { return owner_; }
-    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:83-93
+    // SWEGCA: src/swegca/mosaic_cognitive_kernel.py@5901a5a:220-254
     [[nodiscard]] const StateGeneration& generation() const noexcept {
         return generation_;
     }
@@ -254,32 +271,32 @@ public:
     // borrowed span lives only through this call and must be copied or hashed
     // before the sink returns; no full-state buffer is materialized.
     void for_each_content_chunk(StateContentSink write) const;
-    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:83-93
+    // SWEGCA: src/swegca/mosaic_cognitive_kernel.py@5901a5a:220-254
     [[nodiscard]] const RoleRegistry& roles() const noexcept { return roles_; }
-    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:83-93
+    // SWEGCA: src/swegca/mosaic_cognitive_kernel.py@5901a5a:220-254
     [[nodiscard]] const CognitiveTensor& semantic() const noexcept {
         return semantic_;
     }
-    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:83-93
+    // SWEGCA: src/swegca/mosaic_cognitive_kernel.py@5901a5a:220-254
     [[nodiscard]] const CognitiveTensor& executive() const noexcept {
         return executive_;
     }
-    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:83-93
+    // SWEGCA: src/swegca/mosaic_cognitive_kernel.py@5901a5a:220-254
     [[nodiscard]] const CognitiveTensor& scratch() const noexcept {
         return scratch_;
     }
-    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:83-93
+    // SWEGCA: src/swegca/mosaic_cognitive_kernel.py@5901a5a:220-254
     [[nodiscard]] const StructuredWorldGraph& world_graph() const noexcept {
         return world_graph_;
     }
-    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:83-93
+    // SWEGCA: src/swegca/mosaic_cognitive_kernel.py@5901a5a:220-254
     [[nodiscard]] std::span<const ExperienceAddress> evidence_references()
         const noexcept { return evidence_references_; }
-    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:83-93
+    // SWEGCA: src/swegca/mosaic_cognitive_kernel.py@5901a5a:220-254
     [[nodiscard]] const GoalState& goals() const noexcept { return goals_; }
-    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:83-93
+    // SWEGCA: src/swegca/mosaic_cognitive_kernel.py@5901a5a:220-254
     [[nodiscard]] const ValueState& values() const noexcept { return values_; }
-    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:83-93
+    // SWEGCA: src/swegca/mosaic_cognitive_kernel.py@5901a5a:220-254
     [[nodiscard]] const SelfState& self() const noexcept { return self_; }
 
 private:
@@ -307,7 +324,7 @@ public:
     // SWEGCA: user@2026-09-23:1
     StateSnapshot& operator=(StateSnapshot other) noexcept;
 
-    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:199-200
+    // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:103-107
     [[nodiscard]] const CognitiveState& state() const;
     [[nodiscard]] const Digest256& content_digest() const {
         return state().content_digest();
@@ -316,7 +333,7 @@ public:
 private:
     friend class MainOwner;
 
-    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:222-230
+    // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:103-107
     explicit StateSnapshot(std::shared_ptr<const CognitiveState> state,
                            std::shared_ptr<const void> main_lifetime);
 

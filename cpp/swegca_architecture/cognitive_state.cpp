@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <array>
 #include <limits>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -12,17 +13,17 @@
 namespace swegca::architecture {
 namespace {
 
-// Canonical state content uses fixed order, little-endian integers and
-// explicit lengths. The provisional generation ordinal is outside this
-// content digest; rollback restores the before-content hash.
-// The domain tag separates this digest from every other SWEGCA hash.
-// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3f:567-572
+// Weak source analogy: the author's hash includes tensors and metadata. This
+// native binary stream uses fixed order, little-endian integers and explicit
+// lengths, so its bytes and digest differ from the Python JSON hash. The
+// provisional generation ordinal is outside this C++ content digest.
+// SWEGCA: src/swegca/mosaic_bounded_world_write.py@5901a5a:262-283
 void emit_u8(StateContentSink write, std::uint8_t value) {
     const std::array bytes{static_cast<std::byte>(value)};
     write(bytes);
 }
 
-// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3f:567-572
+// SWEGCA: src/swegca/mosaic_bounded_world_write.py@5901a5a:262-283
 void emit_u64(StateContentSink write, std::uint64_t value) {
     std::array<std::byte, 8> bytes{};
     for (std::size_t index = 0; index < bytes.size(); ++index)
@@ -30,20 +31,20 @@ void emit_u64(StateContentSink write, std::uint64_t value) {
     write(bytes);
 }
 
-// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3f:567-572
+// SWEGCA: src/swegca/mosaic_bounded_world_write.py@5901a5a:262-283
 void emit_bytes(StateContentSink write, std::span<const std::byte> bytes) {
     emit_u64(write, bytes.size());
     write(bytes);
 }
 
-// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3f:567-572
+// SWEGCA: src/swegca/mosaic_bounded_world_write.py@5901a5a:262-283
 void emit_text(StateContentSink write, std::string_view text) {
     emit_u64(write, text.size());
     write(std::span<const std::byte>(
         reinterpret_cast<const std::byte*>(text.data()), text.size()));
 }
 
-// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:269-277
+// SWEGCA: src/swegca/mosaic_bounded_world_write.py@5901a5a:262-283
 void emit_tensor(StateContentSink write, std::uint8_t partition,
                  const CognitiveTensor& tensor) {
     emit_u8(write, partition);
@@ -58,20 +59,9 @@ void emit_tensor(StateContentSink write, std::uint8_t partition,
     });
 }
 
-// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:83-93
-EvidenceReferences canonical_evidence(EvidenceReferences addresses) {
-    std::sort(addresses.begin(), addresses.end(),
-              [](const ExperienceAddress& left,
-                 const ExperienceAddress& right) {
-                  return left.value() < right.value();
-              });
-    if (std::adjacent_find(addresses.begin(), addresses.end()) != addresses.end())
-        throw std::invalid_argument("cognitive_state_duplicate_evidence_reference");
-    return addresses;
-}
-
-// The emitted stream is the exact domain-separated content-digest preimage.
-// A persistent writer consumes these same bytes through a bounded sink.
+// The emitted stream is this C++ state's domain-separated digest preimage.
+// A persistent writer consumes the same bytes through a bounded sink; the
+// original Python function uses a different tensor/JSON encoding.
 // SWEGCA: src/swegca/mosaic_bounded_world_write.py@5901a5a:262-283
 void emit_state_content(
     StateContentSink write,
@@ -99,15 +89,18 @@ void emit_state_content(
     for (const auto& entity : graph.entities()) {
         emit_text(write, entity.id.value());
         emit_text(write, entity.kind.value());
-        emit_bytes(write, entity.attributes.bytes());
+        emit_bytes(write, entity.properties.bytes());
+        emit_bytes(write, entity.spatial.bytes());
+        emit_u64(write, entity.evidence_references.size());
+        for (const auto& address : entity.evidence_references)
+            emit_text(write, address.value());
     }
     emit_u64(write, graph.relations().size());
     for (const auto& relation : graph.relations()) {
-        emit_text(write, relation.id.value());
-        emit_text(write, relation.kind.value());
-        emit_text(write, relation.source.value());
-        emit_text(write, relation.target.value());
-        emit_bytes(write, relation.attributes.bytes());
+        emit_text(write, relation.subject.value());
+        emit_text(write, relation.predicate.value());
+        emit_text(write, relation.object.value());
+        emit_bytes(write, relation.properties.bytes());
     }
 
     emit_u64(write, evidence.size());
@@ -144,7 +137,7 @@ Digest256 state_digest(
     return Digest256(hash.finish());
 }
 
-// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:222-230
+// SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:103-107
 std::uint64_t next_ordinal(const CognitiveState& prior) {
     if (prior.generation().ordinal() ==
         std::numeric_limits<std::uint64_t>::max())
@@ -154,29 +147,29 @@ std::uint64_t next_ordinal(const CognitiveState& prior) {
 
 }  // namespace
 
-// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:222-230
+// SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:103-107
 void InitialStateKey::consume() {
     if (!std::exchange(valid_, false))
         throw std::logic_error("initial_state_key_already_consumed");
 }
 
-// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:222-230
+// SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:103-107
 void SuccessorStateKey::consume() {
     if (!std::exchange(valid_, false))
         throw std::logic_error("successor_state_key_already_consumed");
 }
 
-// Callers define the schema of each payload and must supply its already
-// canonical bytes. The caller's allocation context enforces its injected
-// budget when these bytes are allocated.
-// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:83-93
+// Callers define each metadata mapping's schema and canonical byte encoding.
+// The source uses JSON mappings; this native payload does not parse them.
+// The caller's allocation context enforces its injected budget.
+// SWEGCA: src/swegca/mosaic_cognitive_kernel.py@5901a5a:220-254
 CanonicalPayload::CanonicalPayload(const AllocationContext& account,
                                    std::span<const std::byte> bytes)
     : bytes_(account.allocator<std::byte>()) {
     if (!bytes.empty()) bytes_.assign(bytes.begin(), bytes.end());
 }
 
-// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:83-93
+// SWEGCA: src/swegca/mosaic_cognitive_kernel.py@5901a5a:107-160
 StructuredWorldGraph::StructuredWorldGraph(
     const AllocationContext& account,
     std::span<const WorldEntityInput> entities,
@@ -185,43 +178,31 @@ StructuredWorldGraph::StructuredWorldGraph(
       relations_(account.allocator<WorldRelation>()) {
     entities_.reserve(entities.size());
     relations_.reserve(relations.size());
-    for (const auto& input : entities)
+    std::set<std::string_view, std::less<>, AllocationAdapter<std::string_view>> ids(
+        std::less<>{}, account.allocator<std::string_view>());
+    for (const auto& input : entities) {
+        EvidenceReferences references(account.allocator<ExperienceAddress>());
+        references.reserve(input.evidence_references.size());
+        for (const auto address : input.evidence_references)
+            references.emplace_back(account, address);
         entities_.push_back({EntityId(account, input.id), EntityKind(account, input.kind),
-                             CanonicalPayload(account, input.attributes)});
-    for (const auto& input : relations)
-        relations_.push_back({RelationId(account, input.id), RelationKind(account, input.kind),
-                              EntityId(account, input.source), EntityId(account, input.target),
-                              CanonicalPayload(account, input.attributes)});
-    std::sort(entities_.begin(), entities_.end(),
-              [](const WorldEntity& left, const WorldEntity& right) {
-                  return left.id.value() < right.id.value();
-              });
-    std::sort(relations_.begin(), relations_.end(),
-              [](const WorldRelation& left, const WorldRelation& right) {
-                  return left.id.value() < right.id.value();
-              });
-    for (std::size_t index = 1; index < entities_.size(); ++index)
-        if (entities_[index - 1].id == entities_[index].id)
+                             CanonicalPayload(account, input.properties),
+                             CanonicalPayload(account, input.spatial),
+                             std::move(references)});
+        if (!ids.emplace(entities_.back().id.value()).second)
             throw std::invalid_argument("world_graph_duplicate_entity");
-
-    for (std::size_t index = 0; index < relations_.size(); ++index) {
-        const auto& relation = relations_[index];
-        if (index != 0 && relations_[index - 1].id == relation.id)
-            throw std::invalid_argument("world_graph_duplicate_relation");
-        const auto has_entity = [this](const EntityId& id) {
-            const auto found = std::lower_bound(
-                entities_.begin(), entities_.end(), id.value(),
-                [](const WorldEntity& entity, std::string_view value) {
-                    return entity.id.value() < value;
-                });
-            return found != entities_.end() && found->id == id;
-        };
-        if (!has_entity(relation.source) || !has_entity(relation.target))
+    }
+    for (const auto& input : relations) {
+        if (!ids.contains(input.subject) || !ids.contains(input.object))
             throw std::invalid_argument("world_graph_relation_entity_missing");
+        relations_.push_back({EntityId(account, input.subject),
+                              RelationPredicate(account, input.predicate),
+                              EntityId(account, input.object),
+                              CanonicalPayload(account, input.properties)});
     }
 }
 
-// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:83-93
+// SWEGCA: src/swegca/mosaic_cognitive_kernel.py@5901a5a:220-254
 CognitiveState::CognitiveState(
     InitialStateKey key, OwnerId owner,
     RoleRegistry roles, CognitiveTensor semantic, CognitiveTensor executive,
@@ -232,13 +213,14 @@ CognitiveState::CognitiveState(
       semantic_(std::move(semantic)),
       executive_(std::move(executive)), scratch_(std::move(scratch)),
       world_graph_(std::move(world_graph)),
-      evidence_references_(canonical_evidence(std::move(evidence_references))),
-      // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:83-93
+      evidence_references_(std::move(evidence_references)),
+      // Preserve original evidence reference order and repeats.
+      // SWEGCA: src/swegca/mosaic_cognitive_kernel.py@5901a5a:220-254
       goals_(std::move(goals)), values_(std::move(values)),
       self_(std::move(self)),
       generation_((key.consume(), validated_generation(nullptr))) {}
 
-// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:83-93
+// SWEGCA: src/swegca/mosaic_cognitive_kernel.py@5901a5a:220-254
 CognitiveState::CognitiveState(
     SuccessorStateKey key, const CognitiveState& prior,
     RoleRegistry roles, CognitiveTensor semantic, CognitiveTensor executive,
@@ -249,15 +231,17 @@ CognitiveState::CognitiveState(
       semantic_(std::move(semantic)),
       executive_(std::move(executive)), scratch_(std::move(scratch)),
       world_graph_(std::move(world_graph)),
-      evidence_references_(canonical_evidence(std::move(evidence_references))),
-      // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:83-93
+      evidence_references_(std::move(evidence_references)),
+      // Preserve original evidence reference order and repeats.
+      // SWEGCA: src/swegca/mosaic_cognitive_kernel.py@5901a5a:220-254
       goals_(std::move(goals)), values_(std::move(values)),
       self_(std::move(self)),
       generation_((key.consume(), validated_generation(&prior))) {}
 
 // All members read here precede generation_ in declaration order. Validate
-// their bounds and continuity before hashing; no provisional digest escapes.
-// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:83-93
+// before hashing. Ordinal continuity and append-only roles are C++ successor
+// rules, not checks in the original CognitiveState constructor.
+// SWEGCA: src/swegca/mosaic_cognitive_kernel.py@5901a5a:220-254
 StateGeneration CognitiveState::validated_generation(
     const CognitiveState* prior) const {
     validate();
@@ -290,13 +274,16 @@ StateGeneration CognitiveState::validated_generation(
 
 // This C++ stream is the same canonical preimage used above to compute the
 // content digest; a state-part writer can consume it without a whole-state copy.
-// SWEGCA: docs/SWEGCA_CPP_MAIN_STATE_STORAGE_REVIEW.md@9da0813:227-235
+// SWEGCA: src/swegca/mosaic_bounded_world_write.py@5901a5a:262-283
 void CognitiveState::for_each_content_chunk(StateContentSink write) const {
     emit_state_content(write, owner_, roles_, semantic_, executive_, scratch_,
                        world_graph_, evidence_references_, goals_, values_, self_);
 }
 
-// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:83-93
+// The original checks a common batch dimension. The current native writer
+// still supports only one batch; this stricter general-state boundary remains
+// an explicit architecture gap until its proposal and writer paths are widened.
+// SWEGCA: src/swegca/mosaic_cognitive_kernel.py@5901a5a:234-254
 void CognitiveState::validate() const {
     const auto& semantic_shape = semantic_.shape();
     const auto& executive_shape = executive_.shape();
@@ -324,14 +311,16 @@ void CognitiveState::validate() const {
     for (const auto& entity : world_graph_.entities()) {
         account(entity.id.value().size());
         account(entity.kind.value().size());
-        account(entity.attributes.bytes().size());
+        account(entity.properties.bytes().size());
+        account(entity.spatial.bytes().size());
+        for (const auto& address : entity.evidence_references)
+            account(address.value().size());
     }
     for (const auto& relation : world_graph_.relations()) {
-        account(relation.id.value().size());
-        account(relation.kind.value().size());
-        account(relation.source.value().size());
-        account(relation.target.value().size());
-        account(relation.attributes.bytes().size());
+        account(relation.subject.value().size());
+        account(relation.predicate.value().size());
+        account(relation.object.value().size());
+        account(relation.properties.bytes().size());
     }
     for (const auto& address : evidence_references_)
         account(address.value().size());
@@ -367,7 +356,7 @@ void CognitiveState::validate() const {
 
 }
 
-// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:222-230
+// SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:103-107
 StateSnapshot::StateSnapshot(std::shared_ptr<const CognitiveState> state,
                              std::shared_ptr<const void> main_lifetime)
     : main_lifetime_(std::move(main_lifetime)), state_(std::move(state)) {
@@ -386,7 +375,7 @@ StateSnapshot& StateSnapshot::operator=(StateSnapshot other) noexcept {
 
 // Moving a snapshot transfers its ownership; the emptied handle cannot expose
 // a state. Reject it explicitly instead of dereferencing an empty shared_ptr.
-// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:222-230
+// SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:103-107
 const CognitiveState& StateSnapshot::state() const {
     if (!state_) throw std::logic_error("state_snapshot_not_live");
     return *state_;
