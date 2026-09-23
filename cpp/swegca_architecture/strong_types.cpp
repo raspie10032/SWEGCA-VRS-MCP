@@ -6,9 +6,10 @@
 namespace swegca::architecture {
 namespace {
 
-// C++ text identity uses an explicit ASCII-whitespace rule and does not copy
-// Python Unicode strip behavior. The full byte sequence is always inspected.
-// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:541-543
+// Weak source analogy: the author's _require_text rejects Unicode-blank
+// values. C++ uses an explicit ASCII-whitespace rule and inspects all bytes;
+// this does not copy Python Unicode strip behavior.
+// SWEGCA: src/swegca/mosaic_cognitive_kernel.py@5901a5a:19-21
 bool contains_identity_content(std::string_view value) {
     bool has_content = false;
     for (const auto byte : value) {
@@ -33,8 +34,10 @@ std::uint8_t hex_nibble(char value) {
 namespace detail {
 
 // Strict UTF-8 rejects overlong encodings, surrogate code points, truncated
-// sequences, invalid continuations, and values above U+10FFFF.
-// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:541-543
+// sequences, invalid continuations, and values above U+10FFFF. This byte
+// validation is additional native infrastructure, not a Python _require_text
+// operation.
+// SWEGCA: src/swegca/mosaic_cognitive_kernel.py@5901a5a:19-21
 bool is_strict_utf8(std::string_view value) noexcept {
     const auto* bytes = reinterpret_cast<const unsigned char*>(value.data());
     std::size_t position = 0;
@@ -78,13 +81,15 @@ bool is_strict_utf8(std::string_view value) noexcept {
     return true;
 }
 
-// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:541-543
+// Native identity also imposes UTF-8, NUL and byte-length rules absent from
+// the cited Python text check.
+// SWEGCA: src/swegca/mosaic_cognitive_kernel.py@5901a5a:19-21
 bool is_identity_text(std::string_view value) noexcept {
     return value.size() <= identity_text_max_bytes && is_strict_utf8(value) &&
            value.find('\0') == std::string_view::npos && contains_identity_content(value);
 }
 
-// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:541-543
+// SWEGCA: src/swegca/mosaic_cognitive_kernel.py@5901a5a:19-21
 void require_identity_text(std::string_view value, std::string_view field) {
     if (value.size() > identity_text_max_bytes)
         throw std::invalid_argument(std::string(field) + "_too_long");

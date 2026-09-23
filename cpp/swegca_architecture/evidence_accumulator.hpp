@@ -142,8 +142,9 @@ struct RejectedEvidence {
 // replayed at an observation's address (layer plan 3.1): the exact address
 // and record digest, and its root family and root context digests, sorted
 // and unique. The verifier reads nothing else of the experience; every span
-// is borrowed for the call.
-// SWEGCA: docs/SWEGCA_CPP_VRS_LAYER_PLAN.md@6642262:87-97
+// is borrowed for the call. The digest arrays are C++ admission metadata,
+// not fields specified by the approved Replay step itself.
+// SWEGCA: user@2026-09-22:25
 struct ReplayedOriginal {
     std::string_view address;
     DigestBytes record_digest{};
@@ -160,19 +161,21 @@ struct ReplayedOriginal {
 // outcome differs from the original's is an unresolved conflict, kept. A
 // re-evidencer that changes its outcome on the same generation adds a second
 // result; only an exact repeat is refused, and the refusal is kept.
+// The typed generation, actor and digest fields are the C++ receipt
+// representation of the approved Replay and Re-evidence order.
 class ReEvidenceResult final {
 public:
-    // SWEGCA: docs/SWEGCA_VRS_MCP_ORDER_FOR_REVIEW.md@30b73e7:24-29
+    // SWEGCA: user@2026-09-22:25-29
     [[nodiscard]] const ClaimRevision& claim() const noexcept { return claim_; }
-    // SWEGCA: docs/SWEGCA_VRS_MCP_ORDER_FOR_REVIEW.md@30b73e7:24-29
+    // SWEGCA: user@2026-09-22:25-29
     [[nodiscard]] const ExperienceAddress& address() const noexcept { return address_; }
-    // SWEGCA: docs/SWEGCA_VRS_MCP_ORDER_FOR_REVIEW.md@30b73e7:24-29
+    // SWEGCA: user@2026-09-22:25-29
     [[nodiscard]] const DigestBytes& record_digest() const noexcept { return record_digest_; }
-    // SWEGCA: docs/SWEGCA_VRS_MCP_ORDER_FOR_REVIEW.md@30b73e7:24-29
+    // SWEGCA: user@2026-09-22:25-29
     [[nodiscard]] const StateGeneration& generation() const noexcept { return generation_; }
-    // SWEGCA: docs/SWEGCA_VRS_MCP_ORDER_FOR_REVIEW.md@30b73e7:24-29
+    // SWEGCA: user@2026-09-22:25-29
     [[nodiscard]] const ProducerId& re_evidenced_by() const noexcept { return by_; }
-    // SWEGCA: docs/SWEGCA_VRS_MCP_ORDER_FOR_REVIEW.md@30b73e7:24-29
+    // SWEGCA: user@2026-09-22:25-29
     [[nodiscard]] EvidenceOutcome outcome() const noexcept { return outcome_; }
 
 private:
@@ -314,7 +317,7 @@ public:
         return admitted_evidence_;
     }
     // In recording order.
-    // SWEGCA: docs/SWEGCA_VRS_MCP_ORDER_FOR_REVIEW.md@30b73e7:24-29
+    // SWEGCA: user@2026-09-22:25-29
     [[nodiscard]] std::span<const ReEvidenceResult> re_evidence() const noexcept {
         return re_evidence_;
     }
