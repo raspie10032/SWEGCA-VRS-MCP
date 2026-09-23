@@ -77,6 +77,9 @@ MainOwner::MainOwner(MainInitialState initial, AllocationContext account) {
     RoleRegistry roles(account, initial.roles);
     EvidenceReferences evidence(account.allocator<ExperienceAddress>());
     evidence.reserve(initial.evidence_references.size());
+    // The source CognitiveState accepts state-level reference strings without
+    // validation. Native ExperienceAddress narrows that set (blank/NUL/UTF-8/
+    // byte limit); keep order and repeats, and do not claim Python parity.
     for (const auto address : initial.evidence_references)
         evidence.emplace_back(account, address);
     CognitiveTensor semantic = initial_tensor(account, initial.semantic);

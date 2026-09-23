@@ -70,7 +70,7 @@ void emit_state_content(
     const CognitiveTensor& scratch, const StructuredWorldGraph& graph,
     std::span<const ExperienceAddress> evidence, const GoalState& goals,
     const ValueState& values, const SelfState& self) {
-    constexpr std::string_view domain = "swegca.cognitive_state.content.v2";
+    constexpr std::string_view domain = "swegca.cognitive_state.content.v3";
     write(std::span<const std::byte>(
         reinterpret_cast<const std::byte*>(domain.data()), domain.size()));
     emit_text(write, owner.value());
@@ -137,6 +137,8 @@ Digest256 state_digest(
     return Digest256(hash.finish());
 }
 
+// Weak source analogy: the author requires one authoritative state, but has
+// no matching numeric successor ordinal. This counter is C++ infrastructure.
 // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:103-107
 std::uint64_t next_ordinal(const CognitiveState& prior) {
     if (prior.generation().ordinal() ==
@@ -181,6 +183,9 @@ StructuredWorldGraph::StructuredWorldGraph(
     std::set<std::string_view, std::less<>, AllocationAdapter<std::string_view>> ids(
         std::less<>{}, account.allocator<std::string_view>());
     for (const auto& input : entities) {
+        // The source rejects only an empty per-entity evidence ref. Native
+        // ExperienceAddress also rejects blank, NUL, invalid UTF-8 and texts
+        // over its byte limit; this narrower address rule is still visible.
         EvidenceReferences references(account.allocator<ExperienceAddress>());
         references.reserve(input.evidence_references.size());
         for (const auto address : input.evidence_references)
@@ -366,7 +371,8 @@ StateSnapshot::StateSnapshot(std::shared_ptr<const CognitiveState> state,
 
 // Keep both the old and the replacement Main leases alive while swapping
 // snapshots. The old state's last reference is released before its lease.
-// SWEGCA: user@2026-09-23:1
+// C++ lease order for the source's single Main-owned state.
+// SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:103-107
 StateSnapshot& StateSnapshot::operator=(StateSnapshot other) noexcept {
     state_.swap(other.state_);
     main_lifetime_.swap(other.main_lifetime_);

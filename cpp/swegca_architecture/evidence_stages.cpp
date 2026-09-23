@@ -40,7 +40,10 @@ ReEvidenceRecorded ReEvidence::apply(EvidenceAccumulator& accumulator,
 
 // Replay and the generation HEAD names come from one snapshot of Main's
 // journal, never from the caller; admission is judged against that pair.
-// SWEGCA: user@2026-09-22:24-29
+// The source admits a replayed experience as evidence only through its
+// claim-relevant, address-bound policy. This Main wrapper also binds the
+// journal's current state generation; it is additional C++ infrastructure.
+// SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:111-117
 AdmissionResult EvidenceAdmission::admit(EvidenceAccumulator& accumulator,
                                          const EvidenceObservation& observation,
                                          std::uint64_t current_step) {

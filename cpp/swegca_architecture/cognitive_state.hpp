@@ -71,7 +71,8 @@ using EvidenceReferences =
 
 // The author graph keeps properties, spatial data and per-entity provenance
 // separate. CanonicalPayload is their native byte representation; the caller
-// supplies each payload's schema and canonical encoding.
+// supplies each payload's schema and canonical encoding. Native
+// ExperienceAddress is stricter than the source's nonempty entity ref check.
 struct WorldEntity final {
     EntityId id;
     EntityKind kind;
@@ -321,7 +322,7 @@ class StateSnapshot final {
 public:
     StateSnapshot(const StateSnapshot&) = default;
     StateSnapshot(StateSnapshot&&) noexcept = default;
-    // SWEGCA: user@2026-09-23:1
+    // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:103-107
     StateSnapshot& operator=(StateSnapshot other) noexcept;
 
     // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:103-107

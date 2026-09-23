@@ -6,18 +6,44 @@
 namespace swegca::architecture {
 namespace {
 
-// Weak source analogy: the author's _require_text rejects Unicode-blank
-// values. C++ uses an explicit ASCII-whitespace rule and inspects all bytes;
-// this does not copy Python Unicode strip behavior.
+// The author's _require_text uses Python str.strip. Python 3.14.7 in the
+// pinned Unicode 16.0 environment treats these 29 code points as whitespace.
+// The UTF-8 validity and byte-length limits below remain native rules.
 // SWEGCA: src/swegca/mosaic_cognitive_kernel.py@5901a5a:19-21
-bool contains_identity_content(std::string_view value) {
-    bool has_content = false;
-    for (const auto byte : value) {
-        if (byte != ' ' && byte != '\t' && byte != '\n' && byte != '\r' &&
-            byte != '\f' && byte != '\v')
-            has_content = true;
+bool python_strip_space(std::uint32_t code_point) noexcept {
+    return (code_point >= 0x09 && code_point <= 0x0d) ||
+           (code_point >= 0x1c && code_point <= 0x20) ||
+           code_point == 0x85 || code_point == 0xa0 || code_point == 0x1680 ||
+           (code_point >= 0x2000 && code_point <= 0x200a) ||
+           code_point == 0x2028 || code_point == 0x2029 ||
+           code_point == 0x202f || code_point == 0x205f ||
+           code_point == 0x3000;
+}
+
+// Weak source analogy: implement the source's blank-text predicate on valid
+// UTF-8 bytes; the source works on Python Unicode strings directly.
+// SWEGCA: src/swegca/mosaic_cognitive_kernel.py@5901a5a:19-21
+bool contains_identity_content(std::string_view value) noexcept {
+    const auto* bytes = reinterpret_cast<const unsigned char*>(value.data());
+    for (std::size_t at = 0; at < value.size();) {
+        const std::uint32_t lead = bytes[at++];
+        std::uint32_t code_point = lead;
+        std::size_t continuations = 0;
+        if (lead >= 0xf0) {
+            code_point &= 0x07;
+            continuations = 3;
+        } else if (lead >= 0xe0) {
+            code_point &= 0x0f;
+            continuations = 2;
+        } else if (lead >= 0xc0) {
+            code_point &= 0x1f;
+            continuations = 1;
+        }
+        for (std::size_t continuation = 0; continuation < continuations; ++continuation)
+            code_point = (code_point << 6) | (bytes[at++] & 0x3f);
+        if (!python_strip_space(code_point)) return true;
     }
-    return has_content;
+    return false;
 }
 
 // SWEGCA: src/swegca/mosaic_evidence_revision.py@5901a5a:23-25
@@ -82,7 +108,7 @@ bool is_strict_utf8(std::string_view value) noexcept {
 }
 
 // Native identity also imposes UTF-8, NUL and byte-length rules absent from
-// the cited Python text check.
+// the cited Python text check. Only the blank-string decision matches strip.
 // SWEGCA: src/swegca/mosaic_cognitive_kernel.py@5901a5a:19-21
 bool is_identity_text(std::string_view value) noexcept {
     return value.size() <= identity_text_max_bytes && is_strict_utf8(value) &&

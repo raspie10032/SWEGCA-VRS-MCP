@@ -38,11 +38,26 @@ SOURCE_ROOTS = (
 )
 
 
-def self_design_document(source: str) -> bool:
-    # This repository's docs describe the reconstruction. A new design note
-    # cannot prove its own lineage. Approved user steps use the user@ form;
-    # original author sources live in separately pinned repositories.
-    return source.startswith("docs/")
+RECONSTRUCTION_START = "bfdbc49524ccfeaf91f9a1fd0205cc441f80e5a8"
+
+
+@lru_cache(maxsize=256)
+def self_design_document(source: str, revision: str) -> bool:
+    if not source.startswith("docs/"):
+        return False
+    # Reconstruction notes cannot prove their own lineage. The old author
+    # worklogs in separately pinned repositories remain usable as source
+    # evidence; the approved local order is cited with user@ instead.
+    if source.startswith("docs/SWEGCA_CPP_") or source == (
+        "docs/SWEGCA_VRS_MCP_ORDER_FOR_REVIEW.md"
+    ):
+        return True
+    try:
+        git_bytes("merge-base", "--is-ancestor", RECONSTRUCTION_START,
+                  revision, root=SOURCE_ROOTS[0])
+        return True
+    except (OSError, subprocess.CalledProcessError):
+        return False
 
 
 def git_bytes(*args: str, root: Path | None = None) -> bytes:
@@ -89,9 +104,9 @@ def author_blob(reference: str) -> bytes | None:
 
 def valid_tag(reference: str) -> bool:
     source, rest = reference.split("@", 1)
-    if self_design_document(source):
-        return False
     revision, line_span = rest.split(":", 1)
+    if self_design_document(source, revision):
+        return False
     first, _, last = line_span.partition("-")
     start, end = int(first), int(last or first)
     if start < 1 or end < start:
@@ -215,9 +230,10 @@ def check_cpp(path: str, source: str) -> list[str]:
     if definitions and not tags:
         return [f"{path}: missing // SWEGCA: source@revision:lines tag"]
     for tag in tags:
-        tagged_source = tag.group(1).split("@", 1)[0]
+        tagged_source, tagged_revision_and_lines = tag.group(1).split("@", 1)
+        tagged_revision = tagged_revision_and_lines.split(":", 1)[0]
         line = source.count("\n", 0, tag.start()) + 1
-        if self_design_document(tagged_source):
+        if self_design_document(tagged_source, tagged_revision):
             issues.append(f"{path}:{line}: self-authored design document is not an author source")
         elif not valid_tag(tag.group(1)):
             issues.append(f"{path}:{line}: SWEGCA source tag has no verified source span")
