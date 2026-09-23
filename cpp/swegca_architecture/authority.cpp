@@ -50,6 +50,13 @@ namespace {
 
 std::atomic<std::uint64_t> next_issuer_instance{1};
 
+// The source uses private process-local identity tokens to distinguish a
+// genuine accumulator decision from matching visible fields. The nonce and
+// retirement ranges below are this C++ ledger's one-use representation of
+// that authority boundary, not an algorithm from the Python source.
+// The source identity token can be checked again within its process; this
+// ledger instead consumes one operation-bound token once. A second attempted
+// use needs a fresh Main decision, even when the visible fields are unchanged.
 // SWEGCA: src/swegca/mosaic_bounded_world_write.py@5901a5a:95-150
 std::uint64_t allocate_issuer_instance() {
     auto candidate = next_issuer_instance.load(std::memory_order_relaxed);
@@ -61,7 +68,7 @@ std::uint64_t allocate_issuer_instance() {
     throw std::overflow_error("authority_issuer_space_exhausted");
 }
 
-// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:232-241
+// SWEGCA: src/swegca/mosaic_evidence_accumulator.py@5901a5a:22-45
 bool was_spent_locked(const detail::AuthorityRegistry& registry,
                       std::uint64_t nonce) {
     auto following = registry.spent_ranges.upper_bound(nonce);
@@ -72,7 +79,7 @@ bool was_spent_locked(const detail::AuthorityRegistry& registry,
 
 // Re-created (user@2026-09-23): merged spent ranges grow with live nonce gaps,
 // not with the number of successfully consumed capabilities.
-// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:232-241
+// SWEGCA: src/swegca/mosaic_evidence_accumulator.py@5901a5a:22-45
 void mark_spent_locked(detail::AuthorityRegistry& registry,
                        std::uint64_t nonce,
                        detail::AuthorityRegistry::Ranges::node_type retirement) {
@@ -105,7 +112,7 @@ void mark_spent_locked(detail::AuthorityRegistry& registry,
 
 // Re-created (user@2026-09-23): dropping an unused capability immediately
 // closes its nonce instead of relying on a separate cleanup subsystem.
-// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:232-241
+// SWEGCA: src/swegca/mosaic_evidence_accumulator.py@5901a5a:22-45
 void retire_abandoned_token(detail::AuthorityRegistry& registry,
                             std::uint64_t nonce) noexcept {
     std::lock_guard guard(registry.mutex);
@@ -125,7 +132,7 @@ void retire_abandoned_token(detail::AuthorityRegistry& registry,
 
 namespace detail {
 
-// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:232-241
+// SWEGCA: src/swegca/mosaic_evidence_accumulator.py@5901a5a:22-45
 CapabilityToken::~CapabilityToken() {
     if (retired_) return;
     if (const auto registry = registry_.lock())
@@ -152,7 +159,7 @@ std::size_t MainAuthorityLedger::live_capability_count() const {
 
 // Re-created (user@2026-09-23): private one-use nonce issuance for the six
 // authority domains required by ARCHITECTURE_SPEC.md@5901a5a:88-99.
-// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:232-241
+// SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:88-99
 std::shared_ptr<detail::CapabilityToken> MainAuthorityLedger::issue_token(
     AuthorityDomain domain, const OwnerId& owner,
     const StateGeneration& generation, const Digest256& operation) {
@@ -194,7 +201,7 @@ std::shared_ptr<detail::CapabilityToken> MainAuthorityLedger::issue_token(
 
 // Re-created (user@2026-09-23): consume by rvalue and mark spent before the
 // authorized mutation; failed mutations require a new gate decision.
-// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:232-241
+// SWEGCA: src/swegca/mosaic_evidence_accumulator.py@5901a5a:22-45
 CapabilityDescriptor MainAuthorityLedger::consume_token(
     AuthorityDomain expected,
     std::shared_ptr<detail::CapabilityToken>&& capability,

@@ -9,7 +9,7 @@
 namespace swegca::architecture {
 namespace {
 
-// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:243-251
+// SWEGCA: src/swegca/mosaic_cognitive_kernel.py@5901a5a:175-254
 std::uint64_t checked_elements(const TensorShape3& shape) {
     if (shape.batches == 0 || shape.slots == 0 || shape.width == 0)
         throw std::invalid_argument("cognitive_tensor_shape_must_be_positive");
@@ -22,7 +22,7 @@ std::uint64_t checked_elements(const TensorShape3& shape) {
 }
 
 // Validate the request before the allocator reserves and allocates its bytes.
-// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:243-251
+// SWEGCA: src/swegca/mosaic_cognitive_kernel.py@5901a5a:175-254
 std::size_t checked_bytes(ScalarType type, const TensorShape3& shape) {
     const auto elements = checked_elements(shape);
     const auto width = scalar_width(type);
@@ -31,47 +31,9 @@ std::size_t checked_bytes(ScalarType type, const TensorShape3& shape) {
     return static_cast<std::size_t>(elements) * width;
 }
 
-// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:243-251
-std::uint64_t little_u64(std::span<const std::byte> bytes) noexcept {
-    std::uint64_t value = 0;
-    for (std::size_t index = 0; index < bytes.size(); ++index)
-        value |= static_cast<std::uint64_t>(
-                     std::to_integer<std::uint8_t>(bytes[index]))
-                 << (index * 8);
-    return value;
-}
-
-// Persistent numeric state rejects NaN and infinity for every supported scalar
-// type without reproducing a framework's tensor runtime.
-// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:243-251
-bool scalar_is_finite(ScalarType type, std::span<const std::byte> bytes) noexcept {
-    const auto bits = little_u64(bytes);
-    switch (type) {
-        case ScalarType::bfloat16:
-            return (bits & 0x7f80u) != 0x7f80u;
-        case ScalarType::float16:
-            return (bits & 0x7c00u) != 0x7c00u;
-        case ScalarType::float32:
-            return (bits & 0x7f800000u) != 0x7f800000u;
-        case ScalarType::float64:
-            return (bits & 0x7ff0000000000000ull) != 0x7ff0000000000000ull;
-    }
-    return false;
-}
-
-// IEEE signed zero has one SWEGCA value identity. Canonical storage clears the
-// sign bit so equal zero-valued deltas cannot acquire different digests.
-// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:269-277
-void normalize_signed_zero(std::span<std::byte> bytes) noexcept {
-    const auto bits = little_u64(bytes);
-    const auto sign = std::uint64_t{1} << (bytes.size() * 8 - 1);
-    if ((bits & ~sign) == 0)
-        bytes.back() &= std::byte{0x7f};
-}
-
 }  // namespace
 
-// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:243-251
+// SWEGCA: src/swegca/mosaic_cognitive_kernel.py@5901a5a:175-254
 std::size_t scalar_width(ScalarType scalar_type) {
     switch (scalar_type) {
         case ScalarType::bfloat16:
@@ -85,29 +47,25 @@ std::size_t scalar_width(ScalarType scalar_type) {
     throw std::invalid_argument("cognitive_tensor_scalar_type_invalid");
 }
 
-// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:243-251
-// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:243-251
+// The source CognitiveState checks tensor type and shape, while the source
+// SynapseProposal checks finite delta values separately. Storage must not
+// erase signed zero or reject state values on the proposal's behalf.
+// SWEGCA: src/swegca/mosaic_cognitive_kernel.py@5901a5a:220-254
+// SWEGCA: src/swegca/mosaic_synapse_arbiter.py@5901a5a:65-89
 CognitiveTensor::Chunk::Chunk(Storage value, ScalarType type)
     : bytes(std::move(value)) {
     const auto width = scalar_width(type);
     if (bytes.empty() || bytes.size() % width != 0 || bytes.size() > chunk_bytes)
         throw std::invalid_argument("cognitive_tensor_chunk_size_invalid");
-    for (std::size_t offset = 0; offset < bytes.size(); offset += width) {
-        normalize_signed_zero(
-            std::span<std::byte>(bytes).subspan(offset, width));
-        if (!scalar_is_finite(
-                type, std::span<const std::byte>(bytes).subspan(offset, width)))
-            throw std::invalid_argument("cognitive_tensor_value_not_finite");
-    }
 }
 
-// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:243-251
+// SWEGCA: src/swegca/mosaic_cognitive_kernel.py@5901a5a:175-254
 CognitiveTensor::CognitiveTensor(ScalarType scalar_type, TensorShape3 shape,
                                  std::uint64_t byte_count, Chunks chunks) noexcept
     : scalar_type_(scalar_type), shape_(shape), byte_count_(byte_count),
       chunks_(std::move(chunks)) {}
 
-// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:243-251
+// SWEGCA: src/swegca/mosaic_cognitive_kernel.py@5901a5a:175-254
 CognitiveTensor::CognitiveTensor(const AllocationContext& account,
                                  ScalarType scalar_type, TensorShape3 shape,
                                  std::span<const std::byte> canonical_bytes)
@@ -156,7 +114,7 @@ CognitiveTensor::CognitiveTensor(const AllocationContext& account,
         throw std::invalid_argument("cognitive_tensor_byte_count_mismatch");
 }
 
-// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:243-251
+// SWEGCA: src/swegca/mosaic_cognitive_kernel.py@5901a5a:175-254
 CognitiveTensor CognitiveTensor::zeroed(const AllocationContext& account,
                                          ScalarType scalar_type,
                                          TensorShape3 shape) {
@@ -179,12 +137,12 @@ CognitiveTensor CognitiveTensor::zeroed(const AllocationContext& account,
     return CognitiveTensor(scalar_type, shape, bytes, std::move(chunks));
 }
 
-// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:243-251
+// SWEGCA: src/swegca/mosaic_cognitive_kernel.py@5901a5a:175-254
 std::uint64_t CognitiveTensor::element_count() const noexcept {
     return shape_.batches * shape_.slots * shape_.width;
 }
 
-// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:243-251
+// SWEGCA: src/swegca/mosaic_cognitive_kernel.py@5901a5a:175-254
 void CognitiveTensor::copy_bytes(std::uint64_t offset,
                                  std::span<std::byte> destination) const {
     if (offset > byte_count_ || destination.size() > byte_count_ - offset)
@@ -202,7 +160,7 @@ void CognitiveTensor::copy_bytes(std::uint64_t offset,
     }
 }
 
-// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:243-251
+// SWEGCA: src/swegca/mosaic_bounded_world_write.py@5901a5a:317-329
 CognitiveTensor CognitiveTensor::with_replaced_slot(
     const AllocationContext& account, std::uint64_t slot,
     std::span<const std::byte> value) const {
@@ -231,7 +189,7 @@ CognitiveTensor CognitiveTensor::with_replaced_slot(
     return CognitiveTensor(scalar_type_, shape_, byte_count_, std::move(result));
 }
 
-// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:243-251
+// SWEGCA: src/swegca/mosaic_cognitive_kernel.py@5901a5a:175-254
 bool CognitiveTensor::operator==(const CognitiveTensor& other) const noexcept {
     if (scalar_type_ != other.scalar_type_ || shape_ != other.shape_ ||
         byte_count_ != other.byte_count_) return false;
@@ -241,7 +199,7 @@ bool CognitiveTensor::operator==(const CognitiveTensor& other) const noexcept {
     return true;
 }
 
-// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:243-251
+// SWEGCA: src/swegca/mosaic_cognitive_kernel.py@5901a5a:175-254
 std::strong_ordering CognitiveTensor::operator<=>(const CognitiveTensor& other) const noexcept {
     if (const auto order = scalar_type_ <=> other.scalar_type_; order != 0)
         return order;

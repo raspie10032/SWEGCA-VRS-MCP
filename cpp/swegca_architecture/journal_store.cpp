@@ -110,7 +110,7 @@ bool is_published_name(std::string_view name) {
 // existing ordinal may only grow when it is the tail, a new ordinal must
 // follow the tail contiguously, and a checkpoint must name every extent.
 // SWEGCA: user@2026-09-22:72-79
-void apply_manifest(ExtentTable& extents, const Manifest& manifest) {
+void apply_manifest(RecoveryExtentTable& extents, const Manifest& manifest) {
     for (std::size_t index = 0; index < manifest.extent_count(); ++index) {
         const auto next = manifest.extent(index);
         const auto tail_ordinal = extents.empty() ? 0 : extents.rbegin()->first;
@@ -1159,15 +1159,16 @@ std::unique_ptr<JournalStore> JournalStore::open(const fs::path& directory,
 // published bytes plus the rounding bound per log. HEAD is charged twice:
 // its replacement is written beside it before the move.
 // SWEGCA: user@2026-09-22:72-79
-std::uint64_t JournalStore::storage_of(const ExtentTable& extents, const ManifestFields& head,
+std::uint64_t JournalStore::storage_of(const ExtentIndex& extents, const ManifestFields& head,
                                        const ManifestLocation& location) const {
     constexpr const char* code = "journal_storage_overflow";
     const auto unit = allocation_unit_;
     const auto per_log = plus(manifest_log_header_bytes, times(2, unit, code), code);
     std::uint64_t total = file_charge(0, unit);  // owner.lock
     total = plus(total, times(file_charge(head_bytes, unit), 2, code), code);
-    for (const auto& [ordinal, extent] : extents)
+    extents.for_each([&](std::uint64_t, const SegmentExtent& extent) {
         total = plus(total, file_charge(extent.byte_length, unit), code);
+    });
     total = plus(total, plus(head.manifest_bytes_before, location.length, code), code);
     total = plus(total, times(location.log_ordinal, per_log, code), code);
     return plus(total, page_log_charge(head.view_pages), code);
@@ -1231,6 +1232,8 @@ void JournalStore::load_published_head() {
     if (fields.recovery_bytes_before > max_recovery_bytes - pointer.location.length)
         fail("journal_recovery_over_budget");
 
+    RecoveryExtentTable recovered(
+        memory_.allocator<std::pair<const std::uint64_t, SegmentExtent>>());
     {
         // `older` runs from the head's parent back to the checkpoint. Its
         // capacity is fixed up front, so `walk` stays valid while it grows.
@@ -1262,9 +1265,10 @@ void JournalStore::load_published_head() {
             walk_location = previous_location;
         }
         for (auto manifest = older.rbegin(); manifest != older.rend(); ++manifest)
-            apply_manifest(loaded->extents, *manifest);
+            apply_manifest(recovered, *manifest);
     }
-    apply_manifest(loaded->extents, head);
+    apply_manifest(recovered, head);
+    loaded->extents = ExtentIndex::from_recovery(memory_, recovered);
     loaded->location = pointer.location;
     loaded->page_logs = std::allocate_shared<int>(memory_.allocator<int>(), 0);
     loaded->storage = storage_of(loaded->extents, fields, pointer.location);
@@ -1286,7 +1290,7 @@ void JournalStore::load_published_head() {
             if (ordinal > tail_ordinal) {
                 io::remove_file(entry.path());
                 removed = true;
-            } else if (!loaded->extents.contains(ordinal)) {
+            } else if (loaded->extents.get_if(ordinal) == nullptr) {
                 fail("journal_segment_unaccounted");
             }
         } else if (const auto log = parse_ordinal(name, manifest_log_prefix, manifest_log_suffix)) {
@@ -1332,8 +1336,8 @@ void JournalStore::load_published_head() {
     // checkpoint head checks its tail extent.
     const auto& newest = published->head;
     if (newest.fields().checkpoint) {
-        if (!published->extents.empty())
-            verify_extent(*published, published->extents.rbegin()->second);
+        if (const auto* tail = published->extents.tail())
+            verify_extent(*published, *tail);
     } else {
         for (std::size_t index = 0; index < newest.extent_count(); ++index)
             verify_extent(*published, published->extents.at(newest.extent(index).ordinal));
@@ -1381,9 +1385,9 @@ void JournalStore::verify_extent(const PublishedSnapshot& current,
                                  const SegmentExtent& extent) const {
     Digest entering = zero_digest;
     if (extent.ordinal > 1) {
-        const auto before = current.extents.find(extent.ordinal - 1);
-        if (before == current.extents.end()) fail("journal_extent_chain_missing");
-        entering = before->second.last_record_digest;
+        const auto* before = current.extents.get_if(extent.ordinal - 1);
+        if (before == nullptr) fail("journal_extent_chain_missing");
+        entering = before->last_record_digest;
     }
     LedgerBytes bytes(static_cast<std::size_t>(extent.byte_length), memory_.allocator<std::byte>());
     io::read_range(segment_path(directory_, extent.ordinal), extent.byte_length, 0, bytes,
@@ -1461,8 +1465,7 @@ StagedGeneration JournalStore::stage_from(const std::shared_ptr<const PublishedS
     LedgerVector<PlannedPiece> plan(memory_.allocator<PlannedPiece>());
     plan.reserve(drafts.size() + 1);
 
-    const SegmentExtent* tail =
-        current->extents.empty() ? nullptr : &current->extents.rbegin()->second;
+    const SegmentExtent* tail = current->extents.tail();
     std::uint64_t last_ordinal = tail ? tail->ordinal : 0;
     std::uint64_t new_files = 0;
     std::uint64_t record_bytes = 0;
@@ -1639,32 +1642,34 @@ StagedGeneration JournalStore::stage_from(const std::shared_ptr<const PublishedS
     fields.tail_segment_ordinal =
         touched.empty() ? parent.tail_segment_ordinal : touched.back().ordinal;
 
-    // A checkpoint lists every extent in ordinal order: the published ones,
-    // with the tail replaced when this generation extended it, then the new.
-    LedgerVector<SegmentExtent> all(memory_.allocator<SegmentExtent>());
-    if (fields.checkpoint) {
-        all.reserve(static_cast<std::size_t>(extent_count));
-        std::size_t next_touched = 0;
-        for (const auto& [ordinal, extent] : current->extents) {
-            if (next_touched < touched.size() && touched[next_touched].ordinal == ordinal)
-                all.push_back(touched[next_touched++]);
-            else
-                all.push_back(extent);
-        }
-        for (; next_touched < touched.size(); ++next_touched) all.push_back(touched[next_touched]);
-    }
-    auto manifest = Manifest::encode(fields, identity,
-                                     fields.checkpoint ? std::span<const SegmentExtent>(all)
-                                                       : std::span<const SegmentExtent>(touched),
-                                     views, memory_);
+    // A checkpoint lists every extent in ordinal order. Pull the prior
+    // immutable extent or its touched replacement straight into the encoder;
+    // the manifest bytes remain the one complete bounded output buffer.
+    auto manifest = [&]() -> Manifest {
+        if (!fields.checkpoint)
+            return Manifest::encode(fields, identity, touched, views, memory_);
+        const auto get_extent = [&](std::size_t index) -> SegmentExtent {
+            const auto ordinal = static_cast<std::uint64_t>(index) + 1;
+            const auto found = std::lower_bound(
+                touched.begin(), touched.end(), ordinal,
+                [](const SegmentExtent& extent, std::uint64_t value) {
+                    return extent.ordinal < value;
+                });
+            if (found != touched.end() && found->ordinal == ordinal) return *found;
+            if (ordinal <= current->extents.size()) return current->extents.at(ordinal);
+            fail("journal_checkpoint_incomplete");
+        };
+        return Manifest::encode(fields, identity,
+                                ExtentPull(get_extent, static_cast<std::size_t>(extent_count)),
+                                views, memory_);
+    }();
     if (manifest.bytes().size() != manifest_size) fail("journal_manifest_size_mismatch");
 
     // The complete next snapshot, checked the way recovery checks it, and
     // the full disk use including the view pages.
     auto next = std::allocate_shared<PublishedSnapshot>(memory_.allocator<PublishedSnapshot>(),
                                                         memory_, std::move(manifest));
-    next->extents = current->extents;
-    apply_manifest(next->extents, next->head);
+    next->extents = current->extents.with_manifest(next->head);
     next->location = location;
     next->page_logs = replacement != nullptr
                           ? std::allocate_shared<int>(memory_.allocator<int>(), 0)
@@ -1768,10 +1773,8 @@ PublishedUniverse JournalStore::universe() const {
     require_usable();
     const auto current = snapshot();
     const auto& fields = current->head.fields();
-    std::uint64_t bytes = 0;
-    for (const auto& [ordinal, extent] : current->extents)
-        bytes = plus(bytes, extent.byte_length, "journal_storage_overflow");
-    return PublishedUniverse{fields.generation, current->head.digest(), fields.tail_sequence, bytes};
+    return PublishedUniverse{fields.generation, current->head.digest(),
+                             fields.tail_sequence, current->extents.record_bytes()};
 }
 
 // SWEGCA: user@2026-09-22:72-79
@@ -1858,9 +1861,9 @@ PublishedRecord JournalStore::replay_in(const PublishedSnapshot& current,
 // SWEGCA: user@2026-09-22:72-79
 PublishedRecord JournalStore::read_in(const PublishedSnapshot& current,
                                       const RecordPosition& position) const {
-    const auto found = current.extents.find(position.segment_ordinal);
-    if (found == current.extents.end()) fail("journal_position_unknown_segment");
-    const auto& extent = found->second;
+    const auto* found = current.extents.get_if(position.segment_ordinal);
+    if (found == nullptr) fail("journal_position_unknown_segment");
+    const auto& extent = *found;
     if (position.sequence < extent.first_sequence ||
         position.sequence - extent.first_sequence >= extent.record_count ||
         position.byte_offset < segment_header_bytes ||
@@ -1883,26 +1886,28 @@ PublishedRecord JournalStore::read_in(const PublishedSnapshot& current,
 }
 
 // SWEGCA: user@2026-09-22:72-79
-void JournalStore::for_each_record(
-    const std::function<void(const RecordView&, const RecordPosition&)>& visit) const {
+void JournalStore::for_each_record_impl(
+    const void* target,
+    void (*visit)(const void*, const RecordView&, const RecordPosition&)) const {
     require_usable();
     const auto current = snapshot();
     Digest entering = zero_digest;
-    for (const auto& [ordinal, extent] : current->extents) {
+    current->extents.for_each([&](std::uint64_t ordinal, const SegmentExtent& extent) {
         LedgerBytes bytes(static_cast<std::size_t>(extent.byte_length),
                           memory_.allocator<std::byte>());
         io::read_range(segment_path(directory_, ordinal), extent.byte_length, 0, bytes,
                        "journal_published_segment_missing");
         const std::uint64_t segment = ordinal;
-        const auto forward_record = [&visit, segment](const RecordView& record,
-                                                       std::uint64_t offset) {
-            visit(record, RecordPosition{segment, offset, record.sequence, record.record_digest});
+        const auto forward_record = [target, visit, segment](const RecordView& record,
+                                                              std::uint64_t offset) {
+            visit(target, record,
+                  RecordPosition{segment, offset, record.sequence, record.record_digest});
         };
         const RecordVisitor forward(forward_record);
         decode_segment_range(bytes, 0, extent, extent.first_sequence, extent.record_count,
                              entering, extent.last_record_digest, &forward);
         entering = extent.last_record_digest;
-    }
+    });
 }
 
 // The keys of one index entry are contiguous from (kind, value, separator);
@@ -1910,6 +1915,15 @@ void JournalStore::for_each_record(
 // them.
 // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:475-507
 void JournalStore::for_each_index_match(char kind, std::string_view value, IndexVisitor visit) const {
+    const auto current = snapshot();
+    for_each_index_match_in(*current, kind, value, visit);
+}
+
+// Main may pin one PublishedSnapshot and pass it through every cue lookup,
+// exact resolve and replay in one four-stage activation.
+// SWEGCA: src/tinylm_slicer/mosaic_memory_activation.py@3bddcb7:463-508
+void JournalStore::for_each_index_match_in(const PublishedSnapshot& current, char kind,
+                                           std::string_view value, IndexVisitor visit) const {
     require_usable();
     if (value.size() >= detail::identity_text_max_bytes - 1) fail("journal_index_invalid");
     LedgerBytes bound(memory_.allocator<std::byte>());
@@ -1921,9 +1935,8 @@ void JournalStore::for_each_index_match(char kind, std::string_view value, Index
     if (!is_index_entry(entry)) fail("journal_index_invalid");
     bound.push_back(static_cast<std::byte>(index_separator));
     const std::string_view from(reinterpret_cast<const char*>(bound.data()), bound.size());
-    const auto current = snapshot();
-    if (current->view_unavailable) fail("journal_view_unavailable");
-    const auto& tree = current->head.fields().view_pages.index;
+    if (current.view_unavailable) fail("journal_view_unavailable");
+    const auto& tree = current.head.fields().view_pages.index;
     if (tree.entry_count == 0) return;
     for (LeafCursor cursor(PageSource{directory_, memory_, cache_.get()},
                            BuiltTree{tree.entry_count, tree.height, tree.root}, from);
@@ -2181,7 +2194,7 @@ void JournalStore::rebuild_view(RebuildValidator validate) {
             into.batch.push_back(Entry{at, size, position});
         };
         Digest entering = zero_digest;
-        for (const auto& [ordinal, extent] : current->extents) {
+        current->extents.for_each([&](std::uint64_t ordinal, const SegmentExtent& extent) {
             LedgerBytes bytes(static_cast<std::size_t>(extent.byte_length),
                               memory_.allocator<std::byte>());
             io::read_range(segment_path(directory_, ordinal), extent.byte_length, 0, bytes,
@@ -2204,7 +2217,7 @@ void JournalStore::rebuild_view(RebuildValidator validate) {
             decode_segment_range(bytes, 0, extent, extent.first_sequence, extent.record_count,
                                  entering, extent.last_record_digest, &visit);
             entering = extent.last_record_digest;
-        }
+        });
         // A tree whose entries fit one batch is built straight from it into
         // the final logs; a larger one writes its last batch as a run too and
         // is merged. Runs are written before the final logs are started, so
@@ -2241,18 +2254,24 @@ void JournalStore::rebuild_view(RebuildValidator validate) {
         release_collector(addresses);
         release_collector(index);
         const PageSource rebuilt_pages{directory_, memory_, nullptr};
-        const auto replay_rebuilt = [&](std::string_view address) -> PublishedRecord {
+        const auto resolve_rebuilt = [&](std::string_view address)
+            -> std::optional<RecordPosition> {
             LeafCursor cursor(rebuilt_pages, built_addresses, address);
             if (!cursor.valid() || cursor.item().address != address)
-                fail("journal_address_unknown");
-            auto record = read_in(*current, cursor.item().position);
+                return std::nullopt;
+            return cursor.item().position;
+        };
+        const auto replay_rebuilt = [&](std::string_view address) -> PublishedRecord {
+            const auto position = resolve_rebuilt(address);
+            if (!position) fail("journal_address_unknown");
+            auto record = read_in(*current, *position);
             if (record.view().address != address)
                 fail("journal_address_view_mismatch");
             return record;
         };
-        const RebuildReader reader(replay_rebuilt);
+        const RebuildReader reader(replay_rebuilt, resolve_rebuilt);
         Digest validation_entering = zero_digest;
-        for (const auto& [ordinal, extent] : current->extents) {
+        current->extents.for_each([&](std::uint64_t ordinal, const SegmentExtent& extent) {
             LedgerBytes bytes(static_cast<std::size_t>(extent.byte_length),
                               memory_.allocator<std::byte>());
             io::read_range(segment_path(directory_, ordinal), extent.byte_length, 0, bytes,
@@ -2271,7 +2290,7 @@ void JournalStore::rebuild_view(RebuildValidator validate) {
             decode_segment_range(bytes, 0, extent, extent.first_sequence, extent.record_count,
                                  validation_entering, extent.last_record_digest, &visit);
             validation_entering = extent.last_record_digest;
-        }
+        });
         if (built_addresses.count != fields.tail_sequence) fail("journal_address_view_count_mismatch");
         io::make_entries_durable(directory_);
         const auto pages = merged->pages(

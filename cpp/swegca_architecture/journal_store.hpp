@@ -1,6 +1,7 @@
 #pragma once
 
 #include "swegca_architecture/journal_file_io.hpp"
+#include "swegca_architecture/journal_extent_index.hpp"
 #include "swegca_architecture/journal_format.hpp"
 #include "swegca_architecture/journal_position.hpp"
 #include "swegca_architecture/authority_roles.hpp"
@@ -10,8 +11,6 @@
 #include <atomic>
 #include <cstdint>
 #include <filesystem>
-#include <functional>
-#include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -44,22 +43,16 @@ class ExperienceAppend;
 
 namespace swegca::architecture::journal {
 
-// Published extents by ordinal; every node goes through the host's allocator.
-using ExtentTable =
-    std::map<std::uint64_t, SegmentExtent, std::less<>,
-             AllocationAdapter<std::pair<const std::uint64_t, SegmentExtent>>>;
-
 // One published generation as readers see it. Immutable once published; the
 // object and its control block are allocated through the host's allocator.
 struct PublishedSnapshot {
     // SWEGCA: user@2026-09-22:72-79
     PublishedSnapshot(const AllocationContext& memory, Manifest manifest)
-        : head(std::move(manifest)),
-          extents(memory.allocator<std::pair<const std::uint64_t, SegmentExtent>>()) {}
+        : head(std::move(manifest)), extents(memory) {}
 
     Manifest head;
     ManifestLocation location;
-    ExtentTable extents;
+    ExtentIndex extents;
     std::uint64_t storage = 0;  // charged on-disk use of the files this generation reaches
     // Lease on the page logs this generation's view reaches, shared by every
     // generation until the view is rewritten into new logs. Logs a rewrite
@@ -125,47 +118,69 @@ public:
     RebuildReader& operator=(const RebuildReader&) = delete;
     RebuildReader(RebuildReader&&) = delete;
     RebuildReader& operator=(RebuildReader&&) = delete;
-    // SWEGCA: docs/SWEGCA_CPP_MAIN_STATE_STORAGE_REVIEW.md@9da0813:187-206
-    template <class F>
-        requires(!std::is_same_v<std::remove_cvref_t<F>, RebuildReader> &&
-                 std::is_object_v<F> &&
-                 std::is_invocable_r_v<PublishedRecord, F&,
+    // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:196-205
+    template <class R, class Q>
+        requires(std::is_lvalue_reference_v<R&&> && std::is_lvalue_reference_v<Q&&> &&
+                 std::is_object_v<std::remove_reference_t<R>> &&
+                 std::is_object_v<std::remove_reference_t<Q>> &&
+                 std::is_invocable_r_v<PublishedRecord, R&, std::string_view> &&
+                 std::is_invocable_r_v<std::optional<RecordPosition>, Q&,
                                        std::string_view>)
-    explicit RebuildReader(F& replay) noexcept
+    // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:196-205
+    RebuildReader(R&& replay, Q&& resolve) noexcept
         : target_(static_cast<const void*>(std::addressof(replay))),
-          call_(&invoke<F>) {}
-    template <class F>
-    RebuildReader(const F&&) = delete;
+          call_(&invoke<R>),
+          resolve_target_(static_cast<const void*>(std::addressof(resolve))),
+          resolve_call_(&invoke_resolve<Q>) {}
 
-    // SWEGCA: docs/SWEGCA_CPP_MAIN_STATE_STORAGE_REVIEW.md@9da0813:187-206
+    // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:196-205
     [[nodiscard]] PublishedRecord replay(std::string_view address) const {
         return call_(target_, address);
     }
 
+    // Resolves against the unpublished rebuilt address tree, not caller
+    // supplied positions. The returned position must be compared exactly.
+    // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:196-205
+    [[nodiscard]] std::optional<RecordPosition> resolve(std::string_view address) const {
+        return resolve_call_(resolve_target_, address);
+    }
+
 private:
     using Call = PublishedRecord (*)(const void*, std::string_view);
-    // SWEGCA: docs/SWEGCA_CPP_MAIN_STATE_STORAGE_REVIEW.md@9da0813:187-206
+    using ResolveCall = std::optional<RecordPosition> (*)(const void*, std::string_view);
+    // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:196-205
     template <class F>
     static PublishedRecord invoke(const void* target, std::string_view address) {
-        auto& replay = *static_cast<F*>(const_cast<void*>(target));
+        auto& replay = *static_cast<std::remove_reference_t<F>*>(const_cast<void*>(target));
         return replay(address);
+    }
+
+    // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:196-205
+    template <class Q>
+    static std::optional<RecordPosition> invoke_resolve(const void* target,
+                                                         std::string_view address) {
+        auto& resolve = *static_cast<std::remove_reference_t<Q>*>(const_cast<void*>(target));
+        return resolve(address);
     }
 
     const void* target_;
     Call call_;
+    const void* resolve_target_;
+    ResolveCall resolve_call_;
 };
 
 // Borrowed Main-owned decoder for the second rebuild pass. It checks each
 // record kind and may replay prior records through the rebuilt address tree.
 // It must not reenter JournalStore publication while rebuild_view holds the
 // publication lock.
+// This native recovery adapter has no direct Python type counterpart.
 class RebuildValidator final {
 public:
     RebuildValidator(const RebuildValidator&) = delete;
     RebuildValidator& operator=(const RebuildValidator&) = delete;
     RebuildValidator(RebuildValidator&&) = delete;
     RebuildValidator& operator=(RebuildValidator&&) = delete;
-    // SWEGCA: docs/SWEGCA_CPP_MAIN_STATE_STORAGE_REVIEW.md@9da0813:187-206
+    // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:196-205
     template <class F>
         requires(!std::is_same_v<std::remove_cvref_t<F>, RebuildValidator> &&
                  std::is_object_v<F> &&
@@ -177,7 +192,7 @@ public:
     template <class F>
     RebuildValidator(const F&&) = delete;
 
-    // SWEGCA: docs/SWEGCA_CPP_MAIN_STATE_STORAGE_REVIEW.md@9da0813:187-206
+    // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:196-205
     void operator()(const RecordView& record, const RecordPosition& position,
                     const RebuildReader& reader) const {
         call_(target_, record, position, reader);
@@ -186,7 +201,7 @@ public:
 private:
     using Call = void (*)(const void*, const RecordView&, const RecordPosition&,
                           const RebuildReader&);
-    // SWEGCA: docs/SWEGCA_CPP_MAIN_STATE_STORAGE_REVIEW.md@9da0813:187-206
+    // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:196-205
     template <class F>
     static void invoke(const void* target, const RecordView& record,
                        const RecordPosition& position, const RebuildReader& reader) {
@@ -291,12 +306,14 @@ public:
     // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:475-507
     template <class F>
         requires(!std::is_same_v<std::remove_cvref_t<F>, IndexVisitor> &&
-                 std::is_object_v<std::remove_reference_t<F>> &&
-                 std::is_invocable_r_v<bool, std::remove_reference_t<F>&, std::string_view,
+                 std::is_object_v<F> &&
+                 std::is_invocable_r_v<bool, F&, std::string_view,
                                        const RecordPosition&>)
-    IndexVisitor(F&& visit) noexcept  // NOLINT(google-explicit-constructor)
+    IndexVisitor(F& visit) noexcept  // NOLINT(google-explicit-constructor)
         : target_(static_cast<const void*>(std::addressof(visit))),
-          call_(&invoke<std::remove_reference_t<F>>) {}
+          call_(&invoke<F>) {}
+    template <class F>
+    IndexVisitor(const F&&) = delete;
 
     // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:475-507
     bool operator()(std::string_view address, const RecordPosition& position) const {
@@ -400,7 +417,7 @@ public:
 
     // The experience appender may stage its reserved record kinds but cannot
     // publish or rewrite HEAD. Only MainOwner can perform those mutations.
-    // SWEGCA: docs/SWEGCA_CPP_MAIN_STATE_STORAGE_REVIEW.md@7c4d419:108-110
+    // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:196-205
     [[nodiscard]] StagedGeneration stage_experience_records(
         const ExperienceStageKey&, std::span<const RecordDraft> drafts,
         const StateGeneration& state, std::span<const ViewGeneration> views) const {
@@ -449,7 +466,19 @@ public:
 
     // Visits every published record in sequence order over one snapshot,
     // verifying the whole record chain. No lock is held while `visit` runs.
-    void for_each_record(const std::function<void(const RecordView&, const RecordPosition&)>& visit) const;
+    // SWEGCA: user@2026-09-22:72-79
+    template <class F>
+        requires(std::is_object_v<F> &&
+                 std::is_invocable_v<F&, const RecordView&, const RecordPosition&>)
+    void for_each_record(F& visit) const {
+        const auto invoke = [](const void* target, const RecordView& record,
+                               const RecordPosition& position) {
+            (*static_cast<F*>(const_cast<void*>(target)))(record, position);
+        };
+        for_each_record_impl(std::addressof(visit), invoke);
+    }
+    template <class F>
+    void for_each_record(const F&&) const = delete;
 
     // Index navigation (board §3B :122-123, §9 :592; L3 hot cue lookup):
     // visits every published record that carries the index entry (`kind`,
@@ -520,9 +549,18 @@ private:
     };
 
     void load_published_head();
+    void for_each_record_impl(
+        const void* target,
+        void (*visit)(const void*, const RecordView&, const RecordPosition&)) const;
+    // Main must retain the shared_ptr returned by snapshot() for the entire
+    // multi-cue activation. The reference alone does not keep this generation
+    // or its retired page logs alive. Resolve and replay must use that same
+    // pinned snapshot; a separate snapshot() call may see a newer HEAD.
+    void for_each_index_match_in(const PublishedSnapshot& current, char kind,
+                                 std::string_view value, IndexVisitor visit) const;
     void require_usable() const;
     [[nodiscard]] std::shared_ptr<const PublishedSnapshot> snapshot() const;
-    [[nodiscard]] std::uint64_t storage_of(const ExtentTable& extents, const ManifestFields& head,
+    [[nodiscard]] std::uint64_t storage_of(const ExtentIndex& extents, const ManifestFields& head,
                                            const ManifestLocation& location) const;
     [[nodiscard]] std::uint64_t page_log_charge(const ViewPages& view) const;
     [[nodiscard]] std::uint64_t used_bytes(const PublishedSnapshot& current) const;

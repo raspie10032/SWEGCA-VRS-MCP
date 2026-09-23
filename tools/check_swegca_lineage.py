@@ -38,6 +38,16 @@ SOURCE_ROOTS = (
 )
 
 
+def self_design_document(source: str) -> bool:
+    # These files describe this reconstruction. They can be reviewed as
+    # design records, but cannot independently prove lineage to the user's
+    # SWEGCA architecture or its original implementation. Explicit approved
+    # user directives use the user@ form instead.
+    return source.startswith("docs/SWEGCA_CPP_") or source == (
+        "docs/SWEGCA_VRS_MCP_ORDER_FOR_REVIEW.md"
+    )
+
+
 def git_bytes(*args: str, root: Path | None = None) -> bytes:
     command = ("git", "-C", str(root), *args) if root else ("git", *args)
     environment = os.environ.copy()
@@ -82,6 +92,8 @@ def author_blob(reference: str) -> bytes | None:
 
 def valid_tag(reference: str) -> bool:
     source, rest = reference.split("@", 1)
+    if self_design_document(source):
+        return False
     revision, line_span = rest.split(":", 1)
     first, _, last = line_span.partition("-")
     start, end = int(first), int(last or first)
@@ -206,8 +218,11 @@ def check_cpp(path: str, source: str) -> list[str]:
     if definitions and not tags:
         return [f"{path}: missing // SWEGCA: source@revision:lines tag"]
     for tag in tags:
-        if not valid_tag(tag.group(1)):
-            line = source.count("\n", 0, tag.start()) + 1
+        tagged_source = tag.group(1).split("@", 1)[0]
+        line = source.count("\n", 0, tag.start()) + 1
+        if self_design_document(tagged_source):
+            issues.append(f"{path}:{line}: self-authored design document is not an author source")
+        elif not valid_tag(tag.group(1)):
             issues.append(f"{path}:{line}: SWEGCA source tag has no verified source span")
     if forbidden := FORBIDDEN.search(clean):
         issues.append(f"{path}: external memory vocabulary {forbidden.group(0)!r}")

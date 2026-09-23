@@ -124,18 +124,26 @@ crash cases before code uses it.
    persistent experience. Its published values and lineage must survive
    recovery from HEAD; they are not a rebuildable search view of memory
    records. The strength root is separate from `CognitiveState`, as in the
-   user's later implementation. One Main-published HEAD binds the memory
-   watermark, state root, and VRS strength root so readers never see a
-   half-updated pair;
-   permitted VRS processing lag remains explicit in that published tuple.
+   user's later implementation. The user's current rule is to update the live
+   session VRS immediately, without waiting for a queued worker. The proposed
+   C++ publication invariant is to expose new session memory and its live VRS
+   effect together, so a read cannot see one without the other; a read lease
+   would bind their published generation. At session end the live VRS becomes
+   a block with connections. Selected blocks are merged and processed by VRS
+   during idle time. The exact logical block and connection records remain
+   to be derived from the
+   user's architecture. A physical COW byte block in
+   `mosaic_vrs_block_store.py` is a storage unit, not by itself this logical
+   session block.
    New C++ strength persistence and computation use f32, matching the user's
    later canonicalization path. The old f16 artifact is source history, not a
    compatibility format or a per-edge rounding rule.
-10. A VRS worker proposal carries the memory watermark it read and the
-    parent strength root identity. Main alone checks that the source memory
-    range is contiguous in memory-record order, that no memory record was
-    skipped or counted twice, and that the parent root is still current
-    before publishing. Memory-record positions are not `PublishedStateId`:
+10. Any detached VRS proposal, including idle block merging, carries the
+    source generation and parent VRS identity it read. Main alone checks
+    the proposal's declared source set and its exact coverage, including
+    duplicate inputs, and confirms that the parent is still current before
+    publishing. Detached work cannot delay the live-session VRS update.
+    Memory-record positions are not `PublishedStateId`:
     that type names a CognitiveState publication. Raw cue hit counts grant no
     strength mutation authority. The user's `refine_vrs` stability bit is
     a geometry test, not a SWEGCA three-state decision; their exact interface
@@ -156,6 +164,12 @@ crash cases before code uses it.
 - `StateSnapshot` holds a `shared_ptr<const CognitiveState>` and that exact
   `PublishedStateId`; only Main constructs snapshots. It exposes `state()`
   and `head()`. A producer cannot construct or replace a head identifier.
+- The journal now has a private `for_each_index_match_in` over a caller-pinned
+  `PublishedSnapshot`; `resolve_in` and `replay_in` already accept that same
+  snapshot. Main can therefore keep one journal generation through all cue
+  lookups and exact reads. Main's combined memory/VRS strength read lease is
+  still pending and must bind that journal snapshot to the strength root
+  named by the same HEAD.
 - Proposal `based_on`, Bind, arbitration, gated capabilities, and CAS compare
   the publication identifier. Re-evidence, admission, and accumulator
   `judged_against` compare only the content digest. Replay can inspect
@@ -203,7 +217,9 @@ four-stage VRS path is already implemented.
   is the position in the verified chain. The target record must also have
   the expected address and kind, and precede the binding in record order.
 - `RebuildValidator` and its borrowed `RebuildReader` now provide the second
-  pass with exact replay from the unpublished tree. Main-owned decoders for
+  pass with exact resolve and replay from the unpublished tree. A binding
+  decoder can compare its stored target `RecordPosition` with the formal
+  address view before reading the target. Main-owned decoders for
   each record kind still need to be connected; without one, no caller may
   rebuild a view. A callback failure leaves the previous HEAD authoritative
   and removes unpublished rebuild logs. The callback must use the borrowed
@@ -276,9 +292,16 @@ four-stage VRS path is already implemented.
   published-state snapshot boundary. Replace the separate ordinal with the
   exact state-head publication record position/digest. Keep recording time
   only in external transition metadata, never in content hash or CAS.
-- Replace whole-extent-table cloning and full storage recount on every
-  staged part with shared persistent extents and checked incremental
-  accounting, preserving exact recovery and storage-budget decisions.
+- Published snapshots now share an immutable ordinal extent index. An
+  ordinary staged append copies only the changed tail/new ordinal paths;
+  the host allocator accounts for each node and control block. Recovery still
+  validates the manifest chain in a mutable table and builds one immutable
+  index before readers observe it. The index caches checked record bytes,
+  so `universe()` does not scan every extent. Checkpoints still deliberately
+  list all extents, but the encoder pulls them from the index and the touched
+  overlay without an extra `all` vector. It retains one complete bounded
+  manifest output buffer, its digest, and decode verification. Disk charging
+  retains checked incremental accounting and a full cold-recovery recount.
 
 This storage path is outside the hot Déjà vu → Recall path. It cannot be used
 as a substitute for the SWEGCA-based four-stage VRS navigation and judgment.

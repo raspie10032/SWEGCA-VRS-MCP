@@ -1811,8 +1811,8 @@ SelectionReceipt<NoAuthority> ExperienceSelector::select(const SelectionQuery& q
     LedgerVector<Hit> hits(memory.allocator<Hit>());
     for (std::size_t cue = 0; cue < cues.size(); ++cue) {
         with_cue_lookup(cues[cue], [&](char kind, std::string_view value) {
-            journal.for_each_index_match(kind, value, [&](std::string_view address,
-                                                          const journal::RecordPosition& position) {
+            const auto collect_hit = [&](std::string_view address,
+                                         const journal::RecordPosition& position) {
                 if (position.sequence > universe.record_count) return true;  // after U
                 const bool bound = address.size() == cue_binding_address_bytes &&
                                    address.substr(address_bytes, cue_binding_infix.size()) == cue_binding_infix;
@@ -1823,7 +1823,8 @@ SelectionReceipt<NoAuthority> ExperienceSelector::select(const SelectionQuery& q
                 keys.insert(keys.end(), bytes, bytes + address_bytes);
                 hits.push_back(Hit{at, cue, bound, position});
                 return true;
-            });
+            };
+            journal.for_each_index_match(kind, value, collect_hit);
         });
     }
     const auto key_of = [&keys](const Hit& hit) {

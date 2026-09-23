@@ -235,9 +235,10 @@ bool is_index_entry(std::string_view index_entry) noexcept {
 
 // Rule, a new C++ storage boundary: state kinds carry no index, a cue
 // binding only c/h cue keys, other lowercase entries only memory kinds.
-// The user's lines put cues on a memory episode and state no per-kind rule.
+// The user's lines put cues on a memory episode and state no per-kind rule;
+// the source's semantic-key index supplies the retrieval boundary.
 // SWEGCA: src/tinylm_slicer/mosaic_memory_activation.py@3bddcb7:89-106
-// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3f:122-123
+// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:398-437
 bool index_entry_allowed(std::uint16_t record_kind, std::string_view index_entry) noexcept {
     if (record_kind == state_part_record_kind ||
         record_kind == state_root_record_kind ||
@@ -669,6 +670,14 @@ Manifest Manifest::encode(const ManifestFields& fields, std::string_view journal
                           std::span<const SegmentExtent> extents,
                           std::span<const ViewGeneration> views,
                           const AllocationContext& memory) {
+    const auto at = [extents](std::size_t index) { return extents[index]; };
+    return encode(fields, journal_identity, ExtentPull(at, extents.size()), views, memory);
+}
+
+// SWEGCA: user@2026-09-22:72-79
+Manifest Manifest::encode(const ManifestFields& fields, std::string_view journal_identity,
+                          ExtentPull extents, std::span<const ViewGeneration> views,
+                          const AllocationContext& memory) {
     const auto total = encoded_manifest_size(journal_identity, extents.size(), views);
     LedgerBytes bytes(memory.allocator<std::byte>());
     bytes.reserve(total);
@@ -690,7 +699,8 @@ Manifest Manifest::encode(const ManifestFields& fields, std::string_view journal
     writer.u64(fields.tail_segment_ordinal);
     encode_view_pages(writer, fields.view_pages);
     writer.u32(static_cast<std::uint32_t>(extents.size()));
-    for (const auto& extent : extents) {
+    for (std::size_t index = 0; index < extents.size(); ++index) {
+        const auto extent = extents.at(index);
         writer.u64(extent.ordinal);
         writer.u64(extent.first_sequence);
         writer.u64(extent.record_count);

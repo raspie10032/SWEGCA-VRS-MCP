@@ -276,7 +276,9 @@ void append_segment_header(LedgerBytes& out, std::uint64_t ordinal, std::uint64_
 // record views `bytes`.
 // A decode callback borrows its callable for this invocation. Unlike a
 // std::function target, it never allocates outside the host's ledger.
-// SWEGCA: docs/SWEGCA_CPP_MAIN_STATE_STORAGE_REVIEW.md@9da0813:187-206
+// This is C++ infrastructure for the approved native session journal; the
+// source does not define a matching callback type.
+// SWEGCA: user@2026-09-22:59-68
 class RecordVisitor final {
 public:
     RecordVisitor(const RecordVisitor&) = delete;
@@ -284,7 +286,7 @@ public:
     RecordVisitor(RecordVisitor&&) = delete;
     RecordVisitor& operator=(RecordVisitor&&) = delete;
 
-    // SWEGCA: docs/SWEGCA_CPP_MAIN_STATE_STORAGE_REVIEW.md@9da0813:187-206
+    // SWEGCA: user@2026-09-22:59-68
     template <class F>
         requires(!std::is_same_v<std::remove_cvref_t<F>, RecordVisitor> &&
                  std::is_object_v<F> &&
@@ -295,14 +297,14 @@ public:
     template <class F>
     RecordVisitor(const F&&) = delete;
 
-    // SWEGCA: docs/SWEGCA_CPP_MAIN_STATE_STORAGE_REVIEW.md@9da0813:187-206
+    // SWEGCA: user@2026-09-22:59-68
     void operator()(const RecordView& record, std::uint64_t offset) const {
         call_(target_, record, offset);
     }
 
 private:
     using Call = void (*)(const void*, const RecordView&, std::uint64_t);
-    // SWEGCA: docs/SWEGCA_CPP_MAIN_STATE_STORAGE_REVIEW.md@9da0813:187-206
+    // SWEGCA: user@2026-09-22:59-68
     template <class F>
     static void invoke(const void* target, const RecordView& record,
                        std::uint64_t offset) {
@@ -312,6 +314,41 @@ private:
 
     const void* target_;
     Call call_;
+};
+
+// Borrowed ordinal source for one manifest encoding. The producer remains
+// alive through encode; no second full extent vector is required.
+class ExtentPull final {
+public:
+    // SWEGCA: user@2026-09-22:72-79
+    template <class F>
+        requires(std::is_object_v<F> &&
+                 std::is_invocable_r_v<SegmentExtent, F&, std::size_t>)
+    ExtentPull(F& get, std::size_t count) noexcept
+        : target_(static_cast<const void*>(std::addressof(get))),
+          call_(&invoke<F>), count_(count) {}
+    template <class F>
+    ExtentPull(const F&&, std::size_t) = delete;
+
+    // SWEGCA: user@2026-09-22:72-79
+    [[nodiscard]] SegmentExtent at(std::size_t index) const {
+        return call_(target_, index);
+    }
+    // SWEGCA: user@2026-09-22:72-79
+    [[nodiscard]] std::size_t size() const noexcept { return count_; }
+
+private:
+    using Call = SegmentExtent (*)(const void*, std::size_t);
+    // SWEGCA: user@2026-09-22:72-79
+    template <class F>
+    static SegmentExtent invoke(const void* target, std::size_t index) {
+        auto& get = *static_cast<F*>(const_cast<void*>(target));
+        return get(index);
+    }
+
+    const void* target_;
+    Call call_;
+    std::size_t count_;
 };
 void decode_segment_range(std::span<const std::byte> bytes, std::uint64_t base_offset,
                           const SegmentExtent& extent, std::uint64_t first_sequence,
@@ -467,6 +504,12 @@ public:
     [[nodiscard]] static Manifest encode(const ManifestFields& fields,
                                          std::string_view journal_identity,
                                          std::span<const SegmentExtent> extents,
+                                         std::span<const ViewGeneration> views,
+                                         const AllocationContext& memory);
+    // SWEGCA: user@2026-09-22:72-79
+    [[nodiscard]] static Manifest encode(const ManifestFields& fields,
+                                         std::string_view journal_identity,
+                                         ExtentPull extents,
                                          std::span<const ViewGeneration> views,
                                          const AllocationContext& memory);
 

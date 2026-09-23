@@ -332,7 +332,13 @@ ArbitrationOutcome ProposalArbiter::arbitrate_typed(
                 write_scalar64(result_type, output[r * W + w], scalar);
             else
                 write_scalar32(result_type, output[r * W + w], scalar);
-            for (const auto byte : scalar) nonzero |= byte != std::byte{0};
+            // The source checks proposed_delta.abs().any(), so -0 is not a
+            // changed slot even though its stored sign bit must survive.
+            for (std::size_t at = 0; at < scalar.size(); ++at) {
+                auto bits = std::to_integer<std::uint8_t>(scalar[at]);
+                if (at + 1 == scalar.size()) bits &= 0x7fu;
+                nonzero |= bits != 0;
+            }
         }
         if (nonzero) changed.push_back(r);
     }
