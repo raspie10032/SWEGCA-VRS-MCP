@@ -33,6 +33,13 @@ FORBIDDEN = re.compile(
     r"anthropic|gpt)\b", re.I,
 )
 CONTROL = {"if", "for", "while", "switch", "catch", "sizeof", "alignof", "requires"}
+CORE_STANDARD_HEADERS = frozenset({
+    "algorithm", "array", "bit", "cmath", "compare", "cstddef", "cstdint",
+    "cstring", "limits", "span", "stdexcept", "string", "string_view",
+})
+CORE_LOCAL_INCLUDE = re.compile(r'"swegca_architecture/[a-z0-9_]+\.hpp"\Z')
+CORE_INCLUDE_DIRECTIVE = re.compile(r'^\s*#\s*(include|include_next|import)\b')
+CORE_INCLUDE_OPERAND = re.compile(r'^\s*#\s*include\s+(\S+)\s*\Z')
 CODEX_ROOT = Path(__file__).resolve().parents[2]
 SOURCE_ROOTS = (
     Path(__file__).resolve().parents[1],
@@ -397,9 +404,22 @@ def check_layering(path: str, source: str) -> list[str]:
     if not path.startswith("cpp/swegca_architecture/"):
         return []
     issues: list[str] = []
-    if re.search(r'^\s*#\s*include\s*[<"]swegca_vrs/', source, re.MULTILINE):
-        issues.append(f"{path}: SWEGCA verifier includes VRS")
-    if re.search(r'\bswegca\s*::\s*vrs\b', without_comments_and_strings(source)):
+    code = without_comments_and_strings(source)
+    # The masked source identifies actual directives without mistaking comments
+    # or strings for code. Validate the original operand, including its quotes.
+    for line_number, (masked, original) in enumerate(
+        zip(code.splitlines(), source.splitlines()), 1
+    ):
+        if not CORE_INCLUDE_DIRECTIVE.match(masked):
+            continue
+        match = CORE_INCLUDE_OPERAND.fullmatch(original)
+        operand = match.group(1) if match else ""
+        standard = operand.startswith("<") and operand.endswith(">") and (
+            operand[1:-1] in CORE_STANDARD_HEADERS
+        )
+        if not (CORE_LOCAL_INCLUDE.fullmatch(operand) or standard):
+            issues.append(f"{path}:{line_number}: SWEGCA verifier include is outside core allowlist")
+    if re.search(r'\bvrs\b', code):
         issues.append(f"{path}: SWEGCA verifier references VRS")
     return issues
 

@@ -5,8 +5,9 @@ is not implemented. Later user corrections are recorded in
 `SWEGCA_CPP_VRS_LAYER_PLAN.md` §6.2 and the approved order document; those
 decisions govern implementation where this draft differs. In particular,
 Re-evidence is conditional on a difference between the current and replayed
-three-state judgments, and the opposing-original Replay path proposed in §5
-was withdrawn. The route replaces the single-stage
+three-state judgments. When relevant opposing evidence or a conflict is found,
+only the relevant opposing originals are additionally replayed; this is separate
+from the first Replay set's five-original limit (§5). The route replaces the single-stage
 `ExperienceSelector::select` with Déjà vu → Recall → Replay → Re-evidence.
 
 ## 0. Sources, in order
@@ -78,7 +79,7 @@ Versions up to v1.5 left these approved rules out. They are binding, and the sta
 - **Navigation between Déjà vu and Recall** (:16-19, :37-38, :98-100). Region preactivation from the matched cues, membership lookup, the coactivation witness query, portal planning and one local-navigation cue page follow Déjà vu. They feed navigation cues into Recall and precede its candidate selection. Only the single eligible portal and one cue page are used, and deferred regions stay explicit, so no complete transitive search is claimed (:47-50). These are SWEGCA elements (regions, portals, shared experience). The C++ rebuild must carry them. They are not optional.
 - **Recall keeps the complete address set** (:20-23, :50-52). Every Recall address is kept in `memory_selection`. A transport page limit never removes an address.
 - **Replay** (:24-25, :101). The approved flow opened "the first current original from author Recall order". The user's 2026-09-23 rule replaces that: highest VRS strength, up to 5 on a tie, then matched cues and recency (§4).
-- **Re-evidence with the opposing side** (:26-29, :101-102). Re-evidence runs against the current generation. If there is relevant opposing evidence or a conflict, only the relevant opposing originals are also replayed, Re-evidence runs with both sides, and an unresolved conflict is preserved.
+- **Re-evidence with the opposing side** (:26-29, :101-102). Re-evidence runs against the current generation. If there is relevant opposing evidence or a conflict, only the relevant opposing originals are also replayed, separately from the first set's five-original limit. Re-evidence runs with both sides, and an unresolved conflict is preserved.
 - **Receipt** (:30-32, :50-53). The Recall, Replay and Re-evidence rows bind one-to-one to the opened originals. The full Recall set is paged separately in `memory_selection`. There is no action or truth authority.
 - **Timing** (:38-44). The <1 ms gate covers Déjà vu, navigation and the completion of Recall before Replay. It is measured from the host receiving the input. Main-fallback latency is reported separately and never hidden by session timing.
 - **Input admission** (:103-105). The current input is a recall key at once. It becomes an admitted observation when the host-visible transcript record is captured, and it never holds up the pre-Replay boundary.
