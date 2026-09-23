@@ -1,4 +1,4 @@
-# SWEGCA C++ four-stage memory activation — design v1.9 (for cross-review, no code yet)
+# SWEGCA C++ four-stage memory activation — design v1.10 (for cross-review, no code yet)
 
 Status: draft for Claude–Codex cross-review. Nothing here is implemented.
 It replaces the single-stage `ExperienceSelector::select` with Déjà vu → Recall → Replay → Re-evidence.
@@ -48,6 +48,18 @@ All four stages of one route run over one pinned published universe (the session
     - `load_published_head` removes segment, manifest and page-log bytes outside its own HEAD and truncates to the published end (codex/swegca-cpp-vrs journal_store.cpp). Under root authority this must not happen. Journal recovery and cleanup must first become subordinate to the root-selected generation and live leases, and bytes past the root are kept, not adopted.
     - Resuming writes after recovery (Claude msg 242 candidate, Codex 20:45; not buildable as is). `SegmentExtent` already carries ordinal, first_sequence, record_count and byte_length (journal_format.hpp:261-267), so a root can name each authoritative segment's committed end and where a new segment's sequence starts. But the next logical ordinal after a root-selected tail may already exist as a physical file of an unadopted later generation. Ordinal is the file name today, `ExtentIndex::apply_manifest` requires tail+1 contiguity, and `load_published_head` deletes files past the tail and truncates the last one. A new segment needs either logical ordinal separated from a physical file id/epoch, or unadopted files moved to preserved names. Codex 20:47 found the first is not a path change. Ordinal doubles as logical number and physical id across the manifest codec, `ExtentIndex` keys, `RecordPosition`, segment headers, file names, `stage_from` and replay/verify/read, so it touches format versions. The second needs its own treatment in `is_published_name`, disk accounting and recovery. `stage_from` also prefers appending to the existing tail, so after root recovery a mode that seals the tail is needed. Codex's current candidate keeps the format and starts with preserved names plus a sealed tail. Neither no deletion of original bytes, nor history references, nor storage accounting is proven for it yet, so it stays a design candidate.
     - Agreed direction: segment files are kept; only extents a root names are read; every orphan byte (segments, manifests, page logs) counts toward storage. No bound on orphans per crash is claimed: today several unadopted segments, manifests and page logs can exist.
+    - **v1.10: separating the segment ordinal from the physical file (Codex 21:02, e0d29ff).**
+      - Codex's decision, 21:02: the logical ordinal is kept apart from a physical file id (journal format v8). On restart the next physical id is max+1. After root recovery the tail is sealed, and appending continues under a new ordinal and a new physical id.
+      - Claude's review (msg 257) found no new functional defect for the lower journal. Two open points came out of it:
+        - The "never reused" claim does not hold across restarts. Cold open deletes orphans whose id is above the tail and keeps the maximum only in memory, so a deleted id can come back.
+        - `load_published_head` deleted files above the tail before it had checked anything. A tail file renamed to a higher id was deleted, and published data was lost. This was already true before e0d29ff.
+      - Codex 95e1656 adds a preflight for the store's own HEAD: it checks that every segment file the HEAD names exists, and checks its extent chain, before any orphan is deleted or any tail is truncated. This is not root-selected recovery and not orphan keeping (under review).
+    - **v1.10: manifest log and page log (Codex 21:20).** A physical segment id alone does not make a publish safe after rolling back to a root.
+      - `follows()` (journal_format.cpp) requires each new manifest log ordinal to be the previous one + 1.
+      - `stage_from` appends to the current manifest log or opens the +1 log. `PageWriter` does the same for page logs.
+      - Keeping unadopted manifest and page logs, and the tail suffix, past a chosen earlier root would therefore collide with those paths at the same file and offset.
+      - Required before root recovery: manifest and page logs get physical names, an epoch, or a separate index that cannot collide with kept orphans. A new log is sealed. `follows` checks it, and storage counts it.
+    - **Required of every recovery path:** nothing outside the chosen generation is deleted before that generation is fully checked (Codex 21:24).
   - **Open.**
     - Pending reconciliation. Keep the user's fail-closed rule and preserve the pending file. No automatic "abandoned" rule is fixed.
     - How experiences received or answered around a restart are related explicitly (correction relation).

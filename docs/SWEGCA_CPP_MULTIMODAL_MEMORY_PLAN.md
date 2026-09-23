@@ -1,6 +1,6 @@
-# SWEGCA C++ multimodal memory — design v3.3 (for cross-review, no code yet)
+# SWEGCA C++ multimodal memory — design v3.4 (for cross-review)
 
-Status: draft for Claude–Codex cross-review. Nothing here is implemented.
+Status: draft for Claude–Codex cross-review. §10 (envelope v4) is coded in experience.cpp/.hpp on claude/vrs-resume and waits for cross-review. The rest is not implemented. v3.4 changes: §2 (id once per memory, audio's two forms, metadata open), §3 (no CanonicalPayload), §10 (resource bytes as a standard blob, layout, open items).
 
 ## 0. Sources, in order
 1. The user's current directive (2026-09-23 19:0x): 「그리고 기억은 단순 텍스트로 들어오는게 아니라 텍스트 이미지 사운드 영상 모두를 포함하는 것임. 이거 매우 중요. 원저장소에도 있을거임」.
@@ -36,7 +36,7 @@ A step and a selector are never a separate memory or a separate evidence vote (e
 
 ## 2. Observed resource
 `ObservedResource`:
-- `resource_id`: identity text.
+- `resource_id`: identity text, at most once per memory (the source keys a resource by `(docid, resource_id)`, mosaic_external_memory.py@5901a5a:111).
 - `modality`: one of text, image, audio, video.
 - `bytes`: optional `BlobInput`, present only when the original bytes were actually received. Main keeps them as the original (semantic_encoding :6-7). Large ones use the existing parts, so video fits. When absent, the record says so and names its provenance. Bytes are never made up, and a derived record never claims bytes can be recovered from it (wd14 :21-24, video_native :115 `raw_media_retained_as_experience = False`).
 - `content_digest`: optional SHA-256 of the source bytes (the user's `content_sha256` / `storage_sha256`).
@@ -47,15 +47,15 @@ A step and a selector are never a separate memory or a separate evidence vote (e
 - `descriptor`, by modality, checked like Anchor (:111-134) and media_atoms:
   - text: UTF-8, code point count.
   - image: native width and height (> 0), and the coordinate frame (native or oriented source pixels).
-  - audio: frames, sample_rate (> 0), duration_ns = frames·10^9 // sample_rate (:163-164).
-  - video: native width and height (> 0), duration_ns.
-- `metadata`: canonical structured payload.
+  - audio: the user has two forms and both are kept. One is `duration_ns` alone, as Anchor asks for it (semantic_encoding :130-134). The other is frames and sample_rate (> 0) with duration_ns = frames·10^9 // sample_rate (media_atoms :163-164). The first draft kept only the second, which was narrower than the source (Claude review, msg 255).
+  - video: native width and height (> 0) in either coordinate frame, as SpatialExtent allows for any source (media_atoms :20-37), and duration_ns.
+- `metadata`: bytes kept as given. No canonical check exists yet; this is an open gap (§10), the same as the step observation's JSON check. It is not a rule of the source.
 
 The resource list is part of the payload, so it is part of the address identity. The order is the order the producer gave.
 
 ## 3. Canonical encoding
 - The step list and the resource list are typed sections of the envelope (a new envelope version). Each is decoded and checked on read. None is an opaque blob.
-- Step observation and resource metadata use the core's canonical structured payload (the same CanonicalPayload the state uses). Decode checks that they are canonical.
+- Step observation and resource metadata are kept as the bytes given. The first draft said they would use CanonicalPayload with a canonical check at decode. §10 replaced that: the section is streamed, CanonicalPayload is the state's opaque metadata, and no native check exists yet (open, §10).
 - The user's step bytes are JSON with sorted keys (episode_atoms :21-26). The C++ canonical form does not promise the same bytes (Q1).
 - A step's derived address is `<memory address>/step:<index>:<digest of its C++ canonical bytes>`. It is a view, not a record. The name differs from the user's `memory-step-artifact:` (:59-60) on purpose, so the two are never mixed.
 - Sections larger than a record go to parts, as blobs do now.
@@ -112,7 +112,18 @@ Agreed before code. The C++ envelope v3 (experience.cpp) gets one optional **typ
   - "Non-blank" uses the Python `str.strip` set of 29 code points (Codex 9be048a). Texts are stored as given, not stripped, as the source does (`_text`'s result is not assigned).
 - **Resources:** zero or more, in the producer's order, with the fields of §2.
   - The `r` index is the sorted union of `Observation.resources` and the section's resource ids. Each list is stored as given, so where an id came from stays visible. The producer never has to keep the two in sync.
-  - Resource bytes, when received, are a blob descriptor inside the section. The bytes themselves are existing content-addressed part records.
-- **Decode and checks.** An inline section is checked fully at decode. A parted one is checked by `verify_parts` and while its visitor walks it; evidence admission and Re-evidence already run `verify_parts` first.
+  - Resource bytes, when received, are a standard blob inside the section (Claude msg 253, Codex 21:08). Up to 2 MiB they are bytes of the section. Larger ones are existing content-addressed part records, named by their top digest list. There is no size limit of their own: the first draft always cut them into parts inside a section held to 2 MiB, which refused large resources (Claude review, msg 255).
+  - One resource id appears at most once in the section (§2).
+- **Layout (as coded).**
+  - Episode flag (u8). Then, when the flag is set: episode_id, revision and verification_state; source addresses; steps.
+  - Each step: phase, observation, relations, judgment, outcome (u8), evidence refs.
+  - Then the resources, each with: id; descriptor (modality u8, code_points, width, height, frame u8, frames, sample_rate, duration_ns); digest flag and digest; item flag and item index; locator flag and locator; metadata; bytes flag and standard blob.
+  - Every list comes after its u64 count, and every text or byte field after its u64 length. No field has a size limit beyond the record's and the parts'.
+  - Appending lays the section out without copying the caller's bytes (a section small enough to be inline is then read once into the record, up to 2 MiB): its own fields and prefixes, with the caller's spans named between them. It reads through the existing `BlobReader` path, so it takes two reads, the second checked (`experience_source_changed`).
+- **Decode and checks.** An inline section is checked fully at decode, and its episode, steps and resources are views.
+  - A parted one is read forward, one part per level: `for_each_section` gives it field by field, in pieces, each checked after its last piece. `verify_parts` reads it whole with every resource's parted bytes. Evidence admission and Re-evidence already run `verify_parts` first.
+  - `for_each_resource_chunk` reads a parted section up to the resource it asks for.
 - **No new record kind, no new index letter.** Step and selector addresses are views.
-- **Open:** the observation's JSON-compatibility check. The source round-trips it through JSON (:81-84). C++ has no native JSON validator yet. Until one exists, the bytes are kept unchecked and this gap is recorded.
+- **Open:**
+  - The observation's JSON-compatibility check. The source round-trips it through JSON (:81-84). C++ has no native JSON validator yet. Until one exists, the bytes are kept unchecked and this gap is recorded.
+  - Resource metadata's canonical check (§2), the same gap. Its bytes are kept as given. This is not a rule of the source.

@@ -22,11 +22,11 @@ using journal::LedgerVector;
 
 constexpr std::array<std::byte, 4> envelope_magic{std::byte{'S'}, std::byte{'W'}, std::byte{'X'},
                                                   std::byte{'P'}};
-constexpr std::uint16_t envelope_version = 3;
+constexpr std::uint16_t envelope_version = 4;
 // magic, version, observed step, uncertainty and contradiction bits, span
 // flag, offset and length, context flag and digest, namespace flag, lineage
-// count, resource count (a present namespace, the lineage, the resources and
-// the blobs follow).
+// count, resource count (a present namespace, the lineage, the resources
+// each with its listed flag, the blobs and the typed section follow).
 constexpr std::size_t envelope_fixed_bytes = 4 + 2 + 8 + 8 + 8 + 1 + 8 + 8 + 1 + 32 + 1 + 4 + 4;
 constexpr std::size_t max_derived_from = 1024;
 constexpr std::size_t max_resources = 1024;
@@ -42,13 +42,13 @@ static_assert(experience_part_bytes % digest256_width == 0 && experience_part_by
 constexpr std::size_t inline_blob_encoded_bytes = 1 + 4 + experience_inline_blob_bytes;
 constexpr std::size_t parted_blob_encoded_bytes = 1 + 8 + 32 + 1 + 4 + max_top_digests * digest256_width;
 constexpr std::size_t max_blob_encoded_bytes = std::max(inline_blob_encoded_bytes, parted_blob_encoded_bytes);
-// Every experience's envelope fits one record whatever its bytes: four
-// blobs (raw, structured, root sources, root contexts) at their largest
-// encoding, and the
-// namespace, lineage and resources at their limits.
+// Every experience's envelope fits one record whatever its bytes: five
+// blobs (raw, structured, root sources, root contexts, and the typed section
+// after its flag) at their largest encoding, and the namespace, lineage and
+// flagged resources at their limits.
 static_assert(envelope_fixed_bytes + 4 + detail::identity_text_max_bytes +
                       max_derived_from * (4 + address_bytes) +
-                      max_resources * (4 + detail::identity_text_max_bytes) + 4 * max_blob_encoded_bytes <=
+                      max_resources * (4 + detail::identity_text_max_bytes + 1) + 1 + 5 * max_blob_encoded_bytes <=
                   journal::max_payload_bytes,
               "an experience's envelope must always fit one record");
 // A part record's producer and revision: the part belongs to this module,
@@ -217,6 +217,138 @@ bool is_cue_space(char32_t value) noexcept {
     return (value >= 0x09 && value <= 0x0d) || (value >= 0x1c && value <= 0x20) || value == 0x85 ||
            value == 0xa0 || value == 0x1680 || (value >= 0x2000 && value <= 0x200a) || value == 0x2028 ||
            value == 0x2029 || value == 0x202f || value == 0x205f || value == 0x3000;
+}
+
+// The user's `_text` test: strict UTF-8 holding a code point that Python's
+// str.strip keeps (its whitespace is the set above). The text itself is kept
+// as given, as the user's steps keep it.
+// SWEGCA: src/tinylm_slicer/mosaic_memory_activation.py@3bddcb7:27-31
+bool is_step_text(std::string_view text) noexcept {
+    if (!detail::is_strict_utf8(text)) return false;
+    for (std::size_t at = 0; at < text.size();)
+        if (!is_cue_space(decode_at(text, at))) return true;
+    return false;
+}
+
+// Strict UTF-8 fed in pieces that may cut a code point: counts code points
+// (Python's len of the text the user's text anchor spans) and stays valid only
+// while every completed sequence is strict UTF-8. Streaming it part by part is
+// C++ infrastructure under the approved hard memory limit (:91-92).
+// SWEGCA: src/tinylm_slicer/mosaic_semantic_encoding.py@3bddcb7:109-112
+// SWEGCA: user@2026-09-22:91-92
+class Utf8Count final {
+public:
+    // SWEGCA: user@2026-09-22:91-92
+    void feed(std::span<const std::byte> chunk) noexcept {
+        std::size_t at = 0;
+        if (held_ != 0) {
+            const auto need = sequence_width(carry_[0]) - held_;
+            while (at < chunk.size() && at < need) carry_[held_++] = static_cast<char>(chunk[at++]);
+            if (held_ < sequence_width(carry_[0])) return;
+            const std::string_view sequence(carry_.data(), held_);
+            valid_ = valid_ && detail::is_strict_utf8(sequence);
+            if (valid_ && !nonspace_) {
+                std::size_t from = 0;
+                nonspace_ = !is_cue_space(decode_at(sequence, from));
+            }
+            ++count_;
+            held_ = 0;
+        }
+        auto end = chunk.size();
+        for (std::size_t back = 1; back <= 3 && back <= end - at; ++back) {
+            const auto byte = static_cast<char>(chunk[end - back]);
+            if ((static_cast<unsigned char>(byte) & 0xc0) == 0x80) continue;
+            if (sequence_width(byte) > back) {
+                for (auto from = end - back; from < end; ++from) carry_[held_++] = static_cast<char>(chunk[from]);
+                end -= back;
+            }
+            break;
+        }
+        const std::string_view body(reinterpret_cast<const char*>(chunk.data()) + at, end - at);
+        valid_ = valid_ && detail::is_strict_utf8(body);
+        for (const char byte : body) count_ += (static_cast<unsigned char>(byte) & 0xc0) != 0x80 ? 1 : 0;
+        for (std::size_t from = 0; valid_ && !nonspace_ && from < body.size();)
+            nonspace_ = !is_cue_space(decode_at(body, from));
+    }
+
+    // SWEGCA: user@2026-09-22:91-92
+    [[nodiscard]] bool valid() const noexcept { return valid_ && held_ == 0; }
+    // SWEGCA: user@2026-09-22:91-92
+    [[nodiscard]] std::uint64_t count() const noexcept { return count_; }
+    // Whether a code point Python's str.strip keeps was seen (the user's
+    // `_text` test, streamed).
+    // SWEGCA: src/tinylm_slicer/mosaic_memory_activation.py@3bddcb7:27-31
+    [[nodiscard]] bool nonspace() const noexcept { return nonspace_; }
+
+private:
+    // SWEGCA: user@2026-09-22:91-92
+    static std::size_t sequence_width(char lead) noexcept {
+        const auto value = static_cast<unsigned char>(lead);
+        return value < 0xc0 ? 1 : value < 0xe0 ? 2 : value < 0xf0 ? 3 : value < 0xf8 ? 4 : 1;
+    }
+
+    std::array<char, 4> carry_{};
+    std::size_t held_ = 0;
+    std::uint64_t count_ = 0;
+    bool valid_ = true;
+    bool nonspace_ = false;
+};
+
+// The exact 128-bit product of two u64 values (high word, low word). It keeps
+// the user's audio binding frames * 10**9 // sample_rate exact: Python
+// integers are unbounded, a u64 product is not.
+// SWEGCA: src/tinylm_slicer/mosaic_media_atoms.py@3bddcb7:163-164
+struct WideProduct {
+    std::uint64_t high = 0;
+    std::uint64_t low = 0;
+    auto operator<=>(const WideProduct&) const = default;
+};
+
+// SWEGCA: src/tinylm_slicer/mosaic_media_atoms.py@3bddcb7:163-164
+WideProduct wide_product(std::uint64_t left, std::uint64_t right) noexcept {
+    const std::uint64_t mask = 0xffffffffu;
+    const std::uint64_t ll = (left & mask) * (right & mask);
+    const std::uint64_t lh = (left & mask) * (right >> 32);
+    const std::uint64_t hl = (left >> 32) * (right & mask);
+    const std::uint64_t hh = (left >> 32) * (right >> 32);
+    const std::uint64_t middle = (ll >> 32) + (lh & mask) + (hl & mask);
+    return WideProduct{hh + (lh >> 32) + (hl >> 32) + (middle >> 32), (middle << 32) | (ll & mask)};
+}
+
+// A resource descriptor in its one form: the fields of its modality within
+// their bounds (the user's anchors and media extents), every other field zero.
+// Audio has the user's two forms: the anchor's duration alone, or a waveform
+// whose duration is bound to its frames and sample rate.
+// SWEGCA: src/tinylm_slicer/mosaic_semantic_encoding.py@3bddcb7:109-136
+// SWEGCA: src/tinylm_slicer/mosaic_media_atoms.py@3bddcb7:20-71
+// SWEGCA: src/tinylm_slicer/mosaic_media_atoms.py@3bddcb7:160-166
+bool valid_descriptor(const ResourceDescriptor& d) noexcept {
+    const bool no_size = d.width == 0 && d.height == 0 && d.frame == CoordinateFrame::native_source_pixels;
+    const bool no_samples = d.frames == 0 && d.sample_rate == 0;
+    switch (d.modality) {
+    case ResourceModality::text:
+        return no_size && no_samples && d.duration_ns == 0;
+    case ResourceModality::image:
+        return d.width > 0 && d.height > 0 && d.code_points == 0 && no_samples && d.duration_ns == 0 &&
+               (d.frame == CoordinateFrame::native_source_pixels || d.frame == CoordinateFrame::oriented_source_pixels);
+    case ResourceModality::audio: {
+        if (d.code_points != 0 || !no_size) return false;
+        if (no_samples) return true;
+        if (d.frames == 0 || d.sample_rate == 0) return false;
+        // duration_ns = frames * 10^9 // sample_rate (media_atoms :163-164),
+        // exactly: duration * rate <= frames * 10^9 < (duration + 1) * rate.
+        const auto samples = wide_product(d.frames, 1'000'000'000u);
+        const auto below = wide_product(d.duration_ns, d.sample_rate);
+        auto above = below;
+        above.low += d.sample_rate;
+        above.high += above.low < d.sample_rate ? 1 : 0;
+        return below <= samples && samples < above;
+    }
+    case ResourceModality::video:
+        return d.width > 0 && d.height > 0 && d.code_points == 0 && no_samples &&
+               (d.frame == CoordinateFrame::native_source_pixels || d.frame == CoordinateFrame::oriented_source_pixels);
+    }
+    return false;
 }
 
 // The full case folding of one code point (Unicode status C and F, the
@@ -611,13 +743,15 @@ struct BlobPlan {
 // by level (see ExperienceBlob): each part goes to `parts`, each digest list
 // to `owned` (parts of the next level view it). Bytes in memory are never
 // copied; read bytes are read one part at a time into one buffer, and a read
-// blob small enough to be inline is read into `owned`.
+// blob small enough to be inline is read into `owned`. `text`, when given, is
+// fed every byte once as it is hashed.
 // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:23-60
 BlobPlan plan_blob(const AllocationContext& memory, const BlobInput& input,
-                   LedgerVector<PartSlice>& parts, LedgerVector<LedgerBytes>& owned) {
+                   LedgerVector<PartSlice>& parts, LedgerVector<LedgerBytes>& owned, Utf8Count* text = nullptr) {
     BlobPlan out;
     out.size = input.size;
     auto bytes = input.bytes;
+    if (!input.reader && bytes.size() != input.size) fail("experience_blob_size_mismatch");
     if (input.reader && input.size <= experience_inline_blob_bytes) {
         LedgerBytes copy(static_cast<std::size_t>(input.size), std::byte{}, memory.allocator<std::byte>());
         (*input.reader)(0, copy);
@@ -625,6 +759,7 @@ BlobPlan plan_blob(const AllocationContext& memory, const BlobInput& input,
         bytes = owned.back();
     }
     if (out.size <= experience_inline_blob_bytes) {
+        if (text) text->feed(bytes);
         out.digest = Sha256::of(bytes);
         out.inline_bytes = bytes;
         return out;
@@ -642,6 +777,7 @@ BlobPlan plan_blob(const AllocationContext& memory, const BlobInput& input,
             (*input.reader)(offset, slice);
             const auto digest = Sha256::of(slice);
             whole.update(slice);
+            if (text) text->feed(slice);
             list.insert(list.end(), digest.begin(), digest.end());
             parts.push_back(PartSlice{digest, {}, &*input.reader, offset, length});
         }
@@ -653,6 +789,7 @@ BlobPlan plan_blob(const AllocationContext& memory, const BlobInput& input,
                                                  experience_part_bytes, out.size - offset)));
             const auto digest = Sha256::of(slice);
             whole.update(slice);
+            if (text) text->feed(slice);
             list.insert(list.end(), digest.begin(), digest.end());
             parts.push_back(PartSlice{digest, slice});
         }
@@ -736,21 +873,538 @@ ExperienceBlob read_blob(ByteReader& reader) {
     return out;
 }
 
+// A part of a parted blob, replayed and checked: a part record with no
+// authority, claim or index entry, its payload the digest its parent names
+// and exactly `expected` bytes long.
+// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:137-155
+journal::PublishedRecord replay_part(const journal::JournalStore& journal, const AllocationContext& memory,
+                                     const DigestBytes& digest, std::uint64_t expected) {
+    const auto address = part_address_of(digest);
+    auto part = journal.replay(ExperienceAddress(memory, view_of(address)));
+    const auto& view = part.view();
+    if (view.kind != experience_part_kind || view.authority || !view.claim.empty() || view.index_count != 0 ||
+        view.payload_digest != digest || view.payload.size() != expected)
+        fail("experience_part_invalid");
+    return part;
+}
+
+// The length of part `place` of `level` in a parted blob of `size` bytes: a
+// full part, or what is left for the last one of its level.
+// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:23-60
+std::uint64_t part_length(const PartLevels& levels, std::uint64_t size, std::uint8_t level,
+                          std::uint64_t place) noexcept {
+    if (level == 0) return std::min<std::uint64_t>(experience_part_bytes, size - place * experience_part_bytes);
+    return std::min<std::uint64_t>(digests_per_part, levels.counts[level - 1] - place * digests_per_part) *
+           digest256_width;
+}
+
+// Reads a blob forward: an inline one from the record, a parted one part by
+// part, holding one part per level (each replayed and checked by
+// `replay_part`); `finish` checks, once every byte was read, the whole
+// blob's digest. A read past the end fails with `experience_section_invalid`.
+// C++ infrastructure for reading blobs larger than memory holds (approved
+// flow :91-92); no direct Python counterpart.
+// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:137-155
+// SWEGCA: user@2026-09-22:91-92
+class BlobCursor final {
+public:
+    // SWEGCA: user@2026-09-22:91-92
+    BlobCursor(const journal::JournalStore& journal, const AllocationContext& memory, const ExperienceBlob& blob)
+        : journal_(&journal), memory_(memory), blob_(blob), levels_(part_levels(blob.size)) {
+        if (!blob.parted()) {
+            chunk_ = blob.inline_bytes;
+            return;
+        }
+        lists_[blob.depth - 1].list = blob.top_digests;
+    }
+
+    // SWEGCA: user@2026-09-22:91-92
+    [[nodiscard]] std::uint64_t remaining() const noexcept { return blob_.size - read_; }
+    // Whether what `next` returns stays valid after the next read (an inline
+    // blob's bytes are the record's; a part is released when passed).
+    // SWEGCA: user@2026-09-22:91-92
+    [[nodiscard]] bool stable() const noexcept { return !blob_.parted(); }
+
+    // Up to `limit` of the bytes that follow, at least one: the rest of the
+    // current part at most.
+    // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:137-155
+    std::span<const std::byte> next(std::uint64_t limit) {
+        if (limit == 0 || remaining() == 0) fail("experience_section_invalid");
+        if (chunk_.empty()) load();
+        const auto take = static_cast<std::size_t>(std::min<std::uint64_t>(limit, chunk_.size()));
+        const auto out = chunk_.first(take);
+        chunk_ = chunk_.subspan(take);
+        read_ += take;
+        if (blob_.parted()) whole_.update(out);
+        return out;
+    }
+
+    // SWEGCA: user@2026-09-22:60-61
+    std::uint8_t u8() {
+        std::array<std::byte, 1> bytes{};
+        fixed(bytes);
+        return std::to_integer<std::uint8_t>(bytes[0]);
+    }
+    // SWEGCA: user@2026-09-22:60-61
+    std::uint32_t u32() { return static_cast<std::uint32_t>(little_endian<4>()); }
+    // SWEGCA: user@2026-09-22:60-61
+    std::uint64_t u64() { return little_endian<8>(); }
+    // SWEGCA: user@2026-09-22:60-61
+    DigestBytes digest() {
+        DigestBytes out{};
+        fixed(out);
+        return out;
+    }
+
+    // Every byte read; a parted blob's bytes are its digest.
+    // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:137-155
+    void finish() {
+        if (remaining() != 0) fail("experience_section_invalid");
+        if (blob_.parted() && whole_.finish() != blob_.digest) fail("experience_blob_digest_mismatch");
+    }
+
+private:
+    struct Level {
+        std::optional<journal::PublishedRecord> part;  // the part the list is, below the top
+        std::span<const std::byte> list;               // digests of the parts of this level
+        std::uint64_t at = 0;                          // the next one
+    };
+
+    // SWEGCA: user@2026-09-22:60-61
+    template <std::size_t N>
+    std::uint64_t little_endian() {
+        std::array<std::byte, N> bytes{};
+        fixed(bytes);
+        std::uint64_t value = 0;
+        for (std::size_t at = N; at-- > 0;) value = (value << 8) | std::to_integer<std::uint64_t>(bytes[at]);
+        return value;
+    }
+
+    // SWEGCA: user@2026-09-22:60-61
+    void fixed(std::span<std::byte> out) {
+        if (out.size() > remaining()) fail("experience_section_invalid");
+        for (std::size_t at = 0; at < out.size();) {
+            const auto piece = next(out.size() - at);
+            std::memcpy(out.data() + at, piece.data(), piece.size());
+            at += piece.size();
+        }
+    }
+
+    // The next level-0 part: up from the lowest level with a digest left,
+    // then down, each list part replacing the one before it at its level.
+    // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:137-155
+    void load() {
+        std::uint8_t level = 0;
+        while (level < blob_.depth && lists_[level].at * digest256_width == lists_[level].list.size()) ++level;
+        if (level == blob_.depth) fail("experience_part_invalid");
+        while (true) {
+            auto& list = lists_[level];
+            const auto digest = digest_at(list.list, list.at++);
+            auto part = replay_part(*journal_, memory_, digest,
+                                    part_length(levels_, blob_.size, level, placed_[level]++));
+            if (level == 0) {
+                leaf_.reset();
+                leaf_.emplace(std::move(part));
+                chunk_ = leaf_->view().payload;
+                return;
+            }
+            --level;
+            auto& below = lists_[level];
+            below.part.reset();
+            below.part.emplace(std::move(part));
+            below.list = below.part->view().payload;
+            below.at = 0;
+        }
+    }
+
+    const journal::JournalStore* journal_;
+    AllocationContext memory_;
+    ExperienceBlob blob_;
+    PartLevels levels_;
+    std::array<Level, 3> lists_{};
+    std::array<std::uint64_t, 3> placed_{};  // parts met so far per level
+    std::optional<journal::PublishedRecord> leaf_;
+    std::span<const std::byte> chunk_;  // what is left of the current level-0 part
+    std::uint64_t read_ = 0;
+    Sha256 whole_;
+};
+
+// `length` bytes that follow, whole: a view when they come in one piece that
+// stays valid, else a copy in `buffer`.
+// SWEGCA: user@2026-09-22:91-92
+std::span<const std::byte> held_bytes(BlobCursor& in, std::uint64_t length, LedgerBytes& buffer) {
+    if (length > in.remaining()) fail("experience_section_invalid");
+    if (length == 0) return {};
+    const auto first = in.next(length);
+    if (first.size() == length && in.stable()) return first;
+    buffer.assign(first.begin(), first.end());
+    while (buffer.size() < length) {
+        const auto piece = in.next(length - buffer.size());
+        buffer.insert(buffer.end(), piece.begin(), piece.end());
+    }
+    return buffer;
+}
+
+// The fewest bytes a list item of the typed section takes: a length-prefixed
+// field; a step (phase, observation, relation count, judgment, outcome,
+// evidence count); a resource (id length, descriptor, digest, item and
+// locator flags, metadata length, bytes flag).
+constexpr std::uint64_t least_field_bytes = 8;
+constexpr std::uint64_t least_step_bytes = 8 + 8 + 8 + 8 + 1 + 8;
+constexpr std::uint64_t descriptor_encoded_bytes = 1 + 8 + 8 + 8 + 1 + 8 + 8 + 8;
+constexpr std::uint64_t least_resource_bytes = 8 + descriptor_encoded_bytes + 1 + 1 + 1 + 8 + 1;
+
+// Reads the typed section in order, checking every field, and hands each to
+// `emit` as it comes (a field in pieces, validated after its last piece):
+// - the user's episode and step rules (MemoryEpisode, MemoryStep): identity
+//   texts and step texts hold something Python's str.strip keeps, source
+//   addresses are strict UTF-8 and distinct, at least one source, step and
+//   evidence ref, one of the six outcomes; relations strict UTF-8, unchecked
+//   otherwise; an observation's bytes as given;
+// - each resource: its id an identity text in the record's resource view,
+//   no id twice (the source's key is the id within its memory); its
+//   descriptor in its one form; a locator strict UTF-8; metadata as given;
+//   received bytes as a standard blob with their digest, which is the
+//   resource's digest, and a text's inline bytes strict UTF-8 of its code
+//   point count (parted ones are read by whoever reads them);
+// - every unlisted entry of the resource view is a resource here, and the
+//   section is not empty.
+// Returns false when `emit` stopped it, true when all was read and checked.
+// SWEGCA: src/tinylm_slicer/mosaic_memory_activation.py@3bddcb7:63-106
+// SWEGCA: src/swegca/mosaic_external_memory.py@5901a5a:33-41
+// SWEGCA: src/swegca/mosaic_external_memory.py@5901a5a:111
+bool read_section(BlobCursor& in, std::span<const std::string_view> resources,
+                  std::span<const std::string_view> listed, const AllocationContext& memory, SectionVisitor emit) {
+    const auto counted = [&in](std::uint64_t count, std::uint64_t least) {
+        if (count > in.remaining() / least) fail("experience_section_invalid");
+        return count;
+    };
+    SectionEvent event;
+    // One length-prefixed field as events of `part`; `text` and `hash`, when
+    // given, see each byte once.
+    const auto field = [&](SectionPart part, Utf8Count* text, Sha256* hash) {
+        const auto length = in.u64();
+        if (length > in.remaining()) fail("experience_section_invalid");
+        event.part = part;
+        auto left = length;
+        do {
+            const auto piece = left == 0 ? std::span<const std::byte>() : in.next(left);
+            left -= piece.size();
+            if (text) text->feed(piece);
+            if (hash) hash->update(piece);
+            event.piece = piece;
+            event.last = left == 0;
+            if (!emit(event)) return false;
+        } while (left != 0);
+        event.piece = {};
+        return true;
+    };
+    // The user's `_text`: strict UTF-8 holding something str.strip keeps.
+    const auto step_text = [&](SectionPart part) {
+        Utf8Count text;
+        if (!field(part, &text, nullptr)) return false;
+        if (!text.valid() || !text.nonspace()) fail("experience_section_invalid");
+        return true;
+    };
+    const auto utf8_field = [&](SectionPart part) {
+        Utf8Count text;
+        if (!field(part, &text, nullptr)) return false;
+        if (!text.valid()) fail("experience_section_invalid");
+        return true;
+    };
+
+    const auto has_episode = in.u8();
+    if (has_episode > 1) fail("experience_section_invalid");
+    if (has_episode == 1) {
+        if (!step_text(SectionPart::episode_id) || !step_text(SectionPart::revision) ||
+            !step_text(SectionPart::verification_state))
+            return false;
+        const auto sources = counted(in.u64(), least_field_bytes);
+        if (sources == 0) fail("experience_section_invalid");
+        // Distinct by content: the SHA-256 of each, so any length is compared.
+        LedgerVector<DigestBytes> seen(memory.allocator<DigestBytes>());
+        for (std::uint64_t at = 0; at < sources; ++at) {
+            event.item = at;
+            Utf8Count text;
+            Sha256 hash;
+            if (!field(SectionPart::source_address, &text, &hash)) return false;
+            if (!text.valid()) fail("experience_section_invalid");
+            seen.push_back(hash.finish());
+        }
+        std::sort(seen.begin(), seen.end());
+        if (std::adjacent_find(seen.begin(), seen.end()) != seen.end()) fail("experience_section_invalid");
+        const auto steps = counted(in.u64(), least_step_bytes);
+        if (steps == 0) fail("experience_section_invalid");
+        for (std::uint64_t step = 0; step < steps; ++step) {
+            event.step = step;
+            event.item = 0;
+            if (!step_text(SectionPart::phase) || !field(SectionPart::observation, nullptr, nullptr)) return false;
+            const auto relations = counted(in.u64(), least_field_bytes);
+            for (std::uint64_t at = 0; at < relations; ++at) {
+                event.item = at;
+                if (!utf8_field(SectionPart::relation)) return false;
+            }
+            event.item = 0;
+            if (!step_text(SectionPart::judgment)) return false;
+            const auto outcome = in.u8();
+            if (outcome > static_cast<std::uint8_t>(StepOutcome::pending)) fail("experience_section_invalid");
+            event.part = SectionPart::outcome;
+            event.outcome = static_cast<StepOutcome>(outcome);
+            event.last = true;
+            if (!emit(event)) return false;
+            const auto refs = counted(in.u64(), least_field_bytes);
+            if (refs == 0) fail("experience_section_invalid");
+            for (std::uint64_t at = 0; at < refs; ++at) {
+                event.item = at;
+                if (!step_text(SectionPart::evidence_ref)) return false;
+            }
+        }
+    }
+
+    const auto count = counted(in.u64(), least_resource_bytes);
+    if (count > max_resources || (has_episode == 0 && count == 0)) fail("experience_section_invalid");
+    LedgerVector<std::uint8_t> met(resources.size(), 0, memory.allocator<std::uint8_t>());
+    LedgerBytes id_buffer(memory.allocator<std::byte>());
+    LedgerBytes top_buffer(memory.allocator<std::byte>());
+    for (std::uint64_t at = 0; at < count; ++at) {
+        event = SectionEvent{};
+        event.resource = at;
+        const auto id_length = in.u64();
+        if (id_length > detail::identity_text_max_bytes) fail("experience_section_invalid");
+        const auto id_bytes = held_bytes(in, id_length, id_buffer);
+        const std::string_view id(reinterpret_cast<const char*>(id_bytes.data()), id_bytes.size());
+        if (!detail::is_identity_text(id)) fail("experience_section_invalid");
+        const auto found = std::lower_bound(resources.begin(), resources.end(), id);
+        if (found == resources.end() || *found != id) fail("experience_section_invalid");
+        auto& mark = met[static_cast<std::size_t>(found - resources.begin())];
+        if (mark != 0) fail("experience_section_invalid");
+        mark = 1;
+        auto& d = event.descriptor;
+        const auto modality = in.u8();
+        d.code_points = in.u64();
+        d.width = in.u64();
+        d.height = in.u64();
+        const auto frame = in.u8();
+        d.frames = in.u64();
+        d.sample_rate = in.u64();
+        d.duration_ns = in.u64();
+        if (modality > static_cast<std::uint8_t>(ResourceModality::video) ||
+            frame > static_cast<std::uint8_t>(CoordinateFrame::oriented_source_pixels))
+            fail("experience_section_invalid");
+        d.modality = static_cast<ResourceModality>(modality);
+        d.frame = static_cast<CoordinateFrame>(frame);
+        if (!valid_descriptor(d)) fail("experience_section_invalid");
+        const auto has_digest = in.u8();
+        if (has_digest > 1) fail("experience_section_invalid");
+        if (has_digest == 1) event.content_digest = in.digest();
+        const auto has_item = in.u8();
+        if (has_item > 1) fail("experience_section_invalid");
+        if (has_item == 1) event.item_index = in.u64();
+        event.part = SectionPart::resource;
+        event.resource_id = id;
+        if (!emit(event)) return false;
+        const auto has_locator = in.u8();
+        if (has_locator > 1) fail("experience_section_invalid");
+        if (has_locator == 1 && !utf8_field(SectionPart::storage_locator)) return false;
+        if (!field(SectionPart::metadata, nullptr, nullptr)) return false;
+        const auto has_bytes = in.u8();
+        if (has_bytes > 1) fail("experience_section_invalid");
+        if (has_bytes == 0) continue;
+        // Received bytes keep the digest computed from them.
+        if (!event.content_digest) fail("experience_section_invalid");
+        event.part = SectionPart::resource_bytes;
+        const auto mode = in.u8();
+        if (mode == 0) {
+            const auto length = in.u32();
+            if (length > experience_inline_blob_bytes || length > in.remaining()) fail("experience_section_invalid");
+            event.size = length;
+            Sha256 hash;
+            Utf8Count text;
+            std::uint64_t left = length;
+            do {
+                const auto piece = left == 0 ? std::span<const std::byte>() : in.next(left);
+                left -= piece.size();
+                hash.update(piece);
+                text.feed(piece);
+                event.piece = piece;
+                event.last = left == 0;
+                if (!emit(event)) return false;
+            } while (left != 0);
+            if (hash.finish() != *event.content_digest) fail("experience_section_invalid");
+            if (d.modality == ResourceModality::text && (!text.valid() || text.count() != d.code_points))
+                fail("experience_section_invalid");
+        } else if (mode == 1) {
+            event.size = in.u64();
+            const auto digest = in.digest();
+            const auto depth = in.u8();
+            const auto tops = in.u32();
+            if (event.size <= experience_inline_blob_bytes || digest != *event.content_digest)
+                fail("experience_section_invalid");
+            const auto levels = part_levels(event.size);
+            if (depth != levels.depth || tops != levels.counts[levels.depth - 1]) fail("experience_section_invalid");
+            event.parted = true;
+            event.piece = held_bytes(in, static_cast<std::uint64_t>(tops) * digest256_width, top_buffer);
+            event.last = true;
+            if (!emit(event)) return false;
+        } else {
+            fail("experience_section_invalid");
+        }
+    }
+    for (std::size_t at = 0; at < resources.size(); ++at)
+        if (met[at] == 0 && !std::binary_search(listed.begin(), listed.end(), resources[at]))
+            fail("experience_section_invalid");
+    in.finish();
+    return true;
+}
+
+// The user's MemoryEpisode and MemoryStep checks, the texts kept as given.
+// SWEGCA: src/tinylm_slicer/mosaic_memory_activation.py@3bddcb7:63-106
+void check_episode(const AllocationContext& memory, const MemoryEpisodeInput& episode) {
+    if (!is_step_text(episode.episode_id) || !is_step_text(episode.revision) ||
+        !is_step_text(episode.verification_state))
+        fail("experience_episode_text_invalid");
+    if (episode.steps.empty() || episode.source_addresses.empty()) fail("experience_episode_incomplete");
+    LedgerVector<std::string_view> sources(episode.source_addresses.begin(), episode.source_addresses.end(),
+                                           memory.allocator<std::string_view>());
+    for (const auto source : sources)
+        if (!detail::is_strict_utf8(source)) fail("experience_episode_text_invalid");
+    std::sort(sources.begin(), sources.end());
+    if (std::adjacent_find(sources.begin(), sources.end()) != sources.end())
+        fail("experience_episode_source_duplicate");
+    for (const auto& step : episode.steps) {
+        if (!is_step_text(step.phase) || !is_step_text(step.judgment)) fail("experience_step_text_invalid");
+        if (step.outcome > StepOutcome::pending) fail("experience_step_outcome_invalid");
+        if (step.evidence_refs.empty()) fail("experience_step_evidence_missing");
+        for (const auto ref : step.evidence_refs)
+            if (!is_step_text(ref)) fail("experience_step_evidence_missing");
+        for (const auto relation : step.relations)
+            if (!detail::is_strict_utf8(relation)) fail("experience_step_text_invalid");
+    }
+}
+
+// The typed section of an observation, laid out in `out` for reading as one
+// blob: an episode flag and the episode (its three texts, source addresses
+// and steps, each list after its u64 count, each text and byte field after
+// its u64 length), then the observed resources in the producer's order (id,
+// descriptor, digest, item index, locator, metadata, and received bytes as
+// a standard blob). The caller's texts and bytes are not copied: `out`
+// keeps its own fields and prefixes and names the caller's spans between
+// them. Received bytes are planned as every blob (their parts go to `own`,
+// their lists to `owned`); a text resource's must be strict UTF-8 of its
+// code point count, and a digest the source names must be theirs.
+// SWEGCA: src/tinylm_slicer/mosaic_memory_activation.py@3bddcb7:63-106
+// SWEGCA: src/swegca/mosaic_external_memory.py@5901a5a:33-41
+void build_section(const AllocationContext& memory, const Observation& observation, detail::SectionSource& out,
+                   LedgerVector<PartSlice>& own, LedgerVector<LedgerBytes>& owned) {
+    ByteWriter writer(out.encoded);
+    std::size_t mark = 0;
+    // The encoded bytes since `mark`, then the caller's `bytes`.
+    const auto caller = [&](std::span<const std::byte> bytes) {
+        if (out.encoded.size() > mark) {
+            const auto length = out.encoded.size() - mark;
+            out.pieces.push_back(detail::SectionSource::Piece{out.size, mark, length, {}});
+            out.size += length;
+            mark = out.encoded.size();
+        }
+        if (bytes.empty()) return;
+        out.pieces.push_back(detail::SectionSource::Piece{out.size, 0, bytes.size(), bytes});
+        out.size += bytes.size();
+    };
+    const auto field = [&](std::span<const std::byte> bytes) {
+        writer.u64(bytes.size());
+        caller(bytes);
+    };
+    const auto text = [&](std::string_view value) {
+        field(std::as_bytes(std::span<const char>(value.data(), value.size())));
+    };
+    writer.u8(observation.episode ? 1 : 0);
+    if (observation.episode) {
+        const auto& episode = *observation.episode;
+        text(episode.episode_id);
+        text(episode.revision);
+        text(episode.verification_state);
+        writer.u64(episode.source_addresses.size());
+        for (const auto source : episode.source_addresses) text(source);
+        writer.u64(episode.steps.size());
+        for (const auto& step : episode.steps) {
+            text(step.phase);
+            field(step.observation);
+            writer.u64(step.relations.size());
+            for (const auto relation : step.relations) text(relation);
+            text(step.judgment);
+            writer.u8(static_cast<std::uint8_t>(step.outcome));
+            writer.u64(step.evidence_refs.size());
+            for (const auto ref : step.evidence_refs) text(ref);
+        }
+    }
+    writer.u64(observation.observed_resources.size());
+    for (const auto& resource : observation.observed_resources) {
+        std::optional<BlobPlan> bytes;
+        auto digest = resource.content_digest;
+        if (resource.bytes) {
+            const bool is_text = resource.descriptor.modality == ResourceModality::text;
+            Utf8Count count;
+            bytes = plan_blob(memory, *resource.bytes, own, owned, is_text ? &count : nullptr);
+            if (is_text && (!count.valid() || count.count() != resource.descriptor.code_points))
+                fail("experience_resource_text_invalid");
+            if (resource.content_digest && *resource.content_digest != bytes->digest)
+                fail("experience_resource_digest_mismatch");
+            digest = bytes->digest;
+        }
+        const auto& d = resource.descriptor;
+        text(resource.resource_id);
+        writer.u8(static_cast<std::uint8_t>(d.modality));
+        writer.u64(d.code_points);
+        writer.u64(d.width);
+        writer.u64(d.height);
+        writer.u8(static_cast<std::uint8_t>(d.frame));
+        writer.u64(d.frames);
+        writer.u64(d.sample_rate);
+        writer.u64(d.duration_ns);
+        writer.u8(digest ? 1 : 0);
+        if (digest) writer.digest(*digest);
+        writer.u8(resource.item_index ? 1 : 0);
+        if (resource.item_index) writer.u64(*resource.item_index);
+        writer.u8(resource.storage_locator ? 1 : 0);
+        if (resource.storage_locator) text(*resource.storage_locator);
+        field(resource.metadata);
+        writer.u8(bytes ? 1 : 0);
+        if (!bytes) continue;
+        if (bytes->depth == 0) {
+            writer.u8(0);
+            writer.u32(static_cast<std::uint32_t>(bytes->size));
+            caller(bytes->inline_bytes);
+            continue;
+        }
+        writer.u8(1);
+        writer.u64(bytes->size);
+        writer.digest(bytes->digest);
+        writer.u8(bytes->depth);
+        writer.u32(static_cast<std::uint32_t>(bytes->top.size() / digest256_width));
+        caller(bytes->top);
+    }
+    caller({});
+}
+
 // The experience payload: the observation's step, uncertainty,
 // contradiction, source span, context, namespace, sorted lineage, sorted
-// resources, and its raw, structured and (derived only) root-source and
-// root-context blobs.
+// resources each with its listed flag, its raw, structured and (derived
+// only) root-source and root-context blobs, and its typed section blob after
+// a flag.
 // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:23-60
 LedgerBytes encode_envelope(const AllocationContext& memory, const Observation& observation,
                             std::span<const std::string_view> derived_from,
-                            std::span<const std::string_view> resources, const BlobPlan& raw,
-                            const BlobPlan& structured, const BlobPlan* roots, const BlobPlan* contexts) {
+                            std::span<const std::string_view> resources, std::span<const std::uint8_t> listed,
+                            const BlobPlan& raw, const BlobPlan& structured, const BlobPlan* roots,
+                            const BlobPlan* contexts, const BlobPlan* section) {
     std::uint64_t total = envelope_fixed_bytes;
     if (observation.name_space) total += 4 + observation.name_space->size();
     for (const auto address : derived_from) total += 4 + address.size();
-    for (const auto resource : resources) total += 4 + resource.size();
+    for (const auto resource : resources) total += 4 + resource.size() + 1;
     total += encoded_blob_bytes(raw) + encoded_blob_bytes(structured);
     if (roots) total += encoded_blob_bytes(*roots) + encoded_blob_bytes(*contexts);
+    total += 1;
+    if (section) total += encoded_blob_bytes(*section);
     if (total > journal::max_payload_bytes) fail("experience_envelope_too_large");
     LedgerBytes out(memory.allocator<std::byte>());
     out.reserve(static_cast<std::size_t>(total));
@@ -770,13 +1424,18 @@ LedgerBytes encode_envelope(const AllocationContext& memory, const Observation& 
     writer.u32(static_cast<std::uint32_t>(derived_from.size()));
     for (const auto address : derived_from) writer.text(address, detail::identity_text_max_bytes);
     writer.u32(static_cast<std::uint32_t>(resources.size()));
-    for (const auto resource : resources) writer.text(resource, detail::identity_text_max_bytes);
+    for (std::size_t at = 0; at < resources.size(); ++at) {
+        writer.text(resources[at], detail::identity_text_max_bytes);
+        writer.u8(listed[at]);
+    }
     write_blob(writer, raw);
     write_blob(writer, structured);
     if (roots) {
         write_blob(writer, *roots);
         write_blob(writer, *contexts);
     }
+    writer.u8(section ? 1 : 0);
+    if (section) write_blob(writer, *section);
     if (out.size() != total) fail("experience_envelope_size_mismatch");
     return out;
 }
@@ -824,6 +1483,28 @@ private:
 
 }  // namespace
 
+namespace detail {
+
+// Copies the pieces that hold `out`: this section's own fields and prefixes
+// from `encoded`, the caller's texts and bytes from where they are.
+// SWEGCA: user@2026-09-22:91-92
+void SectionSource::operator()(std::uint64_t offset, std::span<std::byte> out) const {
+    if (offset > size || out.size() > size - offset) throw std::out_of_range("experience_section_read_out_of_range");
+    if (out.empty()) return;
+    auto piece = std::upper_bound(pieces.begin(), pieces.end(), offset,
+                                  [](std::uint64_t at, const Piece& each) { return at < each.at; });
+    std::size_t done = 0;
+    for (--piece; done < out.size(); ++piece) {
+        const auto from = static_cast<std::size_t>(offset + done - piece->at);
+        const auto take = static_cast<std::size_t>(std::min<std::uint64_t>(piece->length - from, out.size() - done));
+        const auto* bytes = piece->caller.empty() ? encoded.data() + piece->encoded_from : piece->caller.data();
+        std::memcpy(out.data() + done, bytes + from, take);
+        done += take;
+    }
+}
+
+}  // namespace detail
+
 // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:413-418
 CueTokens::CueTokens(const AllocationContext& memory, std::string_view source)
     : text_(memory.allocator<std::byte>()), tokens_(memory.allocator<std::string_view>()) {
@@ -845,17 +1526,24 @@ ExperienceRecord::ExperienceRecord(journal::PublishedRecord record, const Alloca
                                    const journal::JournalStore& journal, LedgerVector<std::string_view> derived,
                                    LedgerVector<std::string_view> resources, LedgerVector<std::string_view> index)
     : record_(std::move(record)), journal_(&journal), memory_(memory),
-      derived_from_(std::move(derived)), resources_(std::move(resources)), index_(std::move(index)) {}
+      derived_from_(std::move(derived)), resources_(std::move(resources)), index_(std::move(index)),
+      listed_(memory.allocator<std::string_view>()), section_texts_(memory.allocator<std::string_view>()),
+      steps_(memory.allocator<StepView>()), observed_(memory.allocator<ResourceView>()) {}
 
-// SWEGCA: user@2026-09-22:72-79
-ExperienceRecord::ExperienceRecord(ExperienceRecord&& other) noexcept
-    : record_(std::move(other.record_)), journal_(other.journal_), memory_(other.memory_),
-      observed_at_(other.observed_at_), context_(other.context_), uncertainty_(other.uncertainty_),
-      contradiction_(other.contradiction_), span_(other.span_), derived_from_(std::move(other.derived_from_)),
-      name_space_(std::exchange(other.name_space_, std::nullopt)), resources_(std::move(other.resources_)),
-      index_(std::move(other.index_)), raw_(std::exchange(other.raw_, {})),
+// Moving the record keeps every view valid (its bytes and lists keep their
+// buffers); the source keeps none. C++ infrastructure; no direct Python
+// counterpart.
+// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:23-60
+ExperienceRecord::ExperienceRecord(ExperienceRecord&& other) noexcept : record_(std::move(other.record_)),
+      journal_(other.journal_), memory_(other.memory_), observed_at_(other.observed_at_), context_(other.context_),
+      uncertainty_(other.uncertainty_), contradiction_(other.contradiction_), span_(other.span_),
+      derived_from_(std::move(other.derived_from_)), name_space_(std::exchange(other.name_space_, std::nullopt)),
+      resources_(std::move(other.resources_)), index_(std::move(other.index_)), raw_(std::exchange(other.raw_, {})),
       structured_(std::exchange(other.structured_, {})), roots_(std::exchange(other.roots_, {})),
-      contexts_(std::exchange(other.contexts_, {})) {}
+      contexts_(std::exchange(other.contexts_, {})), listed_(std::move(other.listed_)),
+      has_section_(std::exchange(other.has_section_, false)), section_(std::exchange(other.section_, {})),
+      section_texts_(std::move(other.section_texts_)), episode_(std::exchange(other.episode_, std::nullopt)),
+      steps_(std::move(other.steps_)), observed_(std::move(other.observed_)) {}
 
 // Checks the kind, the envelope byte for byte, that the address is the
 // digest of the record's identity (so it was issued by this module), and
@@ -908,7 +1596,17 @@ ExperienceRecord ExperienceRecord::decode(journal::PublishedRecord published,
     auto derived = read_sorted_texts(reader, derived_count, memory, is_experience_address);
     const auto resource_count = reader.u32();
     if (resource_count > max_resources) fail("experience_envelope_invalid");
-    auto resources = read_sorted_texts(reader, resource_count, memory, [](std::string_view) { return true; });
+    LedgerVector<std::string_view> resources(memory.allocator<std::string_view>());
+    LedgerVector<std::string_view> listed(memory.allocator<std::string_view>());
+    resources.reserve(resource_count);
+    for (std::uint32_t at = 0; at < resource_count; ++at) {
+        const auto text = reader.text_view(detail::identity_text_max_bytes);
+        const auto flag = reader.u8();
+        if (!detail::is_identity_text(text) || flag > 1 || (at != 0 && !(resources.back() < text)))
+            fail("experience_envelope_invalid");
+        resources.push_back(text);
+        if (flag == 1) listed.push_back(text);
+    }
     const auto raw = read_blob(reader);
     const auto structured = read_blob(reader);
     ExperienceBlob roots;
@@ -929,7 +1627,95 @@ ExperienceRecord ExperienceRecord::decode(journal::PublishedRecord published,
         roots = digest_set(true);
         contexts = digest_set(false);
     }
+    const auto has_section = reader.u8();
+    if (has_section > 1) fail("experience_envelope_invalid");
+    ExperienceBlob section;
+    if (has_section == 1) section = read_blob(reader);
     if (reader.remaining() != 0) fail("experience_envelope_trailing_bytes");
+    // An entry the producer did not list is a section resource's id, so a
+    // memory without a section lists every entry.
+    if (has_section == 0 && listed.size() != resources.size()) fail("experience_envelope_invalid");
+
+    // A typed section kept in the record is read and checked whole here
+    // (`read_section`) and viewed: each of its fields comes in one piece
+    // viewing the record's bytes. Step lists are gathered as positions in
+    // `texts` and viewed once the record holds `texts`. A parted section is
+    // checked when it is read (`for_each_section`, `verify_parts`).
+    struct StepSlots {
+        std::string_view phase;
+        std::span<const std::byte> observation;
+        std::size_t relations = 0;
+        std::size_t relation_count = 0;
+        std::string_view judgment;
+        StepOutcome outcome = StepOutcome::pending;
+        std::size_t refs = 0;
+        std::size_t ref_count = 0;
+    };
+    LedgerVector<std::string_view> texts(memory.allocator<std::string_view>());
+    LedgerVector<StepSlots> step_slots(memory.allocator<StepSlots>());
+    LedgerVector<ResourceView> observed(memory.allocator<ResourceView>());
+    std::optional<EpisodeView> episode;
+    std::size_t source_count = 0;
+    if (has_section == 1 && !section.parted()) {
+        BlobCursor in(journal, memory, section);
+        (void)read_section(in, resources, listed, memory, [&](const SectionEvent& event) {
+            const std::string_view text(reinterpret_cast<const char*>(event.piece.data()), event.piece.size());
+            switch (event.part) {
+            case SectionPart::episode_id:
+                episode.emplace();
+                episode->episode_id = text;
+                break;
+            case SectionPart::revision:
+                episode->revision = text;
+                break;
+            case SectionPart::verification_state:
+                episode->verification_state = text;
+                break;
+            case SectionPart::source_address:
+                texts.push_back(text);
+                ++source_count;
+                break;
+            case SectionPart::phase:
+                step_slots.push_back(StepSlots{});
+                step_slots.back().phase = text;
+                break;
+            case SectionPart::observation:
+                step_slots.back().observation = event.piece;
+                break;
+            case SectionPart::relation:
+                if (step_slots.back().relation_count++ == 0) step_slots.back().relations = texts.size();
+                texts.push_back(text);
+                break;
+            case SectionPart::judgment:
+                step_slots.back().judgment = text;
+                break;
+            case SectionPart::outcome:
+                step_slots.back().outcome = event.outcome;
+                break;
+            case SectionPart::evidence_ref:
+                if (step_slots.back().ref_count++ == 0) step_slots.back().refs = texts.size();
+                texts.push_back(text);
+                break;
+            case SectionPart::resource:
+                observed.push_back(ResourceView{event.resource_id, event.descriptor, event.content_digest,
+                                                std::nullopt, event.item_index, {}, std::nullopt});
+                break;
+            case SectionPart::storage_locator:
+                observed.back().storage_locator = text;
+                break;
+            case SectionPart::metadata:
+                observed.back().metadata = event.piece;
+                break;
+            case SectionPart::resource_bytes:
+                observed.back().bytes =
+                    event.parted
+                        ? ExperienceBlob{event.size, *event.content_digest, part_levels(event.size).depth, {}, event.piece}
+                        : ExperienceBlob{event.size, *event.content_digest, 0, event.piece, {}};
+                break;
+            }
+            return true;
+        });
+    }
 
     const auto address = address_of(view.kind, view.source, view.source_revision,
                                      present(view.previous_revision_address), present(view.outcome),
@@ -969,6 +1755,22 @@ ExperienceRecord ExperienceRecord::decode(journal::PublishedRecord published,
     out.structured_ = structured;
     out.roots_ = roots;
     out.contexts_ = contexts;
+    out.listed_ = std::move(listed);
+    out.has_section_ = has_section == 1;
+    out.section_ = section;
+    out.observed_ = std::move(observed);
+    // Step and source lists view the record's own `section_texts_`, so they
+    // are made only once it holds them.
+    out.section_texts_ = std::move(texts);
+    const std::span<const std::string_view> held(out.section_texts_);
+    if (episode) {
+        episode->source_addresses = held.subspan(0, source_count);
+        out.episode_ = episode;
+    }
+    out.steps_.reserve(step_slots.size());
+    for (const auto& step : step_slots)
+        out.steps_.push_back(StepView{step.phase, step.observation, held.subspan(step.relations, step.relation_count),
+                                      step.judgment, step.outcome, held.subspan(step.refs, step.ref_count)});
     return out;
 }
 
@@ -990,48 +1792,21 @@ void ExperienceRecord::for_each_raw_chunk(ChunkVisitor visit) const { for_each_c
 // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:137-155
 void ExperienceRecord::for_each_structured_chunk(ChunkVisitor visit) const { for_each_chunk(structured_, visit); }
 
-// Walks the part tree depth first from the top list. A part must be a part
-// record with no authority, claim or index entry, its payload the digest
-// its parent names and exactly as long as its place in the tree gives (the
-// last part of each level may be shorter). Each level-0 part's bytes are
-// visited once checked; the whole blob's digest is checked after the last.
+// Reads the blob part by part (`BlobCursor`): a part must be a part record
+// with no authority, claim or index entry, its payload the digest its parent
+// names and exactly as long as its place in the tree gives (the last part of
+// each level may be shorter). Each level-0 part's bytes are visited once
+// checked; the whole blob's digest is checked after the last.
 // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:137-155
 void ExperienceRecord::for_each_chunk(const ExperienceBlob& blob, ChunkVisitor visit) const {
     if (!blob.parted()) {
         (void)visit(blob.inline_bytes);
         return;
     }
-    const auto levels = part_levels(blob.size);
-    std::array<std::uint64_t, 4> next{};  // the next part of each level
-    Sha256 whole;
-    std::uint64_t seen = 0;
-    bool going = true;
-    const auto walk = [&](const auto& self, std::span<const std::byte> list, std::uint8_t level) -> void {
-        const auto count = list.size() / digest256_width;
-        for (std::uint64_t at = 0; going && at < count; ++at) {
-            const auto digest = digest_at(list, at);
-            const auto address = part_address_of(digest);
-            const auto part = journal_->replay(ExperienceAddress(memory_, view_of(address)));
-            const auto& view = part.view();
-            const auto place = next[level]++;
-            const std::uint64_t expected =
-                level == 0 ? std::min<std::uint64_t>(experience_part_bytes, blob.size - place * experience_part_bytes)
-                           : std::min<std::uint64_t>(digests_per_part, levels.counts[level - 1] - place * digests_per_part) *
-                                 digest256_width;
-            if (view.kind != experience_part_kind || view.authority || !view.claim.empty() || view.index_count != 0 ||
-                view.payload_digest != digest || view.payload.size() != expected)
-                fail("experience_part_invalid");
-            if (level == 0) {
-                whole.update(view.payload);
-                seen += expected;
-                going = visit(view.payload);
-            } else {
-                self(self, view.payload, static_cast<std::uint8_t>(level - 1));
-            }
-        }
-    };
-    walk(walk, blob.top_digests, static_cast<std::uint8_t>(blob.depth - 1));
-    if (going && (seen != blob.size || whole.finish() != blob.digest)) fail("experience_blob_digest_mismatch");
+    BlobCursor in(*journal_, memory_, blob);
+    while (in.remaining() != 0)
+        if (!visit(in.next(in.remaining()))) return;
+    in.finish();
 }
 
 // A digest-set blob, streamed: strictly increasing 32-byte digests.
@@ -1081,6 +1856,71 @@ void ExperienceRecord::verify_parts() const {
     if (structured_.parted()) for_each_chunk(structured_, whole);
     if (roots_.parted()) for_each_digest(roots_, every);
     if (contexts_.parted()) for_each_digest(contexts_, every);
+    if (!has_section_) return;
+    // The section, read and checked whole; each resource's parted bytes read
+    // to their end, a text resource's as strict UTF-8 of its code point count.
+    BlobCursor in(*journal_, memory_, section_);
+    (void)read_section(in, resources_, listed_, memory_, [this, &whole](const SectionEvent& event) {
+        if (event.part != SectionPart::resource_bytes || !event.parted) return true;
+        const ExperienceBlob bytes{event.size, *event.content_digest, part_levels(event.size).depth, {}, event.piece};
+        if (event.descriptor.modality != ResourceModality::text) {
+            for_each_chunk(bytes, whole);
+            return true;
+        }
+        Utf8Count count;
+        for_each_chunk(bytes, [&count](std::span<const std::byte> chunk) {
+            count.feed(chunk);
+            return true;
+        });
+        if (!count.valid() || count.count() != event.descriptor.code_points)
+            fail("experience_resource_text_invalid");
+        return true;
+    });
+}
+
+// SWEGCA: src/tinylm_slicer/mosaic_memory_activation.py@3bddcb7:63-106
+void ExperienceRecord::for_each_section(SectionVisitor visit) const {
+    if (!has_section_) return;
+    BlobCursor in(*journal_, memory_, section_);
+    (void)read_section(in, resources_, listed_, memory_, visit);
+}
+
+// A section kept in the record gives the resource's bytes directly; a parted
+// one is read up to the resource and on through its bytes (inline ones to
+// their digest check, parted ones as every blob).
+// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:137-155
+void ExperienceRecord::for_each_resource_chunk(std::size_t resource, ChunkVisitor visit) const {
+    if (!section_parted()) {
+        if (resource >= observed_.size()) throw std::out_of_range("experience_resource_index_out_of_range");
+        if (!observed_[resource].bytes) fail("experience_resource_bytes_absent");
+        for_each_chunk(*observed_[resource].bytes, visit);
+        return;
+    }
+    bool found = false;
+    bool received = false;
+    bool done = false;
+    BlobCursor in(*journal_, memory_, section_);
+    (void)read_section(in, resources_, listed_, memory_, [&](const SectionEvent& event) {
+        if (done) return false;
+        if (event.part != SectionPart::resource && event.part != SectionPart::storage_locator &&
+            event.part != SectionPart::metadata && event.part != SectionPart::resource_bytes)
+            return true;
+        if (event.resource != resource) return event.resource < resource;
+        found = true;
+        if (event.part != SectionPart::resource_bytes) return true;
+        received = true;
+        if (event.parted) {
+            for_each_chunk(
+                ExperienceBlob{event.size, *event.content_digest, part_levels(event.size).depth, {}, event.piece},
+                visit);
+            return false;
+        }
+        if (!visit(event.piece)) return false;
+        done = event.last;
+        return true;
+    });
+    if (!found) throw std::out_of_range("experience_resource_index_out_of_range");
+    if (!received) fail("experience_resource_bytes_absent");
 }
 
 namespace {
@@ -1192,16 +2032,19 @@ ExperienceAppend::ExperienceAppend(const ExperienceJournal& journal, const Alloc
                                    std::string_view operation_id, std::optional<std::string_view> transaction_id)
     : journal_(&journal), memory_(memory), observations_(observations), operation_id_(operation_id),
       transaction_id_(transaction_id), heads_(memory.allocator<Head>()), parts_(memory.allocator<Part>()),
-      owned_(memory.allocator<LedgerBytes>()), addresses_(memory.allocator<ExperienceAddress>()),
+      owned_(memory.allocator<LedgerBytes>()), sections_(memory.allocator<detail::SectionSource>()),
+      addresses_(memory.allocator<ExperienceAddress>()),
       binding_inputs_(bindings), bindings_(memory.allocator<Binding>()) {
     detail::require_identity_text(operation_id, journal::OperationIdTag::name);
     if (transaction_id) detail::require_identity_text(*transaction_id, TransactionIdTag::name);
     const auto& store = journal.journal_;
 
-    // Every field, with lineage and resources sorted.
+    // Every field, with lineage sorted, and the resources (those listed and
+    // each observed resource's id) sorted with whether each was listed.
     struct Sorted {
         LedgerVector<std::string_view> derived;
         LedgerVector<std::string_view> resources;
+        LedgerVector<std::uint8_t> listed;
     };
     LedgerVector<Sorted> sorted(memory_.allocator<Sorted>());
     sorted.reserve(observations.size());
@@ -1229,7 +2072,42 @@ ExperienceAppend::ExperienceAppend(const ExperienceJournal& journal, const Alloc
             detail::require_identity_text(resources[at], "resource");
             if (at != 0 && resources[at - 1] == resources[at]) fail("experience_resource_duplicate");
         }
-        sorted.push_back(Sorted{std::move(derived), std::move(resources)});
+        if (observation.episode) check_episode(memory_, *observation.episode);
+        if (observation.observed_resources.size() > max_resources) fail("experience_too_many_resources");
+        LedgerVector<std::string_view> observed(memory_.allocator<std::string_view>());
+        observed.reserve(observation.observed_resources.size());
+        for (const auto& resource : observation.observed_resources) {
+            detail::require_identity_text(resource.resource_id, "resource");
+            if (!valid_descriptor(resource.descriptor)) fail("experience_resource_descriptor_invalid");
+            if (resource.storage_locator && !detail::is_strict_utf8(*resource.storage_locator))
+                fail("experience_resource_locator_invalid");
+            observed.push_back(resource.resource_id);
+        }
+        // The source keys a resource by its id within its memory
+        // (mosaic_external_memory.py@5901a5a:111): no id twice.
+        std::sort(observed.begin(), observed.end());
+        if (std::adjacent_find(observed.begin(), observed.end()) != observed.end())
+            fail("experience_resource_duplicate");
+        // The resource view holds both lists; each entry keeps whether the
+        // producer listed it, so both lists stay recoverable as given.
+        LedgerVector<std::string_view> all(memory_.allocator<std::string_view>());
+        LedgerVector<std::uint8_t> listed(memory_.allocator<std::uint8_t>());
+        all.reserve(resources.size() + observed.size());
+        listed.reserve(resources.size() + observed.size());
+        std::size_t left = 0;
+        std::size_t right = 0;
+        while (left < resources.size() || right < observed.size()) {
+            if (right == observed.size() || (left < resources.size() && resources[left] <= observed[right])) {
+                if (right < observed.size() && resources[left] == observed[right]) ++right;
+                all.push_back(resources[left++]);
+                listed.push_back(1);
+            } else {
+                all.push_back(observed[right++]);
+                listed.push_back(0);
+            }
+        }
+        if (all.size() > max_resources) fail("experience_too_many_resources");
+        sorted.push_back(Sorted{std::move(derived), std::move(all), std::move(listed)});
     }
 
     // Lineage must already be published experience: each distinct address
@@ -1287,6 +2165,7 @@ ExperienceAppend::ExperienceAppend(const ExperienceJournal& journal, const Alloc
     slices.reserve(observations.size());
     heads_.reserve(observations.size());
     addresses_.reserve(observations.size());
+    sections_.reserve(observations.size());
     for (std::size_t at = 0; at < observations.size(); ++at) {
         const auto& observation = observations[at];
         const auto& fields = sorted[at];
@@ -1311,8 +2190,20 @@ ExperienceAppend::ExperienceAppend(const ExperienceJournal& journal, const Alloc
             owned_.push_back(digest_set_bytes(memory_, context_set));
             contexts = plan_blob(memory_, BlobInput(std::span<const std::byte>(owned_.back())), own, owned_);
         }
-        auto payload = encode_envelope(memory_, observation, fields.derived, fields.resources, raw, structured,
-                                       roots ? &*roots : nullptr, contexts ? &*contexts : nullptr);
+        // The typed section, when the observation has an episode or observed
+        // resources: laid out in place (`build_section`, which also plans the
+        // received bytes) and planned as one blob read through its source,
+        // which stays where `sections_` built it.
+        std::optional<BlobPlan> section;
+        if (observation.episode || !observation.observed_resources.empty()) {
+            auto& source = sections_.emplace_back(memory_);
+            build_section(memory_, observation, source, own, owned_);
+            source.input.emplace(source.size, BlobReader(source));
+            section = plan_blob(memory_, *source.input, own, owned_);
+        }
+        auto payload = encode_envelope(memory_, observation, fields.derived, fields.resources, fields.listed, raw,
+                                       structured, roots ? &*roots : nullptr, contexts ? &*contexts : nullptr,
+                                       section ? &*section : nullptr);
         const auto kind = fields.derived.empty() ? original_experience_kind : derived_experience_kind;
         IndexEntries index(memory_);
         add_automatic(index, memory_,

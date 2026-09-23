@@ -147,6 +147,68 @@ struct BlobInput {
     std::optional<BlobReader> reader;
 };
 
+// A historical step's outcome: the user's six OUTCOMES.
+enum class StepOutcome : std::uint8_t { success, failure, negative, uncertain, conflict, pending };
+
+// What an observed resource is. Modality belongs to a resource, never to the
+// whole memory.
+enum class ResourceModality : std::uint8_t { text, image, audio, video };
+
+// The pixel frame an image's native size is given in.
+enum class CoordinateFrame : std::uint8_t { native_source_pixels, oriented_source_pixels };
+
+// One historical step of a user episode (borrowed input). Texts are kept as
+// given; `phase`, `judgment` and each evidence ref must hold something other
+// than Python strip whitespace. `observation` is kept as given bytes.
+struct MemoryStepInput {
+    std::string_view phase;
+    std::span<const std::byte> observation;
+    std::span<const std::string_view> relations;  // kept in order, repeats kept, unchecked
+    std::string_view judgment;
+    StepOutcome outcome = StepOutcome::pending;
+    std::span<const std::string_view> evidence_refs;  // at least one, in order, repeats kept
+};
+
+// A user episode carried by one memory (borrowed input). Its own revision is
+// not the producer's `source_revision`. Its cues are not carried: cues are
+// bound beside the memory (`CueBinding`).
+struct MemoryEpisodeInput {
+    std::string_view episode_id;  // the producer's id, kept as provenance
+    std::string_view revision;
+    std::string_view verification_state;
+    std::span<const std::string_view> source_addresses;  // at least one, distinct, in order
+    std::span<const MemoryStepInput> steps;              // at least one
+};
+
+// What an observed resource's native form is, by modality: a text's code
+// point count; an image's native size and frame; audio's duration, alone or
+// with the frames and sample rate that give it; a video's native size and
+// duration.
+struct ResourceDescriptor {
+    ResourceModality modality = ResourceModality::text;
+    std::uint64_t code_points = 0;
+    std::uint64_t width = 0;
+    std::uint64_t height = 0;
+    CoordinateFrame frame = CoordinateFrame::native_source_pixels;
+    std::uint64_t frames = 0;
+    std::uint64_t sample_rate = 0;
+    std::uint64_t duration_ns = 0;
+};
+
+// One resource a memory observed (borrowed input). Its bytes are kept only
+// when they were received, as parts; a digest is kept only when computed from
+// them or named by the source, and a locator only as provenance (never
+// opened).
+struct ObservedResourceInput {
+    std::string_view resource_id;
+    ResourceDescriptor descriptor;
+    std::optional<DigestBytes> content_digest;
+    std::optional<std::string_view> storage_locator;
+    std::optional<std::uint64_t> item_index;  // the source's own value
+    std::span<const std::byte> metadata;
+    std::optional<BlobInput> bytes;
+};
+
 // One complete observation: the producer's borrowed input. Nothing is
 // filtered (no success, verification or file-type test) and every field is
 // kept. Before Main appends it, it has no address; appending gives it one
@@ -169,6 +231,11 @@ struct Observation {
     std::span<const std::string_view> resources;  // the resources it concerns, each once
     BlobInput raw;         // the exact bytes observed
     BlobInput structured;  // canonical structured form; empty when none
+    // A user episode, when the observation is one; the resources it observed,
+    // in the producer's order. Their ids join `resources` in the resource
+    // view; each list is kept as given.
+    std::optional<MemoryEpisodeInput> episode;
+    std::span<const ObservedResourceInput> observed_resources;
     // No cue: an authored cue calls the memory and is not part of it (user
     // 2026-09-23 18:0x; the author's artifact has none, its semantic keys
     // come beside it, mosaic_unrestricted_experience.py@5901a5a:34-55,
@@ -278,6 +345,81 @@ struct ExperienceBlob {
     [[nodiscard]] bool parted() const noexcept { return depth != 0; }
 };
 
+// A decoded user episode, a step and an observed resource. Every text and
+// byte span views the record's bytes; lists view the record's own lists.
+struct EpisodeView {
+    std::string_view episode_id;
+    std::string_view revision;
+    std::string_view verification_state;
+    std::span<const std::string_view> source_addresses;
+};
+
+struct StepView {
+    std::string_view phase;
+    std::span<const std::byte> observation;
+    std::span<const std::string_view> relations;
+    std::string_view judgment;
+    StepOutcome outcome = StepOutcome::pending;
+    std::span<const std::string_view> evidence_refs;
+};
+
+struct ResourceView {
+    std::string_view resource_id;
+    ResourceDescriptor descriptor;
+    std::optional<DigestBytes> content_digest;
+    std::optional<std::string_view> storage_locator;
+    std::optional<std::uint64_t> item_index;
+    std::span<const std::byte> metadata;
+    // The received bytes, inline or parted as every blob.
+    std::optional<ExperienceBlob> bytes;
+};
+
+// Which field of the typed section an event carries.
+enum class SectionPart : std::uint8_t {
+    episode_id,
+    revision,
+    verification_state,
+    source_address,
+    phase,
+    observation,
+    relation,
+    judgment,
+    outcome,
+    evidence_ref,
+    resource,
+    storage_locator,
+    metadata,
+    resource_bytes,
+};
+
+// One event of reading the typed section in order. A text or byte field
+// comes in pieces (`piece`, the last with `last`) and is checked after its
+// last piece; `outcome` carries a step's outcome; `resource` a resource's id
+// and fixed fields, before its locator, metadata and bytes, and every later
+// event of that resource carries them too. Received bytes kept inline come in
+// pieces with their whole `size`; kept as parts, as one event with `parted`
+// set and `piece` their top digest list; read those with
+// `ExperienceRecord::for_each_resource_chunk`. Every span is valid only
+// during the call.
+struct SectionEvent {
+    SectionPart part = SectionPart::episode_id;
+    std::uint64_t step = 0;      // the step of a step field
+    std::uint64_t resource = 0;  // the resource of a resource field
+    std::uint64_t item = 0;      // the place in its list (source addresses, relations, evidence refs)
+    std::span<const std::byte> piece;
+    bool last = true;
+    StepOutcome outcome = StepOutcome::pending;
+    std::string_view resource_id;
+    ResourceDescriptor descriptor;
+    std::optional<DigestBytes> content_digest;
+    std::optional<std::uint64_t> item_index;
+    bool parted = false;
+    std::uint64_t size = 0;  // resource_bytes: the whole size
+};
+
+// Visits section events in order; returning false stops the reading.
+using SectionVisitor = ExperienceVisitor<const SectionEvent&>;
+
 // One experience record read back: the published record Main replayed and
 // the experience fields decoded from its payload. Every text and span it
 // hands out views the record's bytes and is valid while this object lives.
@@ -325,9 +467,40 @@ public:
     }
     // SWEGCA: src/swegca/mosaic_external_memory.py@5901a5a:15-26
     [[nodiscard]] const std::optional<std::string_view>& name_space() const noexcept { return name_space_; }
-    // In increasing order.
+    // Every resource the memory concerns, in increasing order: those the
+    // producer listed and each observed resource's id.
     // SWEGCA: src/swegca/mosaic_external_memory.py@5901a5a:34-42
     [[nodiscard]] std::span<const std::string_view> resources() const noexcept { return resources_; }
+    // Those the producer listed in `Observation::resources`, in increasing
+    // order.
+    // SWEGCA: src/swegca/mosaic_external_memory.py@5901a5a:34-42
+    [[nodiscard]] std::span<const std::string_view> listed_resources() const noexcept { return listed_; }
+    // Whether the memory has a typed section (a user episode or observed
+    // resources), and whether that section is kept as parts. Only a section
+    // kept in the record is decoded here, checked whole, and viewed by
+    // `episode`, `steps` and `observed_resources`; a parted one is read with
+    // `for_each_section` and checked by `verify_parts`, and those three are
+    // then empty.
+    // SWEGCA: src/tinylm_slicer/mosaic_memory_activation.py@3bddcb7:89-106
+    [[nodiscard]] bool has_section() const noexcept { return has_section_; }
+    // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:137-155
+    [[nodiscard]] bool section_parted() const noexcept { return has_section_ && section_.parted(); }
+    // The user episode the memory carries, when it carries one, and its
+    // steps in order.
+    // SWEGCA: src/tinylm_slicer/mosaic_memory_activation.py@3bddcb7:89-106
+    [[nodiscard]] const std::optional<EpisodeView>& episode() const noexcept { return episode_; }
+    // SWEGCA: src/tinylm_slicer/mosaic_memory_activation.py@3bddcb7:63-87
+    [[nodiscard]] std::span<const StepView> steps() const noexcept { return steps_; }
+    // The resources it observed, in the producer's order.
+    // SWEGCA: src/swegca/mosaic_external_memory.py@5901a5a:33-41
+    [[nodiscard]] std::span<const ResourceView> observed_resources() const noexcept { return observed_; }
+    // Reads the typed section in order, inline or parted, checking every
+    // field as it goes (the checks `verify_parts` makes, received bytes kept
+    // as parts apart: those are read by `for_each_resource_chunk` and
+    // `verify_parts`); nothing when it has none. A resource's inline bytes
+    // come in pieces and are checked against their digest after the last.
+    // SWEGCA: src/tinylm_slicer/mosaic_memory_activation.py@3bddcb7:63-106
+    void for_each_section(SectionVisitor visit) const;
     // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:23-60
     [[nodiscard]] const ExperienceBlob& raw_blob() const noexcept { return raw_; }
     // The raw bytes of an inline blob; a parted one fails with
@@ -359,6 +532,12 @@ public:
     void for_each_raw_chunk(ChunkVisitor visit) const;
     // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:137-155
     void for_each_structured_chunk(ChunkVisitor visit) const;
+    // Streams the received bytes of observed resource `resource` (in the
+    // producer's order) as `for_each_raw_chunk` does; one without bytes fails
+    // with `experience_resource_bytes_absent`. In a parted section the
+    // section is read up to it.
+    // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:137-155
+    void for_each_resource_chunk(std::size_t resource, ChunkVisitor visit) const;
     // The sources every observation this experience rests on came from: its
     // own source for an original; for a derived one, the union of the root
     // sources of what it was derived from, fixed when it was appended.
@@ -371,7 +550,9 @@ public:
     // SWEGCA: paper/swegca/journal_submission_2026-08-25/COMPONENT_LEDGER.md@5901a5a:44-50
     void for_each_root_context(DigestVisitor visit) const;
     // Reads every parted blob (raw, structured, root sources, root
-    // contexts) to its end, checking each part, the order of every digest
+    // contexts) and the typed section to its end, with each observed
+    // resource's parted bytes (a text resource's checked as strict UTF-8 of
+    // its code point count), checking each part, the order of every digest
     // set and each whole digest, as `for_each_raw_chunk` does; one part per
     // level is held. Evidence admission and Re-evidence run it before an
     // experience counts, so a missing or damaged part fails there.
@@ -402,6 +583,13 @@ private:
     ExperienceBlob structured_;
     ExperienceBlob roots_;     // derived only: the root-source digests, 32 bytes each
     ExperienceBlob contexts_;  // derived only: the root-context digests, 32 bytes each
+    journal::LedgerVector<std::string_view> listed_;         // views the record's bytes
+    bool has_section_ = false;
+    ExperienceBlob section_;
+    journal::LedgerVector<std::string_view> section_texts_;  // lists the views below view
+    std::optional<EpisodeView> episode_;
+    journal::LedgerVector<StepView> steps_;
+    journal::LedgerVector<ResourceView> observed_;
 };
 
 // One cue binding read back. Its texts view the record's bytes and are
@@ -449,6 +637,40 @@ private:
 };
 
 class ExperienceJournal;
+
+namespace detail {
+
+// A typed section being appended, read as one blob without copying the
+// caller's bytes: its encoded fields and length prefixes (`encoded`) and the
+// caller's bytes between them, in order. (One small enough to be inline, up
+// to `experience_inline_blob_bytes`, is then read once into the record.) It reads itself through `input`, so
+// it must stay where it was built (its owner reserves room for every one
+// before building any, and moving the owner's list keeps its buffer).
+struct SectionSource {
+    struct Piece {
+        std::uint64_t at = 0;            // where it starts in the section
+        std::uint64_t encoded_from = 0;  // where it is in `encoded`, when `caller` is empty
+        std::uint64_t length = 0;
+        std::span<const std::byte> caller;
+    };
+
+    // C++ infrastructure for streaming a section larger than memory holds
+    // (approved flow :91-92); no direct Python counterpart.
+    // SWEGCA: user@2026-09-22:91-92
+    explicit SectionSource(const AllocationContext& memory)
+        : encoded(memory.allocator<std::byte>()), pieces(memory.allocator<Piece>()) {}
+
+    // Fills `out` with the section's bytes at `offset`.
+    // SWEGCA: user@2026-09-22:91-92
+    void operator()(std::uint64_t offset, std::span<std::byte> out) const;
+
+    journal::LedgerBytes encoded;
+    journal::LedgerVector<Piece> pieces;
+    std::uint64_t size = 0;
+    std::optional<BlobInput> input;
+};
+
+}  // namespace detail
 
 // What appending staged, handed out one generation at a time. The parts of
 // every new experience come first, then the experience records, then the
@@ -547,6 +769,9 @@ private:
     journal::LedgerVector<Head> heads_;
     journal::LedgerVector<Part> parts_;  // sorted by digest, unique
     journal::LedgerVector<journal::LedgerBytes> owned_;  // bytes parts view that the caller did not give
+    // Typed sections read in place; room for one per observation is
+    // reserved first, so none ever moves (parts keep their readers).
+    journal::LedgerVector<detail::SectionSource> sections_;
     journal::LedgerVector<ExperienceAddress> addresses_;
     std::span<const CueBinding> binding_inputs_;
     journal::LedgerVector<Binding> bindings_;
