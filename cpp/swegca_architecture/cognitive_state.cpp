@@ -285,17 +285,17 @@ void CognitiveState::for_each_content_chunk(StateContentSink write) const {
                        world_graph_, evidence_references_, goals_, values_, self_);
 }
 
-// The original checks a common batch dimension. The current native writer
-// still supports only one batch; this stricter general-state boundary remains
-// an explicit architecture gap until its proposal and writer paths are widened.
+// The original state accepts any positive common batch dimension. The
+// separate guarded writer currently accepts only batch one; that narrower
+// operation must not narrow the general state itself.
 // SWEGCA: src/swegca/mosaic_cognitive_kernel.py@5901a5a:234-254
 void CognitiveState::validate() const {
     const auto& semantic_shape = semantic_.shape();
     const auto& executive_shape = executive_.shape();
     const auto& scratch_shape = scratch_.shape();
-    if (semantic_shape.batches != 1 || executive_shape.batches != 1 ||
-        scratch_shape.batches != 1)
-        throw std::invalid_argument("persistent_state_count_must_be_one");
+    if (semantic_shape.batches != executive_shape.batches ||
+        semantic_shape.batches != scratch_shape.batches)
+        throw std::invalid_argument("cognitive_state_batch_mismatch");
     if (semantic_shape.width != executive_shape.width ||
         semantic_shape.width != scratch_shape.width)
         throw std::invalid_argument("cognitive_state_width_mismatch");

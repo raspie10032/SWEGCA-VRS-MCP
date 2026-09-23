@@ -203,7 +203,11 @@ ArbitrationOutcome ProposalArbiter::arbitrate_typed(
                                  : kernel::arbiter_promote(delta_type, weight_type);
     const auto scalar_bytes = scalar_width(result_type);
     std::uint32_t failures = 0;
-    if (P > std::numeric_limits<std::uint32_t>::max() || S == 0 || W == 0 ||
+    // This native arbiter has a scalar score and one role delta per proposal.
+    // Until those buffers carry a batch axis, reject multi-batch arbitration
+    // explicitly; otherwise delta_at would read only batch zero.
+    if (state.semantic().shape().batches != 1 ||
+        P > std::numeric_limits<std::uint32_t>::max() || S == 0 || W == 0 ||
         state.semantic().shape().width > std::numeric_limits<std::size_t>::max())
         failures |= arbitration_invalid_shape;
     for (const auto& bound : proposals) {

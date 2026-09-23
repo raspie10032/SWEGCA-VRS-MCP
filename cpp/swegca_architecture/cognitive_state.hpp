@@ -229,9 +229,9 @@ private:
 
 // The only persistent state type. Construction requires either Main's initial
 // key or the guarded writer's successor key; producers receive StateSnapshot.
-// The keys, registry, binary content digest and batch-one restriction are
-// current C++ rules; the original general CognitiveState accepts any common
-// batch dimension. The guarded verification write alone requires batch one.
+// The keys, registry and binary content digest are current C++ rules. The
+// general state accepts any common batch dimension, as the source does. The
+// guarded verification write alone requires batch one.
 // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:103-107
 // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:139-152
 class CognitiveState final {
