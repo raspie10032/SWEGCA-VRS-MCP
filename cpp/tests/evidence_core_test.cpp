@@ -2,6 +2,7 @@
 #include "swegca_architecture/evidence_rules.hpp"
 
 #include <array>
+#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <iostream>
@@ -127,6 +128,23 @@ int main() {
         ++failures;
     } catch (const std::invalid_argument&) {
     }
+    // Reference bits from the source author's NormalDist().inv_cdf on
+    // CPython 3.14.7; cover the central and both tail branches of AS241.
+    struct QuantileCase { double probability; std::uint64_t bits; };
+    constexpr std::array quantiles{
+        QuantileCase{1e-300, 0xc04286074064c26eULL},
+        QuantileCase{1e-20, 0xc022865170b43a4bULL},
+        QuantileCase{0.02, 0xc0006e13e8aadfdbULL},
+        QuantileCase{0.075, 0xbff7085226d3e523ULL},
+        QuantileCase{0.925, 0x3ff7085226d3e524ULL},
+        QuantileCase{0.999999, 0x40130381a97985f1ULL},
+    };
+    for (const auto& vector : quantiles)
+        if (std::bit_cast<std::uint64_t>(
+                sa::standard_normal_quantile(vector.probability)) != vector.bits) {
+            std::cerr << "normal quantile differs from source bits\n";
+            ++failures;
+        }
 
     std::array<double, axes * count> support{};
     std::array<double, axes * count> refute{};
@@ -220,6 +238,16 @@ int main() {
         aliased != std::array<double, count + 1>{-1, -1, -1, -1, -1,
                                                 -1, -1, -1, -1, -1}) {
         std::cerr << "overlapping output columns were accepted or mutated\n";
+        ++failures;
+    }
+
+    const auto before_support = support;
+    const sk::EvidenceJudgmentColumns input_alias{
+        statuses, reasons, std::span<double>(support).first(count),
+        lower, upper, samples, regimes};
+    if (sk::judge_evidence_batch(rules, input, input_alias, 0, 1) ||
+        support != before_support) {
+        std::cerr << "output overlapping input was accepted or mutated\n";
         ++failures;
     }
     return failures == 0 ? 0 : 1;
