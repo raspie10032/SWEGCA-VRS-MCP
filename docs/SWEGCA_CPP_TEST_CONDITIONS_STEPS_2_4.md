@@ -77,6 +77,7 @@ generation, and Main marker selection before they can be run):
 | B31 | Encode or decode a VRS group base strength or current strength containing NaN, infinity or a negative value, including a corrupted part that would produce one | Reject the generation before Main publishes or restores it; both strength arrays remain finite and nonnegative (`mosaic_vrs_canonicalization.py@3bddcb7:329-332`) |
 | B32 (`VRS route pending`) | End a session with its live VRS as one block, preserve its connection points, then publish and recover a Main root; later merge selected blocks during idle work | The selected root restores the exact block list and connection-point source with their original experiences still addressable; a flat strength array alone cannot stand in for the block/connection topology (`SWEGCA_CPP_FOUR_STAGE_ACTIVATION_PLAN.md` §1) |
 | B33 (`VRS route pending`) | Publish a term with support/refute counts above `UINT32_MAX` and an evidence-request row carrying a valid extra provenance field; recover it from Main's selected root | Counts and the complete request row survive without narrowing or silent key removal; the source live dialogue uses u64 counts (`mosaic_vrs_dialogue.py@3bddcb7:187-191`), and the bridge copies entire request mappings (`mosaic_vrs_memory_bridge.py@3bddcb7:823-834`) |
+| B34 (`VRS route pending`) | Publish VRS source data with visual centroid rows, append a term, and recover the selected generation; separately damage a centroid value or its term-row alignment | Valid recovery preserves every source centroid value and its term association, including the zero-extended new row; damaged centroid data is refused before publication (`rozephine_vrs_array_storage.py@3bddcb7:16-65,107`, `continue_rozephine_mixed_experience_vrs.py@3bddcb7:2101-2111`) |
 
 The f32 persisted strength in B30 is the new C++ storage contract from
 `SWEGCA_CPP_MAIN_STATE_STORAGE_REVIEW.md` §Required contract 9, following
@@ -94,6 +95,11 @@ The original durable VRS state also writes `shuffle_stability`, `direct`,
 (`organize_rozephine_mixed_experience_connections_hybrid.py@3bddcb7:984-1011`);
 the continuation reads several of them when forming evidence requests
 (`continue_rozephine_mixed_experience_vrs.py@3bddcb7:1490-1527`).
+The original VRS array store also carries visual centroid rows and checks
+their row count against terms on cold restore
+(`rozephine_vrs_array_storage.py@3bddcb7:16-65`). Their exact native
+placement remains part of the block and connection design; they cannot be
+dropped as a derived search view.
 
 Fresh-genesis strength content is still a route decision, not a test fixture:
 the author's `CanonicalVRSMemberLineage` rejects an empty member set
