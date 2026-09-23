@@ -83,6 +83,7 @@ void Sha256::compress(const std::byte* block) noexcept {
 // SWEGCA: src/swegca/mosaic_memory_promotion.py@5901a5a:180
 void Sha256::update(std::span<const std::byte> data) {
     if (finished_) throw std::logic_error("sha256_update_after_finish");
+    if (data.empty()) return;
     if (data.size() >
         std::numeric_limits<std::uint64_t>::max() / 8 - total_bytes_)
         throw std::length_error("sha256_input_too_large");
