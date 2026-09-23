@@ -2,6 +2,7 @@
 
 #include "swegca_architecture/authority_roles.hpp"
 #include "swegca_architecture/native_tensor.hpp"
+#include "swegca_architecture/published_state_id.hpp"
 #include "swegca_architecture/role_registry.hpp"
 #include "swegca_architecture/strong_types.hpp"
 
@@ -172,6 +173,11 @@ public:
     [[nodiscard]] const StateGeneration& generation() const noexcept {
         return generation_;
     }
+    // Content only. The provisional StateGeneration wrapper is removed when
+    // Main's journal-backed StateSnapshot can carry PublishedStateId.
+    [[nodiscard]] const Digest256& content_digest() const noexcept {
+        return generation_.digest();
+    }
     // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:83-93
     [[nodiscard]] const RoleRegistry& roles() const noexcept { return roles_; }
     // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:83-93
@@ -227,6 +233,9 @@ public:
 
     // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:199-200
     [[nodiscard]] const CognitiveState& state() const;
+    [[nodiscard]] const Digest256& content_digest() const {
+        return state().content_digest();
+    }
 
 private:
     friend class MainOwner;
