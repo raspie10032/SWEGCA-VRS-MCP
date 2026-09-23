@@ -19,9 +19,9 @@ import sys
 
 PRODUCT_PREFIXES = ("native/", "include/", "cpp/")
 AUTHOR_NAMESPACES = ("src/swegca_vrs2/engine/mosaic_", "src/tinylm_slicer/mosaic_")
-CPP_SUFFIXES = (".cpp", ".cc", ".cxx", ".c", ".cppm", ".cxxm", ".mxx",
+CPP_SUFFIXES = (".cpp", ".cc", ".cxx", ".c", ".cp", ".cu", ".mm", ".cppm", ".cxxm", ".mxx",
                 ".hpp", ".h", ".hxx",
-                ".hh", ".inl", ".ipp", ".tpp", ".ixx", ".inc",
+                ".hh", ".inl", ".ipp", ".tpp", ".tcc", ".ixx", ".inc",
                 ".c++", ".h++")
 TAG = re.compile(
     r"^[ \t]*//[ \t]*SWEGCA:[ \t]+((?:[\w./-]+\.(?:py|md)@[0-9a-f]{7,40}|user@\d{4}-\d{2}-\d{2}):\d+(?:-\d+)?)[ \t]*$",
@@ -145,7 +145,13 @@ def file_mode(path: str, commit: str | None) -> str | None:
 
 
 def is_product_path(path: str) -> bool:
-    return path.lower().startswith(PRODUCT_PREFIXES)
+    lower = path.lower()
+    # A compiled source is product code even if a build file places it under
+    # src/, tools/, or another directory. Check the directory entries too:
+    # Git can replace a top-level source directory with a symlink.
+    return (lower.startswith(PRODUCT_PREFIXES) or
+            lower in ("native", "include", "cpp") or
+            lower.endswith(CPP_SUFFIXES))
 
 
 @lru_cache(maxsize=256)
