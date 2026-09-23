@@ -11,10 +11,10 @@
 #
 # Inputs: CORE_COMPILER, CORE_PROBE_FLAGS ("|"-joined, may be empty),
 # CORE_PROBE_SOURCE (an empty file), CORE_ROOTS_OUTPUT (written: one
-# directory per line).
+# directory per line), CORE_PATH_FILE (configure's PATH).
 cmake_minimum_required(VERSION 3.20)
 
-foreach(input IN ITEMS CORE_COMPILER CORE_PROBE_SOURCE CORE_ROOTS_OUTPUT)
+foreach(input IN ITEMS CORE_COMPILER CORE_PROBE_SOURCE CORE_ROOTS_OUTPUT CORE_PATH_FILE)
     if(NOT DEFINED ${input} OR "${${input}}" STREQUAL "")
         message(FATAL_ERROR "core include probe: ${input} is missing")
     endif()

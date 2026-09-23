@@ -11,10 +11,11 @@
 #
 # Inputs: CORE_COMPILER_KIND (gnu or msvc), CORE_ALLOWED_FILES and
 # CORE_ALLOWED_ROOTS (each joined with "|"), CORE_SOURCE_DIR (the core
-# directory the copies come from); the compiler command follows "--".
+# directory the copies come from), CORE_PATH_FILE (configure's PATH); the
+# compiler command follows "--".
 cmake_minimum_required(VERSION 3.20)
 
-foreach(input IN ITEMS CORE_COMPILER_KIND CORE_ALLOWED_FILES CORE_SOURCE_DIR)
+foreach(input IN ITEMS CORE_COMPILER_KIND CORE_ALLOWED_FILES CORE_SOURCE_DIR CORE_PATH_FILE)
     if(NOT DEFINED ${input} OR "${${input}}" STREQUAL "")
         message(FATAL_ERROR "core isolation check: ${input} is missing")
     endif()

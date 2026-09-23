@@ -257,7 +257,7 @@ endif()
 # (CMAKE_CXX_COMPILER_ARG1), CMake's sysroot, target and external toolchain,
 # each spelled as this compiler's CMake module spells it and left out when
 # the module defines no spelling (CMake ignores it then too), and on Apple
-# the SDK and, for the link, the architectures.
+# the SDK, the deployment target and, for the link, the architectures.
 function(swegca_core_toolchain_flags out which)
     set(flags)
     if(CMAKE_CXX_COMPILER_ARG1)
@@ -296,6 +296,11 @@ function(swegca_core_toolchain_flags out which)
             list(APPEND flags "${CMAKE_CXX_SYSROOT_FLAG}" "${osx_sysroot}")
         endif()
     endif()
+    if(APPLE AND CMAKE_OSX_DEPLOYMENT_TARGET AND CMAKE_CXX_OSX_DEPLOYMENT_TARGET_FLAG)
+        # The deployment target, which the clean environment's scripts no
+        # longer take from MACOSX_DEPLOYMENT_TARGET.
+        list(APPEND flags "${CMAKE_CXX_OSX_DEPLOYMENT_TARGET_FLAG}${CMAKE_OSX_DEPLOYMENT_TARGET}")
+    endif()
     if(APPLE AND which STREQUAL "LINK")
         # The archive holds CMAKE_OSX_ARCHITECTURES; a program for another
         # architecture would skip it and link nothing. (Not in the include
@@ -312,6 +317,31 @@ function(swegca_core_toolchain_flags out which)
     string(REPLACE ";" "|" flags "${flags}")
     set(${out} "${flags}" PARENT_SCOPE)
 endfunction()
+
+# The PATH present at the first configure, when CMake discovered the
+# toolchain (some of whose paths may instead have been given to it), is
+# recorded with that toolchain (and cached, like the compiler); for a
+# GNU-style compiler the probe, the launcher and the link check run the
+# compiler with that PATH, so where the compiler searches PATH for its
+# assembler and linker it sees what configure saw, whatever PATH the build
+# is started with.
+# (MSVC is not run in a clean environment: it gets the build's PATH, INCLUDE
+# and LIB, and its include roots are CMake's measured ones.) It is cached
+# once: a configure the build reruns by itself runs in the build's
+# environment and must not replace it. A new PATH needs a fresh build tree,
+# as a new compiler does. An empty PATH is refused: the compiler would then
+# look for its parts on the system's default search path, which configure
+# did not use. The file lies in the build tree, which already names the
+# commands the build runs, so it needs no check of its own.
+if(NOT DEFINED CACHE{SWEGCA_CORE_TOOLCHAIN_PATH})
+    if("$ENV{PATH}" STREQUAL "")
+        message(FATAL_ERROR "The core isolation check needs the PATH present at configure; configure with PATH set")
+    endif()
+    set(SWEGCA_CORE_TOOLCHAIN_PATH "$ENV{PATH}" CACHE INTERNAL
+        "PATH present when the first configure discovered the toolchain (core isolation)")
+endif()
+set(core_path_file "${CMAKE_CURRENT_BINARY_DIR}/swegca_core_path.txt")
+file(WRITE "${core_path_file}" "${SWEGCA_CORE_TOOLCHAIN_PATH}")
 
 if(MSVC)
     set(core_compiler_roots ${CMAKE_CXX_IMPLICIT_INCLUDE_DIRECTORIES})
@@ -339,6 +369,7 @@ else()
     endif()
     file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/swegca_core_probe.cpp" "")
     execute_process(COMMAND "${CMAKE_COMMAND}"
+            "-DCORE_PATH_FILE=${core_path_file}"
             "-DCORE_COMPILER=${CMAKE_CXX_COMPILER}"
             "-DCORE_PROBE_FLAGS=${core_probe_flags}"
             "-DCORE_PROBE_SOURCE=${CMAKE_CURRENT_BINARY_DIR}/swegca_core_probe.cpp"
@@ -389,7 +420,7 @@ string(REPLACE ";" "|" core_allowed_files_arg "${core_isolation_files};${core_he
 # this one may stand between the build and the compiler. Unity builds and
 # precompiled headers would compile a generated file outside the root.
 set_target_properties(swegca_core swegca_core_isolation PROPERTIES
-    CXX_COMPILER_LAUNCHER "${CMAKE_COMMAND};-DCORE_COMPILER_KIND=${core_compiler_kind};-DCORE_ALLOWED_ROOTS=${core_allowed_roots_arg};-DCORE_ALLOWED_FILES=${core_allowed_files_arg};-DCORE_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}/cpp/swegca_architecture;-P;${CMAKE_CURRENT_SOURCE_DIR}/cmake/SwegcaCoreCompile.cmake;--"
+    CXX_COMPILER_LAUNCHER "${CMAKE_COMMAND};-DCORE_COMPILER_KIND=${core_compiler_kind};-DCORE_ALLOWED_ROOTS=${core_allowed_roots_arg};-DCORE_ALLOWED_FILES=${core_allowed_files_arg};-DCORE_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}/cpp/swegca_architecture;-DCORE_PATH_FILE=${core_path_file};-P;${CMAKE_CURRENT_SOURCE_DIR}/cmake/SwegcaCoreCompile.cmake;--"
     UNITY_BUILD OFF
     DISABLE_PRECOMPILE_HEADERS ON)
 # The link check compiles its program with the core's compile flags of the
@@ -417,6 +448,7 @@ add_custom_command(TARGET swegca_core POST_BUILD
         "-DCORE_LINK_FLAGS=${core_link_flags}"
         "-DCORE_TOOLCHAIN_FLAGS=${core_link_toolchain_flags}"
         "-DCORE_WORK_DIR=${core_isolation_dir}"
+        "-DCORE_PATH_FILE=${core_path_file}"
         "-DCORE_APPLE=$<BOOL:${APPLE}>"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/SwegcaCoreIsolationCheck.cmake"
     VERBATIM)

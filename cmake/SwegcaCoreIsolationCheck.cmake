@@ -16,11 +16,11 @@
 #
 # Inputs: CORE_ARCHIVE, CORE_COMPILER_KIND (gnu or msvc), CORE_SYMBOL_TOOL,
 # CORE_COMPILER, CORE_WORK_DIR, CORE_APPLE (0 or 1), CORE_TOOLCHAIN_FLAGS
-# ("|"-joined, may be empty).
+# ("|"-joined, may be empty), CORE_PATH_FILE (configure's PATH).
 cmake_minimum_required(VERSION 3.20)
 
 foreach(input IN ITEMS CORE_ARCHIVE CORE_COMPILER_KIND CORE_SYMBOL_TOOL CORE_COMPILER
-        CORE_WORK_DIR CORE_APPLE)
+        CORE_WORK_DIR CORE_APPLE CORE_PATH_FILE)
     if(NOT DEFINED ${input} OR "${${input}}" STREQUAL "")
         message(FATAL_ERROR "core isolation check: ${input} is missing")
     endif()
