@@ -46,6 +46,12 @@ crash cases before code uses it.
   Current C++ `SelfState` is an opaque `CanonicalPayload`, so the native
   writer still needs a typed, digest-bound way to update and restore that
   metadata without assuming an undocumented payload schema.
+- User clarification (2026-09-23 18:37 KST): a remembered occurrence and
+  its immutable source record are memory; the numerical synapse strength
+  linking memories is experience. The original hybrid organizer persists
+  `vrs_strengths.f16` and passes it into the next generation as
+  `initial_vrs_strengths`. Its strength history is not reconstructible from
+  memory records alone.
 
 ## Required contract
 
@@ -101,8 +107,46 @@ crash cases before code uses it.
 8. A still-reversible write receipt retains its prior state root and parts
    for bit-exact rollback while that receipt can be the current linked head.
    Reclamation must preserve this reachability before freeing orphan parts.
+9. Main also owns the current VRS synapse-strength data as first-class
+   persistent experience. Its published values and lineage must survive
+   recovery from HEAD; they are not a rebuildable search view of memory
+   records. The journal representation and its relation to `CognitiveState`
+   remain to be decided from the SWEGCA and original VRS sources before code
+   fixes either layout.
 
 ## Candidate representation for review
+
+### C++ identity boundary agreed with Claude (2026-09-23 18:36 KST)
+
+- `CognitiveState` holds only canonical content and its `content_digest()`.
+  It has no publication ordinal, wall clock, or journal position. Main creates
+  the initial content; a guarded writer creates successor content.
+- `PublishedStateId` is `(content_digest, publication RecordPosition)`, where
+  the position has segment, byte offset, sequence, and record digest. Only a
+  successful Main-owned state-head publication may construct it. The latest
+  publication record changes on every transition, including a bit-exact
+  rollback that reuses an older content root.
+- `StateSnapshot` holds a `shared_ptr<const CognitiveState>` and that exact
+  `PublishedStateId`; only Main constructs snapshots. It exposes `state()`
+  and `head()`. A producer cannot construct or replace a head identifier.
+- Proposal `based_on`, Bind, arbitration, gated capabilities, and CAS compare
+  the publication identifier. Re-evidence, admission, and accumulator
+  `judged_against` compare only the content digest. Replay can inspect
+  `StateSnapshot::state()` to judge the current content.
+- The receipt carries display time outside `CognitiveState`. Neither that
+  time nor a new ordinal determines succession or authority. The original
+  bounded writer's self-state write revision remains content, since rollback
+  must restore it. A typed `BoundedWriteHead` in `SelfState` will be included
+  in the next content-digest domain version.
+- State staging must return the exact new publication position before its
+  manifest can name it. A move-only, one-use stage handle is finalized with
+  that position and the content digest, then passed to Main's single
+  publisher. No staged object may manufacture a published `StateSnapshot`.
+  Failure after publication starts requires HEAD recovery before guarded
+  work resumes.
+
+This is an interface contract, not a claim that state publication or the
+four-stage VRS path is already implemented.
 
 - Reserve native state-part, state-root, and state-write-receipt record kinds
   distinct from experience kinds 1–3. Reuse the existing bounded part-tree

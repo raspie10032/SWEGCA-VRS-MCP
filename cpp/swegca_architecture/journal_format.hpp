@@ -78,6 +78,13 @@ inline constexpr std::uint16_t derived_experience_record_kind = 2;
 // One slice of an experience's bytes too large for its record
 // (experience.hpp); it carries no index entries.
 inline constexpr std::uint16_t experience_part_record_kind = 3;
+// Reserved for the Main-owned C++ reconstruction. A cue binding is a caller
+// retrieval attachment, not an experience; state records likewise cannot be
+// decoded or admitted as experience. Their codecs are added separately.
+inline constexpr std::uint16_t cue_binding_record_kind = 4;
+inline constexpr std::uint16_t state_part_record_kind = 5;
+inline constexpr std::uint16_t state_root_record_kind = 6;
+inline constexpr std::uint16_t state_publication_record_kind = 7;
 // ordinal, first sequence, record count, byte length, last record digest.
 inline constexpr std::size_t encoded_extent_bytes = 4 * 8 + 32;
 // As many segments as one manifest can list (a checkpoint lists them all).
