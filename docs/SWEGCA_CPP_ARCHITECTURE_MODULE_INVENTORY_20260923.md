@@ -584,13 +584,24 @@ evidence authority.
    retraction, and recovery.
 8. Autonomous cognition transition inputs and separate external action
    authority.
-9. Reattach conforming C++ VRS read/experience components.
-10. Remove every `.py`, Python packaging path, generator, checker, and test from
+9. Before writing test code, publish the C++ test-condition list for static
+   review. Conditions come from SWEGCA invariants I01-I08 and I10,
+   experience-authority separation, failure model 1-10, E001/E002 rejection,
+   compile-rejection cases, and forced interruption before and after each
+   publication fsync boundary.
+10. After the condition list is accepted, build the completed architecture and
+    run the C++-only tests. Report every failure, fix the architecture, and
+    rerun without weakening an expected result.
+11. Only after the architecture passes those tests, build VRS on top of its
+    Select and Re-evidence/evidence-accumulator boundaries.
+12. Remove every `.py`, Python packaging path, generator, checker, and test from
     the rebuild tree after required replacements exist.
 
 Static source and lineage review is performed at each commit. Build, syntax
-compilation, product tests, and benchmarks remain stopped until the user reopens
-testing.
+compilation, product tests, and benchmarks remain stopped throughout
+architecture implementation. They open only at step 10 after the complete
+architecture and its test-condition list have passed static review
+(`re-created (user@2026-09-23)`). VRS remains frozen until step 10 passes.
 
 ## 11. Open items
 
