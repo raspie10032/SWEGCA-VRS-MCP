@@ -187,6 +187,17 @@ does not compare coefficient magnitudes across unrelated topologies. No
 Replay or Re-evidence occurs inside this prefix. Session-first selection,
 Main generation pinning, host hook dispatch and the full `<1 ms` measurement
 remain unfinished.
+The source episode-membership cache is now represented as a Main-owned memo
+bound to one exact memory/Graph pair, validated numerical input object, node
+directory and region directory. Its key remains episode identity, revision
+and literal cues; a hit cannot bypass generation validation. Eviction removes
+only derived membership tuples, never an original or evidence relation. The
+entry byte charge anticipates both C++ key copies, but remains a conservative
+estimate rather than allocator or process RSS. It therefore cannot enforce
+the 4 GiB product limit by itself. The source-only packed-node strategy is not
+implemented because its dynamically imported module is absent from the
+author checkout; no substitute algorithm is invented. Main generation
+configuration, counter/status parity and coactivation wiring remain pending.
 The selected four-stage suffix now retains the full completed Recall in
 `memory_selection` while the activation receipt carries one selected original
 and any conflict-related opposing originals opened later. Its first Replay
