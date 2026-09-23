@@ -534,6 +534,11 @@ RecoveredStateInput recover_genesis_state(const StateRecordSource& source,
         read_exact(source, view_of(root_address), "state_recovery_invalid:root");
     check_state_record(root_record.view(), journal::state_root_record_kind, expected_owner,
                        "state_recovery_invalid:root");
+    // A root is keyed by its content and every writer that stages it names
+    // that content as its revision. Its operation id is not checked: the
+    // root is reused by any later transition to the same content.
+    if (root_record.view().source_revision != view_of(hex_of(content)))
+        fail("state_recovery_invalid:root");
     const auto root = decode_state_root(root_record.view().payload);
     if (root.content_digest != content) fail("state_recovery_invalid:root");
 
