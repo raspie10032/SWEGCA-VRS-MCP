@@ -56,6 +56,12 @@ public:
     AllocationAdapter() {
         static_assert(sizeof(U) == 0, "allocation_resource_missing: construct with the host resource");
     }
+    // An allocator remains equal to its source after a move. Declaring the
+    // same-type copy operations suppresses an implicit move that would take
+    // the shared resource away from the source allocator.
+    // SWEGCA: user@2026-09-22:89-92
+    AllocationAdapter(const AllocationAdapter&) noexcept = default;
+    AllocationAdapter& operator=(const AllocationAdapter&) noexcept = default;
     // SWEGCA: user@2026-09-22:89-92
     explicit AllocationAdapter(std::shared_ptr<AllocationResource> resource)
         : resource_(std::move(resource)) {
@@ -97,6 +103,11 @@ public:
         : resource_(std::move(resource)) {
         if (!resource_) throw std::invalid_argument("allocation_resource_missing");
     }
+    // A moved context remains usable for later host allocations; moving it
+    // copies its shared resource, as moving AllocationAdapter does.
+    // SWEGCA: user@2026-09-22:89-92
+    AllocationContext(const AllocationContext&) noexcept = default;
+    AllocationContext& operator=(const AllocationContext&) noexcept = default;
 
     // SWEGCA: user@2026-09-22:89-92
     template <class T>
