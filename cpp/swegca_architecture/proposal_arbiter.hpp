@@ -2,7 +2,7 @@
 
 #include "swegca_architecture/cognitive_state.hpp"
 #include "swegca_architecture/judgment_rules.hpp"
-#include "swegca_architecture/memory_ledger.hpp"
+#include "swegca_architecture/allocation.hpp"
 #include "swegca_architecture/proposal.hpp"
 
 #include <cstddef>
@@ -58,8 +58,8 @@ public:
 
 private:
     friend class ProposalArbiter;
-    using Bytes = std::vector<std::byte, MemoryLedger::Allocator<std::byte>>;
-    using Flags = std::vector<std::uint8_t, MemoryLedger::Allocator<std::uint8_t>>;
+    using Bytes = std::vector<std::byte, AllocationAdapter<std::byte>>;
+    using Flags = std::vector<std::uint8_t, AllocationAdapter<std::uint8_t>>;
     ArbitrationResult(StateGeneration based_on, std::uint64_t step, RoleMask changed,
                       ScalarType type, std::uint64_t width, Bytes delta, Flags accepted,
                       Flags conflict, Digest256 receipt);
@@ -100,13 +100,13 @@ public:
 
 private:
     friend class MainOwner;
-    ProposalArbiter(const MemoryLedger::Account& memory, ArbiterPolicy policy);
+    ProposalArbiter(const AllocationContext& memory, ArbiterPolicy policy);
     template <class T, class R>
     [[nodiscard]] ArbitrationOutcome arbitrate_typed(
         const CognitiveState& state, std::uint64_t current_step,
         std::span<const BoundProposal> proposals) const;
 
-    MemoryLedger::Account memory_;
+    AllocationContext memory_;
     ArbiterPolicy policy_;
     kernel::ArbiterRules rules_;
 };

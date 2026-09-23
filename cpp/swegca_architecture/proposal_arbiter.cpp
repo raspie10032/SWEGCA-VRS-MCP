@@ -125,7 +125,7 @@ const Digest256& ArbitrationResult::receipt() const {
 }
 
 // SWEGCA: src/swegca/mosaic_synapse_arbiter.py@5901a5a:219-236
-ProposalArbiter::ProposalArbiter(const MemoryLedger::Account& memory, ArbiterPolicy policy)
+ProposalArbiter::ProposalArbiter(const AllocationContext& memory, ArbiterPolicy policy)
     : memory_(memory), policy_(policy), rules_(make_arbiter_rules(policy)) {}
 
 // SWEGCA: src/swegca/mosaic_synapse_arbiter.py@5901a5a:238-321
@@ -164,13 +164,13 @@ ArbitrationOutcome ProposalArbiter::arbitrate_typed(
     const CognitiveState& state, std::uint64_t current_step,
     std::span<const BoundProposal> proposals) const {
     using Scores = kernel::ProposalScoresOf<T>;
-    using ScoreList = std::vector<Scores, MemoryLedger::Allocator<Scores>>;
-    using Values = std::vector<T, MemoryLedger::Allocator<T>>;
-    using ResultValues = std::vector<R, MemoryLedger::Allocator<R>>;
-    using Weights = std::vector<double, MemoryLedger::Allocator<double>>;
+    using ScoreList = std::vector<Scores, AllocationAdapter<Scores>>;
+    using Values = std::vector<T, AllocationAdapter<T>>;
+    using ResultValues = std::vector<R, AllocationAdapter<R>>;
+    using Weights = std::vector<double, AllocationAdapter<double>>;
     using Flags = ArbitrationResult::Flags;
     using Bytes = ArbitrationResult::Bytes;
-    using Indices = std::vector<std::size_t, MemoryLedger::Allocator<std::size_t>>;
+    using Indices = std::vector<std::size_t, AllocationAdapter<std::size_t>>;
     const auto& registry = state.roles();
     const auto P = proposals.size();
     const auto S = registry.size();

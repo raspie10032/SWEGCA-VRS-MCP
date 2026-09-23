@@ -3,7 +3,7 @@
 #include "swegca_architecture/journal_file_io.hpp"
 #include "swegca_architecture/journal_format.hpp"
 #include "swegca_architecture/journal_position.hpp"
-#include "swegca_architecture/memory_ledger.hpp"
+#include "swegca_architecture/allocation.hpp"
 #include "swegca_architecture/strong_types.hpp"
 
 #include <atomic>
@@ -17,37 +17,42 @@
 #include <span>
 #include <stdexcept>
 #include <string_view>
+#include <type_traits>
 
-// Main-owned native journal directory (v5): exclusive owner lock, detached
+// Main-owned native journal directory (format v7): exclusive owner lock, detached
 // staging, one serialized publisher, snapshot readers (each read holds one
 // immutable published snapshot for its whole duration and takes no journal
 // lock; the atomic snapshot pointer itself is not promised lock-free),
 // fail-closed recovery from the published HEAD only, and the derived
-// exact-address view published by the same HEAD, compacted and rebuildable
-// from the records.
+// exact-address and index views published by the same HEAD, compacted and
+// rebuildable from the records.
 // Rule: SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md §3B, §9; one
 // current generation (I01), provenance-bound and recoverable persistent
 // mutation (I07), ARCHITECTURE_SPEC.md@5901a5a:205-207,214-216.
 // re-created (user@2026-09-23): replaces SQLite, which the user removed.
-// Resources (codex J8, J9, J13): every byte kept on disk is charged to the
-// journal's storage reservation before it is written. Every buffer and
-// container the journal allocates uses Main's ledger allocator, so it is
-// charged with its exact requested size before it is allocated. Not reached
-// by the ledger: path strings, exception objects, OS handles, the store
-// object itself, and the caller's own inputs (drafts, views); Main
-// integration closes those.
+// Resources (codex J8, J9, J13; user 2026-09-23 16:10): the host counts and
+// judges. Every byte kept on disk is allowed by the host's StorageBudget
+// before it is written, and every buffer and container the journal
+// allocates goes through the host's AllocationContext, which sees its exact
+// requested size. Not reached: path strings, exception objects, OS
+// handles, the store object itself, and the caller's own inputs (drafts,
+// views); Main integration closes those.
+namespace swegca::architecture {
+class ExperienceAppend;
+}
+
 namespace swegca::architecture::journal {
 
-// Published extents by ordinal; every node goes through the ledger allocator.
+// Published extents by ordinal; every node goes through the host's allocator.
 using ExtentTable =
     std::map<std::uint64_t, SegmentExtent, std::less<>,
-             MemoryLedger::Allocator<std::pair<const std::uint64_t, SegmentExtent>>>;
+             AllocationAdapter<std::pair<const std::uint64_t, SegmentExtent>>>;
 
 // One published generation as readers see it. Immutable once published; the
-// object and its control block are allocated through the ledger allocator.
+// object and its control block are allocated through the host's allocator.
 struct PublishedSnapshot {
     // SWEGCA: user@2026-09-22:72-79
-    PublishedSnapshot(const MemoryLedger::Account& memory, Manifest manifest)
+    PublishedSnapshot(const AllocationContext& memory, Manifest manifest)
         : head(std::move(manifest)),
           extents(memory.allocator<std::pair<const std::uint64_t, SegmentExtent>>()) {}
 
@@ -67,7 +72,9 @@ struct PublishedSnapshot {
 
 // What one published generation holds, from one snapshot: its number and
 // manifest digest, and its records' count and bytes (the universe a read
-// ran over).
+// ran over). Both counts cover the whole journal, every record kind:
+// `record_count` is the tail sequence (sequences run 1..record_count) and
+// `record_bytes` the bytes of every segment extent, headers included.
 struct PublishedUniverse {
     std::uint64_t generation = 0;
     Digest manifest_digest{};
@@ -76,7 +83,7 @@ struct PublishedUniverse {
 };
 
 // One published record read back: its exact bytes, allocated through the
-// ledger, and the view decoded from them. The view, and every text and span
+// host's allocator, and the view decoded from them. The view, and every text and span
 // it hands out, is valid while this object lives. It can only be moved
 // (moving carries the byte buffer and the view to the new object and leaves
 // the source with an empty view and position, so a moved-from record never
@@ -163,7 +170,7 @@ public:
 
 private:
     friend class JournalStore;
-    explicit StagedGeneration(const MemoryLedger::Account& memory);
+    explicit StagedGeneration(const AllocationContext& memory);
 
     bool valid_ = false;
     std::uint64_t parent_generation_ = 0;
@@ -176,6 +183,54 @@ private:
     std::shared_ptr<PublishedSnapshot> next_;
 };
 
+// The host's storage budget (user 2026-09-23 16:10 via codex): the host
+// counts and judges storage, the journal only asks. `allows(used)` answers
+// whether the journal may use `used` bytes in all (published generation,
+// logs a rewrite left behind, and what a write in progress adds). It must
+// not throw, and must be safe to call from any thread the journal writes on.
+// SWEGCA: user@2026-09-22:72-79
+class StorageBudget {
+public:
+    virtual ~StorageBudget() = default;
+    [[nodiscard]] virtual bool allows(std::uint64_t used) const noexcept = 0;
+};
+
+// Pages of the derived views kept for the read path (journal_store.cpp).
+class PageCache;
+
+// The visitor of one index lookup, borrowed like a function reference: pass
+// a callable object directly (a lambda or functor, not a plain function) and
+// never keep one; nothing is allocated for it. It returns false to stop.
+class IndexVisitor final {
+public:
+    // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:475-507
+    template <class F>
+        requires(!std::is_same_v<std::remove_cvref_t<F>, IndexVisitor> &&
+                 std::is_object_v<std::remove_reference_t<F>> &&
+                 std::is_invocable_r_v<bool, std::remove_reference_t<F>&, std::string_view,
+                                       const RecordPosition&>)
+    IndexVisitor(F&& visit) noexcept  // NOLINT(google-explicit-constructor)
+        : target_(static_cast<const void*>(std::addressof(visit))),
+          call_(&invoke<std::remove_reference_t<F>>) {}
+
+    // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:475-507
+    bool operator()(std::string_view address, const RecordPosition& position) const {
+        return call_(target_, address, position);
+    }
+
+private:
+    using Call = bool (*)(const void*, std::string_view, const RecordPosition&);
+    // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:475-507
+    template <class T>
+    static bool invoke(const void* target, std::string_view address, const RecordPosition& position) {
+        auto& visit = *static_cast<T*>(const_cast<void*>(target));
+        return static_cast<bool>(visit(address, position));
+    }
+
+    const void* target_;
+    Call call_;
+};
+
 class JournalStore final {
 public:
     // Opens `directory`, creating it atomically when it does not exist
@@ -186,7 +241,7 @@ public:
     // corrupt HEAD or manifest on the chain back to the checkpoint, a segment
     // no extent names, a missing or corrupt extent the head generation
     // wrote, a recovery chain over its read budget, and published use over
-    // `storage_bytes`. The view is derived: a missing page log in its range,
+    // what the host's `storage` allows. The view is derived: a missing page log in its range,
     // or a last log that cannot be cut back to its published end, opens the
     // journal with the view unavailable (lookups, stages and compaction fail
     // with `journal_view_unavailable`) so that Main can `rebuild_view` from
@@ -200,16 +255,24 @@ public:
     // digest the view names; `for_each_record` and `rebuild_view` check the
     // whole record chain.
     // `identity` must satisfy the identity rule; the store keeps its own copy
-    // on `memory`.
+    // on `memory`. `page_cache`, when given, is the context the verified
+    // view pages lookups keep are allocated through (see PageCache); the
+    // host's refusal there evicts. The cache is split into
+    // `page_cache_shards` independently locked shards (the host sets it to
+    // its worker count; nonzero when a cache is kept). Every budget is the
+    // host's: the journal counts no resource and fixes no limit. `storage`
+    // must outlive the store. The cache is bounded only by `page_cache`: the
+    // host must refuse (AllocationRefused) past the budget it gives it.
     [[nodiscard]] static std::unique_ptr<JournalStore> open(
         const std::filesystem::path& directory, std::string_view identity,
-        std::uint64_t storage_bytes, const MemoryLedger::Account& memory);
+        const StorageBudget& storage, const AllocationContext& memory,
+        const std::optional<AllocationContext>& page_cache, std::size_t page_cache_shards);
 
     JournalStore(JournalStore&&) = delete;
     JournalStore(const JournalStore&) = delete;
     JournalStore& operator=(const JournalStore&) = delete;
     JournalStore& operator=(JournalStore&&) = delete;
-    ~JournalStore() = default;
+    ~JournalStore();
 
     // The published head manifest, shared with its snapshot: no copy is made
     // and the snapshot lives as long as the returned pointer.
@@ -222,10 +285,15 @@ public:
     // Builds a detached successor of the current head: the records, the
     // exact-address view pages for them (addresses must be new and unique),
     // the complete next snapshot and the HEAD bytes. Disk use is checked
-    // against the storage reservation before any record is encoded and again,
+    // against the host's storage budget before any record is encoded and again,
     // with the view pages, before anything is written. Fails with
     // `journal_generation_too_large`, `journal_address_duplicate`,
-    // `journal_storage_budget_exhausted` or `memory_budget_exhausted`.
+    // `journal_storage_budget_exhausted`, or the host's allocation refusal.
+    // Records of the experience kinds (original, derived, part) are staged
+    // only through ExperienceJournal, which derives a derived record's root
+    // sources and contexts from its published lineage; here they fail
+    // `journal_experience_kind_reserved`, so no record's provenance is
+    // declared by whoever staged it (codex 16:53).
     [[nodiscard]] StagedGeneration stage(std::span<const RecordDraft> drafts,
                                          const StateGeneration& state,
                                          std::span<const ViewGeneration> views) const;
@@ -265,15 +333,15 @@ public:
     // verifying the whole record chain. No lock is held while `visit` runs.
     void for_each_record(const std::function<void(const RecordView&, const RecordPosition&)>& visit) const;
 
-    // Cue navigation (board §9 :592; L3 cue lookup): visits every published
-    // record that carries `cue`, in address order, with its address and exact
-    // position, over one snapshot, until `visit` returns false. Reads one page
-    // per level down to the first match, then the leaves in order, verifying
-    // every page digest; the address views a page that lives only for the
-    // call. Fails with `journal_cue_invalid` or `journal_view_unavailable`.
-    void for_each_cue_match(
-        std::string_view cue,
-        const std::function<bool(std::string_view address, const RecordPosition&)>& visit) const;
+    // Index navigation (board §3B :122-123, §9 :592; L3 hot cue lookup):
+    // visits every published record that carries the index entry (`kind`,
+    // `value`), in address order, with its address and exact position, over
+    // one snapshot, until `visit` returns false. Reads one page per level
+    // down to the first match, then the leaves in order, verifying every page
+    // digest; the address views a page that lives only for the call. Fails
+    // with `journal_index_invalid` (not an index entry) or
+    // `journal_view_unavailable`.
+    void for_each_index_match(char kind, std::string_view value, IndexVisitor visit) const;
 
     // Copy on write leaves replaced pages in the page logs. Compaction is due
     // when their bytes exceed the live pages' bytes (both trees) plus one
@@ -291,7 +359,7 @@ public:
     void compact_view();
 
     // Rebuilds both views from the records alone, never reading the old
-    // ones: every record chain is verified while addresses and cue keys are
+    // ones: every record chain is verified while addresses and index keys are
     // collected in batches of bounded memory; each sorted batch is written as
     // a run of leaf pages in new logs, each tree's runs are merged in one
     // k-way pass into its final tree (reading one page per level per run),
@@ -301,7 +369,8 @@ public:
     // published like a compaction. I/O is linear in the views' size.
     //
     // Both rewrites hold the publication lock for their whole duration, so a
-    // concurrent `publish` waits for them; readers are never blocked.
+    // concurrent `publish` waits for them; readers are never blocked by them
+    // (a reader takes only a page-cache shard lock, per page, briefly).
     void rebuild_view();
 
     // Removes retired page logs whose lease no snapshot holds. Publication
@@ -310,9 +379,15 @@ public:
     void reclaim_retired();
 
 private:
+    friend class swegca::architecture::ExperienceAppend;
+    // `stage` without the kind rule: ExperienceAppend's only.
+    [[nodiscard]] StagedGeneration stage_records(std::span<const RecordDraft> drafts,
+                                                 const StateGeneration& state,
+                                                 std::span<const ViewGeneration> views) const;
     JournalStore(std::filesystem::path directory, JournalIdentity identity,
-                 std::uint64_t storage_bytes, const MemoryLedger::Account& memory,
-                 std::uint64_t allocation_unit, std::unique_ptr<io::OwnerLock> lock);
+                 const StorageBudget& storage, const AllocationContext& memory,
+                 std::uint64_t allocation_unit, std::unique_ptr<io::OwnerLock> lock,
+                 const std::optional<AllocationContext>& page_cache, std::size_t page_cache_shards);
 
     // Page logs a view rewrite left behind, and the lease that keeps them.
     struct RetiredLogs {
@@ -328,7 +403,7 @@ private:
     [[nodiscard]] std::uint64_t storage_of(const ExtentTable& extents, const ManifestFields& head,
                                            const ManifestLocation& location) const;
     [[nodiscard]] std::uint64_t page_log_charge(const ViewPages& view) const;
-    [[nodiscard]] std::uint64_t allowance(const PublishedSnapshot& current) const;
+    [[nodiscard]] std::uint64_t used_bytes(const PublishedSnapshot& current) const;
     void verify_extent(const PublishedSnapshot& snapshot, const SegmentExtent& extent) const;
     [[nodiscard]] StagedGeneration stage_from(const std::shared_ptr<const PublishedSnapshot>& current,
                                               std::span<const RecordDraft> drafts,
@@ -353,10 +428,11 @@ private:
 
     std::filesystem::path directory_;
     JournalIdentity identity_;
-    std::uint64_t storage_bytes_;
-    MemoryLedger::Account memory_;
+    const StorageBudget* storage_;  // the host's; outlives the store
+    AllocationContext memory_;
     std::uint64_t allocation_unit_;
     std::unique_ptr<io::OwnerLock> lock_;
+    std::unique_ptr<PageCache> cache_;  // shared by every reader; internally locked
     std::mutex publish_mutex_;
     std::atomic<std::shared_ptr<const PublishedSnapshot>> snapshot_;
     std::atomic<bool> poisoned_{false};

@@ -1,14 +1,17 @@
 #include "swegca_architecture/journal_store.hpp"
 
 #include "swegca_architecture/journal_file_io.hpp"
-#include "swegca_architecture/resource_limits.hpp"
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cstdio>
 #include <iterator>
 #include <limits>
+#include <map>
+#include <memory>
+#include <mutex>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -145,10 +148,10 @@ void apply_manifest(ExtentTable& extents, const Manifest& manifest) {
         fail("journal_manifest_tail_mismatch");
 }
 
-// Reads and decodes the manifest stored at `location` into ledger bytes.
+// Reads and decodes the manifest stored at `location` into bytes from the host's allocator.
 // SWEGCA: user@2026-09-22:72-79
 Manifest read_manifest(const fs::path& directory, const ManifestLocation& location,
-                       const MemoryLedger::Account& memory) {
+                       const AllocationContext& memory) {
     if (location.log_ordinal == 0 || location.length == 0 ||
         location.length > max_manifest_bytes || location.offset < manifest_log_header_bytes ||
         location.offset > max_manifest_log_bytes)
@@ -168,7 +171,7 @@ Manifest read_manifest(const fs::path& directory, const ManifestLocation& locati
 // not a journal (and then fails closed on open).
 // SWEGCA: user@2026-09-22:72-79
 void create_initial(const fs::path& directory, std::string_view identity,
-                    const MemoryLedger::Account& memory) {
+                    const AllocationContext& memory) {
     const auto parent = directory.has_parent_path() ? directory.parent_path() : fs::path(".");
     fs::create_directories(parent);
     const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
@@ -203,32 +206,202 @@ void create_initial(const fs::path& directory, std::string_view identity,
     io::make_entries_durable(parent);
 }
 
+}  // namespace
+
 // A view page read back: its exact bytes and the view decoded from them (the
-// view points into `bytes`, whose buffer moves with it).
+// view points into `bytes`). Shared and immutable once read.
 struct LoadedPage {
     LedgerBytes bytes;
     AddressPageView view;
 };
+using PageHandle = std::shared_ptr<const LoadedPage>;
+
+// Verified view pages the read path keeps in memory (L3: hot address and
+// index lookup without live I/O; board §9 :592). A published page is never
+// rewritten in place (copy on write writes new pages, a rewrite new logs),
+// and a reference names its exact bytes by digest, so an entry can never be
+// stale. The cache allocates through its own context, which the host gives
+// it and whose budget the host counts and judges: every page it reads and
+// every entry it keeps is allocated there, so it takes no memory another
+// Main component needs. When the host refuses (AllocationRefused) the cache
+// evicts a page no reader holds (CLOCK among those) and retries, so each
+// eviction returns budget; when every cached page is held by a reader, the
+// page is read through Main's context, as any uncached read is, and not
+// kept. A physical allocation failure (std::bad_alloc) is not a refusal:
+// reading a page it propagates; keeping one it leaves the page unkept. Shards chosen by reference keep workers apart except on the
+// pages every lookup passes (the roots).
+class PageCache final {
+public:
+    // SWEGCA: user@2026-09-22:72-79
+    PageCache(const AllocationContext& cache, std::size_t shard_count)
+        : memory_(cache), shards_(memory_.allocator<std::shared_ptr<Shard>>()) {
+        shards_.reserve(shard_count);
+        for (std::size_t at = 0; at < shard_count; ++at)
+            shards_.push_back(std::allocate_shared<Shard>(memory_.allocator<Shard>(), memory_));
+    }
+
+    // SWEGCA: user@2026-09-22:72-79
+    [[nodiscard]] PageHandle find(const PageRef& ref) const {
+        auto& shard = shard_of(ref);
+        std::lock_guard guard(shard.mutex);
+        const auto found = shard.index.find(ref);
+        if (found == shard.index.end()) return {};
+        auto& slot = shard.slots[found->second];
+        slot.used = true;
+        return slot.page;
+    }
+
+    // Reads `ref` on the cache's budget and keeps it; empty when the budget
+    // cannot hold it even after evicting every unused page.
+    // SWEGCA: user@2026-09-22:72-79
+    template <class Read>
+    [[nodiscard]] PageHandle load(const PageRef& ref, Read read) const {
+        for (;;) {
+            PageHandle page;
+            try {
+                page = read(memory_);
+            } catch (const AllocationRefused&) {
+                if (!evict_one()) return {};
+                continue;
+            }
+            try {
+                keep(ref, page);
+            } catch (...) {
+                // a lock, index or allocation that failed: the page is returned unkept
+            }
+            return page;
+        }
+    }
+
+private:
+    // Indexes `page`. An index that cannot grow within the budget leaves the
+    // page unindexed: it is still returned, and its charge ends with its
+    // last reader.
+    // SWEGCA: user@2026-09-22:72-79
+    void keep(const PageRef& ref, const PageHandle& page) const {
+        auto& shard = shard_of(ref);
+        std::lock_guard guard(shard.mutex);
+        if (shard.index.contains(ref)) return;
+        auto& slots = shard.slots;
+        auto& free = shard.free;
+        try {
+            if (free.empty()) {
+                // free.capacity() >= slots.size() always, so eviction never
+                // allocates.
+                if (free.capacity() < slots.size() + 1) free.reserve(slots.size() * 2 + 1);
+                slots.push_back(Slot{});
+                free.push_back(slots.size() - 1);
+            }
+            shard.index.emplace(ref, free.back());
+        } catch (const AllocationRefused&) {
+            return;  // any slot added stays free
+        }
+        slots[free.back()] = Slot{ref, page, true};
+        free.pop_back();
+    }
+
+    // Evicts one page no reader holds, visiting the shards in turn: CLOCK
+    // gives a recently used one a second chance. Only this cache holds a
+    // page whose handle count is one, and a new holder needs the shard lock
+    // held here, so its eviction returns its budget. False when every cached
+    // page is held by a reader.
+    // SWEGCA: user@2026-09-22:72-79
+    bool evict_one() const {
+        const auto first = next_shard_.fetch_add(1, std::memory_order_relaxed);
+        for (std::size_t step = 0; step < shards_.size(); ++step) {
+            auto& shard = *shards_[(first + step) % shards_.size()];
+            std::lock_guard guard(shard.mutex);
+            auto& slots = shard.slots;
+            for (std::size_t turns = 0; !slots.empty() && turns < 2 * slots.size() + 1; ++turns) {
+                auto& slot = slots[shard.hand];
+                const auto at = shard.hand;
+                shard.hand = (shard.hand + 1) % slots.size();
+                if (!slot.page || slot.page.use_count() != 1) continue;
+                if (slot.used) {
+                    slot.used = false;
+                    continue;
+                }
+                shard.index.erase(slot.ref);
+                slot.page.reset();
+                shard.free.push_back(at);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    struct Slot {
+        PageRef ref;
+        PageHandle page;  // empty for a free slot
+        bool used = false;
+    };
+    struct Shard {
+        // SWEGCA: user@2026-09-22:72-79
+        explicit Shard(const AllocationContext& memory)
+            : slots(memory.allocator<Slot>()), free(memory.allocator<std::size_t>()),
+              index(memory.allocator<std::pair<const PageRef, std::size_t>>()) {}
+        std::mutex mutex;
+        LedgerVector<Slot> slots;
+        LedgerVector<std::size_t> free;  // capacity always covers every slot
+        std::map<PageRef, std::size_t, std::less<>,
+                 AllocationAdapter<std::pair<const PageRef, std::size_t>>> index;
+        std::size_t hand = 0;
+    };
+
+    // SWEGCA: user@2026-09-22:72-79
+    [[nodiscard]] Shard& shard_of(const PageRef& ref) const noexcept {
+        const auto mixed = (ref.log_ordinal * 0x9e3779b97f4a7c15ull) ^ ref.offset;
+        return *shards_[static_cast<std::size_t>(mixed % shards_.size())];
+    }
+
+    AllocationContext memory_;  // the cache's own context
+    LedgerVector<std::shared_ptr<Shard>> shards_;
+    mutable std::atomic<std::size_t> next_shard_{0};
+};
+
+namespace {
 
 // Reads one published page and requires the digest its parent (or the
 // manifest) names.
 // SWEGCA: user@2026-09-22:72-79
-LoadedPage load_page(const fs::path& directory, const MemoryLedger::Account& memory,
+PageHandle read_page(const fs::path& directory, const AllocationContext& memory,
                      const PageRef& ref) {
     LedgerBytes bytes(ref.length, memory.allocator<std::byte>());
     io::read_range(page_log_path(directory, ref.log_ordinal), ref.offset + ref.length, ref.offset,
                    bytes, "journal_page_log_missing");
     if (Sha256::of(bytes) != ref.digest) fail("journal_address_page_digest_mismatch");
     auto view = decode_address_page(bytes, memory);
-    return LoadedPage{std::move(bytes), std::move(view)};
+    return std::allocate_shared<LoadedPage>(memory.allocator<LoadedPage>(),
+                                            LoadedPage{std::move(bytes), std::move(view)});
 }
+
+// Where view pages are read from: the journal directory, the allocation
+// context their bytes come from, and the cache the read path shares (none for the
+// rewrites, which read each page once).
+struct PageSource {
+    const fs::path& directory;
+    const AllocationContext& memory;
+    const PageCache* cache = nullptr;
+
+    // SWEGCA: user@2026-09-22:72-79
+    [[nodiscard]] PageHandle load(const PageRef& ref) const {
+        if (cache != nullptr) {
+            if (auto hit = cache->find(ref)) return hit;
+            auto kept = cache->load(ref, [this, &ref](const AllocationContext& budget) {
+                return read_page(directory, budget, ref);
+            });
+            if (kept) return kept;
+        }
+        return read_page(directory, memory, ref);
+    }
+};
 
 // Places the pages one generation writes into page logs: after the published
 // end of the current log, or in new logs when it is full. Every page buffer
 // stays where it was placed until publication, so views into it stay valid.
 // SWEGCA: user@2026-09-22:72-79
 struct PageWriter {
-    const MemoryLedger::Account& memory;
+    const AllocationContext& memory;
     LedgerVector<PagePiece>& pieces;
     std::uint64_t log_ordinal;  // current page log; 0 before the first
     std::uint64_t log_end;      // its end, placed pages included
@@ -331,15 +504,15 @@ LedgerVector<AddressChildItem> write_branch_pages(PageWriter& writer,
 // kept children view the page read here, which lives until the replacement
 // is written.
 // SWEGCA: user@2026-09-22:72-79
-LedgerVector<AddressChildItem> insert_into(PageWriter& writer, const fs::path& directory,
+LedgerVector<AddressChildItem> insert_into(PageWriter& writer, const PageSource& pages,
                                            const PageRef& ref, std::uint32_t height,
                                            std::span<const AddressLeafItem> added,
                                            std::uint64_t& replaced) {
-    const auto page = load_page(directory, writer.memory, ref);
-    if (page.view.leaf != (height == 1)) fail("journal_address_view_corrupt");
+    const auto page = pages.load(ref);
+    if (page->view.leaf != (height == 1)) fail("journal_address_view_corrupt");
     replaced += ref.length;
-    if (page.view.leaf) {
-        const auto& old = page.view.leaves;
+    if (page->view.leaf) {
+        const auto& old = page->view.leaves;
         LedgerVector<AddressLeafItem> merged(writer.memory.allocator<AddressLeafItem>());
         merged.reserve(old.size() + added.size());
         std::size_t left = 0;
@@ -356,7 +529,7 @@ LedgerVector<AddressChildItem> insert_into(PageWriter& writer, const fs::path& d
         }
         return write_leaf_pages(writer, merged);
     }
-    const auto& children = page.view.children;
+    const auto& children = page->view.children;
     LedgerVector<AddressChildItem> next(writer.memory.allocator<AddressChildItem>());
     next.reserve(children.size() + 1);
     std::size_t from = 0;
@@ -374,7 +547,7 @@ LedgerVector<AddressChildItem> insert_into(PageWriter& writer, const fs::path& d
             continue;
         }
         const auto replacement =
-            insert_into(writer, directory, children[at].page, height - 1,
+            insert_into(writer, pages, children[at].page, height - 1,
                         added.subspan(from, to - from), replaced);
         next.insert(next.end(), replacement.begin(), replacement.end());
         from = to;
@@ -385,7 +558,7 @@ LedgerVector<AddressChildItem> insert_into(PageWriter& writer, const fs::path& d
 // The tree after adding `added` (sorted, unique): new pages for every changed
 // path and a taller root when the old root split.
 // SWEGCA: user@2026-09-22:72-79
-ViewTree update_tree(PageWriter& writer, const fs::path& directory, const ViewTree& tree,
+ViewTree update_tree(PageWriter& writer, const PageSource& pages, const ViewTree& tree,
                      std::span<const AddressLeafItem> added) {
     if (added.empty()) return tree;
     const auto written_before = writer.page_bytes;
@@ -393,7 +566,7 @@ ViewTree update_tree(PageWriter& writer, const fs::path& directory, const ViewTr
     std::uint32_t height = 1;
     auto level = tree.entry_count == 0
                      ? write_leaf_pages(writer, added)
-                     : insert_into(writer, directory, tree.root, tree.height, added, replaced);
+                     : insert_into(writer, pages, tree.root, tree.height, added, replaced);
     if (tree.entry_count != 0) height = tree.height;
     while (level.size() > 1) {
         if (height == max_address_height) fail("journal_address_view_too_tall");
@@ -412,12 +585,12 @@ ViewTree update_tree(PageWriter& writer, const fs::path& directory, const ViewTr
 // The view pages after both trees took their additions through `writer`,
 // which places every page of this generation in the shared page logs.
 // SWEGCA: user@2026-09-22:72-79
-ViewPages update_views(PageWriter& writer, const fs::path& directory, const ViewPages& pages,
+ViewPages update_views(PageWriter& writer, const PageSource& source, const ViewPages& pages,
                        std::span<const AddressLeafItem> addresses,
-                       std::span<const AddressLeafItem> cues) {
+                       std::span<const AddressLeafItem> index) {
     ViewPages next = pages;
-    next.addresses = update_tree(writer, directory, pages.addresses, addresses);
-    next.cues = update_tree(writer, directory, pages.cues, cues);
+    next.addresses = update_tree(writer, source, pages.addresses, addresses);
+    next.index = update_tree(writer, source, pages.index, index);
     if (writer.written == 0) return next;
     next.first_page_log = pages.page_log_ordinal == 0 ? 1 : pages.first_page_log;
     next.page_log_ordinal = writer.log_ordinal;
@@ -435,16 +608,16 @@ void append_text(LedgerBytes& keys, std::string_view text) {
 }
 
 // Appends the key of one view entry to `keys`, which has capacity for it,
-// and views it there: the address itself when `cue` is empty, otherwise
-// the cue-view key (cue, separator, address).
+// and views it there: the address itself when `index_entry` is empty,
+// otherwise the index-view key (entry, separator, address).
 // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:398-437
-std::string_view append_view_key(LedgerBytes& keys, std::string_view cue, std::string_view address) {
+std::string_view append_view_key(LedgerBytes& keys, std::string_view index_entry, std::string_view address) {
     const auto at = keys.size();
-    const auto size = cue.empty() ? address.size() : cue_key_size(cue, address);
+    const auto size = index_entry.empty() ? address.size() : index_key_size(index_entry, address);
     if (size > keys.capacity() - at) fail("journal_key_capacity");
-    if (!cue.empty()) {
-        append_text(keys, cue);
-        keys.push_back(static_cast<std::byte>(cue_separator));
+    if (!index_entry.empty()) {
+        append_text(keys, index_entry);
+        keys.push_back(static_cast<std::byte>(index_separator));
     }
     append_text(keys, address);
     return std::string_view(reinterpret_cast<const char*>(keys.data()) + at, size);
@@ -472,15 +645,17 @@ constexpr std::size_t max_page_items =
 
 // Writes view pages straight into new page logs that no HEAD names yet; a
 // reopen removes them unless a HEAD publishes them. Each log is charged by
-// the storage rule (its bytes plus two allocation units) against
-// `allowance` before any of its bytes is written.
+// the storage rule (its bytes plus two allocation units) and the host's
+// StorageBudget must allow the journal's use with it (`used` plus what this
+// writer charged) before any of its bytes is written.
 // SWEGCA: user@2026-09-22:72-79
 class StreamWriter {
 public:
     // SWEGCA: user@2026-09-22:72-79
-    StreamWriter(const fs::path& directory, const MemoryLedger::Account& memory,
-                 std::uint64_t first_log, std::uint64_t allowance, std::uint64_t unit)
-        : directory_(&directory), first_log_(first_log), allowance_(allowance), unit_(unit),
+    StreamWriter(const fs::path& directory, const AllocationContext& memory,
+                 std::uint64_t first_log, const StorageBudget& storage, std::uint64_t used,
+                 std::uint64_t unit)
+        : directory_(&directory), first_log_(first_log), storage_(&storage), used_(used), unit_(unit),
           pending_(memory.allocator<std::byte>()) {
         if (first_log_ == 0) fail("journal_page_log_exhausted");
         pending_.reserve(stream_flush_bytes);
@@ -561,12 +736,12 @@ public:
     // The view pages over the two trees written here (each given with the
     // bytes of its pages; every page written here is live) and their logs.
     // SWEGCA: user@2026-09-22:72-79
-    [[nodiscard]] ViewPages pages(const ViewTree& addresses, const ViewTree& cues) const {
-        if (addresses.live_page_bytes + cues.live_page_bytes != page_bytes_)
+    [[nodiscard]] ViewPages pages(const ViewTree& addresses, const ViewTree& index) const {
+        if (addresses.live_page_bytes + index.live_page_bytes != page_bytes_)
             fail("journal_address_view_corrupt");
         ViewPages out;
         out.addresses = addresses;
-        out.cues = cues;
+        out.index = index;
         if (log_ordinal_ == 0) return out;
         out.first_page_log = first_log_;
         out.page_log_ordinal = log_ordinal_;
@@ -584,13 +759,16 @@ public:
 private:
     // SWEGCA: user@2026-09-22:72-79
     void charge(std::uint64_t bytes) {
-        if (bytes > allowance_ - charged_) fail("journal_storage_budget_exhausted");
+        const auto after = plus(charged_, bytes, "journal_storage_overflow");
+        if (!storage_->allows(plus(used_, after, "journal_storage_overflow")))
+            fail("journal_storage_budget_exhausted");
         charged_ += bytes;
     }
 
     const fs::path* directory_;
     std::uint64_t first_log_;
-    std::uint64_t allowance_;
+    const StorageBudget* storage_;
+    std::uint64_t used_;  // the journal's use before this writer
     std::uint64_t unit_;
     LedgerBytes pending_;
     std::uint64_t log_ordinal_ = 0;  // current log; 0 before the first
@@ -613,8 +791,8 @@ struct BuiltTree {
 class LeafCursor {
 public:
     // SWEGCA: user@2026-09-22:72-79
-    LeafCursor(const fs::path& directory, const MemoryLedger::Account& memory, const BuiltTree& tree)
-        : directory_(&directory), memory_(memory), frames_(memory.allocator<Frame>()) {
+    LeafCursor(const PageSource& pages, const BuiltTree& tree)
+        : pages_(pages), frames_(pages.memory.allocator<Frame>()) {
         frames_.reserve(max_address_height);  // frames never move
         if (tree.count != 0) descend(tree.root, tree.height);
     }
@@ -622,18 +800,17 @@ public:
     // Positioned at the first item whose key is not below `from`: one page
     // per level on the way down.
     // SWEGCA: user@2026-09-22:72-79
-    LeafCursor(const fs::path& directory, const MemoryLedger::Account& memory, const BuiltTree& tree,
-               std::string_view from)
-        : directory_(&directory), memory_(memory), frames_(memory.allocator<Frame>()) {
+    LeafCursor(const PageSource& pages, const BuiltTree& tree, std::string_view from)
+        : pages_(pages), frames_(pages.memory.allocator<Frame>()) {
         frames_.reserve(max_address_height);  // frames never move
         if (tree.count == 0) return;
         PageRef ref = tree.root;
         for (std::uint32_t height = tree.height;; --height) {
             if (height == 0) fail("journal_address_view_corrupt");
-            auto page = load_page(*directory_, memory_, ref);
-            if (page.view.leaf != (height == 1)) fail("journal_address_view_corrupt");
-            if (page.view.leaf) {
-                const auto& leaves = page.view.leaves;
+            auto page = pages_.load(ref);
+            if (page->view.leaf != (height == 1)) fail("journal_address_view_corrupt");
+            if (page->view.leaf) {
+                const auto& leaves = page->view.leaves;
                 const auto found = std::lower_bound(
                     leaves.begin(), leaves.end(), from,
                     [](const AddressLeafItem& item, std::string_view key) { return item.address < key; });
@@ -642,7 +819,7 @@ public:
                 settle();
                 return;
             }
-            const auto& children = page.view.children;
+            const auto& children = page->view.children;
             const auto after = std::upper_bound(
                 children.begin(), children.end(), from,
                 [](std::string_view key, const AddressChildItem& child) { return key < child.first_address; });
@@ -660,7 +837,7 @@ public:
     // SWEGCA: user@2026-09-22:72-79
     [[nodiscard]] const AddressLeafItem& item() const {
         const auto& leaf = frames_.back();
-        return leaf.page.view.leaves[leaf.at];
+        return leaf.page->view.leaves[leaf.at];
     }
 
     // SWEGCA: user@2026-09-22:72-79
@@ -671,7 +848,7 @@ public:
 
 private:
     struct Frame {
-        LoadedPage page;
+        PageHandle page;
         std::size_t at = 0;
         std::uint32_t height = 0;
     };
@@ -682,32 +859,31 @@ private:
         for (;;) {
             const auto& top = frames_.back();
             const auto size =
-                top.page.view.leaf ? top.page.view.leaves.size() : top.page.view.children.size();
+                top.page->view.leaf ? top.page->view.leaves.size() : top.page->view.children.size();
             if (top.at < size) break;
             frames_.pop_back();
             if (frames_.empty()) return;
             ++frames_.back().at;
         }
         const auto& top = frames_.back();
-        if (!top.page.view.leaf) descend(top.page.view.children[top.at].page, top.height - 1);
+        if (!top.page->view.leaf) descend(top.page->view.children[top.at].page, top.height - 1);
     }
 
     // SWEGCA: user@2026-09-22:72-79
     void descend(PageRef ref, std::uint32_t height) {
         for (;;) {
             if (height == 0) fail("journal_address_view_corrupt");
-            auto page = load_page(*directory_, memory_, ref);
-            if (page.view.leaf != (height == 1)) fail("journal_address_view_corrupt");
-            const bool leaf = page.view.leaf;
-            if (!leaf) ref = page.view.children.front().page;
+            auto page = pages_.load(ref);
+            if (page->view.leaf != (height == 1)) fail("journal_address_view_corrupt");
+            const bool leaf = page->view.leaf;
+            if (!leaf) ref = page->view.children.front().page;
             frames_.push_back(Frame{std::move(page), 0, height});
             if (leaf) return;
             --height;
         }
     }
 
-    const fs::path* directory_;
-    MemoryLedger::Account memory_;
+    PageSource pages_;
     LedgerVector<Frame> frames_;
 };
 
@@ -721,12 +897,11 @@ struct Run {
 // cursors: O(log k) per item, one page per level per run in memory. An
 // address in two runs fails as a duplicate.
 // SWEGCA: user@2026-09-22:72-79
-void merge_runs(TreeBuilder& builder, const fs::path& directory, const MemoryLedger::Account& memory,
-                std::span<const Run> runs) {
-    LedgerVector<LeafCursor> cursors(memory.allocator<LeafCursor>());
+void merge_runs(TreeBuilder& builder, const PageSource& pages, std::span<const Run> runs) {
+    LedgerVector<LeafCursor> cursors(pages.memory.allocator<LeafCursor>());
     cursors.reserve(runs.size());
-    for (const auto& run : runs) cursors.emplace_back(directory, memory, run.tree);
-    LedgerVector<std::size_t> heap(memory.allocator<std::size_t>());
+    for (const auto& run : runs) cursors.emplace_back(pages, run.tree);
+    LedgerVector<std::size_t> heap(pages.memory.allocator<std::size_t>());
     heap.reserve(cursors.size());
     const auto later = [&cursors](std::size_t left, std::size_t right) {
         return cursors[right].item().address < cursors[left].item().address;
@@ -756,7 +931,7 @@ void merge_runs(TreeBuilder& builder, const fs::path& directory, const MemoryLed
 class TreeBuilder {
 public:
     // SWEGCA: user@2026-09-22:72-79
-    TreeBuilder(StreamWriter& writer, const MemoryLedger::Account& memory)
+    TreeBuilder(StreamWriter& writer, const AllocationContext& memory)
         : writer_(writer), memory_(memory), levels_(memory.allocator<Level>()),
           last_(memory.allocator<std::byte>()) {
         levels_.reserve(max_address_height);  // levels never move: keys view them
@@ -796,7 +971,7 @@ public:
 private:
     struct Level {
         // SWEGCA: user@2026-09-22:72-79
-        Level(const MemoryLedger::Account& memory, bool leaf_level)
+        Level(const AllocationContext& memory, bool leaf_level)
             : leaf(leaf_level), keys(memory.allocator<std::byte>()),
               leaves(memory.allocator<AddressLeafItem>()),
               children(memory.allocator<AddressChildItem>()) {
@@ -864,7 +1039,7 @@ private:
     }
 
     StreamWriter& writer_;
-    const MemoryLedger::Account& memory_;
+    const AllocationContext& memory_;
     LedgerVector<Level> levels_;
     LedgerBytes last_;
     std::uint64_t count_ = 0;
@@ -874,31 +1049,29 @@ private:
 // verified page per level.
 // SWEGCA: user@2026-09-22:72-79
 template <class Visit>
-void visit_leaves(const fs::path& directory, const MemoryLedger::Account& memory,
-                  const PageRef& ref, std::uint32_t height, Visit& visit) {
+void visit_leaves(const PageSource& pages, const PageRef& ref, std::uint32_t height, Visit& visit) {
     if (height == 0) fail("journal_address_view_corrupt");
-    const auto page = load_page(directory, memory, ref);
-    if (page.view.leaf != (height == 1)) fail("journal_address_view_corrupt");
-    if (page.view.leaf) {
-        for (const auto& item : page.view.leaves) visit(item);
+    const auto page = pages.load(ref);
+    if (page->view.leaf != (height == 1)) fail("journal_address_view_corrupt");
+    if (page->view.leaf) {
+        for (const auto& item : page->view.leaves) visit(item);
         return;
     }
-    for (const auto& child : page.view.children)
-        visit_leaves(directory, memory, child.page, height - 1, visit);
+    for (const auto& child : page->view.children) visit_leaves(pages, child.page, height - 1, visit);
 }
 
 // Feeds `builder` the union of the tree `previous` (when given) and `batch`
 // (sorted), in address order; an address in both fails as a duplicate.
 // SWEGCA: user@2026-09-22:72-79
-void merge_into(TreeBuilder& builder, const fs::path& directory, const MemoryLedger::Account& memory,
-                const BuiltTree* previous, std::span<const AddressLeafItem> batch) {
+void merge_into(TreeBuilder& builder, const PageSource& pages, const BuiltTree* previous,
+                std::span<const AddressLeafItem> batch) {
     std::size_t next = 0;
     auto visit = [&](const AddressLeafItem& item) {
         while (next < batch.size() && batch[next].address < item.address) builder.add(batch[next++]);
         builder.add(item);
     };
     if (previous != nullptr && previous->count != 0)
-        visit_leaves(directory, memory, previous->root, previous->height, visit);
+        visit_leaves(pages, previous->root, previous->height, visit);
     for (; next < batch.size(); ++next) builder.add(batch[next]);
 }
 
@@ -930,7 +1103,7 @@ PublishedRecord::PublishedRecord(PublishedRecord&& other) noexcept
       position_(std::exchange(other.position_, RecordPosition{})) {}
 
 // SWEGCA: user@2026-09-22:72-79
-StagedGeneration::StagedGeneration(const MemoryLedger::Account& memory)
+StagedGeneration::StagedGeneration(const AllocationContext& memory)
     : head_bytes_(memory.allocator<std::byte>()), log_header_(memory.allocator<std::byte>()),
       pieces_(memory.allocator<SegmentPiece>()), page_pieces_(memory.allocator<PagePiece>()),
       positions_(memory.allocator<RecordPosition>()) {}
@@ -946,25 +1119,32 @@ StagedGeneration::StagedGeneration(StagedGeneration&& other) noexcept
 
 // SWEGCA: user@2026-09-22:72-79
 JournalStore::JournalStore(fs::path directory, JournalIdentity identity,
-                           std::uint64_t storage_bytes, const MemoryLedger::Account& memory,
-                           std::uint64_t allocation_unit, std::unique_ptr<io::OwnerLock> lock)
+                           const StorageBudget& storage, const AllocationContext& memory,
+                           std::uint64_t allocation_unit, std::unique_ptr<io::OwnerLock> lock,
+                           const std::optional<AllocationContext>& page_cache, std::size_t page_cache_shards)
     : directory_(std::move(directory)), identity_(std::move(identity)),
-      storage_bytes_(storage_bytes), memory_(memory), allocation_unit_(allocation_unit),
-      lock_(std::move(lock)), retired_(memory.allocator<RetiredLogs>()) {}
+      storage_(&storage), memory_(memory), allocation_unit_(allocation_unit),
+      lock_(std::move(lock)),
+      cache_(page_cache ? std::make_unique<PageCache>(*page_cache, page_cache_shards) : nullptr),
+      retired_(memory.allocator<RetiredLogs>()) {}
+
+// SWEGCA: user@2026-09-22:72-79
+JournalStore::~JournalStore() = default;
 
 // SWEGCA: user@2026-09-22:72-79
 std::unique_ptr<JournalStore> JournalStore::open(const fs::path& directory,
                                                  std::string_view identity,
-                                                 std::uint64_t storage_bytes,
-                                                 const MemoryLedger::Account& memory) {
-    if (storage_bytes == 0 || storage_bytes > ResourceLimits::max_storage_bytes)
-        fail("journal_budget_invalid");
+                                                 const StorageBudget& storage,
+                                                 const AllocationContext& memory,
+                                                 const std::optional<AllocationContext>& page_cache,
+                                                 std::size_t page_cache_shards) {
+    if (page_cache && page_cache_shards == 0) fail("journal_page_cache_invalid");
     JournalIdentity owned(memory, identity);  // checked before anything is created
     if (!fs::exists(directory)) create_initial(directory, identity, memory);
     auto lock = std::make_unique<io::OwnerLock>(directory);
     const auto unit = io::allocation_unit(directory);
-    std::unique_ptr<JournalStore> store(new JournalStore(directory, std::move(owned), storage_bytes,
-                                                         memory, unit, std::move(lock)));
+    std::unique_ptr<JournalStore> store(new JournalStore(directory, std::move(owned), storage, memory, unit,
+                                                         std::move(lock), page_cache, page_cache_shards));
     store->load_published_head();
     return store;
 }
@@ -997,12 +1177,10 @@ std::uint64_t JournalStore::page_log_charge(const ViewPages& view) const {
     return plus(view.page_log_bytes, times(logs, times(2, allocation_unit_, code), code), code);
 }
 
-// What may still be written: the reservation less the published use and
-// the logs a rewrite left behind.
+// The journal's use: the published use and the logs a rewrite left behind.
 // SWEGCA: user@2026-09-22:72-79
-std::uint64_t JournalStore::allowance(const PublishedSnapshot& current) const {
-    const auto used = plus(current.storage, retained_bytes_.load(), "journal_storage_overflow");
-    return used >= storage_bytes_ ? 0 : storage_bytes_ - used;
+std::uint64_t JournalStore::used_bytes(const PublishedSnapshot& current) const {
+    return plus(current.storage, retained_bytes_.load(), "journal_storage_overflow");
 }
 
 // Recovery reads HEAD, then walks back to the latest checkpoint. Each step
@@ -1085,7 +1263,7 @@ void JournalStore::load_published_head() {
     loaded->location = pointer.location;
     loaded->page_logs = std::allocate_shared<int>(memory_.allocator<int>(), 0);
     loaded->storage = storage_of(loaded->extents, fields, pointer.location);
-    if (loaded->storage > storage_bytes_) fail("journal_storage_budget_exceeded");
+    if (!storage_->allows(loaded->storage)) fail("journal_storage_budget_exceeded");
 
     // Second pass, now that the published tails are known: files past them
     // are unpublished leftovers and go, and so do page logs older than the
@@ -1211,13 +1389,24 @@ void JournalStore::verify_extent(const PublishedSnapshot& current,
 
 // Sizes the whole generation first, checks the disk use of its records and
 // manifest against the storage reservation before encoding, then encodes into
-// ledger buffers reserved to their exact size, builds the view pages and the
+// buffers reserved to their exact size, builds the view pages and the
 // complete next snapshot, and checks the full disk use again before
 // returning, so publishing only writes and moves.
 // SWEGCA: user@2026-09-22:72-79
 StagedGeneration JournalStore::stage(std::span<const RecordDraft> drafts,
                                      const StateGeneration& state,
                                      std::span<const ViewGeneration> views) const {
+    for (const auto& draft : drafts)
+        if (draft.kind == original_experience_record_kind || draft.kind == derived_experience_record_kind ||
+            draft.kind == experience_part_record_kind)
+            fail("journal_experience_kind_reserved");
+    return stage_records(drafts, state, views);
+}
+
+// SWEGCA: user@2026-09-22:72-79
+StagedGeneration JournalStore::stage_records(std::span<const RecordDraft> drafts,
+                                             const StateGeneration& state,
+                                             std::span<const ViewGeneration> views) const {
     require_usable();
     // The snapshot is read before the retained charge: a rewrite adds the old
     // logs to the retained charge before it swaps the snapshot, so this order
@@ -1327,9 +1516,9 @@ StagedGeneration JournalStore::stage_from(const std::shared_ptr<const PublishedS
     if (new_log)
         storage = plus(storage, manifest_log_header_bytes + 2 * allocation_unit_,
                        "journal_storage_overflow");
-    if (storage > storage_bytes_) fail("journal_storage_budget_exhausted");
+    if (!storage_->allows(storage)) fail("journal_storage_budget_exhausted");
 
-    // Encode the records into exactly reserved ledger buffers.
+    // Encode the records into exactly reserved buffers.
     StagedGeneration staged(memory_);
     staged.parent_generation_ = parent.generation;
     staged.parent_manifest_digest_ = current->head.digest();
@@ -1377,44 +1566,45 @@ StagedGeneration JournalStore::stage_from(const std::shared_ptr<const PublishedS
     for (std::size_t at = 1; at < added.size(); ++at)
         if (added[at - 1].address == added[at].address) fail("journal_address_duplicate");
 
-    // The cue view: one entry per cue of every record, keyed by (cue,
-    // separator, address) in one exactly reserved key buffer. A key repeats
+    // The index view: one entry per index entry of every record, keyed by
+    // (entry, separator, address) in one exactly reserved key buffer. A key repeats
     // the address, so the entries' encoded size is bounded by itself, like
     // the generation's records: at most `max_generation_bytes` of leaf items.
-    std::size_t cue_count = 0;
-    std::size_t cue_key_bytes = 0;
-    std::size_t cue_item_bytes = 0;
+    std::size_t index_count = 0;
+    std::size_t index_key_bytes = 0;
+    std::size_t index_item_bytes = 0;
     for (const auto& draft : drafts) {
-        for (const auto cue : draft.cues) {
-            const auto size = cue_key_size(cue, draft.address);
+        for (const auto index_entry : draft.index) {
+            const auto size = index_key_size(index_entry, draft.address);
             const auto item = size + encoded_leaf_item_size(std::string_view());
-            if (item > max_generation_bytes - cue_item_bytes) fail("journal_generation_too_large");
-            cue_item_bytes += item;
-            cue_key_bytes += size;
-            ++cue_count;
+            if (item > max_generation_bytes - index_item_bytes) fail("journal_generation_too_large");
+            index_item_bytes += item;
+            index_key_bytes += size;
+            ++index_count;
         }
     }
-    LedgerBytes cue_keys(memory_.allocator<std::byte>());
-    cue_keys.reserve(cue_key_bytes);
-    LedgerVector<AddressLeafItem> cue_added(memory_.allocator<AddressLeafItem>());
-    cue_added.reserve(cue_count);
+    LedgerBytes index_keys(memory_.allocator<std::byte>());
+    index_keys.reserve(index_key_bytes);
+    LedgerVector<AddressLeafItem> index_added(memory_.allocator<AddressLeafItem>());
+    index_added.reserve(index_count);
     for (std::size_t at = 0; at < drafts.size(); ++at)
-        for (const auto cue : drafts[at].cues)
-            cue_added.push_back(AddressLeafItem{append_view_key(cue_keys, cue, drafts[at].address),
+        for (const auto index_entry : drafts[at].index)
+            index_added.push_back(AddressLeafItem{append_view_key(index_keys, index_entry, drafts[at].address),
                                                 staged.positions_[at]});
-    std::sort(cue_added.begin(), cue_added.end(),
+    std::sort(index_added.begin(), index_added.end(),
               [](const AddressLeafItem& left, const AddressLeafItem& right) {
                   return left.address < right.address;
               });
-    for (std::size_t at = 1; at < cue_added.size(); ++at)
-        if (cue_added[at - 1].address == cue_added[at].address) fail("journal_cue_duplicate");
+    for (std::size_t at = 1; at < index_added.size(); ++at)
+        if (index_added[at - 1].address == index_added[at].address) fail("journal_index_duplicate");
 
     if (replacement != nullptr) {
         fields.view_pages = *replacement;
     } else {
         PageWriter writer{memory_, staged.page_pieces_, parent.view_pages.page_log_ordinal,
                           parent.view_pages.page_log_end};
-        fields.view_pages = update_views(writer, directory_, parent.view_pages, added, cue_added);
+        fields.view_pages = update_views(writer, PageSource{directory_, memory_, cache_.get()},
+                                         parent.view_pages, added, index_added);
     }
     for (auto& piece : staged.page_pieces_) {
         piece.parts.reserve(piece.pages.size() + 1);
@@ -1466,7 +1656,7 @@ StagedGeneration JournalStore::stage_from(const std::shared_ptr<const PublishedS
                           ? std::allocate_shared<int>(memory_.allocator<int>(), 0)
                           : current->page_logs;
     next->storage = storage_of(next->extents, next->head.fields(), location);
-    if (plus(next->storage, retained, "journal_storage_overflow") > storage_bytes_)
+    if (!storage_->allows(plus(next->storage, retained, "journal_storage_overflow")))
         fail("journal_storage_budget_exhausted");
     staged.head_bytes_.reserve(head_bytes);
     append_head(staged.head_bytes_, HeadPointer{location, next->head.digest()});
@@ -1501,8 +1691,7 @@ void JournalStore::publish_locked(StagedGeneration&& staged) {
         fail("journal_head_changed");
     // Checked again under the lock: a rewrite may have retired logs since
     // the generation was staged.
-    if (plus(local.next_->storage, retained_bytes_.load(), "journal_storage_overflow") >
-        storage_bytes_)
+    if (!storage_->allows(plus(local.next_->storage, retained_bytes_.load(), "journal_storage_overflow")))
         fail("journal_storage_budget_exhausted");
     const auto& location = local.next_->location;
     const bool new_log = location.log_ordinal != current->location.log_ordinal;
@@ -1581,19 +1770,21 @@ std::optional<RecordPosition> JournalStore::resolve_in(const PublishedSnapshot& 
     if (current.view_unavailable) fail("journal_view_unavailable");
     const auto& view = current.head.fields().view_pages.addresses;
     if (view.entry_count == 0) return std::nullopt;
+    const PageSource pages{directory_, memory_, cache_.get()};
     PageRef ref = view.root;
     for (std::uint32_t height = view.height;; --height) {
-        const auto page = load_page(directory_, memory_, ref);
-        if (height == 0 || page.view.leaf != (height == 1)) fail("journal_address_view_corrupt");
-        if (page.view.leaf) {
-            const auto& leaves = page.view.leaves;
+        if (height == 0) fail("journal_address_view_corrupt");
+        const auto page = pages.load(ref);
+        if (page->view.leaf != (height == 1)) fail("journal_address_view_corrupt");
+        if (page->view.leaf) {
+            const auto& leaves = page->view.leaves;
             const auto found = std::lower_bound(
                 leaves.begin(), leaves.end(), key,
                 [](const AddressLeafItem& item, std::string_view wanted) { return item.address < wanted; });
             if (found == leaves.end() || found->address != key) return std::nullopt;
             return found->position;
         }
-        const auto& children = page.view.children;
+        const auto& children = page->view.children;
         const auto after = std::upper_bound(
             children.begin(), children.end(), key,
             [](std::string_view wanted, const AddressChildItem& child) {
@@ -1683,26 +1874,28 @@ void JournalStore::for_each_record(
     }
 }
 
-// The keys of one cue are contiguous from (cue, separator); the cursor
-// starts at the first of them and stops at the first key past them.
+// The keys of one index entry are contiguous from (kind, value, separator);
+// the cursor starts at the first of them and stops at the first key past
+// them.
 // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:475-507
-void JournalStore::for_each_cue_match(
-    std::string_view cue,
-    const std::function<bool(std::string_view, const RecordPosition&)>& visit) const {
+void JournalStore::for_each_index_match(char kind, std::string_view value, IndexVisitor visit) const {
     require_usable();
-    if (!is_cue_text(cue) || cue.size() >= detail::identity_text_max_bytes)
-        fail("journal_cue_invalid");
+    if (value.size() >= detail::identity_text_max_bytes - 1) fail("journal_index_invalid");
+    LedgerBytes bound(memory_.allocator<std::byte>());
+    bound.reserve(value.size() + 2);
+    bound.push_back(static_cast<std::byte>(kind));
+    const auto* bytes = reinterpret_cast<const std::byte*>(value.data());
+    bound.insert(bound.end(), bytes, bytes + value.size());
+    const std::string_view entry(reinterpret_cast<const char*>(bound.data()), bound.size());
+    if (!is_index_entry(entry)) fail("journal_index_invalid");
+    bound.push_back(static_cast<std::byte>(index_separator));
+    const std::string_view from(reinterpret_cast<const char*>(bound.data()), bound.size());
     const auto current = snapshot();
     if (current->view_unavailable) fail("journal_view_unavailable");
-    const auto& tree = current->head.fields().view_pages.cues;
+    const auto& tree = current->head.fields().view_pages.index;
     if (tree.entry_count == 0) return;
-    LedgerBytes bound(memory_.allocator<std::byte>());
-    bound.reserve(cue.size() + 1);
-    const auto* bytes = reinterpret_cast<const std::byte*>(cue.data());
-    bound.insert(bound.end(), bytes, bytes + cue.size());
-    bound.push_back(static_cast<std::byte>(cue_separator));
-    const std::string_view from(reinterpret_cast<const char*>(bound.data()), bound.size());
-    for (LeafCursor cursor(directory_, memory_, BuiltTree{tree.entry_count, tree.height, tree.root}, from);
+    for (LeafCursor cursor(PageSource{directory_, memory_, cache_.get()},
+                           BuiltTree{tree.entry_count, tree.height, tree.root}, from);
          cursor.valid(); cursor.next()) {
         const auto& item = cursor.item();
         if (!item.address.starts_with(from)) return;
@@ -1815,11 +2008,10 @@ namespace {
 
 // Writes `tree` again through `writer`, in key order.
 // SWEGCA: user@2026-09-22:72-79
-BuiltTree rewrite_tree(StreamWriter& writer, const fs::path& directory,
-                       const MemoryLedger::Account& memory, const ViewTree& tree) {
-    TreeBuilder builder(writer, memory);
+BuiltTree rewrite_tree(StreamWriter& writer, const PageSource& pages, const ViewTree& tree) {
+    TreeBuilder builder(writer, pages.memory);
     const BuiltTree previous{tree.entry_count, tree.height, tree.root};
-    merge_into(builder, directory, memory, &previous, {});
+    merge_into(builder, pages, &previous, {});
     const auto built = builder.finish();
     if (built.count != tree.entry_count) fail("journal_address_view_corrupt");
     return built;
@@ -1840,19 +2032,20 @@ void JournalStore::compact_view() {
     auto current = snapshot();
     if (current->view_unavailable) fail("journal_view_unavailable");
     const auto view = current->head.fields().view_pages;
-    if (view.addresses.entry_count == 0) return;  // no records, so no cues either
+    if (view.addresses.entry_count == 0) return;  // no records, so no index either
     reserve_retired();
-    StreamWriter writer(directory_, memory_, next_page_log(view), allowance(*current),
+    StreamWriter writer(directory_, memory_, next_page_log(view), *storage_, used_bytes(*current),
                         allocation_unit_);
     try {
-        const auto addresses = rewrite_tree(writer, directory_, memory_, view.addresses);
+        const PageSource once{directory_, memory_, nullptr};
+        const auto addresses = rewrite_tree(writer, once, view.addresses);
         const auto address_bytes = writer.page_bytes();
-        const auto cues = rewrite_tree(writer, directory_, memory_, view.cues);
+        const auto index = rewrite_tree(writer, once, view.index);
         writer.close();
         io::make_entries_durable(directory_);
         const auto pages = writer.pages(
             tree_of(addresses.count, addresses.height, addresses.root, address_bytes),
-            tree_of(cues.count, cues.height, cues.root, writer.page_bytes() - address_bytes));
+            tree_of(index.count, index.height, index.root, writer.page_bytes() - address_bytes));
         publish_replacing_view(stage_view(current, pages), current);
     } catch (...) {
         if (!poisoned_.load() && !writer.remove_written()) poisoned_.store(true);
@@ -1890,14 +2083,14 @@ void JournalStore::rebuild_view() {
                          LedgerVector<Run>(memory_.allocator<Run>())};
     };
     Collector addresses = collector();
-    Collector cues = collector();
+    Collector index = collector();
     std::optional<StreamWriter> merged;
-    const auto room = allowance(*current);
+    const auto base_used = used_bytes(*current);
     std::uint64_t held = 0;  // charge of the logs written so far
     auto next_log = next_page_log(fields.view_pages);
     const auto remove_all = [&]() noexcept {
         bool removed = true;
-        for (const auto* each : {&addresses, &cues})
+        for (const auto* each : {&addresses, &index})
             for (const auto& run : each->runs) removed = run.writer.remove_written() && removed;
         if (merged) removed = merged->remove_written() && removed;
         return removed;
@@ -1918,7 +2111,8 @@ void JournalStore::rebuild_view() {
             if (into.runs.size() == into.runs.capacity())
                 into.runs.reserve(std::max<std::size_t>(4, into.runs.capacity() * 2));
             sort_batch(into);
-            StreamWriter writer(directory_, memory_, next_log, room - std::min(room, held),
+            StreamWriter writer(directory_, memory_, next_log, *storage_,
+                                plus(base_used, held, "journal_storage_overflow"),
                                 allocation_unit_);
             BuiltTree tree;
             try {
@@ -1936,12 +2130,12 @@ void JournalStore::rebuild_view() {
             into.keys.clear();
             into.batch.clear();
         };
-        // Adds one entry (an address key when `cue` is empty, else a cue
-        // key), its key copied into the collector's buffer, which grows by
+        // Adds one entry (an address key when `index_entry` is empty, else an
+        // index key), its key copied into the collector's buffer, which grows by
         // doubling up to the batch bounds.
-        const auto collect = [&](Collector& into, std::string_view cue, std::string_view address,
+        const auto collect = [&](Collector& into, std::string_view index_entry, std::string_view address,
                                  const RecordPosition& position) {
-            const auto size = cue.empty() ? address.size() : cue_key_size(cue, address);
+            const auto size = index_entry.empty() ? address.size() : index_key_size(index_entry, address);
             if (into.batch.size() == rebuild_batch_items ||
                 size > rebuild_batch_key_bytes - into.keys.size())
                 write_run(into);
@@ -1952,7 +2146,7 @@ void JournalStore::rebuild_view() {
                 into.batch.reserve(std::min(rebuild_batch_items,
                                             std::max<std::size_t>(into.batch.capacity() * 2, 64)));
             const auto at = into.keys.size();
-            (void)append_view_key(into.keys, cue, address);
+            (void)append_view_key(into.keys, index_entry, address);
             into.batch.push_back(Entry{at, size, position});
         };
         Digest entering = zero_digest;
@@ -1965,8 +2159,8 @@ void JournalStore::rebuild_view() {
             const RecordVisitor visit = [&](const RecordView& record, std::uint64_t offset) {
                 const RecordPosition position{segment, offset, record.sequence, record.record_digest};
                 collect(addresses, {}, record.address, position);
-                for_each_cue(record, [&](std::string_view cue) {
-                    collect(cues, cue, record.address, position);
+                for_each_index_entry(record, [&](std::string_view index_entry) {
+                    collect(index, index_entry, record.address, position);
                 });
             };
             decode_segment_range(bytes, 0, extent, extent.first_sequence, extent.record_count,
@@ -1977,9 +2171,10 @@ void JournalStore::rebuild_view() {
         // the final logs; a larger one writes its last batch as a run too and
         // is merged. Runs are written before the final logs are started, so
         // the published view names one contiguous log range.
-        for (auto* each : {&addresses, &cues})
+        for (auto* each : {&addresses, &index})
             if (!each->runs.empty() && !each->batch.empty()) write_run(*each);
-        merged.emplace(directory_, memory_, next_log, room - std::min(room, held),
+        merged.emplace(directory_, memory_, next_log, *storage_,
+                                plus(base_used, held, "journal_storage_overflow"),
                        allocation_unit_);
         const auto build = [&](Collector& from) {
             TreeBuilder builder(*merged, memory_);
@@ -1987,23 +2182,23 @@ void JournalStore::rebuild_view() {
                 sort_batch(from);
                 feed(builder, from);
             } else {
-                merge_runs(builder, directory_, memory_, from.runs);
+                merge_runs(builder, PageSource{directory_, memory_, nullptr}, from.runs);
             }
             return builder.finish();
         };
         const auto built_addresses = build(addresses);
         const auto address_bytes = merged->page_bytes();
-        const auto built_cues = build(cues);
+        const auto built_index = build(index);
         merged->close();
         // No snapshot ever named a run.
-        for (const auto* each : {&addresses, &cues})
+        for (const auto* each : {&addresses, &index})
             for (const auto& run : each->runs)
                 if (!run.writer.remove_written()) fail("journal_page_log_remove_failed");
         if (built_addresses.count != fields.tail_sequence) fail("journal_address_view_count_mismatch");
         io::make_entries_durable(directory_);
         const auto pages = merged->pages(
             tree_of(built_addresses.count, built_addresses.height, built_addresses.root, address_bytes),
-            tree_of(built_cues.count, built_cues.height, built_cues.root,
+            tree_of(built_index.count, built_index.height, built_index.root,
                     merged->page_bytes() - address_bytes));
         publish_replacing_view(stage_view(current, pages), current);
     } catch (...) {

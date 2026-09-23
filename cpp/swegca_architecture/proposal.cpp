@@ -70,7 +70,7 @@ void hash_tensor(Sha256& hash, std::uint8_t partition, const CognitiveTensor& te
 }  // namespace
 
 // SWEGCA: src/swegca/mosaic_synapse_arbiter.py@5901a5a:54-93
-SynapseProposal::SynapseProposal(const MemoryLedger::Account& memory,
+SynapseProposal::SynapseProposal(const AllocationContext& memory,
                                  const StateSnapshot& snapshot,
                                  const SynapseProposalInput& input)
     : source_(memory, input.source),

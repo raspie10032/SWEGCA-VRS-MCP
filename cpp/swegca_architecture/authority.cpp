@@ -19,26 +19,26 @@ class AuthorityRegistry final {
 public:
     using RangeEntry = std::pair<const std::uint64_t, std::uint64_t>;
     using Ranges = std::map<std::uint64_t, std::uint64_t, std::less<>,
-                           MemoryLedger::Allocator<RangeEntry>>;
+                           AllocationAdapter<RangeEntry>>;
     struct LiveToken {
         std::weak_ptr<CapabilityToken> token;
         Ranges::node_type retirement;
     };
     using LiveEntry = std::pair<const std::uint64_t, LiveToken>;
 
-    AuthorityRegistry(const MemoryLedger::Account& memory, std::uint64_t issuer_instance);
+    AuthorityRegistry(const AllocationContext& memory, std::uint64_t issuer_instance);
 
-    MemoryLedger::Account memory;
+    AllocationContext memory;
     std::mutex mutex;
     std::uint64_t issuer_instance;
     std::uint64_t next_nonce = 1;
     std::map<std::uint64_t, LiveToken, std::less<>,
-             MemoryLedger::Allocator<LiveEntry>> live;
+             AllocationAdapter<LiveEntry>> live;
     Ranges spent_ranges;
 };
 
 // SWEGCA: src/swegca/mosaic_evidence_accumulator.py@5901a5a:28-45
-AuthorityRegistry::AuthorityRegistry(const MemoryLedger::Account& account,
+AuthorityRegistry::AuthorityRegistry(const AllocationContext& account,
                                      std::uint64_t issuer_instance_value)
     : memory(account), issuer_instance(issuer_instance_value),
       live(std::less<>{}, account.allocator<LiveEntry>()),
@@ -135,7 +135,7 @@ CapabilityToken::~CapabilityToken() {
 }  // namespace detail
 
 // SWEGCA: src/swegca/mosaic_evidence_accumulator.py@5901a5a:28-45
-MainAuthorityLedger::MainAuthorityLedger(const MemoryLedger::Account& memory)
+MainAuthorityLedger::MainAuthorityLedger(const AllocationContext& memory)
     : registry_(std::allocate_shared<detail::AuthorityRegistry>(
           memory.allocator<detail::AuthorityRegistry>(), memory, allocate_issuer_instance())) {}
 

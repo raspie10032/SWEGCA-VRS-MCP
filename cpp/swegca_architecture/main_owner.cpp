@@ -1,7 +1,7 @@
 #include "swegca_architecture/main_owner.hpp"
 
 #include "swegca_architecture/authority.hpp"
-#include "swegca_architecture/memory_ledger.hpp"
+#include "swegca_architecture/allocation.hpp"
 
 #include <atomic>
 #include <memory>
@@ -13,8 +13,8 @@ namespace {
 
 std::atomic<bool> main_lifetime_active{false};
 
-// The lease lasts until the final Main account or snapshot releases it.
-// Destroying Main while a snapshot survives cannot open a second budget.
+// The lease lasts until the final Main snapshot releases it.
+// Destroying Main while a snapshot survives cannot open a second Main.
 // This is process-local; the persistent directory owner lock must separately
 // exclude other processes during experience/state storage integration.
 // A retained snapshot deliberately prevents constructing another Main until
@@ -38,12 +38,17 @@ public:
 // Initialization/ownership only: guarded successor publication, experience,
 // evidence and action roles are integrated in their later architecture steps.
 // Tensor/graph-array/payload allocations and state/control-block requests
-// share one account, as do role maps/arrays and evidence-reference arrays.
-// Main-owned state identities now share that account. Other modules' text,
-// bootstrap allocations, allocator overhead, stacks and mappings still
-// require integration; memory_requested() is not an RSS guarantee.
+// share the host-supplied allocation context. The VRS host counts and judges
+// resources; Main retains its authority and single-owner lifetime.
 struct detail::MainOwnerState final {
-    std::unique_ptr<MemoryLedger> memory;
+    // SWEGCA: user@2026-09-23:1
+    MainOwnerState(std::shared_ptr<MainLifetime> lifetime, AllocationContext allocation,
+                   std::unique_ptr<MainAuthorityLedger> authority,
+                   std::shared_ptr<const CognitiveState> current)
+        : lifetime(std::move(lifetime)), allocation(std::move(allocation)),
+          authority(std::move(authority)), current(std::move(current)) {}
+    std::shared_ptr<MainLifetime> lifetime;
+    AllocationContext allocation;
     std::unique_ptr<MainAuthorityLedger> authority;
     std::shared_ptr<const CognitiveState> current;
 };
@@ -51,10 +56,8 @@ struct detail::MainOwnerState final {
 // Only this non-inline member exercises Main's private construction rights.
 // The non-member storage type only receives already constructed objects.
 // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:222-230
-MainOwner::MainOwner(MainInitialState initial, std::uint64_t memory_limit) {
-    auto memory = std::unique_ptr<MemoryLedger>(
-        new MemoryLedger(memory_limit, std::make_shared<MainLifetime>()));
-    const auto account = memory->account();
+MainOwner::MainOwner(MainInitialState initial, AllocationContext account) {
+    auto lifetime = std::make_shared<MainLifetime>();
     auto authority = std::unique_ptr<MainAuthorityLedger>(new MainAuthorityLedger(account));
     RoleRegistry roles(account, initial.roles);
     EvidenceReferences evidence(account.allocator<ExperienceAddress>());
@@ -78,21 +81,17 @@ MainOwner::MainOwner(MainInitialState initial, std::uint64_t memory_limit) {
         std::move(graph), std::move(evidence),
         std::move(goals), std::move(values), std::move(self));
 
-    // Allocate storage before transferring the fully constructed ownership.
-    // The three moves below do not allocate and cannot throw.
-    state_ = std::make_unique<detail::MainOwnerState>();
-    state_->memory = std::move(memory);
-    state_->authority = std::move(authority);
-    state_->current = std::move(current);
+    state_ = std::make_unique<detail::MainOwnerState>(
+        std::move(lifetime), std::move(account), std::move(authority),
+        std::move(current));
 }
 
 // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:222-230
 MainOwner::~MainOwner() = default;
 
 // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:222-230
-StateSnapshot MainOwner::snapshot() const { return StateSnapshot(state_->current); }
-
-// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3f:638-640
-std::uint64_t MainOwner::memory_requested() const noexcept { return state_->memory->used(); }
+StateSnapshot MainOwner::snapshot() const {
+    return StateSnapshot(state_->current, state_->lifetime);
+}
 
 }  // namespace swegca::architecture

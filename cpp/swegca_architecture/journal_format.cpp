@@ -23,7 +23,7 @@ constexpr std::array<std::byte, 4> address_page_magic{
     std::byte{'S'}, std::byte{'W'}, std::byte{'J'}, std::byte{'A'}};
 constexpr std::array<std::byte, 4> page_log_magic{
     std::byte{'S'}, std::byte{'W'}, std::byte{'J'}, std::byte{'P'}};
-constexpr std::uint16_t format_version = 6;
+constexpr std::uint16_t format_version = 7;
 constexpr std::uint8_t leaf_page_kind = 1;
 constexpr std::uint8_t branch_page_kind = 2;
 // Fixed part of a manifest: magic, version, identity length, generation,
@@ -171,7 +171,7 @@ ViewTree read_view_tree(ByteReader& reader) {
 // SWEGCA: user@2026-09-22:72-79
 void encode_view_pages(ByteWriter& writer, const ViewPages& pages) {
     encode_view_tree(writer, pages.addresses);
-    encode_view_tree(writer, pages.cues);
+    encode_view_tree(writer, pages.index);
     writer.u64(pages.first_page_log);
     writer.u64(pages.page_log_ordinal);
     writer.u64(pages.page_log_end);
@@ -198,18 +198,18 @@ bool view_tree_valid(const ViewTree& tree, const ViewPages& pages) noexcept {
 ViewPages decode_view_pages(ByteReader& reader, std::uint64_t tail_sequence) {
     ViewPages pages;
     pages.addresses = read_view_tree(reader);
-    pages.cues = read_view_tree(reader);
+    pages.index = read_view_tree(reader);
     pages.first_page_log = reader.u64();
     pages.page_log_ordinal = reader.u64();
     pages.page_log_end = reader.u64();
     pages.page_log_bytes = reader.u64();
     if (pages.addresses.entry_count != tail_sequence) fail("journal_manifest_invalid:address_count");
-    // A cue entry names a record, so there are none without records.
-    if (pages.addresses.entry_count == 0 && pages.cues.entry_count != 0)
-        fail("journal_manifest_invalid:cue_count");
+    // An index entry names a record, so there are none without records.
+    if (pages.addresses.entry_count == 0 && pages.index.entry_count != 0)
+        fail("journal_manifest_invalid:index_count");
     if (!view_tree_valid(pages.addresses, pages)) fail("journal_manifest_invalid:address_root");
-    if (!view_tree_valid(pages.cues, pages)) fail("journal_manifest_invalid:cue_root");
-    const bool empty = pages.addresses.entry_count == 0 && pages.cues.entry_count == 0;
+    if (!view_tree_valid(pages.index, pages)) fail("journal_manifest_invalid:index_root");
+    const bool empty = pages.addresses.entry_count == 0 && pages.index.entry_count == 0;
     if (pages.page_log_ordinal == 0
             ? (pages.first_page_log != 0 || pages.page_log_end != 0 ||
                pages.page_log_bytes != 0 || !empty)
@@ -217,7 +217,7 @@ ViewPages decode_view_pages(ByteReader& reader, std::uint64_t tail_sequence) {
                pages.page_log_end < page_log_header_bytes ||
                pages.page_log_end > max_page_log_bytes || pages.page_log_bytes < pages.page_log_end ||
                pages.addresses.live_page_bytes > pages.page_log_bytes ||
-               pages.cues.live_page_bytes > pages.page_log_bytes - pages.addresses.live_page_bytes))
+               pages.index.live_page_bytes > pages.page_log_bytes - pages.addresses.live_page_bytes))
         fail("journal_manifest_invalid:page_logs");
     return pages;
 }
@@ -225,8 +225,19 @@ ViewPages decode_view_pages(ByteReader& reader, std::uint64_t tail_sequence) {
 }  // namespace
 
 // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:398-437
-bool is_cue_text(std::string_view cue) noexcept {
-    return detail::is_identity_text(cue) && cue.find(cue_separator) == std::string_view::npos;
+bool is_index_entry(std::string_view index_entry) noexcept {
+    if (index_entry.size() < 2) return false;
+    const auto kind = index_entry.front();
+    return ((kind >= 'a' && kind <= 'z') || (kind >= 'A' && kind <= 'Z')) &&
+           detail::is_identity_text(index_entry) &&
+           index_entry.find(index_separator) == std::string_view::npos;
+}
+
+// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3f:122-123
+bool index_entry_allowed(std::uint16_t record_kind, std::string_view index_entry) noexcept {
+    const bool lowercase = !index_entry.empty() && index_entry.front() >= 'a' && index_entry.front() <= 'z';
+    return !lowercase || record_kind == original_experience_record_kind ||
+           record_kind == derived_experience_record_kind;
 }
 
 // SWEGCA: user@2026-09-22:60-61
@@ -356,13 +367,14 @@ std::size_t encoded_record_size(const RecordDraft& draft) {
         if (text.size() > limit) fail("journal_text_too_long");
         total += text.size();
     }
-    if (draft.cues.size() > max_record_cues) fail("journal_record_invalid:cues");
-    for (std::size_t at = 0; at < draft.cues.size(); ++at) {
-        const auto cue = draft.cues[at];
-        if (!is_cue_text(cue) || (at != 0 && !(draft.cues[at - 1] < cue)) ||
-            cue_key_size(cue, draft.address) > limit)
-            fail("journal_record_invalid:cue");
-        total += 4 + cue.size();
+    if (draft.index.size() > max_record_index_entries) fail("journal_record_invalid:index");
+    for (std::size_t at = 0; at < draft.index.size(); ++at) {
+        const auto index_entry = draft.index[at];
+        if (!is_index_entry(index_entry) || !index_entry_allowed(draft.kind, index_entry) ||
+            (at != 0 && !(draft.index[at - 1] < index_entry)) ||
+            index_key_size(index_entry, draft.address) > limit)
+            fail("journal_record_invalid:index");
+        total += 4 + index_entry.size();
     }
     if (total > std::numeric_limits<std::uint32_t>::max()) fail("journal_record_invalid:length");
     return total;
@@ -393,8 +405,8 @@ void append_record(LedgerBytes& out, const RecordDraft& draft, std::uint64_t seq
     writer.text(optional_text(draft.outcome), limit);
     writer.text(draft.operation_id, limit);
     writer.text(optional_text(draft.transaction_id), limit);
-    writer.u32(static_cast<std::uint32_t>(draft.cues.size()));
-    for (const auto cue : draft.cues) writer.text(cue, limit);
+    writer.u32(static_cast<std::uint32_t>(draft.index.size()));
+    for (const auto index_entry : draft.index) writer.text(index_entry, limit);
     writer.bytes(draft.payload, max_payload_bytes);
     writer.digest(Sha256::of(draft.payload));
     writer.digest(previous_record_digest);
@@ -430,18 +442,19 @@ RecordView decode_record(ByteReader& reader) {
     out.outcome = optional_identity_text(reader, "journal_record_invalid:outcome");
     out.operation_id = identity_text(reader, "journal_record_invalid:operation_id");
     out.transaction_id = optional_identity_text(reader, "journal_record_invalid:transaction_id");
-    out.cue_count = reader.u32();
-    if (out.cue_count > max_record_cues) fail("journal_record_invalid:cues");
-    const auto cues_start = reader.offset();
-    std::string_view previous_cue;
-    for (std::uint32_t at = 0; at < out.cue_count; ++at) {
-        const auto cue = reader.text_view(detail::identity_text_max_bytes);
-        if (!is_cue_text(cue) || (at != 0 && !(previous_cue < cue)) ||
-            cue_key_size(cue, out.address) > detail::identity_text_max_bytes)
-            fail("journal_record_invalid:cue");
-        previous_cue = cue;
+    out.index_count = reader.u32();
+    if (out.index_count > max_record_index_entries) fail("journal_record_invalid:index");
+    const auto index_start = reader.offset();
+    std::string_view previous_entry;
+    for (std::uint32_t at = 0; at < out.index_count; ++at) {
+        const auto index_entry = reader.text_view(detail::identity_text_max_bytes);
+        if (!is_index_entry(index_entry) || !index_entry_allowed(out.kind, index_entry) ||
+            (at != 0 && !(previous_entry < index_entry)) ||
+            index_key_size(index_entry, out.address) > detail::identity_text_max_bytes)
+            fail("journal_record_invalid:index");
+        previous_entry = index_entry;
     }
-    out.cues = reader.consumed_since(cues_start);
+    out.index = reader.consumed_since(index_start);
     out.payload = reader.bytes_view(max_payload_bytes);
     out.payload_digest = reader.digest();
     if (Sha256::of(out.payload) != out.payload_digest)
@@ -548,7 +561,7 @@ void append_branch_page(LedgerBytes& out, std::span<const AddressChildItem> item
 
 // SWEGCA: user@2026-09-22:72-79
 AddressPageView decode_address_page(std::span<const std::byte> bytes,
-                                    const MemoryLedger::Account& memory) {
+                                    const AllocationContext& memory) {
     if (bytes.size() <= address_page_header_bytes || bytes.size() > address_page_max_bytes)
         fail("journal_address_page_invalid");
     ByteReader reader(bytes);
@@ -639,7 +652,7 @@ std::size_t encoded_manifest_size(std::string_view journal_identity, std::size_t
 Manifest Manifest::encode(const ManifestFields& fields, std::string_view journal_identity,
                           std::span<const SegmentExtent> extents,
                           std::span<const ViewGeneration> views,
-                          const MemoryLedger::Account& memory) {
+                          const AllocationContext& memory) {
     const auto total = encoded_manifest_size(journal_identity, extents.size(), views);
     LedgerBytes bytes(memory.allocator<std::byte>());
     bytes.reserve(total);
@@ -680,7 +693,7 @@ Manifest Manifest::encode(const ManifestFields& fields, std::string_view journal
 }
 
 // SWEGCA: user@2026-09-22:72-79
-Manifest Manifest::decode(LedgerBytes bytes, const MemoryLedger::Account& memory) {
+Manifest Manifest::decode(LedgerBytes bytes, const AllocationContext& memory) {
     if (bytes.size() > max_manifest_bytes) fail("journal_manifest_invalid:size");
     const std::span<const std::byte> all(bytes);
     ByteReader reader(all);

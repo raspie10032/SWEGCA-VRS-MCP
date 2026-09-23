@@ -84,7 +84,7 @@ std::size_t scalar_width(ScalarType scalar_type) {
 }
 
 // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:243-251
-CognitiveTensor::CognitiveTensor(const MemoryLedger::Account& account,
+CognitiveTensor::CognitiveTensor(const AllocationContext& account,
                                  ScalarType scalar_type, TensorShape3 shape,
                                  std::span<const std::byte> canonical_bytes)
     : CognitiveTensor(scalar_type, shape, [&] {
@@ -115,7 +115,7 @@ CognitiveTensor::CognitiveTensor(ScalarType scalar_type, TensorShape3 shape,
 }
 
 // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:243-251
-CognitiveTensor CognitiveTensor::zeroed(const MemoryLedger::Account& account,
+CognitiveTensor CognitiveTensor::zeroed(const AllocationContext& account,
                                          ScalarType scalar_type,
                                          TensorShape3 shape) {
     const auto bytes = checked_bytes(scalar_type, shape);

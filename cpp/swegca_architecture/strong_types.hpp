@@ -1,7 +1,7 @@
 #pragma once
 
 #include "swegca_architecture/digest_bytes.hpp"
-#include "swegca_architecture/memory_ledger.hpp"
+#include "swegca_architecture/allocation.hpp"
 
 #include <compare>
 #include <cstddef>
@@ -33,7 +33,7 @@ template <class Tag>
 class TextIdentity final {
 public:
     // SWEGCA: src/swegca/mosaic_cognitive_kernel.py@5901a5a:19-21
-    TextIdentity(const MemoryLedger::Account& account, std::string_view value)
+    TextIdentity(const AllocationContext& account, std::string_view value)
         : value_(account.allocator<char>()) {
         detail::require_identity_text(value, Tag::name);
         value_.assign(value.data(), value.size());
@@ -45,7 +45,7 @@ public:
     auto operator<=>(const TextIdentity&) const = default;
 
 private:
-    std::basic_string<char, std::char_traits<char>, MemoryLedger::Allocator<char>> value_;
+    std::basic_string<char, std::char_traits<char>, AllocationAdapter<char>> value_;
 };
 
 struct OwnerIdTag { static constexpr std::string_view name = "owner_id"; };

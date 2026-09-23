@@ -7,6 +7,7 @@ namespace swegca::architecture {
 
 class StateSnapshot;
 struct MainInitialState;
+class AllocationContext;
 namespace detail { struct MainOwnerState; }
 
 // Complete owner definition prevents a caller defining a substitute friend.
@@ -14,7 +15,7 @@ namespace detail { struct MainOwnerState; }
 // Rule: reconstruction board §2.1, §3A and §10.1; SWEGCA I01, I07, I10.
 class MainOwner final {
 public:
-    MainOwner(MainInitialState initial, std::uint64_t memory_limit);
+    MainOwner(MainInitialState initial, AllocationContext allocation);
     MainOwner(const MainOwner&) = delete;
     MainOwner& operator=(const MainOwner&) = delete;
     MainOwner(MainOwner&&) = delete;
@@ -22,7 +23,6 @@ public:
     ~MainOwner();
 
     [[nodiscard]] StateSnapshot snapshot() const;
-    [[nodiscard]] std::uint64_t memory_requested() const noexcept;
 
 private:
     // Non-member storage receives no MainOwner friendship. In particular,

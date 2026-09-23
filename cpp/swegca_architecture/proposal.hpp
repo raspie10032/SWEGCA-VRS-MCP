@@ -1,7 +1,7 @@
 #pragma once
 
 #include "swegca_architecture/cognitive_state.hpp"
-#include "swegca_architecture/memory_ledger.hpp"
+#include "swegca_architecture/allocation.hpp"
 #include "swegca_architecture/native_tensor.hpp"
 #include "swegca_architecture/role_registry.hpp"
 
@@ -66,7 +66,7 @@ public:
     // or targets can be recorded as a producer output, but Main's Bind rejects
     // either before any authority-bearing path.
     // SWEGCA: src/swegca/mosaic_synapse_arbiter.py@5901a5a:54-93
-    SynapseProposal(const MemoryLedger::Account& memory,
+    SynapseProposal(const AllocationContext& memory,
                     const StateSnapshot& snapshot,
                     const SynapseProposalInput& input);
 
@@ -84,7 +84,7 @@ public:
     [[nodiscard]] const StateGeneration& based_on() const noexcept { return based_on_; }
     // SWEGCA: src/swegca/mosaic_synapse_arbiter.py@5901a5a:54-93
     [[nodiscard]] std::span<const std::basic_string<char, std::char_traits<char>,
-                                                     MemoryLedger::Allocator<char>>>
+                                                     AllocationAdapter<char>>>
     evidence_addresses() const noexcept { return evidence_addresses_; }
     // SWEGCA: src/swegca/mosaic_synapse_arbiter.py@5901a5a:54-93
     [[nodiscard]] const RoleMask& targets() const noexcept { return targets_; }
@@ -102,8 +102,8 @@ public:
     [[nodiscard]] const ScoreScalar& uncertainty() const noexcept { return uncertainty_; }
 
 private:
-    using Text = std::basic_string<char, std::char_traits<char>, MemoryLedger::Allocator<char>>;
-    using Addresses = std::vector<Text, MemoryLedger::Allocator<Text>>;
+    using Text = std::basic_string<char, std::char_traits<char>, AllocationAdapter<char>>;
+    using Addresses = std::vector<Text, AllocationAdapter<Text>>;
 
     ProducerId source_;
     ClaimRevision claim_;

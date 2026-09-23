@@ -132,10 +132,10 @@ void SuccessorStateKey::consume() {
 }
 
 // Callers define the schema of each payload and must supply its already
-// canonical bytes. The caller's MemoryLedger account enforces its injected
+// canonical bytes. The caller's allocation context enforces its injected
 // budget when these bytes are allocated.
 // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:83-93
-CanonicalPayload::CanonicalPayload(const MemoryLedger::Account& account,
+CanonicalPayload::CanonicalPayload(const AllocationContext& account,
                                    std::span<const std::byte> bytes)
     : bytes_(account.allocator<std::byte>()) {
     if (!bytes.empty()) bytes_.assign(bytes.begin(), bytes.end());
@@ -143,7 +143,7 @@ CanonicalPayload::CanonicalPayload(const MemoryLedger::Account& account,
 
 // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:83-93
 StructuredWorldGraph::StructuredWorldGraph(
-    const MemoryLedger::Account& account,
+    const AllocationContext& account,
     std::span<const WorldEntityInput> entities,
     std::span<const WorldRelationInput> relations)
     : entities_(account.allocator<WorldEntity>()),
@@ -232,9 +232,11 @@ StateGeneration CognitiveState::validated_generation(
             scratch_.shape().slots}))
             throw std::invalid_argument("initial_role_registry_shape_mismatch");
     } else {
-        if (semantic_.scalar_type() != prior->semantic_.scalar_type() ||
-            semantic_.shape().width != prior->semantic_.shape().width)
-            throw std::invalid_argument("successor_tensor_format_changed");
+        // A guarded write may promote all three partitions; an exact rollback
+        // may restore their earlier dtype. The writer checks the operation's
+        // dtype rule, while validate() checks their common successor dtype.
+        if (semantic_.shape().width != prior->semantic_.shape().width)
+            throw std::invalid_argument("successor_tensor_width_changed");
         if (semantic_.shape().slots < prior->semantic_.shape().slots ||
             executive_.shape().slots < prior->executive_.shape().slots ||
             scratch_.shape().slots < prior->scratch_.shape().slots)
@@ -314,10 +316,20 @@ void CognitiveState::validate() const {
 }
 
 // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:222-230
-StateSnapshot::StateSnapshot(std::shared_ptr<const CognitiveState> state)
-    : state_(std::move(state)) {
-    if (!state_)
+StateSnapshot::StateSnapshot(std::shared_ptr<const CognitiveState> state,
+                             std::shared_ptr<const void> main_lifetime)
+    : main_lifetime_(std::move(main_lifetime)), state_(std::move(state)) {
+    if (!state_ || !main_lifetime_)
         throw std::invalid_argument("state_snapshot_must_not_be_null");
+}
+
+// Keep both the old and the replacement Main leases alive while swapping
+// snapshots. The old state's last reference is released before its lease.
+// SWEGCA: user@2026-09-23:1
+StateSnapshot& StateSnapshot::operator=(StateSnapshot other) noexcept {
+    state_.swap(other.state_);
+    main_lifetime_.swap(other.main_lifetime_);
+    return *this;
 }
 
 // Moving a snapshot transfers its ownership; the emptied handle cannot expose

@@ -44,7 +44,7 @@ private:
 
 class CanonicalPayload final {
 public:
-    CanonicalPayload(const MemoryLedger::Account& account,
+    CanonicalPayload(const AllocationContext& account,
                      std::span<const std::byte> bytes);
 
     // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:83-93
@@ -55,7 +55,7 @@ public:
     auto operator<=>(const CanonicalPayload&) const = default;
 
 private:
-    std::vector<std::byte, MemoryLedger::Allocator<std::byte>> bytes_;
+    std::vector<std::byte, AllocationAdapter<std::byte>> bytes_;
 };
 
 struct WorldEntity final {
@@ -94,7 +94,7 @@ struct WorldRelationInput final {
 
 class StructuredWorldGraph final {
 public:
-    StructuredWorldGraph(const MemoryLedger::Account& account,
+    StructuredWorldGraph(const AllocationContext& account,
                          std::span<const WorldEntityInput> entities,
                          std::span<const WorldRelationInput> relations);
 
@@ -108,8 +108,8 @@ public:
     }
 
 private:
-    std::vector<WorldEntity, MemoryLedger::Allocator<WorldEntity>> entities_;
-    std::vector<WorldRelation, MemoryLedger::Allocator<WorldRelation>> relations_;
+    std::vector<WorldEntity, AllocationAdapter<WorldEntity>> entities_;
+    std::vector<WorldRelation, AllocationAdapter<WorldRelation>> relations_;
 };
 
 template <class Tag>
@@ -139,7 +139,7 @@ using ValueState = StateSection<ValueStateTag>;
 using SelfState = StateSection<SelfStateTag>;
 
 using EvidenceReferences =
-    std::vector<ExperienceAddress, MemoryLedger::Allocator<ExperienceAddress>>;
+    std::vector<ExperienceAddress, AllocationAdapter<ExperienceAddress>>;
 
 // The only persistent state type. Construction requires either Main's initial
 // key or the guarded writer's successor key; producers receive StateSnapshot.
@@ -222,8 +222,8 @@ class StateSnapshot final {
 public:
     StateSnapshot(const StateSnapshot&) = default;
     StateSnapshot(StateSnapshot&&) noexcept = default;
-    StateSnapshot& operator=(const StateSnapshot&) = default;
-    StateSnapshot& operator=(StateSnapshot&&) noexcept = default;
+    // SWEGCA: user@2026-09-23:1
+    StateSnapshot& operator=(StateSnapshot other) noexcept;
 
     // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:199-200
     [[nodiscard]] const CognitiveState& state() const;
@@ -232,8 +232,10 @@ private:
     friend class MainOwner;
 
     // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:222-230
-    explicit StateSnapshot(std::shared_ptr<const CognitiveState> state);
+    explicit StateSnapshot(std::shared_ptr<const CognitiveState> state,
+                           std::shared_ptr<const void> main_lifetime);
 
+    std::shared_ptr<const void> main_lifetime_;
     std::shared_ptr<const CognitiveState> state_;
 };
 

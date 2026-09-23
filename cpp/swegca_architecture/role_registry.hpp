@@ -1,6 +1,6 @@
 #pragma once
 
-#include "swegca_architecture/memory_ledger.hpp"
+#include "swegca_architecture/allocation.hpp"
 #include "swegca_architecture/strong_types.hpp"
 
 #include <compare>
@@ -49,13 +49,13 @@ struct RolePartitionSizes final {
 // Rule: state subsystem, reconstruction board@7c0b62f:83-93.
 class RoleRegistry final {
 public:
-    RoleRegistry(const MemoryLedger::Account& account,
+    RoleRegistry(const AllocationContext& account,
                  std::span<const RoleDefinition> definitions);
-    RoleRegistry(const MemoryLedger::Account& account,
+    RoleRegistry(const AllocationContext& account,
                  std::span<const RoleDefinitionInput> definitions);
 
     [[nodiscard]] static RoleRegistry initial_profile(
-        const MemoryLedger::Account& account, RolePartitionSizes sizes);
+        const AllocationContext& account, RolePartitionSizes sizes);
     [[nodiscard]] bool matches_initial_profile(RolePartitionSizes sizes) const;
     [[nodiscard]] RoleRegistry with_appended(RoleDefinition definition) const;
 
@@ -72,14 +72,14 @@ public:
 
 private:
     friend class RoleMask;
-    using Definitions = std::vector<RoleDefinition, MemoryLedger::Allocator<RoleDefinition>>;
-    using IdText = std::basic_string<char, std::char_traits<char>, MemoryLedger::Allocator<char>>;
+    using Definitions = std::vector<RoleDefinition, AllocationAdapter<RoleDefinition>>;
+    using IdText = std::basic_string<char, std::char_traits<char>, AllocationAdapter<char>>;
     using IdEntry = std::pair<const IdText, std::size_t>;
-    RoleRegistry(const MemoryLedger::Account& account, Definitions definitions);
+    RoleRegistry(const AllocationContext& account, Definitions definitions);
 
-    MemoryLedger::Account memory_;
+    AllocationContext memory_;
     Definitions definitions_;
-    std::map<IdText, std::size_t, std::less<>, MemoryLedger::Allocator<IdEntry>> by_id_;
+    std::map<IdText, std::size_t, std::less<>, AllocationAdapter<IdEntry>> by_id_;
     Digest256 digest_;
 };
 
@@ -113,7 +113,7 @@ public:
     auto operator<=>(const RoleMask&) const = default;
 
 private:
-    using Words = std::vector<std::uint64_t, MemoryLedger::Allocator<std::uint64_t>>;
+    using Words = std::vector<std::uint64_t, AllocationAdapter<std::uint64_t>>;
     RoleMask(const RoleRegistry& registry, Words words);
 
     std::size_t role_count_;
