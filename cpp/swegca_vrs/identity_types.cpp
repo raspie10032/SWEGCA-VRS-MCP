@@ -122,10 +122,6 @@ void require_identity_text(std::string_view value, std::string_view field) {
 
 }  // namespace detail
 
-// SWEGCA: src/swegca/mosaic_bounded_world_write.py@5901a5a:175-188
-StateGeneration::StateGeneration(std::uint64_t ordinal, Digest256 digest)
-    : ordinal_(ordinal), digest_(std::move(digest)) {}
-
 // SWEGCA: src/swegca/mosaic_evidence_accumulator.py@5901a5a:97-135
 ClaimRevision::ClaimRevision(ClaimId claim, std::uint64_t revision)
     : claim_(std::move(claim)), revision_(revision) {
