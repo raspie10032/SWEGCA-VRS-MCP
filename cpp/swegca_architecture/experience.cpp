@@ -1451,8 +1451,8 @@ SelectionReceipt<NoAuthority> ExperienceSelector::select(const SelectionQuery& q
     LedgerVector<Hit> hits(memory.allocator<Hit>());
     for (const auto cue : cues) {
         with_cue_entry(cue, [&](char kind, std::string_view value) {
-            journal.for_each_index_match(kind, value, [&](std::string_view address,
-                                                          const journal::RecordPosition& position) {
+            const auto collect_hit = [&](std::string_view address,
+                                         const journal::RecordPosition& position) {
                 if (position.sequence > universe.record_count) return true;  // after U
                 if (hits.size() >= policy_.max_retrieved) fail("experience_select_over_policy");
                 const auto at = keys.size();
@@ -1460,7 +1460,8 @@ SelectionReceipt<NoAuthority> ExperienceSelector::select(const SelectionQuery& q
                 keys.insert(keys.end(), bytes, bytes + address.size());
                 hits.push_back(Hit{at, address.size(), position});
                 return true;
-            });
+            };
+            journal.for_each_index_match(kind, value, collect_hit);
         });
     }
     const auto key_of = [&keys](const Hit& hit) {

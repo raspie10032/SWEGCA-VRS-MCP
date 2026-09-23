@@ -305,12 +305,14 @@ public:
     // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:475-507
     template <class F>
         requires(!std::is_same_v<std::remove_cvref_t<F>, IndexVisitor> &&
-                 std::is_object_v<std::remove_reference_t<F>> &&
-                 std::is_invocable_r_v<bool, std::remove_reference_t<F>&, std::string_view,
+                 std::is_object_v<F> &&
+                 std::is_invocable_r_v<bool, F&, std::string_view,
                                        const RecordPosition&>)
-    IndexVisitor(F&& visit) noexcept  // NOLINT(google-explicit-constructor)
+    IndexVisitor(F& visit) noexcept  // NOLINT(google-explicit-constructor)
         : target_(static_cast<const void*>(std::addressof(visit))),
-          call_(&invoke<std::remove_reference_t<F>>) {}
+          call_(&invoke<F>) {}
+    template <class F>
+    IndexVisitor(const F&&) = delete;
 
     // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:475-507
     bool operator()(std::string_view address, const RecordPosition& position) const {
