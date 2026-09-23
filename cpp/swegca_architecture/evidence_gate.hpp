@@ -1,7 +1,6 @@
 #pragma once
 
 #include "swegca_architecture/evidence_accumulator.hpp"
-#include "swegca_architecture/experience.hpp"
 #include "swegca_architecture/memory_ledger.hpp"
 #include "swegca_architecture/proposal.hpp"
 
@@ -13,6 +12,8 @@
 // arbitration, guarded authorization, and publication are later Main stages.
 // Rule: ARCHITECTURE_SPEC.md@5901a5a:135,154-174; board §3D, §5, §10.5.
 namespace swegca::architecture {
+
+class ExperienceJournal;
 
 enum BindFailure : std::uint32_t {
     bind_foreign_decision = 1u << 0,

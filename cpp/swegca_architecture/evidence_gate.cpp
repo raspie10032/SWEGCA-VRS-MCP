@@ -1,5 +1,6 @@
 #include "swegca_architecture/evidence_gate.hpp"
 
+#include "swegca_architecture/experience.hpp"
 #include "swegca_architecture/sha256.hpp"
 
 #include <algorithm>
