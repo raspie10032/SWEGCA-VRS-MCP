@@ -767,3 +767,15 @@ architecture and its test-condition list have passed static review
 - Final physical page sizes and compaction schedule must satisfy 4 GB RAM,
   500 GB disk, 5 Gbps SSD, and 16-worker limits without deleting any
   architecture stage or Main authority check.
+- Main genesis publication depends on a **real primary strength root**.
+  `MainCommitMarkerFields` already requires a nonzero `strength_root_digest`,
+  but `ManifestFields` has no strength-root position and the journal has no
+  strength-record codec. A digest with no published record cannot verify the
+  Main-owned synapse strengths after restart. The architecture phase must
+  define and publish a canonical empty f32 root, its bounded-part locator,
+  and the marker-to-manifest binding before Main selects genesis. The VRS
+  strength update and four-stage read behavior remain in step 11. This
+  follows the primary durable experience rule in
+  `SWEGCA_CPP_VRS_LAYER_PLAN.md` lines 23-32 and the Main storage contract
+  in `SWEGCA_CPP_MAIN_STATE_STORAGE_REVIEW.md` lines 164-181; it does not
+  declare a placeholder strength table to be a verified publication.
