@@ -423,9 +423,58 @@ Decided by the user (18:2x):
   original with the highest VRS strength (reliability comes from strength,
   16:4x); current by the author's versioned rule
   (mosaic_versioned_memory.py@5901a5a:391 excludes non-current). Not cue
-  overlap: overlap is duplication (18:0x). Open: the tie rule among equal
-  strengths (proposed: the author's address order,
-  mosaic_unrestricted_experience.py@5901a5a:501 sorts candidate addresses).
+  overlap: overlap is duplication (18:0x). Ties, the user (18:3x): "정말
+  희박한 확률이겠지만 vrs 강도가 같다면, 5건 까지는 다 불러와." When
+  several current originals share the highest strength, Replay opens up to
+  five. Open: which five when six or more tie (proposed, the author's address
+  order, mosaic_unrestricted_experience.py@5901a5a:501; held until the user
+  confirms, codex 18:24). The user (18:3x) on how often ties occur: "옛
+  스토어는 검증 규칙을 무시하고 단순하게 중복은 증폭시켜서 그 사단이
+  난거고... 이론상 vrs 강도 겹침은 꽤 희박해야 정상임..."; the cap is a
+  guard for a rare case.
+- One experience's strength (codex 18:25 asked for its source). In the
+  author's VRS memory an experience is an edge ("vrs-edge:N") or a
+  canonical edge group ("vrs-edge-group:N"), and its strength is that
+  group's strength with no aggregation:
+  `ResidentVrsStrengthIndex.strength`,
+  tinylm-slicer-sanabi-bazzite@3bddcb7:src/tinylm_slicer/mosaic_paper_vrs_resident_adapter.py:31-43, :92-96
+  (from c925bd7d9d, 2026-09-05); a missing group reads 0.0. Duplicate edges
+  merge into one canonical group whose strength is the occurrence-weighted
+  mean (mosaic_vrs_canonicalization.py@3bddcb7:285-295, :403; from
+  089f4db3ab, 2026-09-01), the same shape as the user's duplicate rule. Open:
+  the author's group key, and how it maps to "same published address".
+  3bddcb7 (2026-09-13) is that repository's origin/main, the revision the
+  prior `cpp/` tags as `src/tinylm_slicer/*@3bddcb7`: those rows of 6.1 are
+  author-sourced and are to be separated from the rows tagged at the
+  prior engine (7536139, c06092a).
+- Speed of that choice (codex 18:27): scanning every Recall candidate for the
+  highest strength grows with a broad cue's fanout and breaks the Déjà vu to
+  Recall budget. The current top addresses by strength must be kept
+  incrementally where the caller index and region pages are, updated when a
+  strength changes; no unsourced cap or approximate top-k.
+- Where the kernel meets the verifier (codex 18:26): `refine_vrs`'s stable
+  test is boolean (compatibility, informed, not unresolved); the core
+  verifier is ternary. Abstain is not mapped to either side by us; the
+  junction needs a source.
+- Parallel form (codex 18:28; user profile: 16 threads, no one-thread
+  bottleneck): the propagation in shuffled order is order dependent and is
+  kept as ordered; the per-edge re-verification and strength update after
+  it are independent and parallel.
+
+State generation, the user (18:3x): "애초에 세대번호는 그냥 기록시간으로
+외부에 두면 되는거 아니냐 굳이 넘버링안하고 시간으로 두면 시간선흐름정도는
+추측이 될거같은데". The state's identity is its content digest, as the
+author's `cognitive_state_hash` (mosaic_bounded_world_write.py@5901a5a:262-283)
+has no ordinal. No separate ordinal counter is kept (codex 18:31). A
+bit-exact rollback reuses the same content root, so the root's first
+position cannot tell before from after: every state transition (and the
+initialisation) publishes its own receipt record with a new sequence and
+record digest; the manifest names (content digest, latest publication
+position and digest), and compare-and-swap is on that publication identity.
+The record time sits only in the transition receipt, as a timeline for
+people, never as order or authority. The author's write revision
+(self_state `_WRITE_KEY`, mosaic_bounded_world_write.py@5901a5a:384) stays a
+content field and rewinds with a rollback.
 - The conflict that triggers Re-evidence: "흑백논리라면 반대결과가 맞지만
   3상으로 취급하는 이상 같은 상이 아니면 불러와서 재검증." Any difference
   between the current input's state and the experience's state among accept,
