@@ -413,6 +413,14 @@ struct JournalRoot {
     Digest manifest_digest{};
 };
 
+// Data from one published journal snapshot. Main uses both fields from this
+// same generation when preparing its external commit marker; neither field
+// is a Main authority token by itself.
+struct PublishedCoordinates {
+    JournalRoot root;
+    StateHeadReference state_head;
+};
+
 class JournalStore final {
 public:
     // This lower-journal open still adopts its own HEAD and removes or cuts
@@ -502,6 +510,11 @@ public:
     // and the snapshot lives as long as the returned pointer.
     [[nodiscard]] std::shared_ptr<const Manifest> head() const;
     [[nodiscard]] StateHeadReference state_head() const;
+    // Captures the root locator and state head together, preventing a marker
+    // assembled from two unrelated journal generations.
+    // Lineage: native mechanism — one manifest names one state publication.
+    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:587-590
+    [[nodiscard]] PublishedCoordinates publication_coordinates() const;
     // Charged on-disk use of the published journal, in bytes, including page
     // logs a view rewrite left behind that are not yet removed.
     [[nodiscard]] std::uint64_t storage_charged() const;

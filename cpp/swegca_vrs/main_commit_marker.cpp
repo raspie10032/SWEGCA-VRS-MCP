@@ -130,4 +130,19 @@ DigestBytes main_commit_marker_digest(std::span<const std::byte> payload) {
     return Sha256::of(payload);
 }
 
+// Lineage: native mechanism — Main's receipt must name the actual published journal HEAD.
+// SWEGCA: src/tinylm_slicer/mosaic_paper_resident_assimilation.py@3bddcb7:491-535
+void validate_main_marker_journal_binding(const MainCommitMarkerFields& marker,
+                                          const journal::JournalStore& store) {
+    check(marker);
+    const auto current = store.publication_coordinates();
+    const auto& named = marker.journal_root.location;
+    const auto& actual = current.root.location;
+    if (named.log_ordinal != actual.log_ordinal || named.offset != actual.offset ||
+        named.length != actual.length ||
+        marker.journal_root.manifest_digest != current.root.manifest_digest ||
+        marker.state_head != current.state_head)
+        throw std::runtime_error("main_commit_marker_journal_mismatch");
+}
+
 }  // namespace swegca::vrs
