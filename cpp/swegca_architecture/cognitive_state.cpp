@@ -12,8 +12,10 @@
 namespace swegca::architecture {
 namespace {
 
-// Canonical state fields use fixed order, little-endian integers and explicit
-// lengths. The domain tag separates this digest from every other SWEGCA hash.
+// Canonical state content uses fixed order, little-endian integers and
+// explicit lengths. Generation ordinal is a separate identity component:
+// rollback restores the before-content hash at a new ordinal.
+// The domain tag separates this digest from every other SWEGCA hash.
 // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3f:567-572
 void hash_u8(Sha256& hash, std::uint8_t value) {
     const std::array bytes{static_cast<std::byte>(value)};
@@ -69,15 +71,14 @@ EvidenceReferences canonical_evidence(EvidenceReferences addresses) {
 
 // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3f:567-572
 Digest256 state_digest(
-    const OwnerId& owner, std::uint64_t ordinal, const RoleRegistry& roles,
+    const OwnerId& owner, const RoleRegistry& roles,
     const CognitiveTensor& semantic, const CognitiveTensor& executive,
     const CognitiveTensor& scratch, const StructuredWorldGraph& graph,
     std::span<const ExperienceAddress> evidence, const GoalState& goals,
     const ValueState& values, const SelfState& self) {
     Sha256 hash;
-    hash.update("swegca.cognitive_state.v1");
+    hash.update("swegca.cognitive_state.content.v1");
     hash_text(hash, owner.value());
-    hash_u64(hash, ordinal);
 
     hash_u64(hash, roles.size());
     for (const auto& role : roles.definitions()) {
@@ -252,7 +253,7 @@ StateGeneration CognitiveState::validated_generation(
     }
     const auto ordinal = prior == nullptr ? 0 : next_ordinal(*prior);
     return StateGeneration(ordinal, state_digest(
-        owner_, ordinal, roles_, semantic_, executive_, scratch_, world_graph_,
+        owner_, roles_, semantic_, executive_, scratch_, world_graph_,
         evidence_references_, goals_, values_, self_));
 }
 

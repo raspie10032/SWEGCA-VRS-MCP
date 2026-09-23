@@ -74,8 +74,9 @@ crash cases before code uses it.
    pointer because HEAD replacement may already have happened. It stops
    guarded work and reopens from the published HEAD before another write.
 6. Initialization, cold recovery, and guarded writes must fit the VRS host's
-   configured memory profile, preserve the canonical state byte stream, and
-   compute the same `swegca.cognitive_state.v1` digest. The host VRS layer
+   configured memory profile and preserve the canonical state content byte
+   stream. Its content digest excludes generation ordinal, as the original
+   bounded writer's bit-exact rollback check requires. The host VRS layer
    counts memory and judges its configured limit; the SWEGCA code uses its
    injected allocator.
 7. State part, root, and receipt records use reserved nonzero kinds with zero
@@ -98,11 +99,10 @@ crash cases before code uses it.
   already a `JournalStore` friend and can use one held snapshot with its
   private `resolve_in` and `read_in`; an `ExperienceAddress` wrapper is wrong
   for a state record.
-- The existing state digest includes its generation ordinal. A bit-exact
-  rollback creates a new successor ordinal, so it does not reuse the former
-  state digest or root address. Keep write receipts separate from the state
-  root; the root binds canonical state fields, while the manifest names the
-  current ordinal and the receipt records write lineage.
+- The state content digest excludes generation ordinal. A bit-exact rollback
+  may reuse the former content root at a new ordinal; the manifest names that
+  ordinal separately. Keep write receipts separate from the state root. The
+  root binds canonical content while receipts record write lineage.
 - Encode enough canonical state fields and typed tensor-part references in
   the root to reconstruct and recompute the existing state digest exactly.
   A root payload that exceeds one record must itself use bounded parts.
