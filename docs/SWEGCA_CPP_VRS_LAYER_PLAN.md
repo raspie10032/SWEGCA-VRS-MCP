@@ -350,6 +350,13 @@ c06092a) and at `src/tinylm_slicer/*@3bddcb7` (not in this repository).
 The author's `src/swegca` has no VRS code; only rule 8 has an author
 source there. The original experiment repository above does.
 
+`src/tinylm_slicer/*@3bddcb7` is the author's: 3bddcb7 (2026-09-13) is the
+origin/main of the original experiment repository
+`tinylm-slicer-sanabi-bazzite` (committer raspie10032). In the table those
+tags (row 3: portal_activation@3bddcb7:81-122, local_navigation@3bddcb7:57-107)
+are author sources; the tags at `src/swegca_vrs2/engine/*.py` (7536139,
+c06092a) are the prior engine and are traces only.
+
 | Part | Prior `cpp/` | Its tag | Prior trace (not a rule source) | In the rebuild |
 |---|---|---|---|---|
 | 1 Blocks | connectivity_regions.cpp:311 `ConnectivityRegions::build` (local_moves :151, communities :205, memberships :233); graph_regions.cpp:112 | mosaic_vrs_connectivity_regions.py@7536139:159-199, :47-78, :81-96, :99-118; store.py@7536139:282-298 | regions by modularity over the experience/cue graph (move score w_in - deg*tot/mass, sweeps 100, levels 32); membership = neighbour mass / total, a node may belong to several; only affected components recomputed; not published unless converged | missing |
@@ -441,8 +448,16 @@ Decided by the user (18:2x):
   (from c925bd7d9d, 2026-09-05); a missing group reads 0.0. Duplicate edges
   merge into one canonical group whose strength is the occurrence-weighted
   mean (mosaic_vrs_canonicalization.py@3bddcb7:285-295, :403; from
-  089f4db3ab, 2026-09-01), the same shape as the user's duplicate rule. Open:
-  the author's group key, and how it maps to "same published address".
+  089f4db3ab, 2026-09-01), the same shape as the user's duplicate rule. The
+  group key is (source node, target node, sign)
+  (mosaic_vrs_canonicalization.py@3bddcb7:16, :273, :346, "Fold appended rows
+  into endpoint-sign groups"); every original row stays a logical member and
+  "vrs-edge:N" reads its group's strength
+  (mosaic_paper_vrs_resident_adapter.py@3bddcb7:41-51). Mapping (msg 205): an
+  original experience (one published address) is one member; evidence counts
+  once per address (the accumulator's seen addresses); strength is shared by
+  the endpoint-sign group, so members of the top group tie and the five-item
+  rule applies. Nodes are terms, the caller side, as cues are.
   3bddcb7 (2026-09-13) is that repository's origin/main, the revision the
   prior `cpp/` tags as `src/tinylm_slicer/*@3bddcb7`: those rows of 6.1 are
   author-sourced and are to be separated from the rows tagged at the
