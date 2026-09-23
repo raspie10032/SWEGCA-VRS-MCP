@@ -219,6 +219,9 @@ struct Interval {
         narrow_axis |= t.axis_source_diversity[axis] < r.minimum_axis_source_diversity_;
     }
     const double samples = supports + refutes;
+    // D8(h), I04: an invalid tally must abstain. The author's Python lets
+    // finite components overflow the posterior to NaN and can then accept;
+    // this explicit fail-closed guard deliberately rejects that arithmetic.
     if (!std::isfinite(samples)) return out;
     const double posterior_numerator = supports + r.prior_alpha_;
     const double posterior_denominator = samples + r.prior_alpha_ + r.prior_beta_;
