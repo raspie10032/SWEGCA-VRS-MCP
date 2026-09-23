@@ -97,7 +97,8 @@ public:
     // Calls `probe` for a previously published address, or copies a new part
     // into one bounded batch. Identical addresses inside the batch are reused
     // only if their full bytes match. Flushes before the next part would put
-    // that generation over the journal's 64 MiB exact encoded-size limit.
+    // that generation over the journal's 64 MiB encoded-size limit, reserving
+    // one segment header even when the journal may append to an existing tail.
     // Lineage: native mechanism — the state root reuses immutable part addresses across generations.
     // SWEGCA: docs/SWEGCA_CPP_VRS_LAYER_PLAN.md@472d23225c973fa0a33581afd6bd9026df6fc98a:64
     void add(const DigestBytes& digest, std::span<const std::byte> payload);

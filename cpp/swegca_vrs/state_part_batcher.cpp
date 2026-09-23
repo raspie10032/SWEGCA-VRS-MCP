@@ -100,7 +100,7 @@ void StatePartBatcher::flush() {
     // The consumer may have published before reporting a failure. Never
     // retry this batch from the same object without Main reconciliation.
     failed_ = true;
-    consume_(drafts_);
+    consume_(std::span<const journal::RecordDraft>(drafts_.data(), drafts_.size()));
     failed_ = false;
     parts_.clear();
     drafts_.clear();
