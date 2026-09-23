@@ -189,6 +189,9 @@ CognitiveTensor CognitiveTensor::with_replaced_slot(
     return CognitiveTensor(scalar_type_, shape_, byte_count_, std::move(result));
 }
 
+// This compares the exact stored state representation. It is C++ storage
+// identity, not the author's tensor elementwise numeric equality: +0 and -0
+// compare differently here because the retained bits also enter state hashes.
 // SWEGCA: src/swegca/mosaic_cognitive_kernel.py@5901a5a:175-254
 bool CognitiveTensor::operator==(const CognitiveTensor& other) const noexcept {
     if (scalar_type_ != other.scalar_type_ || shape_ != other.shape_ ||
@@ -199,6 +202,8 @@ bool CognitiveTensor::operator==(const CognitiveTensor& other) const noexcept {
     return true;
 }
 
+// Lexicographic ordering is additional C++ storage infrastructure. The
+// original CognitiveState has no tensor ordering contract.
 // SWEGCA: src/swegca/mosaic_cognitive_kernel.py@5901a5a:175-254
 std::strong_ordering CognitiveTensor::operator<=>(const CognitiveTensor& other) const noexcept {
     if (const auto order = scalar_type_ <=> other.scalar_type_; order != 0)

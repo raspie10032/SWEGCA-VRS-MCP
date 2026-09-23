@@ -346,6 +346,9 @@ ArbitrationOutcome ProposalArbiter::arbitrate_typed(
     hash_u64(receipt, failures);
     receipt.update(std::as_bytes(std::span<const std::uint8_t>(accepted)));
     receipt.update(std::as_bytes(std::span<const std::uint8_t>(conflict)));
+    // This C++ receipt binds the exact encoded proposal bytes. Its digest can
+    // distinguish +0 from -0 even when both leave changed_mask clear; the
+    // author's numeric dirty test supplies the mask, not this hash identity.
     receipt.update(std::span<const std::byte>(encoded));
     hash_u64(receipt, changed_mask.role_count());
     for (const auto word : changed_mask.words()) hash_u64(receipt, word);
