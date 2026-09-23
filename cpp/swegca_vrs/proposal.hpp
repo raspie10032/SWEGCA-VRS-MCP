@@ -1,9 +1,9 @@
 #pragma once
 
-#include "swegca_vrs/core_allocation.hpp"
+#include "swegca_vrs/allocation.hpp"
 
 #include "swegca_vrs/cognitive_state.hpp"
-#include "swegca_architecture/allocation.hpp"
+#include "swegca_vrs/allocation.hpp"
 #include "swegca_vrs/native_tensor.hpp"
 #include "swegca_vrs/role_registry.hpp"
 

@@ -1,8 +1,8 @@
 #pragma once
 
-#include "swegca_vrs/core_allocation.hpp"
+#include "swegca_vrs/allocation.hpp"
 
-#include "swegca_architecture/allocation.hpp"
+#include "swegca_vrs/allocation.hpp"
 #include "swegca_vrs/identity_types.hpp"
 
 #include <compare>

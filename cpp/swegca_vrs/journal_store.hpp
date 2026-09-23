@@ -1,13 +1,13 @@
 #pragma once
 
-#include "swegca_vrs/core_allocation.hpp"
+#include "swegca_vrs/allocation.hpp"
 
 #include "swegca_vrs/journal_file_io.hpp"
 #include "swegca_vrs/journal_extent_index.hpp"
 #include "swegca_vrs/journal_format.hpp"
 #include "swegca_vrs/journal_position.hpp"
 #include "swegca_vrs/authority_roles.hpp"
-#include "swegca_architecture/allocation.hpp"
+#include "swegca_vrs/allocation.hpp"
 #include "swegca_vrs/identity_types.hpp"
 
 #include <atomic>

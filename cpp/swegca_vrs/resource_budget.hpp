@@ -1,20 +1,20 @@
 #pragma once
 
-#include "swegca_architecture/allocation.hpp"
+#include "swegca_vrs/allocation.hpp"
 
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
 
 // The VRS host selects a resource profile for its workload. The baseline
-// profile can be 4 GB; a larger workload may select a larger budget. SWEGCA
-// receives only the abstract AllocationResource interface. Weak source
+// profile can be 4 GB; a larger workload may select a larger budget. VRS
+// components receive the abstract AllocationResource interface. Weak source
 // analogy: the reviewed flow requires hard budgets; the 4 GB baseline and
 // VRS-owned accounting came from the user's later direct clarification.
 // SWEGCA: user@2026-09-22:89-92
 namespace swegca::vrs {
 
-class RequestedMemoryBudget final : public architecture::AllocationResource {
+class RequestedMemoryBudget final : public AllocationResource {
 public:
     // SWEGCA: user@2026-09-22:89-92
     explicit RequestedMemoryBudget(std::uint64_t limit_bytes);

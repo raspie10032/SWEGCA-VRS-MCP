@@ -1,7 +1,7 @@
 #include "swegca_vrs/main_owner.hpp"
 
 #include "swegca_vrs/authority.hpp"
-#include "swegca_architecture/allocation.hpp"
+#include "swegca_vrs/allocation.hpp"
 
 #include <atomic>
 #include <memory>

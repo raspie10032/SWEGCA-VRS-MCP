@@ -54,7 +54,7 @@ journal or index, counts no resource, and writes no state.
 |---|---|---|
 | digest_bytes, sha256, strong_types | core | digest values the verifier uses |
 | identity_types | VRS | identity validation, owner and experience tags, state generation and claim revision |
-| allocation (codex 408d4e2/3923503) | core | the abstract allocator the host supplies |
+| allocation (codex 408d4e2/3923503) | VRS | the abstract allocator the VRS host supplies; the verifier no longer allocates |
 | byte codec (`ByteReader`, `ByteWriter`, buffer aliases, in journal_format.hpp) | VRS | the core does not use it: the accumulator hashes its own length-prefixed fields; it encodes records, envelopes and cognition |
 | evidence_kernel (was judgment_kernel): EvidenceStatus, EvidenceReason, EvidenceTally, EvidenceJudgment, columns, EvidenceRules, wilson_interval, judge_evidence(_batch); evidence_rules (was judgment_rules): EvidencePolicy, make_evidence_rules, evidence_policy_digest, standard_normal_quantile | core | the ternary judgment itself (accept, reject, abstain) and its configuration |
 | gate_kernel (from judgment_kernel): GateCondition, GateInput, GateFailure, GateRules, authorize_target(_batch), GateColumns; arbiter_kernel: ArbiterRules, ProposalScores, ArbiterShape, ArbiterBuffers, stable_norm, arbiter_input_valid, arbitrate; gate_rules, arbiter_rules (from judgment_rules): GatePolicy, ArbiterPolicy and their make_ functions | VRS | the gate's output is a write-authorization failure mask and the arbiter's a proposal weight and delta, not a verdict (codex 16:55); both stay pure batch kernels, every condition bit and check kept |

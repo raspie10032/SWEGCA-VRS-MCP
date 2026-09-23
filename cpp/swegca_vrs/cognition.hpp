@@ -2,12 +2,12 @@
 
 #include "swegca_vrs/core_digest.hpp"
 #include "swegca_vrs/core_kernel.hpp"
-#include "swegca_vrs/core_allocation.hpp"
+#include "swegca_vrs/allocation.hpp"
 
 #include "swegca_architecture/digest_bytes.hpp"
 #include "swegca_vrs/journal_format.hpp"
 #include "swegca_architecture/evidence_kernel.hpp"
-#include "swegca_architecture/allocation.hpp"
+#include "swegca_vrs/allocation.hpp"
 #include "swegca_vrs/identity_types.hpp"
 
 #include <cstddef>

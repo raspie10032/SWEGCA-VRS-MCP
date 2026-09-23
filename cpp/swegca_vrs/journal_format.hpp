@@ -1,13 +1,13 @@
 #pragma once
 
 #include "swegca_vrs/core_digest.hpp"
-#include "swegca_vrs/core_allocation.hpp"
+#include "swegca_vrs/allocation.hpp"
 #include "swegca_vrs/core_sha256.hpp"
 
 #include "swegca_vrs/authority.hpp"
 #include "swegca_architecture/digest_bytes.hpp"
 #include "swegca_vrs/journal_position.hpp"
-#include "swegca_architecture/allocation.hpp"
+#include "swegca_vrs/allocation.hpp"
 #include "swegca_architecture/sha256.hpp"
 #include "swegca_vrs/identity_types.hpp"
 

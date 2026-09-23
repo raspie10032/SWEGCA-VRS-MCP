@@ -1,6 +1,6 @@
 #pragma once
 
-#include "swegca_architecture/allocation.hpp"
+#include "swegca_vrs/allocation.hpp"
 #include "swegca_architecture/strong_types.hpp"
 
 #include <compare>
@@ -12,8 +12,6 @@
 
 namespace swegca::vrs {
 
-using architecture::AllocationAdapter;
-using architecture::AllocationContext;
 using architecture::Digest256;
 
 namespace detail {

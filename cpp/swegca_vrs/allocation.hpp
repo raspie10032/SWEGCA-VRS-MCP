@@ -7,15 +7,15 @@
 #include <stdexcept>
 #include <utility>
 
-// SWEGCA consumes an allocator supplied by its host. Counting requested bytes,
+// VRS consumes an allocator supplied by its host. Counting requested bytes,
 // setting a memory budget, and deciding whether that budget is exhausted are
-// SWEGCA-VRS runtime responsibilities. The resource stays alive while any
+// VRS runtime responsibilities. The resource stays alive while any
 // container or snapshot still owns an AllocationAdapter copied from it. Weak
 // source analogy: the approved flow requires hard host budgets; the abstract
 // allocator is native C++ infrastructure for the user's later clarification
-// that VRS, not SWEGCA core, owns the count and limit.
+// that VRS owns the count and limit.
 // SWEGCA: user@2026-09-22:89-92
-namespace swegca::architecture {
+namespace swegca::vrs {
 
 // The VRS host throws this when its configured allocation budget refuses a
 // request. A physical allocation failure remains std::bad_alloc, so a page
@@ -100,4 +100,4 @@ private:
     std::shared_ptr<AllocationResource> resource_;
 };
 
-}  // namespace swegca::architecture
+}  // namespace swegca::vrs

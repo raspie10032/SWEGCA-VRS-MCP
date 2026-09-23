@@ -1,10 +1,10 @@
 #pragma once
 
-#include "swegca_vrs/core_allocation.hpp"
+#include "swegca_vrs/allocation.hpp"
 
 #include "swegca_vrs/cognitive_state.hpp"
 #include "swegca_vrs/arbiter_rules.hpp"
-#include "swegca_architecture/allocation.hpp"
+#include "swegca_vrs/allocation.hpp"
 #include "swegca_vrs/proposal.hpp"
 
 #include <cstddef>

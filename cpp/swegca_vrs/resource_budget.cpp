@@ -18,7 +18,7 @@ RequestedMemoryBudget::RequestedMemoryBudget(std::uint64_t limit_bytes)
 void* RequestedMemoryBudget::allocate(std::size_t bytes, std::size_t alignment) {
     auto used = used_.load(std::memory_order_relaxed);
     do {
-        if (bytes > limit_ - used) throw architecture::AllocationRefused{};
+        if (bytes > limit_ - used) throw AllocationRefused{};
     } while (!used_.compare_exchange_weak(used, used + bytes,
                                           std::memory_order_acq_rel,
                                           std::memory_order_relaxed));
