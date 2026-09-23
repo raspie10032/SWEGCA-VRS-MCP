@@ -279,6 +279,45 @@ private:
     std::optional<BoundedWriteHead> write_head_;
 };
 
+class AutonomyControl;
+
+// Main's typed autonomy control inside the state: the canonical bytes of one
+// AutonomyControl. The author keeps these keys in the goal_state and
+// self_state mappings and reads each with .get(), an absent key reading as
+// None or the phase/step default. This whole-control form is exact for those
+// reads, not for the mapping: absence versus a None value per key, and a
+// partial initial mapping, are not represented; no byte- or map-exact Python
+// equivalence is claimed. Absent control (nullopt in CognitiveState) is the
+// author's absent keys; a present control may be the explicit initial one.
+// Lineage: native mechanism — reserved typed keys beside an opaque payload, as for the write head.
+// SWEGCA: src/swegca/mosaic_autonomous_cognition.py@5901a5a:150-186
+class AutonomyState final {
+public:
+    // The canonical bytes of `control`, on `account`.
+    // SWEGCA: src/swegca/mosaic_autonomous_cognition.py@5901a5a:167-186
+    [[nodiscard]] static AutonomyState encode(const AllocationContext& account,
+                                              const AutonomyControl& control);
+    // Copies `bytes` onto `account` only if they decode as one control and
+    // re-encode to the same bytes (`autonomy_state_not_canonical` otherwise).
+    // SWEGCA: src/swegca/mosaic_autonomous_cognition.py@5901a5a:167-186
+    [[nodiscard]] static AutonomyState decode(const AllocationContext& account,
+                                              std::span<const std::byte> bytes);
+
+    // SWEGCA: src/swegca/mosaic_autonomous_cognition.py@5901a5a:150-186
+    [[nodiscard]] std::span<const std::byte> bytes() const noexcept {
+        return payload_.bytes();
+    }
+    // The control these bytes encode, decoded onto `account`.
+    // SWEGCA: src/swegca/mosaic_autonomous_cognition.py@5901a5a:150-186
+    [[nodiscard]] AutonomyControl control(const AllocationContext& account) const;
+
+private:
+    // SWEGCA: src/swegca/mosaic_autonomous_cognition.py@5901a5a:167-186
+    explicit AutonomyState(CanonicalPayload payload) : payload_(std::move(payload)) {}
+
+    CanonicalPayload payload_;
+};
+
 // The only persistent state type. Construction requires either Main's initial
 // key or the guarded writer's successor key; producers receive StateSnapshot.
 // The keys, registry and binary content digest are current C++ rules. The
@@ -293,8 +332,10 @@ public:
                    CognitiveTensor executive, CognitiveTensor scratch,
                    StructuredWorldGraph world_graph,
                    EvidenceReferences evidence_references,
-                   GoalState goals, ValueState values, SelfState self);
+                   GoalState goals, ValueState values, SelfState self,
+                   std::optional<AutonomyState> autonomy);
 
+    // A successor keeps the prior state's autonomy control unchanged.
     CognitiveState(SuccessorStateKey, const CognitiveState& prior,
                    RoleRegistry roles,
                    CognitiveTensor semantic, CognitiveTensor executive,
@@ -356,6 +397,10 @@ public:
     [[nodiscard]] const ValueState& values() const noexcept { return values_; }
     // SWEGCA: src/swegca/mosaic_cognitive_kernel.py@5901a5a:220-254
     [[nodiscard]] const SelfState& self() const noexcept { return self_; }
+    // SWEGCA: src/swegca/mosaic_autonomous_cognition.py@5901a5a:150-186
+    [[nodiscard]] const std::optional<AutonomyState>& autonomy() const noexcept {
+        return autonomy_;
+    }
 
 private:
     void validate() const;
@@ -372,6 +417,7 @@ private:
     GoalState goals_;
     ValueState values_;
     SelfState self_;
+    std::optional<AutonomyState> autonomy_;
     Digest256 content_digest_;
 };
 

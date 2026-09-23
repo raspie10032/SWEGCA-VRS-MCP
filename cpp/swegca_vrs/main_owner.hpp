@@ -5,6 +5,7 @@
 #include "swegca_vrs/cognitive_state.hpp"
 
 #include <cstddef>
+#include <optional>
 #include <span>
 #include <string_view>
 #include <vector>
@@ -37,6 +38,9 @@ struct MainInitialState final {
     std::span<const std::byte> goals;
     std::span<const std::byte> values;
     std::span<const std::byte> self;
+    // Canonical AutonomyControl bytes, or none for the author's absent keys.
+    // An explicit step-0 control is allowed. Main decodes and copies them.
+    std::optional<std::span<const std::byte>> autonomy;
 };
 
 }  // namespace swegca::vrs

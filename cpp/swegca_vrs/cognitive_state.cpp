@@ -1,5 +1,7 @@
 #include "swegca_vrs/cognitive_state.hpp"
 
+#include "swegca_vrs/cognition.hpp"
+
 #include "swegca_vrs/core_sha256.hpp"
 
 #include <algorithm>
@@ -71,10 +73,12 @@ void emit_state_content(
     const CognitiveTensor& semantic, const CognitiveTensor& executive,
     const CognitiveTensor& scratch, const StructuredWorldGraph& graph,
     std::span<const ExperienceAddress> evidence, const GoalState& goals,
-    const ValueState& values, const SelfState& self) {
+    const ValueState& values, const SelfState& self,
+    const std::optional<AutonomyState>& autonomy) {
     if (section) (*section)(StateContentSection::prefix);
     // v4: the bounded-write head carries the claim and proposal digest.
-    constexpr std::string_view domain = "swegca.cognitive_state.content.v4";
+    // v5: the final fields end with the autonomy control's presence and bytes.
+    constexpr std::string_view domain = "swegca.cognitive_state.content.v5";
     write(std::span<const std::byte>(
         reinterpret_cast<const std::byte*>(domain.data()), domain.size()));
     emit_text(write, owner.value());
@@ -133,6 +137,8 @@ void emit_state_content(
         emit_u64(write, head.claim.revision());
         write(head.proposal_digest.bytes());
     }
+    emit_u8(write, autonomy.has_value() ? 1 : 0);
+    if (autonomy) emit_bytes(write, autonomy->bytes());
 }
 
 // SWEGCA: src/swegca/mosaic_bounded_world_write.py@5901a5a:262-283
@@ -141,13 +147,14 @@ Digest256 state_digest(
     const CognitiveTensor& semantic, const CognitiveTensor& executive,
     const CognitiveTensor& scratch, const StructuredWorldGraph& graph,
     std::span<const ExperienceAddress> evidence, const GoalState& goals,
-    const ValueState& values, const SelfState& self) {
+    const ValueState& values, const SelfState& self,
+    const std::optional<AutonomyState>& autonomy) {
     Sha256 hash;
     const auto feed_hash = [&hash](std::span<const std::byte> bytes) {
         hash.update(bytes);
     };
     emit_state_content(StateContentSink(feed_hash), nullptr, owner, roles, semantic,
-                       executive, scratch, graph, evidence, goals, values, self);
+                       executive, scratch, graph, evidence, goals, values, self, autonomy);
     return Digest256(hash.finish());
 }
 
@@ -173,6 +180,32 @@ CanonicalPayload::CanonicalPayload(const AllocationContext& account,
                                    std::span<const std::byte> bytes)
     : bytes_(account.allocator<std::byte>()) {
     if (!bytes.empty()) bytes_.assign(bytes.begin(), bytes.end());
+}
+
+// SWEGCA: src/swegca/mosaic_autonomous_cognition.py@5901a5a:167-186
+AutonomyState AutonomyState::encode(const AllocationContext& account,
+                                    const AutonomyControl& control) {
+    const auto bytes = control.encode(account);
+    return AutonomyState(CanonicalPayload(
+        account, std::span<const std::byte>(bytes.data(), bytes.size())));
+}
+
+// Decode then re-encode: a second byte form of the same control would give
+// one logical state two content digests.
+// SWEGCA: src/swegca/mosaic_autonomous_cognition.py@5901a5a:167-186
+AutonomyState AutonomyState::decode(const AllocationContext& account,
+                                    std::span<const std::byte> bytes) {
+    const auto control = AutonomyControl::decode(account, bytes);
+    const auto canonical = control.encode(account);
+    if (canonical.size() != bytes.size() ||
+        !std::equal(canonical.begin(), canonical.end(), bytes.begin()))
+        throw std::invalid_argument("autonomy_state_not_canonical");
+    return AutonomyState(CanonicalPayload(account, bytes));
+}
+
+// SWEGCA: src/swegca/mosaic_autonomous_cognition.py@5901a5a:150-186
+AutonomyControl AutonomyState::control(const AllocationContext& account) const {
+    return AutonomyControl::decode(account, payload_.bytes());
 }
 
 // SWEGCA: src/swegca/mosaic_cognitive_kernel.py@5901a5a:107-160
@@ -217,7 +250,8 @@ CognitiveState::CognitiveState(
     RoleRegistry roles, CognitiveTensor semantic, CognitiveTensor executive,
     CognitiveTensor scratch, StructuredWorldGraph world_graph,
     EvidenceReferences evidence_references,
-    GoalState goals, ValueState values, SelfState self)
+    GoalState goals, ValueState values, SelfState self,
+    std::optional<AutonomyState> autonomy)
     : owner_(std::move(owner)), roles_(std::move(roles)),
       semantic_(std::move(semantic)),
       executive_(std::move(executive)), scratch_(std::move(scratch)),
@@ -226,7 +260,7 @@ CognitiveState::CognitiveState(
       // Preserve original evidence reference order and repeats.
       // SWEGCA: src/swegca/mosaic_cognitive_kernel.py@5901a5a:220-254
       goals_(std::move(goals)), values_(std::move(values)),
-      self_(std::move(self)),
+      self_(std::move(self)), autonomy_(std::move(autonomy)),
       content_digest_((key.consume(), validated_content_digest(nullptr))) {}
 
 // SWEGCA: src/swegca/mosaic_cognitive_kernel.py@5901a5a:220-254
@@ -244,7 +278,7 @@ CognitiveState::CognitiveState(
       // Preserve original evidence reference order and repeats.
       // SWEGCA: src/swegca/mosaic_cognitive_kernel.py@5901a5a:220-254
       goals_(std::move(goals)), values_(std::move(values)),
-      self_(std::move(self)),
+      self_(std::move(self)), autonomy_(prior.autonomy_),
       content_digest_((key.consume(), validated_content_digest(&prior))) {}
 
 // All members read here precede content_digest_ in declaration order.
@@ -277,7 +311,7 @@ Digest256 CognitiveState::validated_content_digest(
     }
     return state_digest(
         owner_, roles_, semantic_, executive_, scratch_, world_graph_,
-        evidence_references_, goals_, values_, self_);
+        evidence_references_, goals_, values_, self_, autonomy_);
 }
 
 // This C++ stream is the same canonical preimage used above to compute the
@@ -285,7 +319,8 @@ Digest256 CognitiveState::validated_content_digest(
 // SWEGCA: src/swegca/mosaic_bounded_world_write.py@5901a5a:262-283
 void CognitiveState::for_each_content_chunk(StateContentSink write) const {
     emit_state_content(write, nullptr, owner_, roles_, semantic_, executive_, scratch_,
-                       world_graph_, evidence_references_, goals_, values_, self_);
+                       world_graph_, evidence_references_, goals_, values_, self_,
+                       autonomy_);
 }
 
 // The section markers are metadata for a bounded writer, not content bytes.
@@ -294,7 +329,7 @@ void CognitiveState::for_each_content_chunk(
     StateContentSink write, StateContentSectionSink section) const {
     emit_state_content(write, &section, owner_, roles_, semantic_, executive_,
                        scratch_, world_graph_, evidence_references_, goals_,
-                       values_, self_);
+                       values_, self_, autonomy_);
 }
 
 // The original state accepts any common batch dimension, including zero. The
@@ -354,6 +389,7 @@ void CognitiveState::validate() const {
             account(address.value().size());
         account(write.claim.claim().value().size());
     }
+    if (autonomy_) account(autonomy_->bytes().size());
 
     for (const auto& definition : roles_.definitions()) {
         std::uint64_t capacity = 0;

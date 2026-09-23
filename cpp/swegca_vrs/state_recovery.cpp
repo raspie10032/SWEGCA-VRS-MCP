@@ -41,7 +41,7 @@ namespace {
 using Bytes = part_tree::Bytes;
 
 // The canonical stream's domain, the first bytes of its prefix section.
-constexpr std::string_view content_domain = "swegca.cognitive_state.content.v4";
+constexpr std::string_view content_domain = "swegca.cognitive_state.content.v5";
 constexpr std::string_view transition_prefix = "state-transition:";
 constexpr std::size_t prefix_section = 0;
 constexpr std::size_t entities_section = 4;
@@ -492,6 +492,10 @@ void parse_final_fields(RecoveredStateInput::Storage& storage) {
     storage.input.values = reader.bytes();
     storage.input.self = reader.bytes();
     if (reader.u8() != 0) fail("state_recovery_invalid:write_head");
+    // The autonomy control is checked for canonical bytes when Main decodes it.
+    const auto autonomy = reader.u8();
+    if (autonomy > 1) fail("state_recovery_invalid:autonomy");
+    if (autonomy == 1) storage.input.autonomy = reader.bytes();
     reader.finish();
 }
 

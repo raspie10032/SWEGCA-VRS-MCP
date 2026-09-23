@@ -13,7 +13,7 @@
 #include <string_view>
 #include <type_traits>
 
-// Main's cognitive-state record codec, its storage half: the canonical v4
+// Main's cognitive-state record codec, its storage half: the canonical v5
 // content stream of one CognitiveState, cut at its eight section boundaries,
 // one bounded descriptor per section, and one fixed-size root over the eight.
 // A plain section (prefix, entities, relations, evidence, final fields) is

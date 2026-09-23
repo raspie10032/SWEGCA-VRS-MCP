@@ -14,7 +14,7 @@
 // the manifest's state-head position, the kind-6 root and the kind-5
 // descriptors and parts it names, checks each record's kind, exact address,
 // position, digest, length and metadata before any part below it is read,
-// and parses the canonical v4 stream back into a MainInitialState. Tensors
+// and parses the canonical v5 stream back into a MainInitialState. Tensors
 // are not copied here: each streams from its checked parts through a
 // TensorByteReader while Main constructs the state.
 //

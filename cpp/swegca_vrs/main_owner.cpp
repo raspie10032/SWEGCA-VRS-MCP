@@ -115,12 +115,14 @@ std::shared_ptr<const CognitiveState> MainOwner::make_initial_state(
     GoalState goals(CanonicalPayload(account, initial.goals));
     ValueState values(CanonicalPayload(account, initial.values));
     SelfState self(CanonicalPayload(account, initial.self));
+    std::optional<AutonomyState> autonomy;
+    if (initial.autonomy) autonomy.emplace(AutonomyState::decode(account, *initial.autonomy));
     return std::allocate_shared<CognitiveState>(
         account.allocator<CognitiveState>(), InitialStateKey{},
         OwnerId(account, initial.owner), std::move(roles),
         std::move(semantic), std::move(executive), std::move(scratch),
         std::move(graph), std::move(evidence),
-        std::move(goals), std::move(values), std::move(self));
+        std::move(goals), std::move(values), std::move(self), std::move(autonomy));
 }
 
 // A checked genesis record graph can produce a data candidate only. Main must
