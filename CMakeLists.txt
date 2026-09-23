@@ -63,6 +63,7 @@ add_library(swegca_vrs_candidate STATIC
     cpp/swegca_vrs/role_registry.cpp
     cpp/swegca_vrs/scalar_codec.cpp
     cpp/swegca_vrs/state_part_batcher.cpp
+    cpp/swegca_vrs/genesis_state_drafts.cpp
     cpp/swegca_vrs/state_publication_codec.cpp
     cpp/swegca_vrs/state_record_codec.cpp
     cpp/swegca_vrs/vrs_strength_compile.cpp
