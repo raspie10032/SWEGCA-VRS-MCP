@@ -59,14 +59,15 @@ inline constexpr std::size_t state_tensor_header_bytes = 3 + 4 * 8;
 // length and its descriptor's digest.
 inline constexpr std::size_t state_root_payload_bytes =
     4 + 2 + digest256_width + 8 + state_section_count * (8 + digest256_width);
-// Tensor descriptor: form, data length, header, depth, top count, top
+// Tensor descriptor: form, header, depth, top count, top
 // digests; the top list is at most one inline top list of the part tree. A
 // plain descriptor is one blob field, never longer.
 inline constexpr std::size_t state_descriptor_max_bytes =
-    1 + 8 + state_tensor_header_bytes + 1 + 4 + part_tree::inline_top_bytes;
+    blob_field_parted_encoded_bytes;
 static_assert(blob_field_inline_encoded_bytes <= state_descriptor_max_bytes &&
-                  blob_field_parted_encoded_bytes <= state_descriptor_max_bytes,
-              "a plain descriptor fits the descriptor bound");
+                  1 + state_tensor_header_bytes + 1 + 4 + part_tree::inline_top_bytes <=
+                      state_descriptor_max_bytes,
+              "every descriptor fits the descriptor bound");
 static_assert(state_descriptor_max_bytes <= part_tree::part_bytes,
               "a descriptor is always one part");
 

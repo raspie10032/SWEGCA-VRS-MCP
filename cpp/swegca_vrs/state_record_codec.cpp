@@ -277,9 +277,8 @@ private:
                                    part_tree::max_top_digests * digest256_width + top.size());
                 write_parted_blob_field(writer, data_bytes_, whole_->finish(), levels.depth, top);
             } else {
-                descriptor.reserve(1 + 8 + state_tensor_header_bytes + 1 + 4 + top.size());
+                descriptor.reserve(1 + state_tensor_header_bytes + 1 + 4 + top.size());
                 writer.u8(static_cast<std::uint8_t>(StateSectionForm::tensor));
-                writer.u64(data_bytes_);
                 writer.raw(header_);
                 writer.u8(levels.depth);
                 writer.u32(static_cast<std::uint32_t>(top.size() / digest256_width));
@@ -391,9 +390,8 @@ StateSectionDescriptor decode_state_descriptor(std::span<const std::byte> payloa
         out.data = read_blob_field(reader, invalid);
     } else {
         if (reader.u8() != static_cast<std::uint8_t>(StateSectionForm::tensor)) fail(invalid);
-        out.data.size = reader.u64();
         out.tensor_header = reader.raw(state_tensor_header_bytes);
-        if (check_tensor_header(out.tensor_header, section) != out.data.size) fail(invalid);
+        out.data.size = check_tensor_header(out.tensor_header, section);
         out.data.depth = reader.u8();
         const auto count = reader.u32();
         const auto levels = part_tree::part_levels(out.data.size);
