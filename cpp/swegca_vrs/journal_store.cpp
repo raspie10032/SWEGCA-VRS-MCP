@@ -1808,6 +1808,14 @@ PublishedRecord JournalReadSnapshot::replay(std::string_view address) const {
     return record;
 }
 
+// Lineage: native mechanism — every index hit comes from the same pinned view as Replay.
+// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:592-595
+void JournalReadSnapshot::for_each_index_match(char kind, std::string_view value,
+                                                IndexVisitor visit) const {
+    if (!pinned_) fail("journal_read_snapshot_invalid");
+    store_->for_each_index_match_in(*pinned_, kind, value, visit);
+}
+
 // Lineage: native mechanism — Main's marker check and cold reads share one generation.
 // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:587-590
 PublishedCoordinates JournalReadSnapshot::coordinates() const {

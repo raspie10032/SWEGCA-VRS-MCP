@@ -771,6 +771,11 @@ public:
     // Exact-address Replay in the same pinned generation as coordinates().
     // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:569-570
     [[nodiscard]] PublishedRecord replay(std::string_view address) const;
+    // Cue and other index reads use this lease's generation, including every
+    // page reached by the cursor. A later activation keeps one lease for all
+    // of its lookups, Recall and Replay.
+    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:592-595
+    void for_each_index_match(char kind, std::string_view value, IndexVisitor visit) const;
     // The root and head used for Main's marker check come from this same
     // pinned generation as every record resolved and read through this lease.
     // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:587-590
