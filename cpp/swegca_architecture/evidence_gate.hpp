@@ -26,7 +26,7 @@ enum BindFailure : std::uint32_t {
     bind_empty_evidence = 1u << 7,
     bind_evidence_set_mismatch = 1u << 8,
     bind_delta_or_mask_mismatch = 1u << 9,
-    bind_nonoriginal_address = 1u << 10,
+    bind_noncanonical_address = 1u << 10,
     bind_record_changed = 1u << 11,
 };
 
@@ -45,7 +45,7 @@ public:
     ~EvidenceGate() = default;
 
     // Main supplies its exact journal, decision, accumulator and current
-    // state. Every cited address must be a published original experience.
+    // state. Every cited address must be an admitted published experience.
     // An invalid proposal returns a receipt with failure bits and no bound
     // value. Journal corruption or capacity failure propagates fail closed.
     // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:154-174

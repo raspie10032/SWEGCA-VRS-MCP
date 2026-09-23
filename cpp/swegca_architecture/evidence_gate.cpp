@@ -20,9 +20,9 @@ void hash_u64(Sha256& hash, std::uint64_t value) {
     hash.update(bytes);
 }
 
-// Only the journal's canonical original-experience address form is accepted.
+// Original and derived experiences share the journal's canonical address form.
 // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:118-123
-bool original_address_form(std::string_view address) noexcept {
+bool experience_address_form(std::string_view address) noexcept {
     if (!address.starts_with(experience_address_prefix) ||
         address.size() != experience_address_prefix.size() + 64) return false;
     for (const char c : address.substr(experience_address_prefix.size()))
@@ -46,7 +46,7 @@ EvidenceGate::EvidenceGate(const ExperienceJournal& journal,
 // Re-created (user@2026-09-23): Bind precedes arbitration and carries no
 // write capability. The receipt commits to every proposal field that can
 // affect arbitration, the authoritative decision, the current state and the
-// exact failure verdict. Replay validates the cited original kind.
+// exact failure verdict. Replay validates each cited admitted experience.
 // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:154-174
 BindOutcome EvidenceGate::bind(const EvidenceDecision& decision,
                                const EvidenceAccumulator& accumulator,
@@ -61,6 +61,7 @@ BindOutcome EvidenceGate::bind(const EvidenceDecision& decision,
     if (decision.claim() != proposal.claim()) failures |= bind_wrong_claim;
     if (proposal.based_on() != state.generation() ||
         !proposal.targets().matches(state.roles())) failures |= bind_stale_state;
+    if (journal_.state_generation() != state.generation()) failures |= bind_stale_state;
     if (proposal.targets().selected_count() == 0) failures |= bind_empty_targets;
     if (decision.judgment().status != kernel::EvidenceStatus::accept)
         failures |= bind_decision_not_accepted;
@@ -73,7 +74,7 @@ BindOutcome EvidenceGate::bind(const EvidenceDecision& decision,
     cited.reserve(proposal.evidence_addresses().size());
     for (const auto& address : proposal.evidence_addresses()) {
         cited.push_back(address);
-        if (!original_address_form(address)) failures |= bind_nonoriginal_address;
+        if (!experience_address_form(address)) failures |= bind_noncanonical_address;
     }
     if (cited.empty() || decision.admitted().empty()) failures |= bind_empty_evidence;
     std::sort(cited.begin(), cited.end());
@@ -88,18 +89,18 @@ BindOutcome EvidenceGate::bind(const EvidenceDecision& decision,
             }
     }
 
-    using Originals = std::vector<const AdmittedEvidence*,
-                                  MemoryLedger::Allocator<const AdmittedEvidence*>>;
-    Originals originals(memory_.allocator<const AdmittedEvidence*>());
-    originals.reserve(accumulator.admitted_evidence().size());
-    for (const auto& item : accumulator.admitted_evidence()) originals.push_back(&item);
-    std::sort(originals.begin(), originals.end(), [](const auto* left, const auto* right) {
+    using Admitted = std::vector<const AdmittedEvidence*,
+                                 MemoryLedger::Allocator<const AdmittedEvidence*>>;
+    Admitted admitted(memory_.allocator<const AdmittedEvidence*>());
+    admitted.reserve(accumulator.admitted_evidence().size());
+    for (const auto& item : accumulator.admitted_evidence()) admitted.push_back(&item);
+    std::sort(admitted.begin(), admitted.end(), [](const auto* left, const auto* right) {
         return left->address.value() < right->address.value();
     });
-    if (originals.size() != cited.size()) failures |= bind_evidence_set_mismatch;
+    if (admitted.size() != cited.size()) failures |= bind_evidence_set_mismatch;
     else {
         for (std::size_t at = 0; at < cited.size(); ++at)
-            if (originals[at]->address.value() != cited[at]) {
+            if (admitted[at]->address.value() != cited[at]) {
                 failures |= bind_evidence_set_mismatch;
                 break;
             }
@@ -112,17 +113,21 @@ BindOutcome EvidenceGate::bind(const EvidenceDecision& decision,
     if (delta != decision.delta_digest() || mask != decision.mask_digest() ||
         binding != decision.binding()) failures |= bind_delta_or_mask_mismatch;
 
-    // Resolve and Replay only exact citations. A missing or corrupt record
-    // throws before a BoundProposal exists; it cannot become authority.
+    // Resolve and Replay only exact admitted citations. Admission may include
+    // a derived experience whose root source and context were checked there.
+    // Recheck every parted blob and the published record digest now. Missing
+    // or corrupt data throws before a BoundProposal exists.
     if (failures == 0) {
         for (std::size_t at = 0; at < cited.size(); ++at) {
-            const auto original = journal_.replay(ExperienceAddress(memory_, cited[at]));
-            if (original.derived() || original.record().kind != original_experience_kind)
-                failures |= bind_nonoriginal_address;
-            if (original.record().record_digest != originals[at]->record_digest)
+            const auto replayed = journal_.replay(ExperienceAddress(memory_, cited[at]));
+            replayed.verify_parts();
+            if (replayed.record().record_digest != admitted[at]->record_digest)
                 failures |= bind_record_changed;
         }
     }
+    // Publication during Replay invalidates the decision generation. The
+    // guarded writer must recheck at commit because HEAD may advance later.
+    if (journal_.state_generation() != state.generation()) failures |= bind_stale_state;
 
     Sha256 hash;
     hash.update("swegca.bind_receipt.v1");

@@ -444,6 +444,11 @@ ExperienceRecord ExperienceJournal::replay(const ExperienceAddress& address) con
     return ExperienceRecord::decode(journal_.replay(address), memory_);
 }
 
+// SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:141-150
+StateGeneration ExperienceJournal::state_generation() const {
+    return journal_.state_generation();
+}
+
 // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:208-243
 SelectionReceipt<NoAuthority>::SelectionReceipt(QueryText query, const Digest256& context,
                                                 const SelectionUniverse& universe,

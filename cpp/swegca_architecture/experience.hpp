@@ -179,6 +179,9 @@ public:
     // Replays one exact experience (`journal_address_unknown` when absent).
     [[nodiscard]] ExperienceRecord replay(const ExperienceAddress& address) const;
 
+    // The state generation named by the current published journal HEAD.
+    [[nodiscard]] StateGeneration state_generation() const;
+
 private:
     friend class MainOwner;
     friend class ExperienceSelector;
