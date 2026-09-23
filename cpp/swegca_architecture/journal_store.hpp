@@ -114,6 +114,77 @@ private:
     RecordPosition position_;
 };
 
+// Borrowed exact-address reader for owner validation during a view rebuild.
+// It reads from the unpublished rebuilt address tree and the published record
+// extents. The callable and this adapter live only through rebuild_view.
+// C++ rebuild contract: docs/SWEGCA_CPP_MAIN_STATE_STORAGE_REVIEW.md@9da0813:187-206.
+class RebuildReader final {
+public:
+    // SWEGCA: docs/SWEGCA_CPP_MAIN_STATE_STORAGE_REVIEW.md@9da0813:187-206
+    template <class F>
+        requires(!std::is_same_v<std::remove_cvref_t<F>, RebuildReader> &&
+                 std::is_object_v<std::remove_reference_t<F>> &&
+                 std::is_invocable_r_v<PublishedRecord, std::remove_reference_t<F>&,
+                                       std::string_view>)
+    RebuildReader(F&& replay) noexcept  // NOLINT(google-explicit-constructor)
+        : target_(static_cast<const void*>(std::addressof(replay))),
+          call_(&invoke<std::remove_reference_t<F>>) {}
+
+    // SWEGCA: docs/SWEGCA_CPP_MAIN_STATE_STORAGE_REVIEW.md@9da0813:187-206
+    [[nodiscard]] PublishedRecord replay(std::string_view address) const {
+        return call_(target_, address);
+    }
+
+private:
+    using Call = PublishedRecord (*)(const void*, std::string_view);
+    // SWEGCA: docs/SWEGCA_CPP_MAIN_STATE_STORAGE_REVIEW.md@9da0813:187-206
+    template <class F>
+    static PublishedRecord invoke(const void* target, std::string_view address) {
+        auto& replay = *static_cast<F*>(const_cast<void*>(target));
+        return replay(address);
+    }
+
+    const void* target_;
+    Call call_;
+};
+
+// Borrowed Main-owned decoder for the second rebuild pass. It checks each
+// record kind and may replay prior records through the rebuilt address tree.
+// It must not reenter JournalStore publication while rebuild_view holds the
+// publication lock.
+class RebuildValidator final {
+public:
+    // SWEGCA: docs/SWEGCA_CPP_MAIN_STATE_STORAGE_REVIEW.md@9da0813:187-206
+    template <class F>
+        requires(!std::is_same_v<std::remove_cvref_t<F>, RebuildValidator> &&
+                 std::is_object_v<std::remove_reference_t<F>> &&
+                 std::is_invocable_v<std::remove_reference_t<F>&, const RecordView&,
+                                     const RecordPosition&, const RebuildReader&>)
+    RebuildValidator(F&& validate) noexcept  // NOLINT(google-explicit-constructor)
+        : target_(static_cast<const void*>(std::addressof(validate))),
+          call_(&invoke<std::remove_reference_t<F>>) {}
+
+    // SWEGCA: docs/SWEGCA_CPP_MAIN_STATE_STORAGE_REVIEW.md@9da0813:187-206
+    void operator()(const RecordView& record, const RecordPosition& position,
+                    const RebuildReader& reader) const {
+        call_(target_, record, position, reader);
+    }
+
+private:
+    using Call = void (*)(const void*, const RecordView&, const RecordPosition&,
+                          const RebuildReader&);
+    // SWEGCA: docs/SWEGCA_CPP_MAIN_STATE_STORAGE_REVIEW.md@9da0813:187-206
+    template <class F>
+    static void invoke(const void* target, const RecordView& record,
+                       const RecordPosition& position, const RebuildReader& reader) {
+        auto& validate = *static_cast<F*>(const_cast<void*>(target));
+        validate(record, position, reader);
+    }
+
+    const void* target_;
+    Call call_;
+};
+
 // One exact original replayed within one published snapshot, with the
 // Cognitive State generation that snapshot's HEAD names: both belong to the
 // same generation, whatever is published meanwhile.
@@ -401,12 +472,15 @@ private:
     // both final trees going to one set of new logs (a tree that fits one
     // batch is built straight into them, without a run), the runs are removed,
     // and the result, whose address tree must hold one entry per record, is
-    // published like a compaction. I/O is linear in the views' size.
+    // published like a compaction. After the tree is built, `validate` sees
+    // every verified record with a reader backed by that unpublished tree;
+    // failure leaves the previous HEAD authoritative. I/O is linear in the
+    // views' size plus this cold validation pass and its exact reads.
     //
     // Both rewrites hold the publication lock for their whole duration, so a
     // concurrent `publish` waits for them; readers are never blocked by them
     // (a reader takes only a page-cache shard lock, per page, briefly).
-    void rebuild_view();
+    void rebuild_view(RebuildValidator validate);
 
     // Removes retired page logs whose lease no snapshot holds. Publication
     // and both rewrites do this first; Main calls it directly when a stage

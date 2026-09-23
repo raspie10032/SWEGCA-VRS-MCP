@@ -2057,7 +2057,7 @@ void JournalStore::compact_view() {
 }
 
 // SWEGCA: user@2026-09-22:72-79
-void JournalStore::rebuild_view() {
+void JournalStore::rebuild_view(RebuildValidator validate) {
     std::lock_guard guard(publish_mutex_);
     require_usable();
     reclaim_locked();
@@ -2191,6 +2191,32 @@ void JournalStore::rebuild_view() {
         const auto address_bytes = merged->page_bytes();
         const auto built_index = build(index);
         merged->close();
+        const PageSource rebuilt_pages{directory_, memory_, nullptr};
+        const auto replay_rebuilt = [&](std::string_view address) -> PublishedRecord {
+            LeafCursor cursor(rebuilt_pages, built_addresses, address);
+            if (!cursor.valid() || cursor.item().address != address)
+                fail("journal_address_unknown");
+            auto record = read_in(*current, cursor.item().position);
+            if (record.view().address != address)
+                fail("journal_address_view_mismatch");
+            return record;
+        };
+        const RebuildReader reader(replay_rebuilt);
+        Digest validation_entering = zero_digest;
+        for (const auto& [ordinal, extent] : current->extents) {
+            LedgerBytes bytes(static_cast<std::size_t>(extent.byte_length),
+                              memory_.allocator<std::byte>());
+            io::read_range(segment_path(directory_, ordinal), extent.byte_length, 0, bytes,
+                           "journal_published_segment_missing");
+            const RecordVisitor visit = [&](const RecordView& record, std::uint64_t offset) {
+                const RecordPosition position{ordinal, offset, record.sequence,
+                                              record.record_digest};
+                validate(record, position, reader);
+            };
+            decode_segment_range(bytes, 0, extent, extent.first_sequence, extent.record_count,
+                                 validation_entering, extent.last_record_digest, &visit);
+            validation_entering = extent.last_record_digest;
+        }
         // No snapshot ever named a run.
         for (const auto* each : {&addresses, &index})
             for (const auto& run : each->runs)

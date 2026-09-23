@@ -201,9 +201,12 @@ four-stage VRS path is already implemented.
   Reading bytes at the supplied position alone does not establish that it
   is the position in the verified chain. The target record must also have
   the expected address and kind, and precede the binding in record order.
-- The owner-validation callback and exact access interface are not yet
-  implemented. Any failure must leave the previous HEAD authoritative and
-  remove unpublished rebuild logs; no partially validated view is exposed.
+- `RebuildValidator` and its borrowed `RebuildReader` now provide the second
+  pass with exact replay from the unpublished tree. Main-owned decoders for
+  each record kind still need to be connected; without one, no caller may
+  rebuild a view. A callback failure leaves the previous HEAD authoritative
+  and removes unpublished rebuild logs. The callback must use the borrowed
+  reader and must not reenter JournalStore publication while its lock is held.
 
 - Reserve native state-part, state-root, and state-write-receipt record kinds
   distinct from experience kinds 1–3. Reuse the existing bounded part-tree
