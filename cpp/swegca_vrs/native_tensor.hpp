@@ -81,6 +81,7 @@ public:
 
     // Visits the canonical byte stream in order without materializing a
     // second full tensor. Each span remains valid while this tensor lives.
+    // SWEGCA: src/swegca/mosaic_cognitive_kernel.py@5901a5a:175-254
     template <class Visit>
     void for_each_chunk(Visit&& visit) const {
         for (const auto& chunk : chunks_) visit(std::span<const std::byte>(chunk->bytes));

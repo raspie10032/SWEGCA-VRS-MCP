@@ -68,6 +68,7 @@ public:
         if (!resource_) throw std::invalid_argument("allocation_resource_missing");
     }
 
+    // SWEGCA: user@2026-09-22:89-92
     template <class U>
     AllocationAdapter(const AllocationAdapter<U>& other) noexcept
         : resource_(other.resource_) {}
@@ -84,6 +85,7 @@ public:
         resource_->deallocate(pointer, count * sizeof(T), alignof(T));
     }
 
+    // SWEGCA: user@2026-09-22:89-92
     template <class U>
     [[nodiscard]] bool operator==(const AllocationAdapter<U>& other) const noexcept {
         return resource_ == other.resource_;

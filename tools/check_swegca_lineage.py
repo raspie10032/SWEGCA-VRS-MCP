@@ -395,7 +395,12 @@ def definition_positions(code: str) -> list[int]:
         if opening < 0:
             continue
         before = prefix[:opening].rstrip()
-        token = re.search(r"([\w:~]+)$", before)
+        # A call operator has a `()` in its name as well as its parameter
+        # list. The last closing parenthesis belongs to the parameter list;
+        # its preceding token can therefore end in `operator()`.
+        token = re.search(
+            r"(operator\s*(?:\(\)|\[\]|[!<>=+\-*/%&|^~]+)|[\w:~]+)$", before
+        )
         if not token:
             continue
         name = token.group(1).split("::")[-1]
@@ -407,13 +412,13 @@ def definition_positions(code: str) -> list[int]:
         # Reject braced value initializers such as std::byte{0} and
         # Json(Json::Array{}); they follow a call but are not definitions.
         if not re.fullmatch(
-            r"\s*(?:(?:const|noexcept|override|final)\s*)*"
+            r"\s*(?:(?:const|volatile|noexcept|override|final)\b\s*|&&\s*|&\s*)*"
             r"(?:->\s*[\w:<>, *&]+\s*)?", tail
         ):
             continue
-        # Ignore macro declarations and class/namespace openers.
-        if re.search(r"\b(?:class|struct|namespace|enum)\s+[^{};]*$", prefix):
-            continue
+        # A `template <class T>` before a function is not a class opener.
+        # Class and namespace openers have no parameter-list tail matching
+        # the rule above, so they are already excluded there.
         positions.append(at)
     return positions
 

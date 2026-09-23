@@ -237,7 +237,11 @@ four-stage VRS path is already implemented.
   distinct from experience kinds 1–3. Reuse the existing bounded part-tree
   *mechanism*; do not inherit an old VRS ranking or reinforcement policy.
   These state records carry no experience search index entries, and the
-  experience decoder must reject their kinds.
+  experience decoder must reject their kinds. Kinds 5–7 are reserved and the
+  experience decoder rejects them now, but generic `JournalStore::stage`
+  currently refuses only kinds 1–4. Add a Main-only state staging key and
+  reject 5–7 in the generic staging route in the same change, so no caller
+  can publish state records without Main authority.
 - Derive the state-root exact address from the state digest with a reserved
   prefix. The manifest must name the content digest and the latest state-head
   publication record position/digest, so recovery can use the same verified
@@ -257,14 +261,27 @@ four-stage VRS path is already implemented.
   A root payload that exceeds one record must itself use bounded parts.
 - Keep state parts immutable and content addressed. A single-slot write
   may use copy-on-write immutable chunks, changing only those intersecting
-  the slot while the root links unchanged chunks. A bounded stream supplies
-  large initial tensors without simultaneous whole-tensor copies. Hashing
-  the canonical stream may still take time on a write, but it does not
-  belong to the input-to-Recall latency budget.
+  the slot while the root links unchanged chunks. Use a tree per tensor:
+  the canonical stream emits the role list before tensor bytes, so appending
+  a role shifts the 8 MiB boundaries of a whole-stream tree. Tensor chunks
+  are already 8 MiB. A separate state address prefix and record kind prevent
+  identical experience/state part bytes from colliding in the journal;
+  raw SHA-256 part digests can stay shared. Recompute the canonical state
+  content digest from the root's reconstructed stream rather than assuming
+  a tree digest equals it. A bounded stream supplies large initial tensors
+  without simultaneous whole-tensor copies. Hashing the canonical stream
+  may still take time on a write, but it does not belong to the
+  input-to-Recall latency budget.
 - `CognitiveState::for_each_content_chunk` and `content_digest()` now use one
   canonical byte emitter, so a future bounded state-part writer can consume
-  exactly the digest preimage. This emitter alone does not persist or recover
-  state parts, and its borrowed sink must finish each chunk before returning.
+  exactly the digest preimage. The experience `plan_blob` pulls from a span
+  or random-access reader and rereads it when staging; the state emitter
+  pushes chunks into a sink. Share only the input-independent upper digest
+  tree and level-count logic, with a separate bounded push splitter for
+  state tensor parts. State reads use Main's held snapshot with `resolve_in`
+  and `read_in`, rather than experience `replay_part`. This emitter alone
+  does not persist or recover state parts, and its borrowed sink must finish
+  each chunk before returning.
   A writer failure may stop the stream mid-part; no partial part or state HEAD
   may publish, and unpublished bytes must be removed before guarded work resumes.
 
@@ -272,6 +289,9 @@ four-stage VRS path is already implemented.
 
 - Confirm that intermediate part HEADs with an unchanged state generation
   preserve §9's rule that one final HEAD exposes a state successor.
+- Reconcile the reserved kind-7 name `state_publication_record_kind` with
+  this review's state-write-receipt term before defining its payload or
+  publication semantics.
 - Define exact state-root and receipt payloads and how a root larger than
   16 MiB is parted without a second unrelated codec.
 - Define restart behavior when genesis or intermediate HEAD still has a

@@ -741,6 +741,7 @@ private:
 
         // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:31-35
         auto operator<=>(const Part& other) const noexcept { return digest <=> other.digest; }
+        // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:31-35
         bool operator==(const Part& other) const noexcept { return digest == other.digest; }
     };
     struct Binding {
