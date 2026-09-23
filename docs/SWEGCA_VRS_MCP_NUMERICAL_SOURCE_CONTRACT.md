@@ -251,6 +251,14 @@ the complete manifest chain, the final source pair, every active binding page
 and every component root's immutable topology. Main still needs a concrete
 bounded `GraphRegionDirectory` and a coordinator that exposes it through the
 existing exact-generation CAS.
+The concrete native region directory opens only from that manifest state. Its
+cold construction verifies every present global node against the exact term
+at its stored component-local address. Runtime component and local lookups use
+the fixed-budget binding-page cache; topology handles use a separate fixed
+slot cache and always recheck the Graph snapshot on a hit. A cache miss still
+cold-opens and validates an immutable topology file, so a resident hot
+projection and the Main-wide 4 GB accounting owner remain required before the
+input-to-Recall latency target can be measured.
 
 Existing VRS 2.2 pair certificates and numerical arrays are historical
 evidence. A new source implementation must account for their lineage and
