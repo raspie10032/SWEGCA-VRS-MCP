@@ -101,7 +101,9 @@ system is divided by ownership and authority.
   contradiction, and revision lineage.
 - Builds replaceable exact-address, source, cue, content-digest, namespace,
   resource, validity, and transaction views from the journal.
-- Retrieval returns addresses and replay handles. It does not declare truth.
+- `Select(q, U) -> (C, J, rho)` returns addresses and replay handles. `J` records
+  every candidate's selection/rejection, relevance, contradiction, verification
+  state, revision, rationale, and rejection evidence. It does not declare truth.
 
 ### C. `architecture/evidence`
 
@@ -119,8 +121,10 @@ system is divided by ownership and authority.
   target-role set, bounded delta, source identity, confidence, contradiction,
   and uncertainty. It contains no evidence decision or authority capability.
 - Rejects empty or mismatched evidence binding on every authority-bearing path.
-- `ProposalArbiter` validates, bounds, combines, and suppresses conflicts. It
-  cannot write state.
+- The Main evidence gate is the only constructor of `BoundProposal`, which pairs
+  a proposal with its exact decision digest and successful `Bind` result.
+- `ProposalArbiter` accepts only `BoundProposal` values, then validates, bounds,
+  combines, and suppresses conflicts. It cannot write state.
 
 ### E. `architecture/authority`
 
@@ -173,13 +177,16 @@ system is divided by ownership and authority.
 The epistemic objects are different C++ types. They are never represented by a
 shared untyped row whose meaning changes by convention.
 
-- `Observation`: immutable time-indexed input with producer provenance. It has
-  no persistent address and no authority until Main appends it.
+- `Observation`: immutable time-indexed input with producer provenance. Before
+  Main appends it, it has no persistent address. Appending gives it an address
+  and still grants no authority.
 - `ExperienceAddress`: digest-bound address issued only by the Main experience
   journal.
 - `ExperienceRecord`: immutable original or derived experience plus source,
   revision, outcome, uncertainty, contradiction, and lineage.
-- `SelectionReceipt`: candidate judgments and selected/rejected addresses. Its
+- `SelectionReceipt`: candidate judgments `J` and selected/rejected addresses.
+  Each judgment carries selection/rejection, relevance, contradiction,
+  verification state, revision, rationale, and rejection evidence. Its
   authority type is statically `NoAuthority`.
 - `ClaimRevision`: Main-owned identity of the exact hypothesis or mutation being
   judged.
@@ -194,6 +201,9 @@ shared untyped row whose meaning changes by convention.
 - `SynapseProposal`: transient producer output bound to source, claim revision,
   nonempty evidence addresses, source state generation, role mask, delta digest,
   confidence, contradiction, and uncertainty. It contains no decision digest.
+- `BoundProposal`: constructible only by the Main evidence gate after `Bind`;
+  contains the immutable proposal, exact `EvidenceDecision` digest, and binding
+  receipt. Only this type can be passed to `ProposalArbiter`.
 - `ArbitrationReceipt`: bounded aggregate delta plus accepted, rejected,
   conflicted, and no-commit roles. It has no commit capability.
 - `WriteAuthorization`: move-only capability constructible only by the evidence
@@ -224,6 +234,12 @@ component. Capabilities are move-only, name one domain, one identity, one
 generation, and one operation digest, and are consumed exactly once. Visible
 JSON or binary fields alone cannot forge them.
 
+Main records a fresh process-local one-use nonce when issuing a capability. A
+consumer accepts the capability by rvalue reference, marks the nonce spent
+before performing the authorized mutation, and rejects missing, unknown, or
+spent nonces. Capabilities are never persisted. Every restart begins with zero
+valid capability nonces, as required for process-local authority.
+
 ### Native tensor value
 
 `CognitiveTensor` is an owned, contiguous, fixed-rank value with explicit shape
@@ -239,12 +255,15 @@ reproduced.
 ```text
 complete observation
   -> original experience append and stable address
-  -> status-unfiltered selection and zero-authority receipt
+  -> Select(q, U) -> (C, J, rho), with candidate judgments J and
+     zero-authority receipt rho
   -> authority-limited transient producer proposal from detached state
   -> claim-relative evidence admission and re-evidence
   -> evidence accumulation: accept | reject | abstain
   -> exact decision/proposal/evidence/state-generation binding gate
-  -> conflict-aware bounded arbitration, no commit capability
+  -> BoundProposal
+  -> conflict-aware bounded arbitration accepting BoundProposal only,
+     no commit capability
   -> Main guarded authorization
   -> CognitiveState successor + immutable write/no-write receipt
   -> receipt-bound episodic/quarantine/semantic transition
@@ -527,9 +546,14 @@ hash chain is **re-created (user@2026-09-23)** to provide the immutable lineage
 and revision binding required by SWEGCA I03 and I07 without SQLite.
 
 Journal data is split into bounded immutable segments linked by predecessor and
-successor manifests. New generations write data segments, derived view pages,
-and a complete manifest into detached files, flush them, then atomically replace
-the single published-head file. Segment linking prevents any requirement to
+successor manifests. Publication order is fixed: write detached segment, page,
+and manifest files; fsync every file; atomically rename the complete manifest as
+the single published head; then fsync the containing directory. The published
+head is the only recovery root. Readers ignore every detached file not reachable
+from that head. A bad checksum or digest in a published segment fails closed and
+is never automatically truncated; torn-write handling applies only to
+unpublished detached files. Transaction recovery starts from the published head
+and appends compensation records. Segment linking prevents any requirement to
 rewrite an unbounded Main file. Segmented manifests and atomic head replacement
 are **re-created (user@2026-09-23)** to implement the one-current-generation,
 recoverable publication requirements of I01, I07, and §4.8.
