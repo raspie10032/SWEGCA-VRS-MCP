@@ -86,7 +86,7 @@ Budgets (board §11 limits):
 | B23 | Memory through the host's counting AllocationContext during stage, publish, lookup, compaction, rebuild at full scale (baseline and scaled profiles) | every buffer the journal allocates goes through it at its exact requested size; the host's count after each call equals its prior value, apart from the page cache's own context |
 | B24 | Page cache on its own context bounded by the host at C bytes, under a lookup storm | its use never above C; when the host refuses (`AllocationRefused`), a page no reader holds is evicted and the read retried; with every cached page held by a reader, the read is served through Main's context and not kept; a physical `std::bad_alloc` while reading propagates |
 | B25 | No page cache context given; a cache context given with 0 shards | every lookup still correct with no cache; `open` fails `journal_page_cache_invalid` |
-| B26 | User input to first Recall, end to end (query tokenization, every index lookup including page-cache misses that read page logs, candidate judgment hand-off, replay of selected records), largest tested journal, the host's workers (16 in the baseline profile) | within 1 ms; measured only at step 10. A single lookup's time is not this measure |
+| B26 (deferred VRS gate) | Host receives a user input; measure through immediate Déjà vu, session-first cue/region/portal navigation, and completion of Recall's original-address set on the largest tested journal, including page-cache misses and host dispatch. Measure Main fallback separately. Replay and conditional Re-evidence start after this endpoint. | Input receipt to Recall completion is under 1 ms at the baseline profile and at each configured scale. Report the full interval and each stage; a single index lookup or first Recall entry does not establish this result. Run this condition only after the step-11 VRS read path exists, not during the step-10 architecture tests. |
 
 ## C. Experience (step 3; board §3B, §4, §5)
 
@@ -130,7 +130,18 @@ Views (board §3B :122-123):
 | C17 | a key of the wrong form for its view | `experience_view_key_invalid` |
 | C18 | rebuild_view after B10 | every C12-C16 answer identical to before the damage |
 
-Selection `Select(q, U) -> (C, J, rho)` (invariants 3, 11; failure 2):
+The following C19-C26 rows describe the existing single-stage
+`ExperienceSelector::select` and are retained only as a static inventory of
+its current behavior. They are **not** acceptance conditions for the rebuilt
+memory read route: the user-approved Déjà vu → Recall → Replay → conditional
+Re-evidence route replaces that selector (`SWEGCA_CPP_FOUR_STAGE_ACTIVATION_PLAN.md`
+§0-1 and `SWEGCA_CPP_VRS_LAYER_PLAN.md` §6.2). Its stage-specific conditions,
+including an honest Recall miss and highest-strength Replay, must be reviewed
+before step-11 VRS tests; C21's exception on an empty match is not the new
+route's expected result. This draft must not be treated as the complete
+step-9 architecture test-condition list.
+
+Legacy selection `Select(q, U) -> (C, J, rho)` (invariants 3, 11; failure 2):
 
 | # | Setup | Expected |
 |---|---|---|
