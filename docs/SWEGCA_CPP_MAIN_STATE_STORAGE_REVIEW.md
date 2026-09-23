@@ -294,6 +294,10 @@ four-stage VRS path is already implemented.
   publication semantics.
 - Define exact state-root and receipt payloads and how a root larger than
   16 MiB is parted without a second unrelated codec.
+- Decide where the canonical stream's non-tensor prefix (domain, owner and
+  appendable role list) lives. If it is embedded in the root, define how
+  that root is parted when the prefix grows past one record while preserving
+  the per-tensor copy-on-write boundaries.
 - Define restart behavior when genesis or intermediate HEAD still has a
   zero state digest, including what initial input may be accepted.
 - Verify that all tensor readers and digest users can read a chunked
