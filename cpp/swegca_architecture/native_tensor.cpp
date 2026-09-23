@@ -162,7 +162,9 @@ void CognitiveTensor::copy_bytes(std::uint64_t offset,
     }
 }
 
-// The source's bounded write requires batch one before replacing a slot.
+// The source's bounded write requires batch one before replacing a slot;
+// the slot replacement itself follows the source's bounded-write operation.
+// SWEGCA: src/swegca/mosaic_bounded_world_write.py@5901a5a:317-329
 // SWEGCA: src/swegca/mosaic_bounded_world_write.py@5901a5a:341-342
 CognitiveTensor CognitiveTensor::with_replaced_slot(
     const AllocationContext& account, std::uint64_t slot,

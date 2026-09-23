@@ -204,8 +204,9 @@ ArbitrationOutcome ProposalArbiter::arbitrate_typed(
     const auto scalar_bytes = scalar_width(result_type);
     std::uint32_t failures = 0;
     // This native arbiter has a scalar score and one role delta per proposal.
-    // Until those buffers carry a batch axis, reject multi-batch arbitration
-    // explicitly; otherwise delta_at would read only batch zero.
+    // Until those buffers carry a batch axis, reject every nonempty proposal
+    // set whose state batch is not one; otherwise delta_at would read only
+    // batch zero. The empty proposal set remains the source's no-op path.
     if ((P != 0 && state.semantic().shape().batches != 1) ||
         P > std::numeric_limits<std::uint32_t>::max() || S == 0 || W == 0 ||
         state.semantic().shape().width > std::numeric_limits<std::size_t>::max())
