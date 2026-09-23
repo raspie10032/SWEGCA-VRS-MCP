@@ -298,6 +298,15 @@ public:
         const StateGeneration& current_generation,
         const Digest256& actual_operation);
 
+    // The checks of `consume` without spending: this ledger issued the
+    // capability in this domain, it is live and unspent, and it names this
+    // generation and operation. Throws as `consume` does. A guarded dry run
+    // must hold genuine authority for the exact write it previews.
+    template <AuthorityDomain Domain>
+    void verify(const ConsumeKey<Domain>&, const AuthorityCapability<Domain>& capability,
+                const StateGeneration& current_generation,
+                const Digest256& expected_operation) const;
+
 private:
     friend class MainOwner;
 
@@ -312,6 +321,10 @@ private:
         std::shared_ptr<detail::CapabilityToken>&& capability,
         const StateGeneration& current_generation,
         const Digest256& actual_operation);
+    void verify_token(AuthorityDomain expected,
+                      const std::shared_ptr<detail::CapabilityToken>& capability,
+                      const StateGeneration& current_generation,
+                      const Digest256& expected_operation) const;
 
     std::shared_ptr<detail::AuthorityRegistry> registry_;
 };
@@ -341,6 +354,15 @@ CapabilityDescriptor MainAuthorityLedger::consume(
     const Digest256& actual_operation) {
     return consume_token(Domain, std::move(capability.token_),
                          current_generation, actual_operation);
+}
+
+template <AuthorityDomain Domain>
+// SWEGCA: src/tinylm_slicer/mosaic_bounded_world_write.py@3bddcb7:413-423
+void MainAuthorityLedger::verify(
+    const ConsumeKey<Domain>&, const AuthorityCapability<Domain>& capability,
+    const StateGeneration& current_generation,
+    const Digest256& expected_operation) const {
+    verify_token(Domain, capability.token_, current_generation, expected_operation);
 }
 
 }  // namespace swegca::vrs

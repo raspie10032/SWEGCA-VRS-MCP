@@ -79,14 +79,16 @@ struct GateOutcome {
 
 // The operation a cognitive-state-commit capability authorizes: this
 // decision, this binding (claim revision, evidence, actual delta and mask),
-// this role in this registry, at this generation. The writer recomputes it
-// from what it is about to commit and the ledger compares.
+// this preview, this role in this registry, judged under this gate policy,
+// at this generation. The writer recomputes it from what it is about to
+// commit and its own configuration, and the ledger compares.
 [[nodiscard]] Digest256 verification_commit_operation(const Digest256& decision_digest,
                                                       const Digest256& binding,
                                                       const Digest256& bound_receipt,
                                                       const Digest256& preview_receipt,
                                                       std::string_view target,
                                                       const Digest256& registry_digest,
+                                                      const Digest256& gate_policy,
                                                       const StateGeneration& generation);
 
 class ExperienceJournal;
@@ -155,6 +157,7 @@ private:
     MainAuthorityLedger& ledger_;
     AllocationContext memory_;  // Main's allocation context for binding scratch
     kernel::GateRules rules_;
+    Digest256 gate_policy_digest_;
     Digest256 evidence_policy_digest_;
 };
 

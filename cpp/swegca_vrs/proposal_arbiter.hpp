@@ -107,6 +107,8 @@ public:
 
 private:
     friend class MainOwner;
+    // The guarded writer's own arbiter runs under its bounded-write policy.
+    friend class MainStateWriter;
     ProposalArbiter(const AllocationContext& memory, ArbiterPolicy policy);
     template <class T, class R>
     [[nodiscard]] ArbitrationOutcome arbitrate_typed(

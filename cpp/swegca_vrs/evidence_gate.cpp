@@ -59,15 +59,17 @@ Digest256 verification_commit_operation(const Digest256& decision_digest,
                                         const Digest256& preview_receipt,
                                         std::string_view target,
                                         const Digest256& registry_digest,
+                                        const Digest256& gate_policy,
                                         const StateGeneration& generation) {
     Sha256 hash;
-    hash_text(hash, "swegca.verification_commit.v1");
+    hash_text(hash, "swegca.verification_commit.v2");
     hash.update(decision_digest.bytes());
     hash.update(binding.bytes());
     hash.update(bound_receipt.bytes());
     hash.update(preview_receipt.bytes());
     hash_text(hash, target);
     hash.update(registry_digest.bytes());
+    hash.update(gate_policy.bytes());
     hash_generation(hash, generation);
     return Digest256(hash.finish());
 }
@@ -79,6 +81,7 @@ EvidenceGate::EvidenceGate(const ExperienceJournal& journal, MainAuthorityLedger
                            const AllocationContext& memory,
                            const GatePolicy& gate_policy, const EvidencePolicy& evidence_policy)
     : journal_(journal), ledger_(ledger), memory_(memory), rules_(make_gate_rules(gate_policy)),
+      gate_policy_digest_(gate_policy_digest(gate_policy)),
       evidence_policy_digest_(evidence_policy_digest(evidence_policy)) {}
 
 // Everything the gate can compute, it computes; the kernel predicate then
@@ -205,7 +208,8 @@ GateOutcome EvidenceGate::authorize(const EvidenceDecision& decision,
         IssueKey<AuthorityDomain::cognitive_state_commit>{}, state.owner(), state.generation(),
         verification_commit_operation(decision.decision_digest(), binding,
                                       bound.binding_receipt(), preview.receipt(), role->id.value(),
-                                      state.roles().digest(), state.generation()));
+                                      state.roles().digest(), gate_policy_digest_,
+                                      state.generation()));
     return outcome;
 }
 

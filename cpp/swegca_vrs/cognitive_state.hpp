@@ -238,6 +238,10 @@ private:
 // The original bounded writer stores this current-write head under
 // self_state["bounded_verification_write"]. It is state content: rollback
 // restores the prior head exactly, and retraction checks receipt/revision.
+// The user's 2026-08-25 writer adds the hypothesis and the proposal binding
+// digest to the head; here the claim revision and the proposal's content
+// digest.
+// SWEGCA: src/tinylm_slicer/mosaic_bounded_world_write.py@3bddcb7:446-455
 struct BoundedWriteHead final {
     PolicyVersion policy_version;
     Digest256 receipt_id;
@@ -246,6 +250,8 @@ struct BoundedWriteHead final {
     // Preserve proposal order, including repeats, as in the original
     // receipt seed; do not sort this list during the guarded write.
     EvidenceReferences evidence_references;
+    ClaimRevision claim;        // the author's hypothesis_id
+    Digest256 proposal_digest;  // the author's proposal_binding_digest
 };
 
 class SelfState final {

@@ -693,7 +693,36 @@ architecture and its test-condition list have passed static review
 
 ## 11. Open items
 
-- The 2026-08-20 versus 2026-08-25 writer source decision remains deferred.
+- Writer source (decided 2026-09-24, claude with codex): the user's
+  implementation, tinylm-slicer-sanabi-bazzite
+  `src/tinylm_slicer/mosaic_bounded_world_write.py`, last changed in 7e4ae52
+  (2026-08-25, "bind authoritative evidence to world proposals") and unchanged
+  at the pinned 3bddcb7; SWEGCA-Architecture@5901a5a keeps the same text under
+  `reproducibility/evidence_binding_2026-08-25/`. The user's source order
+  (user, user's implementation, approved documents, old VRS) puts it before
+  the 2026-08-20 text in `src/swegca/`@5901a5a. Against 08-20 it binds the
+  gate capability to one exact proposal digest (source, hypothesis, cited
+  addresses, delta, scores, mask), mints it only for a nonempty accepted
+  history, the same hypothesis and cited addresses that are a nonempty subset
+  of the accepted ones, checks that authority before a dry run returns, and
+  adds the hypothesis and proposal binding digest to the receipt seed, the
+  receipt and the self-state head. `MainStateWriter` follows it.
+- Bind strength, to revisit against the explicit requirements: the C++ Bind
+  requires the cited set to equal the decision's admitted set with no
+  repeats (`evidence_gate.cpp`, user@2026-09-23); the user's 08-25 writer
+  requires only a nonempty subset. The C++ rule is stronger and is not
+  source-equivalent; the choice is with the user (asked 2026-09-24). Until
+  then the writer keeps the enforced BoundProposal contract and assumes
+  neither rule is the source's.
+- `MainStateWriter` publication: it returns an immutable successor and its
+  receipt; Main's current-state replacement (synchronized with snapshot
+  reads) waits for the Main experience/evidence integration. Main must build
+  the gate and the writer from one `BoundedWriteConfig`; a mismatch fails
+  closed, because the commit operation binds `gate_policy_digest` and the
+  writer recomputes it from its own configuration.
+  The receipt's persistent codec (the author's to_dict/from_dict,
+  mosaic_bounded_world_write.py@3bddcb7:243-306) belongs to the linked
+  transaction layer and is not yet native.
 - Float16/bfloat16 arithmetic, Unicode normalization/case folding, and inverse
   standard-normal behavior need explicit native numerical contracts only where
   the reconstructed logic uses them.

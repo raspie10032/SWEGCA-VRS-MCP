@@ -236,4 +236,31 @@ CapabilityDescriptor MainAuthorityLedger::consume_token(
     return consumed;
 }
 
+// The user's 2026-08-25 writer checks the gate capability's authenticity and
+// its binding to the exact proposal before a dry run returns. Here: the
+// consume checks, under the same lock, with nothing spent or retired.
+// SWEGCA: src/tinylm_slicer/mosaic_bounded_world_write.py@3bddcb7:413-423
+void MainAuthorityLedger::verify_token(
+    AuthorityDomain expected,
+    const std::shared_ptr<detail::CapabilityToken>& capability,
+    const StateGeneration& current_generation,
+    const Digest256& expected_operation) const {
+    if (!capability)
+        throw std::invalid_argument("authority_capability_not_live");
+    const auto& descriptor = capability->descriptor();
+    std::lock_guard guard(registry_->mutex);
+    if (descriptor.domain != expected ||
+        descriptor.issuer_instance != registry_->issuer_instance ||
+        capability->registry_.lock() != registry_)
+        throw std::invalid_argument("authority_capability_wrong_issuer_or_domain");
+    if (was_spent_locked(*registry_, descriptor.nonce))
+        throw std::invalid_argument("authority_capability_already_spent");
+    const auto found = registry_->live.find(descriptor.nonce);
+    if (found == registry_->live.end() || found->second.token.lock() != capability)
+        throw std::invalid_argument("authority_capability_unknown");
+    if (descriptor.generation != current_generation ||
+        descriptor.operation != expected_operation)
+        throw std::invalid_argument("authority_capability_binding_mismatch");
+}
+
 }  // namespace swegca::vrs

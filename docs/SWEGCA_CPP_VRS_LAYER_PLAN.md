@@ -62,7 +62,7 @@ journal or index, counts no resource, and writes no state.
 | evidence_stages: EvidenceAdmission, ReEvidence, ReEvidenceJudge, SourceFamilies | VRS | Replay then admission, and Re-evidence: stages feeding the verifier |
 | journal_file_io, journal_position, journal_format (record, manifest, page formats), journal_store | VRS | storage and lookup |
 | experience (envelope, part tree, ExperienceJournal, views, CueTokens, ExperienceAppend, ExperienceSelector, receipts) | VRS | experience storage, Déjà vu and Recall |
-| proposal, evidence_gate / Bind, arbiter, writer (codex) | VRS | strengthening a connection from a verdict (spec §4.5-4.6) |
+| proposal, evidence_gate / Bind, arbiter (codex), writer (claude) | VRS | strengthening a connection from a verdict (spec §4.5-4.6) |
 | cognitive_state, native_tensor | VRS | the connection state strengthening changes |
 | cognition | VRS | the autonomy loop that asks for verification and acts on verdicts |
 | authority, authority_roles, role_registry, main_owner | VRS | who may write and Main's ownership of the synapse; see 3.4 |
@@ -198,13 +198,17 @@ Gate -> Writer, with no other entry:
   and generation/step, then sends every existing condition bit to
   `authorize_target` (none removed). The capability's operation binds the
   decision, binding, bound receipt, preview receipt, verification role,
-  role registry and generation. The separate `VerificationProposal`
+  role registry, gate policy digest (claude, 2026-09-24: the writer
+  recomputes it from its own configuration) and generation. The preview
+  is the writer's own, under the bounded-write policy
+  (`MainStateWriter::preview`). The separate `VerificationProposal`
   entry is gone, so no capability is issued without Bind.
-- Writer (codex, not built): verifies the capability names the same
+- Writer (claude, Stage 6 `MainStateWriter`; not built): verifies the capability names the same
   results, commits, and keeps every field of the author's receipt
   (receipt id over before-state hash, delta hash, revision, evidence
-  refs; before/after state and slot hashes, applied delta hash, prior
-  write metadata). The guarded verification write keeps the state's
+  refs; before/after state and slot hashes, the stored slot hash that
+  rollback compares (claude: the author hashes the promoted sum), applied
+  delta hash, prior write metadata). The guarded verification write keeps the state's
   tensor type: the author assigns the new slot into a clone of the
   existing scratch tensor, casting to its stored type
   (mosaic_bounded_world_write.py@5901a5a:317-330; codex 17:16). Promotion

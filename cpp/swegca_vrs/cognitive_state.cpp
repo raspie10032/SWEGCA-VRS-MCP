@@ -73,7 +73,8 @@ void emit_state_content(
     std::span<const ExperienceAddress> evidence, const GoalState& goals,
     const ValueState& values, const SelfState& self) {
     if (section) (*section)(StateContentSection::prefix);
-    constexpr std::string_view domain = "swegca.cognitive_state.content.v3";
+    // v4: the bounded-write head carries the claim and proposal digest.
+    constexpr std::string_view domain = "swegca.cognitive_state.content.v4";
     write(std::span<const std::byte>(
         reinterpret_cast<const std::byte*>(domain.data()), domain.size()));
     emit_text(write, owner.value());
@@ -128,6 +129,9 @@ void emit_state_content(
         emit_u64(write, head.evidence_references.size());
         for (const auto& address : head.evidence_references)
             emit_text(write, address.value());
+        emit_text(write, head.claim.claim().value());
+        emit_u64(write, head.claim.revision());
+        write(head.proposal_digest.bytes());
     }
 }
 
@@ -359,6 +363,7 @@ void CognitiveState::validate() const {
         account(write.target_role.value().size());
         for (const auto& address : write.evidence_references)
             account(address.value().size());
+        account(write.claim.claim().value().size());
     }
 
     for (const auto& definition : roles_.definitions()) {
