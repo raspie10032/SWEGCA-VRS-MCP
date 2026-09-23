@@ -233,6 +233,10 @@ bool is_index_entry(std::string_view index_entry) noexcept {
            index_entry.find(index_separator) == std::string_view::npos;
 }
 
+// Rule, a new C++ storage boundary: state kinds carry no index, a cue
+// binding only c/h cue keys, other lowercase entries only memory kinds.
+// The user's lines put cues on a memory episode and state no per-kind rule.
+// SWEGCA: src/tinylm_slicer/mosaic_memory_activation.py@3bddcb7:89-106
 // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3f:122-123
 bool index_entry_allowed(std::uint16_t record_kind, std::string_view index_entry) noexcept {
     if (record_kind == state_part_record_kind ||
@@ -357,6 +361,9 @@ std::span<const std::byte> ByteReader::consumed_since(std::size_t start) const {
     return data_.subspan(start, offset_ - start);
 }
 
+// Rule: a repeated index entry in one record is refused, as the source
+// refuses a repeated address. Strict order is the C++ encoding's own.
+// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:450-452
 // SWEGCA: user@2026-09-22:60-61
 std::size_t encoded_record_size(const RecordDraft& draft) {
     if (draft.kind == 0) fail("journal_record_invalid:kind");
@@ -422,6 +429,8 @@ void append_record(LedgerBytes& out, const RecordDraft& draft, std::uint64_t seq
     if (out.size() - start != total) fail("journal_record_size_mismatch");
 }
 
+// Rule: decoding refuses a repeated index entry, as encoding does.
+// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:450-452
 // SWEGCA: user@2026-09-22:60-61
 RecordView decode_record(ByteReader& reader) {
     const auto start = reader.offset();
