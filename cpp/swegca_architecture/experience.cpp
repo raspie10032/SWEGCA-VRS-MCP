@@ -29,7 +29,6 @@ constexpr std::uint16_t envelope_version = 3;
 constexpr std::size_t envelope_fixed_bytes = 4 + 2 + 8 + 8 + 8 + 1 + 8 + 8 + 1 + 32 + 1 + 4 + 4;
 constexpr std::size_t max_derived_from = 1024;
 constexpr std::size_t max_resources = 1024;
-constexpr std::size_t max_semantic_cues = 4096;
 constexpr std::size_t digest_hex_bytes = 2 * digest256_width;
 constexpr std::size_t address_bytes = experience_address_bytes;
 // A part holds `experience_part_bytes` of a blob or that many bytes of the
@@ -59,11 +58,9 @@ constexpr std::string_view part_source_revision = "part.v1";
 // address) is an identity text; a longer token is kept by its digest ('h').
 constexpr std::size_t max_inline_cue_bytes = detail::identity_text_max_bytes - 2 - address_bytes;
 // Every entry an experience can carry fits one record: the tokens of the
-// source and of its revision (at most one per byte), the authored cues,
-// lineage, resources, and source, content, revised address, namespace and
-// transaction.
-static_assert(2 * detail::identity_text_max_bytes + max_semantic_cues + max_derived_from +
-                      max_resources + 5 <=
+// source and of its revision (at most one per byte), lineage, resources,
+// and source, content, revised address, namespace and transaction.
+static_assert(2 * detail::identity_text_max_bytes + max_derived_from + max_resources + 5 <=
                   journal::max_record_index_entries,
               "an experience's index entries must always fit one record");
 
@@ -396,16 +393,6 @@ bool same_observed_index(std::span<const std::string_view> left, std::span<const
     }
 }
 
-// An entry no field derives: only an authored cue can be one. A digest
-// entry ('h') is checked by form only: which token it hashes is not
-// recoverable from the record.
-// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:411-431
-bool is_authored_cue_entry(const AllocationContext& memory, std::string_view entry) {
-    const auto value = entry.substr(1);
-    if (entry.front() == 'c') return value.size() <= max_inline_cue_bytes && is_single_token(memory, value);
-    return entry.front() == 'h' && is_hex_digest(value);
-}
-
 // The record identity an address is the digest of: kind, source, revision,
 // revised address, outcome and payload digest. Index entries are derived
 // from these fields or authored, never identity.
@@ -711,7 +698,9 @@ ExperienceRecord::ExperienceRecord(ExperienceRecord&& other) noexcept
 
 // Checks the kind, the envelope byte for byte, that the address is the
 // digest of the record's identity (so it was issued by this module), and
-// that the index entries are exactly the automatic ones plus authored cues.
+// that the index entries are exactly the automatic ones: a memory record
+// carries no authored cue (user 2026-09-23 18:0x; the author's artifact has
+// none, cues are the caller's).
 // A parted blob's parts are checked when they are read.
 // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:23-60
 ExperienceRecord ExperienceRecord::decode(journal::PublishedRecord published,
@@ -787,7 +776,7 @@ ExperienceRecord ExperienceRecord::decode(journal::PublishedRecord published,
     if (view.address != view_of(address)) fail("experience_address_mismatch");
 
     // The record's entries against the automatic ones: every automatic one
-    // present, and every other one an authored cue.
+    // present, and no other.
     LedgerVector<std::string_view> index(memory.allocator<std::string_view>());
     index.reserve(view.index_count);
     journal::for_each_index_entry(view, [&index](std::string_view entry) { index.push_back(entry); });
@@ -797,15 +786,13 @@ ExperienceRecord ExperienceRecord::decode(journal::PublishedRecord published,
                               derived, name_space, resources, raw.digest, present(view.transaction_id)});
     const auto expected = automatic.finish();
     std::size_t next = 0;
-    std::size_t authored = 0;
     for (const auto entry : index) {
         if (next < expected.size() && expected[next] == entry) {
             ++next;
             continue;
         }
         if (next < expected.size() && expected[next] < entry) fail("experience_index_incomplete");
-        if (!is_authored_cue_entry(memory, entry) || ++authored > max_semantic_cues)
-            fail("experience_index_invalid");
+        fail("experience_index_invalid");
     }
     if (next != expected.size()) fail("experience_index_incomplete");
 
@@ -968,7 +955,6 @@ ExperienceAppend::ExperienceAppend(const ExperienceJournal& journal, const Alloc
         if (observation.name_space) detail::require_identity_text(*observation.name_space, "name_space");
         if (observation.derived_from.size() > max_derived_from) fail("experience_lineage_too_long");
         if (observation.resources.size() > max_resources) fail("experience_too_many_resources");
-        if (observation.semantic_cues.size() > max_semantic_cues) fail("experience_too_many_cues");
         LedgerVector<std::string_view> derived(observation.derived_from.begin(), observation.derived_from.end(),
                                                memory_.allocator<std::string_view>());
         std::sort(derived.begin(), derived.end());
@@ -983,8 +969,6 @@ ExperienceAppend::ExperienceAppend(const ExperienceJournal& journal, const Alloc
             detail::require_identity_text(resources[at], "resource");
             if (at != 0 && resources[at - 1] == resources[at]) fail("experience_resource_duplicate");
         }
-        for (const auto cue : observation.semantic_cues)
-            if (!is_single_token(memory_, cue)) fail("experience_cue_not_a_token");
         sorted.push_back(Sorted{std::move(derived), std::move(resources)});
     }
 
@@ -1075,7 +1059,6 @@ ExperienceAppend::ExperienceAppend(const ExperienceJournal& journal, const Alloc
                       IndexFields{observation.source, observation.source_revision,
                                   observation.previous_revision_address, fields.derived, observation.name_space,
                                   fields.resources, raw.digest, transaction_id});
-        for (const auto cue : observation.semantic_cues) index.add_cue(cue);
         (void)index.finish();
         const auto address = address_of(kind, observation.source, observation.source_revision,
                                         observation.previous_revision_address, observation.outcome,

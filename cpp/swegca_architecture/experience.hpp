@@ -58,8 +58,9 @@ inline constexpr std::size_t experience_inline_blob_bytes = 2u * 1024u * 1024u;
 
 // The index views of experience (board §3B :122-123). Each record carries
 // its entries; the journal's index tree answers a lookup by kind and value.
-// - cue: every token of the source and its revision under the cue rule, and
-//   every Rozephine-authored cue (L3 hot cue index);
+// - cue: every token of the source and its revision under the cue rule
+//   (L3 hot cue index); a caller's authored cues are not the memory's and
+//   are kept apart from its record (user 2026-09-23 18:0x);
 // - source: looked up by the exact source text (the entry holds its
 //   SHA-256); content: the SHA-256 of the raw bytes;
 // - lineage: each address the experience was derived from (its derivations);
@@ -157,11 +158,10 @@ struct Observation {
     std::span<const std::string_view> resources;  // the resources it concerns, each once
     BlobInput raw;         // the exact bytes observed
     BlobInput structured;  // canonical structured form; empty when none
-    // Rozephine-authored cues (author: semantic keys by address): each must
-    // be exactly one token under the cue rule (`experience_cue_not_a_token`
-    // otherwise), so a query finds it by the same rule. The tokens of the
-    // source and its revision are added automatically.
-    std::span<const std::string_view> semantic_cues;
+    // No cue: an authored cue calls the memory and is not part of it (user
+    // 2026-09-23 18:0x; the author's artifact has none, its semantic keys
+    // come beside it, mosaic_unrestricted_experience.py@5901a5a:34-55,
+    // :398-436). The tokens of the source and its revision are derived.
 };
 
 // The cue rule (author regex `n\d+|r\d+|[a-z]+|\d+|[^\W\d_]+` over lowered
@@ -260,7 +260,7 @@ class ExperienceRecord final {
 public:
     // Requires an experience kind without authority or claim, a well-formed
     // payload, an address that is the digest of the record's identity, and
-    // index entries that are exactly the automatic ones plus authored cues.
+    // index entries that are exactly the automatic ones.
     // Its lists are kept on `memory`; parts are replayed from `journal`.
     [[nodiscard]] static ExperienceRecord decode(journal::PublishedRecord record,
                                                  const AllocationContext& memory,
@@ -405,7 +405,8 @@ public:
     [[nodiscard]] bool done() const noexcept { return done_; }
     // The next generation, or none once everything is staged (an
     // observation already in the journal is not appended again; one found
-    // there with other index entries fails `experience_index_conflict`).
+    // there with other index entries, which its fields all derive, fails
+    // `experience_index_conflict`).
     [[nodiscard]] std::optional<journal::StagedGeneration> next(const StateGeneration& state,
                                                                 std::span<const journal::ViewGeneration> views);
 
@@ -472,8 +473,8 @@ private:
 // identity (kind, source, revision, revised address, outcome and payload
 // digest; the payload holds every other observed field and the digest of
 // every part), so the same observation appended twice has one address and
-// one record. Index entries are not identity: appending an existing
-// observation with other authored cues fails with
+// one record. Index entries are not identity but are derived from it, so an
+// existing observation found with other entries fails with
 // `experience_index_conflict`, and one appended again in another
 // transaction keeps the transaction it was first appended in.
 class ExperienceJournal final {
@@ -485,8 +486,8 @@ public:
     ~ExperienceJournal() = default;
 
     // Validates every observation (texts by the identity rule, uncertainty
-    // and contradiction finite in [0, 1], resources unique, authored cues
-    // single tokens, every lineage address a published experience), computes
+    // and contradiction finite in [0, 1], resources unique, every lineage
+    // address a published experience), computes
     // each derived one's root sources from its lineage, encodes each with
     // its index entries and splits every blob larger than
     // `experience_inline_blob_bytes` into parts, all before anything is
