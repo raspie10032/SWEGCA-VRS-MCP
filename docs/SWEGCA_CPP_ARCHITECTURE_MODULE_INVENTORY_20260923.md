@@ -268,8 +268,9 @@ generation or operation mismatch, so every retry requires a new gate decision.
 
 ### Native tensor value
 
-`CognitiveTensor` is an owned, contiguous, fixed-rank value with explicit shape
-and one of `bfloat16`, `float16`, `float32`, or `float64`. `RoleMask` is a
+`CognitiveTensor` is an owned, fixed-rank value with immutable bounded chunks,
+explicit shape, and one of `bfloat16`, `float16`, `float32`, or `float64`.
+`RoleMask` is a
 separate boolean type. Tensor bytes, shape, dtype, and byte order are included
 in canonical hashes. There is no autograd, model graph, optimizer, Python
 device, or libtorch state. Retained SWEGCA equations use explicit typed
