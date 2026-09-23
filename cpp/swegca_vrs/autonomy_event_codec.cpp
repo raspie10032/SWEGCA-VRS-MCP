@@ -37,6 +37,7 @@ void hash_u64(Sha256& hash, std::uint64_t value) {
 
 // SWEGCA: src/swegca/mosaic_autonomous_cognition.py@5901a5a:89-120
 std::string_view text_view(const journal::LedgerVector<char>& text) noexcept {
+    if (text.empty()) return {};
     return std::string_view(text.data(), text.size());
 }
 
@@ -74,7 +75,8 @@ void append_uint(journal::LedgerBytes& out, std::uint64_t value, std::size_t wid
 // SWEGCA: user@2026-09-22:60-61
 void append_text(journal::LedgerBytes& out, std::string_view text) {
     append_uint(out, text.size(), 8);
-    append_raw(out, std::as_bytes(std::span<const char>(text.data(), text.size())));
+    if (!text.empty())
+        append_raw(out, std::as_bytes(std::span<const char>(text.data(), text.size())));
 }
 
 // Writes the payload tokens, checking only their shape; the parser that
@@ -622,6 +624,7 @@ AutonomyEventParser::Target AutonomyEventParser::next_target() const noexcept {
 // The six keys the kernel reads (:267, :272, :284, :301, :346-347, :360, :374).
 // SWEGCA: src/swegca/mosaic_autonomous_cognition.py@5901a5a:267-380
 AutonomyEventParser::Target AutonomyEventParser::target_of(std::span<const std::byte> key) noexcept {
+    if (key.empty()) return Target::none;
     const std::string_view name(reinterpret_cast<const char*>(key.data()), key.size());
     if (name == "requested_axes") return Target::requested_axes;
     if (name == "collect_with_tool") return Target::collect_with_tool;

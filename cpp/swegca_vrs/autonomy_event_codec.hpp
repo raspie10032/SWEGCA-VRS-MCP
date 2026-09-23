@@ -124,7 +124,7 @@ public:
     void feed(std::span<const std::byte> bytes);
     // Ends the stream: exactly one complete event must have been fed. Checks
     // the envelope as validate_autonomy_event does and returns the event; the
-    // parser is spent afterwards.
+    // parser is spent afterwards. A failed finish is terminal too.
     // SWEGCA: src/swegca/mosaic_autonomous_cognition.py@5901a5a:89-120
     [[nodiscard]] ParsedAutonomyEvent finish();
 
