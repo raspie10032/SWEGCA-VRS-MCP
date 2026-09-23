@@ -523,6 +523,15 @@ tests remain stopped under the architecture inventory's §10 gate.
 - Define the inline and empty-tensor representation. `part_levels(0)` gives
   a zero level-0 count and depth 1, while experience stores small blobs
   inline; a state tensor codec must state which rule it uses before writing.
+  Decision for the isolated native state codec (2026-09-24): use the same
+  fixed 8 MiB part-tree rule for every section, including an empty section;
+  there is no inline exception. `tensor_chunks` is a marker inside each of
+  the three tensor sections, separating its fixed header from the ordered
+  chunk digest list. A section descriptor and its address must be a
+  deterministic function of those canonical bytes, so a retry of identical
+  content can verify and reuse the same root. Descriptors, digest lists and
+  non-tensor sections over one part are split by the existing part-tree
+  rule; each decoder checks declared lengths and level counts before reads.
 - Define restart behavior when genesis or intermediate HEAD still has a
   zero state digest, including what initial input may be accepted.
 - Verify that all tensor readers and digest users can read a chunked
