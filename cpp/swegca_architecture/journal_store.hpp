@@ -1,6 +1,7 @@
 #pragma once
 
 #include "swegca_architecture/journal_file_io.hpp"
+#include "swegca_architecture/journal_extent_index.hpp"
 #include "swegca_architecture/journal_format.hpp"
 #include "swegca_architecture/journal_position.hpp"
 #include "swegca_architecture/authority_roles.hpp"
@@ -11,7 +12,6 @@
 #include <cstdint>
 #include <filesystem>
 #include <functional>
-#include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -44,22 +44,16 @@ class ExperienceAppend;
 
 namespace swegca::architecture::journal {
 
-// Published extents by ordinal; every node goes through the host's allocator.
-using ExtentTable =
-    std::map<std::uint64_t, SegmentExtent, std::less<>,
-             AllocationAdapter<std::pair<const std::uint64_t, SegmentExtent>>>;
-
 // One published generation as readers see it. Immutable once published; the
 // object and its control block are allocated through the host's allocator.
 struct PublishedSnapshot {
     // SWEGCA: user@2026-09-22:72-79
     PublishedSnapshot(const AllocationContext& memory, Manifest manifest)
-        : head(std::move(manifest)),
-          extents(memory.allocator<std::pair<const std::uint64_t, SegmentExtent>>()) {}
+        : head(std::move(manifest)), extents(memory) {}
 
     Manifest head;
     ManifestLocation location;
-    ExtentTable extents;
+    ExtentIndex extents;
     std::uint64_t storage = 0;  // charged on-disk use of the files this generation reaches
     // Lease on the page logs this generation's view reaches, shared by every
     // generation until the view is rewritten into new logs. Logs a rewrite
@@ -522,7 +516,7 @@ private:
     void load_published_head();
     void require_usable() const;
     [[nodiscard]] std::shared_ptr<const PublishedSnapshot> snapshot() const;
-    [[nodiscard]] std::uint64_t storage_of(const ExtentTable& extents, const ManifestFields& head,
+    [[nodiscard]] std::uint64_t storage_of(const ExtentIndex& extents, const ManifestFields& head,
                                            const ManifestLocation& location) const;
     [[nodiscard]] std::uint64_t page_log_charge(const ViewPages& view) const;
     [[nodiscard]] std::uint64_t used_bytes(const PublishedSnapshot& current) const;

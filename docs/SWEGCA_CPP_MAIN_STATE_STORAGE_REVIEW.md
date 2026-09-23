@@ -276,9 +276,15 @@ four-stage VRS path is already implemented.
   published-state snapshot boundary. Replace the separate ordinal with the
   exact state-head publication record position/digest. Keep recording time
   only in external transition metadata, never in content hash or CAS.
-- Replace whole-extent-table cloning and full storage recount on every
-  staged part with shared persistent extents and checked incremental
-  accounting, preserving exact recovery and storage-budget decisions.
+- Published snapshots now share an immutable ordinal extent index. An
+  ordinary staged append copies only the changed tail/new ordinal paths;
+  the host allocator accounts for each node and control block. Recovery still
+  validates the manifest chain in a mutable table and builds one immutable
+  index before readers observe it. The index caches checked record bytes,
+  so `universe()` does not scan every extent. Checkpoints still deliberately
+  list all extents and materialize an `all` vector; a bounded checkpoint
+  encoder remains open work. Disk charging retains its checked incremental
+  accounting and full cold-recovery recount.
 
 This storage path is outside the hot Déjà vu → Recall path. It cannot be used
 as a substitute for the SWEGCA-based four-stage VRS navigation and judgment.
