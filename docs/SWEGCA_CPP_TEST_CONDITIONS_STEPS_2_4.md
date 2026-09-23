@@ -96,15 +96,15 @@ Append and replay (invariant 3, failure 1):
 |---|---|---|
 | C1 | Observations with every field set and with every optional absent, including failed outcomes, uncertainty 1, contradiction 1, empty structured, any raw bytes | All appended (no filter); replay returns every field exactly; `raw_digest` = SHA-256(raw) |
 | C2 | Same observation twice (one call and two calls) | One address, one record; the second stage stages nothing for it |
-| C3 | Same identity, other authored cues | `experience_index_conflict`; nothing staged |
+| C3 | Same identity found with index entries other than those its fields derive (a writer that altered them) | `experience_index_conflict`; nothing staged. Authored cues are not in a memory record (user 2026-09-23 18:0x, approved 18:2x); they are cue bindings |
 | C4 | Same observation in a second transaction | Existing address; its transaction entry stays the first |
 | C5 | Address = digest of (kind, source, revision, revised address, outcome, payload digest) | Recomputed address equals the stored one; a record whose address differs fails decode `experience_address_mismatch` |
 | C6 | Lineage (revised address or derived_from) unknown, or naming a non-experience record | `experience_lineage_unknown` / `experience_kind_invalid`; nothing staged |
 | C7 | Uncertainty or contradiction NaN, negative, above 1; -0 | invalid code; -0 stored as +0 |
-| C8 | Authored cue with two tokens, uppercase, or punctuation | `experience_cue_not_a_token` |
+| C8 | Cue binding token with two tokens, uppercase, or punctuation (the rule moves from the memory record to the cue binding, user 2026-09-23 18:2x) | `experience_cue_not_a_token` |
 | C9 | Resources repeated; lineage repeated | `experience_resource_duplicate` / `experience_lineage_duplicate` |
-| C10 | Record with an index entry removed, added (non-cue), or altered | decode fails `experience_index_incomplete` / `experience_index_invalid` |
-| C11 | Maximum sizes: 4096-byte source and revision of alternating classes, 4096 authored cues, 1024 lineage, 1024 resources | Staged and decoded; entry count within `max_record_index_entries` |
+| C10 | Record with an index entry removed, added (any entry, a cue too), or altered | decode fails `experience_index_incomplete` / `experience_index_invalid` |
+| C11 | Maximum sizes: 4096-byte source and revision of alternating classes, 1024 lineage, 1024 resources | Staged and decoded; entry count within `max_record_index_entries` |
 | C11a | Raw and structured bytes at 0, the inline size, one byte over it, one byte under and over each part-count boundary (1, 2, 65536, 65537 parts: depth 1 and 2), and a depth-3 size | Each stages and replays byte for byte through `for_each_raw_chunk` / `for_each_structured_chunk`; the envelope stays under `max_payload_bytes`; depth and top count are the ones the size gives; `raw()` on a parted blob fails `experience_blob_parted` |
 | C11b | Every generation `next` stages | Parts before the experience record; no generation over either journal generation limit; the append is `done` only after its last record is in the journal; memory held is at most one part per level while replaying |
 | C11h | Raw bytes given through a `BlobReader` (baseline profile: bytes larger than the host's memory budget, up to the storage budget) | Staged and replayed byte for byte; memory held is one part buffer, the part generation being staged and the digest lists; a reader returning other bytes on the second reading fails `experience_source_changed` |
@@ -112,7 +112,7 @@ Append and replay (invariant 3, failure 1):
 | C11d | `next` called after a generation it returned was not published (publication failed or skipped), for a part generation and for a record generation | The same generation is staged again; the append ends `done` with every address in the journal |
 | C11i | A part address already in the journal holding another record (other kind, authority, index entry, payload or length) | `experience_part_invalid` before any experience record is staged |
 | C11j | Another writer publishes a record under a part address this append staged, then this append's generation is not published (codex 16:41) | The next `next` replays that record and fails `experience_part_invalid` unless it is exactly the part; a part is taken without reading only when the record published at its address is the one this append staged (same record digest) |
-| C11k | As C11j for an experience record: another writer publishes a record at its address with other index entries (cues), then this append's head generation is not published | The next `next` replays it and fails `experience_index_conflict`; with the same index entries it is taken as appended; a head is confirmed without reading only when the published record is the one staged |
+| C11k | As C11j for an experience record: another writer publishes a record at its address with other index entries, then this append's head generation is not published | The next `next` replays it and fails `experience_index_conflict`; with the same index entries it is taken as appended; a head is confirmed without reading only when the published record is the one staged |
 | C11l | A part segment damaged on disk after its generation is published, then the append completes (codex 17:07) | The head may be published; decoding or `verify_parts` fails `experience_part_invalid`, admission, Re-evidence and Bind refuse the experience, and streaming its bytes (`for_each_raw_chunk`) fails; `select` may still return it as a no-authority candidate (it reads the envelope only); confirmation at append proves identity only |
 | C11e | A part replaced, truncated, extended, reordered, with another kind, an index entry or authority; a top digest altered | reading fails `experience_part_invalid`, or decode fails `experience_address_mismatch` (the head's digest binds every top digest) |
 | C11f | Two observations whose bytes share parts; one already in the journal | Each shared part is appended once; the parts of the existing one are not appended |
@@ -122,7 +122,7 @@ Views (board §3B :122-123):
 
 | # | View | Expected |
 |---|---|---|
-| C12 | cue | every token of source and revision and every authored cue finds the record; a token over 4019 bytes finds it through its digest entry |
+| C12 | cue | every token of source and revision finds the record (authored cues find it through cue bindings); a token over 4019 bytes finds it through its digest entry |
 | C13 | source, namespace, resource, transaction | the exact text finds exactly the records with it |
 | C14 | content | the raw SHA-256 hex finds every record with those raw bytes |
 | C15 | lineage | X finds every experience derived from X |

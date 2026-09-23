@@ -55,11 +55,23 @@ inline constexpr std::size_t experience_part_bytes = 8u * 1024u * 1024u;
 // A blob (raw bytes, structured bytes, root sources) up to this size is kept
 // in the experience record itself; a larger one is kept as parts.
 inline constexpr std::size_t experience_inline_blob_bytes = 2u * 1024u * 1024u;
+// A caller's cues for one memory are kept beside it, never in it: a record
+// of their own kind addressed under the memory's address (the memory's
+// address, this infix, and the digest of the binding), so a cue lookup that
+// finds it names the memory by its first `experience_address_bytes`.
+inline constexpr std::uint16_t cue_binding_kind = journal::cue_binding_record_kind;
+inline constexpr std::string_view cue_binding_infix = "/cue-binding:";
+inline constexpr std::size_t cue_binding_address_bytes =
+    experience_address_bytes + cue_binding_infix.size() + 2 * digest256_width;
+// Distinct cues one binding carries at most.
+inline constexpr std::size_t max_bound_cues = 2048;
 
 // The index views of experience (board §3B :122-123). Each record carries
 // its entries; the journal's index tree answers a lookup by kind and value.
-// - cue: every token of the source and its revision under the cue rule, and
-//   every Rozephine-authored cue (L3 hot cue index);
+// - cue: every token of the source and its revision under the cue rule
+//   (L3 hot cue index); a caller's authored cues are not the memory's and
+//   are kept apart from its record (user 2026-09-23 18:0x), in cue
+//   bindings that carry the same view;
 // - source: looked up by the exact source text (the entry holds its
 //   SHA-256); content: the SHA-256 of the raw bytes;
 // - lineage: each address the experience was derived from (its derivations);
@@ -135,6 +147,68 @@ struct BlobInput {
     std::optional<BlobReader> reader;
 };
 
+// A historical step's outcome: the user's six OUTCOMES.
+enum class StepOutcome : std::uint8_t { success, failure, negative, uncertain, conflict, pending };
+
+// What an observed resource is. Modality belongs to a resource, never to the
+// whole memory.
+enum class ResourceModality : std::uint8_t { text, image, audio, video };
+
+// The pixel frame an image's native size is given in.
+enum class CoordinateFrame : std::uint8_t { native_source_pixels, oriented_source_pixels };
+
+// One historical step of a user episode (borrowed input). Texts are kept as
+// given; `phase`, `judgment` and each evidence ref must hold something other
+// than Python strip whitespace. `observation` is kept as given bytes.
+struct MemoryStepInput {
+    std::string_view phase;
+    std::span<const std::byte> observation;
+    std::span<const std::string_view> relations;  // kept in order, repeats kept, unchecked
+    std::string_view judgment;
+    StepOutcome outcome = StepOutcome::pending;
+    std::span<const std::string_view> evidence_refs;  // at least one, in order, repeats kept
+};
+
+// A user episode carried by one memory (borrowed input). Its own revision is
+// not the producer's `source_revision`. Its cues are not carried: cues are
+// bound beside the memory (`CueBinding`).
+struct MemoryEpisodeInput {
+    std::string_view episode_id;  // the producer's id, kept as provenance
+    std::string_view revision;
+    std::string_view verification_state;
+    std::span<const std::string_view> source_addresses;  // at least one, distinct, in order
+    std::span<const MemoryStepInput> steps;              // at least one
+};
+
+// What an observed resource's native form is, by modality: a text's code
+// point count; an image's native size and frame; audio's duration, alone or
+// with the frames and sample rate that give it; a video's native size and
+// duration.
+struct ResourceDescriptor {
+    ResourceModality modality = ResourceModality::text;
+    std::uint64_t code_points = 0;
+    std::uint64_t width = 0;
+    std::uint64_t height = 0;
+    CoordinateFrame frame = CoordinateFrame::native_source_pixels;
+    std::uint64_t frames = 0;
+    std::uint64_t sample_rate = 0;
+    std::uint64_t duration_ns = 0;
+};
+
+// One resource a memory observed (borrowed input). Its bytes are kept only
+// when they were received, as parts; a digest is kept only when computed from
+// them or named by the source, and a locator only as provenance (never
+// opened).
+struct ObservedResourceInput {
+    std::string_view resource_id;
+    ResourceDescriptor descriptor;
+    std::optional<DigestBytes> content_digest;
+    std::optional<std::string_view> storage_locator;
+    std::optional<std::uint64_t> item_index;  // the source's own value
+    std::span<const std::byte> metadata;
+    std::optional<BlobInput> bytes;
+};
+
 // One complete observation: the producer's borrowed input. Nothing is
 // filtered (no success, verification or file-type test) and every field is
 // kept. Before Main appends it, it has no address; appending gives it one
@@ -157,11 +231,29 @@ struct Observation {
     std::span<const std::string_view> resources;  // the resources it concerns, each once
     BlobInput raw;         // the exact bytes observed
     BlobInput structured;  // canonical structured form; empty when none
-    // Rozephine-authored cues (author: semantic keys by address): each must
-    // be exactly one token under the cue rule (`experience_cue_not_a_token`
-    // otherwise), so a query finds it by the same rule. The tokens of the
-    // source and its revision are added automatically.
-    std::span<const std::string_view> semantic_cues;
+    // A user episode, when the observation is one; the resources it observed,
+    // in the producer's order. Their ids join `resources` in the resource
+    // view; each list is kept as given.
+    std::optional<MemoryEpisodeInput> episode;
+    std::span<const ObservedResourceInput> observed_resources;
+    // No cue: an authored cue calls the memory and is not part of it (user
+    // 2026-09-23 18:0x; the author's artifact has none, its semantic keys
+    // come beside it, mosaic_unrestricted_experience.py@5901a5a:34-55,
+    // :398-436). The tokens of the source and its revision are derived.
+    // A caller's cues are bound beside it (`CueBinding`).
+};
+
+// A caller's cues for one memory (the caller's retrieval keys, beside the
+// memory as the author's semantic postings are beside its artifact). Who
+// authored them and at what revision is kept with them; equal bindings are
+// one record. Binding grants nothing and changes no strength.
+struct CueBinding {
+    std::string_view target;  // a published memory's address, or one the same append gives
+    std::string_view source;  // who authored the cues
+    std::string_view source_revision;
+    // Each kept whole, normalized as the user's `_cue` (strip, one space
+    // per run, Unicode case folded); equal ones count once.
+    std::span<const std::string_view> cues;
 };
 
 // The cue rule (author regex `n\d+|r\d+|[a-z]+|\d+|[^\W\d_]+` over lowered
@@ -199,7 +291,9 @@ private:
 template <class Arg>
 class ExperienceVisitor final {
 public:
-    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3f:116-126
+    // C++ infrastructure for reading the derived views (approved flow :62);
+    // no direct Python counterpart.
+    // SWEGCA: user@2026-09-22:62
     template <class F>
         requires(!std::is_same_v<std::remove_cvref_t<F>, ExperienceVisitor> &&
                  std::is_object_v<std::remove_reference_t<F>> &&
@@ -208,12 +302,12 @@ public:
         : target_(static_cast<const void*>(std::addressof(visit))),
           call_(&invoke<std::remove_reference_t<F>>) {}
 
-    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3f:116-126
+    // SWEGCA: user@2026-09-22:62
     bool operator()(Arg value) const { return call_(target_, value); }
 
 private:
     using Call = bool (*)(const void*, Arg);
-    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3f:116-126
+    // SWEGCA: user@2026-09-22:62
     template <class T>
     static bool invoke(const void* target, Arg value) {
         auto& visit = *static_cast<T*>(const_cast<void*>(target));
@@ -251,6 +345,81 @@ struct ExperienceBlob {
     [[nodiscard]] bool parted() const noexcept { return depth != 0; }
 };
 
+// A decoded user episode, a step and an observed resource. Every text and
+// byte span views the record's bytes; lists view the record's own lists.
+struct EpisodeView {
+    std::string_view episode_id;
+    std::string_view revision;
+    std::string_view verification_state;
+    std::span<const std::string_view> source_addresses;
+};
+
+struct StepView {
+    std::string_view phase;
+    std::span<const std::byte> observation;
+    std::span<const std::string_view> relations;
+    std::string_view judgment;
+    StepOutcome outcome = StepOutcome::pending;
+    std::span<const std::string_view> evidence_refs;
+};
+
+struct ResourceView {
+    std::string_view resource_id;
+    ResourceDescriptor descriptor;
+    std::optional<DigestBytes> content_digest;
+    std::optional<std::string_view> storage_locator;
+    std::optional<std::uint64_t> item_index;
+    std::span<const std::byte> metadata;
+    // The received bytes, inline or parted as every blob.
+    std::optional<ExperienceBlob> bytes;
+};
+
+// Which field of the typed section an event carries.
+enum class SectionPart : std::uint8_t {
+    episode_id,
+    revision,
+    verification_state,
+    source_address,
+    phase,
+    observation,
+    relation,
+    judgment,
+    outcome,
+    evidence_ref,
+    resource,
+    storage_locator,
+    metadata,
+    resource_bytes,
+};
+
+// One event of reading the typed section in order. A text or byte field
+// comes in pieces (`piece`, the last with `last`) and is checked after its
+// last piece; `outcome` carries a step's outcome; `resource` a resource's id
+// and fixed fields, before its locator, metadata and bytes, and every later
+// event of that resource carries them too. Received bytes kept inline come in
+// pieces with their whole `size`; kept as parts, as one event with `parted`
+// set and `piece` their top digest list; read those with
+// `ExperienceRecord::for_each_resource_chunk`. Every span is valid only
+// during the call.
+struct SectionEvent {
+    SectionPart part = SectionPart::episode_id;
+    std::uint64_t step = 0;      // the step of a step field
+    std::uint64_t resource = 0;  // the resource of a resource field
+    std::uint64_t item = 0;      // the place in its list (source addresses, relations, evidence refs)
+    std::span<const std::byte> piece;
+    bool last = true;
+    StepOutcome outcome = StepOutcome::pending;
+    std::string_view resource_id;
+    ResourceDescriptor descriptor;
+    std::optional<DigestBytes> content_digest;
+    std::optional<std::uint64_t> item_index;
+    bool parted = false;
+    std::uint64_t size = 0;  // resource_bytes: the whole size
+};
+
+// Visits section events in order; returning false stops the reading.
+using SectionVisitor = ExperienceVisitor<const SectionEvent&>;
+
 // One experience record read back: the published record Main replayed and
 // the experience fields decoded from its payload. Every text and span it
 // hands out views the record's bytes and is valid while this object lives.
@@ -260,7 +429,7 @@ class ExperienceRecord final {
 public:
     // Requires an experience kind without authority or claim, a well-formed
     // payload, an address that is the digest of the record's identity, and
-    // index entries that are exactly the automatic ones plus authored cues.
+    // index entries that are exactly the automatic ones.
     // Its lists are kept on `memory`; parts are replayed from `journal`.
     [[nodiscard]] static ExperienceRecord decode(journal::PublishedRecord record,
                                                  const AllocationContext& memory,
@@ -298,9 +467,40 @@ public:
     }
     // SWEGCA: src/swegca/mosaic_external_memory.py@5901a5a:15-26
     [[nodiscard]] const std::optional<std::string_view>& name_space() const noexcept { return name_space_; }
-    // In increasing order.
+    // Every resource the memory concerns, in increasing order: those the
+    // producer listed and each observed resource's id.
     // SWEGCA: src/swegca/mosaic_external_memory.py@5901a5a:34-42
     [[nodiscard]] std::span<const std::string_view> resources() const noexcept { return resources_; }
+    // Those the producer listed in `Observation::resources`, in increasing
+    // order.
+    // SWEGCA: src/swegca/mosaic_external_memory.py@5901a5a:34-42
+    [[nodiscard]] std::span<const std::string_view> listed_resources() const noexcept { return listed_; }
+    // Whether the memory has a typed section (a user episode or observed
+    // resources), and whether that section is kept as parts. Only a section
+    // kept in the record is decoded here, checked whole, and viewed by
+    // `episode`, `steps` and `observed_resources`; a parted one is read with
+    // `for_each_section` and checked by `verify_parts`, and those three are
+    // then empty.
+    // SWEGCA: src/tinylm_slicer/mosaic_memory_activation.py@3bddcb7:89-106
+    [[nodiscard]] bool has_section() const noexcept { return has_section_; }
+    // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:137-155
+    [[nodiscard]] bool section_parted() const noexcept { return has_section_ && section_.parted(); }
+    // The user episode the memory carries, when it carries one, and its
+    // steps in order.
+    // SWEGCA: src/tinylm_slicer/mosaic_memory_activation.py@3bddcb7:89-106
+    [[nodiscard]] const std::optional<EpisodeView>& episode() const noexcept { return episode_; }
+    // SWEGCA: src/tinylm_slicer/mosaic_memory_activation.py@3bddcb7:63-87
+    [[nodiscard]] std::span<const StepView> steps() const noexcept { return steps_; }
+    // The resources it observed, in the producer's order.
+    // SWEGCA: src/swegca/mosaic_external_memory.py@5901a5a:33-41
+    [[nodiscard]] std::span<const ResourceView> observed_resources() const noexcept { return observed_; }
+    // Reads the typed section in order, inline or parted, checking every
+    // field as it goes (the checks `verify_parts` makes, received bytes kept
+    // as parts apart: those are read by `for_each_resource_chunk` and
+    // `verify_parts`); nothing when it has none. A resource's inline bytes
+    // come in pieces and are checked against their digest after the last.
+    // SWEGCA: src/tinylm_slicer/mosaic_memory_activation.py@3bddcb7:63-106
+    void for_each_section(SectionVisitor visit) const;
     // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:23-60
     [[nodiscard]] const ExperienceBlob& raw_blob() const noexcept { return raw_; }
     // The raw bytes of an inline blob; a parted one fails with
@@ -316,7 +516,9 @@ public:
     // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:23-60
     [[nodiscard]] std::span<const std::byte> structured() const;
     // The record's index entries (kind letter and value), increasing.
-    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3f:122-123
+    // Weak: the user's postings per key, automatic and supplied; the kind
+    // letters are C++'s.
+    // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:410-431
     [[nodiscard]] std::span<const std::string_view> index_entries() const noexcept { return index_; }
 
     // Streams the blob's bytes: each part is replayed, checked against its
@@ -330,6 +532,12 @@ public:
     void for_each_raw_chunk(ChunkVisitor visit) const;
     // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:137-155
     void for_each_structured_chunk(ChunkVisitor visit) const;
+    // Streams the received bytes of observed resource `resource` (in the
+    // producer's order) as `for_each_raw_chunk` does; one without bytes fails
+    // with `experience_resource_bytes_absent`. In a parted section the
+    // section is read up to it.
+    // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:137-155
+    void for_each_resource_chunk(std::size_t resource, ChunkVisitor visit) const;
     // The sources every observation this experience rests on came from: its
     // own source for an original; for a derived one, the union of the root
     // sources of what it was derived from, fixed when it was appended.
@@ -342,7 +550,9 @@ public:
     // SWEGCA: paper/swegca/journal_submission_2026-08-25/COMPONENT_LEDGER.md@5901a5a:44-50
     void for_each_root_context(DigestVisitor visit) const;
     // Reads every parted blob (raw, structured, root sources, root
-    // contexts) to its end, checking each part, the order of every digest
+    // contexts) and the typed section to its end, with each observed
+    // resource's parted bytes (a text resource's checked as strict UTF-8 of
+    // its code point count), checking each part, the order of every digest
     // set and each whole digest, as `for_each_raw_chunk` does; one part per
     // level is held. Evidence admission and Re-evidence run it before an
     // experience counts, so a missing or damaged part fails there.
@@ -373,13 +583,99 @@ private:
     ExperienceBlob structured_;
     ExperienceBlob roots_;     // derived only: the root-source digests, 32 bytes each
     ExperienceBlob contexts_;  // derived only: the root-context digests, 32 bytes each
+    journal::LedgerVector<std::string_view> listed_;         // views the record's bytes
+    bool has_section_ = false;
+    ExperienceBlob section_;
+    journal::LedgerVector<std::string_view> section_texts_;  // lists the views below view
+    std::optional<EpisodeView> episode_;
+    journal::LedgerVector<StepView> steps_;
+    journal::LedgerVector<ResourceView> observed_;
+};
+
+// One cue binding read back. Its texts view the record's bytes and are
+// valid while this object lives.
+class CueBindingRecord final {
+public:
+    // Requires the cue-binding kind without authority, claim, revised
+    // address or outcome, a well-formed payload, an address that is the
+    // binding's digest under its target, index entries that are exactly its
+    // cues' entries, and a target the journal holds as a memory (kind 1 or 2).
+    [[nodiscard]] static CueBindingRecord decode(journal::PublishedRecord record, const AllocationContext& memory,
+                                                 const journal::JournalStore& journal);
+    // The same checks for a binding a view rebuild meets before it is
+    // published, its target read through the rebuilt view (`reader`).
+    // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:398-436
+    static void validate_rebuilt(const journal::RecordView& record, const journal::RecordPosition& position,
+                                 const journal::RebuildReader& reader, const AllocationContext& memory);
+
+    CueBindingRecord(CueBindingRecord&& other) noexcept = default;
+    CueBindingRecord& operator=(CueBindingRecord&&) = delete;
+    CueBindingRecord(const CueBindingRecord&) = delete;
+    CueBindingRecord& operator=(const CueBindingRecord&) = delete;
+    ~CueBindingRecord() = default;
+
+    // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:398-436
+    [[nodiscard]] const journal::RecordView& record() const noexcept { return record_.view(); }
+    // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:398-436
+    [[nodiscard]] const journal::RecordPosition& position() const noexcept { return record_.position(); }
+    // The memory's address.
+    // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:398-436
+    [[nodiscard]] std::string_view target() const noexcept { return target_; }
+    // Normalized phrases, increasing, distinct.
+    // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:425-427
+    [[nodiscard]] std::span<const std::string_view> cues() const noexcept { return cues_; }
+
+private:
+    // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:398-436
+    CueBindingRecord(journal::PublishedRecord record, std::string_view target,
+                     journal::LedgerVector<std::string_view> cues) noexcept
+        : record_(std::move(record)), target_(target), cues_(std::move(cues)) {}
+
+    journal::PublishedRecord record_;
+    std::string_view target_;                     // views the record's bytes
+    journal::LedgerVector<std::string_view> cues_;  // views the record's bytes
 };
 
 class ExperienceJournal;
 
+namespace detail {
+
+// A typed section being appended, read as one blob without copying the
+// caller's bytes: its encoded fields and length prefixes (`encoded`) and the
+// caller's bytes between them, in order. (One small enough to be inline, up
+// to `experience_inline_blob_bytes`, is then read once into the record.) It reads itself through `input`, so
+// it must stay where it was built (its owner reserves room for every one
+// before building any, and moving the owner's list keeps its buffer).
+struct SectionSource {
+    struct Piece {
+        std::uint64_t at = 0;            // where it starts in the section
+        std::uint64_t encoded_from = 0;  // where it is in `encoded`, when `caller` is empty
+        std::uint64_t length = 0;
+        std::span<const std::byte> caller;
+    };
+
+    // C++ infrastructure for streaming a section larger than memory holds
+    // (approved flow :91-92); no direct Python counterpart.
+    // SWEGCA: user@2026-09-22:91-92
+    explicit SectionSource(const AllocationContext& memory)
+        : encoded(memory.allocator<std::byte>()), pieces(memory.allocator<Piece>()) {}
+
+    // Fills `out` with the section's bytes at `offset`.
+    // SWEGCA: user@2026-09-22:91-92
+    void operator()(std::uint64_t offset, std::span<std::byte> out) const;
+
+    journal::LedgerBytes encoded;
+    journal::LedgerVector<Piece> pieces;
+    std::uint64_t size = 0;
+    std::optional<BlobInput> input;
+};
+
+}  // namespace detail
+
 // What appending staged, handed out one generation at a time. The parts of
-// every new experience come first, then the experience records, so an
-// experience becomes visible only with its record, after all its parts:
+// every new experience come first, then the experience records, then the
+// cue bindings, so an experience becomes visible only with its record,
+// after all its parts, and a binding only once its memory is:
 // a crash in between leaves only unreferenced parts, which an append-only
 // journal keeps harmlessly and a retry reuses (equal parts are one record).
 // `next` stages the next generation on the state and views Main passes;
@@ -401,11 +697,14 @@ public:
     // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:31-35
     [[nodiscard]] std::span<const ExperienceAddress> addresses() const noexcept { return addresses_; }
     // True once nothing is left to stage.
-    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3f:282-283
+    // C++ infrastructure for admitting observations (approved flow :61);
+    // no direct Python counterpart.
+    // SWEGCA: user@2026-09-22:61
     [[nodiscard]] bool done() const noexcept { return done_; }
     // The next generation, or none once everything is staged (an
     // observation already in the journal is not appended again; one found
-    // there with other index entries fails `experience_index_conflict`).
+    // there with other index entries, which its fields all derive, fails
+    // `experience_index_conflict`).
     [[nodiscard]] std::optional<journal::StagedGeneration> next(const StateGeneration& state,
                                                                 std::span<const journal::ViewGeneration> views);
 
@@ -441,11 +740,26 @@ private:
         auto operator<=>(const Part& other) const noexcept { return digest <=> other.digest; }
         bool operator==(const Part& other) const noexcept { return digest == other.digest; }
     };
-    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3f:282-283
+    struct Binding {
+        std::size_t input = 0;  // index into `binding_inputs_`
+        std::array<char, cue_binding_address_bytes> address{};
+        journal::LedgerVector<std::string_view> cues;  // distinct, increasing; view the caller's
+        // Encoded when staged: it names where the target was published,
+        // which a target this append gives is only then.
+        journal::LedgerBytes payload;
+        journal::LedgerVector<std::string_view> index;  // views `index_bytes`
+        journal::LedgerBytes index_bytes;
+        bool skip = false;  // equal to an earlier binding of this append, or already bound
+        std::optional<DigestBytes> staged;  // as for heads
+    };
+    // C++ infrastructure for admitting observations (approved flow :61);
+    // no direct Python counterpart.
+    // SWEGCA: user@2026-09-22:61
     ExperienceAppend(const ExperienceJournal& journal, const AllocationContext& memory,
-                     std::span<const Observation> observations, std::string_view operation_id,
-                     std::optional<std::string_view> transaction_id);
+                     std::span<const Observation> observations, std::span<const CueBinding> bindings,
+                     std::string_view operation_id, std::optional<std::string_view> transaction_id);
     [[nodiscard]] journal::RecordDraft head_draft(const Head& head) const;
+    [[nodiscard]] journal::RecordDraft binding_draft(const Binding& binding) const;
 
     const ExperienceJournal* journal_;
     AllocationContext memory_;
@@ -455,13 +769,20 @@ private:
     journal::LedgerVector<Head> heads_;
     journal::LedgerVector<Part> parts_;  // sorted by digest, unique
     journal::LedgerVector<journal::LedgerBytes> owned_;  // bytes parts view that the caller did not give
+    // Typed sections read in place; room for one per observation is
+    // reserved first, so none ever moves (parts keep their readers).
+    journal::LedgerVector<detail::SectionSource> sections_;
     journal::LedgerVector<ExperienceAddress> addresses_;
+    std::span<const CueBinding> binding_inputs_;
+    journal::LedgerVector<Binding> bindings_;
     std::size_t next_part_ = 0;
-    // The generation `next` last returned: 1 parts, 2 records, 0 none, and
-    // where it began. The next call rewinds to it unless all of it is published.
+    // The generation `next` last returned: 1 parts, 2 records, 3 bindings,
+    // 0 none, and where it began. The next call rewinds to it unless all of
+    // it is published.
     std::uint8_t pending_ = 0;
     std::size_t pending_from_ = 0;
     std::size_t next_head_ = 0;
+    std::size_t next_binding_ = 0;
     bool parts_checked_ = false;
     bool done_ = false;
 };
@@ -472,8 +793,8 @@ private:
 // identity (kind, source, revision, revised address, outcome and payload
 // digest; the payload holds every other observed field and the digest of
 // every part), so the same observation appended twice has one address and
-// one record. Index entries are not identity: appending an existing
-// observation with other authored cues fails with
+// one record. Index entries are not identity but are derived from it, so an
+// existing observation found with other entries fails with
 // `experience_index_conflict`, and one appended again in another
 // transaction keeps the transaction it was first appended in.
 class ExperienceJournal final {
@@ -485,8 +806,8 @@ public:
     ~ExperienceJournal() = default;
 
     // Validates every observation (texts by the identity rule, uncertainty
-    // and contradiction finite in [0, 1], resources unique, authored cues
-    // single tokens, every lineage address a published experience), computes
+    // and contradiction finite in [0, 1], resources unique, every lineage
+    // address a published experience), computes
     // each derived one's root sources from its lineage, encodes each with
     // its index entries and splits every blob larger than
     // `experience_inline_blob_bytes` into parts, all before anything is
@@ -494,6 +815,15 @@ public:
     // The returned append stages the generations (`ExperienceAppend::next`).
     [[nodiscard]] ExperienceAppend stage(std::span<const Observation> observations,
                                          std::string_view operation_id,
+                                         std::optional<std::string_view> transaction_id) const;
+    // As above, and binds each caller's cues beside its memory once every
+    // memory is published. A target is a published memory (kind 1 or 2) or
+    // an address this append gives (`experience_cue_binding_target_unknown`);
+    // each cue is kept whole in its normalized form (empty or invalid:
+    // `experience_cue_invalid`),
+    // at least one and at most `max_bound_cues` distinct per binding.
+    [[nodiscard]] ExperienceAppend stage(std::span<const Observation> observations,
+                                         std::span<const CueBinding> bindings, std::string_view operation_id,
                                          std::optional<std::string_view> transaction_id) const;
 
     // Replays one exact experience (`journal_address_unknown` when absent).
@@ -504,7 +834,9 @@ public:
 
     // Visits, in address order over one published snapshot, every experience
     // `view` names for `key` until `visit` returns false: for `cue` a single
-    // cue token; for `source`, `name_space`, `resource` and `transaction` the
+    // cue in its kept form: a token of the memory cue rule or a whole bound
+    // phrase (it visits memories and the cue bindings beside them, whose
+    // address begins with their memory's); for `source`, `name_space`, `resource` and `transaction` the
     // exact text; for `content` the 64 lowercase hex digits of the raw
     // bytes' SHA-256; for `lineage` and `successor` an experience address.
     // Another key fails with `experience_view_key_invalid`.
@@ -514,7 +846,9 @@ private:
     friend class MainOwner;
     friend class ExperienceSelector;
     friend class ExperienceAppend;
-    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3f:116-126
+    // C++ infrastructure for admitting observations (approved flow :61);
+    // no direct Python counterpart.
+    // SWEGCA: user@2026-09-22:61
     ExperienceJournal(const journal::JournalStore& journal, const AllocationContext& memory) noexcept
         : journal_(journal), memory_(memory) {}
 
@@ -722,7 +1056,9 @@ private:
 
 // Main's limits on one selection. More retrieved entries than
 // `max_retrieved` fail closed (`experience_select_over_policy`) rather than
-// being cut: no retrieved candidate is ever dropped unjudged.
+// being cut: no retrieved candidate is ever dropped unjudged. Every index
+// entry a lookup returns counts, a memory's own and each cue binding's
+// beside it alike: the bound is on the work of one selection.
 struct SelectionPolicy {
     std::uint32_t max_retrieved = 1u << 16;
 };
@@ -748,7 +1084,9 @@ public:
 
 private:
     friend class MainOwner;
-    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3f:116-126
+    // C++ infrastructure for the read route (approved flow :20-24);
+    // no direct Python counterpart.
+    // SWEGCA: user@2026-09-22:20-24
     ExperienceSelector(const ExperienceJournal& experience, SelectionPolicy policy) noexcept
         : experience_(experience), policy_(policy) {}
 

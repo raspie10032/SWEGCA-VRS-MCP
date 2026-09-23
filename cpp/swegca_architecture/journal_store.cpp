@@ -507,6 +507,8 @@ LedgerVector<AddressChildItem> write_branch_pages(PageWriter& writer,
 // that replace the subtree root (more than one when it split). The keys of
 // kept children view the page read here, which lives until the replacement
 // is written.
+// Rule: an address already in the view is refused, never overwritten.
+// SWEGCA: src/swegca/mosaic_versioned_memory.py@5901a5a:159-167
 // SWEGCA: user@2026-09-22:72-79
 LedgerVector<AddressChildItem> insert_into(PageWriter& writer, const PageSource& pages,
                                            const PageRef& ref, std::uint32_t height,
@@ -913,6 +915,8 @@ public:
         last_.reserve(detail::identity_text_max_bytes);
     }
 
+    // Rule: the same address arriving twice in a rebuild is refused.
+    // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:69-71
     // SWEGCA: user@2026-09-22:72-79
     void add(const AddressLeafItem& item) {
         const std::string_view last(reinterpret_cast<const char*>(last_.data()), last_.size());
@@ -1445,6 +1449,12 @@ void JournalStore::verify_extent(const PublishedSnapshot& current,
 // buffers reserved to their exact size, builds the view pages and the
 // complete next snapshot, and checks the full disk use again before
 // returning, so publishing only writes and moves.
+// Rule, a new C++ authority boundary: the generic stage refuses experience
+// kinds 1-4, so only Main's experience staging writes them. The user's
+// lines name no kind reservation; the nearest is that only Main-owned
+// staging and publication make a source episode persistent (weak: stated
+// for the dialogue teacher, a principle and not this mechanism).
+// SWEGCA: src/tinylm_slicer/mosaic_dialogic_novel_teacher.py@3bddcb7:4-6
 // SWEGCA: user@2026-09-22:72-79
 StagedGeneration JournalStore::stage(std::span<const RecordDraft> drafts,
                                      const StateGeneration& state,
@@ -1471,6 +1481,9 @@ StagedGeneration JournalStore::stage_records(std::span<const RecordDraft> drafts
 // `replacement`, when given, is a view already written to new page logs over
 // the same entries; the generation then has no records and adds no pages.
 // `retained` is the charge of page logs on disk that no view reaches.
+// Rule: an address repeated within one generation is refused. Refusing a
+// repeated index key too is the C++ index's extension of that rule.
+// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:69-71
 // SWEGCA: user@2026-09-22:72-79
 StagedGeneration JournalStore::stage_from(const std::shared_ptr<const PublishedSnapshot>& current,
                                           std::span<const RecordDraft> drafts,
@@ -1888,6 +1901,9 @@ PublishedRecord JournalStore::replay(const ExperienceAddress& address) const {
     return replay_in(*current, address);
 }
 
+// Rule, weak source: Replay is bound to the state generation of the same
+// snapshot. The user's lines bind evidence to a state hash, not Replay.
+// SWEGCA: src/swegca/mosaic_evidence_revision.py@5901a5a:29-43
 // SWEGCA: user@2026-09-22:72-79
 ReplayAtHead JournalStore::replay_at_head(const ExperienceAddress& address) const {
     require_usable();
@@ -1897,6 +1913,8 @@ ReplayAtHead JournalStore::replay_at_head(const ExperienceAddress& address) cons
     return ReplayAtHead{replay_in(*current, address), std::move(state)};
 }
 
+// Rule (Replay): an unknown address, or a view naming another address, fails.
+// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:89-111
 // SWEGCA: user@2026-09-22:72-79
 PublishedRecord JournalStore::replay_in(const PublishedSnapshot& current,
                                         const ExperienceAddress& address) const {

@@ -4,7 +4,9 @@ Status (2026-09-23 17:4x): the core phase (steps 3-4) is closed: the core
 is split out, matches the author's judgment to the bit and passes its
 C++-only tests. The VRS steps (5-7), the accumulator and stages
 correction and section 6 are pending; nothing in `cpp/swegca_vrs/` is
-moved yet.
+moved yet. 2026-09-23 18:2x: the four stages are drafted in 6.2 with the
+user's decisions; the author's VRS kernel is located in the original
+experiment repository (6.1).
 
 Rules, in the user's words where given:
 
@@ -19,6 +21,17 @@ Rules, in the user's words where given:
   combining them.
 - (user 16:10, 16:13) usage counting and budget judgment belong to VRS; the
   baseline resource profile is a floor, not a ceiling.
+- (user 18:4x, terms) "정확하게는 시냅스 강도자체가 경험의 저장임.
+  겪은것은 기억이고, 이것의 연관성을 수치화하면 경험." A memory is what
+  was lived: an original record at one published address (what this plan and
+  the code call an experience record or "original experience"). An
+  experience is the quantified association between memories: the synapse
+  (endpoint-sign group) strength. The strength table is the experience
+  store, so it is primary durable data owned by Main, published and
+  recovered with the journal, never a rebuildable derived view; the author
+  saves it (`vrs_strengths.f16`) and resumes the next generation from it
+  (`initial_vrs_strengths`, tinylm slicer hybrid organizer :54, :841,
+  :873-878). Renaming code types is put to the user.
 
 So the core verifies and only verifies: from addressed evidence it judges a
 claim accept, reject or abstain. Everything that finds, replays, admits or
@@ -68,6 +81,14 @@ judges them against the current generation, keeping unresolved conflict.
 The journal's cue/index views are what Déjà vu reads; regions, coactivation
 and portals are the VRS blocks and their connection points (§6). All four
 stages are VRS, and each ends in the core verifier or feeds it.
+
+Corrected by the user on 2026-09-23 18:0x (6.2 governs): Recall yields
+addresses only; Replay opens one original, not "relevant opposing ones";
+Re-evidence runs only when the current input conflicts with it. "The
+author's Recall order" above is the prior engine's (-cue_overlap, address)
+order (mosaic_memory_activation.py@7536139:301-348), not the author's
+(SWEGCA-Architecture@5901a5a has no such order), and cue overlap is
+duplication, not strength (6.1). The Select criterion is decided (6.2).
 
 ## 2. Target layout
 
@@ -283,24 +304,76 @@ connections from the verifier's verdicts, and reliability of an
 experience from the strength of its connections (not from a verdict). The
 core verifier abstains unless the evidence meets its sample, diversity
 and regime conditions, and a verdict is never permanent (D15); without the
-synapse, decisions tend to abstain. The mapping to the author's sources
+synapse, decisions tend to abstain. What the prior engine had for each part
 (regions, portals, coactivation, signal strength, state update in the
 prior `cpp/` VRS) and what the rebuild still lacks are listed in 6.1.
 
 ### 6.1 Where each part is today (read of `cpp/` and author sources, 2026-09-23)
 
+**The prior engine is not a rule source (user 2026-09-23 18:0x).** The
+user: "옛 VRS는 너희 에이전트들이 코딩하는 과정에서 불필요하다고 멋대로
+swegca 아키텍처를 잘라내서 제대로 동작을 안했거든". Rules come only from,
+in order: the user's definitions, the author (SWEGCA-Architecture@5901a5a),
+and documents the user approved. The table below records what the prior
+code did, so that a missing SWEGCA part can be found and restored; its
+"Prior trace" column states behavior, not a rule to port. Where the prior
+code creates strength or rank without verification, the trace is a cut
+and is not copied:
+- Recall ordered by cue overlap. The user: "cue가 가장 많이 겹친다는건,
+  중복이라는 뜻이지. 이걸 왜 경험강화를 했나". Overlap is duplication, and
+  a duplicate is one experience (user 17:0x), not a strength.
+- The same claim with the same polarity strengthens the older link (x1.01)
+  with no correlation grouping.
+- Coactivation mass feeding itself: experiences recalled together gain mass
+  that ranks them to be recalled together again.
+Coactivation and portals stay as SWEGCA parts (blocks and connection
+points, user 16:4x); repeated calling is never evidence of reliability.
+Reliability comes from strength, and strength changes only by verification.
+A number in the column is adopted only where the author's original
+experiment has it with the same meaning (below); the rest (0.5, H/(H+age),
+sweep and level counts) have no source above the prior code.
+
+**The author's original VRS kernel (found 2026-09-23 18:2x).** The user:
+"원 실험 저장소에 어지간하면 다 있긴 할걸". The original experiment
+repository `tinylm slicer` (same committer as SWEGCA-Architecture) holds
+`refine_vrs` in
+tools/organize_rozephine_mixed_experience_connections_hybrid.py@7190660997:455-539
+(2026-08-19, "Name and validate the VRS convergence loop"). Per shuffle
+cycle it permutes the edges at random (`randperm`), propagates the
+experience states over them in that order (tanh(direct + 0.2 * aggregate /
+degree), blended 0.8/0.2), then re-verifies every edge: stable when
+compatibility 1 - 0.5*abs(state[source]*sign - state[target]) >= 0.75, the
+ends are informed (abs sum >= 0.1) (and, from 0885b1e97f on 2026-08-25, neither end is unresolved; HEAD e88324e0d3:831-942); a stable
+edge is strengthened x1.01, every other edge weakened x0.995, clamped to
+[0.25, 4] times its base; the spread of states across cycles gives a
+shuffle stability. This is the user's 16:4x definition (shuffle, then
+strengthen or weaken by verification), and it is the source for parts 4-6.
+The prior engine's x1.01 per new same-polarity record (part 5 row) reuses
+the constant with another meaning, a count of evidence; that is the cut
+trace, not the rule. The copy in this repository,
+src/swegca_vrs_mcp/core/vrs_refinement.py@51cf1f9, is an extraction of the
+same kernel. Where the kernel's "stable" test and the SWEGCA core verifier
+meet (the verifier is ternary) is a design item with codex.
+
 The prior VRS lives in top-level `cpp/`; its lineage tags point at
 `src/swegca_vrs2/engine/*.py` in this repository (revisions 7536139,
 c06092a) and at `src/tinylm_slicer/*@3bddcb7` (not in this repository).
 The author's `src/swegca` has no VRS code; only rule 8 has an author
-source there.
+source there. The original experiment repository above does.
 
-| Part | Prior `cpp/` | Its tag | Rule | In the rebuild |
+`src/tinylm_slicer/*@3bddcb7` is the author's: 3bddcb7 (2026-09-13) is the
+origin/main of the original experiment repository
+`tinylm-slicer-sanabi-bazzite` (committer raspie10032). In the table those
+tags (row 3: portal_activation@3bddcb7:81-122, local_navigation@3bddcb7:57-107)
+are author sources; the tags at `src/swegca_vrs2/engine/*.py` (7536139,
+c06092a) are the prior engine and are traces only.
+
+| Part | Prior `cpp/` | Its tag | Prior trace (not a rule source) | In the rebuild |
 |---|---|---|---|---|
 | 1 Blocks | connectivity_regions.cpp:311 `ConnectivityRegions::build` (local_moves :151, communities :205, memberships :233); graph_regions.cpp:112 | mosaic_vrs_connectivity_regions.py@7536139:159-199, :47-78, :81-96, :99-118; store.py@7536139:282-298 | regions by modularity over the experience/cue graph (move score w_in - deg*tot/mass, sweeps 100, levels 32); membership = neighbour mass / total, a node may belong to several; only affected components recomputed; not published unless converged | missing |
 | 2 Block size bound | not found (receipt says `original_experiences_split: 0`, connectivity_regions.cpp:430; only work budgets and a cache byte cap) | - | - | missing, and missing before: to be designed |
 | 3 Connection points | graph_regions.cpp:202 bridges; coactivation_associations.cpp:81; portal_lifecycle.cpp:170 `plan_portals`; portal_navigation.cpp:14; region_navigation.cpp:74, :86 | mosaic_vrs_connectivity_regions.py@7536139:213-248; mosaic_vrs_coactivation_navigation.py@c06092a:118-183; mosaic_vrs_portal_lifecycle.py@c06092a:89-156; tinylm_slicer portal_activation@3bddcb7:81-122, local_navigation@3bddcb7:57-107 | an experience whose cues span two or more regions is a bridge; the first eligible bridge becomes a portal into the destination region's cues, ordered by decayed coactivation mass | missing |
-| 4 Shuffle | no random shuffle found; nearest is deterministic coactivation: coactivation.cpp:45, coactivation_associations.cpp:39 | mosaic_vrs_coactivation.py@c06092a:107-158; mosaic_vrs_coactivation_navigation.py@c06092a:77-116 | experiences recalled together recorded per (topology, region) | missing; the user's shuffle is not in the prior code |
+| 4 Shuffle | no random shuffle found; nearest is deterministic coactivation: coactivation.cpp:45, coactivation_associations.cpp:39 | mosaic_vrs_coactivation.py@c06092a:107-158; mosaic_vrs_coactivation_navigation.py@c06092a:77-116 | experiences recalled together recorded per (topology, region) | missing; the prior engine lost it; the author's shuffle is `refine_vrs` in the original experiment (above) |
 | 5 Strengthen | vrs_state_update.cpp:137, :196; event_signal_strength.cpp:113; graph_append.cpp:135 (:213); event_vrs_kernel.cpp:61 | mosaic_vrs_state_update.py@7536139:75-152; mosaic_vrs_event_signal.py@7536139:53-97; store.py@7536139:193-251; mosaic_vrs_event_kernel.py@7536139:134-209 | support x1.01; new link 0.5; same-claim same-polarity strengthens the older link; strengthen and weaken together is `abstain_conflict` (unchanged); kernel: stable when 1-0.5*abs(l*sign-r) >= 0.75 and abs(l)+abs(r) >= 0.1, bounds [0.25*base, 4*base] | missing (judgment_kernel has only the arbiter's proposal weight) |
 | 6 Weaken, decay | vrs_state_update.cpp:137 (refute); graph_append.cpp:213 (retracted); event_vrs_kernel.cpp:61 (unstable); portal_lifecycle.cpp:170 (time decay of portal mass only) | as 5; mosaic_vrs_portal_lifecycle.py@c06092a:89-156 | refute x0.995, floor 0.25*base; portal mass H/(H+age), ineligible past maximum_age or below minimum_mass; no time decay of link strength found | missing |
 | 7 Strength to reliability | memory_promotion.cpp:23, :33, :56; memory_evidence.cpp:124; graph_regions.cpp:281 | mosaic_memory_promotion.py@7536139:4, :32-40, :55-83; mosaic_memory_activation.py@7536139:432-458; store.py@7536139:305-307 | strength >= 1.0 is promoted (semantic evidence, "retained"), below is "available"; promote / retain / revoke / remain_unpromoted; f16 rounding across 1.0 is an error | missing |
@@ -310,7 +383,137 @@ Order for VRS (after steps 1-6): the synapse state (links, strength,
 promotion) and its update from verdicts (5, 6, 7, 8) first, since blocks
 and portals are read paths over it; then blocks (1) with the size bound (2)
 and connection points (3); then the shuffle (4), whose rule must come from
-the user's definition, as the prior code has none. Each is ported with its
-lineage tag from the prior engine, and the bound and the shuffle are
-designed with codex and put to the user where the definition leaves a
-choice.
+the user's definition, as the prior code has none. Each part is designed
+from the user's definition and the author, with a lineage tag to that
+source; the prior engine only shows where a part was and what was cut. The
+bound, the shuffle and every constant are designed with codex and put to
+the user where the definition leaves a choice.
+
+### 6.2 The four memory stages (draft, 2026-09-23)
+
+Purpose, the user (17:5x): "기억의 4단계는 방대한 기억에서 정확한 경험을
+빠르게 불러오기 위한 과정임. 이거 중요". The pass condition is speed at
+scale and the exact address.
+
+Definition, the user (18:0x; same meaning as the corrections of 2026-09-22
+15:0x and 15:2x): "리콜이 원경험 주소, 리플레이가 원경험. 재검증은 현재
+입력과 경험이 충돌할때 재검증하기 야".
+
+Withdrawn: the wording in claude's msg 193-194 that Re-evidence runs after
+every Replay and also opens opposing originals. Re-evidence is conditional.
+
+| Stage | Does | Does not | Core parts used | Source |
+|---|---|---|---|---|
+| Déjà vu | reacts first to the input's keys: which caller keys hit, and how many addresses each key holds | build a union of postings; open any record | none (exact key lookup, no verdict) | user 18:0x; author `HotExperienceIndex.lookup_semantic_key` (mosaic_unrestricted_experience.py@5901a5a:294-320: prebuilt, no I/O or hashing on lookup, "Building the index is deliberately separate from lookup") |
+| Recall | yields original addresses, a bounded page | open content; judge | none | user 18:0x ("리콜이 원경험 주소") |
+| Replay | opens the most probable original, one | open every candidate | digest check of the exact record on read | user 18:0x; author exact `lookup_address` (:314-318) |
+| Re-evidence | re-judges only when the current input conflicts with the replayed experience; the verdict updates strength (6.1 parts 5, 6, 8) | run on every read | evidence kernel and accumulator (tally, decide) | user 18:0x; author accumulator (mosaic_evidence_accumulator.py@5901a5a:285-428); a verdict is not permanent (user 16:3x) |
+
+Budget: Déjà vu to Recall together under 1 ms, at the store's scale; the
+budget does not extend to Replay or Re-evidence. Neither the author nor the
+prior engine met or measured it (VRS_REGIONS.md@c06092a:147). The prior
+cost grew with the fanout of a broad cue: the union of postings in Déjà vu,
+and Recall scoring every candidate before choosing (1 item 0.79 ms, 1,008
+items 121 ms, NATURAL_REPLAY_BOTTLENECK@c06092a:154-167). The rebuild's
+Déjà vu reads per-key counts that the index already holds, so its cost does
+not depend on how many addresses a key has. Recall reads one bounded page.
+A benchmark at the profile's scale is part of the stage's tests.
+
+Where the author differs from the user's definition, the user's definition
+governs. `select_experience_for_cognition` (:475-540) unions the postings of
+every query key, falls back to the whole universe when no key matches, and
+judges and reads every candidate. That is the full-scan path the four stages
+exist to avoid; its contract survives only in its receipt (each candidate
+decision is replayable, zero authority).
+
+Cues. The author's `ExperienceArtifact` (:34-55) carries no cues; semantic
+keys enter only the postings, supplied beside the artifacts to
+`build_hot_experience_index` (:398-436). The user (18:0x): "cue는 호출을
+위한 호출자로 쓰이는거지 경험에 넣으면 안되는게 아닐까?". The rebuild keeps
+authored cues inside the experience record (`Observation.semantic_cues`,
+`RecordDraft.index`, `experience_index_conflict`), which differs from both.
+Approved by the user (18:2x, "가. 승인"): cues leave the record and form a
+caller index layer beside it; the record's address no longer depends on cues.
+The interface goes to codex before the change (journal index and kind rules).
+
+Decided by the user (18:2x):
+- Replay's "most probable": "vrs 강도가 높은 것으로." The one current
+  original with the highest VRS strength (reliability comes from strength,
+  16:4x); current by the author's versioned rule
+  (mosaic_versioned_memory.py@5901a5a:391 excludes non-current). Not cue
+  overlap: overlap is duplication (18:0x). Ties, the user (18:3x): "정말
+  희박한 확률이겠지만 vrs 강도가 같다면, 5건 까지는 다 불러와." When
+  several current originals share the highest strength, Replay opens up to
+  five. Open: which five when six or more tie (proposed, the author's address
+  order, mosaic_unrestricted_experience.py@5901a5a:501; held until the user
+  confirms, codex 18:24). The user (18:3x) on how often ties occur: "옛
+  스토어는 검증 규칙을 무시하고 단순하게 중복은 증폭시켜서 그 사단이
+  난거고... 이론상 vrs 강도 겹침은 꽤 희박해야 정상임..."; the cap is a
+  guard for a rare case.
+- One experience's strength (codex 18:25 asked for its source). In the
+  author's VRS memory an experience is an edge ("vrs-edge:N") or a
+  canonical edge group ("vrs-edge-group:N"), and its strength is that
+  group's strength with no aggregation:
+  `ResidentVrsStrengthIndex.strength`,
+  tinylm-slicer-sanabi-bazzite@3bddcb7:src/tinylm_slicer/mosaic_paper_vrs_resident_adapter.py:31-43, :92-96
+  (from c925bd7d9d, 2026-09-05); a missing group reads 0.0. Duplicate edges
+  merge into one canonical group whose strength is the occurrence-weighted
+  mean (mosaic_vrs_canonicalization.py@3bddcb7:285-295, :403; from
+  089f4db3ab, 2026-09-01), the same shape as the user's duplicate rule. The
+  group key is (source node, target node, sign)
+  (mosaic_vrs_canonicalization.py@3bddcb7:16, :273, :346, "Fold appended rows
+  into endpoint-sign groups"); every original row stays a logical member and
+  "vrs-edge:N" reads its group's strength
+  (mosaic_paper_vrs_resident_adapter.py@3bddcb7:41-51). Mapping (msg 205): an
+  original experience (one published address) is one member; evidence counts
+  once per address (the accumulator's seen addresses); strength is shared by
+  the endpoint-sign group, so members of the top group tie and the five-item
+  rule applies. Nodes are terms, the caller side, as cues are.
+  3bddcb7 (2026-09-13) is that repository's origin/main, the revision the
+  prior `cpp/` tags as `src/tinylm_slicer/*@3bddcb7`: those rows of 6.1 are
+  author-sourced and are to be separated from the rows tagged at the
+  prior engine (7536139, c06092a).
+- Speed of that choice (codex 18:27): scanning every Recall candidate for the
+  highest strength grows with a broad cue's fanout and breaks the Déjà vu to
+  Recall budget. The current top addresses by strength must be kept
+  incrementally where the caller index and region pages are, updated when a
+  strength changes; no unsourced cap or approximate top-k.
+- Where the kernel meets the verifier (codex 18:26): `refine_vrs`'s stable
+  test is boolean (compatibility, informed, not unresolved); the core
+  verifier is ternary. Abstain is not mapped to either side by us; the
+  junction needs a source.
+- Parallel form (codex 18:28; user profile: 16 threads, no one-thread
+  bottleneck): the propagation in shuffled order is order dependent and is
+  kept as ordered; the per-edge re-verification and strength update after
+  it are independent and parallel.
+
+State generation, the user (18:3x): "애초에 세대번호는 그냥 기록시간으로
+외부에 두면 되는거 아니냐 굳이 넘버링안하고 시간으로 두면 시간선흐름정도는
+추측이 될거같은데". The state's identity is its content digest, as the
+author's `cognitive_state_hash` (mosaic_bounded_world_write.py@5901a5a:262-283)
+has no ordinal. No separate ordinal counter is kept (codex 18:31). A
+bit-exact rollback reuses the same content root, so the root's first
+position cannot tell before from after: every state transition (and the
+initialisation) publishes its own receipt record with a new sequence and
+record digest; the manifest names (content digest, latest publication
+position and digest), and compare-and-swap is on that publication identity.
+The record time sits only in the transition receipt, as a timeline for
+people, never as order or authority. The author's write revision
+(self_state `_WRITE_KEY`, mosaic_bounded_world_write.py@5901a5a:384) stays a
+content field and rewinds with a rollback.
+- The conflict that triggers Re-evidence: "흑백논리라면 반대결과가 맞지만
+  3상으로 취급하는 이상 같은 상이 아니면 불러와서 재검증." Any difference
+  between the current input's state and the experience's state among accept,
+  reject and abstain, not only the opposite outcome. Recorded as verdict
+  `replay-picks-highest-vrs-strength-reevidence-on-any-state-mismatch`.
+
+One Replay is one original experience: its head record and every part the
+head needs, each verified by digest. Reading a part
+(`ExperienceRecord::for_each_chunk`, experience.cpp:851-881, through
+`JournalStore::replay`) is internal to that one Replay and is not counted
+as another (codex 18:18); the stage receipt counts Replays per original.
+
+Rebuild changes this implies: `ExperienceSelector::select` (judges every
+candidate and replays each selected) splits into Recall (addresses) and
+Replay (one); Re-evidence is called only on a state mismatch. Regions, portals and
+coactivation (6.1 parts 1-4) come after this read path.
