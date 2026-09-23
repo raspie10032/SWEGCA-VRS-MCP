@@ -110,6 +110,10 @@ private:
 [[nodiscard]] Digest256 proposal_delta_digest(const SynapseProposal& proposal);
 // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:154-162
 [[nodiscard]] Digest256 proposal_mask_digest(const SynapseProposal& proposal);
+// Every producer field that can affect binding or arbitration, including the
+// exact citation order and score bits. A receipt can audit the complete input.
+// SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:154-162
+[[nodiscard]] Digest256 proposal_content_digest(const SynapseProposal& proposal);
 
 // Main's successful Bind result. Only EvidenceGate can construct one, and it
 // carries no state-write capability. Arbitration receives this type, never an
@@ -117,7 +121,7 @@ private:
 // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:154-174
 class BoundProposal final {
 public:
-    BoundProposal(BoundProposal&& other);
+    BoundProposal(BoundProposal&& other) noexcept;
     BoundProposal& operator=(BoundProposal&&) = delete;
     BoundProposal(const BoundProposal&) = delete;
     BoundProposal& operator=(const BoundProposal&) = delete;

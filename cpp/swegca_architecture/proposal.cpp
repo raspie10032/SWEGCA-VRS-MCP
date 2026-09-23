@@ -2,6 +2,7 @@
 #include "swegca_architecture/sha256.hpp"
 
 #include <array>
+#include <bit>
 #include <cmath>
 #include <stdexcept>
 #include <utility>
@@ -32,6 +33,12 @@ void hash_u64(Sha256& hash, std::uint64_t value) {
     for (std::size_t index = 0; index < bytes.size(); ++index)
         bytes[index] = static_cast<std::byte>((value >> (8 * index)) & 0xff);
     hash.update(bytes);
+}
+
+// SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:154-162
+void hash_text(Sha256& hash, std::string_view value) {
+    hash_u64(hash, value.size());
+    hash.update(value);
 }
 
 // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:154-162
@@ -112,6 +119,31 @@ Digest256 proposal_mask_digest(const SynapseProposal& proposal) {
     return Digest256(hash.finish());
 }
 
+// Re-created (user@2026-09-23): one canonical identity for every immutable
+// field the Bind gate and conflict arbiter may inspect. Scores use their exact
+// finite IEEE representation, with both zero signs reduced to one identity.
+// SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:154-162
+Digest256 proposal_content_digest(const SynapseProposal& proposal) {
+    Sha256 hash;
+    hash_text(hash, "swegca.proposal_content.v1");
+    hash_text(hash, proposal.source().value());
+    hash_text(hash, proposal.claim().claim().value());
+    hash_u64(hash, proposal.claim().revision());
+    hash_u64(hash, proposal.based_on().ordinal());
+    hash.update(proposal.based_on().digest().bytes());
+    hash_u64(hash, proposal.evidence_addresses().size());
+    for (const auto& address : proposal.evidence_addresses()) hash_text(hash, address);
+    hash.update(proposal_delta_digest(proposal).bytes());
+    hash.update(proposal_mask_digest(proposal).bytes());
+    const auto score = [&hash](double value) {
+        hash_u64(hash, std::bit_cast<std::uint64_t>(value + 0.0));
+    };
+    score(proposal.confidence());
+    score(proposal.contradiction());
+    score(proposal.uncertainty());
+    return Digest256(hash.finish());
+}
+
 // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:154-174
 BoundProposal::BoundProposal(SynapseProposal proposal, Digest256 decision_digest,
                              Digest256 binding_digest, Digest256 binding_receipt)
@@ -119,7 +151,7 @@ BoundProposal::BoundProposal(SynapseProposal proposal, Digest256 decision_digest
       binding_digest_(binding_digest), binding_receipt_(binding_receipt) {}
 
 // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:154-174
-BoundProposal::BoundProposal(BoundProposal&& other)
+BoundProposal::BoundProposal(BoundProposal&& other) noexcept
     : proposal_(std::move(other.proposal_)), decision_digest_(other.decision_digest_),
       binding_digest_(other.binding_digest_), binding_receipt_(other.binding_receipt_),
       live_(std::exchange(other.live_, false)) {}
