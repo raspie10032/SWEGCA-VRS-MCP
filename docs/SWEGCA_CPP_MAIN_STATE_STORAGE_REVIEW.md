@@ -498,6 +498,16 @@ tests remain stopped under the architecture inventory's §10 gate.
   kind-7 body variants and their cold-recovery checks. Retraction preserves
   later unrelated cognition; the records that published those later changes
   cannot be silently omitted from the predecessor chain.
+  Current C++ construction routes cover genesis content plus the guarded
+  writer's bounded write, strict rollback and retraction; `cognition_runner`
+  produces proposals without changing Main. The author's
+  `mosaic_autonomous_cognition.py@5901a5a:170-186` also changes goal/self
+  content, while `mosaic_cognitive_slot_memory.py@5901a5a:226-266` changes
+  slots/self metadata. The architecture inventory §3A/E grants successor
+  construction only to MainStateWriter. Those source operations have no
+  reconciled Main publication and authority route in this rebuild. Until
+  that boundary is specified, a kind-7 decoder must reject unknown bodies;
+  it cannot treat an arbitrary state-content change as a verified transition.
 - Confirm that intermediate part HEADs with an unchanged state generation
   preserve §9's rule that one Main committed receipt exposes a state successor.
 - Reconcile the reserved kind-7 name `state_publication_record_kind` with
