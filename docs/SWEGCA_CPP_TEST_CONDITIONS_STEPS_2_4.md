@@ -78,7 +78,7 @@ generation, and Main marker selection before they can be run):
 | B32 (`VRS route pending`) | End a session with its live VRS as one block, preserve its connection points, then publish and recover a Main root; later merge selected blocks during idle work | The selected root restores the exact block list and connection-point source with their original experiences still addressable; a flat strength array alone cannot stand in for the block/connection topology (`SWEGCA_CPP_FOUR_STAGE_ACTIVATION_PLAN.md` §1) |
 | B33 (`VRS route pending`) | Publish a term with support/refute counts above `UINT32_MAX` and an evidence-request row carrying a valid extra provenance field; recover it from Main's selected root | Counts and the complete request row survive without narrowing or silent key removal; the source live dialogue uses u64 counts (`mosaic_vrs_dialogue.py@3bddcb7:187-191`), and the bridge copies entire request mappings (`mosaic_vrs_memory_bridge.py@3bddcb7:823-834`) |
 | B34 (`VRS route pending`) | Publish VRS source data with visual centroid rows, append a term, and recover the selected generation; separately damage a centroid value or its term-row alignment | Valid recovery preserves every source centroid value and its term association, including the zero-extended new row; damaged centroid data is refused before publication (`rozephine_vrs_array_storage.py@3bddcb7:16-65,107`, `continue_rozephine_mixed_experience_vrs.py@3bddcb7:2101-2111`) |
-| B35 (`VRS route pending`) | Publish a VRS generation carrying relation evidence and its provenance/authority report, recover the selected generation, then damage either selected source | Recovery retains the complete relation-evidence and report content needed to establish the selected generation; changed or missing content fails closed before Main exposes the pair (`rozephine_vrs_block_recovery.py@3bddcb7:20-60`, `rozephine_warm_outcome_vrs.py@3bddcb7:62-75`) |
+| B35 (`VRS route pending`) | Publish a VRS generation carrying relation evidence and its provenance/authority report, recover the selected generation, then damage either selected source | Recovery retains the complete relation-evidence and report content needed to establish the selected generation; changed or missing selected artifact bytes fail the report digest/path checks before Main exposes the pair (`rozephine_vrs_block_recovery.py@3bddcb7:20-60`, `rozephine_warm_outcome_vrs.py@3bddcb7:62-75`) |
 | B36 (`VRS route pending`) | Before any original experience, inspect the VRS root; admit the first new original experience with no VRS connection; recover it; then try to publish a later root with an empty connection/member lineage | No VRS root precedes the first original; that first original and its first root publish together and recover with their source identity intact, with the empty-lineage exception confined to the first root; a later root cannot reuse that exception (user, 2026-09-24; source ordinary lineage rejection: `mosaic_vrs_canonicalization.py@3bddcb7:18-30`) |
 
 The f32 persisted strength in B30 is the new C++ storage contract from
@@ -109,7 +109,12 @@ The same selected report restores whole evidence-request rows and relation
 evidence, then supplies the report's provenance and authority fields to the
 resident VRS parent (`rozephine_vrs_block_recovery.py@3bddcb7:20-60`). A
 new native record shape may differ, but those source facts must remain
-recoverable and bound to the selected publication.
+recoverable and bound to the selected publication. The source validates
+relation-evidence row shape, identity and provenance before writing
+(`continue_rozephine_mixed_experience_vrs.py@3bddcb7:647-715`); its cold
+report loader verifies selected artifact bytes and parses the JSON, without
+repeating all field checks. The native publication gate must not mistake a
+digest match for evidence authority.
 
 The first VRS root is published when the first new original experience enters
 (user, 2026-09-24). It is not prepublished empty or imported from the old
