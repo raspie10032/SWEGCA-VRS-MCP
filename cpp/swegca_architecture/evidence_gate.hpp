@@ -26,6 +26,7 @@ enum BindFailure : std::uint32_t {
     bind_evidence_set_mismatch = 1u << 8,
     bind_delta_or_mask_mismatch = 1u << 9,
     bind_nonoriginal_address = 1u << 10,
+    bind_record_changed = 1u << 11,
 };
 
 struct BindOutcome final {

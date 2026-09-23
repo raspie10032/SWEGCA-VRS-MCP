@@ -70,7 +70,10 @@ BindOutcome EvidenceGate::bind(const EvidenceDecision& decision,
     using Views = std::vector<std::string_view, MemoryLedger::Allocator<std::string_view>>;
     Views cited(memory_.allocator<std::string_view>());
     cited.reserve(proposal.evidence_addresses().size());
-    for (const auto& address : proposal.evidence_addresses()) cited.push_back(address);
+    for (const auto& address : proposal.evidence_addresses()) {
+        cited.push_back(address);
+        if (!original_address_form(address)) failures |= bind_nonoriginal_address;
+    }
     if (cited.empty() || decision.admitted().empty()) failures |= bind_empty_evidence;
     std::sort(cited.begin(), cited.end());
     if (std::adjacent_find(cited.begin(), cited.end()) != cited.end() ||
@@ -79,6 +82,23 @@ BindOutcome EvidenceGate::bind(const EvidenceDecision& decision,
     else {
         for (std::size_t at = 0; at < cited.size(); ++at)
             if (cited[at] != decision.admitted()[at].value()) {
+                failures |= bind_evidence_set_mismatch;
+                break;
+            }
+    }
+
+    using Originals = std::vector<const AdmittedEvidence*,
+                                  MemoryLedger::Allocator<const AdmittedEvidence*>>;
+    Originals originals(memory_.allocator<const AdmittedEvidence*>());
+    originals.reserve(accumulator.admitted_evidence().size());
+    for (const auto& item : accumulator.admitted_evidence()) originals.push_back(&item);
+    std::sort(originals.begin(), originals.end(), [](const auto* left, const auto* right) {
+        return left->address.value() < right->address.value();
+    });
+    if (originals.size() != cited.size()) failures |= bind_evidence_set_mismatch;
+    else {
+        for (std::size_t at = 0; at < cited.size(); ++at)
+            if (originals[at]->address.value() != cited[at]) {
                 failures |= bind_evidence_set_mismatch;
                 break;
             }
@@ -94,14 +114,12 @@ BindOutcome EvidenceGate::bind(const EvidenceDecision& decision,
     // Resolve and Replay only exact citations. A missing or corrupt record
     // throws before a BoundProposal exists; it cannot become authority.
     if (failures == 0) {
-        for (const auto address : cited) {
-            if (!original_address_form(address)) {
-                failures |= bind_nonoriginal_address;
-                continue;
-            }
-            const auto original = journal_.replay(ExperienceAddress(memory_, address));
+        for (std::size_t at = 0; at < cited.size(); ++at) {
+            const auto original = journal_.replay(ExperienceAddress(memory_, cited[at]));
             if (original.derived() || original.record().kind != original_experience_kind)
                 failures |= bind_nonoriginal_address;
+            if (original.record().record_digest != originals[at]->record_digest)
+                failures |= bind_record_changed;
         }
     }
 
@@ -113,6 +131,7 @@ BindOutcome EvidenceGate::bind(const EvidenceDecision& decision,
     hash.update(decision.rules_digest().bytes());
     hash.update(binding.bytes());
     hash_u64(hash, decision.accumulator_revision());
+    hash_u64(hash, current_step);
     hash_u64(hash, state.generation().ordinal());
     hash.update(state.generation().digest().bytes());
     hash_u64(hash, failures);
@@ -121,7 +140,7 @@ BindOutcome EvidenceGate::bind(const EvidenceDecision& decision,
     outcome.receipt = Digest256(hash.finish());
     if (failures == 0) {
         BoundProposal bound(std::move(proposal), decision.decision_digest(), binding,
-                            outcome.receipt);
+                            outcome.receipt, current_step);
         outcome.bound.emplace(std::move(bound));
     }
     return outcome;

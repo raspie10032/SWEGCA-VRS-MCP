@@ -135,17 +135,23 @@ public:
     [[nodiscard]] const Digest256& binding_digest() const;
     // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:154-174
     [[nodiscard]] const Digest256& binding_receipt() const;
+    // The writer must reject an expired binding or recheck evidence at its
+    // own current step before authority is issued.
+    // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:141-150
+    [[nodiscard]] std::uint64_t validated_at_step() const;
 
 private:
     friend class EvidenceGate;
     BoundProposal(SynapseProposal proposal, Digest256 decision_digest,
-                  Digest256 binding_digest, Digest256 binding_receipt);
+                  Digest256 binding_digest, Digest256 binding_receipt,
+                  std::uint64_t validated_at_step);
     void require_live() const;
 
     SynapseProposal proposal_;
     Digest256 decision_digest_;
     Digest256 binding_digest_;
     Digest256 binding_receipt_;
+    std::uint64_t validated_at_step_;
     bool live_ = true;
 };
 

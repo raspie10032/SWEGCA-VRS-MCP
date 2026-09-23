@@ -146,14 +146,17 @@ Digest256 proposal_content_digest(const SynapseProposal& proposal) {
 
 // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:154-174
 BoundProposal::BoundProposal(SynapseProposal proposal, Digest256 decision_digest,
-                             Digest256 binding_digest, Digest256 binding_receipt)
+                             Digest256 binding_digest, Digest256 binding_receipt,
+                             std::uint64_t validated_at_step)
     : proposal_(std::move(proposal)), decision_digest_(decision_digest),
-      binding_digest_(binding_digest), binding_receipt_(binding_receipt) {}
+      binding_digest_(binding_digest), binding_receipt_(binding_receipt),
+      validated_at_step_(validated_at_step) {}
 
 // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:154-174
 BoundProposal::BoundProposal(BoundProposal&& other) noexcept
     : proposal_(std::move(other.proposal_)), decision_digest_(other.decision_digest_),
       binding_digest_(other.binding_digest_), binding_receipt_(other.binding_receipt_),
+      validated_at_step_(other.validated_at_step_),
       live_(std::exchange(other.live_, false)) {}
 
 // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:154-174
@@ -183,6 +186,12 @@ const Digest256& BoundProposal::binding_digest() const {
 const Digest256& BoundProposal::binding_receipt() const {
     require_live();
     return binding_receipt_;
+}
+
+// SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:141-150
+std::uint64_t BoundProposal::validated_at_step() const {
+    require_live();
+    return validated_at_step_;
 }
 
 }  // namespace swegca::architecture
