@@ -18,14 +18,14 @@ struct FrozenNumeric {
     std::shared_ptr<const std::vector<T>> owner;
     std::vector<std::size_t> shape;
 
-    // SWEGCA: mosaic_immutable_numeric.py@3bddcb7:8-21
+    // SWEGCA: src/tinylm_slicer/mosaic_immutable_numeric.py@3bddcb7:8-21
     [[nodiscard]] std::span<const T> values() const {
         if (!owner) throw std::runtime_error("immutable_numeric_owner_missing");
         return *owner;
     }
 };
 
-// SWEGCA: mosaic_immutable_numeric.py@3bddcb7:14-21
+// SWEGCA: src/tinylm_slicer/mosaic_immutable_numeric.py@3bddcb7:14-21
 template <typename T>
 [[nodiscard]] FrozenNumeric<T> freeze_numeric(std::span<const T> values,
                                                std::vector<std::size_t> shape) {
@@ -41,7 +41,7 @@ template <typename T>
     return FrozenNumeric<T>{std::move(owner), std::move(shape)};
 }
 
-// SWEGCA: mosaic_immutable_numeric.py@3bddcb7:16-21
+// SWEGCA: src/tinylm_slicer/mosaic_immutable_numeric.py@3bddcb7:16-21
 template <typename T>
 [[nodiscard]] FrozenNumeric<T> reshape_frozen(const FrozenNumeric<T>& value,
                                                std::vector<std::size_t> shape) {

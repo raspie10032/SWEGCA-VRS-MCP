@@ -268,6 +268,9 @@ struct EvidenceByteRange {
     std::uintptr_t end = 0;
 };
 
+// Native column-boundary guard for the author's accumulator batch decision;
+// byte-address overlap arithmetic has no direct Python counterpart.
+// SWEGCA: src/swegca/mosaic_evidence_accumulator.py@5901a5a:285-357
 template <class T>
 [[nodiscard]] inline bool evidence_byte_range(std::span<T> column,
                                               EvidenceByteRange& range) noexcept {
@@ -284,6 +287,8 @@ template <class T>
     return true;
 }
 
+// Native column-boundary guard for the same batch decision.
+// SWEGCA: src/swegca/mosaic_evidence_accumulator.py@5901a5a:285-357
 [[nodiscard]] inline bool evidence_ranges_overlap(EvidenceByteRange a,
                                                   EvidenceByteRange b) noexcept {
     return a.begin < a.end && b.begin < b.end && a.begin < b.end && b.begin < a.end;

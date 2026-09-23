@@ -43,7 +43,7 @@ struct Json {
 };
 
 // The caller supplies only the author episode-row fields until Episode is ported.
-// SWEGCA: mosaic_snapshot_digest.py@3bddcb7:144-187
+// SWEGCA: src/tinylm_slicer/mosaic_snapshot_digest.py@3bddcb7:144-187
 [[nodiscard]] std::string snapshot_digest(const std::vector<Json>& episodes,
                                           const Json& postings);
 

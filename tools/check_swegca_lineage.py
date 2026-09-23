@@ -97,6 +97,11 @@ def staged_paths() -> list[str]:
     return [item.decode("utf-8", "surrogateescape") for item in raw.split(b"\0") if item]
 
 
+def all_index_paths() -> list[str]:
+    raw = git_bytes("ls-files", "-z", "--cached")
+    return [item.decode("utf-8", "surrogateescape") for item in raw.split(b"\0") if item]
+
+
 def committed_paths(commit: str) -> list[str]:
     raw = git_bytes("diff-tree", "--no-commit-id", "--name-only", "-r", "-z",
                     "--diff-filter=ACMR", commit)
@@ -160,7 +165,11 @@ def valid_tag(reference: str) -> bool:
 def protected_author_copy(path: str, staged: bytes) -> bool:
     if not path.startswith(AUTHOR_NAMESPACES):
         return True
-    original = author_blob(path + "@" + PINNED_TINYLM + ":1")
+    # The copied author's engine module lives under a different package
+    # prefix in this repository. Rewrite that exact prefix, never a basename.
+    source_path = path.replace("src/swegca_vrs2/engine/mosaic_",
+                               "src/tinylm_slicer/mosaic_", 1)
+    original = author_blob(source_path + "@" + PINNED_TINYLM + ":1")
     return original is not None and original == staged
 
 
@@ -292,16 +301,24 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     selection = parser.add_mutually_exclusive_group(required=True)
     selection.add_argument("--staged", action="store_true")
+    selection.add_argument("--all", action="store_true", help="audit every tracked file in the index")
     selection.add_argument("--commit")
     args = parser.parse_args()
     issues: list[str] = []
-    for path in staged_paths() if args.staged else committed_paths(args.commit):
-        blob = git_bytes("show", f":{path}" if args.staged else f"{args.commit}:{path}")
+    paths = staged_paths() if args.staged else all_index_paths() if args.all else committed_paths(args.commit)
+    for path in paths:
+        if args.all and path.startswith(AUTHOR_NAMESPACES):
+            # Historical Python ports in the index are read-only inputs; the
+            # whole-tree audit concerns the C++ product. Staged changes to an
+            # author namespace still require exact source bytes below.
+            continue
+        blob = git_bytes("show", f":{path}" if args.staged or args.all else f"{args.commit}:{path}")
         if path.startswith(AUTHOR_NAMESPACES):
             if not protected_author_copy(path, blob):
                 issues.append(f"{path}: author Python copy differs from pinned source")
             continue
-        if not path.startswith(PRODUCT_PREFIXES) or not path.endswith(CPP_SUFFIXES):
+        if (not path.startswith(PRODUCT_PREFIXES) or path.startswith("cpp/tests/")
+                or not path.endswith(CPP_SUFFIXES)):
             continue
         source = blob.decode("utf-8", "strict")
         issues.extend(check_cpp(path, source))

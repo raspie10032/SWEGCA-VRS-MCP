@@ -58,7 +58,7 @@ void append_codepoint(std::string& target, std::uint32_t point) {
     } else throw std::runtime_error("invalid_unicode_escape");
 }
 
-// SWEGCA: mosaic_snapshot_digest.py@3bddcb7:82-89
+// SWEGCA: src/tinylm_slicer/mosaic_snapshot_digest.py@3bddcb7:82-89
 void flush_hash_chunk(std::string& target, Sha256* hash) {
     if (hash && target.size() >= 65536) {
         hash->update(target);
@@ -66,7 +66,7 @@ void flush_hash_chunk(std::string& target, Sha256* hash) {
     }
 }
 
-// SWEGCA: mosaic_snapshot_digest.py@3bddcb7:91-96
+// SWEGCA: src/tinylm_slicer/mosaic_snapshot_digest.py@3bddcb7:91-96
 void append_string(std::string& target, std::string_view value, Sha256* hash = nullptr) {
     validate_utf8(value);
     constexpr char hex[] = "0123456789abcdef";
@@ -96,7 +96,7 @@ void append_string(std::string& target, std::string_view value, Sha256* hash = n
     target.push_back('"');
 }
 
-// SWEGCA: mosaic_snapshot_digest.py@3bddcb7:107-108
+// SWEGCA: src/tinylm_slicer/mosaic_snapshot_digest.py@3bddcb7:107-108
 std::string python_float(double value, bool allow_nan) {
     if (!std::isfinite(value)) {
         if (!allow_nan) throw std::runtime_error("nonfinite_json");
@@ -405,7 +405,7 @@ bool Json::contains(std::string_view key) const {
     return fields && fields->contains(key);
 }
 
-// SWEGCA: mosaic_snapshot_digest.py@3bddcb7:144-187
+// SWEGCA: src/tinylm_slicer/mosaic_snapshot_digest.py@3bddcb7:144-187
 std::string snapshot_digest(const std::vector<Json>& episodes, const Json& postings) {
     std::vector<const Json*> ordered;
     ordered.reserve(episodes.size());

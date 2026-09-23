@@ -22,33 +22,33 @@ constexpr std::array<std::uint32_t, 64> round_constant{
     0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
 };
 
-// SWEGCA: mosaic_snapshot_digest.py@3bddcb7:76-80
+// SWEGCA: src/tinylm_slicer/mosaic_snapshot_digest.py@3bddcb7:76-80
 constexpr std::uint32_t big_sigma0(std::uint32_t value) {
     return std::rotr(value, 2) ^ std::rotr(value, 13) ^ std::rotr(value, 22);
 }
 
-// SWEGCA: mosaic_snapshot_digest.py@3bddcb7:76-80
+// SWEGCA: src/tinylm_slicer/mosaic_snapshot_digest.py@3bddcb7:76-80
 constexpr std::uint32_t big_sigma1(std::uint32_t value) {
     return std::rotr(value, 6) ^ std::rotr(value, 11) ^ std::rotr(value, 25);
 }
 
-// SWEGCA: mosaic_snapshot_digest.py@3bddcb7:76-80
+// SWEGCA: src/tinylm_slicer/mosaic_snapshot_digest.py@3bddcb7:76-80
 constexpr std::uint32_t small_sigma0(std::uint32_t value) {
     return std::rotr(value, 7) ^ std::rotr(value, 18) ^ (value >> 3);
 }
 
-// SWEGCA: mosaic_snapshot_digest.py@3bddcb7:76-80
+// SWEGCA: src/tinylm_slicer/mosaic_snapshot_digest.py@3bddcb7:76-80
 constexpr std::uint32_t small_sigma1(std::uint32_t value) {
     return std::rotr(value, 17) ^ std::rotr(value, 19) ^ (value >> 10);
 }
 
 }  // namespace
 
-// SWEGCA: mosaic_snapshot_digest.py@3bddcb7:76-80
+// SWEGCA: src/tinylm_slicer/mosaic_snapshot_digest.py@3bddcb7:76-80
 Sha256::Sha256() : state_{0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
                           0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19} {}
 
-// SWEGCA: mosaic_snapshot_digest.py@3bddcb7:76-80
+// SWEGCA: src/tinylm_slicer/mosaic_snapshot_digest.py@3bddcb7:76-80
 void Sha256::compress(const std::array<std::byte, 64>& block) {
     std::array<std::uint32_t, 64> word{};
     for (std::size_t i = 0; i < 16; ++i) {
@@ -75,7 +75,7 @@ void Sha256::compress(const std::array<std::byte, 64>& block) {
     state_[4] += e; state_[5] += f; state_[6] += g; state_[7] += h;
 }
 
-// SWEGCA: mosaic_snapshot_digest.py@3bddcb7:76-80
+// SWEGCA: src/tinylm_slicer/mosaic_snapshot_digest.py@3bddcb7:76-80
 void Sha256::update(std::span<const std::byte> bytes) {
     if (finished_) throw std::runtime_error("sha256_already_finished");
     if (bytes.size() > (std::numeric_limits<std::uint64_t>::max() / 8) - byte_count_)
@@ -93,12 +93,12 @@ void Sha256::update(std::span<const std::byte> bytes) {
     }
 }
 
-// SWEGCA: mosaic_snapshot_digest.py@3bddcb7:76-80
+// SWEGCA: src/tinylm_slicer/mosaic_snapshot_digest.py@3bddcb7:76-80
 void Sha256::update(std::string_view bytes) {
     update(std::as_bytes(std::span(bytes.data(), bytes.size())));
 }
 
-// SWEGCA: mosaic_snapshot_digest.py@3bddcb7:76-80
+// SWEGCA: src/tinylm_slicer/mosaic_snapshot_digest.py@3bddcb7:76-80
 std::array<std::byte, 32> Sha256::finish() {
     if (finished_) throw std::runtime_error("sha256_already_finished");
     const auto bits = byte_count_ * 8;

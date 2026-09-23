@@ -13,13 +13,13 @@ namespace swegca::vrs {
 // This small source implementation keeps the hash boundary portable.
 class Sha256 {
 public:
-    // SWEGCA: mosaic_snapshot_digest.py@3bddcb7:76-80
+    // SWEGCA: src/tinylm_slicer/mosaic_snapshot_digest.py@3bddcb7:76-80
     Sha256();
-    // SWEGCA: mosaic_snapshot_digest.py@3bddcb7:76-80
+    // SWEGCA: src/tinylm_slicer/mosaic_snapshot_digest.py@3bddcb7:76-80
     void update(std::span<const std::byte> bytes);
-    // SWEGCA: mosaic_snapshot_digest.py@3bddcb7:76-80
+    // SWEGCA: src/tinylm_slicer/mosaic_snapshot_digest.py@3bddcb7:76-80
     void update(std::string_view bytes);
-    // SWEGCA: mosaic_snapshot_digest.py@3bddcb7:76-80
+    // SWEGCA: src/tinylm_slicer/mosaic_snapshot_digest.py@3bddcb7:76-80
     [[nodiscard]] std::array<std::byte, 32> finish();
 
 private:
@@ -28,7 +28,7 @@ private:
     std::size_t pending_count_ = 0;
     std::uint64_t byte_count_ = 0;
     bool finished_ = false;
-    // SWEGCA: mosaic_snapshot_digest.py@3bddcb7:76-80
+    // SWEGCA: src/tinylm_slicer/mosaic_snapshot_digest.py@3bddcb7:76-80
     void compress(const std::array<std::byte, 64>& block);
 };
 
