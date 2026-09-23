@@ -6,9 +6,12 @@ crash cases before code uses it.
 
 ## Source and current-code facts
 
-- SWEGCA `ARCHITECTURE_SPEC.md` §4.7–4.9 requires a bounded verification-slot
-  commit, exact before/after and evidence-bound receipt, rollback/retraction,
-  and recovery. It describes the old local protocol, not a native byte format.
+- SWEGCA `ARCHITECTURE_SPEC.md` §4.7–4.9 describes a bounded
+  verification-slot commit, a receipt with before/after state and slot
+  hashes plus copied evidence references, rollback/retraction, and recovery.
+  Its §4.5 specifies the intended decision/proposal evidence binding and
+  reports the old writer's E001/E002 gap. These sections describe the old
+  local protocol, not a native byte format.
 - `SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md` §9 requires one
   published HEAD as the recovery root, bounded immutable linked segments,
   exact digests, and a manifest naming the state generation. Derived views
@@ -23,6 +26,17 @@ crash cases before code uses it.
 - `CognitiveTensor` currently owns one contiguous byte vector. A disk part
   tree alone cannot prevent a verification-slot write from copying an entire
   large scratch tensor in memory.
+- `MainInitialState::TensorInput` currently borrows one full byte span, and
+  Main copies it into a tensor. A large caller-held initial tensor plus that
+  copy can exceed a 4 GB VRS host profile before any write. Large
+  initialization and cold recovery need bounded streaming inputs as well.
+- The original `mosaic_world_memory_transaction.py` prepares a transaction
+  for semantic-memory promotion linked to an existing World-write receipt.
+  It does not define a required transaction around state-part staging.
+- The original bounded writer keeps prior write metadata in `self_state`.
+  Current C++ `SelfState` is an opaque `CanonicalPayload`, so the native
+  writer still needs a typed, digest-bound way to update and restore that
+  metadata without assuming an undocumented payload schema.
 
 ## Required contract
 
@@ -44,6 +58,9 @@ crash cases before code uses it.
    generation limit, keeps the prior state generation. Part records confer no
    decision or write authority. A crash before the final HEAD leaves the
    prior state current; a retry may verify and reuse immutable parts.
+   The final stage must be built on the latest journal HEAD while comparing
+   the state generation with the one read before preparation, since unrelated
+   experience appends may advance the journal generation.
 6. A state tensor update shares unchanged immutable byte chunks, copies only
    touched chunks, and preserves the current canonical byte stream and
    `swegca.cognitive_state.v1` digest. The host VRS layer counts memory and
@@ -54,6 +71,8 @@ crash cases before code uses it.
 - Reserve native state-part, state-root, and state-write-receipt record kinds
   distinct from experience kinds 1–3. Reuse the existing bounded part-tree
   *mechanism*; do not inherit an old VRS ranking or reinforcement policy.
+  These state records carry no experience search index entries, and the
+  experience decoder must reject their kinds.
 - Derive the state-root exact address from the state digest with a reserved
   prefix. The manifest already holds state ordinal and digest, so recovery
   can use the same verified address tree without a memory-size scan. Main is
@@ -78,8 +97,16 @@ crash cases before code uses it.
   zero state digest, including what initial input may be accepted.
 - Verify that all tensor readers and digest users can read a chunked
   canonical stream without constructing a full contiguous copy.
+- Replace the whole-tensor startup input for the large-state route with a
+  bounded stream, so its producer and Main never require simultaneous full
+  copies. Use the same canonical validation as the small input route.
 - List crash points around part publication, final HEAD publication, and
   Main pointer swap; assert the published state is always recoverable.
+- Decide how to reclaim published parts that no state root uses. The
+  semantic-memory `prepared` protocol does not itself free their storage
+  and is not a source-backed prerequisite for staging state parts.
+- Define the native typed bounded-write metadata and its state-digest
+  binding before implementing receipts, rollback, or retraction.
 
 This storage path is outside the hot Déjà vu → Recall path. It cannot be used
 as a substitute for the SWEGCA-based four-stage VRS navigation and judgment.
