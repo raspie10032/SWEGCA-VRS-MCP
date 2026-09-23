@@ -227,6 +227,12 @@ source behavior that nodes appended since the last region rebuild do not
 silently inherit an old component. A generation manifest must still bind the
 page-map root, exact topology files, source numerical Graph, memory owner and
 pair certificate before this data can implement `GraphRegionDirectory`.
+The source-bound binding view cold-validates a complete, contiguous logical
+page map against the exact Graph snapshot and node count. Its fixed 16-shard
+cache has a caller-supplied byte budget and changes no component or local
+address on a miss. The view still refuses to act as a region directory until
+the missing component-topology manifest proves which immutable topology file
+belongs to each component and Main pair.
 
 Existing VRS 2.2 pair certificates and numerical arrays are historical
 evidence. A new source implementation must account for their lineage and
