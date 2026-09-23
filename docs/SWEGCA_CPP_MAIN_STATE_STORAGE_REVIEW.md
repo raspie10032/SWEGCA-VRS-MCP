@@ -334,13 +334,32 @@ four-stage VRS path is already implemented.
   exactly the digest preimage. The experience `plan_blob` pulls from a span
   or random-access reader and rereads it when staging; the state emitter
   pushes chunks into a sink. Share only the input-independent upper digest
-  tree and level-count logic, with a separate bounded push splitter for
-  state tensor parts. State reads use Main's held snapshot with `resolve_in`
+  tree and level-count logic. The tensor's existing fixed chunks provide
+  its level-0 parts; bounded push splitting is needed for metadata sections.
+  State reads use Main's held snapshot with `resolve_in`
   and `read_in`, rather than experience `replay_part`. This emitter alone
   does not persist or recover state parts, and its borrowed sink must finish
   each chunk before returning.
   A writer failure may stop the stream mid-part; no partial part or state HEAD
   may publish, and unpublished bytes must be removed before guarded work resumes.
+- The current canonical v3 byte order is prefix (domain, owner, roles), then
+  each of three tensors' partition and header followed by its chunks, then
+  suffix (graph, evidence, goals, values, self and write head). A state tensor
+  tree root can hold its partition/header and ordered top digest list, with
+  lower digest lists in bounded parts when needed;
+  unchanged tensors keep their exact root addresses. A zero-byte tensor has a
+  root with an empty level-0 list. A small tensor uses the same form, with no
+  tensor-specific inline exception. The writer must keep the immutable Main
+  state snapshot alive through every borrowed chunk and prove that prefix,
+  each reconstructed tensor and suffix concatenate to the existing v3 digest
+  preimage. The canonical emitter must report tensor boundaries to the writer
+  while retaining one byte-encoding implementation.
+- Prefix and suffix may themselves exceed one record and need bounded parts.
+  Splitting suffix into stable sections could avoid rewriting an unbounded
+  graph when the write head changes, but the tensor-boundary callback alone
+  cannot mark those sections. Their exact boundaries and root references
+  remain a format decision; any chosen boundaries must come from the same
+  canonical emitter, without a second serializer or content-defined split.
 
 ## Decisions before implementation
 
