@@ -6,8 +6,9 @@
 namespace swegca::architecture {
 namespace {
 
-// The author's _require_text uses Python str.strip. Python 3.14.7 in the
-// pinned Unicode 16.0 environment treats these 29 code points as whitespace.
+// The author's _require_text uses Python str.strip. This C++ implementation
+// fixes its blank set to Unicode 16.0; Python 3.14.7 measured these 29 code
+// points. The source project permits other Python versions.
 // The UTF-8 validity and byte-length limits below remain native rules.
 // SWEGCA: src/swegca/mosaic_cognitive_kernel.py@5901a5a:19-21
 bool python_strip_space(std::uint32_t code_point) noexcept {
@@ -21,7 +22,8 @@ bool python_strip_space(std::uint32_t code_point) noexcept {
 }
 
 // Weak source analogy: implement the source's blank-text predicate on valid
-// UTF-8 bytes; the source works on Python Unicode strings directly.
+// UTF-8 bytes; the source works on Python Unicode strings directly. Callers
+// must run is_strict_utf8 first, since this decoder assumes complete scalars.
 // SWEGCA: src/swegca/mosaic_cognitive_kernel.py@5901a5a:19-21
 bool contains_identity_content(std::string_view value) noexcept {
     const auto* bytes = reinterpret_cast<const unsigned char*>(value.data());

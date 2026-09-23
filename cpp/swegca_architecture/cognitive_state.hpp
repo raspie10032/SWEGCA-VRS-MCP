@@ -322,6 +322,7 @@ class StateSnapshot final {
 public:
     StateSnapshot(const StateSnapshot&) = default;
     StateSnapshot(StateSnapshot&&) noexcept = default;
+    // Weak source analogy: the lease swap is native C++ infrastructure.
     // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:103-107
     StateSnapshot& operator=(StateSnapshot other) noexcept;
 

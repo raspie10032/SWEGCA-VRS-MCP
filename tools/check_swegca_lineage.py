@@ -38,26 +38,14 @@ SOURCE_ROOTS = (
 )
 
 
-RECONSTRUCTION_START = "bfdbc49524ccfeaf91f9a1fd0205cc441f80e5a8"
-
-
-@lru_cache(maxsize=256)
-def self_design_document(source: str, revision: str) -> bool:
-    if not source.startswith("docs/"):
-        return False
-    # Reconstruction notes cannot prove their own lineage. The old author
-    # worklogs in separately pinned repositories remain usable as source
-    # evidence; the approved local order is cited with user@ instead.
-    if source.startswith("docs/SWEGCA_CPP_") or source == (
-        "docs/SWEGCA_VRS_MCP_ORDER_FOR_REVIEW.md"
-    ):
-        return True
-    try:
-        git_bytes("merge-base", "--is-ancestor", RECONSTRUCTION_START,
-                  revision, root=SOURCE_ROOTS[0])
-        return True
-    except (OSError, subprocess.CalledProcessError):
-        return False
+APPROVED_ORDER = (
+    "fcab35bc9609840afbf2987680b317e03cc3fd78",
+    "docs/SWEGCA_VRS_MCP_ORDER_FOR_REVIEW.md",
+)
+# Add a user-authored VRS document here only after its exact path and pinned
+# revision have been inspected. Reconstruction notes in this Git repository
+# cannot validate their own lineage, regardless of their ancestry or name.
+PINNED_VRS_AUTHOR_DOCS: frozenset[tuple[str, str]] = frozenset()
 
 
 def git_bytes(*args: str, root: Path | None = None) -> bytes:
@@ -84,22 +72,33 @@ def committed_paths(commit: str) -> list[str]:
 
 
 @lru_cache(maxsize=256)
-def author_blob(reference: str) -> bytes | None:
-    source, rest = reference.split("@", 1)
-    commit = rest.split(":", 1)[0]
-    for root in SOURCE_ROOTS:
+def resolve_source(source: str, revision: str) -> tuple[int, bytes] | None:
+    if source.startswith("/") or any(part in ("", ".", "..") for part in source.split("/")):
+        return None
+    for root_index, root in enumerate(SOURCE_ROOTS):
         try:
-            paths = git_bytes("ls-tree", "-r", "--name-only", commit, root=root).decode().splitlines()
-            if source in paths:
-                return git_bytes("show", f"{commit}:{source}", root=root)
-            matches = [path for path in paths if path == source or path.endswith("/" + source)]
-            if len(matches) == 1:
-                return git_bytes("show", f"{commit}:{matches[0]}", root=root)
-            if len(matches) > 1:
-                return None
-        except (OSError, subprocess.CalledProcessError, UnicodeDecodeError):
+            if git_bytes("cat-file", "-t", f"{revision}:{source}", root=root) != b"blob\n":
+                continue
+            return root_index, git_bytes("show", f"{revision}:{source}", root=root)
+        except (OSError, subprocess.CalledProcessError):
             continue
     return None
+
+
+def self_design_document(source: str, revision: str) -> bool:
+    located = resolve_source(source, revision)
+    return (
+        located is not None
+        and located[0] in (0, 3)
+        and source.startswith("docs/")
+        and (source, revision) not in PINNED_VRS_AUTHOR_DOCS
+    )
+
+
+def author_blob(reference: str) -> bytes | None:
+    source, rest = reference.split("@", 1)
+    located = resolve_source(source, rest.split(":", 1)[0])
+    return None if located is None else located[1]
 
 
 def valid_tag(reference: str) -> bool:
@@ -112,10 +111,13 @@ def valid_tag(reference: str) -> bool:
     if start < 1 or end < start:
         return False
     if source == "user":
-        approved = Path(__file__).resolve().parents[1] / "docs" / "SWEGCA_VRS_MCP_ORDER_FOR_REVIEW.md"
-        if not approved.is_file():
+        # 2026-09-22 tags refer to the reviewed order at its pinned revision.
+        # Direct 2026-09-23 chat utterances have no line-numbered source in
+        # this repository, so a date alone cannot validate them.
+        if revision != "2026-09-22":
             return False
-        return end <= len(approved.read_text(encoding="utf-8").splitlines())
+        located = resolve_source(APPROVED_ORDER[1], APPROVED_ORDER[0])
+        return located is not None and end <= len(located[1].splitlines())
     blob = author_blob(reference)
     return blob is not None and end <= len(blob.splitlines())
 

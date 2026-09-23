@@ -371,7 +371,8 @@ StateSnapshot::StateSnapshot(std::shared_ptr<const CognitiveState> state,
 
 // Keep both the old and the replacement Main leases alive while swapping
 // snapshots. The old state's last reference is released before its lease.
-// C++ lease order for the source's single Main-owned state.
+// Weak source analogy: the source requires one Main-owned state, while this
+// swap's reference-release order is native C++ lease infrastructure.
 // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:103-107
 StateSnapshot& StateSnapshot::operator=(StateSnapshot other) noexcept {
     state_.swap(other.state_);
