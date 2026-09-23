@@ -210,13 +210,26 @@ def source_blob(root_index: int, full_revision: str, source: str) -> bytes | Non
 def verified_source_object(root: Path, oid: str, kind: str) -> bytes | None:
     # Git can read a loose object stored under a forged hash without checking
     # its contents. Validate the exact commit, every path tree, and the blob.
+    # Require Git's own object hash as well: a plain hashlib SHA-1 check alone
+    # does not use Git's collision-detecting SHA-1 implementation.
     if not re.fullmatch(r"[0-9a-f]{40}", oid):
         return None
     if git_bytes("cat-file", "-t", oid, root=root) != (kind + "\n").encode():
         return None
     data = git_bytes("cat-file", kind, oid, root=root)
     framed = kind.encode() + b" " + str(len(data)).encode() + b"\0" + data
-    return data if hashlib.sha1(framed).hexdigest() == oid else None
+    if hashlib.sha1(framed).hexdigest() != oid:
+        return None
+    environment = os.environ.copy()
+    for name in tuple(environment):
+        if name.startswith("GIT_"):
+            environment.pop(name)
+    environment["GIT_NO_REPLACE_OBJECTS"] = "1"
+    git_oid = subprocess.check_output(
+        ("git", "-C", str(root), "hash-object", "-t", kind, "--stdin"),
+        input=data, stderr=subprocess.DEVNULL, env=environment,
+    ).decode("ascii", "strict").strip()
+    return data if git_oid == oid else None
 
 
 def author_blob(reference: str) -> bytes | None:
