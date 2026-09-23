@@ -182,12 +182,13 @@ CanonicalPayload::CanonicalPayload(const AllocationContext& account,
     if (!bytes.empty()) bytes_.assign(bytes.begin(), bytes.end());
 }
 
+// The bytes pass the same decode check a recovered control does, so a state
+// never holds a control that its own control() or cold recovery would refuse.
 // SWEGCA: src/swegca/mosaic_autonomous_cognition.py@5901a5a:167-186
 AutonomyState AutonomyState::encode(const AllocationContext& account,
                                     const AutonomyControl& control) {
     const auto bytes = control.encode(account);
-    return AutonomyState(CanonicalPayload(
-        account, std::span<const std::byte>(bytes.data(), bytes.size())));
+    return decode(account, std::span<const std::byte>(bytes.data(), bytes.size()));
 }
 
 // Decode then re-encode: a second byte form of the same control would give

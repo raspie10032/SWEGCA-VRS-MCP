@@ -293,7 +293,8 @@ class AutonomyControl;
 // SWEGCA: src/swegca/mosaic_autonomous_cognition.py@5901a5a:150-186
 class AutonomyState final {
 public:
-    // The canonical bytes of `control`, on `account`.
+    // The canonical bytes of `control`, on `account`, checked as decode()
+    // checks them; a control its own decode would refuse throws here.
     // SWEGCA: src/swegca/mosaic_autonomous_cognition.py@5901a5a:167-186
     [[nodiscard]] static AutonomyState encode(const AllocationContext& account,
                                               const AutonomyControl& control);
