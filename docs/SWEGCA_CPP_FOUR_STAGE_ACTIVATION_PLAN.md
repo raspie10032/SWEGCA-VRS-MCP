@@ -1,4 +1,4 @@
-# SWEGCA C++ four-stage memory activation — design v1.5 (for cross-review, no code yet)
+# SWEGCA C++ four-stage memory activation — design v1.6 (for cross-review, no code yet)
 
 Status: draft for Claude–Codex cross-review. Nothing here is implemented.
 It replaces the single-stage `ExperienceSelector::select` with Déjà vu → Recall → Replay → Re-evidence.
@@ -32,6 +32,17 @@ All four stages run over one published journal universe U, and the VRS strength 
 - **Not true of today's API (Codex 19:51).** `for_each_index_match`, `resolve` and `replay_at_head` each take a fresh `snapshot()` (journal_store.cpp:1815-1826 and others). Several cue lookups and up to 5 replays could see different HEADs.
 - **Needed first:** a Main-owned pinned read lease. It is taken once per activation, and every cue lookup, resolve, replay and strength read (the main root and the session VRS, §4) takes that lease. Codex designs and implements the journal side. The four-stage code is built on the lease, never on `snapshot()` per call.
   - Codex 683fe27: `for_each_index_match_in`, `resolve_in` and `replay_in` take one pinned `PublishedSnapshot` through a private Main path. The upper lease that pins the memory and the strength root together (main root, closed session blocks, live session VRS) is not built yet, and it is a precondition here.
+
+## 1.5 The user-approved read route (ORDER_FOR_REVIEW, 「순서맞음 ㄱㄱ」 2026-09-22)
+Versions up to v1.5 left these approved rules out. They are binding, and the stages below follow them. Lines are docs/SWEGCA_VRS_MCP_ORDER_FOR_REVIEW.md.
+- **Session first, main on a miss** (:13-15, :46, :96-97). Déjà vu runs first on the pinned **session** VRS. Only when the session's matched cues are empty (`matched_cues == ()`) do Déjà vu, navigation and Recall run on the pinned **main** VRS with the same input. Main is not probed otherwise (:35-36).
+- **Navigation between Déjà vu and Recall** (:16-19, :37-38, :98-100). Region preactivation from the matched cues, membership lookup, the coactivation witness query, portal planning and one local-navigation cue page follow Déjà vu. They feed navigation cues into Recall and precede its candidate selection. Only the single eligible portal and one cue page are used, and deferred regions stay explicit, so no complete transitive search is claimed (:47-50). These are SWEGCA elements (regions, portals, shared experience). The C++ rebuild must carry them. They are not optional.
+- **Recall keeps the complete address set** (:20-23, :50-52). Every Recall address is kept in `memory_selection`. A transport page limit never removes an address.
+- **Replay** (:24-25, :101). The approved flow opened "the first current original from author Recall order". The user's 2026-09-23 rule replaces that: highest VRS strength, up to 5 on a tie, then matched cues and recency (§4).
+- **Re-evidence with the opposing side** (:26-29, :101-102). Re-evidence runs against the current generation. If there is relevant opposing evidence or a conflict, only the relevant opposing originals are also replayed, Re-evidence runs with both sides, and an unresolved conflict is preserved.
+- **Receipt** (:30-32, :50-53). The Recall, Replay and Re-evidence rows bind one-to-one to the opened originals. The full Recall set is paged separately in `memory_selection`. There is no action or truth authority.
+- **Timing** (:38-44). The <1 ms gate covers Déjà vu, navigation and the completion of Recall before Replay. It is measured from the host receiving the input. Main-fallback latency is reported separately and never hidden by session timing.
+- **Input admission** (:103-105). The current input is a recall key at once. It becomes an admitted observation when the host-visible transcript record is captured, and it never holds up the pre-Replay boundary.
 
 ## 2. Déjà vu (anonymous)
 - **Input:** the query text, plus the current cues as phrases, normalized by the user's `_cue` (:34-35, as in a106ddc).
