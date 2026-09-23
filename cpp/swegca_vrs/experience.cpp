@@ -34,8 +34,8 @@ constexpr std::size_t digest_hex_bytes = 2 * digest256_width;
 constexpr std::size_t address_bytes = experience_address_bytes;
 // A part holds `experience_part_bytes` of a blob or that many bytes of the
 // digest list one level below; the top list fits an inline blob.
-constexpr std::uint64_t digests_per_part = experience_part_bytes / digest256_width;
-constexpr std::uint64_t max_top_digests = experience_inline_blob_bytes / digest256_width;
+constexpr std::uint64_t digests_per_part = part_tree::digests_per_part;
+constexpr std::uint64_t max_top_digests = part_tree::max_top_digests;
 static_assert(experience_part_bytes % digest256_width == 0 && experience_part_bytes <= journal::max_payload_bytes);
 // Inline: mode, length, bytes. Parted: mode, size, digest, depth, top count,
 // top digests.
@@ -167,34 +167,8 @@ DigestBytes digest_at(std::span<const std::byte> list, std::uint64_t at) noexcep
     return out;
 }
 
-// SWEGCA: user@2026-09-22:60-61
-constexpr std::uint64_t ceil_div(std::uint64_t value, std::uint64_t by) noexcept {
-    return value == 0 ? 0 : (value - 1) / by + 1;
-}
-
-// The part count of each level of a parted blob of `size` bytes: level 0
-// cuts the bytes, each higher level the digest list below it, until the top
-// list fits an inline blob. `levels[depth - 1]` is the top count.
-struct PartLevels {
-    std::array<std::uint64_t, 4> counts{};
-    std::uint8_t depth = 0;
-};
-
-// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:23-60
-PartLevels part_levels(std::uint64_t size) noexcept {
-    PartLevels out;
-    auto count = ceil_div(size, experience_part_bytes);
-    out.counts[out.depth++] = count;
-    while (count > max_top_digests) {
-        count = ceil_div(count, digests_per_part);
-        out.counts[out.depth++] = count;
-    }
-    return out;
-}
-static_assert(ceil_div(ceil_div(ceil_div(std::numeric_limits<std::uint64_t>::max(), experience_part_bytes),
-                                digests_per_part),
-                       digests_per_part) <= max_top_digests,
-              "three part levels hold any u64 size");
+using part_tree::PartLevels;
+using part_tree::part_levels;
 
 // One code point of strict UTF-8 text at `at`, which moves past it.
 // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:413-418
@@ -797,22 +771,11 @@ BlobPlan plan_blob(const AllocationContext& memory, const BlobInput& input,
     }
     out.digest = whole.finish();
     owned.push_back(std::move(list));  // a moved vector keeps its buffer: earlier slices stay valid
-    std::span<const std::byte> below = owned.back();
-    for (std::uint8_t level = 1; level < levels.depth; ++level) {
-        LedgerBytes upper(memory.allocator<std::byte>());
-        upper.reserve(static_cast<std::size_t>(levels.counts[level] * digest256_width));
-        for (std::uint64_t at = 0; at < levels.counts[level]; ++at) {
-            const auto offset = at * experience_part_bytes;
-            const auto slice = below.subspan(static_cast<std::size_t>(offset),
-                                             static_cast<std::size_t>(std::min<std::uint64_t>(
-                                                 experience_part_bytes, below.size() - offset)));
-            const auto digest = Sha256::of(slice);
-            upper.insert(upper.end(), digest.begin(), digest.end());
-            parts.push_back(PartSlice{digest, slice});
-        }
-        owned.push_back(std::move(upper));
-        below = owned.back();
-    }
+    const auto below = part_tree::append_upper_levels(
+        memory, levels, owned,
+        [&parts](const DigestBytes& digest, std::span<const std::byte> bytes) {
+            parts.push_back(PartSlice{digest, bytes});
+        });
     out.depth = levels.depth;
     out.top = below;
     return out;

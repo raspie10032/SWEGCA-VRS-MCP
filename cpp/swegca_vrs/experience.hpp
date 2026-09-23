@@ -8,6 +8,7 @@
 #include "swegca_vrs/journal_store.hpp"
 #include "swegca_vrs/allocation.hpp"
 #include "swegca_vrs/identity_types.hpp"
+#include "swegca_vrs/part_tree.hpp"
 
 #include <array>
 #include <cstddef>
@@ -54,10 +55,10 @@ inline constexpr std::uint16_t experience_part_kind = journal::experience_part_r
 inline constexpr std::string_view experience_part_address_prefix = "experience-part:";
 inline constexpr std::size_t experience_part_address_bytes =
     experience_part_address_prefix.size() + 2 * digest256_width;
-inline constexpr std::size_t experience_part_bytes = 8u * 1024u * 1024u;
+inline constexpr std::size_t experience_part_bytes = part_tree::part_bytes;
 // A blob (raw bytes, structured bytes, root sources) up to this size is kept
 // in the experience record itself; a larger one is kept as parts.
-inline constexpr std::size_t experience_inline_blob_bytes = 2u * 1024u * 1024u;
+inline constexpr std::size_t experience_inline_blob_bytes = part_tree::inline_top_bytes;
 // A caller's cues for one memory are kept beside it, never in it: a record
 // of their own kind addressed under the memory's address (the memory's
 // address, this infix, and the digest of the binding), so a cue lookup that
