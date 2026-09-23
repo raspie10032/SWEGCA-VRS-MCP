@@ -74,6 +74,7 @@ generation, and Main marker selection before they can be run):
 | B28 | A committed Main marker carries a nonzero strength-root digest, but its selected journal generation contains no locatable strength-root record | Main refuses to select or expose that publication; a digest alone is not reconstructed strength experience |
 | B29 | Change one current/base strength, canonical member/group link, term identity, per-term score/support/refute value, evidence request, root part, or root locator while leaving the committed marker unchanged; then restart | Exact root and part checks fail closed before Main publishes a state/VRS pair; no derived search view substitutes for the damaged source |
 | B30 | Publish a valid nonempty VRS generation with f32 strengths, terms, per-term score/support/refute, evidence requests and canonical member/group links, then restart from Main's selected marker while the lower journal HEAD points to another generation | Recovered VRS data and Cognitive State match the selected marker's generation exactly; the lower HEAD cannot select another pair |
+| B31 | Encode or decode a VRS group base strength or current strength containing NaN, infinity or a negative value, including a corrupted part that would produce one | Reject the generation before Main publishes or restores it; both strength arrays remain finite and nonnegative (`mosaic_vrs_canonicalization.py@3bddcb7:329-332`) |
 
 The f32 persisted strength in B30 is the new C++ storage contract from
 `SWEGCA_CPP_MAIN_STATE_STORAGE_REVIEW.md` §Required contract 9, following
