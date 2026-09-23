@@ -44,6 +44,7 @@ add_library(swegca_vrs_candidate STATIC
     cpp/swegca_vrs/arbiter_rules.cpp
     cpp/swegca_vrs/authority.cpp
     cpp/swegca_vrs/cognition.cpp
+    cpp/swegca_vrs/cognition_runner.cpp
     cpp/swegca_vrs/cognitive_state.cpp
     cpp/swegca_vrs/evidence_accumulator.cpp
     cpp/swegca_vrs/evidence_gate.cpp
