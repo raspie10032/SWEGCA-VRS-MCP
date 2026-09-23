@@ -382,34 +382,83 @@ LedgerVector<AddressChildItem> insert_into(PageWriter& writer, const fs::path& d
     return write_branch_pages(writer, next);
 }
 
-// The view after adding `added` (sorted, unique): new pages for every changed
-// path, a taller root when the old root split, and the page-log accounting.
+// The tree after adding `added` (sorted, unique): new pages for every changed
+// path and a taller root when the old root split.
 // SWEGCA: user@2026-09-22:72-79
-AddressView update_view(PageWriter& writer, const fs::path& directory, const AddressView& view,
-                        std::span<const AddressLeafItem> added) {
-    if (added.empty()) return view;
+ViewTree update_tree(PageWriter& writer, const fs::path& directory, const ViewTree& tree,
+                     std::span<const AddressLeafItem> added) {
+    if (added.empty()) return tree;
+    const auto written_before = writer.page_bytes;
     std::uint64_t replaced = 0;
     std::uint32_t height = 1;
-    auto level = view.entry_count == 0
+    auto level = tree.entry_count == 0
                      ? write_leaf_pages(writer, added)
-                     : insert_into(writer, directory, view.root, view.height, added, replaced);
-    if (view.entry_count != 0) height = view.height;
+                     : insert_into(writer, directory, tree.root, tree.height, added, replaced);
+    if (tree.entry_count != 0) height = tree.height;
     while (level.size() > 1) {
         if (height == max_address_height) fail("journal_address_view_too_tall");
         level = write_branch_pages(writer, level);
         ++height;
     }
-    if (replaced > view.live_page_bytes) fail("journal_address_view_corrupt");
-    AddressView next = view;
-    next.entry_count = plus(view.entry_count, added.size(), "journal_address_count_overflow");
+    if (replaced > tree.live_page_bytes) fail("journal_address_view_corrupt");
+    ViewTree next;
+    next.entry_count = plus(tree.entry_count, added.size(), "journal_address_count_overflow");
     next.height = height;
     next.root = level.front().page;
-    next.first_page_log = view.page_log_ordinal == 0 ? 1 : view.first_page_log;
+    next.live_page_bytes = tree.live_page_bytes - replaced + (writer.page_bytes - written_before);
+    return next;
+}
+
+// The view pages after both trees took their additions through `writer`,
+// which places every page of this generation in the shared page logs.
+// SWEGCA: user@2026-09-22:72-79
+ViewPages update_views(PageWriter& writer, const fs::path& directory, const ViewPages& pages,
+                       std::span<const AddressLeafItem> addresses,
+                       std::span<const AddressLeafItem> cues) {
+    ViewPages next = pages;
+    next.addresses = update_tree(writer, directory, pages.addresses, addresses);
+    next.cues = update_tree(writer, directory, pages.cues, cues);
+    if (writer.written == 0) return next;
+    next.first_page_log = pages.page_log_ordinal == 0 ? 1 : pages.first_page_log;
     next.page_log_ordinal = writer.log_ordinal;
     next.page_log_end = writer.log_end;
-    next.page_log_bytes = plus(view.page_log_bytes, writer.written, "journal_storage_overflow");
-    next.live_page_bytes = view.live_page_bytes - replaced + writer.page_bytes;
+    next.page_log_bytes = plus(pages.page_log_bytes, writer.written, "journal_storage_overflow");
     return next;
+}
+
+// Appends `text` to `keys`, which has capacity for it (so nothing moves).
+// SWEGCA: user@2026-09-22:72-79
+void append_text(LedgerBytes& keys, std::string_view text) {
+    if (text.size() > keys.capacity() - keys.size()) fail("journal_key_capacity");
+    const auto* bytes = reinterpret_cast<const std::byte*>(text.data());
+    keys.insert(keys.end(), bytes, bytes + text.size());
+}
+
+// Appends the key of one view entry to `keys`, which has capacity for it,
+// and views it there: the address itself when `cue` is empty, otherwise
+// the cue-view key (cue, separator, address).
+// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:398-437
+std::string_view append_view_key(LedgerBytes& keys, std::string_view cue, std::string_view address) {
+    const auto at = keys.size();
+    const auto size = cue.empty() ? address.size() : cue_key_size(cue, address);
+    if (size > keys.capacity() - at) fail("journal_key_capacity");
+    if (!cue.empty()) {
+        append_text(keys, cue);
+        keys.push_back(static_cast<std::byte>(cue_separator));
+    }
+    append_text(keys, address);
+    return std::string_view(reinterpret_cast<const char*>(keys.data()) + at, size);
+}
+
+// The tree a builder finished, with the bytes of its pages.
+// SWEGCA: user@2026-09-22:72-79
+ViewTree tree_of(std::uint64_t count, std::uint32_t height, const PageRef& root,
+                 std::uint64_t page_bytes) {
+    if (count == 0) {
+        if (page_bytes != 0) fail("journal_address_view_corrupt");
+        return ViewTree{};
+    }
+    return ViewTree{count, height, root, page_bytes};
 }
 
 // Pages a view rewrite keeps in memory before appending them to disk.
@@ -509,15 +558,25 @@ public:
         return log_ordinal_ + 1;
     }
 
-    // The view over the tree written here: its logs, their bytes and the
-    // bytes of its pages (all of them live).
+    // The view pages over the two trees written here (each given with the
+    // bytes of its pages; every page written here is live) and their logs.
     // SWEGCA: user@2026-09-22:72-79
-    [[nodiscard]] AddressView view(std::uint64_t entries, std::uint32_t height,
-                                   const PageRef& root) const {
-        if (entries == 0) return AddressView{};
-        return AddressView{entries, height,       root,     first_log_, log_ordinal_,
-                           log_end_, written_,     page_bytes_};
+    [[nodiscard]] ViewPages pages(const ViewTree& addresses, const ViewTree& cues) const {
+        if (addresses.live_page_bytes + cues.live_page_bytes != page_bytes_)
+            fail("journal_address_view_corrupt");
+        ViewPages out;
+        out.addresses = addresses;
+        out.cues = cues;
+        if (log_ordinal_ == 0) return out;
+        out.first_page_log = first_log_;
+        out.page_log_ordinal = log_ordinal_;
+        out.page_log_end = log_end_;
+        out.page_log_bytes = written_;
+        return out;
     }
+
+    // SWEGCA: user@2026-09-22:72-79
+    [[nodiscard]] std::uint64_t page_bytes() const noexcept { return page_bytes_; }
 
     // SWEGCA: user@2026-09-22:72-79
     [[nodiscard]] std::uint64_t charged() const noexcept { return charged_; }
@@ -560,6 +619,41 @@ public:
         if (tree.count != 0) descend(tree.root, tree.height);
     }
 
+    // Positioned at the first item whose key is not below `from`: one page
+    // per level on the way down.
+    // SWEGCA: user@2026-09-22:72-79
+    LeafCursor(const fs::path& directory, const MemoryLedger::Account& memory, const BuiltTree& tree,
+               std::string_view from)
+        : directory_(&directory), memory_(memory), frames_(memory.allocator<Frame>()) {
+        frames_.reserve(max_address_height);  // frames never move
+        if (tree.count == 0) return;
+        PageRef ref = tree.root;
+        for (std::uint32_t height = tree.height;; --height) {
+            if (height == 0) fail("journal_address_view_corrupt");
+            auto page = load_page(*directory_, memory_, ref);
+            if (page.view.leaf != (height == 1)) fail("journal_address_view_corrupt");
+            if (page.view.leaf) {
+                const auto& leaves = page.view.leaves;
+                const auto found = std::lower_bound(
+                    leaves.begin(), leaves.end(), from,
+                    [](const AddressLeafItem& item, std::string_view key) { return item.address < key; });
+                const auto at = static_cast<std::size_t>(found - leaves.begin());
+                frames_.push_back(Frame{std::move(page), at, height});
+                settle();
+                return;
+            }
+            const auto& children = page.view.children;
+            const auto after = std::upper_bound(
+                children.begin(), children.end(), from,
+                [](std::string_view key, const AddressChildItem& child) { return key < child.first_address; });
+            const auto at = after == children.begin()
+                                ? std::size_t{0}
+                                : static_cast<std::size_t>(after - children.begin()) - 1;
+            ref = children[at].page;
+            frames_.push_back(Frame{std::move(page), at, height});
+        }
+    }
+
     // SWEGCA: user@2026-09-22:72-79
     [[nodiscard]] bool valid() const noexcept { return !frames_.empty(); }
 
@@ -572,6 +666,19 @@ public:
     // SWEGCA: user@2026-09-22:72-79
     void next() {
         ++frames_.back().at;
+        settle();
+    }
+
+private:
+    struct Frame {
+        LoadedPage page;
+        std::size_t at = 0;
+        std::uint32_t height = 0;
+    };
+
+    // Moves past exhausted pages to the next item, down to its leaf.
+    // SWEGCA: user@2026-09-22:72-79
+    void settle() {
         for (;;) {
             const auto& top = frames_.back();
             const auto size =
@@ -584,13 +691,6 @@ public:
         const auto& top = frames_.back();
         if (!top.page.view.leaf) descend(top.page.view.children[top.at].page, top.height - 1);
     }
-
-private:
-    struct Frame {
-        LoadedPage page;
-        std::size_t at = 0;
-        std::uint32_t height = 0;
-    };
 
     // SWEGCA: user@2026-09-22:72-79
     void descend(PageRef ref, std::uint32_t height) {
@@ -803,7 +903,7 @@ void merge_into(TreeBuilder& builder, const fs::path& directory, const MemoryLed
 }
 
 // SWEGCA: user@2026-09-22:72-79
-std::uint64_t next_page_log(const AddressView& view) {
+std::uint64_t next_page_log(const ViewPages& view) {
     if (view.page_log_ordinal == std::numeric_limits<std::uint64_t>::max())
         fail("journal_page_log_exhausted");
     return view.page_log_ordinal + 1;
@@ -885,12 +985,12 @@ std::uint64_t JournalStore::storage_of(const ExtentTable& extents, const Manifes
         total = plus(total, file_charge(extent.byte_length, unit), code);
     total = plus(total, plus(head.manifest_bytes_before, location.length, code), code);
     total = plus(total, times(location.log_ordinal, per_log, code), code);
-    return plus(total, page_log_charge(head.address_view), code);
+    return plus(total, page_log_charge(head.view_pages), code);
 }
 
-// A view's page logs: their exact bytes plus two allocation units per log.
+// The views' page logs: their exact bytes plus two allocation units per log.
 // SWEGCA: user@2026-09-22:72-79
-std::uint64_t JournalStore::page_log_charge(const AddressView& view) const {
+std::uint64_t JournalStore::page_log_charge(const ViewPages& view) const {
     constexpr const char* code = "journal_storage_overflow";
     if (view.page_log_ordinal == 0) return 0;
     const auto logs = view.page_log_ordinal - view.first_page_log + 1;
@@ -994,7 +1094,7 @@ void JournalStore::load_published_head() {
     // leaves the view unavailable until it is rebuilt from the records.
     // Then bytes past each published end are cut.
     const auto tail_ordinal = fields.tail_segment_ordinal;
-    const auto& view = fields.address_view;
+    const auto& view = fields.view_pages;
     std::uint64_t page_logs = 0;
     bool last_log_present = false;
     for (const auto& entry : fs::directory_iterator(directory_)) {
@@ -1134,7 +1234,7 @@ StagedGeneration JournalStore::stage_from(const std::shared_ptr<const PublishedS
                                           std::span<const RecordDraft> drafts,
                                           const StateGeneration& state,
                                           std::span<const ViewGeneration> views,
-                                          const AddressView* replacement,
+                                          const ViewPages* replacement,
                                           std::uint64_t retained) const {
     const auto& parent = current->head.fields();
     if (replacement != nullptr && !drafts.empty()) fail("journal_view_replacement_with_records");
@@ -1215,7 +1315,7 @@ StagedGeneration JournalStore::stage_from(const std::shared_ptr<const PublishedS
     if (replacement != nullptr) {
         // `retained` already holds the old view's logs, which `current->storage`
         // counts too; the generation's own view is the replacement.
-        storage = plus(storage - page_log_charge(parent.address_view),
+        storage = plus(storage - page_log_charge(parent.view_pages),
                        page_log_charge(*replacement), "journal_storage_overflow");
     }
     for (const auto& piece : plan) {
@@ -1276,12 +1376,41 @@ StagedGeneration JournalStore::stage_from(const std::shared_ptr<const PublishedS
     });
     for (std::size_t at = 1; at < added.size(); ++at)
         if (added[at - 1].address == added[at].address) fail("journal_address_duplicate");
+
+    // The cue view: one entry per cue of every record, keyed by (cue,
+    // separator, address) in one exactly reserved key buffer. Its size is
+    // bounded like the generation's records, since a key repeats the address.
+    std::size_t cue_count = 0;
+    std::size_t cue_key_bytes = 0;
+    for (const auto& draft : drafts) {
+        for (const auto cue : draft.cues) {
+            const auto size = cue_key_size(cue, draft.address);
+            if (size > max_generation_bytes - cue_key_bytes) fail("journal_generation_too_large");
+            cue_key_bytes += size;
+            ++cue_count;
+        }
+    }
+    LedgerBytes cue_keys(memory_.allocator<std::byte>());
+    cue_keys.reserve(cue_key_bytes);
+    LedgerVector<AddressLeafItem> cue_added(memory_.allocator<AddressLeafItem>());
+    cue_added.reserve(cue_count);
+    for (std::size_t at = 0; at < drafts.size(); ++at)
+        for (const auto cue : drafts[at].cues)
+            cue_added.push_back(AddressLeafItem{append_view_key(cue_keys, cue, drafts[at].address),
+                                                staged.positions_[at]});
+    std::sort(cue_added.begin(), cue_added.end(),
+              [](const AddressLeafItem& left, const AddressLeafItem& right) {
+                  return left.address < right.address;
+              });
+    for (std::size_t at = 1; at < cue_added.size(); ++at)
+        if (cue_added[at - 1].address == cue_added[at].address) fail("journal_cue_duplicate");
+
     if (replacement != nullptr) {
-        fields.address_view = *replacement;
+        fields.view_pages = *replacement;
     } else {
-        PageWriter writer{memory_, staged.page_pieces_, parent.address_view.page_log_ordinal,
-                          parent.address_view.page_log_end};
-        fields.address_view = update_view(writer, directory_, parent.address_view, added);
+        PageWriter writer{memory_, staged.page_pieces_, parent.view_pages.page_log_ordinal,
+                          parent.view_pages.page_log_end};
+        fields.view_pages = update_views(writer, directory_, parent.view_pages, added, cue_added);
     }
     for (auto& piece : staged.page_pieces_) {
         piece.parts.reserve(piece.pages.size() + 1);
@@ -1435,7 +1564,7 @@ std::optional<RecordPosition> JournalStore::resolve(const ExperienceAddress& add
 std::optional<RecordPosition> JournalStore::resolve_in(const PublishedSnapshot& current,
                                                        std::string_view key) const {
     if (current.view_unavailable) fail("journal_view_unavailable");
-    const auto& view = current.head.fields().address_view;
+    const auto& view = current.head.fields().view_pages.addresses;
     if (view.entry_count == 0) return std::nullopt;
     PageRef ref = view.root;
     for (std::uint32_t height = view.height;; --height) {
@@ -1524,13 +1653,39 @@ void JournalStore::for_each_record(
     }
 }
 
+// The keys of one cue are contiguous from (cue, separator); the cursor
+// starts at the first of them and stops at the first key past them.
+// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:475-507
+void JournalStore::for_each_cue_match(
+    std::string_view cue,
+    const std::function<bool(std::string_view, const RecordPosition&)>& visit) const {
+    require_usable();
+    if (!is_cue_text(cue) || cue.size() >= detail::identity_text_max_bytes)
+        fail("journal_cue_invalid");
+    const auto current = snapshot();
+    if (current->view_unavailable) fail("journal_view_unavailable");
+    const auto& tree = current->head.fields().view_pages.cues;
+    if (tree.entry_count == 0) return;
+    LedgerBytes bound(memory_.allocator<std::byte>());
+    bound.reserve(cue.size() + 1);
+    const auto* bytes = reinterpret_cast<const std::byte*>(cue.data());
+    bound.insert(bound.end(), bytes, bytes + cue.size());
+    bound.push_back(static_cast<std::byte>(cue_separator));
+    const std::string_view from(reinterpret_cast<const char*>(bound.data()), bound.size());
+    for (LeafCursor cursor(directory_, memory_, BuiltTree{tree.entry_count, tree.height, tree.root}, from);
+         cursor.valid(); cursor.next()) {
+        const auto& item = cursor.item();
+        if (!item.address.starts_with(from)) return;
+        if (!visit(item.address.substr(from.size()), item.position)) return;
+    }
+}
 
 // The generation that publishes `view`, a rewrite of the current view over
 // the same entries: no records, the parent's state generation and derived
 // views, and the old view's logs still charged (they stay until reclaimed).
 // SWEGCA: user@2026-09-22:72-79
 StagedGeneration JournalStore::stage_view(const std::shared_ptr<const PublishedSnapshot>& current,
-                                          const AddressView& view) const {
+                                          const ViewPages& view) const {
     const auto& head = current->head;
     LedgerVector<ViewGeneration> views(memory_.allocator<ViewGeneration>());
     views.reserve(head.view_count());
@@ -1538,7 +1693,7 @@ StagedGeneration JournalStore::stage_view(const std::shared_ptr<const PublishedS
     const auto& fields = head.fields();
     const StateGeneration state(fields.state_generation_ordinal,
                                 Digest256(fields.state_generation_digest));
-    const auto retained = plus(retained_bytes_.load(), page_log_charge(fields.address_view),
+    const auto retained = plus(retained_bytes_.load(), page_log_charge(fields.view_pages),
                                "journal_storage_overflow");
     return stage_from(current, {}, state, views, &view, retained);
 }
@@ -1550,7 +1705,7 @@ StagedGeneration JournalStore::stage_view(const std::shared_ptr<const PublishedS
 // SWEGCA: user@2026-09-22:72-79
 void JournalStore::publish_replacing_view(StagedGeneration&& staged,
                                           const std::shared_ptr<const PublishedSnapshot>& old) {
-    const auto& view = old->head.fields().address_view;
+    const auto& view = old->head.fields().view_pages;
     if (view.page_log_ordinal == 0) {
         publish_locked(std::move(staged));
         return;
@@ -1620,10 +1775,27 @@ bool JournalStore::remove_page_logs(const RetiredLogs& logs) const noexcept {
 bool JournalStore::compaction_due() const {
     require_usable();
     const auto current = snapshot();
-    const auto& view = current->head.fields().address_view;
-    if (view.page_log_bytes <= view.live_page_bytes) return false;
-    return view.page_log_bytes - view.live_page_bytes > view.live_page_bytes + max_page_log_bytes;
+    const auto& view = current->head.fields().view_pages;
+    const auto live = view.live_page_bytes();
+    if (view.page_log_bytes <= live) return false;
+    return view.page_log_bytes - live > live + max_page_log_bytes;
 }
+
+namespace {
+
+// Writes `tree` again through `writer`, in key order.
+// SWEGCA: user@2026-09-22:72-79
+BuiltTree rewrite_tree(StreamWriter& writer, const fs::path& directory,
+                       const MemoryLedger::Account& memory, const ViewTree& tree) {
+    TreeBuilder builder(writer, memory);
+    const BuiltTree previous{tree.entry_count, tree.height, tree.root};
+    merge_into(builder, directory, memory, &previous, {});
+    const auto built = builder.finish();
+    if (built.count != tree.entry_count) fail("journal_address_view_corrupt");
+    return built;
+}
+
+}  // namespace
 
 // A failure before HEAD removes the new logs (and poisons the store only
 // if they cannot be removed); a failure in publication itself has already
@@ -1637,21 +1809,21 @@ void JournalStore::compact_view() {
     reclaim_locked();
     auto current = snapshot();
     if (current->view_unavailable) fail("journal_view_unavailable");
-    const auto view = current->head.fields().address_view;
-    if (view.entry_count == 0) return;
+    const auto view = current->head.fields().view_pages;
+    if (view.addresses.entry_count == 0) return;  // no records, so no cues either
     reserve_retired();
     StreamWriter writer(directory_, memory_, next_page_log(view), allowance(*current),
                         allocation_unit_);
     try {
-        TreeBuilder builder(writer, memory_);
-        const BuiltTree tree{view.entry_count, view.height, view.root};
-        merge_into(builder, directory_, memory_, &tree, {});
-        const auto built = builder.finish();
-        if (built.count != view.entry_count) fail("journal_address_view_corrupt");
+        const auto addresses = rewrite_tree(writer, directory_, memory_, view.addresses);
+        const auto address_bytes = writer.page_bytes();
+        const auto cues = rewrite_tree(writer, directory_, memory_, view.cues);
         writer.close();
         io::make_entries_durable(directory_);
-        publish_replacing_view(
-            stage_view(current, writer.view(built.count, built.height, built.root)), current);
+        const auto pages = writer.pages(
+            tree_of(addresses.count, addresses.height, addresses.root, address_bytes),
+            tree_of(cues.count, cues.height, cues.root, writer.page_bytes() - address_bytes));
+        publish_replacing_view(stage_view(current, pages), current);
     } catch (...) {
         if (!poisoned_.load() && !writer.remove_written()) poisoned_.store(true);
         throw;
@@ -1669,41 +1841,55 @@ void JournalStore::rebuild_view() {
     const auto& fields = current->head.fields();
     reserve_retired();
     // Batches never exceed what the journal holds, so a small journal
-    // reserves little.
+    // reserves little: a record is at least `minimum_record_bytes`, and each
+    // of its cues at least five bytes of it.
     std::uint64_t segment_bytes = 0;
     for (const auto& [ordinal, extent] : current->extents)
         segment_bytes = plus(segment_bytes, extent.byte_length, "journal_storage_overflow");
-    LedgerBytes keys(memory_.allocator<std::byte>());
-    keys.reserve(static_cast<std::size_t>(
-        std::min<std::uint64_t>(rebuild_batch_key_bytes, segment_bytes)));  // never grows
-    LedgerVector<AddressLeafItem> batch(memory_.allocator<AddressLeafItem>());
-    batch.reserve(static_cast<std::size_t>(
-        std::min<std::uint64_t>(rebuild_batch_items, fields.tail_sequence)));
-    LedgerVector<Run> runs(memory_.allocator<Run>());
+    // One collector per tree: its key buffer and batch (both never grow) and
+    // the sorted runs written so far.
+    struct Collector {
+        LedgerBytes keys;
+        LedgerVector<AddressLeafItem> batch;
+        LedgerVector<Run> runs;
+    };
+    const auto key_room = static_cast<std::size_t>(
+        std::min<std::uint64_t>(rebuild_batch_key_bytes, segment_bytes));
+    const auto collector = [&](std::uint64_t most_items) {
+        Collector out{LedgerBytes(memory_.allocator<std::byte>()),
+                      LedgerVector<AddressLeafItem>(memory_.allocator<AddressLeafItem>()),
+                      LedgerVector<Run>(memory_.allocator<Run>())};
+        out.keys.reserve(key_room);
+        out.batch.reserve(static_cast<std::size_t>(std::min<std::uint64_t>(rebuild_batch_items, most_items)));
+        return out;
+    };
+    Collector addresses = collector(fields.tail_sequence);
+    Collector cues = collector(segment_bytes / 5);
     std::optional<StreamWriter> merged;
     const auto room = allowance(*current);
     std::uint64_t held = 0;  // charge of the logs written so far
-    auto next_log = next_page_log(fields.address_view);
+    auto next_log = next_page_log(fields.view_pages);
     const auto remove_all = [&]() noexcept {
         bool removed = true;
-        for (const auto& run : runs) removed = run.writer.remove_written() && removed;
+        for (const auto* each : {&addresses, &cues})
+            for (const auto& run : each->runs) removed = run.writer.remove_written() && removed;
         if (merged) removed = merged->remove_written() && removed;
         return removed;
     };
     try {
-        const auto write_run = [&] {
-            if (runs.size() == runs.capacity())
-                runs.reserve(std::max<std::size_t>(4, runs.capacity() * 2));
-            std::sort(batch.begin(), batch.end(), [](const AddressLeafItem& left,
-                                                     const AddressLeafItem& right) {
-                return left.address < right.address;
-            });
+        const auto write_run = [&](Collector& into) {
+            if (into.runs.size() == into.runs.capacity())
+                into.runs.reserve(std::max<std::size_t>(4, into.runs.capacity() * 2));
+            std::sort(into.batch.begin(), into.batch.end(),
+                      [](const AddressLeafItem& left, const AddressLeafItem& right) {
+                          return left.address < right.address;
+                      });
             StreamWriter writer(directory_, memory_, next_log, room - std::min(room, held),
                                 allocation_unit_);
             BuiltTree tree;
             try {
                 TreeBuilder builder(writer, memory_);
-                for (const auto& item : batch) builder.add(item);
+                for (const auto& item : into.batch) builder.add(item);
                 tree = builder.finish();
                 writer.close();
             } catch (...) {
@@ -1712,9 +1898,22 @@ void JournalStore::rebuild_view() {
             }
             next_log = writer.next_ordinal();
             held += writer.charged();
-            runs.push_back(Run{tree, std::move(writer)});  // capacity reserved above
-            keys.clear();
-            batch.clear();
+            into.runs.push_back(Run{tree, std::move(writer)});  // capacity reserved above
+            into.keys.clear();
+            into.batch.clear();
+        };
+        // Adds one entry (an address key when `cue` is empty, else a cue
+        // key), its key copied into the collector's buffer.
+        const auto collect = [&](Collector& into, std::string_view cue, std::string_view address,
+                                 const RecordPosition& position) {
+            const auto size = cue.empty() ? address.size() : cue_key_size(cue, address);
+            const auto fits = [&] {
+                return into.batch.size() < into.batch.capacity() &&
+                       size <= into.keys.capacity() - into.keys.size();
+            };
+            if (!fits()) write_run(into);
+            if (!fits()) fail("journal_rebuild_batch_invalid");  // more than the journal holds
+            into.batch.push_back(AddressLeafItem{append_view_key(into.keys, cue, address), position});
         };
         Digest entering = zero_digest;
         for (const auto& [ordinal, extent] : current->extents) {
@@ -1723,48 +1922,43 @@ void JournalStore::rebuild_view() {
             io::read_range(segment_path(directory_, ordinal), extent.byte_length, 0, bytes,
                            "journal_published_segment_missing");
             const std::uint64_t segment = ordinal;
-            const RecordVisitor collect = [&](const RecordView& record, std::uint64_t offset) {
-                const auto size = record.address.size();
-                if (batch.size() == batch.capacity() || size > keys.capacity() - keys.size())
-                    write_run();
-                if (batch.size() == batch.capacity() || size > keys.capacity() - keys.size())
-                    fail("journal_rebuild_batch_invalid");  // more records than the journal holds
-                const auto at = keys.size();
-                const auto* text = reinterpret_cast<const std::byte*>(record.address.data());
-                keys.insert(keys.end(), text, text + size);
-                batch.push_back(AddressLeafItem{
-                    std::string_view(reinterpret_cast<const char*>(keys.data()) + at, size),
-                    RecordPosition{segment, offset, record.sequence, record.record_digest}});
+            const RecordVisitor visit = [&](const RecordView& record, std::uint64_t offset) {
+                const RecordPosition position{segment, offset, record.sequence, record.record_digest};
+                collect(addresses, {}, record.address, position);
+                for_each_cue(record, [&](std::string_view cue) {
+                    collect(cues, cue, record.address, position);
+                });
             };
             decode_segment_range(bytes, 0, extent, extent.first_sequence, extent.record_count,
-                                 entering, extent.last_record_digest, &collect);
+                                 entering, extent.last_record_digest, &visit);
             entering = extent.last_record_digest;
         }
-        if (!batch.empty()) write_run();
+        if (!addresses.batch.empty()) write_run(addresses);
+        if (!cues.batch.empty()) write_run(cues);
 
-        BuiltTree built;
-        const StreamWriter* built_by = nullptr;
-        if (runs.size() == 1) {
-            built = runs.front().tree;  // the single run is the tree
-            built_by = &runs.front().writer;
-        } else if (runs.size() > 1) {
-            merged.emplace(directory_, memory_, next_log, room - std::min(room, held),
-                           allocation_unit_);
+        // Both trees are merged into one set of new logs, so the published
+        // view names one contiguous log range; no snapshot ever named a run.
+        merged.emplace(directory_, memory_, next_log, room - std::min(room, held),
+                       allocation_unit_);
+        const auto merge = [&](const Collector& from) {
             TreeBuilder builder(*merged, memory_);
-            merge_runs(builder, directory_, memory_, runs);
-            built = builder.finish();
-            merged->close();
-            built_by = &*merged;
-            // No snapshot ever named the runs.
-            for (const auto& run : runs)
+            merge_runs(builder, directory_, memory_, from.runs);
+            return builder.finish();
+        };
+        const auto built_addresses = merge(addresses);
+        const auto address_bytes = merged->page_bytes();
+        const auto built_cues = merge(cues);
+        merged->close();
+        for (const auto* each : {&addresses, &cues})
+            for (const auto& run : each->runs)
                 if (!run.writer.remove_written()) fail("journal_page_log_remove_failed");
-        }
-        if (built.count != fields.tail_sequence) fail("journal_address_view_count_mismatch");
+        if (built_addresses.count != fields.tail_sequence) fail("journal_address_view_count_mismatch");
         io::make_entries_durable(directory_);
-        const auto view = built_by != nullptr
-                              ? built_by->view(built.count, built.height, built.root)
-                              : AddressView{};
-        publish_replacing_view(stage_view(current, view), current);
+        const auto pages = merged->pages(
+            tree_of(built_addresses.count, built_addresses.height, built_addresses.root, address_bytes),
+            tree_of(built_cues.count, built_cues.height, built_cues.root,
+                    merged->page_bytes() - address_bytes));
+        publish_replacing_view(stage_view(current, pages), current);
     } catch (...) {
         if (!poisoned_.load() && !remove_all()) poisoned_.store(true);
         throw;

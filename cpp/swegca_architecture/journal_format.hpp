@@ -16,10 +16,10 @@
 #include <string_view>
 #include <vector>
 
-// Byte format of the Main-owned native journal (v5): append-only record
+// Byte format of the Main-owned native journal (v6): append-only record
 // segments, an append-only manifest log, checkpoint manifests, append-only
-// page logs of the derived exact-address view, and a fixed-size HEAD pointer,
-// all as flat files in one directory. Storage format only; no record grants
+// page logs of the derived exact-address and cue views, and a fixed-size HEAD
+// pointer, all as flat files in one directory. Storage format only; no record grants
 // authority.
 // Rules: SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md §3B, §9;
 // ARCHITECTURE_SPEC.md@5901a5a:205-207,214-216 (I03, I07).
@@ -60,25 +60,34 @@ inline constexpr std::size_t segment_header_bytes = 4 + 2 + 8 + 8;
 inline constexpr std::size_t manifest_log_header_bytes = 4 + 2 + 8;
 inline constexpr std::size_t record_prefix_bytes = 4 + 2 + 4;
 // magic, version, length, kind, authority, reserved, sequence, 8 text lengths,
-// payload length, payload/previous/record digests.
+// cue count, payload length, payload/previous/record digests.
 inline constexpr std::size_t minimum_record_bytes =
-    4 + 2 + 4 + 2 + 1 + 1 + 8 + 8 * 4 + 4 + 3 * 32;
+    4 + 2 + 4 + 2 + 1 + 1 + 8 + 8 * 4 + 4 + 4 + 3 * 32;
+// Cues one record carries. A cue is an identity text without the cue
+// separator; its cue-view key is (cue, separator, address), which must itself
+// be an identity text, so the separator splits every key exactly.
+inline constexpr std::size_t max_record_cues = 1024;
+inline constexpr char cue_separator = '\x1f';
 // ordinal, first sequence, record count, byte length, last record digest.
 inline constexpr std::size_t encoded_extent_bytes = 4 * 8 + 32;
 
-// Derived exact-address view (board §3B :122, §9 :569-592). Main builds it in
-// the same detached generation as the records it indexes, as immutable pages
-// in append-only page logs; the manifest names its root page by location and
-// digest, so one HEAD publishes records and view together and every page is
-// bound to that HEAD through its parent's digest. It is rebuildable from the
-// records and never the source of truth; the record chain is.
+// Derived views (board §3B :122, §9 :569-592): the exact-address tree (one
+// entry per record, keyed by address) and the cue tree (one entry per cue of
+// every record, keyed by cue, separator, address; L3 hot cue lookup). Main
+// builds both in the same detached generation as the records they index, as
+// immutable pages in shared append-only page logs; the manifest names each
+// root page by location and digest, so one HEAD publishes records and views
+// together and every page is bound to that HEAD through its parent's digest.
+// They are rebuildable from the records and never the source of truth; the
+// record chain is.
 inline constexpr std::size_t address_page_max_bytes = 16u * 1024u;
 inline constexpr std::size_t address_page_header_bytes = 4 + 2 + 1 + 1 + 4;
 inline constexpr std::size_t max_page_log_bytes = 64u * 1024u * 1024u;
 inline constexpr std::size_t page_log_header_bytes = 4 + 2 + 8;
 inline constexpr std::uint32_t max_address_height = 32;
 inline constexpr std::size_t encoded_page_ref_bytes = 8 + 8 + 4 + 32;
-inline constexpr std::size_t encoded_address_view_bytes = 8 + 4 + encoded_page_ref_bytes + 5 * 8;
+inline constexpr std::size_t encoded_view_tree_bytes = 8 + 4 + encoded_page_ref_bytes + 8;
+inline constexpr std::size_t encoded_view_pages_bytes = 2 * encoded_view_tree_bytes + 4 * 8;
 
 struct JournalIdentityTag { static constexpr std::string_view name = "journal_identity"; };
 struct SourceRevisionTag { static constexpr std::string_view name = "source_revision"; };
@@ -103,6 +112,9 @@ struct RecordDraft {
     std::optional<std::string_view> outcome;
     std::string_view operation_id;
     std::optional<std::string_view> transaction_id;
+    // Strictly increasing cues (see `is_cue_text`); each with the address
+    // forms one cue-view key.
+    std::span<const std::string_view> cues;
     std::span<const std::byte> payload;  // canonical owner bytes
 };
 
@@ -121,6 +133,8 @@ struct RecordView {
     std::string_view outcome;
     std::string_view operation_id;
     std::string_view transaction_id;
+    std::uint32_t cue_count = 0;
+    std::span<const std::byte> cues;  // `cue_count` length-prefixed texts, increasing
     std::span<const std::byte> payload;
     Digest payload_digest{};
     Digest previous_record_digest{};
@@ -180,6 +194,26 @@ private:
     std::size_t offset_ = 0;
 };
 
+// Visits a decoded record's cues in their increasing order; each text views
+// the record's bytes.
+// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:398-437
+template <class Visit>
+void for_each_cue(const RecordView& record, Visit&& visit) {
+    ByteReader reader(record.cues);
+    for (std::uint32_t at = 0; at < record.cue_count; ++at)
+        visit(reader.text_view(detail::identity_text_max_bytes));
+}
+
+// An identity text without the cue separator.
+[[nodiscard]] bool is_cue_text(std::string_view cue) noexcept;
+
+// Size of the cue-view key (cue, separator, address).
+// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:398-437
+[[nodiscard]] constexpr std::size_t cue_key_size(std::string_view cue,
+                                                 std::string_view address) noexcept {
+    return cue.size() + 1 + address.size();
+}
+
 // Exact encoded size of `draft` as a record. Validates every limit, so a
 // draft that sizes can be encoded. Allocates nothing.
 [[nodiscard]] std::size_t encoded_record_size(const RecordDraft& draft);
@@ -227,28 +261,42 @@ struct PageRef {
     auto operator<=>(const PageRef&) const = default;
 };
 
-// The exact-address view of one generation. It holds one entry per record,
-// so `entry_count` equals the manifest's `tail_sequence`.
-struct AddressView {
+// One tree of the derived views.
+struct ViewTree {
     std::uint64_t entry_count = 0;
-    std::uint32_t height = 0;            // 0 when empty
-    PageRef root;                        // zero when empty
-    std::uint64_t first_page_log = 0;    // oldest page log the tree reaches; 0 without logs
+    std::uint32_t height = 0;           // 0 when empty
+    PageRef root;                       // zero when empty
+    std::uint64_t live_page_bytes = 0;  // bytes of the pages the tree reaches
+
+    auto operator<=>(const ViewTree&) const = default;
+};
+
+// The derived views of one generation and the page logs they share. The
+// address tree holds one entry per record, so its `entry_count` equals the
+// manifest's `tail_sequence`; the cue tree holds one per cue.
+struct ViewPages {
+    ViewTree addresses;
+    ViewTree cues;
+    std::uint64_t first_page_log = 0;    // oldest page log a tree reaches; 0 without logs
     std::uint64_t page_log_ordinal = 0;  // current page log; 0 without logs
     std::uint64_t page_log_end = 0;      // published length of the current page log
     std::uint64_t page_log_bytes = 0;    // bytes of logs first..current, headers included
-    std::uint64_t live_page_bytes = 0;   // bytes of the pages the tree reaches
 
-    auto operator<=>(const AddressView&) const = default;
+    // SWEGCA: user@2026-09-22:72-79
+    [[nodiscard]] std::uint64_t live_page_bytes() const noexcept {
+        return addresses.live_page_bytes + cues.live_page_bytes;
+    }
+    auto operator<=>(const ViewPages&) const = default;
 };
 
-// One leaf entry: an address and the exact position of its record.
+// One leaf entry: a view key (an address in the address tree; cue,
+// separator, address in the cue tree) and the exact position of its record.
 struct AddressLeafItem {
     std::string_view address;
     RecordPosition position;
 };
 
-// One branch entry: the smallest address under a child page, and the child.
+// One branch entry: the smallest key under a child page, and the child.
 struct AddressChildItem {
     std::string_view first_address;
     PageRef page;
@@ -330,7 +378,7 @@ struct ManifestFields {
     std::uint64_t tail_sequence = 0;  // 0 when empty
     Digest tail_record_digest{};      // zero when empty
     std::uint64_t tail_segment_ordinal = 0;
-    AddressView address_view;
+    ViewPages view_pages;
 };
 
 // Exact encoded size of a manifest; validates the count limits and that
@@ -344,8 +392,8 @@ struct ManifestFields {
 // allocated, both through the ledger.
 class Manifest final {
 public:
-    // Verifies magic, version, limits, extent contiguity, tail, address
-    // view, checkpoint and recovery rules, and the digest.
+    // Verifies magic, version, limits, extent contiguity, tail, view pages,
+    // checkpoint and recovery rules, and the digest.
     [[nodiscard]] static Manifest decode(LedgerBytes bytes, const MemoryLedger::Account& memory);
 
     // Encodes and decodes (so what could not be loaded is never kept).

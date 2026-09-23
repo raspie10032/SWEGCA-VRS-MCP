@@ -23,15 +23,15 @@ constexpr std::array<std::byte, 4> address_page_magic{
     std::byte{'S'}, std::byte{'W'}, std::byte{'J'}, std::byte{'A'}};
 constexpr std::array<std::byte, 4> page_log_magic{
     std::byte{'S'}, std::byte{'W'}, std::byte{'J'}, std::byte{'P'}};
-constexpr std::uint16_t format_version = 5;
+constexpr std::uint16_t format_version = 6;
 constexpr std::uint8_t leaf_page_kind = 1;
 constexpr std::uint8_t branch_page_kind = 2;
 // Fixed part of a manifest: magic, version, identity length, generation,
 // previous digest and location, checkpoint flag, checkpoint generation,
-// recovery and manifest byte counters, state generation, tail, address view,
+// recovery and manifest byte counters, state generation, tail, view pages,
 // extent count, view count, digest.
 constexpr std::size_t manifest_fixed_bytes = 4 + 2 + 4 + 8 + 32 + 3 * 8 + 1 + 3 * 8 + 8 + 32 +
-                                             8 + 32 + 8 + encoded_address_view_bytes + 4 + 4 + 32;
+                                             8 + 32 + 8 + encoded_view_pages_bytes + 4 + 4 + 32;
 // Smallest encoded view: empty name is invalid, so a one-byte name.
 constexpr std::size_t minimum_view_bytes = 4 + 1 + 8 + 32;
 
@@ -151,51 +151,79 @@ void write_page_header(ByteWriter& writer, std::uint8_t kind, std::size_t count)
 }
 
 // SWEGCA: user@2026-09-22:72-79
-void encode_address_view(ByteWriter& writer, const AddressView& view) {
-    writer.u64(view.entry_count);
-    writer.u32(view.height);
-    encode_page_ref(writer, view.root);
-    writer.u64(view.first_page_log);
-    writer.u64(view.page_log_ordinal);
-    writer.u64(view.page_log_end);
-    writer.u64(view.page_log_bytes);
-    writer.u64(view.live_page_bytes);
+void encode_view_tree(ByteWriter& writer, const ViewTree& tree) {
+    writer.u64(tree.entry_count);
+    writer.u32(tree.height);
+    encode_page_ref(writer, tree.root);
+    writer.u64(tree.live_page_bytes);
 }
 
-// The view holds one entry per record, its pages sit in the page logs it
-// names, and an empty view has no root.
 // SWEGCA: user@2026-09-22:72-79
-AddressView decode_address_view(ByteReader& reader, std::uint64_t tail_sequence) {
-    AddressView view;
-    view.entry_count = reader.u64();
-    view.height = reader.u32();
-    view.root = read_page_ref(reader);
-    view.first_page_log = reader.u64();
-    view.page_log_ordinal = reader.u64();
-    view.page_log_end = reader.u64();
-    view.page_log_bytes = reader.u64();
-    view.live_page_bytes = reader.u64();
-    if (view.entry_count != tail_sequence) fail("journal_manifest_invalid:address_count");
-    const bool empty = view.entry_count == 0;
-    if (empty ? (view.height != 0 || view.root != PageRef{} || view.live_page_bytes != 0)
-              : (view.height == 0 || view.height > max_address_height ||
-                 !page_ref_valid(view.root) || view.root.log_ordinal < view.first_page_log ||
-                 view.root.log_ordinal > view.page_log_ordinal ||
-                 (view.root.log_ordinal == view.page_log_ordinal &&
-                  view.root.offset + view.root.length > view.page_log_end)))
-        fail("journal_manifest_invalid:address_root");
-    if (view.page_log_ordinal == 0
-            ? (view.first_page_log != 0 || view.page_log_end != 0 || view.page_log_bytes != 0 ||
-               !empty)
-            : (view.first_page_log == 0 || view.first_page_log > view.page_log_ordinal ||
-               view.page_log_end < page_log_header_bytes ||
-               view.page_log_end > max_page_log_bytes || view.page_log_bytes < view.page_log_end ||
-               view.live_page_bytes > view.page_log_bytes))
+ViewTree read_view_tree(ByteReader& reader) {
+    ViewTree tree;
+    tree.entry_count = reader.u64();
+    tree.height = reader.u32();
+    tree.root = read_page_ref(reader);
+    tree.live_page_bytes = reader.u64();
+    return tree;
+}
+
+// SWEGCA: user@2026-09-22:72-79
+void encode_view_pages(ByteWriter& writer, const ViewPages& pages) {
+    encode_view_tree(writer, pages.addresses);
+    encode_view_tree(writer, pages.cues);
+    writer.u64(pages.first_page_log);
+    writer.u64(pages.page_log_ordinal);
+    writer.u64(pages.page_log_end);
+    writer.u64(pages.page_log_bytes);
+}
+
+// An empty tree has no root; any other tree's root sits in the page logs the
+// view pages name.
+// SWEGCA: user@2026-09-22:72-79
+bool view_tree_valid(const ViewTree& tree, const ViewPages& pages) noexcept {
+    if (tree.entry_count == 0)
+        return tree.height == 0 && tree.root == PageRef{} && tree.live_page_bytes == 0;
+    return tree.height != 0 && tree.height <= max_address_height && page_ref_valid(tree.root) &&
+           tree.root.log_ordinal >= pages.first_page_log &&
+           tree.root.log_ordinal <= pages.page_log_ordinal &&
+           (tree.root.log_ordinal != pages.page_log_ordinal ||
+            tree.root.offset + tree.root.length <= pages.page_log_end);
+}
+
+// The address tree holds one entry per record, both roots sit in the page
+// logs named, and there are logs exactly when a tree is nonempty.
+// SWEGCA: user@2026-09-22:72-79
+ViewPages decode_view_pages(ByteReader& reader, std::uint64_t tail_sequence) {
+    ViewPages pages;
+    pages.addresses = read_view_tree(reader);
+    pages.cues = read_view_tree(reader);
+    pages.first_page_log = reader.u64();
+    pages.page_log_ordinal = reader.u64();
+    pages.page_log_end = reader.u64();
+    pages.page_log_bytes = reader.u64();
+    if (pages.addresses.entry_count != tail_sequence) fail("journal_manifest_invalid:address_count");
+    if (!view_tree_valid(pages.addresses, pages)) fail("journal_manifest_invalid:address_root");
+    if (!view_tree_valid(pages.cues, pages)) fail("journal_manifest_invalid:cue_root");
+    const bool empty = pages.addresses.entry_count == 0 && pages.cues.entry_count == 0;
+    if (pages.page_log_ordinal == 0
+            ? (pages.first_page_log != 0 || pages.page_log_end != 0 ||
+               pages.page_log_bytes != 0 || !empty)
+            : (pages.first_page_log == 0 || pages.first_page_log > pages.page_log_ordinal ||
+               pages.page_log_end < page_log_header_bytes ||
+               pages.page_log_end > max_page_log_bytes || pages.page_log_bytes < pages.page_log_end ||
+               pages.addresses.live_page_bytes > pages.page_log_bytes ||
+               pages.cues.live_page_bytes > pages.page_log_bytes - pages.addresses.live_page_bytes))
         fail("journal_manifest_invalid:page_logs");
-    return view;
+    return pages;
 }
 
 }  // namespace
+
+// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:398-437
+bool is_cue_text(std::string_view cue) noexcept {
+    return detail::is_identity_text(cue) && cue.find(cue_separator) == std::string_view::npos;
+}
 
 // SWEGCA: user@2026-09-22:60-61
 void ByteWriter::u8(std::uint8_t value) { out_->push_back(std::byte{value}); }
@@ -324,6 +352,14 @@ std::size_t encoded_record_size(const RecordDraft& draft) {
         if (text.size() > limit) fail("journal_text_too_long");
         total += text.size();
     }
+    if (draft.cues.size() > max_record_cues) fail("journal_record_invalid:cues");
+    for (std::size_t at = 0; at < draft.cues.size(); ++at) {
+        const auto cue = draft.cues[at];
+        if (!is_cue_text(cue) || (at != 0 && !(draft.cues[at - 1] < cue)) ||
+            cue_key_size(cue, draft.address) > limit)
+            fail("journal_record_invalid:cue");
+        total += 4 + cue.size();
+    }
     if (total > std::numeric_limits<std::uint32_t>::max()) fail("journal_record_invalid:length");
     return total;
 }
@@ -353,6 +389,8 @@ void append_record(LedgerBytes& out, const RecordDraft& draft, std::uint64_t seq
     writer.text(optional_text(draft.outcome), limit);
     writer.text(draft.operation_id, limit);
     writer.text(optional_text(draft.transaction_id), limit);
+    writer.u32(static_cast<std::uint32_t>(draft.cues.size()));
+    for (const auto cue : draft.cues) writer.text(cue, limit);
     writer.bytes(draft.payload, max_payload_bytes);
     writer.digest(Sha256::of(draft.payload));
     writer.digest(previous_record_digest);
@@ -388,6 +426,18 @@ RecordView decode_record(ByteReader& reader) {
     out.outcome = optional_identity_text(reader, "journal_record_invalid:outcome");
     out.operation_id = identity_text(reader, "journal_record_invalid:operation_id");
     out.transaction_id = optional_identity_text(reader, "journal_record_invalid:transaction_id");
+    out.cue_count = reader.u32();
+    if (out.cue_count > max_record_cues) fail("journal_record_invalid:cues");
+    const auto cues_start = reader.offset();
+    std::string_view previous_cue;
+    for (std::uint32_t at = 0; at < out.cue_count; ++at) {
+        const auto cue = reader.text_view(detail::identity_text_max_bytes);
+        if (!is_cue_text(cue) || (at != 0 && !(previous_cue < cue)) ||
+            cue_key_size(cue, out.address) > detail::identity_text_max_bytes)
+            fail("journal_record_invalid:cue");
+        previous_cue = cue;
+    }
+    out.cues = reader.consumed_since(cues_start);
     out.payload = reader.bytes_view(max_payload_bytes);
     out.payload_digest = reader.digest();
     if (Sha256::of(out.payload) != out.payload_digest)
@@ -605,7 +655,7 @@ Manifest Manifest::encode(const ManifestFields& fields, std::string_view journal
     writer.u64(fields.tail_sequence);
     writer.digest(fields.tail_record_digest);
     writer.u64(fields.tail_segment_ordinal);
-    encode_address_view(writer, fields.address_view);
+    encode_view_pages(writer, fields.view_pages);
     writer.u32(static_cast<std::uint32_t>(extents.size()));
     for (const auto& extent : extents) {
         writer.u64(extent.ordinal);
@@ -650,7 +700,7 @@ Manifest Manifest::decode(LedgerBytes bytes, const MemoryLedger::Account& memory
     out.tail_sequence = reader.u64();
     out.tail_record_digest = reader.digest();
     out.tail_segment_ordinal = reader.u64();
-    out.address_view = decode_address_view(reader, out.tail_sequence);
+    out.view_pages = decode_view_pages(reader, out.tail_sequence);
 
     const auto extent_count = reader.u32();
     if (extent_count > max_extents || extent_count > reader.remaining() / encoded_extent_bytes)

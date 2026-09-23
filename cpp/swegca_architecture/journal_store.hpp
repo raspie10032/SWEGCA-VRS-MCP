@@ -240,28 +240,39 @@ public:
     // verifying the whole record chain. No lock is held while `visit` runs.
     void for_each_record(const std::function<void(const RecordView&, const RecordPosition&)>& visit) const;
 
+    // Cue navigation (board §9 :592; L3 cue lookup): visits every published
+    // record that carries `cue`, in address order, with its address and exact
+    // position, over one snapshot, until `visit` returns false. Reads one page
+    // per level down to the first match, then the leaves in order, verifying
+    // every page digest; the address views a page that lives only for the
+    // call. Fails with `journal_cue_invalid` or `journal_view_unavailable`.
+    void for_each_cue_match(
+        std::string_view cue,
+        const std::function<bool(std::string_view address, const RecordPosition&)>& visit) const;
+
     // Copy on write leaves replaced pages in the page logs. Compaction is due
-    // when their bytes exceed the live pages' bytes plus one log, so after
-    // Main compacts whenever it is due, the view's disk use stays within
-    // twice its live pages plus one log.
+    // when their bytes exceed the live pages' bytes (both trees) plus one
+    // log, so after Main compacts whenever it is due, the views' disk use
+    // stays within twice their live pages plus one log.
     [[nodiscard]] bool compaction_due() const;
 
-    // Rewrites the live view pages, streamed leaf by leaf in address order,
-    // into new page logs (memory: one open page per level), then publishes a
-    // generation with no records whose view is the rewritten tree over the
-    // same entries (`journal_view_unavailable` when the view is). The old
+    // Rewrites the live view pages of both trees, streamed leaf by leaf in
+    // key order, into new page logs (memory: one open page per level), then
+    // publishes a generation with no records whose views are the rewritten
+    // trees over the same entries (`journal_view_unavailable` when the view is). The old
     // logs stay, charged, until no snapshot holds their
     // lease; the next publication removes them, and a reopen removes any
     // left. A failure before HEAD removes the new logs and publishes nothing.
     void compact_view();
 
-    // Rebuilds the view from the records alone, never reading the old view:
-    // every record chain is verified while addresses are collected in batches
-    // of bounded memory; each sorted batch is written as a run of leaf pages
-    // in new logs, the runs are merged in one k-way pass into the final tree
-    // (reading one page per level per run), the runs are removed, and the
-    // result, which must hold one entry per record, is published like a
-    // compaction. I/O is linear in the view's size.
+    // Rebuilds both views from the records alone, never reading the old
+    // ones: every record chain is verified while addresses and cue keys are
+    // collected in batches of bounded memory; each sorted batch is written as
+    // a run of leaf pages in new logs, each tree's runs are merged in one
+    // k-way pass into its final tree (reading one page per level per run),
+    // both final trees going to one set of new logs, the runs are removed,
+    // and the result, whose address tree must hold one entry per record, is
+    // published like a compaction. I/O is linear in the views' size.
     //
     // Both rewrites hold the publication lock for their whole duration, so a
     // concurrent `publish` waits for them; readers are never blocked.
@@ -290,17 +301,17 @@ private:
     [[nodiscard]] std::shared_ptr<const PublishedSnapshot> snapshot() const;
     [[nodiscard]] std::uint64_t storage_of(const ExtentTable& extents, const ManifestFields& head,
                                            const ManifestLocation& location) const;
-    [[nodiscard]] std::uint64_t page_log_charge(const AddressView& view) const;
+    [[nodiscard]] std::uint64_t page_log_charge(const ViewPages& view) const;
     [[nodiscard]] std::uint64_t allowance(const PublishedSnapshot& current) const;
     void verify_extent(const PublishedSnapshot& snapshot, const SegmentExtent& extent) const;
     [[nodiscard]] StagedGeneration stage_from(const std::shared_ptr<const PublishedSnapshot>& current,
                                               std::span<const RecordDraft> drafts,
                                               const StateGeneration& state,
                                               std::span<const ViewGeneration> views,
-                                              const AddressView* replacement,
+                                              const ViewPages* replacement,
                                               std::uint64_t retained) const;
     [[nodiscard]] StagedGeneration stage_view(const std::shared_ptr<const PublishedSnapshot>& current,
-                                              const AddressView& view) const;
+                                              const ViewPages& view) const;
     void publish_locked(StagedGeneration&& staged);
     void reserve_retired();
     void publish_replacing_view(StagedGeneration&& staged,
