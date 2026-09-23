@@ -220,6 +220,10 @@ public:
     // must then be reopened, and reopening removes unpublished leftovers.
     void publish(StagedGeneration&& staged);
 
+    // False when open found the derived view damaged; `rebuild_view` makes
+    // it available again.
+    [[nodiscard]] bool view_available() const;
+
     // Exact address lookup (board §9 :592) through the published view: the
     // position comes from pages bound to HEAD by digests, never from the
     // caller. Reads one page per level. Empty when the address is not in the

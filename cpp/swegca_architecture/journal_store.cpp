@@ -996,6 +996,7 @@ void JournalStore::load_published_head() {
     const auto tail_ordinal = fields.tail_segment_ordinal;
     const auto& view = fields.address_view;
     std::uint64_t page_logs = 0;
+    bool last_log_present = false;
     for (const auto& entry : fs::directory_iterator(directory_)) {
         const auto name = entry.path().filename().string();
         if (const auto ordinal = parse_ordinal(name, segment_prefix, segment_suffix)) {
@@ -1016,6 +1017,7 @@ void JournalStore::load_published_head() {
                 removed = true;
             } else {
                 ++page_logs;
+                last_log_present = last_log_present || page_log == view.page_log_ordinal;
             }
         }
     }
@@ -1027,11 +1029,14 @@ void JournalStore::load_published_head() {
                                     loaded->extents.at(tail_ordinal).byte_length, {});
     io::append_at_published_end(manifest_log_path(directory_, loaded->location.log_ordinal),
                                 loaded->location.offset + loaded->location.length, {});
-    if (view.page_log_ordinal != 0 && !loaded->view_unavailable) {
+    // The last log is cut whenever it exists, so no unpublished byte stays
+    // uncharged; a log that cannot be cut (an I/O failure, a length short of
+    // its published end) is a damaged derived view, not a damaged journal.
+    if (last_log_present) {
         try {
             io::append_at_published_end(page_log_path(directory_, view.page_log_ordinal),
                                         view.page_log_end, {});
-        } catch (const std::exception&) {
+        } catch (const std::runtime_error&) {
             loaded->view_unavailable = true;  // a derived log only; the records decide
         }
     }
@@ -1409,6 +1414,12 @@ void JournalStore::publish_locked(StagedGeneration&& staged) {
     std::shared_ptr<const PublishedSnapshot> published = std::move(local.next_);
     snapshot_.store(published);  // noexcept
     poisoned_.store(false);
+}
+
+// SWEGCA: user@2026-09-22:72-79
+bool JournalStore::view_available() const {
+    require_usable();
+    return !snapshot()->view_unavailable;
 }
 
 // SWEGCA: user@2026-09-22:72-79

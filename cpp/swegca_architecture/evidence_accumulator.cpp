@@ -11,9 +11,13 @@
 #include <limits>
 #include <memory>
 #include <stdexcept>
+#include <type_traits>
 
 namespace swegca::architecture {
 namespace {
+
+// The commit phase of admission moves the kept original; it must not throw.
+static_assert(std::is_nothrow_move_constructible_v<AdmittedEvidence>);
 
 // A group's count stays below 2^32, so a nonzero ratio exceeds 2^-32 and is
 // an exact multiple of 2^-84 (its last significand bit is worth >= 2^-84).
@@ -225,7 +229,7 @@ std::uint32_t EvidenceAccumulator::identity_id(const Map<Text, std::uint32_t>& t
 // SWEGCA: src/swegca/mosaic_evidence_accumulator.py@5901a5a:359-428
 AdmissionResult EvidenceAccumulator::admit(const EvidenceObservation& observation,
                                            const journal::PublishedRecord& replayed,
-                                           const CognitiveState& state,
+                                           const StateGeneration& current,
                                            std::uint64_t current_step) {
     if (observation.claim != claim_.claim().value() || observation.claim_revision != claim_.revision())
         throw std::invalid_argument("evidence_claim_mismatch");
@@ -244,15 +248,15 @@ AdmissionResult EvidenceAccumulator::admit(const EvidenceObservation& observatio
     if (replayed.view().address != observation.address.value())
         throw std::invalid_argument("evidence_record_address_mismatch");
 
+    if (originals_.contains(observation.address))
+        return reject(observation.address, AdmissionResult::duplicate);
     // Author: every audit row's world hash is the current state's.
-    if (observation.judged_against != state.generation())
+    if (observation.judged_against != current)
         return reject(observation.address, AdmissionResult::stale);
     if (observation.expires_at && current_step > *observation.expires_at)
         return reject(observation.address, AdmissionResult::expired);
     if (observation.outcome == EvidenceOutcome::insufficient)
         return reject(observation.address, AdmissionResult::insufficient);
-    if (originals_.contains(observation.address))
-        return reject(observation.address, AdmissionResult::duplicate);
     if (tally_.revision == std::numeric_limits<std::uint64_t>::max())
         throw std::overflow_error("evidence_revision_exhausted");
 
@@ -312,7 +316,8 @@ AdmissionResult EvidenceAccumulator::admit(const EvidenceObservation& observatio
                           observation.judged_against, observation.expires_at, observation.outcome,
                           observation.axis, SourceFamily(memory_, source_text),
                           observation.context, ProducerId(memory_, producer_text),
-                          observation.observed_at, observation.producer_confidence};
+                          observation.observed_at,
+                          observation.producer_confidence + 0.0};  // -0 is kept as +0
 
     // Commit phase: splices, a noexcept move and integer updates only. The
     // recent ring never reallocates: its capacity was reserved at construction.
@@ -533,6 +538,8 @@ ReEvidenceRecorded ReEvidence::apply(EvidenceAccumulator& accumulator,
                                      const ExperienceAddress& address,
                                      const CognitiveState& state, std::string_view by,
                                      ReEvidenceJudge judge) const {
+    if (state.generation() != journal_.state_generation())
+        throw std::invalid_argument("re_evidence_state_not_current");
     const auto replayed = journal_.replay(address);
     const auto& view = replayed.view();
     if (view.address != address.value())
@@ -543,6 +550,18 @@ ReEvidenceRecorded ReEvidence::apply(EvidenceAccumulator& accumulator,
                             ProducerId(memory_, by), outcome);
     const auto admission = accumulator.record(result);
     return ReEvidenceRecorded{std::move(result), admission};
+}
+
+// Replay first, then admission against the generation HEAD names; both
+// come from Main's journal, never from the caller.
+// SWEGCA: docs/SWEGCA_VRS_MCP_ORDER_FOR_REVIEW.md@30b73e7:24-29
+AdmissionResult EvidenceAdmission::admit(EvidenceAccumulator& accumulator,
+                                         const EvidenceObservation& observation,
+                                         std::uint64_t current_step) const {
+    detail::require_identity_text(observation.address, ExperienceAddressTag::name);
+    const auto current = journal_.state_generation();
+    const auto replayed = journal_.replay(ExperienceAddress(accumulator.memory_, observation.address));
+    return accumulator.admit(observation, replayed, current, current_step);
 }
 
 }  // namespace swegca::architecture
