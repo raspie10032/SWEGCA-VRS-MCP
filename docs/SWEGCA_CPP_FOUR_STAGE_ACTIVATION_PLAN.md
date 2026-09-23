@@ -1,7 +1,13 @@
 # SWEGCA C++ four-stage memory activation — design v1.10 (for cross-review, no code yet)
 
-Status: draft for Claude–Codex cross-review. Nothing here is implemented.
-It replaces the single-stage `ExperienceSelector::select` with Déjà vu → Recall → Replay → Re-evidence.
+Status: historical draft for Claude–Codex cross-review. The four-stage route
+is not implemented. Later user corrections are recorded in
+`SWEGCA_CPP_VRS_LAYER_PLAN.md` §6.2 and the approved order document; those
+decisions govern implementation where this draft differs. In particular,
+Re-evidence is conditional on a difference between the current and replayed
+three-state judgments, and the opposing-original Replay path proposed in §5
+was withdrawn. The route replaces the single-stage
+`ExperienceSelector::select` with Déjà vu → Recall → Replay → Re-evidence.
 
 ## 0. Sources, in order
 1. The user's current directives (2026-09-23):

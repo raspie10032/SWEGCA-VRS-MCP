@@ -412,9 +412,9 @@ every Replay and also opens opposing originals. Re-evidence is conditional.
 | Stage | Does | Does not | Core parts used | Source |
 |---|---|---|---|---|
 | Déjà vu | reacts first to the input's keys: which caller keys hit, and how many addresses each key holds | build a union of postings; open any record | none (exact key lookup, no verdict) | user 18:0x; author `HotExperienceIndex.lookup_semantic_key` (mosaic_unrestricted_experience.py@5901a5a:294-320: prebuilt, no I/O or hashing on lookup, "Building the index is deliberately separate from lookup") |
-| Recall | yields original addresses, a bounded page | open content; judge | none | user 18:0x ("리콜이 원경험 주소") |
-| Replay | opens the most probable original, one | open every candidate | digest check of the exact record on read | user 18:0x; author exact `lookup_address` (:314-318) |
-| Re-evidence | re-judges only when the current input conflicts with the replayed experience; the verdict updates strength (6.1 parts 5, 6, 8) | run on every read | evidence kernel and accumulator (tally, decide) | user 18:0x; author accumulator (mosaic_evidence_accumulator.py@5901a5a:285-428); a verdict is not permanent (user 16:3x) |
+| Recall | yields the complete original-address set; transport pages do not discard addresses | open content; judge | none | user 18:0x ("리콜이 원경험 주소"); approved order :20-23 |
+| Replay | opens the highest-strength current original; up to five when the top strength ties | open every candidate | digest check of each exact record on read | user 18:0x, 18:3x; author exact `lookup_address` (:314-318) |
+| Re-evidence | re-judges when the current and replayed states differ among accept, reject and abstain; the verdict updates strength (6.1 parts 5, 6, 8) | run on every read | evidence kernel and accumulator (tally, decide) | user 18:0x, 18:3x; author accumulator (mosaic_evidence_accumulator.py@5901a5a:285-428) |
 
 Budget: Déjà vu to Recall together under 1 ms, at the store's scale; the
 budget does not extend to Replay or Re-evidence. Neither the author nor the
@@ -451,9 +451,9 @@ Decided by the user (18:2x):
   overlap: overlap is duplication (18:0x). Ties, the user (18:3x): "정말
   희박한 확률이겠지만 vrs 강도가 같다면, 5건 까지는 다 불러와." When
   several current originals share the highest strength, Replay opens up to
-  five. Open: which five when six or more tie (proposed, the author's address
-  order, mosaic_unrestricted_experience.py@5901a5a:501; held until the user
-  confirms, codex 18:24). The user (18:3x) on how often ties occur: "옛
+  five. When six or more tie, the user's later choice is matched cue count
+  descending, then journal recency descending (four-stage plan §0, user
+  19:4x). The user (18:3x) on how often ties occur: "옛
   스토어는 검증 규칙을 무시하고 단순하게 중복은 증폭시켜서 그 사단이
   난거고... 이론상 vrs 강도 겹침은 꽤 희박해야 정상임..."; the cap is a
   guard for a rare case.
@@ -522,5 +522,6 @@ as another (codex 18:18); the stage receipt counts Replays per original.
 
 Rebuild changes this implies: `ExperienceSelector::select` (judges every
 candidate and replays each selected) splits into Recall (addresses) and
-Replay (one); Re-evidence is called only on a state mismatch. Regions, portals and
+Replay (one original per opened row, up to five on a top-strength tie);
+Re-evidence is called only on a state mismatch. Regions, portals and
 coactivation (6.1 parts 1-4) come after this read path.
