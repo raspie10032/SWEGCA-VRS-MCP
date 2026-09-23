@@ -27,7 +27,7 @@ public:
 private:
     // Non-member storage receives no MainOwner friendship. In particular,
     // no incomplete nested type can be defined elsewhere to obtain it.
-    std::unique_ptr<detail::MainOwnerState> state_;
+    std::shared_ptr<detail::MainOwnerState> state_;
 };
 
 // EvidenceGate is defined completely in evidence_gate.hpp, which authority.hpp

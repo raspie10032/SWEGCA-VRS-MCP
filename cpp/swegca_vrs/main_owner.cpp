@@ -5,6 +5,7 @@
 
 #include <atomic>
 #include <memory>
+#include <new>
 #include <stdexcept>
 #include <utility>
 
@@ -52,19 +53,20 @@ public:
 
 // Initialization/ownership only: guarded successor publication, experience,
 // evidence and action roles are integrated in their later architecture steps.
-// Tensor/graph-array/payload allocations and state/control-block requests
-// share the host-supplied allocation context. The VRS host counts and judges
-// resources; Main retains its authority and single-owner lifetime.
+// Tensor/graph-array/payload allocations and the Main lifetime, authority,
+// state holder and their control blocks share the host-supplied allocation
+// context. The VRS host counts and judges resources; Main retains its
+// authority and single-owner lifetime.
 struct detail::MainOwnerState final {
     // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:17-27
     MainOwnerState(std::shared_ptr<MainLifetime> lifetime, AllocationContext allocation,
-                   std::unique_ptr<MainAuthorityLedger> authority,
+                   std::shared_ptr<MainAuthorityLedger> authority,
                    std::shared_ptr<const CognitiveState> current)
         : lifetime(std::move(lifetime)), allocation(std::move(allocation)),
           authority(std::move(authority)), current(std::move(current)) {}
     std::shared_ptr<MainLifetime> lifetime;
     AllocationContext allocation;
-    std::unique_ptr<MainAuthorityLedger> authority;
+    std::shared_ptr<MainAuthorityLedger> authority;
     std::shared_ptr<const CognitiveState> current;
 };
 
@@ -72,8 +74,22 @@ struct detail::MainOwnerState final {
 // The non-member storage type only receives already constructed objects.
 // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:103-107
 MainOwner::MainOwner(MainInitialState initial, AllocationContext account) {
-    auto lifetime = std::make_shared<MainLifetime>();
-    auto authority = std::unique_ptr<MainAuthorityLedger>(new MainAuthorityLedger(account));
+    auto lifetime = std::allocate_shared<MainLifetime>(account.allocator<MainLifetime>());
+    auto authority_allocator = account.allocator<MainAuthorityLedger>();
+    auto* raw_authority = authority_allocator.allocate(1);
+    try {
+        // Construction remains inside Main's private authority boundary.
+        ::new (static_cast<void*>(raw_authority)) MainAuthorityLedger(account);
+    } catch (...) {
+        authority_allocator.deallocate(raw_authority, 1);
+        throw;
+    }
+    auto authority = std::shared_ptr<MainAuthorityLedger>(
+        raw_authority,
+        [authority_allocator](MainAuthorityLedger* value) mutable noexcept {
+            value->~MainAuthorityLedger();
+            authority_allocator.deallocate(value, 1);
+        }, account.allocator<MainAuthorityLedger>());
     RoleRegistry roles(account, initial.roles);
     EvidenceReferences evidence(account.allocator<ExperienceAddress>());
     evidence.reserve(initial.evidence_references.size());
@@ -96,7 +112,8 @@ MainOwner::MainOwner(MainInitialState initial, AllocationContext account) {
         std::move(graph), std::move(evidence),
         std::move(goals), std::move(values), std::move(self));
 
-    state_ = std::make_unique<detail::MainOwnerState>(
+    auto state_allocator = account.allocator<detail::MainOwnerState>();
+    state_ = std::allocate_shared<detail::MainOwnerState>(state_allocator,
         std::move(lifetime), std::move(account), std::move(authority),
         std::move(current));
 }

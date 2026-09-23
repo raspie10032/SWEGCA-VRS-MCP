@@ -192,7 +192,8 @@ ReEvidenceResult::ReEvidenceResult(ClaimRevision claim, ExperienceAddress addres
 // SWEGCA: src/swegca/mosaic_evidence_accumulator.py@5901a5a:222-236
 EvidenceAccumulator::EvidenceAccumulator(const AllocationContext& memory, ClaimRevision claim,
                                          const EvidencePolicy& policy)
-    : memory_(memory), origin_(std::make_shared<const int>(0)), claim_(std::move(claim)),
+    : memory_(memory), origin_(std::allocate_shared<int>(memory.allocator<int>(), 0)),
+      claim_(std::move(claim)),
       rules_(make_evidence_rules(policy)), rules_digest_(evidence_policy_digest(policy)),
       recent_window_(policy.recent_window) {
     axes_.reserve(policy.axis_count);

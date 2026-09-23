@@ -39,8 +39,9 @@
 // design board requires (claim revision, accumulator revision, admitted and
 // rejected address sets, evaluated delta and mask digests, rule configuration
 // digest, binding digest and decision digest).
-// Every container allocates through Main's allocation context (the one
-// Main creates the accumulator with). It names no journal, record or
+// Every container and the decision-origin control block allocate through
+// Main's allocation context (the one Main creates the accumulator with).
+// It names no journal, record or
 // state type: what it knows of a replayed experience is ReplayedOriginal,
 // which the VRS admission stage builds (evidence_stages.hpp).
 // Rules: ARCHITECTURE_SPEC.md@5901a5a §4.4 (accumulation; decisions are
