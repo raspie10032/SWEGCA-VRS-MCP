@@ -6,6 +6,7 @@
 #include <atomic>
 #include <memory>
 #include <new>
+#include <optional>
 #include <stdexcept>
 #include <utility>
 
@@ -68,6 +69,9 @@ struct detail::MainOwnerState final {
     AllocationContext allocation;
     std::shared_ptr<MainAuthorityLedger> authority;
     std::shared_ptr<const CognitiveState> current;
+    // Filled only after Main has verified the state publication selected by
+    // its committed marker. The initial content alone grants no state head.
+    std::optional<PublishedStateId> head;
 };
 
 // Only this non-inline member exercises Main's private construction rights.
@@ -123,7 +127,9 @@ MainOwner::~MainOwner() = default;
 
 // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:103-107
 StateSnapshot MainOwner::snapshot() const {
-    return StateSnapshot(state_->current, state_->lifetime);
+    if (!state_->head)
+        throw std::logic_error("main_state_unpublished");
+    return StateSnapshot(state_->current, *state_->head, state_->lifetime);
 }
 
 }  // namespace swegca::vrs

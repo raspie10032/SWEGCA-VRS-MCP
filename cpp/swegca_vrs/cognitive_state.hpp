@@ -385,6 +385,11 @@ public:
 
     // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:103-107
     [[nodiscard]] const CognitiveState& state() const;
+    // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:196-205
+    [[nodiscard]] const PublishedStateId& head() const noexcept {
+        return head_;
+    }
+    // SWEGCA: src/swegca/mosaic_bounded_world_write.py@5901a5a:262-283
     [[nodiscard]] const Digest256& content_digest() const {
         return state().content_digest();
     }
@@ -394,10 +399,12 @@ private:
 
     // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:103-107
     explicit StateSnapshot(std::shared_ptr<const CognitiveState> state,
+                           PublishedStateId head,
                            std::shared_ptr<const void> main_lifetime);
 
     std::shared_ptr<const void> main_lifetime_;
     std::shared_ptr<const CognitiveState> state_;
+    PublishedStateId head_;
 };
 
 }  // namespace swegca::vrs

@@ -376,10 +376,14 @@ void CognitiveState::validate() const {
 
 // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:103-107
 StateSnapshot::StateSnapshot(std::shared_ptr<const CognitiveState> state,
+                             PublishedStateId head,
                              std::shared_ptr<const void> main_lifetime)
-    : main_lifetime_(std::move(main_lifetime)), state_(std::move(state)) {
+    : main_lifetime_(std::move(main_lifetime)), state_(std::move(state)),
+      head_(std::move(head)) {
     if (!state_ || !main_lifetime_)
         throw std::invalid_argument("state_snapshot_must_not_be_null");
+    if (state_->content_digest() != head_.content_digest())
+        throw std::invalid_argument("state_snapshot_head_content_mismatch");
 }
 
 // Keep both the old and the replacement Main leases alive while swapping
@@ -390,6 +394,7 @@ StateSnapshot::StateSnapshot(std::shared_ptr<const CognitiveState> state,
 StateSnapshot& StateSnapshot::operator=(StateSnapshot other) noexcept {
     state_.swap(other.state_);
     main_lifetime_.swap(other.main_lifetime_);
+    std::swap(head_, other.head_);
     return *this;
 }
 
