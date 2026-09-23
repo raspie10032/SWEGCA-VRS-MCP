@@ -1201,8 +1201,10 @@ std::uint64_t JournalStore::used_bytes(const PublishedSnapshot& current) const {
 // SWEGCA: user@2026-09-22:72-79
 void JournalStore::load_published_head() {
     // First pass: the directory holds only journal entries. A `.part` file is
-    // an interrupted publication only under a name the journal publishes, and
-    // then it goes; any other entry fails closed. Nothing is collected.
+    // an interrupted publication only under a name the journal publishes.
+    // Keep it until the HEAD-selected files have been checked: an expected
+    // published file may have been renamed to `.part` and must not be erased
+    // on a failed open. Any other entry fails closed.
     bool removed = false;
     std::uint64_t max_seen_file_id = 0;
     for (const auto& entry : fs::directory_iterator(directory_)) {
@@ -1216,8 +1218,6 @@ void JournalStore::load_published_head() {
                 fail("journal_unknown_entry");
             max_seen_file_id = std::max(
                 max_seen_file_id, parse_ordinal(base, segment_prefix, segment_suffix));
-            io::remove_file(entry.path());
-            removed = true;
             continue;
         }
         if (!is_published_name(name)) fail("journal_unknown_entry");
@@ -1319,6 +1319,11 @@ void JournalStore::load_published_head() {
     bool last_log_present = false;
     for (const auto& entry : fs::directory_iterator(directory_)) {
         const auto name = entry.path().filename().string();
+        if (name.ends_with(io::part_suffix)) {
+            io::remove_file(entry.path());
+            removed = true;
+            continue;
+        }
         if (const auto file_id = parse_ordinal(name, segment_prefix, segment_suffix)) {
             if (file_id > tail_file_id) {
                 io::remove_file(entry.path());
