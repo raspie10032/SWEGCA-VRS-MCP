@@ -20,7 +20,7 @@ PRODUCT_PREFIXES = ("native/", "include/", "cpp/")
 AUTHOR_NAMESPACES = ("src/swegca_vrs2/engine/mosaic_", "src/tinylm_slicer/mosaic_")
 CPP_SUFFIXES = (".cpp", ".cc", ".cxx", ".hpp", ".h")
 TAG = re.compile(
-    r"^\s*//\s*SWEGCA:\s+((?:[\w./-]+\.(?:py|md)@[0-9a-f]{7,40}|user@\d{4}-\d{2}-\d{2}):\d+(?:-\d+)?)\s*$",
+    r"^[ \t]*//[ \t]*SWEGCA:[ \t]+((?:[\w./-]+\.(?:py|md)@[0-9a-f]{7,40}|user@\d{4}-\d{2}-\d{2}):\d+(?:-\d+)?)[ \t]*$",
     re.MULTILINE,
 )
 FORBIDDEN = re.compile(
@@ -34,18 +34,50 @@ SOURCE_ROOTS = (
     Path(__file__).resolve().parents[1],
     Path(os.environ.get("SWEGCA_TINYLM_SOURCE_ROOT", CODEX_ROOT / "tinylm-slicer-sanabi-bazzite")),
     Path(os.environ.get("SWEGCA_ARCH_SOURCE_ROOT", CODEX_ROOT / "SWEGCA-Architecture")),
-    Path(os.environ.get("SWEGCA_VRS_SOURCE_ROOT", CODEX_ROOT / "SWEGCA-VRS-MCP")),
 )
 
 
-APPROVED_ORDER = (
-    "fcab35bc9609840afbf2987680b317e03cc3fd78",
-    "docs/SWEGCA_VRS_MCP_ORDER_FOR_REVIEW.md",
-)
-# Add a user-authored VRS document here only after its exact path and pinned
-# revision have been inspected. Reconstruction notes in this Git repository
-# cannot validate their own lineage, regardless of their ancestry or name.
-PINNED_VRS_AUTHOR_DOCS: frozenset[tuple[str, str]] = frozenset()
+PINNED_TINYLM = "3bddcb7adc8c07e21a57d8c921d312aed83270e5"
+PINNED_ARCH = "5901a5aa2dcbd0ac7ad12ac6dd745699f72288a8"
+ORDER_PATH = "docs/SWEGCA_VRS_MCP_ORDER_FOR_REVIEW.md"
+ORDER_2026_09_22 = "30b73e7cbd5bef29e32db0d9d947c8e70f8622e0"
+ORDER_2026_09_23 = "fcab35bc9609840afbf2987680b317e03cc3fd78"
+
+# The product and its original VRS sources share one Git object database.
+# Only these inspected, exact source pairs from that database can be cited.
+# A source in this list is an input to semantic review, not proof of parity or
+# proof that a ported file is the original author's exact bytes.
+PINNED_LOCAL_SOURCE_PAIRS: frozenset[tuple[str, str]] = frozenset({
+    ("src/swegca_vrs2/conversation_finalize.py", "c06092a"),
+    ("src/swegca_vrs2/cue_shards.py", "c06092a"),
+    ("src/swegca_vrs2/engine/mosaic_memory_activation.py", "7536139"),
+    ("src/swegca_vrs2/engine/mosaic_memory_promotion.py", "7536139"),
+    ("src/swegca_vrs2/engine/mosaic_semantic_family_directory.py", "7536139"),
+    ("src/swegca_vrs2/engine/mosaic_vrs_coactivation.py", "c06092a"),
+    ("src/swegca_vrs2/engine/mosaic_vrs_coactivation_navigation.py", "c06092a"),
+    ("src/swegca_vrs2/engine/mosaic_vrs_connectivity_regions.py", "7536139"),
+    ("src/swegca_vrs2/engine/mosaic_vrs_dependency_index.py", "7536139"),
+    ("src/swegca_vrs2/engine/mosaic_vrs_event_delta.py", "7536139"),
+    ("src/swegca_vrs2/engine/mosaic_vrs_event_kernel.py", "7536139"),
+    ("src/swegca_vrs2/engine/mosaic_vrs_event_signal.py", "7536139"),
+    ("src/swegca_vrs2/engine/mosaic_vrs_portal_lifecycle.py", "c06092a"),
+    ("src/swegca_vrs2/engine/mosaic_vrs_region_arrays.py", "7536139"),
+    ("src/swegca_vrs2/engine/mosaic_vrs_region_publication.py", "0dc716a"),
+    ("src/swegca_vrs2/engine/mosaic_vrs_state_update.py", "7536139"),
+    ("src/swegca_vrs2/exact_replay.py", "c06092a"),
+    ("src/swegca_vrs2/linked_shards.py", "c06092a"),
+    ("src/swegca_vrs2/native_context.py", "7536139"),
+    ("src/swegca_vrs2/native_journal.py", "c06092a"),
+    ("src/swegca_vrs2/native_lock.py", "c06092a"),
+    ("src/swegca_vrs2/native_transport.py", "7536139"),
+    ("src/swegca_vrs2/session_capture.py", "c06092a"),
+    ("src/swegca_vrs2/store.py", "7536139"),
+    ("src/swegca_vrs2/store.py", "c06092a"),
+})
+
+
+def pinned_revision(given: str, pinned: str) -> bool:
+    return len(given) >= 7 and pinned.startswith(given)
 
 
 def git_bytes(*args: str, root: Path | None = None) -> bytes:
@@ -85,16 +117,6 @@ def resolve_source(source: str, revision: str) -> tuple[int, bytes] | None:
     return None
 
 
-def self_design_document(source: str, revision: str) -> bool:
-    located = resolve_source(source, revision)
-    return (
-        located is not None
-        and located[0] in (0, 3)
-        and source.startswith("docs/")
-        and (source, revision) not in PINNED_VRS_AUTHOR_DOCS
-    )
-
-
 def author_blob(reference: str) -> bytes | None:
     source, rest = reference.split("@", 1)
     located = resolve_source(source, rest.split(":", 1)[0])
@@ -104,28 +126,41 @@ def author_blob(reference: str) -> bytes | None:
 def valid_tag(reference: str) -> bool:
     source, rest = reference.split("@", 1)
     revision, line_span = rest.split(":", 1)
-    if self_design_document(source, revision):
-        return False
     first, _, last = line_span.partition("-")
     start, end = int(first), int(last or first)
     if start < 1 or end < start:
         return False
     if source == "user":
-        # 2026-09-22 tags refer to the reviewed order at its pinned revision.
-        # Direct 2026-09-23 chat utterances have no line-numbered source in
-        # this repository, so a date alone cannot validate them.
-        if revision != "2026-09-22":
+        # The review order has an original 22 Sep version and a 23 Sep
+        # amendment. Only amendment lines may be cited as 23 Sep directives.
+        if revision == "2026-09-22":
+            order_revision = ORDER_2026_09_22
+            approved = True
+        elif revision == "2026-09-23":
+            order_revision = ORDER_2026_09_23
+            approved = any(start >= lo and end <= hi for lo, hi in
+                           ((69, 70), (76, 78), (107, 122)))
+        else:
             return False
-        located = resolve_source(APPROVED_ORDER[1], APPROVED_ORDER[0])
-        return located is not None and end <= len(located[1].splitlines())
-    blob = author_blob(reference)
-    return blob is not None and end <= len(blob.splitlines())
+        located = resolve_source(ORDER_PATH, order_revision)
+        return approved and located is not None and end <= len(located[1].splitlines())
+    located = resolve_source(source, revision)
+    if located is None or end > len(located[1].splitlines()):
+        return False
+    root_index = located[0]
+    if root_index == 0:
+        return (source, revision) in PINNED_LOCAL_SOURCE_PAIRS
+    if root_index == 1:
+        return pinned_revision(revision, PINNED_TINYLM)
+    if root_index == 2:
+        return pinned_revision(revision, PINNED_ARCH)
+    return False
 
 
 def protected_author_copy(path: str, staged: bytes) -> bool:
     if not path.startswith(AUTHOR_NAMESPACES):
         return True
-    original = author_blob(path.rsplit("/", 1)[-1] + "@3bddcb7:1")
+    original = author_blob(path + "@" + PINNED_TINYLM + ":1")
     return original is not None and original == staged
 
 
@@ -232,12 +267,8 @@ def check_cpp(path: str, source: str) -> list[str]:
     if definitions and not tags:
         return [f"{path}: missing // SWEGCA: source@revision:lines tag"]
     for tag in tags:
-        tagged_source, tagged_revision_and_lines = tag.group(1).split("@", 1)
-        tagged_revision = tagged_revision_and_lines.split(":", 1)[0]
         line = source.count("\n", 0, tag.start()) + 1
-        if self_design_document(tagged_source, tagged_revision):
-            issues.append(f"{path}:{line}: self-authored design document is not an author source")
-        elif not valid_tag(tag.group(1)):
+        if not valid_tag(tag.group(1)):
             issues.append(f"{path}:{line}: SWEGCA source tag has no verified source span")
     if forbidden := FORBIDDEN.search(clean):
         issues.append(f"{path}: external memory vocabulary {forbidden.group(0)!r}")
