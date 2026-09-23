@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 from functools import lru_cache
+import hashlib
 import os
 from pathlib import Path
 import re
@@ -155,11 +156,54 @@ def source_blob(root_index: int, full_revision: str, source: str) -> bytes | Non
     try:
         if grafts_present(root):
             return None
-        if git_bytes("cat-file", "-t", f"{full_revision}:{source}", root=root) != b"blob\n":
+        if git_bytes("rev-parse", "--show-object-format", root=root) != b"sha1\n":
             return None
-        return git_bytes("show", f"{full_revision}:{source}", root=root)
+        commit = verified_source_object(root, full_revision, "commit")
+        if commit is None:
+            return None
+        tree_line = commit.split(b"\n", 1)[0]
+        if not re.fullmatch(rb"tree [0-9a-f]{40}", tree_line):
+            return None
+        oid = tree_line[5:].decode("ascii")
+        parts = [os.fsencode(part) for part in source.split("/")]
+        for index, part in enumerate(parts):
+            tree = verified_source_object(root, oid, "tree")
+            if tree is None:
+                return None
+            entries: list[tuple[bytes, bytes, str]] = []
+            at = 0
+            while at < len(tree):
+                space = tree.find(b" ", at)
+                nul = tree.find(b"\0", space + 1)
+                if space < 0 or nul < 0 or nul + 21 > len(tree):
+                    return None
+                entries.append((tree[at:space], tree[space + 1:nul],
+                                tree[nul + 1:nul + 21].hex()))
+                at = nul + 21
+            found = [entry for entry in entries if entry[1] == part]
+            if len(found) != 1:
+                return None
+            mode, _, oid = found[0]
+            if index + 1 < len(parts):
+                if mode != b"40000":
+                    return None
+            elif mode not in (b"100644", b"100755"):
+                return None
+        return verified_source_object(root, oid, "blob")
     except (OSError, subprocess.CalledProcessError):
         return None
+
+
+def verified_source_object(root: Path, oid: str, kind: str) -> bytes | None:
+    # Git can read a loose object stored under a forged hash without checking
+    # its contents. Validate the exact commit, every path tree, and the blob.
+    if not re.fullmatch(r"[0-9a-f]{40}", oid):
+        return None
+    if git_bytes("cat-file", "-t", oid, root=root) != (kind + "\n").encode():
+        return None
+    data = git_bytes("cat-file", kind, oid, root=root)
+    framed = kind.encode() + b" " + str(len(data)).encode() + b"\0" + data
+    return data if hashlib.sha1(framed).hexdigest() == oid else None
 
 
 def author_blob(reference: str) -> bytes | None:
