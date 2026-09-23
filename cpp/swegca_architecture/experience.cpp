@@ -1,6 +1,7 @@
 #include "swegca_architecture/experience.hpp"
 
 #include "swegca_architecture/sha256.hpp"
+#include "swegca_architecture/unicode_casefold.hpp"
 
 #include <algorithm>
 #include <array>
@@ -218,10 +219,44 @@ bool is_cue_space(char32_t value) noexcept {
            value == 0x2029 || value == 0x202f || value == 0x205f || value == 0x3000;
 }
 
+// The full case folding of one code point (Unicode status C and F, the
+// folding Python's str.casefold applies), or empty when it folds to itself.
+// SWEGCA: src/tinylm_slicer/mosaic_memory_activation.py@3bddcb7:34-35
+std::span<const char32_t> case_fold(char32_t value) noexcept {
+    const auto& table = detail::case_foldings;
+    const auto found = std::lower_bound(table.begin(), table.end(), value,
+                                        [](const detail::CaseFolding& row, char32_t key) {
+                                            return row.from < key;
+                                        });
+    if (found == table.end() || found->from != value) return {};
+    return std::span<const char32_t>(found->to.data(), found->count);
+}
+
+// Appends one code point as UTF-8.
+// SWEGCA: src/tinylm_slicer/mosaic_memory_activation.py@3bddcb7:34-35
+void append_utf8(LedgerBytes& out, char32_t value) {
+    const auto put = [&out](std::uint32_t byte) { out.push_back(static_cast<std::byte>(byte)); };
+    if (value < 0x80) {
+        put(value);
+    } else if (value < 0x800) {
+        put(0xc0 | (value >> 6));
+        put(0x80 | (value & 0x3f));
+    } else if (value < 0x10000) {
+        put(0xe0 | (value >> 12));
+        put(0x80 | ((value >> 6) & 0x3f));
+        put(0x80 | (value & 0x3f));
+    } else {
+        put(0xf0 | (value >> 18));
+        put(0x80 | ((value >> 12) & 0x3f));
+        put(0x80 | ((value >> 6) & 0x3f));
+        put(0x80 | (value & 0x3f));
+    }
+}
+
 // A bound cue as the user's rule keeps it (`_cue`): the whole phrase,
-// stripped, each run of whitespace one space, lowered. Lowering is ASCII
-// only, as in the cue-token rule; Python's casefold of other scripts
-// (ß to ss, final sigma) is not re-created. Empty when nothing is left.
+// stripped, each run of whitespace one space, then case folded in full by
+// the Unicode table (user 2026-09-23 「유니코드 casefold 그대로」; the
+// table is Unicode 16.0.0, the host python3's). Empty when nothing is left.
 // SWEGCA: src/tinylm_slicer/mosaic_memory_activation.py@3bddcb7:34-35
 LedgerBytes normalized_cue(const AllocationContext& memory, std::string_view text) {
     if (!detail::is_strict_utf8(text)) fail("cue_text_not_utf8");
@@ -237,9 +272,9 @@ LedgerBytes normalized_cue(const AllocationContext& memory, std::string_view tex
         }
         if (space) out.push_back(std::byte{' '});
         space = false;
-        if (value < 0x80) {
-            const auto ascii = static_cast<char>(value >= 'A' && value <= 'Z' ? value - 'A' + 'a' : value);
-            out.push_back(static_cast<std::byte>(ascii));
+        const auto folded = case_fold(value);
+        if (!folded.empty()) {
+            for (const auto each : folded) append_utf8(out, each);
             continue;
         }
         const auto* bytes = reinterpret_cast<const std::byte*>(text.data() + begin);

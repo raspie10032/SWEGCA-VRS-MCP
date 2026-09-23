@@ -185,7 +185,7 @@ struct CueBinding {
     std::string_view source;  // who authored the cues
     std::string_view source_revision;
     // Each kept whole, normalized as the user's `_cue` (strip, one space
-    // per run, ASCII lowered); equal ones count once.
+    // per run, Unicode case folded); equal ones count once.
     std::span<const std::string_view> cues;
 };
 
