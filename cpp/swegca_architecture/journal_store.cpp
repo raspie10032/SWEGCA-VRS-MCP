@@ -1610,9 +1610,24 @@ std::optional<RecordPosition> JournalStore::resolve_in(const PublishedSnapshot& 
 PublishedRecord JournalStore::replay(const ExperienceAddress& address) const {
     require_usable();
     const auto current = snapshot();
-    const auto position = resolve_in(*current, address.value());
+    return replay_in(*current, address);
+}
+
+// SWEGCA: user@2026-09-22:72-79
+ReplayAtHead JournalStore::replay_at_head(const ExperienceAddress& address) const {
+    require_usable();
+    const auto current = snapshot();
+    const auto& fields = current->head.fields();
+    StateGeneration state(fields.state_generation_ordinal, Digest256(fields.state_generation_digest));
+    return ReplayAtHead{replay_in(*current, address), std::move(state)};
+}
+
+// SWEGCA: user@2026-09-22:72-79
+PublishedRecord JournalStore::replay_in(const PublishedSnapshot& current,
+                                        const ExperienceAddress& address) const {
+    const auto position = resolve_in(current, address.value());
     if (!position) fail("journal_address_unknown");
-    auto record = read_in(*current, *position);
+    auto record = read_in(current, *position);
     if (record.view().address != address.value()) fail("journal_address_view_mismatch");
     return record;
 }

@@ -538,10 +538,11 @@ ReEvidenceRecorded ReEvidence::apply(EvidenceAccumulator& accumulator,
                                      const ExperienceAddress& address,
                                      const CognitiveState& state, std::string_view by,
                                      ReEvidenceJudge judge) const {
-    if (state.generation() != journal_.state_generation())
+    // One snapshot gives both the generation HEAD names and the original.
+    const auto at_head = journal_.replay_at_head(address);
+    if (state.generation() != at_head.state)
         throw std::invalid_argument("re_evidence_state_not_current");
-    const auto replayed = journal_.replay(address);
-    const auto& view = replayed.view();
+    const auto& view = at_head.record.view();
     if (view.address != address.value())
         throw std::invalid_argument("re_evidence_replay_address_mismatch");
     const auto outcome = judge(view, accumulator.claim(), state);
@@ -552,16 +553,16 @@ ReEvidenceRecorded ReEvidence::apply(EvidenceAccumulator& accumulator,
     return ReEvidenceRecorded{std::move(result), admission};
 }
 
-// Replay first, then admission against the generation HEAD names; both
-// come from Main's journal, never from the caller.
+// Replay and the generation HEAD names come from one snapshot of Main's
+// journal, never from the caller; admission is judged against that pair.
 // SWEGCA: docs/SWEGCA_VRS_MCP_ORDER_FOR_REVIEW.md@30b73e7:24-29
 AdmissionResult EvidenceAdmission::admit(EvidenceAccumulator& accumulator,
                                          const EvidenceObservation& observation,
                                          std::uint64_t current_step) const {
     detail::require_identity_text(observation.address, ExperienceAddressTag::name);
-    const auto current = journal_.state_generation();
-    const auto replayed = journal_.replay(ExperienceAddress(accumulator.memory_, observation.address));
-    return accumulator.admit(observation, replayed, current, current_step);
+    const auto at_head =
+        journal_.replay_at_head(ExperienceAddress(accumulator.memory_, observation.address));
+    return accumulator.admit(observation, at_head.record, at_head.state, current_step);
 }
 
 }  // namespace swegca::architecture

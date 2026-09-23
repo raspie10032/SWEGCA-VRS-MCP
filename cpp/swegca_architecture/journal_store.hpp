@@ -106,6 +106,14 @@ private:
     RecordPosition position_;
 };
 
+// One exact original replayed within one published snapshot, with the
+// Cognitive State generation that snapshot's HEAD names: both belong to the
+// same generation, whatever is published meanwhile.
+struct ReplayAtHead {
+    PublishedRecord record;
+    StateGeneration state;
+};
+
 // Bytes one generation places in one segment file: appended at the published
 // length of the tail segment, or a new file starting with its header.
 struct SegmentPiece {
@@ -249,6 +257,10 @@ public:
     // not published).
     [[nodiscard]] PublishedRecord replay(const ExperienceAddress& address) const;
 
+    // Replay of one exact original together with the state generation HEAD
+    // names, both from one snapshot (codex 14:46).
+    [[nodiscard]] ReplayAtHead replay_at_head(const ExperienceAddress& address) const;
+
     // Visits every published record in sequence order over one snapshot,
     // verifying the whole record chain. No lock is held while `visit` runs.
     void for_each_record(const std::function<void(const RecordView&, const RecordPosition&)>& visit) const;
@@ -336,6 +348,8 @@ private:
                                                            std::string_view key) const;
     [[nodiscard]] PublishedRecord read_in(const PublishedSnapshot& current,
                                           const RecordPosition& position) const;
+    [[nodiscard]] PublishedRecord replay_in(const PublishedSnapshot& current,
+                                            const ExperienceAddress& address) const;
 
     std::filesystem::path directory_;
     JournalIdentity identity_;
