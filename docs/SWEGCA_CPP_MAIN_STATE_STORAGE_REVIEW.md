@@ -676,3 +676,47 @@ those reads while normalizing per-key absent versus `None` and partial initial
 mappings. It does not claim Python mapping or byte equivalence. No Main writer
 route yet applies an accepted `AutonomyTransition`, and the representation
 does not assign a publication body tag or give action intent authority.
+
+Before that route can exist, Main must run the pure autonomy transition from
+one published state snapshot, Main's own configuration, and an event read from
+an addressed experience. A caller-supplied `AutonomyTransition` or
+`AutonomyEventView` cannot establish that the event fields came from the
+experience: the author event is an in-memory value with no address, and the
+current C++ view has no experience-record parser. The event record must hold
+the **complete event**, including identity, kind, hypothesis, evidence
+references, source_family, context, confidence and payload. Main must parse those
+fields from the record it replayed on a pinned journal read lease and verify
+the record's own integrity before running the kernel. The exact native event
+byte encoding remains to be specified; no new record kind is implied.
+An event interpreted from a user's input cannot share that input's original
+record under one source: the input and the producer's event need separate
+addresses and provenance. Whether the event record is original or derived
+depends on its actual source and lineage. The relationship between its event
+context and the record's native context is open: the source autonomy event
+does not require equality, while native evidence admission separately checks
+context. No event-context equality rule is adopted here.
+
+`AutonomyPayloadView::digest` names the payload alone, whereas
+`ExperienceRecord::raw_digest()` names the entire event record's raw blob. Equating
+them would leave the event fields unbound, or incorrectly equate a payload
+digest with a complete-event digest. The eventual parser must derive the
+payload view and its digest from the replayed event bytes. A VERIFY decision
+must additionally be checked against the current published evidence and its
+claim; the mapping from autonomy hypothesis identity to `ClaimRevision` is
+still unresolved. Current cold recovery reconstructs an exact v5 **genesis
+candidate**; a successor publication chain is not implemented yet. Its future
+recovery rules must at least verify the selected successor content and
+publication binding. Whether cold audit must also rederive autonomy
+transitions from stored configuration and decision facts, and the durability
+of rejected no-commit receipts, remain open. These gates do not create a
+publication body tag or an authority domain. Inventory §2.8's requirement for
+an authoritative decision and exact bound proposal reads as a guarded
+role-write condition because it specifies target roles; the L3 autonomous
+goal/self transition has no corresponding source decision or proposal for
+every phase. Whether that scoped reading is the intended Main authority rule
+needs confirmation before this route can publish. Likewise, whether the
+architecture's I07 reversible-write rule covers autonomous goal/self updates
+is unresolved; if it does, a digest alone cannot restore the prior control.
+The autonomy route would need its own transition receipt; the inventory's
+`StateWriteReceipt` names claim, decision, bound proposal and role-delta
+fields of a World-role write and cannot be silently reused for this route.
