@@ -551,6 +551,10 @@ private:
     void for_each_record_impl(
         const void* target,
         void (*visit)(const void*, const RecordView&, const RecordPosition&)) const;
+    // Main must retain the shared_ptr returned by snapshot() for the entire
+    // multi-cue activation. The reference alone does not keep this generation
+    // or its retired page logs alive. Resolve and replay must use that same
+    // pinned snapshot; a separate snapshot() call may see a newer HEAD.
     void for_each_index_match_in(const PublishedSnapshot& current, char kind,
                                  std::string_view value, IndexVisitor visit) const;
     void require_usable() const;

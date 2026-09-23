@@ -124,18 +124,26 @@ crash cases before code uses it.
    persistent experience. Its published values and lineage must survive
    recovery from HEAD; they are not a rebuildable search view of memory
    records. The strength root is separate from `CognitiveState`, as in the
-   user's later implementation. One Main-published HEAD binds the memory
-   watermark, state root, and VRS strength root so readers never see a
-   half-updated pair;
-   permitted VRS processing lag remains explicit in that published tuple.
+   user's later implementation. The user's current rule is to update the live
+   session VRS immediately, without waiting for a queued worker. The proposed
+   C++ publication invariant is to expose new session memory and its live VRS
+   effect together, so a read cannot see one without the other; a read lease
+   would bind their published generation. At session end the live VRS becomes
+   a block with connections. Selected blocks are merged and processed by VRS
+   during idle time. The exact logical block and connection records remain
+   to be derived from the
+   user's architecture. A physical COW byte block in
+   `mosaic_vrs_block_store.py` is a storage unit, not by itself this logical
+   session block.
    New C++ strength persistence and computation use f32, matching the user's
    later canonicalization path. The old f16 artifact is source history, not a
    compatibility format or a per-edge rounding rule.
-10. A VRS worker proposal carries the memory watermark it read and the
-    parent strength root identity. Main alone checks that the source memory
-    range is contiguous in memory-record order, that no memory record was
-    skipped or counted twice, and that the parent root is still current
-    before publishing. Memory-record positions are not `PublishedStateId`:
+10. Any detached VRS proposal, including idle block merging, carries the
+    source generation and parent VRS identity it read. Main alone checks
+    the proposal's declared source set and its exact coverage, including
+    duplicate inputs, and confirms that the parent is still current before
+    publishing. Detached work cannot delay the live-session VRS update.
+    Memory-record positions are not `PublishedStateId`:
     that type names a CognitiveState publication. Raw cue hit counts grant no
     strength mutation authority. The user's `refine_vrs` stability bit is
     a geometry test, not a SWEGCA three-state decision; their exact interface
