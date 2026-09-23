@@ -18,10 +18,13 @@ namespace swegca::vrs {
 struct RegionBindingRecord {
     std::uint32_t component = 0;
     std::uint32_t local = 0;
+    // Only the component root stores the direct catalog address. Members and
+    // explicit pending records keep this zero.
+    std::uint64_t topology_offset = 0;
     bool present = false;
 };
 
-inline constexpr std::size_t region_binding_record_bytes = 16;
+inline constexpr std::size_t region_binding_record_bytes = 24;
 
 // SWEGCA: src/swegca_vrs2/store.py@c06092a:542-575
 [[nodiscard]] std::array<std::byte, region_binding_record_bytes>

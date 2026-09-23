@@ -26,8 +26,8 @@
 namespace swegca::vrs {
 namespace {
 
-constexpr std::string_view file_magic = "VRS2RBF1";
-constexpr std::string_view page_magic = "VRS2RBP1";
+constexpr std::string_view file_magic = "VRS2RBF2";
+constexpr std::string_view page_magic = "VRS2RBP2";
 constexpr std::uint64_t file_header_bytes = 64;
 constexpr std::uint64_t page_header_bytes = 64;
 constexpr std::uint64_t payload_bytes =
@@ -42,10 +42,25 @@ void put_u32(std::byte* out, std::uint32_t value) {
 }
 
 // SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:26-29
+void put_u64(std::byte* out, std::uint64_t value) {
+    for (unsigned at = 0; at < 8; ++at)
+        out[at] = static_cast<std::byte>((value >> (8 * at)) & 0xff);
+}
+
+// SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:26-29
 std::uint32_t get_u32(const std::byte* in) {
     std::uint32_t value = 0;
     for (unsigned at = 0; at < 4; ++at)
         value |= std::uint32_t(std::to_integer<unsigned char>(in[at])) <<
+                 (8 * at);
+    return value;
+}
+
+// SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:26-29
+std::uint64_t get_u64(const std::byte* in) {
+    std::uint64_t value = 0;
+    for (unsigned at = 0; at < 8; ++at)
+        value |= std::uint64_t(std::to_integer<unsigned char>(in[at])) <<
                  (8 * at);
     return value;
 }
@@ -141,13 +156,15 @@ std::array<std::byte, page_header_bytes> page_header(
 // SWEGCA: src/swegca_vrs2/store.py@c06092a:542-575
 std::array<std::byte, region_binding_record_bytes>
 encode_region_binding_record(RegionBindingRecord value) {
-    if (!value.present && (value.component != 0 || value.local != 0))
+    if (!value.present && (value.component != 0 || value.local != 0 ||
+                           value.topology_offset != 0))
         throw std::runtime_error("region_binding_absent_record_invalid");
     std::array<std::byte, region_binding_record_bytes> bytes{};
     put_u32(bytes.data(), value.component);
     put_u32(bytes.data() + 4, value.local);
     bytes[8] = static_cast<std::byte>(value.present ? 1 : 0);
-    put_u32(bytes.data() + 12, checksum(bytes.data(), 12));
+    put_u64(bytes.data() + 12, value.topology_offset);
+    put_u32(bytes.data() + 20, checksum(bytes.data(), 20));
     return bytes;
 }
 
@@ -157,12 +174,14 @@ RegionBindingRecord decode_region_binding_record(
     if ((bytes[8] != std::byte{} && bytes[8] != std::byte{1}) ||
         bytes[9] != std::byte{} || bytes[10] != std::byte{} ||
         bytes[11] != std::byte{} ||
-        get_u32(bytes.data() + 12) != checksum(bytes.data(), 12))
+        get_u32(bytes.data() + 20) != checksum(bytes.data(), 20))
         throw std::runtime_error("region_binding_record_corrupt");
     RegionBindingRecord value{get_u32(bytes.data()),
                               get_u32(bytes.data() + 4),
+                              get_u64(bytes.data() + 12),
                               bytes[8] == std::byte{1}};
-    if (!value.present && (value.component != 0 || value.local != 0))
+    if (!value.present && (value.component != 0 || value.local != 0 ||
+                           value.topology_offset != 0))
         throw std::runtime_error("region_binding_absent_record_invalid");
     return value;
 }

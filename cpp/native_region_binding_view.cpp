@@ -143,7 +143,7 @@ void NativeRegionBindingView::require_source(
 }
 
 // Cold-open proof: every logical page and live record belongs to the exact
-// node range. This retains only one 4 KiB payload at a time.
+// node range. This retains only one binding page at a time.
 // SWEGCA: src/swegca_vrs2/store.py@c06092a:512-577
 void NativeRegionBindingView::validate_complete_state() const {
     const auto pages = required_pages(state_.node_count);
@@ -164,7 +164,8 @@ void NativeRegionBindingView::validate_complete_state() const {
             const auto& value = page.records[at];
             if (!value.present) continue;
             if (value.component > global || value.component >= state_.node_count ||
-                ((value.local == 0) != (value.component == global)))
+                ((value.local == 0) != (value.component == global)) ||
+                ((value.topology_offset != 0) != (value.component == global)))
                 throw std::runtime_error("region_binding_record_source_invalid");
         }
         ++visited_pages;
@@ -185,7 +186,8 @@ std::optional<RegionBindingRecord> NativeRegionBindingView::binding(
     const auto value = cache_->record(file_, *offset, page_id, record);
     if (!value.present) return std::nullopt;
     if (value.component > node || value.component >= state_.node_count ||
-        ((value.local == 0) != (value.component == node)))
+        ((value.local == 0) != (value.component == node)) ||
+        ((value.topology_offset != 0) != (value.component == node)))
         throw std::runtime_error("region_binding_record_source_invalid");
     return value;
 }

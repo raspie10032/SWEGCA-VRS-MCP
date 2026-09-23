@@ -230,9 +230,17 @@ pair certificate before this data can implement `GraphRegionDirectory`.
 The source-bound binding view cold-validates a complete, contiguous logical
 page map against the exact Graph snapshot and node count. Its fixed 16-shard
 cache has a caller-supplied byte budget and changes no component or local
-address on a miss. The view still refuses to act as a region directory until
-the missing component-topology manifest proves which immutable topology file
-belongs to each component and Main pair.
+address on a miss. Only a component's root record may hold a nonzero physical
+topology-catalog offset; member and pending records must keep it zero. The
+view still refuses to act as a region directory until the catalog and the
+missing manifest prove which immutable topology file belongs to each
+component and Main pair.
+The native topology catalog is an append-only, direct-offset directory of
+checksummed component, VRS snapshot, topology ID and safe relative file-name
+records. A component root binding can therefore open one exact cold-validated
+topology without a graph-wide RAM map or directory scan. Catalog append and
+file sync still precede, and do not replace, the missing generation manifest
+and Main publication gate.
 
 Existing VRS 2.2 pair certificates and numerical arrays are historical
 evidence. A new source implementation must account for their lineage and
