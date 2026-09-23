@@ -10,9 +10,11 @@ namespace swegca::architecture::kernel {
 
 // One canonical connection is evaluated once for a pinned VRS generation.
 // The shell first maps every judgment to its original row action, using the
-// whole receipt's conflicting-proposition set, then collects all rows for
-// this connection, including aliases. These flags are neither provenance
-// nor publication authority. The shell must retain every judgment/address,
+// whole receipt's conflicting-proposition set, then collects rows with an
+// eligible edge step for this connection, including aliases. A judgment
+// without such a step is skipped by the original. These flags are neither
+// provenance nor publication authority. The shell retains every selected
+// row's judgment/address,
 // require equal previous strengths under numeric equality (+0 == -0), and
 // pass both the first row's and representative row's previous values. The
 // representative is the first reinforce/weaken row, or the first row.
@@ -59,8 +61,12 @@ struct StrengthTransition final {
 // step eligible; a missing field fails the whole receipt. The host preserves
 // Python int() truncation for group/edge IDs and float() conversion for
 // strength, groups by the exact vrs-edge:/vrs-edge-group: connection ID,
-// checks every alias previous under numeric equality, and retains every
-// judgment/address. It rejects missing replay episodes, blank episode,
+// checks every alias previous under numeric equality, and retains the
+// selected rows' judgments/addresses. The output row copies episode,
+// proposition, verdict and previous_strength from the representative row;
+// its nested promotion.previous_strength comes from the first row. These
+// previous strengths can have opposite zero signs. The host rejects missing
+// replay episodes, blank episode,
 // proposition, connection or snapshot identities, duplicate output IDs,
 // and any invalid row; one failure discards the whole receipt. It binds
 // stage order and false authority flags. None of these host conditions is

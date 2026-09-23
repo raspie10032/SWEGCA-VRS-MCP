@@ -18,7 +18,8 @@ import sys
 
 PRODUCT_PREFIXES = ("native/", "include/", "cpp/")
 AUTHOR_NAMESPACES = ("src/swegca_vrs2/engine/mosaic_", "src/tinylm_slicer/mosaic_")
-CPP_SUFFIXES = (".cpp", ".cc", ".cxx", ".hpp", ".h", ".hxx",
+CPP_SUFFIXES = (".cpp", ".cc", ".cxx", ".c", ".cppm", ".cxxm", ".mxx",
+                ".hpp", ".h", ".hxx",
                 ".hh", ".inl", ".ipp", ".tpp", ".ixx", ".inc",
                 ".c++", ".h++")
 TAG = re.compile(
@@ -104,7 +105,7 @@ def git_bytes(*args: str, root: Path | None = None) -> bytes:
 
 def staged_paths() -> list[str]:
     raw = git_bytes("diff", "--cached", "--no-renames", "--name-only",
-                    "--diff-filter=ACMRD", "-z")
+                    "--diff-filter=ACMRDT", "-z")
     return [item.decode("utf-8", "surrogateescape") for item in raw.split(b"\0") if item]
 
 
@@ -114,9 +115,11 @@ def all_index_paths() -> list[str]:
 
 
 def committed_paths(commit: str) -> list[str]:
-    raw = git_bytes("diff-tree", "--no-commit-id", "--no-renames", "--name-only",
-                    "-r", "-z", "--diff-filter=ACMRD", commit)
-    return [item.decode("utf-8", "surrogateescape") for item in raw.split(b"\0") if item]
+    raw = git_bytes("diff-tree", "--root", "-m", "--no-commit-id",
+                    "--no-renames", "--name-only", "-r", "-z",
+                    "--diff-filter=ACMRDT", commit)
+    return list(dict.fromkeys(item.decode("utf-8", "surrogateescape")
+                              for item in raw.split(b"\0") if item))
 
 
 def file_mode(path: str, commit: str | None) -> str | None:
@@ -351,11 +354,6 @@ def main() -> int:
             continue
         if mode not in ("100644", "100755"):
             issues.append(f"{path}: non-regular product or author file mode {mode}")
-            continue
-        if args.all and protected:
-            # Historical Python ports in the index are read-only inputs; the
-            # whole-tree audit concerns the C++ product. Staged changes to an
-            # author namespace still require exact source bytes below.
             continue
         blob = git_bytes("show", f":{path}" if args.staged or args.all else f"{args.commit}:{path}")
         if protected:
