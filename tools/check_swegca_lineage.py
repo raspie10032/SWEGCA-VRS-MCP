@@ -96,6 +96,9 @@ def git_bytes(*args: str, root: Path | None = None) -> bytes:
         for name in tuple(environment):
             if name.startswith("GIT_"):
                 environment.pop(name)
+        # A replace ref can substitute a different commit's tree even when
+        # `git show` is passed the complete pinned object ID.
+        environment["GIT_NO_REPLACE_OBJECTS"] = "1"
     return subprocess.check_output(command, stderr=subprocess.DEVNULL, env=environment)
 
 
