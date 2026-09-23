@@ -215,6 +215,16 @@ int main() {
         std::cerr << "derived nonfinite posterior did not fail closed\n";
         ++failures;
     }
+    auto aggregate_overflow = supporting();
+    aggregate_overflow.axis_support.fill(0);
+    aggregate_overflow.axis_support[0] = 1e308;
+    aggregate_overflow.axis_support[1] = 1e308;
+    const auto aggregate_verdict = sk::judge_evidence(rules, aggregate_overflow);
+    if (aggregate_verdict.status != sk::EvidenceStatus::abstain ||
+        aggregate_verdict.reason != sk::EvidenceReason::invalid_input) {
+        std::cerr << "nonfinite aggregate samples did not fail closed\n";
+        ++failures;
+    }
 
     // At a zero regime threshold, the source algorithm compares the
     // unmeasured score of zero against the threshold too.
