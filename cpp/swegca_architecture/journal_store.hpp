@@ -260,12 +260,14 @@ public:
     // host's refusal there evicts. The cache is split into
     // `page_cache_shards` independently locked shards (the host sets it to
     // its worker count; nonzero when a cache is kept). Every budget is the
-    // host's: the journal counts no resource and fixes no limit. `storage`
-    // must outlive the store. The cache is bounded only by `page_cache`: the
+    // host's: the journal counts no resource and fixes no limit. The store
+    // shares ownership of `storage` (non-null, `journal_budget_missing`), so
+    // the budget lives as long as the store whatever order the host tears
+    // down in (codex 17:04). The cache is bounded only by `page_cache`: the
     // host must refuse (AllocationRefused) past the budget it gives it.
     [[nodiscard]] static std::unique_ptr<JournalStore> open(
         const std::filesystem::path& directory, std::string_view identity,
-        const StorageBudget& storage, const AllocationContext& memory,
+        std::shared_ptr<const StorageBudget> storage, const AllocationContext& memory,
         const std::optional<AllocationContext>& page_cache, std::size_t page_cache_shards);
 
     JournalStore(JournalStore&&) = delete;
@@ -385,7 +387,7 @@ private:
                                                  const StateGeneration& state,
                                                  std::span<const ViewGeneration> views) const;
     JournalStore(std::filesystem::path directory, JournalIdentity identity,
-                 const StorageBudget& storage, const AllocationContext& memory,
+                 std::shared_ptr<const StorageBudget> storage, const AllocationContext& memory,
                  std::uint64_t allocation_unit, std::unique_ptr<io::OwnerLock> lock,
                  const std::optional<AllocationContext>& page_cache, std::size_t page_cache_shards);
 
@@ -428,7 +430,7 @@ private:
 
     std::filesystem::path directory_;
     JournalIdentity identity_;
-    const StorageBudget* storage_;  // the host's; outlives the store
+    std::shared_ptr<const StorageBudget> storage_;  // the host's, shared
     AllocationContext memory_;
     std::uint64_t allocation_unit_;
     std::unique_ptr<io::OwnerLock> lock_;

@@ -294,7 +294,11 @@ private:
 // Main registered is the only one that holds its identity.
 //
 // Groups (COMPONENT_LEDGER.md@5901a5a:44-50: results sharing a source
-// family, context or derived evidence must be grouped). Each admitted
+// family, context or derived evidence must be grouped). The author's
+// accumulator groups by (source family, context hash) only and has no
+// derived evidence; linking what derived evidence shares, transitively,
+// is this rebuild's conservative reading of that rule, not the author's
+// code (codex 17:04): it can only lower diversity. Each admitted
 // experience links the families of all its root sources, and all its root
 // contexts; families linked directly or through other admitted evidence
 // are one source group, contexts likewise one context group, and a group

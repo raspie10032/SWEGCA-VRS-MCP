@@ -132,7 +132,47 @@ storage budget port. As built (claude, step 2): `StorageBudget::allows(used)`
 is asked with the journal's whole use (published generation, logs a
 rewrite left, what a write in progress adds) at open, stage, publish,
 rebuild and compaction; `storage_charged()` reports the use; the host
-counts and judges, the journal fixes no limit.
+counts and judges, the journal fixes no limit. The store shares
+ownership of the budget (`std::shared_ptr<const StorageBudget>`), so no
+teardown order can leave it dangling (codex 17:04).
+
+3.6 The write path (codex 17:08-17:13, claude 17:1x). One authorized write
+is one proposal, as the author's registered route is:
+`bounded_verification_write` takes one proposal targeting only the
+verification slot, previews the arbiter on that proposal alone and
+commits with a receipt (mosaic_bounded_world_write.py@5901a5a:332-421);
+multi-proposal arbitration is preview-only on the registered route
+(COMPONENT_LEDGER.md@5901a5a:20). The order is Bind -> Arbiter preview ->
+Gate -> Writer, with no other entry:
+
+- Bind (codex): replays each exact admitted address and yields a
+  `BoundProposal` (3.3).
+- Arbiter: `ArbitrationResult` of that single proposal (weight, bounds,
+  accepted, the changed verification role, generation and step).
+- Gate: `GateOutcome EvidenceGate::authorize(const EvidenceDecision&,
+  const EvidenceAccumulator&, const BoundProposal&, const
+  ArbitrationResult& single_preview, const MainGateEvaluation&, const
+  CognitiveState&, std::uint64_t step) const`. It checks the
+  BoundProposal's decision, binding and step against the preview's
+  single-input binding receipt, accepted flag, changed verification role
+  and generation/step, then sends every existing condition bit to
+  `authorize_target` (none removed). The capability's operation binds the
+  decision, binding, bound receipt, preview receipt, verification role,
+  role registry and generation. The separate `VerificationProposal`
+  entry is gone, so no capability is issued without Bind.
+- Writer (codex, not built): verifies the capability names the same
+  results, commits, and keeps every field of the author's receipt
+  (receipt id over before-state hash, delta hash, revision, evidence
+  refs; before/after state and slot hashes, applied delta hash, prior
+  write metadata). The guarded verification write keeps the state's
+  tensor type: the author assigns the new slot into a clone of the
+  existing scratch tensor, casting to its stored type
+  (mosaic_bounded_world_write.py@5901a5a:317-330; codex 17:16). Promotion
+  of state and delta happens only in the arbiter's own `commit=True`
+  successor, which is not a registered route. A rollback or retraction
+  restores the prior type and bytes exactly (codex 16:58). Proposals accepted together
+  are written one at a time, each through this path on the state the
+  previous one produced; no receipt spans several proposals.
 
 ## 4. Order (each step a pure move or a mechanical change, reviewed alone)
 
