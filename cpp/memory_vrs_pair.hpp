@@ -47,11 +47,14 @@ public:
     // SWEGCA: src/swegca_vrs2/engine/mosaic_memory_activation.py@7536139:145-147
     [[nodiscard]] std::shared_ptr<const MainReadGeneration> snapshot() const;
 
-    // Main calls replace only after its journal commit succeeds. A reader
-    // observes the pair and every bound Graph directory in one generation.
+    // Main calls replace only after its journal commit succeeds. The expected
+    // value is the exact pinned generation, so same-pair navigation work
+    // cannot overwrite a newer publication. A reader observes the pair and
+    // every bound Graph directory in one generation.
     // SWEGCA: src/swegca_vrs2/engine/mosaic_memory_activation.py@7536139:149-158
+    // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_region_publication.py@0dc716a:37-53
     [[nodiscard]] std::string replace(
-        std::string_view expected_snapshot_id,
+        std::shared_ptr<const MainReadGeneration> expected,
         std::shared_ptr<const MainReadGeneration> replacement);
 
 private:

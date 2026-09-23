@@ -50,13 +50,15 @@ AtomicFullCurrentMemoryVrsOwner::snapshot() const {
 }
 
 // SWEGCA: src/swegca_vrs2/engine/mosaic_memory_activation.py@7536139:149-158
+// SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_region_publication.py@0dc716a:37-53
 std::string AtomicFullCurrentMemoryVrsOwner::replace(
-    std::string_view expected_snapshot_id,
+    std::shared_ptr<const MainReadGeneration> expected,
     std::shared_ptr<const MainReadGeneration> replacement) {
-    if (!replacement) throw std::runtime_error("full-current memory pair is missing");
+    if (!expected || !replacement)
+        throw std::runtime_error("full-current memory generation is missing");
     std::lock_guard lock(mutex_);
-    if (current_->pair().snapshot_id() != expected_snapshot_id)
-        throw std::runtime_error("full-current snapshot changed before replacement");
+    if (current_ != expected)
+        throw std::runtime_error("full-current generation changed before replacement");
     auto result = replacement->pair().snapshot_id();
     current_ = std::move(replacement);
     return result;
