@@ -352,14 +352,18 @@ four-stage VRS path is already implemented.
   tensor-specific inline exception. The writer must keep the immutable Main
   state snapshot alive through every borrowed chunk and prove that prefix,
   each reconstructed tensor and suffix concatenate to the existing v3 digest
-  preimage. The canonical emitter must report tensor boundaries to the writer
-  while retaining one byte-encoding implementation.
+  preimage. A tensor root contains only partition, header and content digest
+  lists: generation, owner, time and predecessor addresses stay outside it,
+  so an unchanged tensor retains its exact root address. The canonical emitter
+  must report section boundaries to the writer while retaining one
+  byte-encoding implementation.
 - Prefix and suffix may themselves exceed one record and need bounded parts.
   Splitting suffix into stable sections could avoid rewriting an unbounded
-  graph when the write head changes, but the tensor-boundary callback alone
-  cannot mark those sections. Their exact boundaries and root references
-  remain a format decision; any chosen boundaries must come from the same
-  canonical emitter, without a second serializer or content-defined split.
+  graph when the write head changes. One section-boundary callback in the
+  canonical emitter can name prefix, each tensor, entities, relations,
+  evidence and final fields. Which sections become separate trees and how
+  their roots are referenced remain format decisions. The writer must not
+  introduce a second serializer or content-defined split.
 
 ## Decisions before implementation
 
