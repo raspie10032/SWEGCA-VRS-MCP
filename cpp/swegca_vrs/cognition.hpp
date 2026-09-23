@@ -106,8 +106,8 @@ struct PayloadField {
 };
 
 // The payload fields the machine reads; `digest` is the SHA-256 of the
-// producer's complete canonical payload, which the receipt binds (the
-// complete observation itself is original experience).
+// complete canonical payload, derived by the event parser from its bytes.
+// The event's experience kind follows its actual source and lineage.
 struct AutonomyPayloadView {
     PayloadField<std::span<const std::string_view>> requested_axes;
     PayloadField<bool> collect_with_tool;
@@ -136,7 +136,7 @@ struct AutonomyEventView {
 // validated here: the phase that reads one rejects it by the author's reason.
 // Throws `autonomy_event_invalid:<field>`. The payload view is the caller's
 // reading of the payload `digest` names; binding the two is the adapter's
-// duty (the complete payload is original experience).
+// duty; the payload digest alone is not the event record's raw digest.
 // SWEGCA: src/swegca/mosaic_autonomous_cognition.py@5901a5a:89-120
 void validate_autonomy_event(const AutonomyEventView& event);
 

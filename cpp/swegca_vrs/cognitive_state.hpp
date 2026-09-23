@@ -289,6 +289,8 @@ class AutonomyControl;
 // partial initial mapping, are not represented; no byte- or map-exact Python
 // equivalence is claimed. Absent control (nullopt in CognitiveState) is the
 // author's absent keys; a present control may be the explicit initial one.
+// As with a unique handle, only destruction or assignment is valid after a
+// move; bytes() and control() require a retained payload.
 // Lineage: native mechanism — reserved typed keys beside an opaque payload, as for the write head.
 // SWEGCA: src/swegca/mosaic_autonomous_cognition.py@5901a5a:150-186
 class AutonomyState final {

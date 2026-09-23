@@ -391,9 +391,8 @@ Digest256 CognitiveState::validated_content_digest(
             body_->scratch.shape().slots}))
             throw std::invalid_argument("initial_role_registry_shape_mismatch");
     } else {
-        // A guarded write may promote all three partitions; an exact rollback
-        // may restore their earlier dtype. The writer checks the operation's
-        // dtype rule, while validate() checks their common successor dtype.
+        // A general Main successor may change partition dtype. Its writer
+        // checks the operation, while validate() checks the common dtype.
         if (body_->common->semantic.shape().width != prior->body_->common->semantic.shape().width)
             throw std::invalid_argument("successor_tensor_width_changed");
         if (body_->common->semantic.shape().slots < prior->body_->common->semantic.shape().slots ||
