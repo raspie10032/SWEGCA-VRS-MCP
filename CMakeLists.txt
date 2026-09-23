@@ -67,6 +67,7 @@ add_library(swegca_vrs_candidate STATIC
     cpp/swegca_vrs/main_commit_marker.cpp
     cpp/swegca_vrs/state_publication_codec.cpp
     cpp/swegca_vrs/state_record_codec.cpp
+    cpp/swegca_vrs/state_recovery.cpp
     cpp/swegca_vrs/vrs_strength_compile.cpp
     cpp/swegca_vrs/resource_budget.cpp
 )
