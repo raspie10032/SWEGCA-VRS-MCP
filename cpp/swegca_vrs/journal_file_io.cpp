@@ -348,7 +348,9 @@ void write_new_file_fsynced(const fs::path& path, std::span<const std::byte> byt
     handle.close_checked("journal_file_close_failed");
 }
 
-// The committed marker name cannot replace an existing immutable receipt.
+// Native no-replace guard in Main's exclusively created attempt directory;
+// the author's final move uses replace, with directory uniqueness preventing
+// an earlier committed receipt from occupying this name.
 // SWEGCA: src/tinylm_slicer/mosaic_paper_resident_assimilation.py@3bddcb7:491-535
 bool rename_file_no_replace(const fs::path& from, const fs::path& to) {
     if (::MoveFileExW(from.c_str(), to.c_str(), MOVEFILE_WRITE_THROUGH)) return true;
@@ -548,7 +550,9 @@ void write_new_file_fsynced(const fs::path& path, std::span<const std::byte> byt
     descriptor.close_checked("journal_file_close_failed");
 }
 
-// The committed marker name cannot replace an existing immutable receipt.
+// Native no-replace guard in Main's exclusively created attempt directory;
+// the author's final move uses replace, with directory uniqueness preventing
+// an earlier committed receipt from occupying this name.
 // SWEGCA: src/tinylm_slicer/mosaic_paper_resident_assimilation.py@3bddcb7:491-535
 bool rename_file_no_replace(const fs::path& from, const fs::path& to) {
     if (::renameat2(AT_FDCWD, from.c_str(), AT_FDCWD, to.c_str(), RENAME_NOREPLACE) == 0)

@@ -222,11 +222,14 @@ crash cases before code uses it.
   stores an exact `JournalRoot` (`ManifestLocation` plus digest) selected by
   Main. A marker filename or timestamp cannot replace verification of its
   payload, predecessor and named root.
-  The author's pending marker is opened exclusively (`"xb"`), then renamed
-  after Main's in-memory swap. The existing native `io::publish_file` replaces
-  a destination name, so it cannot be used for this append-only marker as-is;
-  the Main marker writer needs exclusive creation and a non-replacing commit
-  step while preserving that ordering.
+  The author first creates an exclusive attempt directory, opens the pending
+  marker there with `"xb"`, then uses a replacing move after Main's in-memory
+  swap. The fresh directory prevents that move from overwriting an older
+  committed receipt. The native marker path must keep the exclusive attempt
+  directory and pending creation; it adds a no-replace move as a stricter guard
+  while preserving the author's ordering. After a failed move or directory
+  fsync, the swapped pair remains live and further writes stop until
+  reconciliation.
 - Proposal `based_on`, Bind, arbitration, gated capabilities, and CAS compare
   the publication identifier. Re-evidence, admission, and accumulator
   `judged_against` compare only the content digest. Replay can inspect

@@ -21,8 +21,11 @@
 //            MOVEFILE_WRITE_THROUGH, which is documented not to return until
 //            the move is on disk; `make_entries_durable` has nothing left to
 //            do, and no undocumented directory flush is relied on.
-// Main's pending commit marker is different: it is created exclusively and
-// flushed under its own pending name, then moved after Main's owner swap.
+// Main's pending commit marker is different: Main first creates a unique
+// attempt directory exclusively, then creates and flushes the pending file
+// there and moves it after Main's owner swap. The author's final replace is
+// safe because that directory was new; this native move also refuses an
+// existing destination.
 namespace swegca::vrs::journal::io {
 
 inline constexpr const char* part_suffix = ".part";
@@ -76,17 +79,21 @@ void publish_file_parts(const std::filesystem::path& path,
                         std::span<const std::span<const std::byte>> parts);
 
 // Main's append-only commit marker has a different publication order from a
-// replaceable journal HEAD. Create its unique pending name exclusively and
-// fsync its bytes before Main swaps the live owner pair. A failure after
-// creation leaves that pending file for Main to reconcile.
+// replaceable journal HEAD. Main must first create a unique attempt directory
+// exclusively. Create the pending name there exclusively and fsync its bytes
+// before Main swaps the live owner pair. A failure after creation leaves that
+// pending file for Main to reconcile.
 // SWEGCA: src/tinylm_slicer/mosaic_paper_resident_assimilation.py@3bddcb7:491-535
 void write_new_file_fsynced(const std::filesystem::path& path,
                             std::span<const std::byte> bytes);
 
 // After Main's owner swap, move a pending marker to its committed name only
-// when the destination is absent. False means the destination exists and
-// leaves `from` untouched. On POSIX the caller must then fsync the directory;
-// the Windows move uses WRITE_THROUGH.
+// when the destination is absent. This no-replace guard is stricter than the
+// author's replace inside a new attempt directory. False means the destination
+// exists and leaves `from` untouched. A false result or exception after the
+// owner swap must leave the new pair live and block writes until reconciliation.
+// On POSIX the caller must then fsync the attempt directory; the Windows move
+// uses WRITE_THROUGH.
 // SWEGCA: src/tinylm_slicer/mosaic_paper_resident_assimilation.py@3bddcb7:491-535
 [[nodiscard]] bool rename_file_no_replace(const std::filesystem::path& from,
                                           const std::filesystem::path& to);
