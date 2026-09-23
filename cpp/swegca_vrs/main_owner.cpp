@@ -6,7 +6,6 @@
 #include <atomic>
 #include <memory>
 #include <new>
-#include <optional>
 #include <stdexcept>
 #include <utility>
 
@@ -58,20 +57,28 @@ public:
 // state holder and their control blocks share the host-supplied allocation
 // context. The VRS host counts and judges resources; Main retains its
 // authority and single-owner lifetime.
+struct MainPublishedPair final {
+    std::shared_ptr<const CognitiveState> state;
+    PublishedStateId head;
+};
+
 struct detail::MainOwnerState final {
     // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:17-27
     MainOwnerState(std::shared_ptr<MainLifetime> lifetime, AllocationContext allocation,
                    std::shared_ptr<MainAuthorityLedger> authority,
                    std::shared_ptr<const CognitiveState> current)
         : lifetime(std::move(lifetime)), allocation(std::move(allocation)),
-          authority(std::move(authority)), current(std::move(current)) {}
+          authority(std::move(authority)), initial(std::move(current)) {}
     std::shared_ptr<MainLifetime> lifetime;
     AllocationContext allocation;
     std::shared_ptr<MainAuthorityLedger> authority;
-    std::shared_ptr<const CognitiveState> current;
-    // Filled only after Main has verified the state publication selected by
-    // its committed marker. The initial content alone grants no state head.
-    std::optional<PublishedStateId> head;
+    // Before genesis there is only initial content. Once Main has verified
+    // and selected a committed publication, the state and its exact head
+    // enter one immutable object. A reader can never observe a state from
+    // one publication with the head of another, including a bit-exact
+    // rollback whose content digest equals an earlier publication.
+    std::shared_ptr<const CognitiveState> initial;
+    std::atomic<std::shared_ptr<const MainPublishedPair>> published;
 };
 
 // Only this non-inline member exercises Main's private construction rights.
@@ -127,9 +134,10 @@ MainOwner::~MainOwner() = default;
 
 // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:103-107
 StateSnapshot MainOwner::snapshot() const {
-    if (!state_->head)
+    const auto pair = state_->published.load();
+    if (!pair)
         throw std::logic_error("main_state_unpublished");
-    return StateSnapshot(state_->current, *state_->head, state_->lifetime);
+    return StateSnapshot(pair->state, pair->head, state_->lifetime);
 }
 
 }  // namespace swegca::vrs
