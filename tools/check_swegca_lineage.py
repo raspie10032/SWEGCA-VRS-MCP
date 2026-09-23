@@ -18,7 +18,9 @@ import sys
 
 PRODUCT_PREFIXES = ("native/", "include/", "cpp/")
 AUTHOR_NAMESPACES = ("src/swegca_vrs2/engine/mosaic_", "src/tinylm_slicer/mosaic_")
-CPP_SUFFIXES = (".cpp", ".cc", ".cxx", ".hpp", ".h")
+CPP_SUFFIXES = (".cpp", ".cc", ".cxx", ".hpp", ".h", ".hxx",
+                ".hh", ".inl", ".ipp", ".tpp", ".ixx", ".inc",
+                ".c++", ".h++")
 TAG = re.compile(
     r"^[ \t]*//[ \t]*SWEGCA:[ \t]+((?:[\w./-]+\.(?:py|md)@[0-9a-f]{7,40}|user@\d{4}-\d{2}-\d{2}):\d+(?:-\d+)?)[ \t]*$",
     re.MULTILINE,
@@ -39,6 +41,11 @@ SOURCE_ROOTS = (
 
 PINNED_TINYLM = "3bddcb7adc8c07e21a57d8c921d312aed83270e5"
 PINNED_ARCH = "5901a5aa2dcbd0ac7ad12ac6dd745699f72288a8"
+PINNED_LOCAL_REVISIONS = {
+    "7536139": "7536139d5f7b95879f9ba950f0211bc16f4e32c5",
+    "c06092a": "c06092af7f6d050fc41a950be637b8e4cea584bc",
+    "0dc716a": "0dc716a0153160fb39f2fc063dda9e20ffb9d942",
+}
 ORDER_PATH = "docs/SWEGCA_VRS_MCP_ORDER_FOR_REVIEW.md"
 ORDER_2026_09_22 = "30b73e7cbd5bef29e32db0d9d947c8e70f8622e0"
 ORDER_2026_09_23 = "fcab35bc9609840afbf2987680b317e03cc3fd78"
@@ -93,7 +100,8 @@ def git_bytes(*args: str, root: Path | None = None) -> bytes:
 
 
 def staged_paths() -> list[str]:
-    raw = git_bytes("diff", "--cached", "--name-only", "--diff-filter=ACMR", "-z")
+    raw = git_bytes("diff", "--cached", "--no-renames", "--name-only",
+                    "--diff-filter=ACMRD", "-z")
     return [item.decode("utf-8", "surrogateescape") for item in raw.split(b"\0") if item]
 
 
@@ -103,29 +111,47 @@ def all_index_paths() -> list[str]:
 
 
 def committed_paths(commit: str) -> list[str]:
-    raw = git_bytes("diff-tree", "--no-commit-id", "--name-only", "-r", "-z",
-                    "--diff-filter=ACMR", commit)
+    raw = git_bytes("diff-tree", "--no-commit-id", "--no-renames", "--name-only",
+                    "-r", "-z", "--diff-filter=ACMRD", commit)
     return [item.decode("utf-8", "surrogateescape") for item in raw.split(b"\0") if item]
 
 
+def file_mode(path: str, commit: str | None) -> str | None:
+    if commit is None:
+        raw = git_bytes("ls-files", "--stage", "-z", "--", path)
+    else:
+        raw = git_bytes("ls-tree", "-z", commit, "--", path)
+    entries = [item for item in raw.split(b"\0") if item]
+    if not entries:
+        return None
+    if len(entries) != 1 or b"\t" not in entries[0]:
+        return "unmerged"
+    return entries[0].split(b" ", 1)[0].decode("ascii", "strict")
+
+
+def is_product_path(path: str) -> bool:
+    return path.lower().startswith(PRODUCT_PREFIXES)
+
+
 @lru_cache(maxsize=256)
-def resolve_source(source: str, revision: str) -> tuple[int, bytes] | None:
+def source_blob(root_index: int, full_revision: str, source: str) -> bytes | None:
     if source.startswith("/") or any(part in ("", ".", "..") for part in source.split("/")):
         return None
-    for root_index, root in enumerate(SOURCE_ROOTS):
-        try:
-            if git_bytes("cat-file", "-t", f"{revision}:{source}", root=root) != b"blob\n":
-                continue
-            return root_index, git_bytes("show", f"{revision}:{source}", root=root)
-        except (OSError, subprocess.CalledProcessError):
-            continue
-    return None
+    root = SOURCE_ROOTS[root_index]
+    try:
+        if git_bytes("cat-file", "-t", f"{full_revision}:{source}", root=root) != b"blob\n":
+            return None
+        return git_bytes("show", f"{full_revision}:{source}", root=root)
+    except (OSError, subprocess.CalledProcessError):
+        return None
 
 
 def author_blob(reference: str) -> bytes | None:
     source, rest = reference.split("@", 1)
-    located = resolve_source(source, rest.split(":", 1)[0])
-    return None if located is None else located[1]
+    revision = rest.split(":", 1)[0]
+    if source.startswith("src/tinylm_slicer/") and pinned_revision(revision, PINNED_TINYLM):
+        return source_blob(1, PINNED_TINYLM, source)
+    return None
 
 
 def valid_tag(reference: str) -> bool:
@@ -140,26 +166,30 @@ def valid_tag(reference: str) -> bool:
         # amendment. Only amendment lines may be cited as 23 Sep directives.
         if revision == "2026-09-22":
             order_revision = ORDER_2026_09_22
-            approved = True
+            approved = not any(start <= hi and end >= lo for lo, hi in
+                               ((69, 70), (76, 78)))
         elif revision == "2026-09-23":
             order_revision = ORDER_2026_09_23
             approved = any(start >= lo and end <= hi for lo, hi in
-                           ((69, 70), (76, 78), (107, 122)))
+                           ((69, 70), (76, 78), (112, 115)))
         else:
             return False
-        located = resolve_source(ORDER_PATH, order_revision)
-        return approved and located is not None and end <= len(located[1].splitlines())
-    located = resolve_source(source, revision)
-    if located is None or end > len(located[1].splitlines()):
+        blob = source_blob(0, order_revision, ORDER_PATH)
+        return approved and blob is not None and end <= len(blob.splitlines())
+    if source.startswith("src/swegca_vrs2/"):
+        full_revision = next((full for short, full in PINNED_LOCAL_REVISIONS.items()
+                              if pinned_revision(revision, full) and
+                              (source, short) in PINNED_LOCAL_SOURCE_PAIRS), None)
+        blob = None if full_revision is None else source_blob(0, full_revision, source)
+    elif source.startswith("src/tinylm_slicer/") and pinned_revision(revision, PINNED_TINYLM):
+        blob = source_blob(1, PINNED_TINYLM, source)
+    elif source.startswith(("src/swegca/", "paper/swegca/")) and pinned_revision(revision, PINNED_ARCH):
+        blob = source_blob(2, PINNED_ARCH, source)
+    else:
         return False
-    root_index = located[0]
-    if root_index == 0:
-        return (source, revision) in PINNED_LOCAL_SOURCE_PAIRS
-    if root_index == 1:
-        return pinned_revision(revision, PINNED_TINYLM)
-    if root_index == 2:
-        return pinned_revision(revision, PINNED_ARCH)
-    return False
+    if blob is None or end > len(blob.splitlines()):
+        return False
+    return True
 
 
 def protected_author_copy(path: str, staged: bytes) -> bool:
@@ -307,18 +337,30 @@ def main() -> int:
     issues: list[str] = []
     paths = staged_paths() if args.staged else all_index_paths() if args.all else committed_paths(args.commit)
     for path in paths:
-        if args.all and path.startswith(AUTHOR_NAMESPACES):
+        protected = path.startswith(AUTHOR_NAMESPACES)
+        product = is_product_path(path)
+        if not protected and not product:
+            continue
+        mode = file_mode(path, None if args.staged or args.all else args.commit)
+        if mode is None:
+            if protected:
+                issues.append(f"{path}: protected author copy was deleted or moved")
+            continue
+        if mode not in ("100644", "100755"):
+            issues.append(f"{path}: non-regular product or author file mode {mode}")
+            continue
+        if args.all and protected:
             # Historical Python ports in the index are read-only inputs; the
             # whole-tree audit concerns the C++ product. Staged changes to an
             # author namespace still require exact source bytes below.
             continue
         blob = git_bytes("show", f":{path}" if args.staged or args.all else f"{args.commit}:{path}")
-        if path.startswith(AUTHOR_NAMESPACES):
+        if protected:
             if not protected_author_copy(path, blob):
                 issues.append(f"{path}: author Python copy differs from pinned source")
             continue
-        if (not path.startswith(PRODUCT_PREFIXES) or path.startswith("cpp/tests/")
-                or not path.endswith(CPP_SUFFIXES)):
+        if not path.lower().endswith(CPP_SUFFIXES):
+            issues.append(f"{path}: unrecognized product source suffix")
             continue
         source = blob.decode("utf-8", "strict")
         issues.extend(check_cpp(path, source))
