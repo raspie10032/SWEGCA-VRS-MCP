@@ -104,6 +104,13 @@ def git_bytes(*args: str, root: Path | None = None) -> bytes:
     return subprocess.check_output(command, stderr=subprocess.DEVNULL, env=environment)
 
 
+def grafts_present(root: Path | None = None) -> bool:
+    # GIT_NO_REPLACE_OBJECTS does not disable the older info/grafts file.
+    # Refuse a repository with grafts before trusting its commit ancestry.
+    raw = git_bytes("rev-parse", "--path-format=absolute", "--git-path", "info/grafts", root=root)
+    return Path(os.fsdecode(raw).removesuffix("\n")).exists()
+
+
 def staged_paths() -> list[str]:
     raw = git_bytes("diff", "--cached", "--no-renames", "--name-only",
                     "--diff-filter=ACMRDT", "-z")
@@ -146,6 +153,8 @@ def source_blob(root_index: int, full_revision: str, source: str) -> bytes | Non
         return None
     root = SOURCE_ROOTS[root_index]
     try:
+        if grafts_present(root):
+            return None
         if git_bytes("cat-file", "-t", f"{full_revision}:{source}", root=root) != b"blob\n":
             return None
         return git_bytes("show", f"{full_revision}:{source}", root=root)
@@ -342,6 +351,9 @@ def main() -> int:
     selection.add_argument("--commit")
     args = parser.parse_args()
     issues: list[str] = []
+    if grafts_present():
+        print("Git info/grafts is present; source lineage cannot be trusted", file=sys.stderr)
+        return 1
     paths = staged_paths() if args.staged else all_index_paths() if args.all else committed_paths(args.commit)
     for path in paths:
         protected = path.startswith(AUTHOR_NAMESPACES)
