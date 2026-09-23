@@ -6,7 +6,9 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <span>
+#include <type_traits>
 
 // SWEGCA nano-core: pure judgment kernels for the evidence decision, the
 // target gate predicate and the Single-World arbiter.
@@ -18,7 +20,7 @@
 //
 // Arithmetic contract (codex KJ7). Bit-identical results are claimed only
 // when all of these hold, and are not yet verified on any GPU/NPU:
-//   - IEEE-754 binary32 (arbiter) and binary64 (evidence), round to nearest
+//   - IEEE-754 binary32 or binary64 (arbiter), binary64 (evidence), round to nearest
 //     even, subnormals preserved (no flush-to-zero / denormals-are-zero);
 //   - no floating-point contraction or reassociation (-ffp-contract=off,
 //     no -ffast-math);
@@ -439,12 +441,15 @@ struct GateColumns {
     return true;
 }
 
-struct ProposalScores {
-    float confidence = 0;
-    float contradiction = 0;
-    float uncertainty = 0;
+template <class T>
+struct ProposalScoresOf {
+    static_assert(std::is_same_v<T, float> || std::is_same_v<T, double>);
+    T confidence = 0;
+    T contradiction = 0;
+    T uncertainty = 0;
     std::uint32_t source = 0;  // dense nonzero source id assigned by the shell
 };
+using ProposalScores = ProposalScoresOf<float>;
 
 struct ArbiterShape {
     std::size_t proposals = 0;
@@ -454,50 +459,84 @@ struct ArbiterShape {
 
 // Caller-owned buffers; the kernel allocates nothing. Layouts are row-major:
 // masks[p][s], deltas[p][s][w], bounded[p][s][w], delta_out[s][w].
-struct ArbiterBuffers {
-    std::span<const ProposalScores> scores;
+template <class T>
+struct ArbiterBuffersOf {
+    static_assert(std::is_same_v<T, float> || std::is_same_v<T, double>);
+    std::span<const ProposalScoresOf<T>> scores;
     std::span<const std::uint8_t> masks;
-    std::span<const float> deltas;
-    std::span<float> weights;
+    std::span<const T> deltas;
+    std::span<T> weights;
     std::span<std::uint8_t> accepted;
-    std::span<float> bounded;  // workspace
+    std::span<T> bounded;  // workspace
     std::span<std::uint8_t> conflict;
-    std::span<float> delta_out;
+    std::span<T> delta_out;
 };
+using ArbiterBuffers = ArbiterBuffersOf<float>;
+
+class ArbiterRules;
+// SWEGCA: src/swegca/mosaic_synapse_arbiter.py@5901a5a:263-321
+template <class T>
+[[nodiscard]] bool arbitrate(const ArbiterRules& rules, const ArbiterShape& shape,
+                             const ArbiterBuffersOf<T>& buffers) noexcept;
 
 // Validated arbiter limits; only `make_arbiter_rules` constructs one.
 class ArbiterRules final {
 private:
     ArbiterRules() = default;
     friend ArbiterRules swegca::architecture::make_arbiter_rules(const ArbiterPolicy&);
+    template <class T>
     friend bool arbitrate(const ArbiterRules& rules, const ArbiterShape& shape,
-                          const ArbiterBuffers& buffers) noexcept;
+                          const ArbiterBuffersOf<T>& buffers) noexcept;
 
     float maximum_slot_delta_ = 0;
     float maximum_world_delta_ = 0;
     float minimum_weight_ = 0;
+    double maximum_slot_delta_exact_ = 0;
+    double maximum_world_delta_exact_ = 0;
+    double minimum_weight_exact_ = 0;
 };
 
-// Euclidean norm scaled by the largest magnitude so no square overflows.
+// Clip by the Euclidean norm without constructing largest * sqrt(sum), which
+// may overflow even when every input is finite. Input and output may alias.
 // SWEGCA: src/swegca/mosaic_synapse_arbiter.py@5901a5a:274-286
-[[nodiscard]] inline float stable_norm(std::span<const float> values) noexcept {
-    float largest = 0;
-    for (const float value : values) largest = std::fmax(largest, std::fabs(value));
-    if (largest == 0) return 0;
-    float sum = 0;
-    for (const float value : values) {
-        const float scaled = value / largest;
+template <class T>
+inline void clip_norm(std::span<const T> values, std::span<T> output, T limit) noexcept {
+    static_assert(std::is_same_v<T, float> || std::is_same_v<T, double>);
+    T largest = 0;
+    for (const T value : values) largest = std::fmax(largest, std::fabs(value));
+    if (largest == 0) {
+        for (std::size_t at = 0; at < values.size(); ++at) output[at] = values[at];
+        return;
+    }
+    T sum = 0;
+    for (const T value : values) {
+        const T scaled = value / largest;
         sum += scaled * scaled;
     }
-    return largest * std::sqrt(sum);
+    const T root = std::sqrt(sum);
+    // The source clamps each norm denominator to 1e-12 before clipping.
+    const T denominator_floor = static_cast<T>(1.0e-12);
+    if (largest < denominator_floor / root) {
+        const T scale = std::fmin(T{1}, limit / denominator_floor);
+        for (std::size_t at = 0; at < values.size(); ++at) output[at] = values[at] * scale;
+        return;
+    }
+    if (largest <= limit / root) {
+        for (std::size_t at = 0; at < values.size(); ++at) output[at] = values[at];
+        return;
+    }
+    const T clipped_magnitude = limit / root;
+    for (std::size_t at = 0; at < values.size(); ++at)
+        output[at] = (values[at] / largest) * clipped_magnitude;
 }
 
 // Preflight before any write (codex KJ2): shape nonzero, buffers exact, rules
 // finite and bounded, scores finite in [0, 1], sources nonzero, masks 0/1,
 // every delta finite.
 // SWEGCA: src/swegca/mosaic_synapse_arbiter.py@5901a5a:238-262
+template <class T>
 [[nodiscard]] inline bool arbiter_input_valid(const ArbiterShape& shape,
-                                              const ArbiterBuffers& b) noexcept {
+                                              const ArbiterBuffersOf<T>& b) noexcept {
     const std::size_t p = shape.proposals;
     const std::size_t s = shape.slots;
     const std::size_t w = shape.width;
@@ -513,7 +552,7 @@ private:
             return false;
     for (const auto mask : b.masks)
         if (mask > 1) return false;
-    for (const float delta : b.deltas)
+    for (const T delta : b.deltas)
         if (!std::isfinite(delta)) return false;
     return true;
 }
@@ -526,12 +565,23 @@ private:
 // weights keep every sum finite. Returns false and writes nothing on any
 // invalid input.
 // SWEGCA: src/swegca/mosaic_synapse_arbiter.py@5901a5a:263-321
+template <class T>
 [[nodiscard]] inline bool arbitrate(const ArbiterRules& rules, const ArbiterShape& shape,
-                                    const ArbiterBuffers& b) noexcept {
-    if (!(std::isfinite(rules.maximum_slot_delta_) && rules.maximum_slot_delta_ > 0 &&
-          rules.maximum_slot_delta_ <= max_delta_limit &&
-          std::isfinite(rules.maximum_world_delta_) && rules.maximum_world_delta_ > 0 &&
-          rules.maximum_world_delta_ <= max_delta_limit && finite_unit(rules.minimum_weight_)))
+                                    const ArbiterBuffersOf<T>& b) noexcept {
+    static_assert(std::is_same_v<T, float> || std::is_same_v<T, double>);
+    const T maximum_slot_delta = std::is_same_v<T, float>
+                                     ? static_cast<T>(rules.maximum_slot_delta_)
+                                     : static_cast<T>(rules.maximum_slot_delta_exact_);
+    const T maximum_world_delta = std::is_same_v<T, float>
+                                      ? static_cast<T>(rules.maximum_world_delta_)
+                                      : static_cast<T>(rules.maximum_world_delta_exact_);
+    const T minimum_weight = std::is_same_v<T, float>
+                                 ? static_cast<T>(rules.minimum_weight_)
+                                 : static_cast<T>(rules.minimum_weight_exact_);
+    if (!(std::isfinite(maximum_slot_delta) && maximum_slot_delta > 0 &&
+          maximum_slot_delta <= max_delta_limit && std::isfinite(maximum_world_delta) &&
+          maximum_world_delta > 0 && maximum_world_delta <= max_delta_limit &&
+          finite_unit(minimum_weight)))
         return false;
     if (!arbiter_input_valid(shape, b)) return false;
     const std::size_t P = shape.proposals;
@@ -540,21 +590,18 @@ private:
 
     for (std::size_t p = 0; p < P; ++p) {
         const auto& score = b.scores[p];
-        const float weight =
-            score.confidence * (1 - score.contradiction) * (1 - score.uncertainty);
+        const T weight = score.confidence * (T{1} - score.contradiction) *
+                         (T{1} - score.uncertainty);
         b.weights[p] = weight;
-        b.accepted[p] = weight >= rules.minimum_weight_ ? 1 : 0;
+        b.accepted[p] = weight >= minimum_weight ? 1 : 0;
         for (std::size_t s = 0; s < S; ++s) {
             const std::size_t row = (p * S + s) * W;
             if (b.masks[p * S + s] == 0) {
-                for (std::size_t w = 0; w < W; ++w) b.bounded[row + w] = 0.0f;
+                for (std::size_t w = 0; w < W; ++w) b.bounded[row + w] = T{0};
                 continue;
             }
-            const float norm = stable_norm(b.deltas.subspan(row, W));
-            const float scale = norm > rules.maximum_slot_delta_
-                                    ? rules.maximum_slot_delta_ / norm
-                                    : 1.0f;
-            for (std::size_t w = 0; w < W; ++w) b.bounded[row + w] = b.deltas[row + w] * scale;
+            clip_norm<T>(b.deltas.subspan(row, W), b.bounded.subspan(row, W),
+                         maximum_slot_delta);
         }
     }
 
@@ -565,33 +612,47 @@ private:
             if (!b.accepted[right] || b.scores[left].source == b.scores[right].source) continue;
             for (std::size_t s = 0; s < S; ++s) {
                 if (!b.masks[left * S + s] || !b.masks[right * S + s]) continue;
-                float product = 0;
-                for (std::size_t w = 0; w < W; ++w)
-                    product += b.bounded[(left * S + s) * W + w] *
-                               b.bounded[(right * S + s) * W + w];
-                if (product < 0) b.conflict[s] = 1;
+                T product = 0;
+                T absolute_sum = 0;
+                bool underflowed_product = false;
+                for (std::size_t w = 0; w < W; ++w) {
+                    const T a = b.bounded[(left * S + s) * W + w];
+                    const T c = b.bounded[(right * S + s) * W + w];
+                    const T term = a * c;
+                    underflowed_product |= a != 0 && c != 0 && term == 0;
+                    product += term;
+                    absolute_sum += std::fabs(term);
+                }
+                // A near-zero sum has an uncertain exact sign after rounded
+                // products and additions. Treat it as unresolved instead of
+                // silently accepting a possibly negative directional product.
+                const T operations = static_cast<T>(W) + T{1};
+                const T relative = operations * std::numeric_limits<T>::epsilon();
+                const T error = relative >= T{1}
+                                    ? std::numeric_limits<T>::infinity()
+                                    : (relative / (T{1} - relative)) * absolute_sum +
+                                          operations * std::numeric_limits<T>::denorm_min();
+                if (underflowed_product || (absolute_sum > 0 && product <= error))
+                    b.conflict[s] = 1;
             }
         }
     }
 
     for (std::size_t s = 0; s < S; ++s) {
-        float weight_sum = 0;
+        T weight_sum = 0;
         for (std::size_t p = 0; p < P; ++p)
-            weight_sum += b.accepted[p] && b.masks[p * S + s] ? b.weights[p] : 0.0f;
+            weight_sum += b.accepted[p] && b.masks[p * S + s] ? b.weights[p] : T{0};
         for (std::size_t w = 0; w < W; ++w) {
-            float sum = 0;
+            T sum = 0;
             for (std::size_t p = 0; p < P; ++p)
                 if (b.accepted[p] && b.masks[p * S + s])
                     sum += b.bounded[(p * S + s) * W + w] * b.weights[p];
-            b.delta_out[s * W + w] =
-                b.conflict[s] || !(weight_sum > 0) ? 0.0f : sum / weight_sum;
+            b.delta_out[s * W + w] = b.conflict[s]
+                                         ? T{0}
+                                         : sum / std::fmax(weight_sum, static_cast<T>(1.0e-12));
         }
     }
-    const float world = stable_norm(b.delta_out);
-    if (world > rules.maximum_world_delta_) {
-        const float scale = rules.maximum_world_delta_ / world;
-        for (std::size_t at = 0; at < S * W; ++at) b.delta_out[at] *= scale;
-    }
+    clip_norm<T>(std::span<const T>(b.delta_out), b.delta_out, maximum_world_delta);
     return true;
 }
 

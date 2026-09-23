@@ -92,8 +92,9 @@ kernel::GateRules make_gate_rules(const GatePolicy& p) {
     return rules;
 }
 
-// Limits are bounded by `kernel::max_delta_limit`, so the float conversion is
-// exact in range and every arbiter sum stays finite (codex KJ4).
+// Retain the policy's binary64 limits for binary64 state. The binary32 fields
+// retain the existing conversion for binary32 state; an underflowed binary32
+// limit makes only that execution path fail closed.
 // SWEGCA: src/swegca/mosaic_synapse_arbiter.py@5901a5a:222-236
 kernel::ArbiterRules make_arbiter_rules(const ArbiterPolicy& p) {
     constexpr const char* name = "arbiter_policy";
@@ -104,13 +105,12 @@ kernel::ArbiterRules make_arbiter_rules(const ArbiterPolicy& p) {
     if (!bounded(p.maximum_world_delta)) invalid(name, "maximum_world_delta");
     if (!unit(p.minimum_weight)) invalid(name, "minimum_weight");
     kernel::ArbiterRules rules;
+    rules.maximum_slot_delta_exact_ = p.maximum_slot_delta;
+    rules.maximum_world_delta_exact_ = p.maximum_world_delta;
+    rules.minimum_weight_exact_ = p.minimum_weight;
     rules.maximum_slot_delta_ = static_cast<float>(p.maximum_slot_delta);
     rules.maximum_world_delta_ = static_cast<float>(p.maximum_world_delta);
     rules.minimum_weight_ = static_cast<float>(p.minimum_weight);
-    if (!(std::isfinite(rules.maximum_slot_delta_) && rules.maximum_slot_delta_ > 0 &&
-          std::isfinite(rules.maximum_world_delta_) && rules.maximum_world_delta_ > 0 &&
-          std::isfinite(rules.minimum_weight_)))
-        invalid(name, "float_conversion");
     return rules;
 }
 
