@@ -15,6 +15,8 @@ class MainOwner;
 // may restore the same content under a new, Main-published state head.
 // This type can be copied from a genuine Main snapshot, but only Main can
 // create a new one after it has published and verified that head.
+// The source checks current state hash and transaction head; RecordPosition
+// is their native publication locator, with no direct Python type counterpart.
 class PublishedStateId final {
 public:
     PublishedStateId(const PublishedStateId&) = default;
@@ -22,16 +24,16 @@ public:
     PublishedStateId& operator=(const PublishedStateId&) = default;
     PublishedStateId& operator=(PublishedStateId&&) noexcept = default;
 
-    // SWEGCA: docs/SWEGCA_CPP_MAIN_STATE_STORAGE_REVIEW.md@7c4d419:125-139
+    // SWEGCA: src/swegca/mosaic_bounded_world_write.py@5901a5a:200-225
     [[nodiscard]] const Digest256& content_digest() const noexcept {
         return content_digest_;
     }
-    // SWEGCA: docs/SWEGCA_CPP_MAIN_STATE_STORAGE_REVIEW.md@7c4d419:125-139
+    // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:196-205
     [[nodiscard]] const journal::RecordPosition& publication() const noexcept {
         return publication_;
     }
 
-    // SWEGCA: docs/SWEGCA_CPP_MAIN_STATE_STORAGE_REVIEW.md@7c4d419:125-139
+    // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:196-205
     [[nodiscard]] bool operator==(const PublishedStateId& other) const noexcept {
         return content_digest_ == other.content_digest_ &&
                publication_.segment_ordinal == other.publication_.segment_ordinal &&
@@ -43,7 +45,7 @@ public:
 private:
     friend class MainOwner;
 
-    // SWEGCA: docs/SWEGCA_CPP_MAIN_STATE_STORAGE_REVIEW.md@7c4d419:125-139
+    // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:196-205
     PublishedStateId(Digest256 content_digest, journal::RecordPosition publication)
         : content_digest_(std::move(content_digest)), publication_(publication) {
         if (publication.sequence == 0 ||

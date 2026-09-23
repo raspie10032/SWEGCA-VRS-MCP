@@ -33,17 +33,18 @@ CognitiveTensor initial_tensor(const AllocationContext& account,
 // exclude other processes during experience/state storage integration.
 // A retained snapshot deliberately prevents constructing another Main until
 // it is released. This is not a mechanism for discarding old snapshots.
-// Rule: reconstruction board §2.1 and §10.1 (one Main and persistent state).
+// This process-local guard is the C++ implementation of the source's one
+// authoritative Main rule; the source does not prescribe this atomic flag.
 class MainLifetime final {
 public:
-    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:83-93
+    // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:103-107
     MainLifetime() {
         if (main_lifetime_active.exchange(true))
             throw std::logic_error("main_owner_already_live");
     }
     MainLifetime(const MainLifetime&) = delete;
     MainLifetime& operator=(const MainLifetime&) = delete;
-    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:83-93
+    // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:103-107
     ~MainLifetime() { main_lifetime_active.store(false); }
 };
 
@@ -55,7 +56,7 @@ public:
 // share the host-supplied allocation context. The VRS host counts and judges
 // resources; Main retains its authority and single-owner lifetime.
 struct detail::MainOwnerState final {
-    // SWEGCA: user@2026-09-23:1
+    // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:17-27
     MainOwnerState(std::shared_ptr<MainLifetime> lifetime, AllocationContext allocation,
                    std::unique_ptr<MainAuthorityLedger> authority,
                    std::shared_ptr<const CognitiveState> current)
@@ -69,7 +70,7 @@ struct detail::MainOwnerState final {
 
 // Only this non-inline member exercises Main's private construction rights.
 // The non-member storage type only receives already constructed objects.
-// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:222-230
+// SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:103-107
 MainOwner::MainOwner(MainInitialState initial, AllocationContext account) {
     auto lifetime = std::make_shared<MainLifetime>();
     auto authority = std::unique_ptr<MainAuthorityLedger>(new MainAuthorityLedger(account));
@@ -97,10 +98,10 @@ MainOwner::MainOwner(MainInitialState initial, AllocationContext account) {
         std::move(current));
 }
 
-// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:222-230
+// SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:103-107
 MainOwner::~MainOwner() = default;
 
-// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:222-230
+// SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:103-107
 StateSnapshot MainOwner::snapshot() const {
     return StateSnapshot(state_->current, state_->lifetime);
 }

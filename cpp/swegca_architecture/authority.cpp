@@ -54,6 +54,9 @@ std::atomic<std::uint64_t> next_issuer_instance{1};
 // genuine accumulator decision from matching visible fields. The nonce and
 // retirement ranges below are this C++ ledger's one-use representation of
 // that authority boundary, not an algorithm from the Python source.
+// The source identity token can be checked again within its process; this
+// ledger instead consumes one operation-bound token once. A second attempted
+// use needs a fresh Main decision, even when the visible fields are unchanged.
 // SWEGCA: src/swegca/mosaic_bounded_world_write.py@5901a5a:95-150
 std::uint64_t allocate_issuer_instance() {
     auto candidate = next_issuer_instance.load(std::memory_order_relaxed);
