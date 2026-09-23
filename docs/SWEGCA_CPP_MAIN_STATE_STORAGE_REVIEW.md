@@ -588,3 +588,32 @@ adapter are still separate work.
 
 This storage path is outside the hot Déjà vu → Recall path. It cannot be used
 as a substitute for the SWEGCA-based four-stage VRS navigation and judgment.
+
+## CognitiveState transition inventory before successor record tags (2026-09-24)
+
+This inventory is about changes to `CognitiveState` content, not VRS-strength
+changes or observation admission. It must be reconciled before assigning
+kind-7 successor body tags or a cold-recovery rule. The existing kind-7 tag 0
+encodes genesis only.
+
+| Source transition | Content changed | Current C++ route | Publication gap |
+|---|---|---|---|
+| Initial construction (`mosaic_cognitive_kernel.py@5901a5a:220-254`) | Initial tensors, graph, references, goals, values, self | `MainOwner::make_initial_state` uses `InitialStateKey` | The checked genesis candidate is not yet a committed Main pair. |
+| Guarded bounded write (`mosaic_bounded_world_write.py@3bddcb7:379-475`) | Verification slot and write-head self metadata | `MainStateWriter::write` uses `SuccessorStateKey` | Returns a successor and receipt without kind-7 successor publication or Main pair swap. |
+| Strict rollback (`mosaic_bounded_world_write.py@3bddcb7:478-496`) | Restores slot and prior write-head metadata, requiring exact prior state digest | `MainStateWriter::rollback` uses `SuccessorStateKey` | No persistent transition receipt or cold replay. |
+| Retraction (`mosaic_bounded_world_write.py@3bddcb7:499-541`) | Restores the current verification slot and prior write-head metadata while preserving later unrelated fields | `MainStateWriter::retract` uses `SuccessorStateKey` | No persistent transition receipt or cold replay. |
+| Autonomous cognition (`mosaic_autonomous_cognition.py@5901a5a:167-186`) | Goal phase, step and event identity, plus event-specific goal/self fields | `cognition_runner` returns a proposal; no `SuccessorStateKey` route for these content changes | Main authority, publication body and recovery rule remain open. |
+| Slot archive/protect/apply (`mosaic_cognitive_slot_memory.py@5901a5a:226-266,269-367`) | Slot-manager self metadata; apply also changes a role-addressed tensor slot | No C++ successor route for these operations | Main authority, publication body and recovery rule remain open. |
+
+Preview, rejected bounded writes, detached proposals and evidence reads do not
+produce a successor. Only `MainStateWriter` currently exercises
+`SuccessorStateKey` (`main_state_writer.cpp` lines 456, 513 and 557). A
+decoder for three writer variants alone would omit the other state mutations
+above. The record header, receipt body and transition tags remain unspecified
+until the complete route and authority boundary are reviewed.
+`mosaic_recurrent_cognition.py@3bddcb7:242-253` also constructs a
+`CognitiveState` as a recurrent-core output. No source-backed Main commit of
+that output was found in the resident path; treat it as a detached candidate
+until an explicit Main transition and authority route is established.
+`mosaic_world_bundle_training.py@3bddcb7:132-144` constructs a training batch
+state, outside resident Main publication.
