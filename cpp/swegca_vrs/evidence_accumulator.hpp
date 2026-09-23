@@ -80,6 +80,8 @@ enum class EvidenceOutcome : std::uint8_t { support = 1, refute = 2, insufficien
 // state (the author's audit row compares world hashes). It is retained as
 // the observation's content claim; Re-evidence never rewrites it. Publication
 // identity belongs to Main's state head, not to this producer observation.
+// Equality here is not proof that the producer actually judged on that state:
+// the Main-owned admission path must bind its judgment to the snapshot it used.
 // Provenance is the replayed experience's (COMPONENT_LEDGER.md@5901a5a:
 // 44-50, codex 15:40): `source_family` must be the family (SourceFamilies,
 // evidence_stages.hpp) of one of the experience's root sources, `context`
