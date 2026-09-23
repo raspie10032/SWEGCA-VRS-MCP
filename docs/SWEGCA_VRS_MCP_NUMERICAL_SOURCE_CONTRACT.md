@@ -121,8 +121,17 @@ This produces a source-shaped input to `ConnectivityRegions.build`. The C++
 region unit now carries the author's weighted modularity local moves,
 multilevel collapse, overlapping membership coefficients, reverse membership
 directory, source-generation guard and topology receipt. Its C++ reductions
-have not been compared to NumPy's `reduceat`, `sum` and `bincount` order, so
-exact numeric parity and topology digest equivalence remain unverified.
+now reproduce the NumPy 2.5.3 float64 add order used by the author: `sum`
+adds the 0.0 identity to the 128-element pairwise reduction, and `reduceat`
+copies the first item before applying that reduction to the remaining items.
+Weighted `bincount` remains the source's input-order `dans[number] += weight`
+loop. The dependency source is the exact 2.5.3 sdist pinned in `uv.lock`
+(`df2d5874ff183595a4ba404edd04f6bd9b5505c1d7708573f6a6c17489a67563`),
+specifically `loops_utils.h.src:57-145`,
+`loops_arithm_fp.dispatch.c.src:45-68`, `ufunc_object.c:3402-3500`, and
+`compiled_base.c:228-264`. No compiled NumPy artifact enters the C++ product.
+The translation has not been built or compared numerically, so parity and
+topology digest equivalence remain unverified.
 The detached graph-region replacement now binds the old component directory
 to the old input generation, builds the changed component's topology from the
 settled generation, refuses unconverged work and records which old component

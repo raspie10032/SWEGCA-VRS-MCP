@@ -40,6 +40,59 @@ struct Communities {
     std::vector<std::uint32_t> sweeps;
 };
 
+// Exact double add reduction used by NumPy 2.5.3 for the author's contiguous
+// float64 sum/reduceat calls. NumPy source: loops_utils.h.src:57-145,
+// loops_arithm_fp.dispatch.c.src:45-68 in the sdist pinned by uv.lock.
+// SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_connectivity_regions.py@7536139:35-50
+template <typename Read>
+double numpy_pairwise_add(std::size_t offset, std::size_t count,
+                          const Read& read) {
+    if (count < 8) {
+        double result = -0.0;
+        for (std::size_t at = 0; at < count; ++at)
+            result += read(offset + at);
+        return result;
+    }
+    if (count <= 128) {
+        std::array<double, 8> partials{
+            read(offset), read(offset + 1), read(offset + 2),
+            read(offset + 3), read(offset + 4), read(offset + 5),
+            read(offset + 6), read(offset + 7)};
+        std::size_t at = 8;
+        const auto unrolled = count - count % 8;
+        for (; at < unrolled; at += 8)
+            for (std::size_t lane = 0; lane < 8; ++lane)
+                partials[lane] += read(offset + at + lane);
+        double result =
+            ((partials[0] + partials[1]) + (partials[2] + partials[3])) +
+            ((partials[4] + partials[5]) + (partials[6] + partials[7]));
+        for (; at < count; ++at) result += read(offset + at);
+        return result;
+    }
+    auto left = count / 2;
+    left -= left % 8;
+    return numpy_pairwise_add(offset, left, read) +
+        numpy_pairwise_add(offset + left, count - left, read);
+}
+
+// np.add.reduce starts from its 0.0 identity, then adds one pairwise block.
+// SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_connectivity_regions.py@7536139:49-50
+template <typename Read>
+double numpy_add_reduce(std::size_t count, const Read& read) {
+    return 0.0 + numpy_pairwise_add(0, count, read);
+}
+
+// np.add.reduceat copies the first element to output, then reduces the rest.
+// NumPy source: ufunc_object.c:3402-3443,3462-3500 in the pinned 2.5.3 sdist.
+// SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_connectivity_regions.py@7536139:31-36
+template <typename Read>
+double numpy_add_reduceat_segment(std::size_t count, const Read& read) {
+    if (count == 0)
+        throw std::runtime_error("empty reduceat segment");
+    if (count == 1) return read(0);
+    return read(0) + numpy_pairwise_add(1, count - 1, read);
+}
+
 // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_connectivity_regions.py@7536139:162-164
 bool generation_digest(std::string_view identifier) {
     return identifier.size() == 64 &&
@@ -59,16 +112,19 @@ WeightedCsr csr(std::vector<WeightedEntry> entries, std::size_t size) {
     WeightedCsr result;
     result.offsets.assign(size + 1, 0);
     for (std::size_t at = 0; at < entries.size();) {
+        const auto first = at;
         const auto row = entries[at].row;
         const auto column = entries[at].column;
         if (row >= size || column >= size)
             throw std::runtime_error("invalid region endpoint");
-        double total = 0;
         do {
-            total += entries[at].weight;
             ++at;
         } while (at < entries.size() && entries[at].row == row &&
                  entries[at].column == column);
+        const auto total = numpy_add_reduceat_segment(
+            at - first, [&](std::size_t index) {
+                return entries[first + index].weight;
+            });
         result.neighbors.push_back(column);
         result.weights.push_back(total);
         ++result.offsets[static_cast<std::size_t>(row) + 1];
@@ -95,11 +151,14 @@ std::vector<std::uint32_t> canonical(const std::vector<std::uint32_t>& labels) {
 LocalMoves local_moves(const WeightedCsr& graph, std::uint32_t maximum_sweeps) {
     const auto size = graph.offsets.size() - 1;
     std::vector<double> degree(size, 0);
-    for (std::size_t node = 0; node < size; ++node)
-        for (auto at = graph.offsets[node]; at < graph.offsets[node + 1]; ++at)
-            degree[node] += graph.weights[at];
-    double mass = 0;
-    for (const auto value : degree) mass += value;
+    for (std::size_t node = 0; node < size; ++node) {
+        const auto first = graph.offsets[node];
+        degree[node] = numpy_add_reduce(
+            graph.offsets[node + 1] - first,
+            [&](std::size_t index) { return graph.weights[first + index]; });
+    }
+    const auto mass = numpy_add_reduce(
+        degree.size(), [&](std::size_t index) { return degree[index]; });
     std::vector<std::uint32_t> labels(size);
     std::iota(labels.begin(), labels.end(), 0);
     auto totals = degree;
@@ -273,8 +332,9 @@ ConnectivityRegions ConnectivityRegions::build(
         associations.push_back(WeightedEntry{v, u, weight});
     }
     const auto graph = csr(std::move(associations), size);
-    double association_mass = 0;
-    for (const auto weight : graph.weights) association_mass += weight;
+    const auto association_mass = numpy_add_reduce(
+        graph.weights.size(),
+        [&](std::size_t index) { return graph.weights[index]; });
     if (!std::isfinite(association_mass))
         throw std::runtime_error("association mass overflow");
     auto found = communities(graph, maximum_sweeps, maximum_levels);
