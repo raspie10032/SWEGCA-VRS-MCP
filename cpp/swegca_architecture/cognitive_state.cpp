@@ -49,7 +49,10 @@ void hash_tensor(Sha256& hash, std::uint8_t partition,
     hash_u64(hash, tensor.shape().batches);
     hash_u64(hash, tensor.shape().slots);
     hash_u64(hash, tensor.shape().width);
-    hash_bytes(hash, tensor.bytes());
+    hash_u64(hash, tensor.byte_count());
+    tensor.for_each_chunk([&hash](std::span<const std::byte> chunk) {
+        hash.update(chunk);
+    });
 }
 
 // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:83-93

@@ -64,7 +64,9 @@ void hash_tensor(Sha256& hash, std::uint8_t partition, const CognitiveTensor& te
     hash_u64(hash, tensor.shape().slots);
     hash_u64(hash, tensor.shape().width);
     hash_u64(hash, tensor.byte_count());
-    hash.update(tensor.bytes());
+    tensor.for_each_chunk([&hash](std::span<const std::byte> chunk) {
+        hash.update(chunk);
+    });
 }
 
 }  // namespace

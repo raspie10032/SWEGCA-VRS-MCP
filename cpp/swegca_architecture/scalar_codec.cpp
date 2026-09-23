@@ -1,5 +1,6 @@
 #include "swegca_architecture/scalar_codec.hpp"
 
+#include <array>
 #include <bit>
 #include <cmath>
 #include <cstdint>
@@ -152,9 +153,11 @@ bool try_read_scalar32(const CognitiveTensor& tensor, std::size_t element,
     if (type == ScalarType::float64 || element >= tensor.element_count()) return false;
     const std::size_t width = type == ScalarType::float32 ? 4 :
                               (type == ScalarType::float16 || type == ScalarType::bfloat16) ? 2 : 0;
-    if (width == 0 || element >= tensor.bytes().size() / width) return false;
+    if (width == 0 || element >= tensor.byte_count() / width) return false;
     try {
-        value = read_scalar32(type, tensor.bytes().subspan(element * width, width));
+        std::array<std::byte, 4> bytes{};
+        tensor.copy_bytes(element * width, std::span<std::byte>(bytes).first(width));
+        value = read_scalar32(type, std::span<const std::byte>(bytes).first(width));
         return true;
     } catch (...) {
         return false;
@@ -165,11 +168,12 @@ bool try_read_scalar32(const CognitiveTensor& tensor, std::size_t element,
 bool try_read_scalar64(const CognitiveTensor& tensor, std::size_t element,
                        double& value) noexcept {
     if (tensor.scalar_type() != ScalarType::float64 ||
-        element >= tensor.element_count() || element >= tensor.bytes().size() / 8)
+        element >= tensor.element_count() || element >= tensor.byte_count() / 8)
         return false;
     try {
-        value = read_scalar64(ScalarType::float64,
-                              tensor.bytes().subspan(element * 8, 8));
+        std::array<std::byte, 8> bytes{};
+        tensor.copy_bytes(element * 8, bytes);
+        value = read_scalar64(ScalarType::float64, bytes);
         return true;
     } catch (...) {
         return false;
