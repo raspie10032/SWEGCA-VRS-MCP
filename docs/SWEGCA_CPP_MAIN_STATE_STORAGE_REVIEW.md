@@ -52,10 +52,16 @@ crash cases before code uses it.
   cannot represent the reserved write head; only the typed field does.
 - User clarification (2026-09-23 18:37 KST): a remembered occurrence and
   its immutable source record are memory; the numerical synapse strength
-  linking memories is experience. The original hybrid organizer persists
+  linking memories is experience. The old hybrid organizer persists
   `vrs_strengths.f16` and passes it into the next generation as
-  `initial_vrs_strengths`. Its strength history is not reconstructible from
-  memory records alone.
+  `initial_vrs_strengths`. The later canonicalization path at
+  `mosaic_vrs_canonicalization.py@3bddcb7:319-400` requires and emits f32.
+  Its strength history is not reconstructible from memory records alone.
+- The later original `mosaic_memory_activation.py@3bddcb7:462-488` keeps a
+  memory index and VRS snapshot as a Main-owned atomic pair. Its
+  `replay_memory` (`:725-746`) does not rank by strength. Strength-ordered
+  Replay and the five-way tie cap are user instructions from 2026-09-23;
+  they are not attributed to the original Replay function.
 
 ## Required contract
 
@@ -114,9 +120,22 @@ crash cases before code uses it.
 9. Main also owns the current VRS synapse-strength data as first-class
    persistent experience. Its published values and lineage must survive
    recovery from HEAD; they are not a rebuildable search view of memory
-   records. The journal representation and its relation to `CognitiveState`
-   remain to be decided from the SWEGCA and original VRS sources before code
-   fixes either layout.
+   records. The strength root is separate from `CognitiveState`, as in the
+   later original. One Main-published HEAD binds the memory watermark, state
+   root, and VRS strength root so readers never see a half-updated pair;
+   permitted VRS processing lag remains explicit in that published tuple.
+   New C++ strength persistence and computation use f32, matching the later
+   canonicalization path. The old f16 artifact is source history, not a
+   compatibility format or a per-edge rounding rule.
+10. A VRS worker proposal carries the memory watermark it read and the
+    parent strength root identity. Main alone checks that the source memory
+    range is contiguous in memory-record order, that no memory record was
+    skipped or counted twice, and that the parent root is still current
+    before publishing. Memory-record positions are not `PublishedStateId`:
+    that type names a CognitiveState publication. Raw cue hit counts grant no
+    strength mutation authority. The original `refine_vrs` stability bit is
+    a geometry test, not a SWEGCA three-state decision; their exact interface
+    remains open, including abstention.
 
 ## Candidate representation for review
 
