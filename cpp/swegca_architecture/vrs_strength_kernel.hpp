@@ -14,7 +14,8 @@ namespace swegca::architecture::kernel {
 // this connection, including aliases. These flags are neither provenance
 // nor publication authority. The shell must retain every judgment/address,
 // require equal previous strengths under numeric equality (+0 == -0), and
-// pass the first row's previous value here to preserve its stored zero sign.
+// pass both the first row's and representative row's previous values. The
+// representative is the first reinforce/weaken row, or the first row.
 struct ConnectionDirections final {
     bool has_judgment = false;
     bool reinforce = false;
@@ -51,29 +52,45 @@ struct StrengthTransition final {
 // abstain_conflict action or both directions preserve it. Unresolved rows do
 // not cancel an unopposed direction. This detached result grants no semantic
 // write or action authority. The host maps only exact support/refute strings
-// to direction, chooses the first eligible edge step and strength field,
-// groups by the exact vrs-edge:/vrs-edge-group: connection id, retains the
-// first reinforce/weaken row as representative (else first row), rejects
-// duplicate output connection ids, binds stage order and false authority
-// flags, and discards the whole proposal if any connection fails.
+// to direction using the whole receipt's conflicting-proposition set. It
+// chooses the first step with (edge_id, vrs_strength) or
+// (canonical_group_id, deweighted_vrs_strength). Presence of the canonical
+// key then chooses the deweighted field even when the edge pair made the
+// step eligible; a missing field fails the whole receipt. The host preserves
+// Python int() truncation for group/edge IDs and float() conversion for
+// strength, groups by the exact vrs-edge:/vrs-edge-group: connection ID,
+// checks every alias previous under numeric equality, and retains every
+// judgment/address. It rejects missing replay episodes, blank episode,
+// proposition, connection or snapshot identities, duplicate output IDs,
+// and any invalid row; one failure discards the whole receipt. It binds
+// stage order and false authority flags. None of these host conditions is
+// checked by this numeric kernel.
 // SWEGCA: src/tinylm_slicer/mosaic_vrs_state_update.py@3bddcb7:63-161
 // SWEGCA: src/tinylm_slicer/mosaic_memory_promotion.py@3bddcb7:83-153
 [[nodiscard]] inline StrengthTransition update_vrs_strength(
-    double previous, ConnectionDirections directions) noexcept {
+    double first_previous, double selected_previous,
+    ConnectionDirections directions) noexcept {
     StrengthTransition out;
-    if (!std::isfinite(previous) || previous < 0 || !directions.has_judgment)
+    if (!std::isfinite(first_previous) || first_previous < 0 ||
+        !std::isfinite(selected_previous) || selected_previous < 0 ||
+        std::isless(first_previous, selected_previous) ||
+        std::isgreater(first_previous, selected_previous) ||
+        !directions.has_judgment)
         return out;
 
     // The original constructs candidate rows before grouping them. A
     // nonfinite candidate invalidates the entire receipt even when the
     // grouped connection would later abstain on conflicting directions.
-    const double reinforced = directions.reinforce ? previous * 1.01 : previous;
-    const double weakened = directions.weaken ? previous * 0.995 : previous;
+    const double reinforced = directions.reinforce
+                                  ? selected_previous * 1.01 : selected_previous;
+    const double weakened = directions.weaken
+                                ? selected_previous * 0.995 : selected_previous;
     if (!std::isfinite(reinforced) || !std::isfinite(weakened)) return out;
 
-    double current = previous;
+    double current = selected_previous;
     StrengthAction action = StrengthAction::preserve_unresolved;
     if (directions.abstain_conflict || (directions.reinforce && directions.weaken)) {
+        current = first_previous;
         action = StrengthAction::abstain_conflict;
     } else if (directions.reinforce) {
         current = reinforced;
@@ -84,7 +101,7 @@ struct StrengthTransition final {
     }
     if (!std::isfinite(current) || current < 0) return out;
 
-    const bool was_promoted = previous >= 1.0;
+    const bool was_promoted = first_previous >= 1.0;
     const bool is_promoted = current >= 1.0;
     const auto promotion =
         was_promoted ? (is_promoted ? PromotionAction::retain : PromotionAction::revoke)
@@ -134,25 +151,32 @@ template <class T>
 // is native C++ infrastructure, not an algorithm in the original source.
 // SWEGCA: src/tinylm_slicer/mosaic_vrs_state_update.py@3bddcb7:63-161
 [[nodiscard]] inline bool update_vrs_strength_batch(
-    std::span<const double> previous,
+    std::span<const double> first_previous,
+    std::span<const double> selected_previous,
     std::span<const ConnectionDirections> directions,
     std::span<StrengthTransition> output,
     std::size_t first, std::size_t last) noexcept {
-    if (directions.size() != previous.size() || output.size() != previous.size() ||
-        first > last || last > previous.size())
+    if (selected_previous.size() != first_previous.size() ||
+        directions.size() != first_previous.size() ||
+        output.size() != first_previous.size() ||
+        first > last || last > first_previous.size())
         return false;
-    StrengthByteRange strengths, judgments, results;
-    if (!strength_byte_range(previous, strengths) ||
+    StrengthByteRange first_strengths, selected_strengths, judgments, results;
+    if (!strength_byte_range(first_previous, first_strengths) ||
+        !strength_byte_range(selected_previous, selected_strengths) ||
         !strength_byte_range(directions, judgments) ||
         !strength_byte_range(output, results) ||
-        strength_ranges_overlap(results, strengths) ||
+        strength_ranges_overlap(results, first_strengths) ||
+        strength_ranges_overlap(results, selected_strengths) ||
         strength_ranges_overlap(results, judgments))
         return false;
     for (std::size_t item = first; item < last; ++item)
-        if (!update_vrs_strength(previous[item], directions[item]).valid)
+        if (!update_vrs_strength(first_previous[item], selected_previous[item],
+                                 directions[item]).valid)
             return false;
     for (std::size_t item = first; item < last; ++item)
-        output[item] = update_vrs_strength(previous[item], directions[item]);
+        output[item] = update_vrs_strength(first_previous[item], selected_previous[item],
+                                           directions[item]);
     return true;
 }
 
