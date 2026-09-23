@@ -48,7 +48,8 @@ struct SynapseProposalInput final {
     std::uint64_t claim_revision;
     StateGeneration based_on;
     // Untrusted citation text. Main's Bind verifies address form, publication,
-    // original-experience kind, and equality with the decision's admitted set.
+    // experience kind (original or derived), and equality with the decision's
+    // admitted set.
     std::span<const std::string_view> evidence_addresses;
     std::span<const std::size_t> target_role_indices;  // indices in snapshot.state().roles()
     TensorDeltaInput semantic_delta;

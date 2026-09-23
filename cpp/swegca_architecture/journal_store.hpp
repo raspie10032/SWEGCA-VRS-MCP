@@ -407,7 +407,8 @@ private:
     void reclaim_retired();
 
     friend class swegca::architecture::MainOwner;
-    // `stage` without the kind rule: ExperienceAppend's only.
+    // `stage` without the kind rule: reachable outside JournalStore only
+    // through stage_experience_records with ExperienceStageKey.
     [[nodiscard]] StagedGeneration stage_records(std::span<const RecordDraft> drafts,
                                                  const StateGeneration& state,
                                                  std::span<const ViewGeneration> views) const;
