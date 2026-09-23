@@ -573,20 +573,24 @@ and revision binding required by SWEGCA I03 and I07 without SQLite.
 
 Journal data is split into bounded immutable segments linked by predecessor and
 successor manifests. Publication order is fixed: write detached segment, page,
-and manifest files; fsync every file; atomically rename the complete manifest as
-the single published head; then fsync the containing directory. The published
-head is the only recovery root. Readers ignore every detached file not reachable
-from that head. A bad checksum or digest in a published segment fails closed and
-is never automatically truncated; torn-write handling applies only to
-unpublished detached files. Transaction recovery starts from the published head
-and appends compensation records. Segment linking prevents any requirement to
-rewrite an unbounded Main file. Segmented manifests and atomic head replacement
-are **re-created (user@2026-09-23)** to implement the one-current-generation,
-recoverable publication requirements of I01, I07, and §4.8.
+and manifest files; fsync every file; then atomically publish Main's root naming
+the exact manifest and state publication, and fsync the containing directory.
+Main's published root is the authoritative recovery root. The lower journal's
+own HEAD may support standalone use but cannot override the generation that
+Main names. Readers ignore detached files outside Main's selected generation;
+those bytes remain accounted for until an explicit reconciliation rule permits
+their cleanup. A bad checksum or digest in a selected segment fails closed and
+is never automatically truncated. Transaction recovery starts from Main's
+published root and appends compensation records. Segment linking prevents any
+requirement to rewrite an unbounded Main file. Segmented manifests and atomic
+root replacement are **re-created (user@2026-09-23)** to implement the
+one-current-generation, recoverable publication requirements of I01, I07,
+and §4.8. The Main root publisher and write resumption after a selected older
+generation remain implementation work.
 
-Main prepares records and derived pages in a detached generation. The published
+Main prepares records and derived pages in a detached generation. The selected
 manifest names the journal tail, state generation, view generations, and exact
-digests. One atomic manifest replacement exposes the successor. Derived views
+digests. One atomic Main-root replacement exposes the successor. Derived views
 are rebuildable and never become the source of truth.
 
 The native read path consists of exact address lookup, cue/region navigation,

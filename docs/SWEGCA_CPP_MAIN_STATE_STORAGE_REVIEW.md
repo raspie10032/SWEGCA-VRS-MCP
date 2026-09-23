@@ -13,8 +13,9 @@ crash cases before code uses it.
   reports the old writer's E001/E002 gap. These sections describe the old
   local protocol, not a native byte format.
 - `SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md` §9 requires one
-  published HEAD as the recovery root, bounded immutable linked segments,
-  exact digests, and a manifest naming the state generation. Derived views
+  Main-published root as the authority for recovery, bounded immutable linked
+  segments, exact digests, and a manifest naming the state generation. The
+  journal's local HEAD cannot override Main's selected root. Derived views
   remain rebuildable.
 - `MainOwner` currently constructs generation 0 with a computed state digest.
   A new `JournalStore` starts with a zero state digest in its genesis HEAD.
