@@ -22,10 +22,14 @@ constexpr std::array<std::string_view, 32> initial_role_names{
     "environment_0", "environment_1", "audio_event_0", "audio_event_1",
     "narrative", "constraints", "verification", "global",
 };
+// The names and their order reproduce mosaic_omni.py SLOT_ROLES (16-32).
 
 constexpr std::size_t verification_role_index = 30;
 
-// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:83-93
+// The original compatibility topology checks the total against 32 roles.
+// Nonempty partitions and keeping verification in scratch are C++ profile
+// rules; the cited function does not impose them.
+// SWEGCA: src/swegca/mosaic_cognitive_slot_topology.py@5901a5a:12-73
 void require_initial_sizes(RolePartitionSizes sizes) {
     if (sizes.semantic == 0 || sizes.executive == 0 || sizes.scratch == 0 ||
         sizes.semantic > initial_role_names.size() ||
@@ -37,9 +41,9 @@ void require_initial_sizes(RolePartitionSizes sizes) {
         throw std::invalid_argument("verification_role_must_be_in_scratch");
 }
 
-// Registry identity is stable across processes and binds every mask to the
-// exact ordered role-to-partition map, rather than only its cardinality.
-// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:83-93
+// Weak source analogy: CognitiveSlotTopology binds ordered roles and partition
+// sizes. A persistent hash of that mapping is additional C++ infrastructure.
+// SWEGCA: src/swegca/mosaic_cognitive_slot_topology.py@5901a5a:12-73
 void update_u64(Sha256& hash, std::uint64_t value) {
     std::array<std::byte, 8> bytes{};
     for (std::size_t index = 0; index < bytes.size(); ++index)
@@ -47,7 +51,7 @@ void update_u64(Sha256& hash, std::uint64_t value) {
     hash.update(bytes);
 }
 
-// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:83-93
+// SWEGCA: src/swegca/mosaic_cognitive_slot_topology.py@5901a5a:12-73
 Digest256 registry_digest(std::span<const RoleDefinition> definitions) {
     Sha256 hash;
     hash.update("swegca.role_registry.v1");
@@ -63,7 +67,7 @@ Digest256 registry_digest(std::span<const RoleDefinition> definitions) {
     return Digest256(hash.finish());
 }
 
-// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:83-93
+// SWEGCA: src/swegca/mosaic_cognitive_slot_topology.py@5901a5a:12-73
 std::size_t required_word_count(std::size_t roles) {
     if (roles == 0)
         throw std::invalid_argument("role_mask_registry_must_not_be_empty");
@@ -72,18 +76,20 @@ std::size_t required_word_count(std::size_t roles) {
     return (roles + 63) / 64;
 }
 
-// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:83-93
+// SWEGCA: src/swegca/mosaic_cognitive_slot_topology.py@5901a5a:12-73
 std::string_view role_text(const RoleDefinition& definition) noexcept {
     return definition.id.value();
 }
 
-// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:83-93
+// SWEGCA: src/swegca/mosaic_cognitive_slot_topology.py@5901a5a:12-73
 std::string_view role_text(const RoleDefinitionInput& definition) noexcept {
     return definition.id;
 }
 
 // Both startup and typed successor inputs become identities on Main's account.
-// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:83-93
+// The original topology is fixed at 32 roles; dynamic registry ownership is
+// additional C++ infrastructure, not an existing Python implementation.
+// SWEGCA: src/swegca/mosaic_cognitive_slot_topology.py@5901a5a:12-73
 template <class Input>
 std::vector<RoleDefinition, AllocationAdapter<RoleDefinition>> owned_definitions(
     const AllocationContext& account, std::span<const Input> definitions) {
@@ -100,17 +106,17 @@ std::vector<RoleDefinition, AllocationAdapter<RoleDefinition>> owned_definitions
 
 }  // namespace
 
-// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:83-93
+// SWEGCA: src/swegca/mosaic_cognitive_slot_topology.py@5901a5a:12-73
 RoleRegistry::RoleRegistry(const AllocationContext& account,
                             std::span<const RoleDefinition> definitions)
     : RoleRegistry(account, owned_definitions(account, definitions)) {}
 
-// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:83-93
+// SWEGCA: src/swegca/mosaic_cognitive_slot_topology.py@5901a5a:12-73
 RoleRegistry::RoleRegistry(const AllocationContext& account,
                            std::span<const RoleDefinitionInput> definitions)
     : RoleRegistry(account, owned_definitions(account, definitions)) {}
 
-// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:83-93
+// SWEGCA: src/swegca/mosaic_cognitive_slot_topology.py@5901a5a:12-73
 RoleRegistry::RoleRegistry(const AllocationContext& account, Definitions definitions)
     : memory_(account), definitions_(std::move(definitions)),
       by_id_(std::less<>{}, account.allocator<IdEntry>()),
@@ -128,7 +134,8 @@ RoleRegistry::RoleRegistry(const AllocationContext& account, Definitions definit
             throw std::invalid_argument("role_registry_partition_invalid");
         // The map node and any key character buffer share Main's account.
         // Small-string storage is already covered by the map node allocation.
-        // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3f:638-640
+        // This owned lookup map is additional C++ infrastructure.
+        // SWEGCA: src/swegca/mosaic_cognitive_slot_topology.py@5901a5a:12-73
         if (!by_id_.emplace(
                 IdText(definition.id.value().data(), definition.id.value().size(),
                        account.allocator<char>()), index).second)
@@ -138,10 +145,11 @@ RoleRegistry::RoleRegistry(const AllocationContext& account, Definitions definit
     }
 }
 
-// The accepted profile preserves SLOT_ROLES global order across the three
-// concatenated partitions. Further roles are explicit registry extensions;
-// they do not create another state object.
-// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:83-93
+// The initial profile preserves SLOT_ROLES global order across the three
+// concatenated partitions. Additional roles are C++ successor infrastructure:
+// the original Python audit identifies compatible extension as missing
+// (mosaic_cognitive_slot_topology.py:107-118); it does not implement one.
+// SWEGCA: src/swegca/mosaic_omni.py@5901a5a:16-32
 RoleRegistry RoleRegistry::initial_profile(const AllocationContext& account,
                                             RolePartitionSizes sizes) {
     require_initial_sizes(sizes);
@@ -169,7 +177,7 @@ RoleRegistry RoleRegistry::initial_profile(const AllocationContext& account,
 }
 
 // Check the same fixed profile without constructing a second registry.
-// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:83-93
+// SWEGCA: src/swegca/mosaic_omni.py@5901a5a:16-32
 bool RoleRegistry::matches_initial_profile(RolePartitionSizes sizes) const {
     require_initial_sizes(sizes);
     if (definitions_.size() != initial_role_names.size()) return false;
@@ -186,7 +194,9 @@ bool RoleRegistry::matches_initial_profile(RolePartitionSizes sizes) const {
     return true;
 }
 
-// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:83-93
+// The original audit reports string-addressable extension as a missing
+// definition. This method is the C++ successor mechanism, not a Python port.
+// SWEGCA: src/swegca/mosaic_cognitive_slot_topology.py@5901a5a:107-118
 RoleRegistry RoleRegistry::with_appended(RoleDefinition definition) const {
     auto definitions = definitions_;
     definitions.push_back({RoleId(memory_, definition.id.value()),
@@ -194,20 +204,22 @@ RoleRegistry RoleRegistry::with_appended(RoleDefinition definition) const {
     return RoleRegistry(memory_, std::move(definitions));
 }
 
-// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:83-93
+// SWEGCA: src/swegca/mosaic_cognitive_slot_topology.py@5901a5a:12-73
 const RoleDefinition& RoleRegistry::at(std::size_t index) const {
     if (index >= definitions_.size())
         throw std::out_of_range("role_registry_index_out_of_range");
     return definitions_[index];
 }
 
-// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:83-93
+// SWEGCA: src/swegca/mosaic_cognitive_slot_topology.py@5901a5a:12-73
 const RoleDefinition* RoleRegistry::find(std::string_view id) const noexcept {
     const auto found = by_id_.find(id);
     return found == by_id_.end() ? nullptr : &definitions_[found->second];
 }
 
-// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:243-251
+// The original target_slot_mask is a boolean tensor. Packed words and the
+// registry digest are C++ representation and binding rules.
+// SWEGCA: src/swegca/mosaic_synapse_arbiter.py@5901a5a:54-75
 RoleMask::RoleMask(const RoleRegistry& registry,
                    Words words)
     : role_count_(registry.size()), registry_digest_(registry.digest()),
@@ -222,7 +234,7 @@ RoleMask::RoleMask(const RoleRegistry& registry,
     }
 }
 
-// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:243-251
+// SWEGCA: src/swegca/mosaic_synapse_arbiter.py@5901a5a:54-75
 RoleMask RoleMask::none(const RoleRegistry& registry) {
     return RoleMask(
         registry,
@@ -230,7 +242,7 @@ RoleMask RoleMask::none(const RoleRegistry& registry) {
               registry.memory_.allocator<std::uint64_t>()));
 }
 
-// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:243-251
+// SWEGCA: src/swegca/mosaic_synapse_arbiter.py@5901a5a:54-75
 RoleMask RoleMask::from_indices(
     const RoleRegistry& registry, std::span<const std::size_t> selected) {
     auto mask = none(registry);
@@ -242,7 +254,7 @@ RoleMask RoleMask::from_indices(
     return mask;
 }
 
-// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:243-251
+// SWEGCA: src/swegca/mosaic_synapse_arbiter.py@5901a5a:54-75
 bool RoleMask::test(std::size_t index) const {
     if (index >= role_count_)
         throw std::out_of_range("role_mask_index_out_of_range");
@@ -251,7 +263,7 @@ bool RoleMask::test(std::size_t index) const {
     return (words_[index / 64] & (std::uint64_t{1} << (index % 64))) != 0;
 }
 
-// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:243-251
+// SWEGCA: src/swegca/mosaic_synapse_arbiter.py@5901a5a:54-75
 std::size_t RoleMask::selected_count() const noexcept {
     std::size_t count = 0;
     for (const auto word : words_) count += std::popcount(word);

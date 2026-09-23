@@ -110,15 +110,17 @@ private:
 // Borrowed exact-address reader for owner validation during a view rebuild.
 // It reads from the unpublished rebuilt address tree and the published record
 // extents. The callable and this adapter live only through rebuild_view.
-// C++ rebuild adapter, not a claim of an identical type in the user's prior
-// implementation. Contract: docs/SWEGCA_CPP_MAIN_STATE_STORAGE_REVIEW.md.
+// Weak source analogy: the author's cold block loader exposes a result only
+// after the complete layout validates. This address reader is additional C++
+// journal-view infrastructure, not that loader or a prior Python type.
+// Contract: docs/SWEGCA_CPP_MAIN_STATE_STORAGE_REVIEW.md.
 class RebuildReader final {
 public:
     RebuildReader(const RebuildReader&) = delete;
     RebuildReader& operator=(const RebuildReader&) = delete;
     RebuildReader(RebuildReader&&) = delete;
     RebuildReader& operator=(RebuildReader&&) = delete;
-    // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:196-205
+    // SWEGCA: src/tinylm_slicer/mosaic_vrs_block_store.py@3bddcb7:187-225
     template <class R, class Q>
         requires(std::is_lvalue_reference_v<R&&> && std::is_lvalue_reference_v<Q&&> &&
                  std::is_object_v<std::remove_reference_t<R>> &&
@@ -126,21 +128,21 @@ public:
                  std::is_invocable_r_v<PublishedRecord, R&, std::string_view> &&
                  std::is_invocable_r_v<std::optional<RecordPosition>, Q&,
                                        std::string_view>)
-    // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:196-205
+    // SWEGCA: src/tinylm_slicer/mosaic_vrs_block_store.py@3bddcb7:187-225
     RebuildReader(R&& replay, Q&& resolve) noexcept
         : target_(static_cast<const void*>(std::addressof(replay))),
           call_(&invoke<R>),
           resolve_target_(static_cast<const void*>(std::addressof(resolve))),
           resolve_call_(&invoke_resolve<Q>) {}
 
-    // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:196-205
+    // SWEGCA: src/tinylm_slicer/mosaic_vrs_block_store.py@3bddcb7:187-225
     [[nodiscard]] PublishedRecord replay(std::string_view address) const {
         return call_(target_, address);
     }
 
     // Resolves against the unpublished rebuilt address tree, not caller
     // supplied positions. The returned position must be compared exactly.
-    // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:196-205
+    // SWEGCA: src/tinylm_slicer/mosaic_vrs_block_store.py@3bddcb7:187-225
     [[nodiscard]] std::optional<RecordPosition> resolve(std::string_view address) const {
         return resolve_call_(resolve_target_, address);
     }
@@ -148,14 +150,14 @@ public:
 private:
     using Call = PublishedRecord (*)(const void*, std::string_view);
     using ResolveCall = std::optional<RecordPosition> (*)(const void*, std::string_view);
-    // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:196-205
+    // SWEGCA: src/tinylm_slicer/mosaic_vrs_block_store.py@3bddcb7:187-225
     template <class F>
     static PublishedRecord invoke(const void* target, std::string_view address) {
         auto& replay = *static_cast<std::remove_reference_t<F>*>(const_cast<void*>(target));
         return replay(address);
     }
 
-    // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:196-205
+    // SWEGCA: src/tinylm_slicer/mosaic_vrs_block_store.py@3bddcb7:187-225
     template <class Q>
     static std::optional<RecordPosition> invoke_resolve(const void* target,
                                                          std::string_view address) {
@@ -173,14 +175,17 @@ private:
 // record kind and may replay prior records through the rebuilt address tree.
 // It must not reenter JournalStore publication while rebuild_view holds the
 // publication lock.
-// This native recovery adapter has no direct Python type counterpart.
+// Weak source analogy: complete-layout validation precedes exposure in the
+// author's cold block loader. Validation of journal records before rebuilding
+// a derived address view is additional C++ infrastructure with no direct
+// Python type counterpart.
 class RebuildValidator final {
 public:
     RebuildValidator(const RebuildValidator&) = delete;
     RebuildValidator& operator=(const RebuildValidator&) = delete;
     RebuildValidator(RebuildValidator&&) = delete;
     RebuildValidator& operator=(RebuildValidator&&) = delete;
-    // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:196-205
+    // SWEGCA: src/tinylm_slicer/mosaic_vrs_block_store.py@3bddcb7:187-225
     template <class F>
         requires(!std::is_same_v<std::remove_cvref_t<F>, RebuildValidator> &&
                  std::is_object_v<F> &&
@@ -192,7 +197,7 @@ public:
     template <class F>
     RebuildValidator(const F&&) = delete;
 
-    // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:196-205
+    // SWEGCA: src/tinylm_slicer/mosaic_vrs_block_store.py@3bddcb7:187-225
     void operator()(const RecordView& record, const RecordPosition& position,
                     const RebuildReader& reader) const {
         call_(target_, record, position, reader);
@@ -201,7 +206,7 @@ public:
 private:
     using Call = void (*)(const void*, const RecordView&, const RecordPosition&,
                           const RebuildReader&);
-    // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:196-205
+    // SWEGCA: src/tinylm_slicer/mosaic_vrs_block_store.py@3bddcb7:187-225
     template <class F>
     static void invoke(const void* target, const RecordView& record,
                        const RecordPosition& position, const RebuildReader& reader) {
@@ -417,7 +422,7 @@ public:
 
     // The experience appender may stage its reserved record kinds but cannot
     // publish or rewrite HEAD. Only MainOwner can perform those mutations.
-    // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:196-205
+    // SWEGCA: user@2026-09-22:61
     [[nodiscard]] StagedGeneration stage_experience_records(
         const ExperienceStageKey&, std::span<const RecordDraft> drafts,
         const StateGeneration& state, std::span<const ViewGeneration> views) const {

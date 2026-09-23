@@ -45,8 +45,10 @@ struct RolePartitionSizes final {
 };
 
 // Immutable string-addressed mapping from cognitive role to one tensor slot.
-// Extensions append roles inside the same Cognitive State identity.
-// Rule: state subsystem, reconstruction board@7c0b62f:83-93.
+// The original CognitiveSlotTopology defines a fixed 32-role compatibility
+// profile. Its audit explicitly reports compatible extensions as missing
+// (mosaic_cognitive_slot_topology.py:49-73,107-118). Appended roles and the
+// digest-bound map are additional C++ successor infrastructure.
 class RoleRegistry final {
 public:
     RoleRegistry(const AllocationContext& account,
@@ -59,15 +61,15 @@ public:
     [[nodiscard]] bool matches_initial_profile(RolePartitionSizes sizes) const;
     [[nodiscard]] RoleRegistry with_appended(RoleDefinition definition) const;
 
-    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:83-93
+    // SWEGCA: src/swegca/mosaic_cognitive_slot_topology.py@5901a5a:12-73
     [[nodiscard]] std::size_t size() const noexcept { return definitions_.size(); }
     [[nodiscard]] const RoleDefinition& at(std::size_t index) const;
     [[nodiscard]] const RoleDefinition* find(std::string_view id) const noexcept;
-    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:83-93
+    // SWEGCA: src/swegca/mosaic_cognitive_slot_topology.py@5901a5a:12-73
     [[nodiscard]] std::span<const RoleDefinition> definitions() const noexcept {
         return definitions_;
     }
-    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:83-93
+    // SWEGCA: src/swegca/mosaic_cognitive_slot_topology.py@5901a5a:12-73
     [[nodiscard]] const Digest256& digest() const noexcept { return digest_; }
 
 private:
@@ -83,7 +85,9 @@ private:
     Digest256 digest_;
 };
 
-// A role mask cannot be confused with numeric tensor storage.
+// A role mask cannot be confused with numeric tensor storage. It represents
+// the author's boolean target_slot_mask with C++ packed words; the original
+// does not have a RoleMask class or registry digest.
 class RoleMask final {
 public:
     [[nodiscard]] static RoleMask none(const RoleRegistry& registry);
@@ -91,21 +95,21 @@ public:
         const RoleRegistry& registry, std::span<const std::size_t> selected);
 
     [[nodiscard]] bool test(std::size_t index) const;
-    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:243-251
+    // SWEGCA: src/swegca/mosaic_synapse_arbiter.py@5901a5a:54-75
     [[nodiscard]] std::size_t role_count() const noexcept { return role_count_; }
     [[nodiscard]] std::size_t selected_count() const noexcept;
-    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:83-93
+    // SWEGCA: src/swegca/mosaic_cognitive_slot_topology.py@5901a5a:12-73
     [[nodiscard]] bool matches(const RoleRegistry& registry) const noexcept {
         // A moved-from word buffer must not keep a usable registry binding.
         return role_count_ == registry.size() &&
                words_.size() == role_count_ / 64 + (role_count_ % 64 != 0) &&
                registry_digest_ == registry.digest();
     }
-    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:83-93
+    // SWEGCA: src/swegca/mosaic_cognitive_slot_topology.py@5901a5a:12-73
     [[nodiscard]] const Digest256& registry_digest() const noexcept {
         return registry_digest_;
     }
-    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:243-251
+    // SWEGCA: src/swegca/mosaic_synapse_arbiter.py@5901a5a:54-75
     [[nodiscard]] std::span<const std::uint64_t> words() const noexcept {
         return words_;
     }
