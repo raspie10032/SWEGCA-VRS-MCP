@@ -59,6 +59,7 @@ add_library(swegca_vrs_candidate STATIC
     cpp/swegca_vrs/identity_types.cpp
     cpp/swegca_vrs/main_owner.cpp
     cpp/swegca_vrs/main_state_writer.cpp
+    cpp/swegca_vrs/memory_candidate.cpp
     cpp/swegca_vrs/native_tensor.cpp
     cpp/swegca_vrs/proposal.cpp
     cpp/swegca_vrs/proposal_arbiter.cpp
