@@ -36,7 +36,7 @@ from the first Replay set's five-original limit (§5). The route replaces the si
 
 ## 1. One pinned universe per route for all four stages
 All four stages of one route run over one pinned published universe (the session U_s or the main U_m, see below) and that universe's VRS strengths (main: named by Main HEAD, b2c2f33). A stage handed a result from another snapshot fails, as :663-664 and :733-734 do. The query text is the same in every stage (:936-943). This is the user's one memory+VRS pair swapped atomically (:463-508): our Main HEAD names the memory watermark and the VRS strength root in one CAS.
-- **Not true of today's API (Codex 19:51).** `for_each_index_match`, `resolve` and `replay_at_head` each take a fresh `snapshot()` (journal_store.cpp:1815-1826 and others). Several cue lookups and up to 5 replays could see different HEADs.
+- **Still missing from the activation API.** Standalone `for_each_index_match`, `resolve` and `replay` each take a fresh journal snapshot. Evidence admission now keeps its original, state head and parts on one `JournalReadSnapshot`, but several cue lookups and up to 5 activation replays can still see different HEADs until the Main-owned activation lease exists.
 - **Needed first:** a Main-owned activation lease, taken once per activation. It pins **both** the session universe U_s (the session-local native journal and its session VRS) and the main universe U_m (the main journal and its VRS root), because the approved flow keeps them apart (:59-69). Déjà vu runs on U_s. Its `matched_cues` decides one route: U_s, or U_m on a miss (:13-15, :46). Every later stage (navigation, Recall, Replay, strength reads, Re-evidence) uses that one chosen universe. The same-U contract holds per route. Codex designs and implements the journal side. The four-stage code is built on the lease, never on `snapshot()` per call.
 - **Publication boundary (v1.9, Claude msg 240 / Codex 20:37-20:38).** Three layers, kept apart.
   - **User rules (fixed).**
@@ -156,7 +156,7 @@ Versions up to v1.5 left these approved rules out. They are binding, and the sta
   3. If 2 to 5 share it, open them all.
   4. If 6 or more share it, order them by matched count (descending), then by journal sequence (descending, most recent first), and open the first 5.
   5. The receipt records how many were tied and how many were left unopened.
-- **Open:** `replay_at_head` on the same snapshot. The memory is decoded exactly, with its parts checked when read.
+- **Open:** exact-address Replay through the chosen activation lease's pinned journal snapshot. The memory is decoded exactly, with its parts checked from that same snapshot when read.
   - The replayed memory carries its steps (phase, observation, relations, judgment, outcome, evidence_refs) once the multimodal envelope exists (plan v3.2 §1).
   - Until then it carries raw/structured, as now.
 - **Authority:** replay is reconstruction, not historical truth (:709-713). It grants no authority (:722-724).

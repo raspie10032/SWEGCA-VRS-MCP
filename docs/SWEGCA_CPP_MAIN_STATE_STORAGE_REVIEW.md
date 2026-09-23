@@ -442,16 +442,13 @@ non-tensor inline representation remain undecided.
   framing** and each generation fit 64 MiB. No empty-budget assumption can
   replace those encoded-size checks. Intermediate lower HEADs confer no Main
   state authority; only Main's committed marker selects a final manifest.
-- The final record-free generation cannot yet bind the new kind-7 identity:
-  `ManifestFields` still has a provisional state ordinal and content digest,
-  but no publication `RecordPosition` and digest. That manifest format, its
-  codec and recovery checks must change before state publication code can
-  use this graph. The Main marker then has to bind that exact final
-  `JournalRoot`, publication identity, content digest and strength root.
-  The migration also reaches `stage_from`, `stage_state_records`, `stage_view`,
-  `state_generation` and `replay_at_head`, which currently pass or reconstruct
-  the ordinal-bearing `StateGeneration`; changing only the manifest bytes
-  would leave the public snapshot and Replay bound to the old identity.
+- `ManifestFields` now carries both `state_content_digest` and the exact
+  `state_publication` position. Main's reserved-kind staging and a read-only
+  genesis recovery candidate exist. Evidence admission keeps the original,
+  state head and every experience part on one pinned journal generation.
+  The final Main publication path remains incomplete: marker-chain selection,
+  durable strength-root verification, owner binding, pair swap, and writable
+  reconciliation after an older selected root still need implementation.
 
 The predecessor chain, writable resumption after `open_at_root`, orphan
 genesis, pending-marker restart selection, part reclamation and strength-root
