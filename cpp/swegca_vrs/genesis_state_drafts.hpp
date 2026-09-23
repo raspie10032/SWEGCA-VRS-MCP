@@ -5,6 +5,7 @@
 #include "swegca_vrs/state_record_codec.hpp"
 
 #include <array>
+#include <optional>
 #include <string_view>
 
 // The two fixed records after Main has staged all state parts: a reusable
@@ -12,6 +13,10 @@
 // drafts, not a Main publication or a commit marker. Main verifies/reuses an
 // existing root and stages the candidate through its private StateStageKey.
 namespace swegca::vrs {
+
+namespace journal {
+class JournalStore;
+}
 
 class GenesisStateDrafts final {
 public:
@@ -36,6 +41,18 @@ public:
     // Lineage: native mechanism — the candidate record precedes Main's commit receipt.
     // SWEGCA: src/tinylm_slicer/mosaic_paper_resident_assimilation.py@3bddcb7:491-535
     [[nodiscard]] journal::RecordDraft publication_draft() const noexcept;
+
+    // Existing immutable records are reusable only after Main compares
+    // their full bytes. An absent address returns false/nullopt; a present
+    // address with a different record fails closed. Neither result selects
+    // a Main publication.
+    // Lineage: native mechanism — retry can reuse the same content root and candidate.
+    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:567-572
+    [[nodiscard]] bool root_published_in(const journal::JournalStore& store,
+                                         const AllocationContext& memory) const;
+    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:567-572
+    [[nodiscard]] std::optional<journal::RecordPosition> publication_published_in(
+        const journal::JournalStore& store, const AllocationContext& memory) const;
 
 private:
     std::string_view source_;

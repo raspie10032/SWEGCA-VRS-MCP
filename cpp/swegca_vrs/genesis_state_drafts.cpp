@@ -1,6 +1,7 @@
 #include "swegca_vrs/genesis_state_drafts.hpp"
 
 #include "swegca_vrs/core_sha256.hpp"
+#include "swegca_vrs/journal_store.hpp"
 
 #include <algorithm>
 #include <stdexcept>
@@ -64,6 +65,56 @@ journal::RecordDraft GenesisStateDrafts::publication_draft() const noexcept {
     draft.payload =
         std::span<const std::byte>(publication_payload_.data(), publication_payload_.size());
     return draft;
+}
+
+// Lineage: native mechanism — a retry verifies the whole reusable root.
+// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:567-572
+bool GenesisStateDrafts::root_published_in(const journal::JournalStore& store,
+                                           const AllocationContext& memory) const {
+    const ExperienceAddress address(
+        memory, std::string_view(root_address_.data(), root_address_.size()));
+    const auto position = store.resolve(address);
+    if (!position) return false;
+    const auto record = store.replay(address);
+    const auto& view = record.view();
+    if (record.position() != *position || view.kind != journal::state_root_record_kind ||
+        view.address != address.value() || view.source != source_ || view.authority ||
+        !view.previous_revision_address.empty() || !view.claim.empty() ||
+        !view.outcome.empty() || !view.transaction_id.empty() || view.index_count != 0 ||
+        !view.index.empty() ||
+        view.payload_digest != Sha256::of(std::span<const std::byte>(
+                                   root_payload_.data(), root_payload_.size())) ||
+        view.payload.size() != root_payload_.size() ||
+        !std::equal(view.payload.begin(), view.payload.end(), root_payload_.begin()))
+        throw std::runtime_error("state_root_published_mismatch");
+    return true;
+}
+
+// Lineage: native mechanism — an orphan genesis candidate is data until Main's marker selects it.
+// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:567-572
+std::optional<journal::RecordPosition> GenesisStateDrafts::publication_published_in(
+    const journal::JournalStore& store, const AllocationContext& memory) const {
+    const ExperienceAddress address(
+        memory, std::string_view(publication_address_.data(), publication_address_.size()));
+    const auto position = store.resolve(address);
+    if (!position) return std::nullopt;
+    const auto record = store.replay(address);
+    const auto& view = record.view();
+    if (record.position() != *position ||
+        view.kind != journal::state_publication_record_kind ||
+        view.address != address.value() || view.source != source_ || view.authority ||
+        view.source_revision !=
+            std::string_view(source_revision_.data(), source_revision_.size()) ||
+        view.operation_id != std::string_view(operation_id_.data(), operation_id_.size()) ||
+        !view.previous_revision_address.empty() || !view.claim.empty() ||
+        !view.outcome.empty() || !view.transaction_id.empty() || view.index_count != 0 ||
+        !view.index.empty() ||
+        view.payload_digest != Sha256::of(std::span<const std::byte>(
+                                   publication_payload_.data(), publication_payload_.size())) ||
+        view.payload.size() != publication_payload_.size() ||
+        !std::equal(view.payload.begin(), view.payload.end(), publication_payload_.begin()))
+        throw std::runtime_error("state_publication_published_mismatch");
+    return position;
 }
 
 }  // namespace swegca::vrs
