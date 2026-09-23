@@ -109,6 +109,14 @@ bool is_strict_utf8(std::string_view value) noexcept {
     return true;
 }
 
+// Source _text calls strip and rejects an empty result. MemoryStep invokes it
+// for validation without replacing the stored field, so input bytes remain.
+// UTF-8 validity is an additional native boundary for string_view inputs.
+// SWEGCA: src/tinylm_slicer/mosaic_memory_activation.py@3bddcb7:27-31
+bool has_python_nonspace(std::string_view value) noexcept {
+    return is_strict_utf8(value) && contains_identity_content(value);
+}
+
 // Native identity also imposes UTF-8, NUL and byte-length rules absent from
 // the cited Python text check. Only the blank-string decision matches strip.
 // SWEGCA: src/swegca/mosaic_cognitive_kernel.py@5901a5a:19-21
