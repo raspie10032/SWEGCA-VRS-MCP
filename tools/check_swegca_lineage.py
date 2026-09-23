@@ -42,6 +42,19 @@ CORE_INCLUDE_OPERAND = re.compile(r'^[ \t]*(?:#|%:)[ \t]*include[ \t]+(\S+)[ \t]
 CORE_PRAGMA_ONCE = re.compile(r'^[ \t]*(?:#|%:)[ \t]*pragma[ \t]+once[ \t]*\Z')
 CORE_UNSAFE_SEPARATOR = re.compile(r'[\x00\r\f\v\u2028\u2029]')
 CORE_LINE_SPLICE = re.compile(r'\\[ \t]*\n')
+# Inline assembly can read any file (`.incbin`, `.include`) and `_Pragma` or
+# `__has_include` reach the preprocessor outside a directive line; a string
+# built from adjacent literals or escapes hides the path from the raw `vrs`
+# search below, so the tokens themselves are refused. Module lines import
+# without a directive.
+CORE_FORBIDDEN_TOKEN = re.compile(
+    r'(?<![A-Za-z0-9_])(asm|_asm|__asm|__asm__|_Pragma|__pragma|__has_include|__has_embed)(?![A-Za-z0-9_])'
+)
+# A module line starts a logical line (P1857); the pattern also accepts one
+# after `;`, `{` or `}` so no compiler's looser reading can hide one.
+CORE_MODULE_LINE = re.compile(
+    r'(?:^|[;{}])[ \t]*(?:export[ \t]+)?(?:import|module)(?![A-Za-z0-9_])', re.MULTILINE
+)
 CODEX_ROOT = Path(__file__).resolve().parents[2]
 SOURCE_ROOTS = (
     Path(__file__).resolve().parents[1],
@@ -60,6 +73,22 @@ PINNED_LOCAL_REVISIONS = {
 ORDER_PATH = "docs/SWEGCA_VRS_MCP_ORDER_FOR_REVIEW.md"
 ORDER_2026_09_22 = "30b73e7cbd5bef29e32db0d9d947c8e70f8622e0"
 ORDER_2026_09_23 = "fcab35bc9609840afbf2987680b317e03cc3fd78"
+
+# C++ design documents of this repository, each at one selected pinned
+# revision (codex 2026-09-23 23:19, 23:29, 23:47). Pinning selects the text a
+# tag may cite; it does not approve the whole document, and each cited span
+# still needs semantic review. A tag citing one names the design basis of a
+# C++ mechanism, including one new to C++ (the inventory's own fourth source
+# rank); it does not claim the original author's code or a direct user
+# directive, and the comment above the tag must say whether the function is
+# a direct port, a weak analogy or a native mechanism. Only these exact
+# path/revision pairs are accepted, cited by the full 40-digit revision:
+# never another document, a revision prefix, nor the current HEAD of these.
+PINNED_DESIGN_DOCS: dict[str, str] = {
+    "docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md":
+        "cefdc3fce8b5c605166d668924baa5d4a6c49dc0",
+    "docs/SWEGCA_CPP_VRS_LAYER_PLAN.md": "472d23225c973fa0a33581afd6bd9026df6fc98a",
+}
 
 # The product and its original VRS sources share one Git object database.
 # Only these inspected, exact source pairs from that database can be cited.
@@ -264,7 +293,10 @@ def valid_tag(reference: str) -> bool:
             return False
         blob = source_blob(0, order_revision, ORDER_PATH)
         return approved and blob is not None and end <= len(blob.splitlines())
-    if source.startswith("src/swegca_vrs2/"):
+    if source in PINNED_DESIGN_DOCS:
+        full_revision = PINNED_DESIGN_DOCS[source]
+        blob = source_blob(0, full_revision, source) if revision == full_revision else None
+    elif source.startswith("src/swegca_vrs2/"):
         full_revision = next((full for short, full in PINNED_LOCAL_REVISIONS.items()
                               if pinned_revision(revision, full) and
                               (source, short) in PINNED_LOCAL_SOURCE_PAIRS), None)
@@ -447,6 +479,11 @@ def check_layering(path: str, source: str) -> list[str]:
     # boundary: comments and strings may cause false positives, never misses.
     if re.search(r'vrs', source, re.IGNORECASE):
         issues.append(f"{path}: SWEGCA verifier references VRS")
+    token = CORE_FORBIDDEN_TOKEN.search(source)
+    if token:
+        issues.append(f"{path}: SWEGCA verifier uses `{token.group(1)}`")
+    if CORE_MODULE_LINE.search(source):
+        issues.append(f"{path}: SWEGCA verifier module import/declaration is forbidden")
     return issues
 
 
