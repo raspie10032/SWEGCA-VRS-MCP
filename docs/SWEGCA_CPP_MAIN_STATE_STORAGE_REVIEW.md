@@ -612,8 +612,8 @@ boolean is not a Main capability.
 | Autonomous cognition (`S/mosaic_autonomous_cognition.py:167-189`) | Goal phase, step, event ID and event-specific goal/self fields; pure state-machine checks, no Main capability | `cognition_runner` returns a proposal; no successor route for these fields. |
 | Slot apply/archive/protect (`S/mosaic_cognitive_slot_memory.py:226-367`) | Role-addressed tensor slot and/or slot-manager self metadata; revision, lease and content-hash checks, no Main capability | No C++ successor route. |
 | Arbiter commit (`S/mosaic_synapse_arbiter.py:238-360`) | Semantic, executive or scratch slots when `commit=True`; no Main capability and no source caller found | C++ arbiter is commit-free; no successor route. |
-| Accelerated/hybrid verification (`T/mosaic_accelerated_verification.py:89-110`; `T/mosaic_hybrid_verification.py:59-89`) | Delegate to recurrent state update below; no separate Main gate | No C++ successor route. |
-| Continuous-soak audio lease (`T/mosaic_continuous_soak.py:72-119`) | Delegates to slot apply/archive; updates audio slot, evidence references and manager self metadata | No C++ successor route. |
+| Accelerated/hybrid verification (`T/mosaic_accelerated_verification.py:89-110`; `T/mosaic_hybrid_verification.py:59-89`) | Delegates to autonomous cognition after replay-decision selection, changing goal/self fields; slot tensors remain the same objects; no separate Main gate | No C++ successor route. |
+| Continuous-soak audio lease (`T/mosaic_continuous_soak.py:72-119`) | Delegates to slot apply/archive; updates an audio-pool slot and slot-manager self metadata, including lease evidence references; the state's `evidence_refs` field is unchanged | No C++ successor route. |
 | Semantic consolidation (`T/mosaic_semantic_consolidation.py:399-457`) | Delegates to slot apply after promoted VRS context and semantic-promotion decision | No C++ successor route or linked transaction. |
 | Consolidation rollback and verified reload (`T/mosaic_semantic_consolidation.py:497-578`) | Returns exact prior state on receipt/journal checks; reload changes semantic slot after accepted accumulator decision and promoted context | No C++ successor route. |
 | Temporal evidence window (`T/mosaic_temporal_evidence_stream.py:71-112`) | Recurrent update and evidence-reference TTL pruning; passes a plain `authorized` boolean | No C++ successor route. |
@@ -630,3 +630,9 @@ its source whether the output is request-local or Main-published, then provide
 an authorized Main route for every persistent change. None of the source
 behavior is silently removed. The record header, receipt body and transition
 tags remain unspecified until that boundary is reviewed.
+Among the listed post-genesis source routes, only recurrent integration,
+temporal-window pruning and physical correction change
+`CognitiveState.evidence_refs`; only physical correction changes
+`value_state`. Lease evidence references belong to slot-manager metadata in
+`self_state`. No source route was found that changes world-graph content or
+roles after initial construction.
