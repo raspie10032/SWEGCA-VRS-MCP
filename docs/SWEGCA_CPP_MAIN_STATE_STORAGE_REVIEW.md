@@ -504,6 +504,13 @@ record graph or marker, or recover the selected state. `MainOwner::snapshot()`
 therefore refuses its as-yet-unpublished initial state. Build and product
 tests remain stopped under the architecture inventory's §10 gate.
 
+The integration branch now has a genesis-only kind-7 payload codec
+(`state_publication_codec.{hpp,cpp}`): SWSH/v1, the actual initial content
+digest, no predecessor and body tag zero. It derives the record address from
+the entire payload and rejects every other body. This codec does not stage a
+record or select a Main state; the section/root codec and Main publication
+adapter are still separate work.
+
 ## Decisions before implementation
 
 - Enumerate every Main-owned state-changing transition before fixing the
