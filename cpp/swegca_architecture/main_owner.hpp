@@ -19,6 +19,10 @@ struct MainInitialState final {
         ScalarType scalar_type;
         TensorShape3 shape;
         std::span<const std::byte> canonical_bytes;
+        // When present, Main reads bounded chunks from this borrowed reader.
+        // canonical_bytes must then be empty. The reader lives through Main's
+        // constructor call; neither input becomes part of CognitiveState.
+        const TensorByteReader* reader = nullptr;
     };
 
     std::string_view owner;

@@ -126,6 +126,30 @@ CognitiveTensor::CognitiveTensor(const AllocationContext& account,
     }
 }
 
+// SWEGCA: docs/SWEGCA_CPP_MAIN_STATE_STORAGE_REVIEW.md@7c4d419:38-41
+CognitiveTensor::CognitiveTensor(const AllocationContext& account,
+                                 ScalarType scalar_type, TensorShape3 shape,
+                                 const TensorByteReader& source)
+    : scalar_type_(scalar_type), shape_(shape),
+      byte_count_(checked_bytes(scalar_type, shape)),
+      chunks_(account.allocator<ChunkPtr>()) {
+    chunks_.reserve(1 + (byte_count_ - 1) / chunk_bytes);
+    for (std::size_t offset = 0; offset < byte_count_; offset += chunk_bytes) {
+        const auto count = std::min<std::size_t>(chunk_bytes, byte_count_ - offset);
+        Storage part(count, std::byte{0}, account.allocator<std::byte>());
+        std::size_t filled = 0;
+        while (filled < count) {
+            const auto remaining = std::span<std::byte>(part).subspan(filled);
+            const auto received = source.read(offset + filled, remaining);
+            if (received == 0 || received > remaining.size())
+                throw std::invalid_argument("cognitive_tensor_source_short_read");
+            filled += received;
+        }
+        chunks_.push_back(std::allocate_shared<Chunk>(
+            account.allocator<Chunk>(), std::move(part), scalar_type));
+    }
+}
+
 // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:243-251
 CognitiveTensor CognitiveTensor::zeroed(const AllocationContext& account,
                                          ScalarType scalar_type,

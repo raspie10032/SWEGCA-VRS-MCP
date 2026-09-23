@@ -31,6 +31,16 @@ struct TensorShape3 final {
     auto operator<=>(const TensorShape3&) const = default;
 };
 
+// Borrowed source for bounded initial-state recovery. A read may return less
+// than requested; zero signals end or failure. CognitiveTensor requires every
+// canonical byte and validates each complete chunk before retaining it.
+class TensorByteReader {
+public:
+    virtual ~TensorByteReader() = default;
+    [[nodiscard]] virtual std::size_t read(
+        std::uint64_t offset, std::span<std::byte> destination) const = 0;
+};
+
 // Owned canonical storage for a fixed-rank [batch, slot, width] tensor. Bytes
 // are always little-endian and expose no mutable view. Immutable bounded
 // chunks can be shared by successive states; a verification-slot update
@@ -41,6 +51,9 @@ public:
     CognitiveTensor(const AllocationContext& account,
                     ScalarType scalar_type, TensorShape3 shape,
                     std::span<const std::byte> canonical_bytes);
+    CognitiveTensor(const AllocationContext& account,
+                    ScalarType scalar_type, TensorShape3 shape,
+                    const TensorByteReader& source);
 
     [[nodiscard]] static CognitiveTensor zeroed(const AllocationContext& account,
                                                 ScalarType scalar_type,

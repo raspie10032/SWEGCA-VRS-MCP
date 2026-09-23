@@ -35,10 +35,10 @@ crash cases before code uses it.
   Candidate `462a6f7` replaces it with immutable shared chunks, but the
   writer and large-state startup paths are not connected yet. A disk part
   tree alone would not solve the in-memory copy.
-- `MainInitialState::TensorInput` currently borrows one full byte span, and
-  Main copies it into a tensor. A large caller-held initial tensor plus that
-  copy can exceed a 4 GB VRS host profile before any write. Large
-  initialization and cold recovery need bounded streaming inputs as well.
+- `MainInitialState::TensorInput` now accepts either a full borrowed span or
+  a borrowed `TensorByteReader` consumed into validated 8 MiB chunks. The
+  stream path avoids holding caller input and a second whole tensor at once.
+  Main's cold journal recovery has not been connected to this reader yet.
 - The original `mosaic_world_memory_transaction.py` prepares a transaction
   for semantic-memory promotion linked to an existing World-write receipt.
   It does not define a required transaction around state-part staging.
