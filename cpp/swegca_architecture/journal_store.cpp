@@ -224,9 +224,10 @@ using PageHandle = std::shared_ptr<const LoadedPage>;
 // stale. The cache owns a budget carved out of Main's ledger at open: every
 // page it reads and every entry it keeps is charged there exactly, so it can
 // hold no more than that budget and never takes memory another Main
-// component needs. A full budget evicts unused pages by CLOCK and retries;
-// when every cached page is in use the page is read on Main's account and
-// not kept. Shards chosen by reference keep workers apart except on the
+// component needs. A full budget evicts a page no reader holds (CLOCK
+// among those) and retries, so each eviction returns budget; when every
+// cached page is held by a reader, the page is read on Main's account, as
+// any uncached read is, and not kept. Shards chosen by reference keep workers apart except on the
 // pages every lookup passes (the roots).
 class PageCache final {
 public:
@@ -257,14 +258,20 @@ public:
     template <class Read>
     [[nodiscard]] PageHandle load(const PageRef& ref, Read read) const {
         for (;;) {
+            PageHandle page;
             try {
-                auto page = read(memory_);
-                keep(ref, page);
-                return page;
+                page = read(memory_);
             } catch (const std::runtime_error& error) {
                 if (std::string_view(error.what()) != "memory_budget_exhausted") throw;
+                if (!evict_one()) return {};
+                continue;
             }
-            if (!evict_one()) return {};
+            try {
+                keep(ref, page);
+            } catch (...) {
+                // a lock or index that failed: the page is returned unkept
+            }
+            return page;
         }
     }
 
@@ -281,13 +288,11 @@ private:
         auto& free = shard.free;
         try {
             if (free.empty()) {
-                if (slots.size() == slots.capacity()) {
-                    const auto grown = slots.size() * 2 + 1;
-                    free.reserve(grown);  // first, so eviction never allocates
-                    slots.reserve(grown);
-                }
-                free.push_back(slots.size());
+                // free.capacity() >= slots.size() always, so eviction never
+                // allocates.
+                if (free.capacity() < slots.size() + 1) free.reserve(slots.size() * 2 + 1);
                 slots.push_back(Slot{});
+                free.push_back(slots.size() - 1);
             }
             shard.index.emplace(ref, free.back());
         } catch (const std::runtime_error& error) {
@@ -298,8 +303,11 @@ private:
         free.pop_back();
     }
 
-    // Evicts one unused page, visiting the shards in turn: CLOCK gives a
-    // used slot a second chance. False when every cached page is in use.
+    // Evicts one page no reader holds, visiting the shards in turn: CLOCK
+    // gives a recently used one a second chance. Only this cache holds a
+    // page whose handle count is one, and a new holder needs the shard lock
+    // held here, so its eviction returns its budget. False when every cached
+    // page is held by a reader.
     // SWEGCA: user@2026-09-22:72-79
     bool evict_one() const {
         const auto first = next_shard_.fetch_add(1, std::memory_order_relaxed);
@@ -311,7 +319,7 @@ private:
                 auto& slot = slots[shard.hand];
                 const auto at = shard.hand;
                 shard.hand = (shard.hand + 1) % slots.size();
-                if (!slot.page) continue;
+                if (!slot.page || slot.page.use_count() != 1) continue;
                 if (slot.used) {
                     slot.used = false;
                     continue;

@@ -94,7 +94,8 @@ public:
         // while any Account, Hold or Allocator on the carved budget lives.
         // Charges on the carved budget count against `bytes` only, so a
         // component given one can never take more of this ledger, and no
-        // other component can take the part it was given.
+        // other component can take the part it was given. The carved state
+        // and its bookkeeping (a few hundred bytes) are charged here too.
         [[nodiscard]] Account carve(std::uint64_t bytes) const;
         // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3f:638-640
         [[nodiscard]] std::uint64_t used() const noexcept { return state_->used.load(); }

@@ -20,7 +20,8 @@
 // Main-owned original experience (board §3B, §4, §5): complete observations
 // appended unfiltered to Main's journal under stable digest-bound addresses,
 // decoded back exactly, found through the typed index views (cue, source,
-// content digest, lineage, validity, namespace, resource, transaction), and
+// content digest, lineage, successor for validity and supersession,
+// namespace, resource, transaction), and
 // selected for cognition through the cue view with a receipt whose
 // authority is statically none. Nothing here grants authority: a record
 // documents, a receipt audits, and neither converts to a capability. Main
@@ -46,7 +47,8 @@ inline constexpr std::string_view experience_address_prefix = "experience:";
 // its entries; the journal's index tree answers a lookup by kind and value.
 // - cue: every token of the source and its revision under the cue rule, and
 //   every Rozephine-authored cue (L3 hot cue index);
-// - source: the exact source; content: the SHA-256 of the raw bytes;
+// - source: looked up by the exact source text (the entry holds its
+//   SHA-256); content: the SHA-256 of the raw bytes;
 // - lineage: each address the experience was derived from (its derivations);
 // - successor: the address it revises (validity and supersession: the
 //   experience that supersedes an address is found here);

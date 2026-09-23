@@ -69,8 +69,10 @@ inline constexpr std::size_t minimum_record_bytes =
 // must itself be an identity text, so the separator splits every key exactly
 // and the keys of one kind and value are contiguous. Lowercase kinds belong
 // to experience records (the two kinds below, experience.hpp); a record of
-// any other kind may carry only uppercase kinds, so no other owner's record
-// can answer an experience lookup.
+// any other kind may carry only uppercase kinds. The journal enforces the
+// kind rule; that only the experience module writes kinds 1 and 2 is Main's
+// rule (it stages them only through ExperienceJournal), and decoding an
+// experience rejects any record it did not write.
 inline constexpr std::size_t max_record_index_entries = 16384;
 inline constexpr char index_separator = '\x1f';
 inline constexpr std::uint16_t original_experience_record_kind = 1;

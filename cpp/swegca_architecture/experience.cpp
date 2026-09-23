@@ -216,6 +216,11 @@ public:
         : bytes_(memory.allocator<std::byte>()),
           spans_(memory.allocator<std::pair<std::size_t, std::size_t>>()),
           entries_(memory.allocator<std::string_view>()) {}
+    IndexEntries(IndexEntries&&) noexcept = default;
+    IndexEntries& operator=(IndexEntries&&) = delete;
+    IndexEntries(const IndexEntries&) = delete;
+    IndexEntries& operator=(const IndexEntries&) = delete;
+    ~IndexEntries() = default;
 
     // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3f:122-123
     void add(char kind, std::string_view value) {
@@ -294,9 +299,9 @@ void add_automatic(IndexEntries& index, const MemoryLedger::Account& memory, con
 // observation was first appended and is not part of what was observed.
 // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3f:122-123
 bool same_observed_index(std::span<const std::string_view> left, std::span<const std::string_view> right) noexcept {
-    constexpr auto transaction = static_cast<char>(ExperienceView::transaction);
     const auto skip = [](std::span<const std::string_view> entries, std::size_t& at) {
-        while (at < entries.size() && entries[at].front() == transaction) ++at;
+        while (at < entries.size() && entries[at].front() == static_cast<char>(ExperienceView::transaction))
+            ++at;
     };
     std::size_t left_at = 0;
     std::size_t right_at = 0;
@@ -311,7 +316,9 @@ bool same_observed_index(std::span<const std::string_view> left, std::span<const
     }
 }
 
-// An entry no field derives: only an authored cue can be one.
+// An entry no field derives: only an authored cue can be one. A digest
+// entry ('h') is checked by form only: which token it hashes is not
+// recoverable from the record.
 // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:411-431
 bool is_authored_cue_entry(const MemoryLedger::Account& memory, std::string_view entry) {
     const auto value = entry.substr(1);
@@ -507,13 +514,15 @@ ExperienceRecord ExperienceRecord::decode(journal::PublishedRecord published,
                               derived, name_space, resources, raw_digest, present(view.transaction_id)});
     const auto expected = automatic.finish();
     std::size_t next = 0;
+    std::size_t authored = 0;
     for (const auto entry : index) {
         if (next < expected.size() && expected[next] == entry) {
             ++next;
             continue;
         }
         if (next < expected.size() && expected[next] < entry) fail("experience_index_incomplete");
-        if (!is_authored_cue_entry(memory, entry)) fail("experience_index_invalid");
+        if (!is_authored_cue_entry(memory, entry) || ++authored > max_semantic_cues)
+            fail("experience_index_invalid");
     }
     if (next != expected.size()) fail("experience_index_incomplete");
 
@@ -601,14 +610,23 @@ ExperienceAppend ExperienceJournal::stage(std::span<const Observation> observati
         out.addresses.emplace_back(memory_, view_of(address));
     }
 
-    // Lineage must already be published experience. Of equal addresses in
-    // this call only the first is a candidate, and it is appended only when
-    // the journal does not hold it yet: O(n log n), one lookup per address.
-    const auto require_experience = [this](std::string_view address) {
-        const ExperienceAddress lineage(memory_, address);
-        if (!journal_.resolve(lineage)) fail("experience_lineage_unknown");
-        (void)ExperienceRecord::decode(journal_.replay(lineage), memory_);
-    };
+    // Lineage must already be published experience: each distinct address
+    // is replayed and decoded once. Of equal addresses in this call only the
+    // first is a candidate, and it is appended only when the journal does not
+    // hold it yet: O(n log n), one lookup per address.
+    LedgerVector<std::string_view> lineage(memory_.allocator<std::string_view>());
+    for (std::size_t at = 0; at < observations.size(); ++at) {
+        if (observations[at].previous_revision_address)
+            lineage.push_back(*observations[at].previous_revision_address);
+        lineage.insert(lineage.end(), prepared[at].derived_from.begin(), prepared[at].derived_from.end());
+    }
+    std::sort(lineage.begin(), lineage.end());
+    lineage.erase(std::unique(lineage.begin(), lineage.end()), lineage.end());
+    for (const auto address : lineage) {
+        const ExperienceAddress earlier(memory_, address);
+        if (!journal_.resolve(earlier)) fail("experience_lineage_unknown");
+        (void)ExperienceRecord::decode(journal_.replay(earlier), memory_);
+    }
     LedgerVector<std::size_t> order(memory_.allocator<std::size_t>());
     order.reserve(observations.size());
     for (std::size_t at = 0; at < observations.size(); ++at) order.push_back(at);
@@ -620,9 +638,6 @@ ExperienceAppend ExperienceJournal::stage(std::span<const Observation> observati
     for (std::size_t rank = 0; rank < order.size(); ++rank) {
         const auto at = order[rank];
         auto& item = prepared[at];
-        const auto& observation = observations[at];
-        if (observation.previous_revision_address) require_experience(*observation.previous_revision_address);
-        for (const auto address : item.derived_from) require_experience(address);
         if (rank != 0 && prepared[order[rank - 1]].address == item.address) {
             if (!same_observed_index(prepared[order[rank - 1]].index.entries(), item.index.entries()))
                 fail("experience_index_conflict");

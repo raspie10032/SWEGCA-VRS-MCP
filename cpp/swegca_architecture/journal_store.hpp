@@ -19,13 +19,13 @@
 #include <string_view>
 #include <type_traits>
 
-// Main-owned native journal directory (v5): exclusive owner lock, detached
+// Main-owned native journal directory (format v7): exclusive owner lock, detached
 // staging, one serialized publisher, snapshot readers (each read holds one
 // immutable published snapshot for its whole duration and takes no journal
 // lock; the atomic snapshot pointer itself is not promised lock-free),
 // fail-closed recovery from the published HEAD only, and the derived
-// exact-address view published by the same HEAD, compacted and rebuildable
-// from the records.
+// exact-address and index views published by the same HEAD, compacted and
+// rebuildable from the records.
 // Rule: SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md §3B, §9; one
 // current generation (I01), provenance-bound and recoverable persistent
 // mutation (I07), ARCHITECTURE_SPEC.md@5901a5a:205-207,214-216.
