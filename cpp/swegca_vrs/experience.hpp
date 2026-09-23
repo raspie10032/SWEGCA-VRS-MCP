@@ -459,6 +459,10 @@ public:
     [[nodiscard]] const journal::RecordView& record() const noexcept { return record_.view(); }
     // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:23-60
     [[nodiscard]] const journal::RecordPosition& position() const noexcept { return record_.position(); }
+    // A pinned read keeps the record and its later blob-part reads in one
+    // journal generation. It does not assert that Main selected that root.
+    // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:137-155
+    [[nodiscard]] bool has_pinned_read_snapshot() const noexcept { return pinned_.has_value(); }
     // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:23-60
     [[nodiscard]] bool derived() const noexcept {
         return record_.view().kind == derived_experience_kind;
