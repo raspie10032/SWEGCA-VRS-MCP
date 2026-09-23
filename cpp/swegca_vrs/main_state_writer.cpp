@@ -262,7 +262,7 @@ std::shared_ptr<const CognitiveState> successor_state(
     const CognitiveState& prior, CognitiveTensor scratch, SelfState self) {
     const auto evidence = prior.evidence_references();
     return std::allocate_shared<CognitiveState>(
-        memory.allocator<CognitiveState>(), std::move(key), prior,
+        memory.allocator<CognitiveState>(), std::move(key), memory, prior,
         RoleRegistry(prior.roles()), CognitiveTensor(prior.semantic()),
         CognitiveTensor(prior.executive()), std::move(scratch),
         StructuredWorldGraph(prior.world_graph()),

@@ -720,3 +720,13 @@ is unresolved; if it does, a digest alone cannot restore the prior control.
 The autonomy route would need its own transition receipt; the inventory's
 `StateWriteReceipt` names claim, decision, bound proposal and role-delta
 fields of a World-role write and cannot be silently reused for this route.
+
+The native state now keeps its non-autonomy fields in one immutable, host-
+accounted shared body. An autonomy-only successor shares that exact body and
+finishes a checked SHA-256 checkpoint taken just before the v5 autonomy
+presence byte. This preserves the canonical full-stream digest without
+copying the graph or rereading World tensor bytes for **in-memory successor
+construction**. It creates no Main apply route or publication authority.
+`split_state_content` still visits the complete canonical stream when it
+materializes a state root; incremental disk publication and its verification
+remain open and must be reviewed separately before any end-to-end speed claim.

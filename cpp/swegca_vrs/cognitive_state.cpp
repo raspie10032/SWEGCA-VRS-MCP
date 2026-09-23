@@ -67,14 +67,13 @@ void emit_tensor(StateContentSink write, const StateContentSectionSink* section,
 // A persistent writer consumes the same bytes through a bounded sink; the
 // original Python function uses a different tensor/JSON encoding.
 // SWEGCA: src/swegca/mosaic_bounded_world_write.py@5901a5a:262-283
-void emit_state_content(
+void emit_state_prefix(
     StateContentSink write, const StateContentSectionSink* section,
     const OwnerId& owner, const RoleRegistry& roles,
     const CognitiveTensor& semantic, const CognitiveTensor& executive,
     const CognitiveTensor& scratch, const StructuredWorldGraph& graph,
     std::span<const ExperienceAddress> evidence, const GoalState& goals,
-    const ValueState& values, const SelfState& self,
-    const std::optional<AutonomyState>& autonomy) {
+    const ValueState& values, const SelfState& self) {
     if (section) (*section)(StateContentSection::prefix);
     // v4: the bounded-write head carries the claim and proposal digest.
     // v5: the final fields end with the autonomy control's presence and bytes.
@@ -137,24 +136,64 @@ void emit_state_content(
         emit_u64(write, head.claim.revision());
         write(head.proposal_digest.bytes());
     }
+}
+
+// The final control is the only section an autonomy phase changes. Keeping
+// this suffix separate lets a successor share the verified immutable prefix
+// without reading all World tensor bytes again.
+// SWEGCA: src/swegca/mosaic_autonomous_cognition.py@5901a5a:167-186
+void emit_autonomy_suffix(StateContentSink write,
+                          const std::optional<AutonomyState>& autonomy) {
     emit_u8(write, autonomy.has_value() ? 1 : 0);
     if (autonomy) emit_bytes(write, autonomy->bytes());
 }
 
-// SWEGCA: src/swegca/mosaic_bounded_world_write.py@5901a5a:262-283
-Digest256 state_digest(
-    const OwnerId& owner, const RoleRegistry& roles,
-    const CognitiveTensor& semantic, const CognitiveTensor& executive,
-    const CognitiveTensor& scratch, const StructuredWorldGraph& graph,
-    std::span<const ExperienceAddress> evidence, const GoalState& goals,
-    const ValueState& values, const SelfState& self,
-    const std::optional<AutonomyState>& autonomy) {
-    Sha256 hash;
-    const auto feed_hash = [&hash](std::span<const std::byte> bytes) {
+}  // namespace
+
+// The World and the non-autonomy metadata are immutable between autonomous
+// phases. One account-charged body is shared by those successors, so neither
+// its tensors, graph nor metadata are copied on a phase step. The unfinished
+// hash is exactly the v5 content stream before the autonomy presence byte;
+// it is a derived in-memory cache, never a publication or authority token.
+// SWEGCA: src/swegca/mosaic_autonomous_cognition.py@5901a5a:167-186
+struct CognitiveState::StateBody final {
+    StateBody(OwnerId owner_in, RoleRegistry roles_in,
+              CognitiveTensor semantic_in, CognitiveTensor executive_in,
+              CognitiveTensor scratch_in, StructuredWorldGraph graph_in,
+              EvidenceReferences evidence_in, GoalState goals_in,
+              ValueState values_in, SelfState self_in)
+        // SWEGCA: src/swegca/mosaic_autonomous_cognition.py@5901a5a:167-186
+        : owner(std::move(owner_in)), roles(std::move(roles_in)),
+          semantic(std::move(semantic_in)), executive(std::move(executive_in)),
+          scratch(std::move(scratch_in)), graph(std::move(graph_in)),
+          evidence(std::move(evidence_in)), goals(std::move(goals_in)),
+          values(std::move(values_in)), self(std::move(self_in)) {}
+
+    OwnerId owner;
+    RoleRegistry roles;
+    CognitiveTensor semantic;
+    CognitiveTensor executive;
+    CognitiveTensor scratch;
+    StructuredWorldGraph graph;
+    EvidenceReferences evidence;
+    GoalState goals;
+    ValueState values;
+    SelfState self;
+    // Filled after cross-field validation, before this body is shared.
+    mutable std::optional<Sha256> prefix_hash;
+};
+
+namespace {
+
+// Finishes the exact canonical v5 stream from a checked immutable prefix.
+// SWEGCA: src/swegca/mosaic_autonomous_cognition.py@5901a5a:167-186
+Digest256 digest_with_autonomy(const Sha256& prefix,
+                               const std::optional<AutonomyState>& autonomy) {
+    Sha256 hash = prefix;
+    const auto feed = [&hash](std::span<const std::byte> bytes) {
         hash.update(bytes);
     };
-    emit_state_content(StateContentSink(feed_hash), nullptr, owner, roles, semantic,
-                       executive, scratch, graph, evidence, goals, values, self, autonomy);
+    emit_autonomy_suffix(StateContentSink(feed), autonomy);
     return Digest256(hash.finish());
 }
 
@@ -247,40 +286,71 @@ StructuredWorldGraph::StructuredWorldGraph(
 
 // SWEGCA: src/swegca/mosaic_cognitive_kernel.py@5901a5a:220-254
 CognitiveState::CognitiveState(
-    InitialStateKey key, OwnerId owner,
+    InitialStateKey key, const AllocationContext& memory, OwnerId owner,
     RoleRegistry roles, CognitiveTensor semantic, CognitiveTensor executive,
     CognitiveTensor scratch, StructuredWorldGraph world_graph,
     EvidenceReferences evidence_references,
     GoalState goals, ValueState values, SelfState self,
     std::optional<AutonomyState> autonomy)
-    : owner_(std::move(owner)), roles_(std::move(roles)),
-      semantic_(std::move(semantic)),
-      executive_(std::move(executive)), scratch_(std::move(scratch)),
-      world_graph_(std::move(world_graph)),
-      evidence_references_(std::move(evidence_references)),
-      // Preserve original evidence reference order and repeats.
+    : body_(std::allocate_shared<StateBody>(
+          memory.allocator<StateBody>(), std::move(owner), std::move(roles),
+          std::move(semantic), std::move(executive), std::move(scratch),
+          std::move(world_graph), std::move(evidence_references),
+          std::move(goals), std::move(values), std::move(self))),
+      autonomy_(std::move(autonomy)),
       // SWEGCA: src/swegca/mosaic_cognitive_kernel.py@5901a5a:220-254
-      goals_(std::move(goals)), values_(std::move(values)),
-      self_(std::move(self)), autonomy_(std::move(autonomy)),
       content_digest_((key.consume(), validated_content_digest(nullptr))) {}
 
 // SWEGCA: src/swegca/mosaic_cognitive_kernel.py@5901a5a:220-254
 CognitiveState::CognitiveState(
-    SuccessorStateKey key, const CognitiveState& prior,
+    SuccessorStateKey key, const AllocationContext& memory,
+    const CognitiveState& prior,
     RoleRegistry roles, CognitiveTensor semantic, CognitiveTensor executive,
     CognitiveTensor scratch, StructuredWorldGraph world_graph,
     EvidenceReferences evidence_references,
     GoalState goals, ValueState values, SelfState self)
-    : owner_(prior.owner_), roles_(std::move(roles)),
-      semantic_(std::move(semantic)),
-      executive_(std::move(executive)), scratch_(std::move(scratch)),
-      world_graph_(std::move(world_graph)),
-      evidence_references_(std::move(evidence_references)),
-      // Preserve original evidence reference order and repeats.
+    : body_(std::allocate_shared<StateBody>(
+          memory.allocator<StateBody>(), prior.owner(), std::move(roles),
+          std::move(semantic), std::move(executive), std::move(scratch),
+          std::move(world_graph), std::move(evidence_references),
+          std::move(goals), std::move(values), std::move(self))),
+      autonomy_(prior.autonomy_),
       // SWEGCA: src/swegca/mosaic_cognitive_kernel.py@5901a5a:220-254
-      goals_(std::move(goals)), values_(std::move(values)),
-      self_(std::move(self)), autonomy_(prior.autonomy_),
       content_digest_((key.consume(), validated_content_digest(&prior))) {}
+
+// Shares the exact immutable body, including tensor objects and its verified
+// prefix hash. Only Main's one-use successor key can make this state.
+// SWEGCA: src/swegca/mosaic_autonomous_cognition.py@5901a5a:167-186
+CognitiveState::CognitiveState(SuccessorStateKey key,
+                               const CognitiveState& prior,
+                               AutonomyState next_autonomy)
+    : body_(prior.body_), autonomy_(std::move(next_autonomy)),
+      // SWEGCA: src/swegca/mosaic_autonomous_cognition.py@5901a5a:167-186
+      content_digest_((key.consume(), digest_with_autonomy(body_->prefix_hash.value(),
+                                                            autonomy_))) {}
+
+// SWEGCA: src/swegca/mosaic_cognitive_kernel.py@5901a5a:220-254
+const OwnerId& CognitiveState::owner() const noexcept { return body_->owner; }
+// SWEGCA: src/swegca/mosaic_cognitive_kernel.py@5901a5a:220-254
+const RoleRegistry& CognitiveState::roles() const noexcept { return body_->roles; }
+// SWEGCA: src/swegca/mosaic_cognitive_kernel.py@5901a5a:220-254
+const CognitiveTensor& CognitiveState::semantic() const noexcept { return body_->semantic; }
+// SWEGCA: src/swegca/mosaic_cognitive_kernel.py@5901a5a:220-254
+const CognitiveTensor& CognitiveState::executive() const noexcept { return body_->executive; }
+// SWEGCA: src/swegca/mosaic_cognitive_kernel.py@5901a5a:220-254
+const CognitiveTensor& CognitiveState::scratch() const noexcept { return body_->scratch; }
+// SWEGCA: src/swegca/mosaic_cognitive_kernel.py@5901a5a:220-254
+const StructuredWorldGraph& CognitiveState::world_graph() const noexcept { return body_->graph; }
+// SWEGCA: src/swegca/mosaic_cognitive_kernel.py@5901a5a:220-254
+std::span<const ExperienceAddress> CognitiveState::evidence_references() const noexcept {
+    return body_->evidence;
+}
+// SWEGCA: src/swegca/mosaic_cognitive_kernel.py@5901a5a:220-254
+const GoalState& CognitiveState::goals() const noexcept { return body_->goals; }
+// SWEGCA: src/swegca/mosaic_cognitive_kernel.py@5901a5a:220-254
+const ValueState& CognitiveState::values() const noexcept { return body_->values; }
+// SWEGCA: src/swegca/mosaic_cognitive_kernel.py@5901a5a:220-254
+const SelfState& CognitiveState::self() const noexcept { return body_->self; }
 
 // All members read here precede content_digest_ in declaration order.
 // Validate before hashing; append-only roles are a C++ successor rule, not
@@ -290,47 +360,57 @@ Digest256 CognitiveState::validated_content_digest(
     const CognitiveState* prior) const {
     validate();
     if (prior == nullptr) {
-        if (!roles_.matches_initial_profile({
-            semantic_.shape().slots, executive_.shape().slots,
-            scratch_.shape().slots}))
+        if (!body_->roles.matches_initial_profile({
+            body_->semantic.shape().slots, body_->executive.shape().slots,
+            body_->scratch.shape().slots}))
             throw std::invalid_argument("initial_role_registry_shape_mismatch");
     } else {
         // A guarded write may promote all three partitions; an exact rollback
         // may restore their earlier dtype. The writer checks the operation's
         // dtype rule, while validate() checks their common successor dtype.
-        if (semantic_.shape().width != prior->semantic_.shape().width)
+        if (body_->semantic.shape().width != prior->body_->semantic.shape().width)
             throw std::invalid_argument("successor_tensor_width_changed");
-        if (semantic_.shape().slots < prior->semantic_.shape().slots ||
-            executive_.shape().slots < prior->executive_.shape().slots ||
-            scratch_.shape().slots < prior->scratch_.shape().slots)
+        if (body_->semantic.shape().slots < prior->body_->semantic.shape().slots ||
+            body_->executive.shape().slots < prior->body_->executive.shape().slots ||
+            body_->scratch.shape().slots < prior->body_->scratch.shape().slots)
             throw std::invalid_argument("successor_tensor_capacity_shrank");
-        const auto previous_roles = prior->roles_.definitions();
-        const auto next_roles = roles_.definitions();
+        const auto previous_roles = prior->body_->roles.definitions();
+        const auto next_roles = body_->roles.definitions();
         if (next_roles.size() < previous_roles.size() ||
             !std::equal(previous_roles.begin(), previous_roles.end(), next_roles.begin()))
             throw std::invalid_argument("successor_role_registry_not_append_only");
     }
-    return state_digest(
-        owner_, roles_, semantic_, executive_, scratch_, world_graph_,
-        evidence_references_, goals_, values_, self_, autonomy_);
+    body_->prefix_hash.emplace();
+    const auto feed = [this](std::span<const std::byte> bytes) {
+        body_->prefix_hash->update(bytes);
+    };
+    emit_state_prefix(StateContentSink(feed), nullptr, body_->owner, body_->roles,
+                      body_->semantic, body_->executive, body_->scratch,
+                      body_->graph, body_->evidence, body_->goals,
+                      body_->values, body_->self);
+    return digest_with_autonomy(body_->prefix_hash.value(), autonomy_);
 }
 
 // This C++ stream is the same canonical preimage used above to compute the
 // content digest; a state-part writer can consume it without a whole-state copy.
 // SWEGCA: src/swegca/mosaic_bounded_world_write.py@5901a5a:262-283
 void CognitiveState::for_each_content_chunk(StateContentSink write) const {
-    emit_state_content(write, nullptr, owner_, roles_, semantic_, executive_, scratch_,
-                       world_graph_, evidence_references_, goals_, values_, self_,
-                       autonomy_);
+    emit_state_prefix(write, nullptr, body_->owner, body_->roles,
+                      body_->semantic, body_->executive, body_->scratch,
+                      body_->graph, body_->evidence, body_->goals,
+                      body_->values, body_->self);
+    emit_autonomy_suffix(write, autonomy_);
 }
 
 // The section markers are metadata for a bounded writer, not content bytes.
 // SWEGCA: src/swegca/mosaic_bounded_world_write.py@5901a5a:262-283
 void CognitiveState::for_each_content_chunk(
     StateContentSink write, StateContentSectionSink section) const {
-    emit_state_content(write, &section, owner_, roles_, semantic_, executive_,
-                       scratch_, world_graph_, evidence_references_, goals_,
-                       values_, self_, autonomy_);
+    emit_state_prefix(write, &section, body_->owner, body_->roles,
+                      body_->semantic, body_->executive, body_->scratch,
+                      body_->graph, body_->evidence, body_->goals,
+                      body_->values, body_->self);
+    emit_autonomy_suffix(write, autonomy_);
 }
 
 // The original state accepts any common batch dimension, including zero. The
@@ -338,17 +418,17 @@ void CognitiveState::for_each_content_chunk(
 // operation must not narrow the general state itself.
 // SWEGCA: src/swegca/mosaic_cognitive_kernel.py@5901a5a:234-254
 void CognitiveState::validate() const {
-    const auto& semantic_shape = semantic_.shape();
-    const auto& executive_shape = executive_.shape();
-    const auto& scratch_shape = scratch_.shape();
+    const auto& semantic_shape = body_->semantic.shape();
+    const auto& executive_shape = body_->executive.shape();
+    const auto& scratch_shape = body_->scratch.shape();
     if (semantic_shape.batches != executive_shape.batches ||
         semantic_shape.batches != scratch_shape.batches)
         throw std::invalid_argument("cognitive_state_batch_mismatch");
     if (semantic_shape.width != executive_shape.width ||
         semantic_shape.width != scratch_shape.width)
         throw std::invalid_argument("cognitive_state_width_mismatch");
-    if (semantic_.scalar_type() != executive_.scalar_type() ||
-        semantic_.scalar_type() != scratch_.scalar_type())
+    if (body_->semantic.scalar_type() != body_->executive.scalar_type() ||
+        body_->semantic.scalar_type() != body_->scratch.scalar_type())
         throw std::invalid_argument("cognitive_state_scalar_type_mismatch");
     std::uint64_t logical_bytes = 0;
     const auto account = [&logical_bytes](std::uint64_t bytes) {
@@ -356,12 +436,12 @@ void CognitiveState::validate() const {
             throw std::overflow_error("cognitive_state_logical_byte_count_overflow");
         logical_bytes += bytes;
     };
-    account(semantic_.byte_count());
-    account(executive_.byte_count());
-    account(scratch_.byte_count());
-    account(owner_.value().size());
-    for (const auto& role : roles_.definitions()) account(role.id.value().size());
-    for (const auto& entity : world_graph_.entities()) {
+    account(body_->semantic.byte_count());
+    account(body_->executive.byte_count());
+    account(body_->scratch.byte_count());
+    account(body_->owner.value().size());
+    for (const auto& role : body_->roles.definitions()) account(role.id.value().size());
+    for (const auto& entity : body_->graph.entities()) {
         account(entity.id.value().size());
         account(entity.kind.value().size());
         account(entity.properties.bytes().size());
@@ -369,19 +449,19 @@ void CognitiveState::validate() const {
         for (const auto& address : entity.evidence_references)
             account(address.value().size());
     }
-    for (const auto& relation : world_graph_.relations()) {
+    for (const auto& relation : body_->graph.relations()) {
         account(relation.subject.value().size());
         account(relation.predicate.value().size());
         account(relation.object.value().size());
         account(relation.properties.bytes().size());
     }
-    for (const auto& address : evidence_references_)
+    for (const auto& address : body_->evidence)
         account(address.value().size());
-    account(goals_.payload().bytes().size());
-    account(values_.payload().bytes().size());
-    account(self_.payload().bytes().size());
-    if (self_.write_head()) {
-        const auto& write = *self_.write_head();
+    account(body_->goals.payload().bytes().size());
+    account(body_->values.payload().bytes().size());
+    account(body_->self.payload().bytes().size());
+    if (body_->self.write_head()) {
+        const auto& write = *body_->self.write_head();
         if (write.revision == 0)
             throw std::invalid_argument("bounded_write_revision_invalid");
         account(write.policy_version.value().size());
@@ -392,7 +472,7 @@ void CognitiveState::validate() const {
     }
     if (autonomy_) account(autonomy_->bytes().size());
 
-    for (const auto& definition : roles_.definitions()) {
+    for (const auto& definition : body_->roles.definitions()) {
         std::uint64_t capacity = 0;
         switch (definition.partition) {
             case TensorPartition::semantic:

@@ -118,7 +118,7 @@ std::shared_ptr<const CognitiveState> MainOwner::make_initial_state(
     std::optional<AutonomyState> autonomy;
     if (initial.autonomy) autonomy.emplace(AutonomyState::decode(account, *initial.autonomy));
     return std::allocate_shared<CognitiveState>(
-        account.allocator<CognitiveState>(), InitialStateKey{},
+        account.allocator<CognitiveState>(), InitialStateKey{}, account,
         OwnerId(account, initial.owner), std::move(roles),
         std::move(semantic), std::move(executive), std::move(scratch),
         std::move(graph), std::move(evidence),

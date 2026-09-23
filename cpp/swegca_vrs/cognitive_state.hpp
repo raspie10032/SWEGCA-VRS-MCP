@@ -329,7 +329,7 @@ private:
 // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:139-152
 class CognitiveState final {
 public:
-    CognitiveState(InitialStateKey, OwnerId owner,
+    CognitiveState(InitialStateKey, const AllocationContext& memory, OwnerId owner,
                    RoleRegistry roles, CognitiveTensor semantic,
                    CognitiveTensor executive, CognitiveTensor scratch,
                    StructuredWorldGraph world_graph,
@@ -338,12 +338,19 @@ public:
                    std::optional<AutonomyState> autonomy);
 
     // A successor keeps the prior state's autonomy control unchanged.
-    CognitiveState(SuccessorStateKey, const CognitiveState& prior,
+    CognitiveState(SuccessorStateKey, const AllocationContext& memory,
+                   const CognitiveState& prior,
                    RoleRegistry roles,
                    CognitiveTensor semantic, CognitiveTensor executive,
                    CognitiveTensor scratch, StructuredWorldGraph world_graph,
                    EvidenceReferences evidence_references,
                    GoalState goals, ValueState values, SelfState self);
+
+    // A Main-only autonomy successor shares the immutable World/body exactly;
+    // only its typed control and the canonical content digest change.
+    // SWEGCA: src/swegca/mosaic_autonomous_cognition.py@5901a5a:167-186
+    CognitiveState(SuccessorStateKey, const CognitiveState& prior,
+                   AutonomyState next_autonomy);
 
     CognitiveState(const CognitiveState&) = delete;
     CognitiveState& operator=(const CognitiveState&) = delete;
@@ -352,7 +359,7 @@ public:
     ~CognitiveState() = default;
 
     // SWEGCA: src/swegca/mosaic_cognitive_kernel.py@5901a5a:220-254
-    [[nodiscard]] const OwnerId& owner() const noexcept { return owner_; }
+    [[nodiscard]] const OwnerId& owner() const noexcept;
     // SWEGCA: src/swegca/mosaic_cognitive_kernel.py@5901a5a:220-254
     // Content identity belongs to this immutable state. Main keeps its
     // publication identity in StateSnapshot after the journal publishes it.
@@ -373,52 +380,36 @@ public:
     void for_each_content_chunk(StateContentSink write,
                                 StateContentSectionSink section) const;
     // SWEGCA: src/swegca/mosaic_cognitive_kernel.py@5901a5a:220-254
-    [[nodiscard]] const RoleRegistry& roles() const noexcept { return roles_; }
+    [[nodiscard]] const RoleRegistry& roles() const noexcept;
     // SWEGCA: src/swegca/mosaic_cognitive_kernel.py@5901a5a:220-254
-    [[nodiscard]] const CognitiveTensor& semantic() const noexcept {
-        return semantic_;
-    }
+    [[nodiscard]] const CognitiveTensor& semantic() const noexcept;
     // SWEGCA: src/swegca/mosaic_cognitive_kernel.py@5901a5a:220-254
-    [[nodiscard]] const CognitiveTensor& executive() const noexcept {
-        return executive_;
-    }
+    [[nodiscard]] const CognitiveTensor& executive() const noexcept;
     // SWEGCA: src/swegca/mosaic_cognitive_kernel.py@5901a5a:220-254
-    [[nodiscard]] const CognitiveTensor& scratch() const noexcept {
-        return scratch_;
-    }
+    [[nodiscard]] const CognitiveTensor& scratch() const noexcept;
     // SWEGCA: src/swegca/mosaic_cognitive_kernel.py@5901a5a:220-254
-    [[nodiscard]] const StructuredWorldGraph& world_graph() const noexcept {
-        return world_graph_;
-    }
+    [[nodiscard]] const StructuredWorldGraph& world_graph() const noexcept;
     // SWEGCA: src/swegca/mosaic_cognitive_kernel.py@5901a5a:220-254
     [[nodiscard]] std::span<const ExperienceAddress> evidence_references()
-        const noexcept { return evidence_references_; }
+        const noexcept;
     // SWEGCA: src/swegca/mosaic_cognitive_kernel.py@5901a5a:220-254
-    [[nodiscard]] const GoalState& goals() const noexcept { return goals_; }
+    [[nodiscard]] const GoalState& goals() const noexcept;
     // SWEGCA: src/swegca/mosaic_cognitive_kernel.py@5901a5a:220-254
-    [[nodiscard]] const ValueState& values() const noexcept { return values_; }
+    [[nodiscard]] const ValueState& values() const noexcept;
     // SWEGCA: src/swegca/mosaic_cognitive_kernel.py@5901a5a:220-254
-    [[nodiscard]] const SelfState& self() const noexcept { return self_; }
+    [[nodiscard]] const SelfState& self() const noexcept;
     // SWEGCA: src/swegca/mosaic_autonomous_cognition.py@5901a5a:150-186
     [[nodiscard]] const std::optional<AutonomyState>& autonomy() const noexcept {
         return autonomy_;
     }
 
 private:
+    struct StateBody;
     void validate() const;
     [[nodiscard]] Digest256 validated_content_digest(
         const CognitiveState* prior) const;
 
-    OwnerId owner_;
-    RoleRegistry roles_;
-    CognitiveTensor semantic_;
-    CognitiveTensor executive_;
-    CognitiveTensor scratch_;
-    StructuredWorldGraph world_graph_;
-    EvidenceReferences evidence_references_;
-    GoalState goals_;
-    ValueState values_;
-    SelfState self_;
+    std::shared_ptr<const StateBody> body_;
     std::optional<AutonomyState> autonomy_;
     Digest256 content_digest_;
 };
