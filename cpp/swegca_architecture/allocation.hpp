@@ -14,6 +14,17 @@
 // SWEGCA: user@2026-09-23:1
 namespace swegca::architecture {
 
+// The VRS host throws this when its configured allocation budget refuses a
+// request. A physical allocation failure remains std::bad_alloc, so a page
+// cache can evict only for budget refusal.
+// SWEGCA: user@2026-09-23:1
+class AllocationRefused final : public std::bad_alloc {
+public:
+    [[nodiscard]] const char* what() const noexcept override {
+        return "allocation_budget_refused";
+    }
+};
+
 class AllocationResource {
 public:
     // SWEGCA: user@2026-09-23:1
