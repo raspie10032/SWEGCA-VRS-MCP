@@ -20,7 +20,7 @@
 #include <type_traits>
 #include <vector>
 
-// Byte format of the Main-owned native journal (v8): append-only record
+// Byte format of the Main-owned native journal (v9): append-only record
 // segments, an append-only manifest log, checkpoint manifests, append-only
 // page logs of the derived exact-address and index views, and a fixed-size HEAD
 // pointer, all as flat files in one directory. Storage format only; no record grants
@@ -479,9 +479,14 @@ struct ViewGeneration {
 
 // The fixed-size part of one published generation. A checkpoint lists every
 // extent; any other generation lists only the extents it touched (the
-// extended tail and new segments). `state_generation_*` is Main's Cognitive
-// State generation. The accounting fields make recovery cost and storage use
-// verifiable from the chain itself:
+// extended tail and new segments). `state_content_digest` and
+// `state_publication` name Main's current Cognitive State: its content digest
+// and the exact position of the state-head publication record that published
+// it. Content and publication are separate identities; a bit-exact rollback
+// restores earlier content under a new publication. No state is the all-zero
+// pair (zero digest, absent publication); a present publication is a real
+// record at or before the tail. The accounting fields make recovery cost and
+// storage use verifiable from the chain itself:
 //   manifest_bytes_before  lengths of every earlier manifest, summed;
 //   recovery_bytes_before  lengths of the manifests from the latest
 //                          checkpoint up to the parent, summed (0 for a
@@ -495,8 +500,8 @@ struct ManifestFields {
     std::uint64_t checkpoint_generation = 0;
     std::uint64_t recovery_bytes_before = 0;
     std::uint64_t manifest_bytes_before = 0;
-    std::uint64_t state_generation_ordinal = 0;
-    Digest state_generation_digest{};
+    Digest state_content_digest{};                   // zero when no state
+    std::optional<RecordPosition> state_publication;  // absent when no state
     std::uint64_t tail_sequence = 0;  // 0 when empty
     Digest tail_record_digest{};      // zero when empty
     std::uint64_t tail_segment_ordinal = 0;

@@ -23,15 +23,19 @@ constexpr std::array<std::byte, 4> address_page_magic{
     std::byte{'S'}, std::byte{'W'}, std::byte{'J'}, std::byte{'A'}};
 constexpr std::array<std::byte, 4> page_log_magic{
     std::byte{'S'}, std::byte{'W'}, std::byte{'J'}, std::byte{'P'}};
-constexpr std::uint16_t format_version = 8;
+// 9: the manifest names the state content digest and its publication record
+// position in place of the provisional state generation ordinal.
+constexpr std::uint16_t format_version = 9;
 constexpr std::uint8_t leaf_page_kind = 1;
 constexpr std::uint8_t branch_page_kind = 2;
 // Fixed part of a manifest: magic, version, identity length, generation,
 // previous digest and location, checkpoint flag, checkpoint generation,
-// recovery and manifest byte counters, state generation, tail, view pages,
-// extent count, view count, digest.
-constexpr std::size_t manifest_fixed_bytes = 4 + 2 + 4 + 8 + 32 + 3 * 8 + 1 + 3 * 8 + 8 + 32 +
-                                             8 + 32 + 8 + encoded_view_pages_bytes + 4 + 4 + 32;
+// recovery and manifest byte counters, state content digest, state
+// publication position (segment, offset, sequence, record digest), tail,
+// view pages, extent count, view count, digest.
+constexpr std::size_t manifest_fixed_bytes = 4 + 2 + 4 + 8 + 32 + 3 * 8 + 1 + 3 * 8 + 32 +
+                                             3 * 8 + 32 + 8 + 32 + 8 + encoded_view_pages_bytes +
+                                             4 + 4 + 32;
 // Smallest encoded view: empty name is invalid, so a one-byte name.
 constexpr std::size_t minimum_view_bytes = 4 + 1 + 8 + 32;
 
@@ -725,8 +729,12 @@ Manifest Manifest::encode(const ManifestFields& fields, std::string_view journal
     writer.u64(fields.checkpoint_generation);
     writer.u64(fields.recovery_bytes_before);
     writer.u64(fields.manifest_bytes_before);
-    writer.u64(fields.state_generation_ordinal);
-    writer.digest(fields.state_generation_digest);
+    writer.digest(fields.state_content_digest);
+    const RecordPosition publication = fields.state_publication.value_or(RecordPosition{});
+    writer.u64(publication.segment_ordinal);
+    writer.u64(publication.byte_offset);
+    writer.u64(publication.sequence);
+    writer.digest(publication.record_digest);
     writer.u64(fields.tail_sequence);
     writer.digest(fields.tail_record_digest);
     writer.u64(fields.tail_segment_ordinal);
@@ -749,7 +757,11 @@ Manifest Manifest::encode(const ManifestFields& fields, std::string_view journal
     }
     writer.digest(Sha256::of(bytes));
     if (bytes.size() != total) fail("journal_manifest_size_mismatch");
-    return decode(std::move(bytes), memory);
+    auto manifest = decode(std::move(bytes), memory);
+    // An all-zero position passed as present would decode as no state.
+    if (manifest.fields_.state_publication.has_value() != fields.state_publication.has_value())
+        fail("journal_manifest_invalid:state");
+    return manifest;
 }
 
 // Lineage: weak analogy — the author loads a manifest under a size bound, checking digest and geometry; here binary fields, extent chain, recovery rules.
@@ -774,8 +786,12 @@ Manifest Manifest::decode(LedgerBytes bytes, const AllocationContext& memory) {
     out.checkpoint_generation = reader.u64();
     out.recovery_bytes_before = reader.u64();
     out.manifest_bytes_before = reader.u64();
-    out.state_generation_ordinal = reader.u64();
-    out.state_generation_digest = reader.digest();
+    out.state_content_digest = reader.digest();
+    RecordPosition publication;
+    publication.segment_ordinal = reader.u64();
+    publication.byte_offset = reader.u64();
+    publication.sequence = reader.u64();
+    publication.record_digest = reader.digest();
     out.tail_sequence = reader.u64();
     out.tail_record_digest = reader.digest();
     out.tail_segment_ordinal = reader.u64();
@@ -848,6 +864,21 @@ Manifest Manifest::decode(LedgerBytes bytes, const AllocationContext& memory) {
          last.first_sequence + last.record_count - 1 != out.tail_sequence ||
          last.last_record_digest != out.tail_record_digest))
         fail("journal_manifest_invalid:tail");
+    // No state is the all-zero pair; anything else names a real record that
+    // is already in this journal. A mixed zero is refused.
+    const bool stateless = out.state_content_digest == zero_digest &&
+                           publication.segment_ordinal == 0 && publication.byte_offset == 0 &&
+                           publication.sequence == 0 && publication.record_digest == zero_digest;
+    if (!stateless) {
+        if (out.state_content_digest == zero_digest || publication.segment_ordinal == 0 ||
+            publication.sequence == 0 || publication.record_digest == zero_digest ||
+            publication.byte_offset < segment_header_bytes ||
+            publication.byte_offset >= max_segment_bytes || empty ||
+            publication.segment_ordinal > out.tail_segment_ordinal ||
+            publication.sequence > out.tail_sequence)
+            fail("journal_manifest_invalid:state");
+        out.state_publication = publication;
+    }
     if (out.checkpoint) {
         // A checkpoint names every extent from ordinal 1 to the tail and
         // starts a new recovery chain.
