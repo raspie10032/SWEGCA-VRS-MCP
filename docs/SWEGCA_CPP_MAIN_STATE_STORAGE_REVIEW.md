@@ -27,10 +27,11 @@ crash cases before code uses it.
   64 MiB. An initial state may exceed both limits. The experience module
   already streams large blobs through content-addressed 8 MiB parts and a
   bounded-depth digest tree.
-- `JournalStore::stage_from` currently copies the full published segment
-  extent map and recalculates storage across it for every generation. This
-  is a preparation cost proportional to segment count even for one small
-  state part; HEAD publication serialization does not require that cost.
+- `JournalStore::stage_from` still copies the full published segment extent
+  map for every generation, so preparation remains proportional to segment
+  count even for one small state part. The extra full storage recount was
+  replaced with checked deltas for changed extents, manifest bytes, and view
+  pages; HEAD publication serialization does not require the map copy.
 - The earlier C++ `CognitiveTensor` owned one contiguous byte vector.
   Candidate `462a6f7` replaces it with immutable shared chunks, but the
   writer and large-state startup paths are not connected yet. A disk part

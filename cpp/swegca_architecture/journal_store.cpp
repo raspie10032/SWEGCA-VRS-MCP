@@ -1656,8 +1656,19 @@ StagedGeneration JournalStore::stage_from(const std::shared_ptr<const PublishedS
     next->page_logs = replacement != nullptr
                           ? std::allocate_shared<int>(memory_.allocator<int>(), 0)
                           : current->page_logs;
-    next->storage = storage_of(next->extents, next->head.fields(), location);
-    if (!storage_->allows(plus(next->storage, retained, "journal_storage_overflow")))
+    // `storage` already charged the prior snapshot, changed extents, this
+    // manifest and any replacement view. An ordinary append also writes
+    // copy-on-write view pages; charge only their increase. Recounting every
+    // old extent here would make each small append grow with journal size.
+    if (replacement == nullptr) {
+        const auto previous_pages = page_log_charge(parent.view_pages);
+        const auto next_pages = page_log_charge(fields.view_pages);
+        if (next_pages < previous_pages) fail("journal_storage_accounting_invalid");
+        storage = plus(storage, next_pages - previous_pages, "journal_storage_overflow");
+    }
+    if (storage < retained) fail("journal_storage_accounting_invalid");
+    next->storage = storage - retained;
+    if (!storage_->allows(storage))
         fail("journal_storage_budget_exhausted");
     staged.head_bytes_.reserve(head_bytes);
     append_head(staged.head_bytes_, HeadPointer{location, next->head.digest()});
