@@ -25,6 +25,18 @@ constexpr std::array<std::string_view, 32> initial_role_names{
 
 constexpr std::size_t verification_role_index = 30;
 
+// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:83-93
+void require_initial_sizes(RolePartitionSizes sizes) {
+    if (sizes.semantic == 0 || sizes.executive == 0 || sizes.scratch == 0 ||
+        sizes.semantic > initial_role_names.size() ||
+        sizes.executive > initial_role_names.size() ||
+        sizes.scratch > initial_role_names.size() ||
+        sizes.semantic + sizes.executive + sizes.scratch != initial_role_names.size())
+        throw std::invalid_argument("initial_role_partition_size_invalid");
+    if (verification_role_index < sizes.semantic + sizes.executive)
+        throw std::invalid_argument("verification_role_must_be_in_scratch");
+}
+
 // Registry identity is stable across processes and binds every mask to the
 // exact ordered role-to-partition map, rather than only its cardinality.
 // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:83-93
@@ -63,11 +75,25 @@ std::size_t required_word_count(std::size_t roles) {
 }  // namespace
 
 // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:83-93
-RoleRegistry::RoleRegistry(std::vector<RoleDefinition> definitions)
-    : definitions_(std::move(definitions)), digest_(registry_digest(definitions_)) {
+RoleRegistry::RoleRegistry(const MemoryLedger::Account& account,
+                            std::span<const RoleDefinition> definitions)
+    : RoleRegistry(account, [&] {
+          if (definitions.empty())
+              throw std::invalid_argument("role_registry_must_not_be_empty");
+          return Definitions(definitions.begin(), definitions.end(),
+                             account.allocator<RoleDefinition>());
+      }()) {}
+
+// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:83-93
+RoleRegistry::RoleRegistry(const MemoryLedger::Account& account, Definitions definitions)
+    : memory_(account), definitions_(std::move(definitions)),
+      by_id_(std::less<>{}, account.allocator<IdEntry>()),
+      digest_(registry_digest(definitions_)) {
     if (definitions_.empty())
         throw std::invalid_argument("role_registry_must_not_be_empty");
-    std::set<std::pair<TensorPartition, std::uint64_t>> locations;
+    using Location = std::pair<TensorPartition, std::uint64_t>;
+    std::set<Location, std::less<Location>, MemoryLedger::Allocator<Location>> locations(
+        std::less<Location>{}, account.allocator<Location>());
     for (std::size_t index = 0; index < definitions_.size(); ++index) {
         const auto& definition = definitions_[index];
         if (definition.partition != TensorPartition::semantic &&
@@ -85,19 +111,12 @@ RoleRegistry::RoleRegistry(std::vector<RoleDefinition> definitions)
 // concatenated partitions. Further roles are explicit registry extensions;
 // they do not create another state object.
 // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:83-93
-RoleRegistry RoleRegistry::initial_profile(RolePartitionSizes sizes) {
-    if (sizes.semantic == 0 || sizes.executive == 0 || sizes.scratch == 0 ||
-        sizes.semantic > initial_role_names.size() ||
-        sizes.executive > initial_role_names.size() ||
-        sizes.scratch > initial_role_names.size() ||
-        sizes.semantic + sizes.executive + sizes.scratch !=
-            initial_role_names.size())
-        throw std::invalid_argument("initial_role_partition_size_invalid");
+RoleRegistry RoleRegistry::initial_profile(const MemoryLedger::Account& account,
+                                            RolePartitionSizes sizes) {
+    require_initial_sizes(sizes);
     const auto scratch_begin = sizes.semantic + sizes.executive;
-    if (verification_role_index < scratch_begin)
-        throw std::invalid_argument("verification_role_must_be_in_scratch");
 
-    std::vector<RoleDefinition> definitions;
+    Definitions definitions(account.allocator<RoleDefinition>());
     definitions.reserve(initial_role_names.size());
     for (std::size_t index = 0; index < initial_role_names.size(); ++index) {
         TensorPartition partition = TensorPartition::semantic;
@@ -115,14 +134,32 @@ RoleRegistry RoleRegistry::initial_profile(RolePartitionSizes sizes) {
             local_slot,
         });
     }
-    return RoleRegistry(std::move(definitions));
+    return RoleRegistry(account, std::move(definitions));
+}
+
+// Check the same fixed profile without constructing a second registry.
+// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:83-93
+bool RoleRegistry::matches_initial_profile(RolePartitionSizes sizes) const {
+    require_initial_sizes(sizes);
+    if (definitions_.size() != initial_role_names.size()) return false;
+    const auto scratch_begin = sizes.semantic + sizes.executive;
+    for (std::size_t index = 0; index < definitions_.size(); ++index) {
+        const auto partition = index >= scratch_begin ? TensorPartition::scratch
+            : index >= sizes.semantic ? TensorPartition::executive : TensorPartition::semantic;
+        const auto slot = index >= scratch_begin ? index - scratch_begin
+            : index >= sizes.semantic ? index - sizes.semantic : index;
+        const auto& role = definitions_[index];
+        if (role.id.value() != initial_role_names[index] || role.partition != partition ||
+            role.slot != slot) return false;
+    }
+    return true;
 }
 
 // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:83-93
 RoleRegistry RoleRegistry::with_appended(RoleDefinition definition) const {
     auto definitions = definitions_;
     definitions.push_back(std::move(definition));
-    return RoleRegistry(std::move(definitions));
+    return RoleRegistry(memory_, std::move(definitions));
 }
 
 // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:83-93
@@ -140,7 +177,7 @@ const RoleDefinition* RoleRegistry::find(std::string_view id) const noexcept {
 
 // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:243-251
 RoleMask::RoleMask(const RoleRegistry& registry,
-                   std::vector<std::uint64_t> words)
+                   Words words)
     : role_count_(registry.size()), registry_digest_(registry.digest()),
       words_(std::move(words)) {
     if (words_.size() != required_word_count(role_count_))
@@ -157,7 +194,8 @@ RoleMask::RoleMask(const RoleRegistry& registry,
 RoleMask RoleMask::none(const RoleRegistry& registry) {
     return RoleMask(
         registry,
-        std::vector<std::uint64_t>(required_word_count(registry.size())));
+        Words(required_word_count(registry.size()), std::uint64_t{0},
+              registry.memory_.allocator<std::uint64_t>()));
 }
 
 // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:243-251

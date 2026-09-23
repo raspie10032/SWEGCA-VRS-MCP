@@ -21,13 +21,13 @@ struct MainInitialState final {
     };
 
     OwnerId owner;
-    RoleRegistry roles;
+    std::span<const RoleDefinition> roles;
     TensorInput semantic;
     TensorInput executive;
     TensorInput scratch;
     std::span<const WorldEntityInput> entities;
     std::span<const WorldRelationInput> relations;
-    std::vector<ExperienceAddress> evidence_references;
+    std::span<const ExperienceAddress> evidence_references;
     std::span<const std::byte> goals;
     std::span<const std::byte> values;
     std::span<const std::byte> self;

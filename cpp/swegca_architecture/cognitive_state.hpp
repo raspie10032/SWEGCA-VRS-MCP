@@ -138,6 +138,9 @@ using GoalState = StateSection<GoalStateTag>;
 using ValueState = StateSection<ValueStateTag>;
 using SelfState = StateSection<SelfStateTag>;
 
+using EvidenceReferences =
+    std::vector<ExperienceAddress, MemoryLedger::Allocator<ExperienceAddress>>;
+
 // The only persistent state type. Construction requires either Main's initial
 // key or the guarded writer's successor key; producers receive StateSnapshot.
 // Rule: Single-World state, reconstruction board@7c0b62f:83-93,199-200,222-230.
@@ -147,14 +150,14 @@ public:
                    RoleRegistry roles, CognitiveTensor semantic,
                    CognitiveTensor executive, CognitiveTensor scratch,
                    StructuredWorldGraph world_graph,
-                   std::vector<ExperienceAddress> evidence_references,
+                   EvidenceReferences evidence_references,
                    GoalState goals, ValueState values, SelfState self);
 
     CognitiveState(SuccessorStateKey, const CognitiveState& prior,
                    RoleRegistry roles,
                    CognitiveTensor semantic, CognitiveTensor executive,
                    CognitiveTensor scratch, StructuredWorldGraph world_graph,
-                   std::vector<ExperienceAddress> evidence_references,
+                   EvidenceReferences evidence_references,
                    GoalState goals, ValueState values, SelfState self);
 
     CognitiveState(const CognitiveState&) = delete;
@@ -188,7 +191,7 @@ public:
         return world_graph_;
     }
     // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:83-93
-    [[nodiscard]] const std::vector<ExperienceAddress>& evidence_references()
+    [[nodiscard]] std::span<const ExperienceAddress> evidence_references()
         const noexcept { return evidence_references_; }
     // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:83-93
     [[nodiscard]] const GoalState& goals() const noexcept { return goals_; }
@@ -208,7 +211,7 @@ private:
     CognitiveTensor executive_;
     CognitiveTensor scratch_;
     StructuredWorldGraph world_graph_;
-    std::vector<ExperienceAddress> evidence_references_;
+    EvidenceReferences evidence_references_;
     GoalState goals_;
     ValueState values_;
     SelfState self_;

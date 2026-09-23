@@ -54,8 +54,7 @@ void hash_tensor(Sha256& hash, std::uint8_t partition,
 }
 
 // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:83-93
-std::vector<ExperienceAddress> canonical_evidence(
-    std::vector<ExperienceAddress> addresses) {
+EvidenceReferences canonical_evidence(EvidenceReferences addresses) {
     std::sort(addresses.begin(), addresses.end(),
               [](const ExperienceAddress& left,
                  const ExperienceAddress& right) {
@@ -192,7 +191,7 @@ CognitiveState::CognitiveState(
     InitialStateKey key, OwnerId owner,
     RoleRegistry roles, CognitiveTensor semantic, CognitiveTensor executive,
     CognitiveTensor scratch, StructuredWorldGraph world_graph,
-    std::vector<ExperienceAddress> evidence_references,
+    EvidenceReferences evidence_references,
     GoalState goals, ValueState values, SelfState self)
     : owner_(std::move(owner)), roles_(std::move(roles)),
       semantic_(std::move(semantic)),
@@ -209,7 +208,7 @@ CognitiveState::CognitiveState(
     SuccessorStateKey key, const CognitiveState& prior,
     RoleRegistry roles, CognitiveTensor semantic, CognitiveTensor executive,
     CognitiveTensor scratch, StructuredWorldGraph world_graph,
-    std::vector<ExperienceAddress> evidence_references,
+    EvidenceReferences evidence_references,
     GoalState goals, ValueState values, SelfState self)
     : owner_(prior.owner_), roles_(std::move(roles)),
       semantic_(std::move(semantic)),
@@ -228,10 +227,9 @@ StateGeneration CognitiveState::validated_generation(
     const CognitiveState* prior) const {
     validate();
     if (prior == nullptr) {
-        const auto initial = RoleRegistry::initial_profile({
+        if (!roles_.matches_initial_profile({
             semantic_.shape().slots, executive_.shape().slots,
-            scratch_.shape().slots});
-        if (roles_.definitions() != initial.definitions())
+            scratch_.shape().slots}))
             throw std::invalid_argument("initial_role_registry_shape_mismatch");
     } else {
         if (semantic_.scalar_type() != prior->semantic_.scalar_type() ||

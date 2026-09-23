@@ -1,5 +1,6 @@
 #pragma once
 
+#include "swegca_architecture/memory_ledger.hpp"
 #include "swegca_architecture/strong_types.hpp"
 
 #include <compare>
@@ -41,9 +42,12 @@ struct RolePartitionSizes final {
 // Rule: state subsystem, reconstruction board@7c0b62f:83-93.
 class RoleRegistry final {
 public:
-    explicit RoleRegistry(std::vector<RoleDefinition> definitions);
+    RoleRegistry(const MemoryLedger::Account& account,
+                 std::span<const RoleDefinition> definitions);
 
-    [[nodiscard]] static RoleRegistry initial_profile(RolePartitionSizes sizes);
+    [[nodiscard]] static RoleRegistry initial_profile(
+        const MemoryLedger::Account& account, RolePartitionSizes sizes);
+    [[nodiscard]] bool matches_initial_profile(RolePartitionSizes sizes) const;
     [[nodiscard]] RoleRegistry with_appended(RoleDefinition definition) const;
 
     // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:83-93
@@ -51,15 +55,21 @@ public:
     [[nodiscard]] const RoleDefinition& at(std::size_t index) const;
     [[nodiscard]] const RoleDefinition* find(std::string_view id) const noexcept;
     // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:83-93
-    [[nodiscard]] const std::vector<RoleDefinition>& definitions() const noexcept {
+    [[nodiscard]] std::span<const RoleDefinition> definitions() const noexcept {
         return definitions_;
     }
     // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:83-93
     [[nodiscard]] const Digest256& digest() const noexcept { return digest_; }
 
 private:
-    std::vector<RoleDefinition> definitions_;
-    std::map<std::string, std::size_t, std::less<>> by_id_;
+    friend class RoleMask;
+    using Definitions = std::vector<RoleDefinition, MemoryLedger::Allocator<RoleDefinition>>;
+    using IdEntry = std::pair<const std::string, std::size_t>;
+    RoleRegistry(const MemoryLedger::Account& account, Definitions definitions);
+
+    MemoryLedger::Account memory_;
+    Definitions definitions_;
+    std::map<std::string, std::size_t, std::less<>, MemoryLedger::Allocator<IdEntry>> by_id_;
     Digest256 digest_;
 };
 
@@ -83,18 +93,19 @@ public:
         return registry_digest_;
     }
     // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:243-251
-    [[nodiscard]] const std::vector<std::uint64_t>& words() const noexcept {
+    [[nodiscard]] std::span<const std::uint64_t> words() const noexcept {
         return words_;
     }
 
     auto operator<=>(const RoleMask&) const = default;
 
 private:
-    RoleMask(const RoleRegistry& registry, std::vector<std::uint64_t> words);
+    using Words = std::vector<std::uint64_t, MemoryLedger::Allocator<std::uint64_t>>;
+    RoleMask(const RoleRegistry& registry, Words words);
 
     std::size_t role_count_;
     Digest256 registry_digest_;
-    std::vector<std::uint64_t> words_;
+    Words words_;
 };
 
 }  // namespace swegca::architecture

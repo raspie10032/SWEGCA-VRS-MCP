@@ -38,8 +38,8 @@ public:
 // Initialization/ownership only: guarded successor publication, experience,
 // evidence and action roles are integrated in their later architecture steps.
 // Tensor/graph-array/payload allocations and state/control-block requests
-// share one account. Identity strings, role and evidence-reference containers,
-// bootstrap allocations, allocator overhead, stacks and mappings
+// share one account, as do role maps/arrays and evidence-reference arrays.
+// Identity strings, bootstrap allocations, allocator overhead, stacks and mappings
 // still require integration; memory_requested() is not an RSS guarantee.
 struct detail::MainOwnerState final {
     std::unique_ptr<MemoryLedger> memory;
@@ -55,6 +55,10 @@ MainOwner::MainOwner(MainInitialState initial, std::uint64_t memory_limit) {
         new MemoryLedger(memory_limit, std::make_shared<MainLifetime>()));
     auto authority = std::unique_ptr<MainAuthorityLedger>(new MainAuthorityLedger());
     const auto account = memory->account();
+    RoleRegistry roles(account, initial.roles);
+    EvidenceReferences evidence(account.allocator<ExperienceAddress>());
+    if (!initial.evidence_references.empty())
+        evidence.assign(initial.evidence_references.begin(), initial.evidence_references.end());
     CognitiveTensor semantic(account, initial.semantic.scalar_type,
                              initial.semantic.shape, initial.semantic.canonical_bytes);
     CognitiveTensor executive(account, initial.executive.scalar_type,
@@ -67,9 +71,9 @@ MainOwner::MainOwner(MainInitialState initial, std::uint64_t memory_limit) {
     SelfState self(CanonicalPayload(account, initial.self));
     auto current = std::allocate_shared<CognitiveState>(
         account.allocator<CognitiveState>(), InitialStateKey{},
-        std::move(initial.owner), std::move(initial.roles),
+        std::move(initial.owner), std::move(roles),
         std::move(semantic), std::move(executive), std::move(scratch),
-        std::move(graph), std::move(initial.evidence_references),
+        std::move(graph), std::move(evidence),
         std::move(goals), std::move(values), std::move(self));
 
     // Allocate storage before transferring the fully constructed ownership.
