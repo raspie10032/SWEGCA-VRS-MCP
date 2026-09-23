@@ -103,4 +103,46 @@ private:
     double uncertainty_;
 };
 
+// Canonical identities of the actual delta tensors and target mask held by a
+// proposal. Main supplies these exact digests when it asks the accumulator
+// for a decision; Bind recomputes them from the proposal it will arbitrate.
+// SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:154-162
+[[nodiscard]] Digest256 proposal_delta_digest(const SynapseProposal& proposal);
+// SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:154-162
+[[nodiscard]] Digest256 proposal_mask_digest(const SynapseProposal& proposal);
+
+// Main's successful Bind result. Only EvidenceGate can construct one, and it
+// carries no state-write capability. Arbitration receives this type, never an
+// unbound producer proposal. A moved-from shell cannot be read as a bound one.
+// SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:154-174
+class BoundProposal final {
+public:
+    BoundProposal(BoundProposal&& other);
+    BoundProposal& operator=(BoundProposal&&) = delete;
+    BoundProposal(const BoundProposal&) = delete;
+    BoundProposal& operator=(const BoundProposal&) = delete;
+    ~BoundProposal() = default;
+
+    // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:154-174
+    [[nodiscard]] const SynapseProposal& proposal() const;
+    // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:154-174
+    [[nodiscard]] const Digest256& decision_digest() const;
+    // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:154-174
+    [[nodiscard]] const Digest256& binding_digest() const;
+    // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:154-174
+    [[nodiscard]] const Digest256& binding_receipt() const;
+
+private:
+    friend class EvidenceGate;
+    BoundProposal(SynapseProposal proposal, Digest256 decision_digest,
+                  Digest256 binding_digest, Digest256 binding_receipt);
+    void require_live() const;
+
+    SynapseProposal proposal_;
+    Digest256 decision_digest_;
+    Digest256 binding_digest_;
+    Digest256 binding_receipt_;
+    bool live_ = true;
+};
+
 }  // namespace swegca::architecture
