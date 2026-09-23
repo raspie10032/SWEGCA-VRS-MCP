@@ -453,7 +453,8 @@ supplies the Main commit ordering.
 ### Publication-identity migration scope
 
 Replacing the two manifest state fields alone is insufficient. The current
-`StateGeneration(ordinal, digest)` crosses eighteen C++ files. The migration
+`StateGeneration(ordinal, digest)` is named in eighteen C++ files and passed
+through `generation()` or `based_on()` in four more. The migration
 must preserve each existing freshness check while moving the ordinal out of
 content and using the exact Main-published `RecordPosition` where publication
 order matters:
