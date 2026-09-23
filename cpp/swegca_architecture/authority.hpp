@@ -342,3 +342,6 @@ CapabilityDescriptor MainAuthorityLedger::consume(
 }
 
 }  // namespace swegca::architecture
+
+// The complete EvidenceGate (see authority_roles.hpp).
+#include "swegca_architecture/evidence_gate.hpp"

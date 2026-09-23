@@ -79,6 +79,12 @@ bool is_strict_utf8(std::string_view value) noexcept {
 }
 
 // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:541-543
+bool is_identity_text(std::string_view value) noexcept {
+    return value.size() <= identity_text_max_bytes && is_strict_utf8(value) &&
+           value.find('\0') == std::string_view::npos && contains_identity_content(value);
+}
+
+// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:541-543
 void require_identity_text(std::string_view value, std::string_view field) {
     if (value.size() > identity_text_max_bytes)
         throw std::invalid_argument(std::string(field) + "_too_long");

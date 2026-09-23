@@ -30,6 +30,10 @@ private:
     std::unique_ptr<detail::MainOwnerState> state_;
 };
 
+// EvidenceGate is defined completely in evidence_gate.hpp, which authority.hpp
+// includes at its end, so every translation unit that can name its issue key
+// also sees its one definition.
+
 // Complete, non-instantiable role definitions close friend-by-name passkey
 // spoofing. Each role becomes constructible only when its architecture stage
 // adds the complete Main-owned checks and operations to this definition.
@@ -39,7 +43,6 @@ private:
         Name() = delete;                         \
     }
 
-SWEGCA_DECLARE_CLOSED_AUTHORITY_ROLE(EvidenceGate);
 SWEGCA_DECLARE_CLOSED_AUTHORITY_ROLE(MainStateWriter);
 SWEGCA_DECLARE_CLOSED_AUTHORITY_ROLE(SemanticMemoryGate);
 SWEGCA_DECLARE_CLOSED_AUTHORITY_ROLE(SemanticMemoryWriter);

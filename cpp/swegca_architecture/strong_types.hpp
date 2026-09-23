@@ -20,6 +20,10 @@ inline constexpr std::size_t identity_text_max_bytes = 4096;
 
 void require_identity_text(std::string_view value, std::string_view field);
 
+// The same rule as `require_identity_text`, judged without allocating or
+// throwing (for texts viewed in place, such as decoded journal records).
+[[nodiscard]] bool is_identity_text(std::string_view value) noexcept;
+
 }  // namespace detail
 
 // A distinct Tag creates a non-convertible identity type. The source files are
