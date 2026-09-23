@@ -373,9 +373,10 @@ public:
     // the originals. Unpublished
     // leftovers of an interrupted publication and page logs the view no
     // longer reaches are removed. Opening reads HEAD and the manifest chain
-    // back to its checkpoint (at most `max_recovery_bytes`) and verifies only
-    // the extents the head generation wrote (at most two segments). Older
-    // segments (their presence and bytes) and view pages are verified when
+    // back to its checkpoint (at most `max_recovery_bytes`) and verifies the
+    // extents the head generation wrote (at most two segments) plus the
+    // selected tail when those extents omit it. Older segments (their
+    // presence and bytes) and view pages are verified when
     // read: `replay` checks every page digest on the way and the record
     // digest the view names; `for_each_record` and `rebuild_view` check the
     // whole record chain.

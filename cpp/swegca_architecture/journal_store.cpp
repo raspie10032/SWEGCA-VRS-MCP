@@ -1291,14 +1291,20 @@ void JournalStore::load_published_head() {
         if (!fs::is_regular_file(segment_path(directory_, extent.file_id)))
             fail("journal_published_segment_missing");
     });
-    // Verify the head's written extents before cleanup for the same reason.
+    // Verify the head's written extents before cleanup. Also verify the
+    // selected tail when the head wrote no records: cutting bytes beyond it
+    // is safe only after its published prefix is checked.
     // This is the lower journal's own-HEAD preflight, not Main root recovery.
-    if (fields.checkpoint) {
-        if (const auto* tail = loaded->extents.tail()) verify_extent(*loaded, *tail);
-    } else {
-        for (std::size_t index = 0; index < head.extent_count(); ++index)
-            verify_extent(*loaded, loaded->extents.at(head.extent(index).ordinal));
+    bool verified_tail = false;
+    const auto* tail = loaded->extents.tail();
+    if (!fields.checkpoint) {
+        for (std::size_t index = 0; index < head.extent_count(); ++index) {
+            const auto& extent = loaded->extents.at(head.extent(index).ordinal);
+            verify_extent(*loaded, extent);
+            verified_tail = verified_tail || (tail != nullptr && extent.ordinal == tail->ordinal);
+        }
     }
+    if (tail != nullptr && !verified_tail) verify_extent(*loaded, *tail);
 
     // Second pass, now that the published tails are known: files past them
     // are unpublished leftovers and go, and so do page logs older than the
@@ -1314,9 +1320,27 @@ void JournalStore::load_published_head() {
         if (!published_files.emplace(extent.file_id).second)
             fail("journal_segment_file_id_reused");
     });
+    // Check every segment name before deleting any leftover. A low-numbered
+    // unaccounted segment can otherwise make open fail after higher-numbered
+    // files have already been removed.
+    for (const auto& entry : fs::directory_iterator(directory_)) {
+        const auto name = entry.path().filename().string();
+        if (const auto file_id = parse_ordinal(name, segment_prefix, segment_suffix)) {
+            if (file_id <= tail_file_id && !published_files.contains(file_id))
+                fail("journal_segment_unaccounted");
+        }
+    }
     const auto& view = fields.view_pages;
     std::uint64_t page_logs = 0;
     bool last_log_present = false;
+    // Truncation can fail because the published file is short or unwritable.
+    // Do it before removing any other entry so such a failure preserves the
+    // unpublished files for another recovery attempt.
+    if (tail_extent != nullptr)
+        io::append_at_published_end(segment_path(directory_, tail_extent->file_id),
+                                    tail_extent->byte_length, {});
+    io::append_at_published_end(manifest_log_path(directory_, loaded->location.log_ordinal),
+                                loaded->location.offset + loaded->location.length, {});
     for (const auto& entry : fs::directory_iterator(directory_)) {
         const auto name = entry.path().filename().string();
         if (name.ends_with(io::part_suffix)) {
@@ -1328,8 +1352,6 @@ void JournalStore::load_published_head() {
             if (file_id > tail_file_id) {
                 io::remove_file(entry.path());
                 removed = true;
-            } else if (!published_files.contains(file_id)) {
-                fail("journal_segment_unaccounted");
             }
         } else if (const auto log = parse_ordinal(name, manifest_log_prefix, manifest_log_suffix)) {
             if (log > loaded->location.log_ordinal) {
@@ -1349,11 +1371,6 @@ void JournalStore::load_published_head() {
     const auto expected_page_logs =
         view.page_log_ordinal == 0 ? 0 : view.page_log_ordinal - view.first_page_log + 1;
     if (page_logs != expected_page_logs) loaded->view_unavailable = true;
-    if (tail_extent != nullptr)
-        io::append_at_published_end(segment_path(directory_, tail_extent->file_id),
-                                    tail_extent->byte_length, {});
-    io::append_at_published_end(manifest_log_path(directory_, loaded->location.log_ordinal),
-                                loaded->location.offset + loaded->location.length, {});
     // The last log is cut whenever it exists, so no unpublished byte stays
     // uncharged; a log that cannot be cut (an I/O failure, a length short of
     // its published end) is a damaged derived view, not a damaged journal.
