@@ -1629,24 +1629,27 @@ StagedGeneration JournalStore::stage_from(const std::shared_ptr<const PublishedS
     fields.tail_segment_ordinal =
         touched.empty() ? parent.tail_segment_ordinal : touched.back().ordinal;
 
-    // A checkpoint lists every extent in ordinal order: the published ones,
-    // with the tail replaced when this generation extended it, then the new.
-    LedgerVector<SegmentExtent> all(memory_.allocator<SegmentExtent>());
-    if (fields.checkpoint) {
-        all.reserve(static_cast<std::size_t>(extent_count));
-        std::size_t next_touched = 0;
-        current->extents.for_each([&](std::uint64_t ordinal, const SegmentExtent& extent) {
-            if (next_touched < touched.size() && touched[next_touched].ordinal == ordinal)
-                all.push_back(touched[next_touched++]);
-            else
-                all.push_back(extent);
-        });
-        for (; next_touched < touched.size(); ++next_touched) all.push_back(touched[next_touched]);
-    }
-    auto manifest = Manifest::encode(fields, identity,
-                                     fields.checkpoint ? std::span<const SegmentExtent>(all)
-                                                       : std::span<const SegmentExtent>(touched),
-                                     views, memory_);
+    // A checkpoint lists every extent in ordinal order. Pull the prior
+    // immutable extent or its touched replacement straight into the encoder;
+    // the manifest bytes remain the one complete bounded output buffer.
+    auto manifest = [&]() -> Manifest {
+        if (!fields.checkpoint)
+            return Manifest::encode(fields, identity, touched, views, memory_);
+        const auto get_extent = [&](std::size_t index) -> SegmentExtent {
+            const auto ordinal = static_cast<std::uint64_t>(index) + 1;
+            const auto found = std::lower_bound(
+                touched.begin(), touched.end(), ordinal,
+                [](const SegmentExtent& extent, std::uint64_t value) {
+                    return extent.ordinal < value;
+                });
+            if (found != touched.end() && found->ordinal == ordinal) return *found;
+            if (ordinal <= current->extents.size()) return current->extents.at(ordinal);
+            fail("journal_checkpoint_incomplete");
+        };
+        return Manifest::encode(fields, identity,
+                                ExtentPull(get_extent, static_cast<std::size_t>(extent_count)),
+                                views, memory_);
+    }();
     if (manifest.bytes().size() != manifest_size) fail("journal_manifest_size_mismatch");
 
     // The complete next snapshot, checked the way recovery checks it, and

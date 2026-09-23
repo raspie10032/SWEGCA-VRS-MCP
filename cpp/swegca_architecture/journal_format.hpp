@@ -313,6 +313,41 @@ private:
     const void* target_;
     Call call_;
 };
+
+// Borrowed ordinal source for one manifest encoding. The producer remains
+// alive through encode; no second full extent vector is required.
+class ExtentPull final {
+public:
+    // SWEGCA: user@2026-09-22:72-79
+    template <class F>
+        requires(std::is_object_v<F> &&
+                 std::is_invocable_r_v<SegmentExtent, F&, std::size_t>)
+    ExtentPull(F& get, std::size_t count) noexcept
+        : target_(static_cast<const void*>(std::addressof(get))),
+          call_(&invoke<F>), count_(count) {}
+    template <class F>
+    ExtentPull(const F&&, std::size_t) = delete;
+
+    // SWEGCA: user@2026-09-22:72-79
+    [[nodiscard]] SegmentExtent at(std::size_t index) const {
+        return call_(target_, index);
+    }
+    // SWEGCA: user@2026-09-22:72-79
+    [[nodiscard]] std::size_t size() const noexcept { return count_; }
+
+private:
+    using Call = SegmentExtent (*)(const void*, std::size_t);
+    // SWEGCA: user@2026-09-22:72-79
+    template <class F>
+    static SegmentExtent invoke(const void* target, std::size_t index) {
+        auto& get = *static_cast<F*>(const_cast<void*>(target));
+        return get(index);
+    }
+
+    const void* target_;
+    Call call_;
+    std::size_t count_;
+};
 void decode_segment_range(std::span<const std::byte> bytes, std::uint64_t base_offset,
                           const SegmentExtent& extent, std::uint64_t first_sequence,
                           std::uint64_t record_count, const Digest& entering,
@@ -467,6 +502,12 @@ public:
     [[nodiscard]] static Manifest encode(const ManifestFields& fields,
                                          std::string_view journal_identity,
                                          std::span<const SegmentExtent> extents,
+                                         std::span<const ViewGeneration> views,
+                                         const AllocationContext& memory);
+    // SWEGCA: user@2026-09-22:72-79
+    [[nodiscard]] static Manifest encode(const ManifestFields& fields,
+                                         std::string_view journal_identity,
+                                         ExtentPull extents,
                                          std::span<const ViewGeneration> views,
                                          const AllocationContext& memory);
 

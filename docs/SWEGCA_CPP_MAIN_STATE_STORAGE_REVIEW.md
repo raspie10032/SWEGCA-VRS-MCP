@@ -282,9 +282,10 @@ four-stage VRS path is already implemented.
   validates the manifest chain in a mutable table and builds one immutable
   index before readers observe it. The index caches checked record bytes,
   so `universe()` does not scan every extent. Checkpoints still deliberately
-  list all extents and materialize an `all` vector; a bounded checkpoint
-  encoder remains open work. Disk charging retains its checked incremental
-  accounting and full cold-recovery recount.
+  list all extents, but the encoder pulls them from the index and the touched
+  overlay without an extra `all` vector. It retains one complete bounded
+  manifest output buffer, its digest, and decode verification. Disk charging
+  retains checked incremental accounting and a full cold-recovery recount.
 
 This storage path is outside the hot Déjà vu → Recall path. It cannot be used
 as a substitute for the SWEGCA-based four-stage VRS navigation and judgment.

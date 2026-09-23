@@ -660,6 +660,14 @@ Manifest Manifest::encode(const ManifestFields& fields, std::string_view journal
                           std::span<const SegmentExtent> extents,
                           std::span<const ViewGeneration> views,
                           const AllocationContext& memory) {
+    const auto at = [extents](std::size_t index) { return extents[index]; };
+    return encode(fields, journal_identity, ExtentPull(at, extents.size()), views, memory);
+}
+
+// SWEGCA: user@2026-09-22:72-79
+Manifest Manifest::encode(const ManifestFields& fields, std::string_view journal_identity,
+                          ExtentPull extents, std::span<const ViewGeneration> views,
+                          const AllocationContext& memory) {
     const auto total = encoded_manifest_size(journal_identity, extents.size(), views);
     LedgerBytes bytes(memory.allocator<std::byte>());
     bytes.reserve(total);
@@ -681,7 +689,8 @@ Manifest Manifest::encode(const ManifestFields& fields, std::string_view journal
     writer.u64(fields.tail_segment_ordinal);
     encode_view_pages(writer, fields.view_pages);
     writer.u32(static_cast<std::uint32_t>(extents.size()));
-    for (const auto& extent : extents) {
+    for (std::size_t index = 0; index < extents.size(); ++index) {
+        const auto extent = extents.at(index);
         writer.u64(extent.ordinal);
         writer.u64(extent.first_sequence);
         writer.u64(extent.record_count);
