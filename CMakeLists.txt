@@ -45,6 +45,7 @@ add_library(swegca_vrs_candidate STATIC
     cpp/swegca_architecture/proposal_arbiter.cpp
     cpp/swegca_architecture/role_registry.cpp
     cpp/swegca_architecture/scalar_codec.cpp
+    cpp/swegca_architecture/vrs_strength_compile.cpp
 )
 target_link_libraries(swegca_vrs_candidate PUBLIC swegca_core)
 set_target_properties(swegca_vrs_candidate PROPERTIES CXX_EXTENSIONS OFF)
