@@ -7,6 +7,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <array>
 #include <span>
 #include <string>
 #include <string_view>
@@ -27,6 +28,20 @@ struct TensorDeltaInput final {
     std::span<const std::byte> canonical_bytes;
 };
 
+// One element of an original [batch] score tensor. Its tensor dtype is
+// independent of both the other scores and the candidate delta dtype.
+struct ScoreScalarInput final {
+    ScalarType scalar_type;
+    std::span<const std::byte> canonical_bytes;
+};
+
+struct ScoreScalar final {
+    ScalarType scalar_type;
+    std::array<std::byte, 8> bytes{};
+    // Numeric -0 is normalized for arithmetic; bytes retain its input bit.
+    double value = 0;  // exact widening of the stored binary16/32/64 value
+};
+
 struct SynapseProposalInput final {
     std::string_view source;
     std::string_view claim;
@@ -39,9 +54,9 @@ struct SynapseProposalInput final {
     TensorDeltaInput semantic_delta;
     TensorDeltaInput executive_delta;
     TensorDeltaInput scratch_delta;
-    double confidence;
-    double contradiction;
-    double uncertainty;
+    ScoreScalarInput confidence;
+    ScoreScalarInput contradiction;
+    ScoreScalarInput uncertainty;
 };
 
 class SynapseProposal final {
@@ -80,11 +95,11 @@ public:
     // SWEGCA: src/swegca/mosaic_synapse_arbiter.py@5901a5a:54-93
     [[nodiscard]] const CognitiveTensor& scratch_delta() const noexcept { return scratch_delta_; }
     // SWEGCA: src/swegca/mosaic_synapse_arbiter.py@5901a5a:73-93
-    [[nodiscard]] double confidence() const noexcept { return confidence_; }
+    [[nodiscard]] const ScoreScalar& confidence() const noexcept { return confidence_; }
     // SWEGCA: src/swegca/mosaic_synapse_arbiter.py@5901a5a:73-93
-    [[nodiscard]] double contradiction() const noexcept { return contradiction_; }
+    [[nodiscard]] const ScoreScalar& contradiction() const noexcept { return contradiction_; }
     // SWEGCA: src/swegca/mosaic_synapse_arbiter.py@5901a5a:73-93
-    [[nodiscard]] double uncertainty() const noexcept { return uncertainty_; }
+    [[nodiscard]] const ScoreScalar& uncertainty() const noexcept { return uncertainty_; }
 
 private:
     using Text = std::basic_string<char, std::char_traits<char>, MemoryLedger::Allocator<char>>;
@@ -98,9 +113,9 @@ private:
     CognitiveTensor semantic_delta_;
     CognitiveTensor executive_delta_;
     CognitiveTensor scratch_delta_;
-    double confidence_;
-    double contradiction_;
-    double uncertainty_;
+    ScoreScalar confidence_;
+    ScoreScalar contradiction_;
+    ScoreScalar uncertainty_;
 };
 
 // Canonical identities of the actual delta tensors and target mask held by a

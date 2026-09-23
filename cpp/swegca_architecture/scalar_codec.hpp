@@ -16,6 +16,14 @@ namespace swegca::architecture {
 [[nodiscard]] float read_scalar32(ScalarType type, std::span<const std::byte> bytes);
 // SWEGCA: src/swegca/mosaic_synapse_arbiter.py@5901a5a:263-321
 [[nodiscard]] double read_scalar64(ScalarType type, std::span<const std::byte> bytes);
+// No-throw access into an already owned tensor for the pure arbiter callback.
+// False means a type, index, width, or value invariant failed.
+// SWEGCA: src/swegca/mosaic_synapse_arbiter.py@5901a5a:238-262
+[[nodiscard]] bool try_read_scalar32(const CognitiveTensor& tensor,
+                                     std::size_t element, float& value) noexcept;
+// SWEGCA: src/swegca/mosaic_synapse_arbiter.py@5901a5a:238-262
+[[nodiscard]] bool try_read_scalar64(const CognitiveTensor& tensor,
+                                     std::size_t element, double& value) noexcept;
 // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:269-277
 void write_scalar32(ScalarType type, float value, std::span<std::byte> bytes);
 // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:269-277

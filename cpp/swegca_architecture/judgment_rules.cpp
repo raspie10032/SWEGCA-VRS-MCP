@@ -92,25 +92,20 @@ kernel::GateRules make_gate_rules(const GatePolicy& p) {
     return rules;
 }
 
-// Retain the policy's binary64 limits for binary64 state. The binary32 fields
-// retain the existing conversion for binary32 state; an underflowed binary32
-// limit makes only that execution path fail closed.
+// Keep the original positive finite policy values in binary64. Conversion to
+// a state scalar occurs only after the clip comparison establishes it fits.
 // SWEGCA: src/swegca/mosaic_synapse_arbiter.py@5901a5a:222-236
 kernel::ArbiterRules make_arbiter_rules(const ArbiterPolicy& p) {
     constexpr const char* name = "arbiter_policy";
-    const auto bounded = [](double value) {
-        return std::isfinite(value) && value > 0 && value <= kernel::max_delta_limit;
-    };
-    if (!bounded(p.maximum_slot_delta)) invalid(name, "maximum_slot_delta");
-    if (!bounded(p.maximum_world_delta)) invalid(name, "maximum_world_delta");
+    if (!(std::isfinite(p.maximum_slot_delta) && p.maximum_slot_delta > 0))
+        invalid(name, "maximum_slot_delta");
+    if (!(std::isfinite(p.maximum_world_delta) && p.maximum_world_delta > 0))
+        invalid(name, "maximum_world_delta");
     if (!unit(p.minimum_weight)) invalid(name, "minimum_weight");
     kernel::ArbiterRules rules;
-    rules.maximum_slot_delta_exact_ = p.maximum_slot_delta;
-    rules.maximum_world_delta_exact_ = p.maximum_world_delta;
-    rules.minimum_weight_exact_ = p.minimum_weight;
-    rules.maximum_slot_delta_ = static_cast<float>(p.maximum_slot_delta);
-    rules.maximum_world_delta_ = static_cast<float>(p.maximum_world_delta);
-    rules.minimum_weight_ = static_cast<float>(p.minimum_weight);
+    rules.maximum_slot_delta_ = p.maximum_slot_delta;
+    rules.maximum_world_delta_ = p.maximum_world_delta;
+    rules.minimum_weight_ = p.minimum_weight;
     return rules;
 }
 

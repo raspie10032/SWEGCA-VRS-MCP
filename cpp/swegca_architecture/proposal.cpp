@@ -1,4 +1,5 @@
 #include "swegca_architecture/proposal.hpp"
+#include "swegca_architecture/scalar_codec.hpp"
 #include "swegca_architecture/sha256.hpp"
 
 #include <array>
@@ -10,19 +11,32 @@
 namespace swegca::architecture {
 namespace {
 
-// The candidate delta has exactly the detached state's partition shapes and
-// scalar types. The tensor constructor separately checks byte count, finite
+// The candidate delta has exactly the detached state's partition shapes.
+// Its scalar dtype is independent of the state, as in SynapseProposal.validate.
+// The tensor constructor separately checks byte count, finite
 // values, and canonical signed zero for every supported scalar format.
 // SWEGCA: src/swegca/mosaic_synapse_arbiter.py@5901a5a:65-93
-void require_matching_delta(const CognitiveTensor& delta, const CognitiveTensor& state) {
-    if (delta.scalar_type() != state.scalar_type() || delta.shape() != state.shape())
+void require_matching_delta_shape(const CognitiveTensor& delta,
+                                  const CognitiveTensor& state) {
+    if (delta.shape() != state.shape())
         throw std::invalid_argument("proposal_delta_state_shape_mismatch");
 }
 
 // SWEGCA: src/swegca/mosaic_synapse_arbiter.py@5901a5a:73-93
-void require_unit_score(double value) {
+ScoreScalar keep_unit_score(const ScoreScalarInput& input) {
+    const auto width = scalar_width(input.scalar_type);
+    if (input.canonical_bytes.size() != width)
+        throw std::invalid_argument("proposal_score_width_mismatch");
+    const double value = input.scalar_type == ScalarType::float64
+                             ? read_scalar64(input.scalar_type, input.canonical_bytes)
+                             : static_cast<double>(read_scalar32(input.scalar_type,
+                                                                  input.canonical_bytes));
     if (!std::isfinite(value) || value < 0.0 || value > 1.0)
         throw std::invalid_argument("proposal_score_out_of_range");
+    ScoreScalar score{input.scalar_type, {}, value};
+    for (std::size_t at = 0; at < width; ++at)
+        score.bytes[at] = input.canonical_bytes[at];
+    return score;
 }
 
 // Fixed-width little-endian encoding keeps the digest independent of host
@@ -71,18 +85,19 @@ SynapseProposal::SynapseProposal(const MemoryLedger::Account& memory,
       scratch_delta_(memory, input.scratch_delta.scalar_type,
                      input.scratch_delta.shape, input.scratch_delta.canonical_bytes),
       // SWEGCA: src/swegca/mosaic_synapse_arbiter.py@5901a5a:54-93
-      confidence_(input.confidence),
-      contradiction_(input.contradiction),
-      uncertainty_(input.uncertainty) {
+      confidence_(keep_unit_score(input.confidence)),
+      contradiction_(keep_unit_score(input.contradiction)),
+      uncertainty_(keep_unit_score(input.uncertainty)) {
     const auto& state = snapshot.state();
     if (based_on_ != state.generation())
         throw std::invalid_argument("proposal_snapshot_generation_mismatch");
-    require_matching_delta(semantic_delta_, state.semantic());
-    require_matching_delta(executive_delta_, state.executive());
-    require_matching_delta(scratch_delta_, state.scratch());
-    require_unit_score(confidence_);
-    require_unit_score(contradiction_);
-    require_unit_score(uncertainty_);
+    require_matching_delta_shape(semantic_delta_, state.semantic());
+    require_matching_delta_shape(executive_delta_, state.executive());
+    require_matching_delta_shape(scratch_delta_, state.scratch());
+    // One original delta_candidate is split across these three partitions.
+    if (semantic_delta_.scalar_type() != executive_delta_.scalar_type() ||
+        semantic_delta_.scalar_type() != scratch_delta_.scalar_type())
+        throw std::invalid_argument("proposal_delta_partition_dtype_mismatch");
     evidence_addresses_.reserve(input.evidence_addresses.size());
     for (const auto address : input.evidence_addresses) {
         detail::require_identity_text(address, ExperienceAddressTag::name);
@@ -120,8 +135,8 @@ Digest256 proposal_mask_digest(const SynapseProposal& proposal) {
 }
 
 // Re-created (user@2026-09-23): one canonical identity for every immutable
-// field the Bind gate and conflict arbiter may inspect. Scores use their exact
-// finite IEEE representation, with both zero signs reduced to one identity.
+// field the Bind gate and conflict arbiter may inspect. Every score's own
+// tensor dtype and stored bits are part of its identity.
 // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:154-162
 Digest256 proposal_content_digest(const SynapseProposal& proposal) {
     Sha256 hash;
@@ -135,8 +150,11 @@ Digest256 proposal_content_digest(const SynapseProposal& proposal) {
     for (const auto& address : proposal.evidence_addresses()) hash_text(hash, address);
     hash.update(proposal_delta_digest(proposal).bytes());
     hash.update(proposal_mask_digest(proposal).bytes());
-    const auto score = [&hash](double value) {
-        hash_u64(hash, std::bit_cast<std::uint64_t>(value + 0.0));
+    const auto score = [&hash](const ScoreScalar& value) {
+        const auto width = scalar_width(value.scalar_type);
+        hash_u64(hash, static_cast<std::uint8_t>(value.scalar_type));
+        hash_u64(hash, width);
+        hash.update(std::span<const std::byte>(value.bytes.data(), width));
     };
     score(proposal.confidence());
     score(proposal.contradiction());

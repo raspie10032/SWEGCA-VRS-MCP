@@ -145,6 +145,37 @@ double read_scalar64(ScalarType type, std::span<const std::byte> bytes) {
     return value == 0 ? 0.0 : value;
 }
 
+// SWEGCA: src/swegca/mosaic_synapse_arbiter.py@5901a5a:238-262
+bool try_read_scalar32(const CognitiveTensor& tensor, std::size_t element,
+                       float& value) noexcept {
+    const auto type = tensor.scalar_type();
+    if (type == ScalarType::float64 || element >= tensor.element_count()) return false;
+    const std::size_t width = type == ScalarType::float32 ? 4 :
+                              (type == ScalarType::float16 || type == ScalarType::bfloat16) ? 2 : 0;
+    if (width == 0 || element >= tensor.bytes().size() / width) return false;
+    try {
+        value = read_scalar32(type, tensor.bytes().subspan(element * width, width));
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
+// SWEGCA: src/swegca/mosaic_synapse_arbiter.py@5901a5a:238-262
+bool try_read_scalar64(const CognitiveTensor& tensor, std::size_t element,
+                       double& value) noexcept {
+    if (tensor.scalar_type() != ScalarType::float64 ||
+        element >= tensor.element_count() || element >= tensor.bytes().size() / 8)
+        return false;
+    try {
+        value = read_scalar64(ScalarType::float64,
+                              tensor.bytes().subspan(element * 8, 8));
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
 // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:269-277
 void write_scalar32(ScalarType type, float value, std::span<std::byte> bytes) {
     if (type == ScalarType::float64)
