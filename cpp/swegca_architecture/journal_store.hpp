@@ -59,16 +59,22 @@ struct PublishedSnapshot {
     // generation until the view is rewritten into new logs. Logs a rewrite
     // left behind are removed only once their lease has no holder.
     std::shared_ptr<const void> page_logs;
+    // The view is derived from the records. Set when open found its page
+    // logs damaged: lookups, stages and compaction fail closed with
+    // `journal_view_unavailable` until `rebuild_view` publishes a new view.
+    bool view_unavailable = false;
 };
 
 // One published record read back: its exact bytes, allocated through the
 // ledger, and the view decoded from them. The view, and every text and span
 // it hands out, is valid while this object lives. It can only be moved
-// (moving keeps the byte buffer, so the view stays valid); it cannot be
-// assigned, copied, or have its bytes taken out (codex J14).
+// (moving carries the byte buffer and the view to the new object and leaves
+// the source with an empty view and position, so a moved-from record never
+// exposes bytes it no longer owns); it cannot be assigned, copied, or have
+// its bytes taken out (codex J14, codex 14:31).
 class PublishedRecord final {
 public:
-    PublishedRecord(PublishedRecord&&) noexcept = default;
+    PublishedRecord(PublishedRecord&& other) noexcept;
     PublishedRecord& operator=(PublishedRecord&&) = delete;
     PublishedRecord(const PublishedRecord&) = delete;
     PublishedRecord& operator=(const PublishedRecord&) = delete;
@@ -160,9 +166,13 @@ public:
     // these fail closed: unknown entries (including a `.part` file that is
     // not an interrupted publication of a journal name), a missing or
     // corrupt HEAD or manifest on the chain back to the checkpoint, a segment
-    // no extent names, a missing page log in the view's range, a missing or
-    // corrupt extent the head generation wrote, a recovery chain over its
-    // read budget, and published use over `storage_bytes`. Unpublished
+    // no extent names, a missing or corrupt extent the head generation
+    // wrote, a recovery chain over its read budget, and published use over
+    // `storage_bytes`. The view is derived: a missing page log in its range,
+    // or a last log that cannot be cut back to its published end, opens the
+    // journal with the view unavailable (lookups, stages and compaction fail
+    // with `journal_view_unavailable`) so that Main can `rebuild_view` from
+    // the originals. Unpublished
     // leftovers of an interrupted publication and page logs the view no
     // longer reaches are removed. Opening reads HEAD and the manifest chain
     // back to its checkpoint (at most `max_recovery_bytes`) and verifies only
@@ -235,7 +245,8 @@ public:
     // Rewrites the live view pages, streamed leaf by leaf in address order,
     // into new page logs (memory: one open page per level), then publishes a
     // generation with no records whose view is the rewritten tree over the
-    // same entries. The old logs stay, charged, until no snapshot holds their
+    // same entries (`journal_view_unavailable` when the view is). The old
+    // logs stay, charged, until no snapshot holds their
     // lease; the next publication removes them, and a reopen removes any
     // left. A failure before HEAD removes the new logs and publishes nothing.
     void compact_view();

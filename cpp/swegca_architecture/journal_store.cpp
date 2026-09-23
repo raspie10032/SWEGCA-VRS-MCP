@@ -821,6 +821,14 @@ PublishedRecord::PublishedRecord(LedgerBytes bytes, const RecordPosition& positi
         fail("journal_position_mismatch");
 }
 
+// The source keeps no view of the bytes it gave away. A vector move carries
+// the buffer itself, so the moved view still points into owned bytes.
+// SWEGCA: user@2026-09-22:72-79
+PublishedRecord::PublishedRecord(PublishedRecord&& other) noexcept
+    : bytes_(std::move(other.bytes_)),
+      view_(std::exchange(other.view_, RecordView{})),
+      position_(std::exchange(other.position_, RecordPosition{})) {}
+
 // SWEGCA: user@2026-09-22:72-79
 StagedGeneration::StagedGeneration(const MemoryLedger::Account& memory)
     : head_bytes_(memory.allocator<std::byte>()), log_header_(memory.allocator<std::byte>()),
@@ -982,8 +990,9 @@ void JournalStore::load_published_head() {
     // Second pass, now that the published tails are known: files past them
     // are unpublished leftovers and go, and so do page logs older than the
     // oldest one the view reaches; a segment below the tail that no extent
-    // names is not this journal's, and a missing page log in the view's
-    // range fails closed. Then bytes past each published end are cut.
+    // names is not this journal's. A missing page log in the view's range
+    // leaves the view unavailable until it is rebuilt from the records.
+    // Then bytes past each published end are cut.
     const auto tail_ordinal = fields.tail_segment_ordinal;
     const auto& view = fields.address_view;
     std::uint64_t page_logs = 0;
@@ -1012,15 +1021,20 @@ void JournalStore::load_published_head() {
     }
     const auto expected_page_logs =
         view.page_log_ordinal == 0 ? 0 : view.page_log_ordinal - view.first_page_log + 1;
-    if (page_logs != expected_page_logs) fail("journal_page_log_missing");
+    if (page_logs != expected_page_logs) loaded->view_unavailable = true;
     if (tail_ordinal != 0)
         io::append_at_published_end(segment_path(directory_, tail_ordinal),
                                     loaded->extents.at(tail_ordinal).byte_length, {});
     io::append_at_published_end(manifest_log_path(directory_, loaded->location.log_ordinal),
                                 loaded->location.offset + loaded->location.length, {});
-    if (view.page_log_ordinal != 0)
-        io::append_at_published_end(page_log_path(directory_, view.page_log_ordinal),
-                                    view.page_log_end, {});
+    if (view.page_log_ordinal != 0 && !loaded->view_unavailable) {
+        try {
+            io::append_at_published_end(page_log_path(directory_, view.page_log_ordinal),
+                                        view.page_log_end, {});
+        } catch (const std::exception&) {
+            loaded->view_unavailable = true;  // a derived log only; the records decide
+        }
+    }
     if (removed) io::make_entries_durable(directory_);
 
     std::shared_ptr<const PublishedSnapshot> published = std::move(loaded);
@@ -1119,6 +1133,7 @@ StagedGeneration JournalStore::stage_from(const std::shared_ptr<const PublishedS
                                           std::uint64_t retained) const {
     const auto& parent = current->head.fields();
     if (replacement != nullptr && !drafts.empty()) fail("journal_view_replacement_with_records");
+    if (replacement == nullptr && current->view_unavailable) fail("journal_view_unavailable");
     if (parent.generation == std::numeric_limits<std::uint64_t>::max())
         fail("journal_generation_exhausted");
 
@@ -1408,6 +1423,7 @@ std::optional<RecordPosition> JournalStore::resolve(const ExperienceAddress& add
 // SWEGCA: user@2026-09-22:72-79
 std::optional<RecordPosition> JournalStore::resolve_in(const PublishedSnapshot& current,
                                                        std::string_view key) const {
+    if (current.view_unavailable) fail("journal_view_unavailable");
     const auto& view = current.head.fields().address_view;
     if (view.entry_count == 0) return std::nullopt;
     PageRef ref = view.root;
@@ -1609,6 +1625,7 @@ void JournalStore::compact_view() {
     require_usable();
     reclaim_locked();
     auto current = snapshot();
+    if (current->view_unavailable) fail("journal_view_unavailable");
     const auto view = current->head.fields().address_view;
     if (view.entry_count == 0) return;
     reserve_retired();

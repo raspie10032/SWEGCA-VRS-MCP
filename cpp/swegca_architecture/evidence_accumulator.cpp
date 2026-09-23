@@ -104,7 +104,8 @@ void reserve_one_more(Vector& vector) {
 }
 
 // Every admitted original exactly (address, content digest, observation
-// generation, expiry, outcome) in admission order, then every Re-evidence
+// generation, expiry, outcome, axis, source family, context, producer,
+// observation step, producer confidence bits) in admission order, then every Re-evidence
 // result (original, content digest, re-evidence generation, re-evidencer,
 // outcome) in recording order, then the positions of exactly repeated results.
 // SWEGCA: src/swegca/mosaic_evidence_revision.py@5901a5a:81-180
@@ -113,7 +114,7 @@ Digest256 evidence_record_digest(std::span<const AdmittedEvidence> evidence,
                                  std::span<const ReEvidenceResult> results,
                                  const Positions& repeated) {
     Sha256 hash;
-    hash_field(hash, "swegca.admitted_evidence.v2");
+    hash_field(hash, "swegca.admitted_evidence.v3");
     hash_u64(hash, evidence.size());
     for (const auto& item : evidence) {
         hash_field(hash, item.address.value());
@@ -122,6 +123,12 @@ Digest256 evidence_record_digest(std::span<const AdmittedEvidence> evidence,
         hash_u64(hash, item.expires_at ? 1 : 0);
         hash_u64(hash, item.expires_at.value_or(0));
         hash_u64(hash, static_cast<std::uint64_t>(item.outcome));
+        hash_u64(hash, item.axis);
+        hash_field(hash, item.source_family.value());
+        hash.update(item.context.bytes());
+        hash_field(hash, item.producer.value());
+        hash_u64(hash, item.observed_at);
+        hash_u64(hash, std::bit_cast<std::uint64_t>(item.producer_confidence));
     }
     hash_u64(hash, results.size());
     for (const auto& result : results) {
@@ -218,6 +225,7 @@ std::uint32_t EvidenceAccumulator::identity_id(const Map<Text, std::uint32_t>& t
 // SWEGCA: src/swegca/mosaic_evidence_accumulator.py@5901a5a:359-428
 AdmissionResult EvidenceAccumulator::admit(const EvidenceObservation& observation,
                                            const journal::PublishedRecord& replayed,
+                                           const CognitiveState& state,
                                            std::uint64_t current_step) {
     if (observation.claim != claim_.claim().value() || observation.claim_revision != claim_.revision())
         throw std::invalid_argument("evidence_claim_mismatch");
@@ -236,6 +244,9 @@ AdmissionResult EvidenceAccumulator::admit(const EvidenceObservation& observatio
     if (replayed.view().address != observation.address.value())
         throw std::invalid_argument("evidence_record_address_mismatch");
 
+    // Author: every audit row's world hash is the current state's.
+    if (observation.judged_against != state.generation())
+        return reject(observation.address, AdmissionResult::stale);
     if (observation.expires_at && current_step > *observation.expires_at)
         return reject(observation.address, AdmissionResult::expired);
     if (observation.outcome == EvidenceOutcome::insufficient)
@@ -298,7 +309,10 @@ AdmissionResult EvidenceAccumulator::admit(const EvidenceObservation& observatio
     reserve_one_more(admitted_evidence_);
     AdmittedEvidence kept{ExperienceAddress(memory_, observation.address),
                           replayed.view().record_digest,
-                          observation.judged_against, observation.expires_at, observation.outcome};
+                          observation.judged_against, observation.expires_at, observation.outcome,
+                          observation.axis, SourceFamily(memory_, source_text),
+                          observation.context, ProducerId(memory_, producer_text),
+                          observation.observed_at, observation.producer_confidence};
 
     // Commit phase: splices, a noexcept move and integer updates only. The
     // recent ring never reallocates: its capacity was reserved at construction.
@@ -511,18 +525,20 @@ bool EvidenceDecision::issued_by(const EvidenceAccumulator& accumulator) const n
 }
 
 // Replay first (the journal resolves the address through its published view
-// and verifies the record, or throws), then bind the result to what was
-// replayed and to the generation of the state Main passes, then record it.
+// and verifies the record, or throws), then Main judges the replayed record
+// against the claim revision and the state it passes, then the result is
+// bound to what was replayed and to that state's generation, and recorded.
 // SWEGCA: docs/SWEGCA_VRS_MCP_ORDER_FOR_REVIEW.md@30b73e7:24-29
 ReEvidenceRecorded ReEvidence::apply(EvidenceAccumulator& accumulator,
                                      const ExperienceAddress& address,
                                      const CognitiveState& state, std::string_view by,
-                                     EvidenceOutcome outcome) const {
-    if (!outcome_valid(outcome)) throw std::invalid_argument("re_evidence_outcome_invalid");
+                                     ReEvidenceJudge judge) const {
     const auto replayed = journal_.replay(address);
     const auto& view = replayed.view();
     if (view.address != address.value())
         throw std::invalid_argument("re_evidence_replay_address_mismatch");
+    const auto outcome = judge(view, accumulator.claim(), state);
+    if (!outcome_valid(outcome)) throw std::invalid_argument("re_evidence_outcome_invalid");
     ReEvidenceResult result(accumulator.claim(), address, view.record_digest, state.generation(),
                             ProducerId(memory_, by), outcome);
     const auto admission = accumulator.record(result);
