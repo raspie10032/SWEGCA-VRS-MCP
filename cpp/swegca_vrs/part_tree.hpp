@@ -9,11 +9,17 @@
 #include <cstdint>
 #include <limits>
 #include <span>
+#include <type_traits>
+#include <vector>
 #include <utility>
 
-// Bounded digest tree shared by experience blobs and Main-owned state
-// tensors. This layer knows neither record addresses nor journal kinds.
-// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:23-60
+// The VRS plan names an experience part tree; this is its native bounded
+// digest-list mechanism. A Main-owned state writer may reuse it later.
+// Size, level count and byte encoding are C++ storage choices, not behavior
+// specified by the original experience class. This layer knows neither
+// record addresses nor journal kinds.
+// Lineage: native mechanism — the plan names the part tree; this code defines its bounded representation.
+// SWEGCA: docs/SWEGCA_CPP_VRS_LAYER_PLAN.md@472d23225c973fa0a33581afd6bd9026df6fc98a:64
 namespace swegca::vrs::part_tree {
 
 inline constexpr std::size_t part_bytes = 8u * 1024u * 1024u;
@@ -27,12 +33,18 @@ struct PartLevels {
     std::uint8_t depth = 0;
 };
 
-// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:23-60
+using Bytes = std::vector<std::byte, AllocationAdapter<std::byte>>;
+using OwnedLists = std::vector<Bytes, AllocationAdapter<Bytes>>;
+static_assert(std::is_nothrow_move_constructible_v<Bytes>);
+
+// Lineage: native mechanism — bounded level arithmetic for the plan's part tree.
+// SWEGCA: docs/SWEGCA_CPP_VRS_LAYER_PLAN.md@472d23225c973fa0a33581afd6bd9026df6fc98a:64
 constexpr std::uint64_t ceil_div(std::uint64_t value, std::uint64_t by) noexcept {
     return value == 0 ? 0 : (value - 1) / by + 1;
 }
 
-// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:23-60
+// Lineage: native mechanism — computes level counts for the plan's part tree.
+// SWEGCA: docs/SWEGCA_CPP_VRS_LAYER_PLAN.md@472d23225c973fa0a33581afd6bd9026df6fc98a:64
 constexpr PartLevels part_levels(std::uint64_t size) noexcept {
     PartLevels out;
     auto count = ceil_div(size, part_bytes);
@@ -49,16 +61,17 @@ static_assert(ceil_div(ceil_div(ceil_div(std::numeric_limits<std::uint64_t>::max
               "three part levels hold any u64 size");
 
 // `owned.back()` starts as the level-0 digest list. Each emitted part views
-// a list kept in `owned`; moving an inner vector retains its byte allocation.
+// a list kept in `owned`; the concrete allocator-backed byte-vector type
+// keeps its allocation when moved by the outer vector.
 // `emit` records each (digest, bytes) without assigning a record kind or
 // address. The caller owns the level-0 input and all publication decisions.
-// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:23-60
-template <class Owned, class Emit>
+// Lineage: native mechanism — constructs upper digest lists of the plan's part tree.
+// SWEGCA: docs/SWEGCA_CPP_VRS_LAYER_PLAN.md@472d23225c973fa0a33581afd6bd9026df6fc98a:64
+template <class Emit>
 std::span<const std::byte> append_upper_levels(const AllocationContext& memory,
-                                               const PartLevels& levels, Owned& owned, Emit&& emit) {
+                                               const PartLevels& levels, OwnedLists& owned, Emit&& emit) {
     std::span<const std::byte> below = owned.back();
     for (std::uint8_t level = 1; level < levels.depth; ++level) {
-        using Bytes = typename Owned::value_type;
         Bytes upper(memory.allocator<std::byte>());
         upper.reserve(static_cast<std::size_t>(levels.counts[level] * digest256_width));
         for (std::uint64_t at = 0; at < levels.counts[level]; ++at) {

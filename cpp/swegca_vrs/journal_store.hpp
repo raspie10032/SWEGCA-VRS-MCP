@@ -518,10 +518,12 @@ public:
         return stage_records(drafts, state, views);
     }
 
-    // Main alone may stage the reserved state kinds. This is the authority
-    // boundary only; state payload codecs and the final state publication
-    // protocol are implemented in Main's later storage step.
-    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:151-153
+    // Main alone may stage the reserved state kinds. This key excludes other
+    // callers, but does not narrow MainOwner's existing JournalStore friend
+    // rights or grant a state-write capability. State codecs and final
+    // publication remain Main storage work.
+    // Lineage: native mechanism — reserved state staging follows the sole Main-owned state rule; kind numbers and this key are C++ storage choices.
+    // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:103-107
     [[nodiscard]] StagedGeneration stage_state_records(
         const StateStageKey&, std::span<const RecordDraft> drafts,
         const StateGeneration& state, std::span<const ViewGeneration> views) const {

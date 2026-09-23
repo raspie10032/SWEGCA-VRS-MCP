@@ -1758,9 +1758,10 @@ void JournalStore::verify_extent(const PublishedSnapshot& current,
 // returning, so publishing only writes and moves.
 // The generic stage refuses all reserved experience and state kinds. Their
 // separate staging routes require a key formed by ExperienceAppend or Main.
-// Lineage: native mechanism — state publication authority belongs to Main;
-// record-kind reservation is this C++ journal's enforcement of that boundary.
-// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:151-153
+// This stages only; it does not publish or grant a state-write capability.
+// Lineage: native mechanism — the plan reserves experience staging; the state-kind reservation is a C++ storage boundary for the source's sole Main-owned state.
+// SWEGCA: docs/SWEGCA_CPP_VRS_LAYER_PLAN.md@472d23225c973fa0a33581afd6bd9026df6fc98a:159-165
+// SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:103-107
 StagedGeneration JournalStore::stage(std::span<const RecordDraft> drafts,
                                      const StateGeneration& state,
                                      std::span<const ViewGeneration> views) const {
