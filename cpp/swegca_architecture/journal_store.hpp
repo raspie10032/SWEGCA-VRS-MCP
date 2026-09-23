@@ -176,6 +176,10 @@ private:
     std::shared_ptr<PublishedSnapshot> next_;
 };
 
+// Pages of the derived views kept for the read path (journal_store.cpp).
+class PageCache;
+inline constexpr std::uint64_t default_page_cache_bytes = 256u << 20;
+
 class JournalStore final {
 public:
     // Opens `directory`, creating it atomically when it does not exist
@@ -200,16 +204,18 @@ public:
     // digest the view names; `for_each_record` and `rebuild_view` check the
     // whole record chain.
     // `identity` must satisfy the identity rule; the store keeps its own copy
-    // on `memory`.
+    // on `memory`. Up to `page_cache_bytes` of verified view pages stay in
+    // memory for lookups (see PageCache); 0 keeps none.
     [[nodiscard]] static std::unique_ptr<JournalStore> open(
         const std::filesystem::path& directory, std::string_view identity,
-        std::uint64_t storage_bytes, const MemoryLedger::Account& memory);
+        std::uint64_t storage_bytes, const MemoryLedger::Account& memory,
+        std::uint64_t page_cache_bytes = default_page_cache_bytes);
 
     JournalStore(JournalStore&&) = delete;
     JournalStore(const JournalStore&) = delete;
     JournalStore& operator=(const JournalStore&) = delete;
     JournalStore& operator=(JournalStore&&) = delete;
-    ~JournalStore() = default;
+    ~JournalStore();
 
     // The published head manifest, shared with its snapshot: no copy is made
     // and the snapshot lives as long as the returned pointer.
@@ -301,7 +307,8 @@ public:
     // published like a compaction. I/O is linear in the views' size.
     //
     // Both rewrites hold the publication lock for their whole duration, so a
-    // concurrent `publish` waits for them; readers are never blocked.
+    // concurrent `publish` waits for them; readers are never blocked by them
+    // (a reader takes only a page-cache shard lock, per page, briefly).
     void rebuild_view();
 
     // Removes retired page logs whose lease no snapshot holds. Publication
@@ -312,7 +319,8 @@ public:
 private:
     JournalStore(std::filesystem::path directory, JournalIdentity identity,
                  std::uint64_t storage_bytes, const MemoryLedger::Account& memory,
-                 std::uint64_t allocation_unit, std::unique_ptr<io::OwnerLock> lock);
+                 std::uint64_t allocation_unit, std::unique_ptr<io::OwnerLock> lock,
+                 std::uint64_t page_cache_bytes);
 
     // Page logs a view rewrite left behind, and the lease that keeps them.
     struct RetiredLogs {
@@ -357,6 +365,7 @@ private:
     MemoryLedger::Account memory_;
     std::uint64_t allocation_unit_;
     std::unique_ptr<io::OwnerLock> lock_;
+    std::unique_ptr<PageCache> cache_;  // shared by every reader; internally locked
     std::mutex publish_mutex_;
     std::atomic<std::shared_ptr<const PublishedSnapshot>> snapshot_;
     std::atomic<bool> poisoned_{false};
