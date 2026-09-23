@@ -9,19 +9,25 @@
 #include <limits>
 #include <memory>
 #include <new>
+#include <utility>
 
-// Main's one resident-memory ledger. MainOwner creates exactly one, with a
-// limit no larger than ResourceLimits::max_resident_bytes, and hands each
-// Main-owned component an Account on it; no component can make a ledger of
-// its own, so every charge in the process lands on the same limit.
+// Main's resident-memory ledger. What this type guarantees: only MainOwner
+// can construct one (limit nonzero and at most
+// ResourceLimits::max_resident_bytes), it cannot be copied or moved, and a
+// component can only charge it through an Account it was given. What it does
+// not guarantee by itself: that the process has one ledger. That is a
+// premise of Main integration (MainOwner owns exactly one and hands the same
+// Account to every component), closed there, not here.
 //
-// What a charge counts: the bytes a component asks an allocator for, before
-// it asks. A Hold covers memory the component sizes itself (reserve before
-// building); an Allocator charges each allocation it performs with its exact
-// requested size (containers and shared-object control blocks, so no
-// per-node or per-block constant is guessed). Allocator bookkeeping below
-// the requested size (heap headers, rounding) is not counted here; the
-// ledger is exact for requested bytes, not a resident-set measurement.
+// What a charge counts: the bytes a component asks for, before it asks. A
+// Hold covers memory the component sizes itself (reserve before building);
+// an Allocator charges each allocation of the container or shared object it
+// is given to with its exact requested size (nodes, arrays, control blocks).
+// It does not reach allocations those elements make themselves (for example
+// a std::string inside a map value), which the component must charge with a
+// Hold, nor heap headers and rounding, stacks or mappings. The ledger is
+// exact for requested bytes; it is not by itself the 4 GB resident bound,
+// which Main integration closes over every allocation.
 //
 // Lifetime contract: the counter lives as long as any Account, Hold or
 // Allocator on it, so a charge released after MainOwner dropped its ledger
@@ -99,8 +105,9 @@ public:
 
     // Standard allocator that charges each allocation's exact requested size
     // before allocating and returns it after deallocating.
+    // Not final: standard containers derive from their allocator.
     template <class T>
-    class Allocator final {
+    class Allocator {
     public:
         using value_type = T;
 
