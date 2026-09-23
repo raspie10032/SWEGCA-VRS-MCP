@@ -787,15 +787,18 @@ architecture and its test-condition list have passed static review
   500 GB disk, 5 Gbps SSD, and 16-worker limits without deleting any
   architecture stage or Main authority check.
 - Main genesis publication depends on a **real primary strength root**.
+  The user chose to issue that first VRS root when the first **new original
+  experience** enters (2026-09-24); Main must not prepublish an empty VRS root
+  or import an old store to create it.
   `MainCommitMarkerFields` already requires a nonzero `strength_root_digest`,
   but `ManifestFields` has no strength-root position and the journal has no
   strength-record codec. A digest with no published record cannot verify the
   Main-owned synapse strengths after restart. The architecture phase must
   define the durable strength-root locator, bounded parts and
   marker-to-manifest binding before Main selects genesis. The initial-root
-  content remains unresolved: the author's canonical lineage rejects an
-  empty member set (`mosaic_vrs_canonicalization.py@3bddcb7:18-30`), while
-  the later C++ memory decision starts a new store rather than decoding the
-  old one (`SWEGCA_CPP_MULTIMODAL_MEMORY_PLAN.md` lines 95-97). Neither an
-  empty-root exception nor an import of old VRS data is implied by those
-  rules. The VRS update and four-stage read behavior remain in step 11.
+  **content** remains unresolved if that first original experience has no
+  connection: the source canonical lineage rejects an empty member set
+  (`mosaic_vrs_canonicalization.py@3bddcb7:18-30`). Whether the first root
+  alone admits an empty connection set or requires a source-backed connection
+  rule was put to the user; do not infer either. The VRS update and four-stage
+  read behavior remain in step 11.

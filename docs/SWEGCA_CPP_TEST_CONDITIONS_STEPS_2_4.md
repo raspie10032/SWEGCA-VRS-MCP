@@ -110,10 +110,12 @@ resident VRS parent (`rozephine_vrs_block_recovery.py@3bddcb7:20-60`). A
 new native record shape may differ, but those source facts must remain
 recoverable and bound to the selected publication.
 
-Fresh-genesis strength content is still a route decision, not a test fixture:
-the author's `CanonicalVRSMemberLineage` rejects an empty member set
-(`mosaic_vrs_canonicalization.py@3bddcb7:18-30`). The new store cannot pass
-B28-B30 by inventing an empty canonical lineage or importing the old store.
+The first VRS root is published when the first new original experience enters
+(user, 2026-09-24). It is not prepublished empty or imported from the old
+store. Its content rule remains open when that first experience has no
+connection: the source `CanonicalVRSMemberLineage` rejects an empty member
+set (`mosaic_vrs_canonicalization.py@3bddcb7:18-30`). B28-B30 cannot be
+passed by silently inventing an empty canonical lineage.
 
 Views:
 

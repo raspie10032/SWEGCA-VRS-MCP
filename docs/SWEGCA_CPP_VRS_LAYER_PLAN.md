@@ -393,6 +393,22 @@ c06092a) are the prior engine and are traces only.
 | 7 Strength to reliability | memory_promotion.cpp:23, :33, :56; memory_evidence.cpp:124; graph_regions.cpp:281 | mosaic_memory_promotion.py@7536139:4, :32-40, :55-83; mosaic_memory_activation.py@7536139:432-458; store.py@7536139:305-307 | strength >= 1.0 is promoted (semantic evidence, "retained"), below is "available"; promote / retain / revoke / remain_unpromoted; f16 rounding across 1.0 is an error | missing |
 | 8 A reject is not final | graph_append.cpp:213-249; vrs_state_update.cpp:165, :224; memory_evidence.cpp:188 | store.py@7536139:223-249; mosaic_vrs_state_update.py@7536139:131-151; mosaic_memory_activation.py@7536139:461-555 | a reject only multiplies by 0.995 and never deletes; a later support raises it again, promotion can be revoked and regained; author: every observation re-judges (mosaic_evidence_accumulator.py@5901a5a:285-428) | verdict side present (judgment_kernel, evidence_accumulator, cognition); strength side missing |
 
+The user's original `tinylm-slicer-sanabi-bazzite@3bddcb7` also contains
+source rules for derived regions and navigation. `mosaic_vrs_connectivity_regions.py`
+lines 120-138 keeps a shared original experience as a bridge, and lines
+160-205 builds a generation-bound region topology from the VRS graph.
+`mosaic_vrs_portal_lifecycle.py` lines 14-40 and 85-100 defines portal keys,
+policy and navigation-only age decay. These are source material for parts 1
+and 3, even though those C++ parts are still missing. The source's
+`mosaic_vrs_current_regions.py` lines 1-5 requires a full cold regrouping;
+it does not supply the user's session-block idle merge rule.
+`mosaic_vrs_local_navigation.py` lines 1-5 explicitly calls its pages
+scheduling units, not memory shards. The typed `GenerationBlockStore` blocks
+are storage byte blocks, not a definition of the user's logical VRS blocks.
+Block size, shard geometry, and the merge selection rule therefore remain
+design work under the user's approved order, without substituting either
+source regions or byte blocks for session blocks.
+
 Order for VRS (after steps 1-6): the synapse state (links, strength,
 promotion) and its update from verdicts (5, 6, 7, 8) first, since blocks
 and portals are read paths over it; then blocks (1) with the size bound (2)
