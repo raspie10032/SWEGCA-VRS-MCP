@@ -190,6 +190,50 @@ private:
     Call call_;
 };
 
+// Native storage boundaries within the existing canonical state byte stream.
+// The digest consumes the same bytes without observing these boundaries.
+enum class StateContentSection {
+    prefix,
+    semantic_tensor,
+    executive_tensor,
+    scratch_tensor,
+    entities,
+    relations,
+    evidence,
+    final_fields,
+};
+
+class StateContentSectionSink final {
+public:
+    // Weak source analogy: the author's state hash binds all of these fields.
+    // This callback marks C++ storage sections without changing their bytes.
+    // SWEGCA: src/swegca/mosaic_bounded_world_write.py@5901a5a:262-283
+    template <class F>
+        requires(!std::is_same_v<std::remove_cvref_t<F>, StateContentSectionSink> &&
+                 std::is_object_v<F> &&
+                 std::is_invocable_v<F&, StateContentSection>)
+    explicit StateContentSectionSink(F& section) noexcept
+        : target_(static_cast<const void*>(std::addressof(section))),
+          call_(&invoke<F>) {}
+    template <class F>
+    StateContentSectionSink(const F&&) = delete;
+
+    // SWEGCA: src/swegca/mosaic_bounded_world_write.py@5901a5a:262-283
+    void operator()(StateContentSection section) const { call_(target_, section); }
+
+private:
+    using Call = void (*)(const void*, StateContentSection);
+    // SWEGCA: src/swegca/mosaic_bounded_world_write.py@5901a5a:262-283
+    template <class F>
+    static void invoke(const void* target, StateContentSection section) {
+        auto& callback = *static_cast<F*>(const_cast<void*>(target));
+        callback(section);
+    }
+
+    const void* target_;
+    Call call_;
+};
+
 // The original bounded writer stores this current-write head under
 // self_state["bounded_verification_write"]. It is state content: rollback
 // restores the prior head exactly, and retraction checks receipt/revision.
@@ -273,6 +317,12 @@ public:
     // borrowed span lives only through this call and must be copied or hashed
     // before the sink returns; no full-state buffer is materialized.
     void for_each_content_chunk(StateContentSink write) const;
+    // The section callback runs immediately before that section's first byte.
+    // An empty tensor still has partition/header bytes. Both forms use the
+    // same canonical emitter and therefore the same digest preimage.
+    // SWEGCA: src/swegca/mosaic_bounded_world_write.py@5901a5a:262-283
+    void for_each_content_chunk(StateContentSink write,
+                                StateContentSectionSink section) const;
     // SWEGCA: src/swegca/mosaic_cognitive_kernel.py@5901a5a:220-254
     [[nodiscard]] const RoleRegistry& roles() const noexcept { return roles_; }
     // SWEGCA: src/swegca/mosaic_cognitive_kernel.py@5901a5a:220-254

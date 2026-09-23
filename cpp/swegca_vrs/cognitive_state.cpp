@@ -64,12 +64,13 @@ void emit_tensor(StateContentSink write, std::uint8_t partition,
 // original Python function uses a different tensor/JSON encoding.
 // SWEGCA: src/swegca/mosaic_bounded_world_write.py@5901a5a:262-283
 void emit_state_content(
-    StateContentSink write,
+    StateContentSink write, const StateContentSectionSink* section,
     const OwnerId& owner, const RoleRegistry& roles,
     const CognitiveTensor& semantic, const CognitiveTensor& executive,
     const CognitiveTensor& scratch, const StructuredWorldGraph& graph,
     std::span<const ExperienceAddress> evidence, const GoalState& goals,
     const ValueState& values, const SelfState& self) {
+    if (section) (*section)(StateContentSection::prefix);
     constexpr std::string_view domain = "swegca.cognitive_state.content.v3";
     write(std::span<const std::byte>(
         reinterpret_cast<const std::byte*>(domain.data()), domain.size()));
@@ -81,10 +82,14 @@ void emit_state_content(
         emit_u8(write, static_cast<std::uint8_t>(role.partition));
         emit_u64(write, role.slot);
     }
+    if (section) (*section)(StateContentSection::semantic_tensor);
     emit_tensor(write, 1, semantic);
+    if (section) (*section)(StateContentSection::executive_tensor);
     emit_tensor(write, 2, executive);
+    if (section) (*section)(StateContentSection::scratch_tensor);
     emit_tensor(write, 3, scratch);
 
+    if (section) (*section)(StateContentSection::entities);
     emit_u64(write, graph.entities().size());
     for (const auto& entity : graph.entities()) {
         emit_text(write, entity.id.value());
@@ -95,6 +100,7 @@ void emit_state_content(
         for (const auto& address : entity.evidence_references)
             emit_text(write, address.value());
     }
+    if (section) (*section)(StateContentSection::relations);
     emit_u64(write, graph.relations().size());
     for (const auto& relation : graph.relations()) {
         emit_text(write, relation.subject.value());
@@ -103,8 +109,10 @@ void emit_state_content(
         emit_bytes(write, relation.properties.bytes());
     }
 
+    if (section) (*section)(StateContentSection::evidence);
     emit_u64(write, evidence.size());
     for (const auto& address : evidence) emit_text(write, address.value());
+    if (section) (*section)(StateContentSection::final_fields);
     emit_bytes(write, goals.payload().bytes());
     emit_bytes(write, values.payload().bytes());
     emit_bytes(write, self.payload().bytes());
@@ -132,7 +140,7 @@ Digest256 state_digest(
     const auto feed_hash = [&hash](std::span<const std::byte> bytes) {
         hash.update(bytes);
     };
-    emit_state_content(StateContentSink(feed_hash), owner, roles, semantic,
+    emit_state_content(StateContentSink(feed_hash), nullptr, owner, roles, semantic,
                        executive, scratch, graph, evidence, goals, values, self);
     return Digest256(hash.finish());
 }
@@ -281,8 +289,17 @@ StateGeneration CognitiveState::validated_generation(
 // content digest; a state-part writer can consume it without a whole-state copy.
 // SWEGCA: src/swegca/mosaic_bounded_world_write.py@5901a5a:262-283
 void CognitiveState::for_each_content_chunk(StateContentSink write) const {
-    emit_state_content(write, owner_, roles_, semantic_, executive_, scratch_,
+    emit_state_content(write, nullptr, owner_, roles_, semantic_, executive_, scratch_,
                        world_graph_, evidence_references_, goals_, values_, self_);
+}
+
+// The section markers are metadata for a bounded writer, not content bytes.
+// SWEGCA: src/swegca/mosaic_bounded_world_write.py@5901a5a:262-283
+void CognitiveState::for_each_content_chunk(
+    StateContentSink write, StateContentSectionSink section) const {
+    emit_state_content(write, &section, owner_, roles_, semantic_, executive_,
+                       scratch_, world_graph_, evidence_references_, goals_,
+                       values_, self_);
 }
 
 // The original state accepts any common batch dimension, including zero. The
