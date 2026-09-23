@@ -2,11 +2,27 @@
 
 Status: plan for review (claude, 2026-09-23). Nothing here is moved yet.
 
-Rule (user 2026-09-23 16:24 via codex 16:23): the SWEGCA core is a set of
-logic elements; SWEGCA-VRS and the four memory stages (Déjà vu, Recall,
-Replay, Re-evidence) are the higher system built by combining them. Usage
-counting and budget judgment belong to VRS (user 16:10); the baseline
-resource profile is a floor, not a ceiling (user 16:13).
+Rules, in the user's words where given:
+
+- (user 2026-09-23 16:3x, direct) "SWEGCA 자체는 철저하게 검증기의 역할임.
+  승인, 반려, 기권의 3가지 상태만으로 판단하고 이 행위를 '검증'으로 칭함.
+  VRS는 SWEGCA 코어를 이용해서 경험을 '검증'하고 연결을 '강화'하는
+  '시냅스'를 뜻함. 각 3가지 상태로 판별한 경험의 연결은 새로운 경험의
+  습득을 통해 검증이 변화할 수 있으며 기존 조건에서의 반려가 매번 다시
+  반려가 되는 것은 아님."
+- (user 16:24 via codex 16:23) the core is the logic elements; VRS and the
+  four memory stages (Déjà vu, Recall, Replay, Re-evidence) are built by
+  combining them.
+- (user 16:10, 16:13) usage counting and budget judgment belong to VRS; the
+  baseline resource profile is a floor, not a ceiling.
+
+So the core verifies and only verifies: from addressed evidence it judges a
+claim accept, reject or abstain. Everything that finds, replays, admits or
+re-judges experience, and everything that strengthens a connection from a
+verdict (proposal, Bind, arbitration, the write, the state it changes) is
+the synapse, VRS. No verdict is final: a later verification with new
+experience may differ (test condition D15), so nothing on either side may
+keep a reject as binding.
 
 What does not change: the author's logic and the design board's rules, every
 byte format, every failure code, and every test condition's expected result.
@@ -15,39 +31,44 @@ type change. Build and test gates stay closed (board §10 steps 9-10).
 
 ## 1. Classification
 
-An element takes inputs and gives a judgment, a transition, or a value. It
-names no file, directory, journal or index, and counts no resource.
+The core holds the verifier and the values it needs. It names no file,
+journal or index, counts no resource, and writes no state.
 
 | Module (today, `cpp/swegca_architecture/`) | Layer | Reason |
 |---|---|---|
-| digest_bytes, sha256, strong_types | core | values and identity rules |
+| digest_bytes, sha256, strong_types | core | values and identity rules the verifier uses |
 | allocation (codex 408d4e2/3923503) | core | the abstract allocator the host supplies |
-| byte codec (`ByteReader`, `ByteWriter`, `LedgerBytes` aliases, now in journal_format.hpp) | core | canonical encoding used by elements (cognition's AutonomyControl, envelopes); split out of journal_format |
-| authority, authority_roles, role_registry | core | authority rules |
-| cognitive_state, native_tensor | core | state and its transition |
-| judgment_kernel, judgment_rules | core | pure kernels |
-| evidence_accumulator: tally, admit step, Re-evidence record step, decide, EvidenceDecision, ReEvidenceResult | core | accumulation and decision (spec §4.4) |
-| evidence_gate / Bind, proposal, arbiter (codex) | core | spec §4.5-4.6 |
-| cognition | core | autonomy transition kernel |
-| main_owner (authority, lifetime) | core | Main's authority; see 3.4 for what it stops owning |
-| journal_file_io, journal_position, journal_format (record, manifest, page formats), journal_store (segments, manifest, HEAD, view trees, page cache, storage port) | VRS | storage and lookup |
-| experience: envelope, part tree, ExperienceJournal, index views, CueTokens, ExperienceAppend | VRS | experience storage and Déjà vu / Recall retrieval |
-| experience: ExperienceSelector, VerdictSink, SelectionReceipt | VRS | Recall (the judge it calls is Rozephine's runtime cognition, passed in) |
-| evidence_accumulator: EvidenceAdmission, ReEvidence, SourceFamilies | VRS | Replay then admission, and Re-evidence: stages that combine journal replay with core steps |
+| byte codec (`ByteReader`, `ByteWriter`, buffer aliases, now in journal_format.hpp) | core | canonical encoding of what the verifier binds (decision digests); split out of journal_format |
+| judgment_kernel, judgment_rules | core | the ternary judgment itself (accept, reject, abstain) and its configuration |
+| evidence_accumulator: tally, admit step, record step, decide, EvidenceDecision, ReEvidenceResult | core | the verifier's input and verdict (spec §4.4): the tally the kernel judges; see question 5.4 |
+| evidence_accumulator: EvidenceAdmission, ReEvidence, SourceFamilies | VRS | Replay then admission, and Re-evidence: stages feeding the verifier |
+| journal_file_io, journal_position, journal_format (record, manifest, page formats), journal_store | VRS | storage and lookup |
+| experience (envelope, part tree, ExperienceJournal, views, CueTokens, ExperienceAppend, ExperienceSelector, receipts) | VRS | experience storage, Déjà vu and Recall |
+| proposal, evidence_gate / Bind, arbiter, writer (codex) | VRS | strengthening a connection from a verdict (spec §4.5-4.6) |
+| cognitive_state, native_tensor | VRS | the connection state strengthening changes |
+| cognition | VRS | the autonomy loop that asks for verification and acts on verdicts |
+| authority, authority_roles, role_registry, main_owner | VRS | who may write and Main's ownership of the synapse; see 3.4 |
 
 Déjà vu = cue/index retrieval (views over the journal); Recall = Select with
 the judge and its receipt; Replay = exact record and part streaming;
-Re-evidence = ReEvidence against the current state. All four are VRS.
+Re-evidence = ReEvidence against the current state. All four are VRS, and
+each ends in the core verifier or feeds it.
 
 ## 2. Target layout
 
-- `cpp/swegca_architecture/` (namespace `swegca::architecture`): core only.
-  No header here includes a VRS header (checked by the lineage gate, 4.3).
+- `cpp/swegca_architecture/` (namespace `swegca::architecture`): the
+  verifier only. No header here includes a VRS header (checked by the
+  lineage gate, step 6).
 - `cpp/swegca_vrs/` (namespace `swegca::vrs`): journal, experience, the four
-  stages, the host's counting allocator and storage budget, and the runtime
-  that composes Main.
+  stages, admission, strengthening (proposal, Bind, arbiter, writer, state),
+  cognition, authority and Main, the host's counting allocator and storage
+  budget.
 
 ## 3. Boundary types (minimal, from current dependencies)
+
+With strengthening in VRS, the only core boundary is the verifier's input
+and output (3.1, 3.2). 3.3 and 3.4 are now choices inside VRS, kept here
+because they were open.
 
 Only what the current code already passes across is turned into a core type;
 nothing new is invented.
@@ -93,10 +114,12 @@ judged by the host).
    storage budget port; PageCache on its own resource. No relocation yet.
 3. Claude: split the byte codec out of journal_format.hpp into core
    `byte_codec.hpp` (cognition and envelopes use it). Pure move.
-4. Claude: `git mv` journal_*, experience.* into `cpp/swegca_vrs/`, namespace
-   `swegca::vrs`; EvidenceAdmission, ReEvidence, SourceFamilies into
-   `cpp/swegca_vrs/evidence_stages.*`. Includes and qualifiers only; the
-   lineage gate checks every moved definition keeps its tag.
+4. `git mv` into `cpp/swegca_vrs/`, namespace `swegca::vrs`, includes and
+   qualifiers only; the lineage gate checks every moved definition keeps
+   its tag. Claude: journal_*, experience.*, and EvidenceAdmission,
+   ReEvidence, SourceFamilies into `evidence_stages.*`. Codex: proposal,
+   evidence_gate, arbiter, writer, cognitive_state, native_tensor,
+   authority*, role_registry, main_owner. Claude: cognition.
 5. Claude: 3.1 (`ReplayedOriginal`), 3.2. Codex: 3.3, 3.4.
 6. Both: a layering check in the lineage gate (no `swegca_architecture/`
    file includes `swegca_vrs/`), test conditions regrouped by layer (A, D1-D9
@@ -110,3 +133,10 @@ judged by the host).
 - Do SourceFamilies belong to VRS (they are Main's registry, used only by
   admission) or to the core (a grouping rule)? This plan puts the registry in
   VRS and the rule text in the core comment of EvidenceObservation.
+- 5.4 (for the user if we disagree): is accumulation (the tally of admitted
+  evidence) part of the verifier, or a VRS stage that hands the verifier a
+  finished tally? This plan keeps it in the core because the verdict is a
+  judgment of that tally and its binding (spec §4.4); moving it would leave
+  the core a kernel over a struct.
+- With authority and Main in VRS, 3.4's PublishCapability is a VRS rule; the
+  core needs none (the verifier writes nothing).
