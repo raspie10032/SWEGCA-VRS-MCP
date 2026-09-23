@@ -130,6 +130,46 @@ int main() {
             ++failures;
         }
     }
+    auto mixed = supporting();
+    mixed.axis_support = {7.25, 13.5, 4, 21.125};
+    mixed.axis_refute = {1.5, 2.75, 0.5, 3};
+    mixed.source_diversity = 3;
+    mixed.context_diversity = 5;
+    mixed.recent_count = 5;
+    mixed.recent_sum = 4;
+    const auto mixed_result = sk::judge_evidence(rules, mixed);
+    if (mixed_result.status != sk::EvidenceStatus::accept ||
+        mixed_result.reason != sk::EvidenceReason::causal_lower_bound ||
+        std::bit_cast<std::uint64_t>(mixed_result.posterior_mean) !=
+            0x3feaf75eebdd7bafULL ||
+        std::bit_cast<std::uint64_t>(mixed_result.causal_lower_bound) !=
+            0x3fe009c8948c61a9ULL ||
+        std::bit_cast<std::uint64_t>(mixed_result.overall_upper_bound) !=
+            0x3fed5aca269884efULL ||
+        std::bit_cast<std::uint64_t>(mixed_result.regime_change_score) !=
+            0x3fa5dc55243e2150ULL) {
+        std::cerr << "mixed evidence differs from source decision or bits\n";
+        ++failures;
+    }
+    auto high_confidence = sa::EvidencePolicy{};
+    high_confidence.confidence_level = 0.95;
+    mixed.recent_count = 4;
+    mixed.recent_sum = 3;
+    const auto mixed_c95 =
+        sk::judge_evidence(sa::make_evidence_rules(high_confidence), mixed);
+    if (mixed_c95.status != sk::EvidenceStatus::abstain ||
+        mixed_c95.reason != sk::EvidenceReason::uncertain ||
+        std::bit_cast<std::uint64_t>(mixed_c95.posterior_mean) !=
+            0x3feaf75eebdd7bafULL ||
+        std::bit_cast<std::uint64_t>(mixed_c95.causal_lower_bound) !=
+            0x3fdb9a744c3c21c5ULL ||
+        std::bit_cast<std::uint64_t>(mixed_c95.overall_upper_bound) !=
+            0x3fed9f2b097f1c62ULL ||
+        std::bit_cast<std::uint64_t>(mixed_c95.regime_change_score) !=
+            0x3fb7baf75eebdd78ULL) {
+        std::cerr << "mixed confidence 0.95 differs from source decision or bits\n";
+        ++failures;
+    }
     const auto expect_invalid = [&](const char* label, sk::EvidenceTally tally) {
         const auto value = sk::judge_evidence(rules, tally);
         if (value.status != sk::EvidenceStatus::abstain ||
