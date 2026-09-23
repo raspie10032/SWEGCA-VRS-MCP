@@ -417,7 +417,8 @@ bool is_normalized_cue(const AllocationContext& memory, std::string_view text) {
 
 // Non-ASCII letters of the cue rule: every code point from U+00C0 except
 // the listed marks, punctuation, symbol, byte-order-mark and private blocks.
-// Lineage: direct — the non-ASCII letters of the author's [^\W\d_] cue class, as a range table.
+// Lineage: weak analogy — this range table approximates the author's Unicode
+// [^\W\d_] class; it excludes some letters that the regex accepts, such as U+00AA.
 // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:414
 // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:495
 bool is_cue_letter(char32_t value) noexcept {
@@ -2685,8 +2686,11 @@ StateGeneration ExperienceJournal::state_generation() const {
     return journal_.state_generation();
 }
 
-// Lineage: direct — the author's runtime receipt holds the query, context, candidate judgments, selected artifacts and universe metrics.
-// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:208-243
+// Lineage: weak analogy — these field families match the author's runtime
+// receipt, but this constructor does not perform its __post_init__ checks for
+// candidate uniqueness, selected/judgment agreement and universe metrics.
+// Some conditions are checked earlier by ExperienceSelector, not by this type.
+// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:208-255
 SelectionReceipt<NoAuthority>::SelectionReceipt(QueryText query, const Digest256& context,
                                                 const SelectionUniverse& universe,
                                                 LedgerVector<CandidateJudgment> judgments,
@@ -2698,7 +2702,9 @@ SelectionReceipt<NoAuthority>::SelectionReceipt(QueryText query, const Digest256
 // Covers the query, context, universe, method, rationale, every judgment,
 // every selected experience in order, the two fixed selection flags, and
 // the authority flags. The native digest format is a C++ receipt mechanism.
-// Lineage: native mechanism — one digest over the whole receipt, so a replayed selection can be compared byte for byte; the author's receipt has no digest, and only its to_dict field order is followed.
+// Lineage: native mechanism — one digest over the whole receipt, so a replayed
+// selection can be compared byte for byte. The author has no receipt digest;
+// its to_dict field order also differs from this C++ hash order.
 // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:274-290
 // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:207-210
 Digest256 SelectionReceipt<NoAuthority>::compute_digest() const {
