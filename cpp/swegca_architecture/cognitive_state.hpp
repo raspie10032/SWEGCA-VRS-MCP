@@ -76,19 +76,19 @@ struct WorldRelation final {
     auto operator<=>(const WorldRelation&) const = default;
 };
 
-// Borrowed construction inputs; graph-owned payloads and arrays are copied
-// only after Main's allocator has reserved their bytes.
+// Borrowed construction inputs; graph-owned identities, payloads and arrays
+// are copied only through Main's allocator.
 struct WorldEntityInput final {
-    EntityId id;
-    EntityKind kind;
+    std::string_view id;
+    std::string_view kind;
     std::span<const std::byte> attributes;
 };
 
 struct WorldRelationInput final {
-    RelationId id;
-    RelationKind kind;
-    EntityId source;
-    EntityId target;
+    std::string_view id;
+    std::string_view kind;
+    std::string_view source;
+    std::string_view target;
     std::span<const std::byte> attributes;
 };
 

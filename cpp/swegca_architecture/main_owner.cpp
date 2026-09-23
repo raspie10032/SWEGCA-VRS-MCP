@@ -39,8 +39,9 @@ public:
 // evidence and action roles are integrated in their later architecture steps.
 // Tensor/graph-array/payload allocations and state/control-block requests
 // share one account, as do role maps/arrays and evidence-reference arrays.
-// Identity strings, bootstrap allocations, allocator overhead, stacks and mappings
-// still require integration; memory_requested() is not an RSS guarantee.
+// Main-owned state identities now share that account. Other modules' text,
+// bootstrap allocations, allocator overhead, stacks and mappings still
+// require integration; memory_requested() is not an RSS guarantee.
 struct detail::MainOwnerState final {
     std::unique_ptr<MemoryLedger> memory;
     std::unique_ptr<MainAuthorityLedger> authority;
@@ -57,8 +58,9 @@ MainOwner::MainOwner(MainInitialState initial, std::uint64_t memory_limit) {
     auto authority = std::unique_ptr<MainAuthorityLedger>(new MainAuthorityLedger(account));
     RoleRegistry roles(account, initial.roles);
     EvidenceReferences evidence(account.allocator<ExperienceAddress>());
-    if (!initial.evidence_references.empty())
-        evidence.assign(initial.evidence_references.begin(), initial.evidence_references.end());
+    evidence.reserve(initial.evidence_references.size());
+    for (const auto address : initial.evidence_references)
+        evidence.emplace_back(account, address);
     CognitiveTensor semantic(account, initial.semantic.scalar_type,
                              initial.semantic.shape, initial.semantic.canonical_bytes);
     CognitiveTensor executive(account, initial.executive.scalar_type,
@@ -71,7 +73,7 @@ MainOwner::MainOwner(MainInitialState initial, std::uint64_t memory_limit) {
     SelfState self(CanonicalPayload(account, initial.self));
     auto current = std::allocate_shared<CognitiveState>(
         account.allocator<CognitiveState>(), InitialStateKey{},
-        std::move(initial.owner), std::move(roles),
+        OwnerId(account, initial.owner), std::move(roles),
         std::move(semantic), std::move(executive), std::move(scratch),
         std::move(graph), std::move(evidence),
         std::move(goals), std::move(values), std::move(self));

@@ -72,17 +72,43 @@ std::size_t required_word_count(std::size_t roles) {
     return (roles + 63) / 64;
 }
 
+// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:83-93
+std::string_view role_text(const RoleDefinition& definition) noexcept {
+    return definition.id.value();
+}
+
+// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:83-93
+std::string_view role_text(const RoleDefinitionInput& definition) noexcept {
+    return definition.id;
+}
+
+// Both startup and typed successor inputs become identities on Main's account.
+// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:83-93
+template <class Input>
+std::vector<RoleDefinition, MemoryLedger::Allocator<RoleDefinition>> owned_definitions(
+    const MemoryLedger::Account& account, std::span<const Input> definitions) {
+    if (definitions.empty())
+        throw std::invalid_argument("role_registry_must_not_be_empty");
+    std::vector<RoleDefinition, MemoryLedger::Allocator<RoleDefinition>> owned(
+        account.allocator<RoleDefinition>());
+    owned.reserve(definitions.size());
+    for (const auto& definition : definitions)
+        owned.push_back({RoleId(account, role_text(definition)),
+                         definition.partition, definition.slot});
+    return owned;
+}
+
 }  // namespace
 
 // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:83-93
 RoleRegistry::RoleRegistry(const MemoryLedger::Account& account,
                             std::span<const RoleDefinition> definitions)
-    : RoleRegistry(account, [&] {
-          if (definitions.empty())
-              throw std::invalid_argument("role_registry_must_not_be_empty");
-          return Definitions(definitions.begin(), definitions.end(),
-                             account.allocator<RoleDefinition>());
-      }()) {}
+    : RoleRegistry(account, owned_definitions(account, definitions)) {}
+
+// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:83-93
+RoleRegistry::RoleRegistry(const MemoryLedger::Account& account,
+                           std::span<const RoleDefinitionInput> definitions)
+    : RoleRegistry(account, owned_definitions(account, definitions)) {}
 
 // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:83-93
 RoleRegistry::RoleRegistry(const MemoryLedger::Account& account, Definitions definitions)
@@ -134,7 +160,7 @@ RoleRegistry RoleRegistry::initial_profile(const MemoryLedger::Account& account,
             local_slot = index - sizes.semantic;
         }
         definitions.push_back(RoleDefinition{
-            RoleId(std::string(initial_role_names[index])),
+            RoleId(account, initial_role_names[index]),
             partition,
             local_slot,
         });
@@ -163,7 +189,8 @@ bool RoleRegistry::matches_initial_profile(RolePartitionSizes sizes) const {
 // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:83-93
 RoleRegistry RoleRegistry::with_appended(RoleDefinition definition) const {
     auto definitions = definitions_;
-    definitions.push_back(std::move(definition));
+    definitions.push_back({RoleId(memory_, definition.id.value()),
+                           definition.partition, definition.slot});
     return RoleRegistry(memory_, std::move(definitions));
 }
 

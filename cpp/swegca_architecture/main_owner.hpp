@@ -5,12 +5,13 @@
 
 #include <cstddef>
 #include <span>
+#include <string_view>
 #include <vector>
 
 namespace swegca::architecture {
 
-// Startup input only. Main copies tensor and payload bytes through its Account during
-// construction; input spans must remain valid for that constructor call.
+// Startup input only. Main copies text, tensor and payload bytes through its
+// Account during construction; all views and spans must remain valid for that call.
 // No field is a capability or an accepted evidence decision.
 // Rule: reconstruction board §3A, §4 CognitiveState, §10.1.
 struct MainInitialState final {
@@ -20,14 +21,14 @@ struct MainInitialState final {
         std::span<const std::byte> canonical_bytes;
     };
 
-    OwnerId owner;
-    std::span<const RoleDefinition> roles;
+    std::string_view owner;
+    std::span<const RoleDefinitionInput> roles;
     TensorInput semantic;
     TensorInput executive;
     TensorInput scratch;
     std::span<const WorldEntityInput> entities;
     std::span<const WorldRelationInput> relations;
-    std::span<const ExperienceAddress> evidence_references;
+    std::span<const std::string_view> evidence_references;
     std::span<const std::byte> goals;
     std::span<const std::byte> values;
     std::span<const std::byte> self;

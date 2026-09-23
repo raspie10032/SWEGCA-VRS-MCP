@@ -153,9 +153,11 @@ StructuredWorldGraph::StructuredWorldGraph(
     entities_.reserve(entities.size());
     relations_.reserve(relations.size());
     for (const auto& input : entities)
-        entities_.push_back({input.id, input.kind, CanonicalPayload(account, input.attributes)});
+        entities_.push_back({EntityId(account, input.id), EntityKind(account, input.kind),
+                             CanonicalPayload(account, input.attributes)});
     for (const auto& input : relations)
-        relations_.push_back({input.id, input.kind, input.source, input.target,
+        relations_.push_back({RelationId(account, input.id), RelationKind(account, input.kind),
+                              EntityId(account, input.source), EntityId(account, input.target),
                               CanonicalPayload(account, input.attributes)});
     std::sort(entities_.begin(), entities_.end(),
               [](const WorldEntity& left, const WorldEntity& right) {

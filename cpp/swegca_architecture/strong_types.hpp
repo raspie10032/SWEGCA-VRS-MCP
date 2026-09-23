@@ -1,6 +1,7 @@
 #pragma once
 
 #include "swegca_architecture/digest_bytes.hpp"
+#include "swegca_architecture/memory_ledger.hpp"
 
 #include <compare>
 #include <cstddef>
@@ -17,8 +18,7 @@ inline constexpr std::size_t identity_text_max_bytes = 4096;
 
 [[nodiscard]] bool is_strict_utf8(std::string_view value) noexcept;
 
-[[nodiscard]] std::string require_identity_text(std::string value,
-                                                std::string_view field);
+void require_identity_text(std::string_view value, std::string_view field);
 
 }  // namespace detail
 
@@ -29,16 +29,19 @@ template <class Tag>
 class TextIdentity final {
 public:
     // SWEGCA: src/swegca/mosaic_cognitive_kernel.py@5901a5a:19-21
-    explicit TextIdentity(std::string value)
-        : value_(detail::require_identity_text(std::move(value), Tag::name)) {}
+    TextIdentity(const MemoryLedger::Account& account, std::string_view value)
+        : value_(account.allocator<char>()) {
+        detail::require_identity_text(value, Tag::name);
+        value_.assign(value.data(), value.size());
+    }
 
     // SWEGCA: src/swegca/mosaic_cognitive_kernel.py@5901a5a:40-49
-    [[nodiscard]] const std::string& value() const noexcept { return value_; }
+    [[nodiscard]] std::string_view value() const noexcept { return value_; }
 
     auto operator<=>(const TextIdentity&) const = default;
 
 private:
-    std::string value_;
+    std::basic_string<char, std::char_traits<char>, MemoryLedger::Allocator<char>> value_;
 };
 
 struct OwnerIdTag { static constexpr std::string_view name = "owner_id"; };

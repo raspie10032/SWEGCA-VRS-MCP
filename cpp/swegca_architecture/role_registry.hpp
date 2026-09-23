@@ -29,6 +29,13 @@ struct RoleDefinition final {
     auto operator<=>(const RoleDefinition&) const = default;
 };
 
+// Borrowed startup fields; Main constructs the owned RoleId on its account.
+struct RoleDefinitionInput final {
+    std::string_view id;
+    TensorPartition partition;
+    std::uint64_t slot;
+};
+
 struct RolePartitionSizes final {
     std::uint64_t semantic;
     std::uint64_t executive;
@@ -44,6 +51,8 @@ class RoleRegistry final {
 public:
     RoleRegistry(const MemoryLedger::Account& account,
                  std::span<const RoleDefinition> definitions);
+    RoleRegistry(const MemoryLedger::Account& account,
+                 std::span<const RoleDefinitionInput> definitions);
 
     [[nodiscard]] static RoleRegistry initial_profile(
         const MemoryLedger::Account& account, RolePartitionSizes sizes);

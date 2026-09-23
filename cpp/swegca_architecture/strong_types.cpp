@@ -79,16 +79,15 @@ bool is_strict_utf8(std::string_view value) noexcept {
 }
 
 // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:541-543
-std::string require_identity_text(std::string value, std::string_view field) {
+void require_identity_text(std::string_view value, std::string_view field) {
     if (value.size() > identity_text_max_bytes)
         throw std::invalid_argument(std::string(field) + "_too_long");
     if (!is_strict_utf8(value))
         throw std::invalid_argument(std::string(field) + "_must_be_utf8");
-    if (value.find('\0') != std::string::npos)
+    if (value.find('\0') != std::string_view::npos)
         throw std::invalid_argument(std::string(field) + "_must_not_contain_nul");
     if (!contains_identity_content(value))
         throw std::invalid_argument(std::string(field) + "_must_not_be_empty");
-    return value;
 }
 
 }  // namespace detail
