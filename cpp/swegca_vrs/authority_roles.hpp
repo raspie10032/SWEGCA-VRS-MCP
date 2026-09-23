@@ -17,6 +17,11 @@ struct ArbitrationOutcome;
 struct BoundedWriteConfig;
 struct BoundedWriteReceipt;
 struct BoundedWriteResult;
+struct MainCommitMarkerFields;
+struct MainPublishedPair;
+namespace journal {
+class JournalStore;
+}
 namespace detail {
 struct MainOwnerState;
 struct MainStateWriterState;
@@ -37,6 +42,16 @@ public:
     [[nodiscard]] StateSnapshot snapshot() const;
 
 private:
+    // Only Main can use the initial-state key or turn a verified journal
+    // candidate into a publication identity. The candidate stays detached
+    // until the marker chain and strength root have also been verified.
+    // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:103-107
+    static std::shared_ptr<const CognitiveState> make_initial_state(
+        MainInitialState initial, const AllocationContext& allocation);
+    // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:196-205
+    static std::shared_ptr<const MainPublishedPair> reconstruct_genesis_candidate(
+        const journal::JournalStore& selected, const MainCommitMarkerFields& marker,
+        const AllocationContext& allocation);
     // Non-member storage receives no MainOwner friendship. In particular,
     // no incomplete nested type can be defined elsewhere to obtain it.
     std::shared_ptr<detail::MainOwnerState> state_;
