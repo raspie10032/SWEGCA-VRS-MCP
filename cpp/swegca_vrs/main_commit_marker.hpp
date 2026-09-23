@@ -46,12 +46,12 @@ struct MainCommitMarkerFields final {
 // SWEGCA: src/tinylm_slicer/mosaic_paper_resident_assimilation.py@3bddcb7:491-535
 [[nodiscard]] DigestBytes main_commit_marker_digest(std::span<const std::byte> payload);
 
-// Requires the marker's journal locator and state head to equal one published
-// JournalStore snapshot. This is only a binding check: Main still verifies
+// Requires the marker's journal locator and state head to equal the pinned
+// snapshot used for every recovery read. This is only a binding check: Main still verifies
 // the selected marker chain, exact state record, state bytes and strength.
 // Lineage: native mechanism — the receipt binds one replacement pair.
 // SWEGCA: src/tinylm_slicer/mosaic_paper_resident_assimilation.py@3bddcb7:491-535
 void validate_main_marker_journal_binding(const MainCommitMarkerFields& marker,
-                                          const journal::JournalStore& store);
+                                          const journal::JournalReadSnapshot& snapshot);
 
 }  // namespace swegca::vrs

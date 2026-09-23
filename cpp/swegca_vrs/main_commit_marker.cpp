@@ -133,9 +133,9 @@ DigestBytes main_commit_marker_digest(std::span<const std::byte> payload) {
 // Lineage: native mechanism — Main's receipt must name the actual published journal HEAD.
 // SWEGCA: src/tinylm_slicer/mosaic_paper_resident_assimilation.py@3bddcb7:491-535
 void validate_main_marker_journal_binding(const MainCommitMarkerFields& marker,
-                                          const journal::JournalStore& store) {
+                                          const journal::JournalReadSnapshot& snapshot) {
     check(marker);
-    const auto current = store.publication_coordinates();
+    const auto current = snapshot.coordinates();
     const auto& named = marker.journal_root.location;
     const auto& actual = current.root.location;
     if (named.log_ordinal != actual.log_ordinal || named.offset != actual.offset ||

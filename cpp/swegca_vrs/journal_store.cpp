@@ -1796,6 +1796,16 @@ PublishedRecord JournalReadSnapshot::read_at(const RecordPosition& position) con
     return store_->read_in(*pinned_, position);
 }
 
+// Lineage: native mechanism — Main's marker check and cold reads share one generation.
+// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:587-590
+PublishedCoordinates JournalReadSnapshot::coordinates() const {
+    if (!pinned_) fail("journal_read_snapshot_invalid");
+    store_->require_usable();
+    return PublishedCoordinates{
+        JournalRoot{pinned_->location, pinned_->head.digest()},
+        state_head_of(pinned_->head.fields())};
+}
+
 // Lineage: native mechanism — reports the use the host's budget judges.
 // SWEGCA: docs/SWEGCA_CPP_VRS_LAYER_PLAN.md@472d23225c973fa0a33581afd6bd9026df6fc98a:170-174
 std::uint64_t JournalStore::storage_charged() const {

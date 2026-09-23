@@ -130,8 +130,9 @@ std::shared_ptr<const CognitiveState> MainOwner::make_initial_state(
 MainRecoveredGenesis MainOwner::reconstruct_genesis_candidate(
     const journal::JournalStore& selected, const MainCommitMarkerFields& marker,
     const AllocationContext& account) {
-    validate_main_marker_journal_binding(marker, selected);
-    PinnedJournalStateSource source(selected.pin_records());
+    auto pinned = selected.pin_records();
+    validate_main_marker_journal_binding(marker, pinned);
+    PinnedJournalStateSource source(std::move(pinned));
     auto recovered = recover_genesis_state(source, selected.identity_.value(),
                                            marker.state_head, account);
     auto current = make_initial_state(recovered.input(), account);

@@ -780,6 +780,10 @@ public:
     [[nodiscard]] std::optional<RecordPosition> resolve(std::string_view address) const;
     // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:569-570
     [[nodiscard]] PublishedRecord read_at(const RecordPosition& position) const;
+    // The root and head used for Main's marker check come from this same
+    // pinned generation as every record resolved and read through this lease.
+    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:587-590
+    [[nodiscard]] PublishedCoordinates coordinates() const;
 
 private:
     friend class JournalStore;
