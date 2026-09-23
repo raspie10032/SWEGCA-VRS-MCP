@@ -1206,7 +1206,8 @@ JournalStore::JournalStore(fs::path directory, JournalIdentity identity,
     : directory_(std::move(directory)), identity_(std::move(identity)),
       storage_(std::move(storage)), memory_(memory), allocation_unit_(allocation_unit),
       lock_(std::move(lock)),
-      cache_(page_cache ? std::make_unique<PageCache>(*page_cache, page_cache_shards) : nullptr),
+      cache_(page_cache ? std::allocate_shared<PageCache>(page_cache->allocator<PageCache>(),
+                                                         *page_cache, page_cache_shards) : nullptr),
       retired_(memory.allocator<RetiredLogs>()) {}
 
 // Lineage: native mechanism — default destruction.

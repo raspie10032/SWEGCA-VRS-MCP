@@ -700,7 +700,7 @@ private:
     AllocationContext memory_;
     std::uint64_t allocation_unit_;
     std::unique_ptr<io::OwnerLock> lock_;
-    std::unique_ptr<PageCache> cache_;  // shared by every reader; internally locked
+    std::shared_ptr<PageCache> cache_;  // charged to its host context; internally locked
     std::mutex publish_mutex_;
     std::atomic<std::shared_ptr<const PublishedSnapshot>> snapshot_;
     // Cold scan includes unpublished segment names, so a physical file id
