@@ -20,7 +20,7 @@ PRODUCT_PREFIXES = ("native/", "include/", "cpp/")
 AUTHOR_NAMESPACES = ("src/swegca_vrs2/engine/mosaic_", "src/tinylm_slicer/mosaic_")
 CPP_SUFFIXES = (".cpp", ".cc", ".cxx", ".hpp", ".h")
 TAG = re.compile(
-    r"^\s*//\s*SWEGCA:\s+((?:[\w./-]+\.py@[0-9a-f]{7,40}|user@\d{4}-\d{2}-\d{2}):\d+(?:-\d+)?)\s*$",
+    r"^\s*//\s*SWEGCA:\s+((?:[\w./-]+\.(?:py|md)@[0-9a-f]{7,40}|user@\d{4}-\d{2}-\d{2}):\d+(?:-\d+)?)\s*$",
     re.MULTILINE,
 )
 FORBIDDEN = re.compile(
@@ -31,6 +31,7 @@ FORBIDDEN = re.compile(
 CONTROL = {"if", "for", "while", "switch", "catch", "sizeof", "alignof", "requires"}
 CODEX_ROOT = Path(__file__).resolve().parents[2]
 SOURCE_ROOTS = (
+    Path(__file__).resolve().parents[1],
     Path(os.environ.get("SWEGCA_TINYLM_SOURCE_ROOT", CODEX_ROOT / "tinylm-slicer-sanabi-bazzite")),
     Path(os.environ.get("SWEGCA_ARCH_SOURCE_ROOT", CODEX_ROOT / "SWEGCA-Architecture")),
     Path(os.environ.get("SWEGCA_VRS_SOURCE_ROOT", CODEX_ROOT / "SWEGCA-VRS-MCP")),

@@ -12,6 +12,26 @@
 5. Do not introduce a parallel external logic path that bypasses a SWEGCA
    stage, ownership boundary, evidence judgment, or authority check.
 
+### Nano-core execution boundary
+
+The SWEGCA decision core is a small hardware-neutral nano-core. One decision has
+an ns-scale target, and batches must retain data-parallel execution across CPU,
+GPU, and NPU implementations. Hardware-specific acceleration may change the
+executor but cannot change the decision rule or its exact inputs and outputs.
+
+To preserve that boundary, a nano-core translation unit contains only
+deterministic operations over fixed-width numeric, digest, and enum data. It has
+no allocation, lock, exception, I/O, string, virtual call, or global mutable
+state. Batch interfaces use structure-of-arrays views so CPU SIMD and 16-worker
+execution do not require a different decision contract. GPU and NPU executors
+can implement the same contract later.
+
+Journaling, identity text, receipt assembly, and authority nonce tracking are
+outside the nano-core. A gate computes its authorization predicate in the pure
+nano-core first; only an accepted result reaches the domain-specific issue key
+and process-local authority ledger. The ledger is never on the decision
+kernel's inner path.
+
 ## 1. Governing decision
 
 This is an architecture reconstruction, not a Python behavior port.
@@ -239,6 +259,12 @@ consumer accepts the capability by rvalue reference, marks the nonce spent
 before performing the authorized mutation, and rejects missing, unknown, or
 spent nonces. Capabilities are never persisted. Every restart begins with zero
 valid capability nonces, as required for process-local authority.
+
+Issuance and consumption use separate domain-specific passkey types. Only the
+named gate can construct an issue key, and only the matching writer or executor
+can construct the consume key. A consumer supplies the current state generation
+and actual operation digest; the ledger spends the nonce before rejecting a
+generation or operation mismatch, so every retry requires a new gate decision.
 
 ### Native tensor value
 
