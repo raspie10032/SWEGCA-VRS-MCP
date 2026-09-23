@@ -17,43 +17,44 @@ namespace {
 // content digest; rollback restores the before-content hash.
 // The domain tag separates this digest from every other SWEGCA hash.
 // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3f:567-572
-void hash_u8(Sha256& hash, std::uint8_t value) {
+void emit_u8(StateContentSink write, std::uint8_t value) {
     const std::array bytes{static_cast<std::byte>(value)};
-    hash.update(bytes);
+    write(bytes);
 }
 
 // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3f:567-572
-void hash_u64(Sha256& hash, std::uint64_t value) {
+void emit_u64(StateContentSink write, std::uint64_t value) {
     std::array<std::byte, 8> bytes{};
     for (std::size_t index = 0; index < bytes.size(); ++index)
         bytes[index] = static_cast<std::byte>((value >> (index * 8)) & 0xff);
-    hash.update(bytes);
+    write(bytes);
 }
 
 // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3f:567-572
-void hash_bytes(Sha256& hash, std::span<const std::byte> bytes) {
-    hash_u64(hash, bytes.size());
-    hash.update(bytes);
+void emit_bytes(StateContentSink write, std::span<const std::byte> bytes) {
+    emit_u64(write, bytes.size());
+    write(bytes);
 }
 
 // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3f:567-572
-void hash_text(Sha256& hash, std::string_view text) {
-    hash_u64(hash, text.size());
-    hash.update(text);
+void emit_text(StateContentSink write, std::string_view text) {
+    emit_u64(write, text.size());
+    write(std::span<const std::byte>(
+        reinterpret_cast<const std::byte*>(text.data()), text.size()));
 }
 
 // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:269-277
-void hash_tensor(Sha256& hash, std::uint8_t partition,
+void emit_tensor(StateContentSink write, std::uint8_t partition,
                  const CognitiveTensor& tensor) {
-    hash_u8(hash, partition);
-    hash_u8(hash, static_cast<std::uint8_t>(tensor.scalar_type()));
-    hash_u8(hash, static_cast<std::uint8_t>(tensor.byte_order()));
-    hash_u64(hash, tensor.shape().batches);
-    hash_u64(hash, tensor.shape().slots);
-    hash_u64(hash, tensor.shape().width);
-    hash_u64(hash, tensor.byte_count());
-    tensor.for_each_chunk([&hash](std::span<const std::byte> chunk) {
-        hash.update(chunk);
+    emit_u8(write, partition);
+    emit_u8(write, static_cast<std::uint8_t>(tensor.scalar_type()));
+    emit_u8(write, static_cast<std::uint8_t>(tensor.byte_order()));
+    emit_u64(write, tensor.shape().batches);
+    emit_u64(write, tensor.shape().slots);
+    emit_u64(write, tensor.shape().width);
+    emit_u64(write, tensor.byte_count());
+    tensor.for_each_chunk([write](std::span<const std::byte> chunk) {
+        write(chunk);
     });
 }
 
@@ -69,6 +70,64 @@ EvidenceReferences canonical_evidence(EvidenceReferences addresses) {
     return addresses;
 }
 
+// The emitted stream is the exact domain-separated content-digest preimage.
+// A persistent writer consumes these same bytes through a bounded sink.
+// SWEGCA: src/swegca/mosaic_bounded_world_write.py@5901a5a:262-283
+void emit_state_content(
+    StateContentSink write,
+    const OwnerId& owner, const RoleRegistry& roles,
+    const CognitiveTensor& semantic, const CognitiveTensor& executive,
+    const CognitiveTensor& scratch, const StructuredWorldGraph& graph,
+    std::span<const ExperienceAddress> evidence, const GoalState& goals,
+    const ValueState& values, const SelfState& self) {
+    constexpr std::string_view domain = "swegca.cognitive_state.content.v2";
+    write(std::span<const std::byte>(
+        reinterpret_cast<const std::byte*>(domain.data()), domain.size()));
+    emit_text(write, owner.value());
+
+    emit_u64(write, roles.size());
+    for (const auto& role : roles.definitions()) {
+        emit_text(write, role.id.value());
+        emit_u8(write, static_cast<std::uint8_t>(role.partition));
+        emit_u64(write, role.slot);
+    }
+    emit_tensor(write, 1, semantic);
+    emit_tensor(write, 2, executive);
+    emit_tensor(write, 3, scratch);
+
+    emit_u64(write, graph.entities().size());
+    for (const auto& entity : graph.entities()) {
+        emit_text(write, entity.id.value());
+        emit_text(write, entity.kind.value());
+        emit_bytes(write, entity.attributes.bytes());
+    }
+    emit_u64(write, graph.relations().size());
+    for (const auto& relation : graph.relations()) {
+        emit_text(write, relation.id.value());
+        emit_text(write, relation.kind.value());
+        emit_text(write, relation.source.value());
+        emit_text(write, relation.target.value());
+        emit_bytes(write, relation.attributes.bytes());
+    }
+
+    emit_u64(write, evidence.size());
+    for (const auto& address : evidence) emit_text(write, address.value());
+    emit_bytes(write, goals.payload().bytes());
+    emit_bytes(write, values.payload().bytes());
+    emit_bytes(write, self.payload().bytes());
+    emit_u8(write, self.write_head().has_value() ? 1 : 0);
+    if (self.write_head()) {
+        const auto& head = *self.write_head();
+        emit_text(write, head.policy_version.value());
+        write(head.receipt_id.bytes());
+        emit_u64(write, head.revision);
+        emit_text(write, head.target_role.value());
+        emit_u64(write, head.evidence_references.size());
+        for (const auto& address : head.evidence_references)
+            emit_text(write, address.value());
+    }
+}
+
 // SWEGCA: src/swegca/mosaic_bounded_world_write.py@5901a5a:262-283
 Digest256 state_digest(
     const OwnerId& owner, const RoleRegistry& roles,
@@ -77,50 +136,11 @@ Digest256 state_digest(
     std::span<const ExperienceAddress> evidence, const GoalState& goals,
     const ValueState& values, const SelfState& self) {
     Sha256 hash;
-    hash.update("swegca.cognitive_state.content.v2");
-    hash_text(hash, owner.value());
-
-    hash_u64(hash, roles.size());
-    for (const auto& role : roles.definitions()) {
-        hash_text(hash, role.id.value());
-        hash_u8(hash, static_cast<std::uint8_t>(role.partition));
-        hash_u64(hash, role.slot);
-    }
-    hash_tensor(hash, 1, semantic);
-    hash_tensor(hash, 2, executive);
-    hash_tensor(hash, 3, scratch);
-
-    hash_u64(hash, graph.entities().size());
-    for (const auto& entity : graph.entities()) {
-        hash_text(hash, entity.id.value());
-        hash_text(hash, entity.kind.value());
-        hash_bytes(hash, entity.attributes.bytes());
-    }
-    hash_u64(hash, graph.relations().size());
-    for (const auto& relation : graph.relations()) {
-        hash_text(hash, relation.id.value());
-        hash_text(hash, relation.kind.value());
-        hash_text(hash, relation.source.value());
-        hash_text(hash, relation.target.value());
-        hash_bytes(hash, relation.attributes.bytes());
-    }
-
-    hash_u64(hash, evidence.size());
-    for (const auto& address : evidence) hash_text(hash, address.value());
-    hash_bytes(hash, goals.payload().bytes());
-    hash_bytes(hash, values.payload().bytes());
-    hash_bytes(hash, self.payload().bytes());
-    hash_u8(hash, self.write_head().has_value() ? 1 : 0);
-    if (self.write_head()) {
-        const auto& write = *self.write_head();
-        hash_text(hash, write.policy_version.value());
-        hash.update(write.receipt_id.bytes());
-        hash_u64(hash, write.revision);
-        hash_text(hash, write.target_role.value());
-        hash_u64(hash, write.evidence_references.size());
-        for (const auto& address : write.evidence_references)
-            hash_text(hash, address.value());
-    }
+    const auto feed_hash = [&hash](std::span<const std::byte> bytes) {
+        hash.update(bytes);
+    };
+    emit_state_content(StateContentSink(feed_hash), owner, roles, semantic,
+                       executive, scratch, graph, evidence, goals, values, self);
     return Digest256(hash.finish());
 }
 
@@ -266,6 +286,14 @@ StateGeneration CognitiveState::validated_generation(
     return StateGeneration(ordinal, state_digest(
         owner_, roles_, semantic_, executive_, scratch_, world_graph_,
         evidence_references_, goals_, values_, self_));
+}
+
+// This C++ stream is the same canonical preimage used above to compute the
+// content digest; a state-part writer can consume it without a whole-state copy.
+// SWEGCA: docs/SWEGCA_CPP_MAIN_STATE_STORAGE_REVIEW.md@9da0813:227-235
+void CognitiveState::for_each_content_chunk(StateContentSink write) const {
+    emit_state_content(write, owner_, roles_, semantic_, executive_, scratch_,
+                       world_graph_, evidence_references_, goals_, values_, self_);
 }
 
 // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:83-93

@@ -239,10 +239,12 @@ bool index_entry_allowed(std::uint16_t record_kind, std::string_view index_entry
         record_kind == state_root_record_kind ||
         record_kind == state_publication_record_kind)
         return false;
+    if (record_kind == cue_binding_record_kind)
+        return !index_entry.empty() &&
+               (index_entry.front() == 'c' || index_entry.front() == 'h');
     const bool lowercase = !index_entry.empty() && index_entry.front() >= 'a' && index_entry.front() <= 'z';
     return !lowercase || record_kind == original_experience_record_kind ||
-           record_kind == derived_experience_record_kind ||
-           record_kind == cue_binding_record_kind;
+           record_kind == derived_experience_record_kind;
 }
 
 // SWEGCA: user@2026-09-22:60-61
@@ -518,7 +520,7 @@ void decode_segment_range(std::span<const std::byte> bytes, std::uint64_t base_o
         if (record.sequence != first_sequence + at) fail("journal_segment_sequence_invalid");
         if (record.previous_record_digest != chain) fail("journal_segment_chain_invalid");
         chain = record.record_digest;
-        if (visit != nullptr && *visit) (*visit)(record, offset);
+        if (visit != nullptr) (*visit)(record, offset);
     }
     if (reader.remaining() != 0) fail("journal_segment_trailing_bytes");
     if (chain != expected_last) fail("journal_segment_tail_invalid");

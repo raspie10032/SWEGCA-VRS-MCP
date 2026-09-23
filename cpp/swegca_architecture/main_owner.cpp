@@ -13,6 +13,20 @@ namespace {
 
 std::atomic<bool> main_lifetime_active{false};
 
+// The user's CognitiveState source defines the tensor invariants. Selecting
+// a bounded borrowed reader is a C++ startup/recovery extension.
+// SWEGCA: src/swegca/mosaic_cognitive_kernel.py@5901a5a:220-254
+CognitiveTensor initial_tensor(const AllocationContext& account,
+                               const MainInitialState::TensorInput& input) {
+    if (input.reader != nullptr) {
+        if (!input.canonical_bytes.empty())
+            throw std::invalid_argument("main_initial_tensor_source_ambiguous");
+        return CognitiveTensor(account, input.scalar_type, input.shape, *input.reader);
+    }
+    return CognitiveTensor(account, input.scalar_type, input.shape,
+                           input.canonical_bytes);
+}
+
 // The lease lasts until the final Main snapshot releases it.
 // Destroying Main while a snapshot survives cannot open a second Main.
 // This is process-local; the persistent directory owner lock must separately
@@ -64,12 +78,9 @@ MainOwner::MainOwner(MainInitialState initial, AllocationContext account) {
     evidence.reserve(initial.evidence_references.size());
     for (const auto address : initial.evidence_references)
         evidence.emplace_back(account, address);
-    CognitiveTensor semantic(account, initial.semantic.scalar_type,
-                             initial.semantic.shape, initial.semantic.canonical_bytes);
-    CognitiveTensor executive(account, initial.executive.scalar_type,
-                              initial.executive.shape, initial.executive.canonical_bytes);
-    CognitiveTensor scratch(account, initial.scratch.scalar_type,
-                            initial.scratch.shape, initial.scratch.canonical_bytes);
+    CognitiveTensor semantic = initial_tensor(account, initial.semantic);
+    CognitiveTensor executive = initial_tensor(account, initial.executive);
+    CognitiveTensor scratch = initial_tensor(account, initial.scratch);
     StructuredWorldGraph graph(account, initial.entities, initial.relations);
     GoalState goals(CanonicalPayload(account, initial.goals));
     ValueState values(CanonicalPayload(account, initial.values));

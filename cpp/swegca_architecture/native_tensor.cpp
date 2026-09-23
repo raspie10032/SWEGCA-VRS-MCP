@@ -1,6 +1,7 @@
 #include "swegca_architecture/native_tensor.hpp"
 
 #include <algorithm>
+#include <array>
 #include <limits>
 #include <stdexcept>
 #include <utility>
@@ -124,6 +125,35 @@ CognitiveTensor::CognitiveTensor(const AllocationContext& account,
         chunks_.push_back(std::allocate_shared<Chunk>(
             account.allocator<Chunk>(), std::move(part), scalar_type));
     }
+}
+
+// The user's CognitiveState source defines the tensor shape and value
+// contract. Borrowed, bounded byte reading is a C++ recovery extension.
+// SWEGCA: src/swegca/mosaic_cognitive_kernel.py@5901a5a:220-254
+CognitiveTensor::CognitiveTensor(const AllocationContext& account,
+                                 ScalarType scalar_type, TensorShape3 shape,
+                                 const TensorByteReader& source)
+    : scalar_type_(scalar_type), shape_(shape),
+      byte_count_(checked_bytes(scalar_type, shape)),
+      chunks_(account.allocator<ChunkPtr>()) {
+    chunks_.reserve(1 + (byte_count_ - 1) / chunk_bytes);
+    for (std::size_t offset = 0; offset < byte_count_; offset += chunk_bytes) {
+        const auto count = std::min<std::size_t>(chunk_bytes, byte_count_ - offset);
+        Storage part(count, std::byte{0}, account.allocator<std::byte>());
+        std::size_t filled = 0;
+        while (filled < count) {
+            const auto remaining = std::span<std::byte>(part).subspan(filled);
+            const auto received = source.read(offset + filled, remaining);
+            if (received == 0 || received > remaining.size())
+                throw std::invalid_argument("cognitive_tensor_source_short_read");
+            filled += received;
+        }
+        chunks_.push_back(std::allocate_shared<Chunk>(
+            account.allocator<Chunk>(), std::move(part), scalar_type));
+    }
+    std::array<std::byte, 1> trailing{};
+    if (source.read(byte_count_, trailing) != 0)
+        throw std::invalid_argument("cognitive_tensor_byte_count_mismatch");
 }
 
 // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:243-251
