@@ -450,7 +450,7 @@ define the current lower-journal mechanism; the author's
 retraction, and `mosaic_paper_resident_assimilation.py@3bddcb7:491-535`
 supplies the Main commit ordering.
 
-### Publication-identity migration scope
+### Publication-identity migration scope (2026-09-23 audit)
 
 Replacing the two manifest state fields alone is insufficient. The current
 `StateGeneration(ordinal, digest)` crosses eighteen C++ files. The migration
@@ -481,6 +481,16 @@ order matters:
 
 This map records the work needed to uphold the existing checks; it does not
 claim the migration or a cold-recovery path has been implemented.
+
+As of 2026-09-24, the isolated `codex/state-identity-integration` branch has
+removed `StateGeneration` from the C++ tree and migrated the manifest,
+snapshots, proposal/arbiter, evidence, journal, gate, authority and guarded
+writer interfaces to content digest plus the exact Main publication. Static
+lineage and diff checks passed. This branch is still incomplete: Main does not
+publish genesis, construct a verified `PublishedStateId`, persist the state
+record graph or marker, or recover the selected state. `MainOwner::snapshot()`
+therefore refuses its as-yet-unpublished initial state. Build and product
+tests remain stopped under the architecture inventory's §10 gate.
 
 ## Decisions before implementation
 
