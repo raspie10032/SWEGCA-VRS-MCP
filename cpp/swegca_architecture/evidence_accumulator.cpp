@@ -1,8 +1,5 @@
 #include "swegca_architecture/evidence_accumulator.hpp"
 
-#include "swegca_architecture/cognitive_state.hpp"
-#include "swegca_architecture/experience.hpp"
-#include "swegca_architecture/journal_store.hpp"
 #include "swegca_architecture/sha256.hpp"
 
 #include <algorithm>
@@ -149,12 +146,6 @@ Digest256 evidence_record_digest(std::span<const AdmittedEvidence> evidence,
     return Digest256(hash.finish());
 }
 
-// SWEGCA: src/swegca/mosaic_evidence_accumulator.py@5901a5a:359-428
-bool outcome_valid(EvidenceOutcome outcome) noexcept {
-    return outcome == EvidenceOutcome::support || outcome == EvidenceOutcome::refute ||
-           outcome == EvidenceOutcome::insufficient;
-}
-
 }  // namespace
 
 // Bind over a decision's admitted set (already sorted and unique).
@@ -230,9 +221,7 @@ std::uint32_t EvidenceAccumulator::identity_id(const Map<Text, std::uint32_t>& t
 // exactly as it was.
 // SWEGCA: src/swegca/mosaic_evidence_accumulator.py@5901a5a:359-428
 AdmissionResult EvidenceAccumulator::admit(const EvidenceObservation& observation,
-                                           const ExperienceRecord& replayed,
-                                           std::span<const DigestBytes> root_families,
-                                           std::span<const DigestBytes> root_contexts,
+                                           const ReplayedOriginal& replayed,
                                            const StateGeneration& current,
                                            std::uint64_t current_step) {
     if (observation.claim != claim_.claim().value() || observation.claim_revision != claim_.revision())
@@ -241,7 +230,7 @@ AdmissionResult EvidenceAccumulator::admit(const EvidenceObservation& observatio
     detail::require_identity_text(observation.source_family, SourceFamilyTag::name);
     detail::require_identity_text(observation.producer, ProducerIdTag::name);
     if (observation.axis >= axes_.size()) throw std::invalid_argument("evidence_axis_unknown");
-    if (!outcome_valid(observation.outcome))
+    if (!evidence_outcome_valid(observation.outcome))
         throw std::invalid_argument("evidence_outcome_invalid");
     if (observation.expires_at && *observation.expires_at < observation.observed_at)
         throw std::invalid_argument("evidence_expiry_precedes_observation");
@@ -249,18 +238,23 @@ AdmissionResult EvidenceAccumulator::admit(const EvidenceObservation& observatio
           observation.producer_confidence >= 0 && observation.producer_confidence <= 1))
         throw std::invalid_argument("evidence_producer_confidence_invalid");
     // Spec :118 — the observation cites the record Main replayed, nothing else.
-    if (replayed.record().address != observation.address)
+    if (replayed.address != observation.address)
         throw std::invalid_argument("evidence_record_address_mismatch");
     const auto family = Sha256::of(std::as_bytes(std::span(observation.source_family.data(),
                                                            observation.source_family.size())));
     const auto increasing = [](std::span<const DigestBytes> set) {
         return std::adjacent_find(set.begin(), set.end(), std::greater_equal<>()) == set.end();
     };
+    const auto root_families = replayed.root_families;
+    const auto root_contexts = replayed.root_contexts;
     if (!increasing(root_families) || !increasing(root_contexts) ||
         !std::binary_search(root_families.begin(), root_families.end(), family) ||
         !std::binary_search(root_contexts.begin(), root_contexts.end(), observation.context.bytes()))
         throw std::invalid_argument("evidence_correlation_invalid");
 
+    // One experience counts once (user 2026-09-23): the author refuses a
+    // seen address (mosaic_evidence_accumulator.py@5901a5a:392-400), and
+    // the address is the digest of the experience's identity.
     if (originals_.contains(observation.address))
         return reject(observation.address, AdmissionResult::duplicate);
     // Author: every audit row's world hash is the current state's.
@@ -356,7 +350,7 @@ AdmissionResult EvidenceAccumulator::admit(const EvidenceObservation& observatio
         coverage_node = detached(coverage_, observation.judged_against, Coverage{});
     reserve_one_more(admitted_evidence_);
     AdmittedEvidence kept{ExperienceAddress(memory_, observation.address),
-                          replayed.record().record_digest,
+                          replayed.record_digest,
                           observation.judged_against, observation.expires_at, observation.outcome,
                           observation.axis, SourceFamily(memory_, source_text),
                           observation.context, ProducerId(memory_, producer_text),
@@ -503,7 +497,7 @@ AdmissionResult EvidenceAccumulator::reject(std::string_view address, AdmissionR
 // SWEGCA: docs/SWEGCA_VRS_MCP_ORDER_FOR_REVIEW.md@30b73e7:24-29
 AdmissionResult EvidenceAccumulator::record(ReEvidenceResult result) {
     if (result.claim() != claim_) throw std::invalid_argument("re_evidence_claim_mismatch");
-    if (!outcome_valid(result.outcome())) throw std::invalid_argument("re_evidence_outcome_invalid");
+    if (!evidence_outcome_valid(result.outcome())) throw std::invalid_argument("re_evidence_outcome_invalid");
     const auto original_found = originals_.find(std::string_view(result.address().value()));
     if (original_found == originals_.end())
         throw std::invalid_argument("re_evidence_original_not_admitted");
@@ -645,114 +639,6 @@ EvidenceDecision EvidenceAccumulator::decide(const Digest256& delta_digest,
 bool EvidenceDecision::issued_by(const EvidenceAccumulator& accumulator) const noexcept {
     return accumulator.origin_ != nullptr && !origin_.owner_before(accumulator.origin_) &&
            !accumulator.origin_.owner_before(origin_);
-}
-
-// Replay first (the journal resolves the address through its published view
-// and verifies the record, or throws), then Main judges the replayed record
-// against the claim revision and the state it passes, then the result is
-// bound to what was replayed and to that state's generation, and recorded.
-// SWEGCA: docs/SWEGCA_VRS_MCP_ORDER_FOR_REVIEW.md@30b73e7:24-29
-ReEvidenceRecorded ReEvidence::apply(EvidenceAccumulator& accumulator,
-                                     const ExperienceAddress& address,
-                                     const CognitiveState& state, std::string_view by,
-                                     ReEvidenceJudge judge) const {
-    // One snapshot gives both the generation HEAD names and the original.
-    auto at_head = journal_.replay_at_head(address);
-    if (state.generation() != at_head.state)
-        throw std::invalid_argument("re_evidence_state_not_current");
-    const auto experience = ExperienceRecord::decode(std::move(at_head.record), memory_, journal_);
-    experience.verify_parts();  // codex 16:32: fail closed before it counts
-    const auto& view = experience.record();
-    if (view.address != address.value())
-        throw std::invalid_argument("re_evidence_replay_address_mismatch");
-    const auto outcome = judge(experience, accumulator.claim(), state);
-    if (!outcome_valid(outcome)) throw std::invalid_argument("re_evidence_outcome_invalid");
-    ReEvidenceResult result(accumulator.claim(), address, view.record_digest, state.generation(),
-                            ProducerId(memory_, by), outcome);
-    const auto admission = accumulator.record(result);
-    return ReEvidenceRecorded{std::move(result), admission};
-}
-
-// Replay and the generation HEAD names come from one snapshot of Main's
-// journal, never from the caller; admission is judged against that pair.
-// SWEGCA: docs/SWEGCA_VRS_MCP_ORDER_FOR_REVIEW.md@30b73e7:24-29
-AdmissionResult EvidenceAdmission::admit(EvidenceAccumulator& accumulator,
-                                         const EvidenceObservation& observation,
-                                         std::uint64_t current_step) {
-    detail::require_identity_text(observation.address, ExperienceAddressTag::name);
-    detail::require_identity_text(observation.source_family, SourceFamilyTag::name);
-    auto at_head =
-        journal_.replay_at_head(ExperienceAddress(accumulator.memory_, observation.address));
-    const auto experience =
-        ExperienceRecord::decode(std::move(at_head.record), accumulator.memory_, journal_);
-    experience.verify_parts();  // codex 16:32: fail closed before it counts
-    // Provenance is the experience's (COMPONENT_LEDGER.md@5901a5a:44-50), and
-    // the evidence is linked to all of it: every root context (already
-    // increasing, for_each_root_context checks) and every root family.
-    const auto memory = accumulator.memory_;
-    SourceFamilies::Digests contexts(memory.allocator<DigestBytes>());
-    experience.for_each_root_context([&](const DigestBytes& context) {
-        contexts.push_back(context);
-        return true;
-    });
-    if (contexts.empty()) throw std::invalid_argument("evidence_context_unbound");
-    if (!std::binary_search(contexts.begin(), contexts.end(), observation.context.bytes()))
-        throw std::invalid_argument("evidence_provenance_mismatch:context");
-    if (experience.observed_at() != observation.observed_at)
-        throw std::invalid_argument("evidence_provenance_mismatch:observed_at");
-    SourceFamilies::Digests families(memory.allocator<DigestBytes>());
-    SourceFamilies::Fixes fixes(memory.allocator<SourceFamilies::Map::node_type>());
-    if (!families_.root_families(experience, observation.source_family, families, fixes))
-        throw std::invalid_argument("evidence_provenance_mismatch:source_family");
-    const auto result =
-        accumulator.admit(observation, experience, families, contexts, at_head.state, current_step);
-    if (result == AdmissionResult::applied) families_.commit(fixes);
-    return result;
-}
-
-// SWEGCA: paper/swegca/journal_submission_2026-08-25/COMPONENT_LEDGER.md@5901a5a:44-50
-void SourceFamilies::assign(std::string_view source, std::string_view family) {
-    detail::require_identity_text(source, ProducerIdTag::name);
-    detail::require_identity_text(family, SourceFamilyTag::name);
-    const auto root = Sha256::of(std::as_bytes(std::span(source.data(), source.size())));
-    const auto grouped = Sha256::of(std::as_bytes(std::span(family.data(), family.size())));
-    const auto found = families_.find(root);
-    if (found != families_.end()) {
-        if (found->second != grouped) throw std::invalid_argument("source_family_reassigned");
-        return;
-    }
-    families_.emplace(root, grouped);
-}
-
-// A grouped root's family is Main's; an ungrouped root's is its own name
-// (digest: the root), and the entry fixing it is prepared before the
-// accumulator's step. One pass over the roots.
-// SWEGCA: paper/swegca/journal_submission_2026-08-25/COMPONENT_LEDGER.md@5901a5a:44-50
-bool SourceFamilies::root_families(const ExperienceRecord& experience, std::string_view family,
-                                   Digests& families, Fixes& fixes) const {
-    experience.for_each_root_source([&](const DigestBytes& root) {
-        const auto grouped = families_.find(root);
-        if (grouped != families_.end()) {
-            families.push_back(grouped->second);
-        } else {
-            families.push_back(root);
-            Map staging(families_.get_allocator());
-            staging.emplace(root, root);
-            fixes.push_back(staging.extract(staging.begin()));
-        }
-        return true;
-    });
-    std::sort(families.begin(), families.end());
-    families.erase(std::unique(families.begin(), families.end()), families.end());
-    const auto named = Sha256::of(std::as_bytes(std::span(family.data(), family.size())));
-    return std::binary_search(families.begin(), families.end(), named);
-}
-
-// Inserting prepared nodes allocates nothing and the key comparison
-// cannot throw.
-// SWEGCA: paper/swegca/journal_submission_2026-08-25/COMPONENT_LEDGER.md@5901a5a:44-50
-void SourceFamilies::commit(Fixes& fixes) noexcept {
-    for (auto& fix : fixes) (void)families_.insert(std::move(fix));
 }
 
 }  // namespace swegca::architecture

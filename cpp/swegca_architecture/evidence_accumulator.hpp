@@ -1,10 +1,10 @@
 #pragma once
 
-#include "swegca_architecture/authority_roles.hpp"
 #include "swegca_architecture/digest_bytes.hpp"
 #include "swegca_architecture/evidence_kernel.hpp"
 #include "swegca_architecture/evidence_rules.hpp"
 #include "swegca_architecture/allocation.hpp"
+#include "swegca_architecture/authority_roles.hpp"
 #include "swegca_architecture/strong_types.hpp"
 
 #include <algorithm>
@@ -25,29 +25,32 @@
 #error "exact axis sums need a 128-bit unsigned integer"
 #endif
 
-// Main-owned evidence accumulation for one claim revision. This is the shell
-// around the nano-core: it admits observations, keeps the fixed-size tally
+// Main-owned evidence accumulation for one claim revision. It is VRS, the
+// shell around the SWEGCA core: the core is the pure judgment of
+// evidence_kernel.hpp (accept, reject or abstain, and only that; user
+// 2026-09-23). The accumulator admits observations, keeps the fixed-size tally
 // the kernel judges, records every rejected observation, records Main's
 // Re-evidence of admitted originals, and issues decisions that carry what the
 // design board requires (claim revision, accumulator revision, admitted and
 // rejected address sets, evaluated delta and mask digests, rule configuration
 // digest, binding digest and decision digest).
 // Every container allocates through Main's allocation context (the one
-// Main creates the accumulator with); nothing here reads the journal.
+// Main creates the accumulator with). It names no journal, record or
+// state type: what it knows of a replayed experience is ReplayedOriginal,
+// which the VRS admission stage builds (evidence_stages.hpp).
 // Rules: ARCHITECTURE_SPEC.md@5901a5a §4.4 (accumulation; decisions are
 // process-local), §4.5 (Bind), I03 provenance; design board @7c0b62f:195-198;
 // Re-evidence is an explicit input stage (board @cefdc3f:459-462) run by Main
 // against the current generation after Replay (order @30b73e7:24-29).
 namespace swegca::architecture {
 
-namespace journal {
-class JournalStore;
-class PublishedRecord;
-struct RecordView;
-}  // namespace journal
-
-class CognitiveState;
-class ExperienceRecord;
+// Friends of the accumulator. MainOwner is complete in authority_roles.hpp;
+// the two stages are complete in evidence_stages.hpp, which this header
+// includes at its end, so every translation unit that sees these friend
+// declarations also sees the one definition and cannot define a
+// substitute (Codex 2026-09-23 17:24).
+class EvidenceAdmission;
+class ReEvidence;
 
 struct SourceFamilyTag {
     static constexpr std::string_view name = "source_family";
@@ -55,6 +58,12 @@ struct SourceFamilyTag {
 using SourceFamily = TextIdentity<SourceFamilyTag>;
 
 enum class EvidenceOutcome : std::uint8_t { support = 1, refute = 2, insufficient = 3 };
+
+// SWEGCA: src/swegca/mosaic_evidence_accumulator.py@5901a5a:359-428
+[[nodiscard]] inline bool evidence_outcome_valid(EvidenceOutcome outcome) noexcept {
+    return outcome == EvidenceOutcome::support || outcome == EvidenceOutcome::refute ||
+           outcome == EvidenceOutcome::insufficient;
+}
 
 // One observation judged against one claim revision: the producer's borrowed
 // input. Its texts must satisfy the identity rule; Main copies what it keeps
@@ -67,8 +76,9 @@ enum class EvidenceOutcome : std::uint8_t { support = 1, refute = 2, insufficien
 // requires the world hash to be the current state's), and then it is the
 // observation generation, which Re-evidence never rewrites.
 // Provenance is the replayed experience's (COMPONENT_LEDGER.md@5901a5a:
-// 44-50, codex 15:40): `source_family` must be the family (SourceFamilies)
-// of one of the experience's root sources, `context` one of its root
+// 44-50, codex 15:40): `source_family` must be the family (SourceFamilies,
+// evidence_stages.hpp) of one of the experience's root sources, `context`
+// one of its root
 // contexts and `observed_at` its step. `producer` is the judge, which no experience
 // names; it cannot raise diversity above what the experiences bear out,
 // since source and context diversity are each the smaller of the verified
@@ -87,54 +97,6 @@ struct EvidenceObservation {
     std::optional<std::uint64_t> expires_at;
     std::string_view producer;
     double producer_confidence = 0;
-};
-
-// Main's grouping of sources into families (COMPONENT_LEDGER.md@5901a5a:
-// 44-50: results sharing a source family must be grouped). A source Main
-// has not grouped is its own family. A source's family is fixed once Main
-// sets it or once evidence is applied under it, so no source is ever
-// counted under two families; an observation that is rejected or fails
-// fixes nothing. Evidence is applied under every root source of its
-// experience (they are linked, see EvidenceAccumulator), so applying it
-// fixes every ungrouped root as its own family. Sources and families are
-// kept by the SHA-256 of their text, as experiences record their root
-// sources; an ungrouped source's family digest is its own.
-class SourceFamilies final {
-public:
-    SourceFamilies(const SourceFamilies&) = delete;
-    SourceFamilies& operator=(const SourceFamilies&) = delete;
-    SourceFamilies(SourceFamilies&&) = delete;
-    SourceFamilies& operator=(SourceFamilies&&) = delete;
-    ~SourceFamilies() = default;
-
-    // Groups `source` under `family` (both identity texts). A source whose
-    // family is already another fails with `source_family_reassigned`.
-    void assign(std::string_view source, std::string_view family);
-
-private:
-    friend class MainOwner;
-    friend class EvidenceAdmission;
-    // SWEGCA: paper/swegca/journal_submission_2026-08-25/COMPONENT_LEDGER.md@5901a5a:44-50
-    explicit SourceFamilies(const AllocationContext& memory)
-        : memory_(memory), families_(memory.allocator<std::pair<const DigestBytes, DigestBytes>>()) {}
-
-    // source digest -> family digest
-    using Map = std::map<DigestBytes, DigestBytes, std::less<>,
-                         AllocationAdapter<std::pair<const DigestBytes, DigestBytes>>>;
-    using Digests = std::vector<DigestBytes, AllocationAdapter<DigestBytes>>;
-    using Fixes = std::vector<Map::node_type, AllocationAdapter<Map::node_type>>;
-
-    // The family digest of every root source of the experience, sorted and
-    // unique, into `families`, and whether `family` is one of them, changing
-    // nothing. The entries fixing its ungrouped roots are prepared in
-    // `fixes`, for `commit` once applied.
-    [[nodiscard]] bool root_families(const ExperienceRecord& experience, std::string_view family,
-                                     Digests& families, Fixes& fixes) const;
-    // Records prepared entries; allocates nothing.
-    void commit(Fixes& fixes) noexcept;
-
-    AllocationContext memory_;
-    Map families_;
 };
 
 enum class AdmissionResult : std::uint8_t {
@@ -176,7 +138,18 @@ struct RejectedEvidence {
     auto operator<=>(const RejectedEvidence&) const = default;
 };
 
-class ReEvidence;
+// What the admission stage hands the verifier about the experience it
+// replayed at an observation's address (layer plan 3.1): the exact address
+// and record digest, and its root family and root context digests, sorted
+// and unique. The verifier reads nothing else of the experience; every span
+// is borrowed for the call.
+// SWEGCA: docs/SWEGCA_CPP_VRS_LAYER_PLAN.md@6642262:87-97
+struct ReplayedOriginal {
+    std::string_view address;
+    DigestBytes record_digest{};
+    std::span<const DigestBytes> root_families;
+    std::span<const DigestBytes> root_contexts;
+};
 
 // Main's Re-evidence of one admitted original: the record Main replayed (its
 // address and content digest), the claim revision, the generation it was
@@ -366,20 +339,19 @@ private:
     EvidenceAccumulator(const AllocationContext& memory, ClaimRevision claim,
                         const EvidencePolicy& policy);
 
-    // Called by EvidenceAdmission only. `replayed` is the experience Main
-    // replayed at `observation.address` (its record digest is what the
-    // original binds), `root_families` and `root_contexts` its root
-    // families and contexts (sorted, unique; they must hold the
-    // observation's, `evidence_correlation_invalid`) and `current` the
+    // Called by EvidenceAdmission only. `replayed` describes the experience
+    // Main replayed at `observation.address` (its record digest is what the
+    // original binds; its root families and contexts must hold the
+    // observation's, `evidence_correlation_invalid`) and `current` is the
     // state generation HEAD names. Throws on an observation
     // for another claim revision, an unknown axis, invalid fields or a record
-    // for another address. A duplicate (address already admitted), stale
+    // for another address. A duplicate (the address already admitted: the
+    // address is the digest of the experience's identity, so the same
+    // experience recorded twice counts once, user 2026-09-23), stale
     // (judged on another generation than `current`), expired or insufficient
     // observation leaves the tally unchanged and is recorded as rejected. Any
     // throw leaves the accumulator exactly as it was.
-    AdmissionResult admit(const EvidenceObservation& observation, const ExperienceRecord& replayed,
-                          std::span<const DigestBytes> root_families,
-                          std::span<const DigestBytes> root_contexts,
+    AdmissionResult admit(const EvidenceObservation& observation, const ReplayedOriginal& replayed,
                           const StateGeneration& current, std::uint64_t current_step);
 
     using Text = std::basic_string<char, std::char_traits<char>, AllocationAdapter<char>>;
@@ -504,123 +476,7 @@ private:
     kernel::EvidenceTally tally_;
 };
 
-// What Re-evidence recorded: the result, and whether it was applied or was
-// an exact repeat of a result already kept (original, generation,
-// re-evidencer, outcome).
-struct ReEvidenceRecorded {
-    ReEvidenceResult result;
-    AdmissionResult admission = AdmissionResult::applied;
-};
-
-// Main's evidence admission (spec :118, order @30b73e7:24-29): replays the
-// observation's address from Main's journal and admits it against the state
-// generation the journal's HEAD names, both from one snapshot, so neither the
-// record nor the current generation is the caller's to choose. A HEAD
-// published after that snapshot leaves the admission judged against the
-// earlier generation: evidence_current then requires Re-evidence at the new
-// one, so the pair is never mixed. The only caller of the accumulator's
-// admission step.
-class EvidenceAdmission final {
-public:
-    EvidenceAdmission(const EvidenceAdmission&) = delete;
-    EvidenceAdmission& operator=(const EvidenceAdmission&) = delete;
-    EvidenceAdmission(EvidenceAdmission&&) = delete;
-    EvidenceAdmission& operator=(EvidenceAdmission&&) = delete;
-    ~EvidenceAdmission() = default;
-
-    // Replays `observation.address` (throws if the journal cannot confirm
-    // it), requires its provenance to be the experience's (an experience
-    // without a context fails `evidence_context_unbound`; a family, context
-    // or step that is not the experience's fails
-    // `evidence_provenance_mismatch:source_family|context|observed_at`) and
-    // admits the observation into `accumulator` as its admission step
-    // describes, at `current_step`. A family is fixed as its source's own
-    // (SourceFamilies) only when the observation is applied.
-    AdmissionResult admit(EvidenceAccumulator& accumulator, const EvidenceObservation& observation,
-                          std::uint64_t current_step);
-
-private:
-    friend class MainOwner;
-    // SWEGCA: docs/SWEGCA_VRS_MCP_ORDER_FOR_REVIEW.md@30b73e7:24-29
-    EvidenceAdmission(const journal::JournalStore& journal, SourceFamilies& families) noexcept
-        : journal_(journal), families_(families) {}
-
-    const journal::JournalStore& journal_;  // Main's journal; originals are replayed here
-    SourceFamilies& families_;              // Main's grouping of sources
-};
-
-// The judgment Main runs on a replayed original: it receives the replayed
-// experience, the claim revision and the Cognitive State it re-judges against,
-// and returns the outcome (the author's runtime judge sees the artifact it
-// judges, never a caller's verdict). It must not touch the accumulator.
-// Borrowed for one call, like a function reference: it owns and allocates
-// nothing, so the callable must outlive the call it is passed to (pass it
-// directly; never keep one).
-class ReEvidenceJudge final {
-public:
-    // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:475-512
-    template <class F>
-        requires(!std::is_same_v<std::remove_cvref_t<F>, ReEvidenceJudge> &&
-                 std::is_invocable_r_v<EvidenceOutcome, std::remove_reference_t<F>&,
-                                       const ExperienceRecord&, const ClaimRevision&,
-                                       const CognitiveState&>)
-    ReEvidenceJudge(F&& judge) noexcept  // NOLINT(google-explicit-constructor)
-        : target_(static_cast<const void*>(std::addressof(judge))),
-          call_(&invoke<std::remove_reference_t<F>>) {}
-
-    // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:508-512
-    EvidenceOutcome operator()(const ExperienceRecord& record, const ClaimRevision& claim,
-                               const CognitiveState& state) const {
-        return call_(target_, record, claim, state);
-    }
-
-private:
-    using Call = EvidenceOutcome (*)(const void*, const ExperienceRecord&,
-                                     const ClaimRevision&, const CognitiveState&);
-    // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:508-512
-    template <class T>
-    static EvidenceOutcome invoke(const void* target, const ExperienceRecord& record,
-                                  const ClaimRevision& claim, const CognitiveState& state) {
-        auto& judge = *static_cast<T*>(const_cast<void*>(target));
-        return static_cast<EvidenceOutcome>(judge(record, claim, state));
-    }
-
-    const void* target_;
-    Call call_;
-};
-
-// Main's Re-evidence component (order @30b73e7:24-29): replays an admitted
-// original from Main's journal and records its re-judgment against the
-// current Cognitive State generation. It is the only constructor of
-// ReEvidenceResult and the only caller of the accumulator's recording step.
-class ReEvidence final {
-public:
-    ReEvidence(const ReEvidence&) = delete;
-    ReEvidence& operator=(const ReEvidence&) = delete;
-    ReEvidence(ReEvidence&&) = delete;
-    ReEvidence& operator=(ReEvidence&&) = delete;
-    ~ReEvidence() = default;
-
-    // Requires `state` to be the generation Main's journal HEAD names
-    // (`re_evidence_state_not_current` otherwise), replays `address` (throws
-    // if the journal cannot confirm it), asks `judge` for the outcome of the
-    // replayed record against the accumulator's claim revision and `state`,
-    // requires the record to be an admitted original of `accumulator` with
-    // the same content digest, and records that outcome by `by` (a producer
-    // id, borrowed) against that generation. Any throw leaves the
-    // accumulator exactly as it was.
-    [[nodiscard]] ReEvidenceRecorded apply(EvidenceAccumulator& accumulator,
-                                 const ExperienceAddress& address, const CognitiveState& state,
-                                 std::string_view by, ReEvidenceJudge judge) const;
-
-private:
-    friend class MainOwner;
-    // SWEGCA: docs/SWEGCA_VRS_MCP_ORDER_FOR_REVIEW.md@30b73e7:24-29
-    ReEvidence(const journal::JournalStore& journal, const AllocationContext& memory) noexcept
-        : journal_(journal), memory_(memory) {}
-
-    const journal::JournalStore& journal_;  // Main's journal; originals are replayed here
-    AllocationContext memory_;          // Main's allocation context; results are kept in it
-};
-
 }  // namespace swegca::architecture
+
+// The complete EvidenceAdmission and ReEvidence (see the friend note above).
+#include "swegca_architecture/evidence_stages.hpp"

@@ -95,10 +95,15 @@ takes `const ExperienceRecord&` and reads only `record().address` and
 `record().record_digest`, plus the root family and root context digests
 admission computed (sorted spans; the correlation groups, codex 16:41).
 Type (VRS, the accumulator's input): `ReplayedOriginal { std::string_view
-address; DigestBytes record_digest; DigestBytes content; std::span<const
-DigestBytes> root_families, root_contexts; }`; `content` is the digest of
-the experience's raw and structured bytes, and equal content is one
-experience (user 2026-09-23).
+address; DigestBytes record_digest; std::span<const DigestBytes>
+root_families, root_contexts; }`. Duplicates are one experience (user
+2026-09-23) by the author's rule: a seen published address is refused
+(mosaic_evidence_accumulator.py@5901a5a:392-418), and the address is the
+digest of the experience's identity (kind, source, revision, previous,
+outcome, payload with step, context and blobs), so the same experience
+recorded twice is one address. No other digest selects "the same
+experience" (codex 17:44; review B2: a raw-and-structured digest folded
+independent replications into one).
 The provenance checks (context, step, source family over root sources) and
 the family registry stay in EvidenceAdmission (VRS), which alone may call
 `admit` (friend, as today); grouping by what evidence shares is the
@@ -209,7 +214,7 @@ Core (claude/core-close; closed 2026-09-23 17:4x):
    evidence_accumulator from the stages feeding it (`evidence_stages.*`:
    SourceFamilies, EvidenceAdmission, ReEvidenceJudge, ReEvidence), the
    accumulator taking `ReplayedOriginal` (3.1) and counting an experience
-   once by its content (user 17:0x), its friends complete wherever it is
+   once by its address (user 17:0x, codex 17:44), its friends complete wherever it is
    visible (codex 17:24). The byte codec stays in journal_format: the
    core does not use it, so it is VRS. The accumulator part was taken
    out of c26a14a and waits for VRS step 5 (below). 1d4fd2d makes the

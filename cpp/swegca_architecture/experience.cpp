@@ -1081,7 +1081,8 @@ ExperienceAppend::ExperienceAppend(const ExperienceJournal& journal, const Alloc
                                         observation.previous_revision_address, observation.outcome,
                                         Sha256::of(payload));
         addresses_.emplace_back(memory_, view_of(address));
-        heads_.push_back(Head{kind, at, address, std::move(payload), index.take_entries(), index.take_bytes(), false});
+        heads_.push_back(Head{kind, at, address, std::move(payload), index.take_entries(), index.take_bytes(), false,
+                              std::nullopt});
         slices.push_back(std::move(own));
     }
 
@@ -1113,7 +1114,7 @@ ExperienceAppend::ExperienceAppend(const ExperienceJournal& journal, const Alloc
         if (heads_[at].skip) continue;
         for (const auto& slice : slices[at])
             parts_.push_back(Part{slice.digest, part_address_of(slice.digest), slice.bytes, slice.reader,
-                                  slice.offset, slice.length});
+                                  slice.offset, slice.length, false, std::nullopt});
     }
     std::sort(parts_.begin(), parts_.end());
     parts_.erase(std::unique(parts_.begin(), parts_.end()), parts_.end());
@@ -1489,8 +1490,8 @@ SelectionReceipt<NoAuthority> ExperienceSelector::select(const SelectionQuery& q
                 fail("experience_select_position_changed");
             selected.push_back(SelectedExperience{ExperienceAddress(memory, address), position,
                                                   record.raw_blob().size, record.raw_digest(),
-                                                  position.record_digest, judgment.verification_state,
-                                                  judgment.revision, record.raw_blob().parted()});
+                                                  position.record_digest, record.raw_blob().parted(),
+                                                  judgment.verification_state, judgment.revision});
         }
         judgments.push_back(std::move(judgment));
         first = last;
