@@ -12,10 +12,10 @@
 // transaction exists and the id is new, checked by the author's
 // _prepare_journal :72-93 before it writes `prepared` at :94-111),
 // recovery ordering and compensation records, and the memory and state
-// work each stage records. A stage is a recorded name. `state_committed` in particular proves nothing about Main's
-// current publication: the author sets it right after `memory_committed`
-// (:265-271), with the World write committed before the promotion began
-// (:224).
+// work each stage records. A stage is a recorded name. `state_committed`
+// in particular proves nothing about Main's current publication: the
+// author sets it right after `memory_committed` (:265-271), with the World
+// write committed before the promotion began (:224).
 //
 // Rules: tinylm-slicer-sanabi-bazzite
 // src/tinylm_slicer/mosaic_world_memory_transaction.py@3bddcb7:67-183,212-361.
