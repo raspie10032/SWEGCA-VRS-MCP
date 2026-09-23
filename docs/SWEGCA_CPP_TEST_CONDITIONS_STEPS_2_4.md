@@ -36,15 +36,15 @@ Publication and recovery:
 | # | Setup | Expected |
 |---|---|---|
 | B1 | Stage N records, publish, reopen | Same HEAD digest, generation, tail sequence; every record replays byte-identical with the same position and record digest |
-| B2 | Forced interruption before the segment appends are flushed | Reopen shows the previous HEAD; the unpublished bytes and `.part` files are removed; no record of the interrupted generation is resolvable |
-| B3 | Interruption after segment flush, before the manifest log write | As B2 |
-| B4 | Interruption after the manifest write, before the HEAD rename | As B2 |
-| B5 | Interruption after the HEAD rename, before the directory is made durable | Reopen shows exactly the previous or exactly the new HEAD, and every record the shown HEAD names replays; never a mix |
-| B6 | Interruption after the directory is durable | New HEAD; all records replay |
-| B7 | B2-B6 repeated for `compact_view` and `rebuild_view` (page logs instead of segments) | Old view or new view, never a mix; records unaffected |
+| B2 | Publication fault matrix. The publisher's steps in order: (a) each segment piece written, (b) each page-log piece written, (c) the manifest log appended, (d) new directory entries made durable (when files were created), (e) `HEAD.part` written, (f) `HEAD.part` made durable, (g) `HEAD.part` renamed to HEAD (the commit point), (h) the directory made durable. A crash is injected immediately before and immediately after the durability call (fsync) of each file step (a)-(c), (e)-(f), and before and after each rename and each directory durability call (d), (g), (h). | Crash at or before (g): reopen shows the previous HEAD, every leftover (`.part`, unpublished tail bytes, unreached page logs) is removed, and no record of the interrupted generation resolves. Crash after (g), before (h) completes: reopen shows exactly the previous or exactly the new HEAD and everything that HEAD names replays. Crash after (h): the new HEAD |
+| B3 | An in-process I/O failure (not a crash) at every point of B2 | store poisoned (B14); a reopen gives the B2 result for that point |
+| B4 | B2 for a generation that opens a new segment and a new page log (new directory entries) and for one that only appends | Same results; step (d) present only in the first |
+| B5 | B2 for `compact_view` and for `rebuild_view` (page-log steps only, then manifest and HEAD) | Old view or new view, never a mix; records unaffected |
+| B6 | Crash during reopen's own cleanup (removing leftovers) | A second reopen reaches the same state as B2 |
+| B7 | Crash between the HEAD durability (h) and the snapshot swap | Reopen shows the new HEAD (the swap is in memory only) |
 | B8 | Corrupt one byte of a published segment the head generation wrote | `open` fails closed (`journal_segment_*` / `journal_record_*` digest code) |
 | B9 | Corrupt one byte of an older segment | `open` succeeds; `replay` of a record in it fails with a digest code; `for_each_record` and `rebuild_view` fail on the chain |
-| B10 | Delete or truncate a page log in the view's range | `open` succeeds with the view unavailable; lookups, stage and compaction fail `journal_view_unavailable`; `rebuild_view` from the records restores every lookup; replay by chain still works |
+| B10 | Delete or truncate a page log in the view's range | `open` succeeds with the view unavailable; `resolve`, `replay`, index lookups, stage and compaction fail `journal_view_unavailable` (replay goes through the view); `for_each_record` still scans and verifies the whole chain; `rebuild_view` from the records restores every lookup and replay |
 | B11 | Unknown file in the directory | `open` fails `journal_unknown_entry` |
 | B12 | Second owner of the same directory | `journal_already_owned` |
 | B13 | Publish a stale StagedGeneration (HEAD moved) | `journal_head_changed`; nothing published |
@@ -65,12 +65,12 @@ Budgets (board §11 limits):
 
 | # | Setup | Expected |
 |---|---|---|
-| B21 | Storage use would pass `storage_bytes` (up to 500 GB) | stage fails `journal_storage_budget_exceeded`; nothing written |
+| B21 | Storage use would pass `storage_bytes` (up to 500 GB) | stage and publish fail `journal_storage_budget_exhausted` with nothing written; a directory whose published use already exceeds `storage_bytes` fails `open` with `journal_storage_budget_exceeded` |
 | B22 | Recovery chain over `max_recovery_bytes` | `journal_recovery_over_budget` |
-| B23 | Main ledger usage during stage, publish, lookup, compaction, rebuild at full scale | never above the ledger limit; every buffer charged (ledger `used()` returns to its prior value after each call) |
-| B24 | Page cache with a carve of C bytes under a lookup storm | carve usage never above C; Main ledger never charged by cache-kept pages; after every reader lets go, eviction returns the carve |
+| B23 | Main ledger usage during stage, publish, lookup, compaction, rebuild at full scale | never above the ledger limit; every buffer charged; after each call Main's `used()` equals its prior value (the page-cache carve is a constant part of it, charged at open) |
+| B24 | Page cache with a carve of C bytes under a lookup storm | carve usage never above C; cached pages stay until evicted and are charged to the carve only; when a read needs carve budget, a page no reader holds is evicted and its bytes return to the carve; with every cached page held by a reader, the read is served on Main's account and not kept |
 | B25 | Main ledger smaller than the requested carve | `open` fails `memory_budget_exhausted`; with 0, no cache and every lookup still correct |
-| B26 | Lookup latency, hot cache, largest tested journal | one index lookup within the 1 ms Recall budget (measured only at step 10) |
+| B26 | User input to first Recall, end to end (query tokenization, every index lookup including page-cache misses that read page logs, candidate judgment hand-off, replay of selected records), largest tested journal, 16 workers | within 1 ms; measured only at step 10. A single lookup's time is not this measure |
 
 ## C. Experience (step 3; board §3B, §4, §5)
 
@@ -126,7 +126,9 @@ Selection `Select(q, U) -> (C, J, rho)` (invariants 3, 11; failure 2):
 | D5 | Expired, insufficient outcome | `expired` / `insufficient`; tally unchanged |
 | D6 | Re-evidence at a new HEAD generation | only with the state of that generation (`re_evidence_state_not_current` otherwise); only an admitted original (`re_evidence_original_not_admitted`); the judge receives the decoded experience |
 | D7 | HEAD published between admission and gate | the admission stays judged against the earlier generation; `evidence_current` false at the new one until Re-evidence there |
-| D8 | Missing, stale, duplicate, source-concentrated, contradictory, mismatched evidence | decision `abstain` or `reject`, never `accept` (invariant 5) |
+| D8 | Each negative gate alone, every other gate passing: (a) effective samples below the minimum, (b) source diversity below the minimum, (c) a required axis's source diversity below the minimum, (d) context diversity below the minimum, (e) regime change suspected, (f) upper bound below the threshold, (g) lower bound not above the threshold with the upper bound above it, (h) an invalid tally | (a)-(e), (g), (h) `abstain` with reasons `minimum_effective_samples`, `source_diversity`, `axis_source_diversity`, `context_diversity`, `regime_change_suspected`, `uncertain`, `invalid_input`; (f) `reject` with `upper_bound_below_threshold`; never `accept` (invariant 5) |
+| D8p | Positive: supporting evidence with enough effective samples, sources, per-axis sources and contexts, no regime change | `accept` with `causal_lower_bound`, lower bound above the threshold |
+| D8s | Stale, duplicate, claim-mismatched evidence (D3, D4, `evidence_claim_mismatch`) | not counted: the decision equals the one made without them |
 | D9 | High producer confidence with no admitted evidence | no `accept` (I05) |
 
 ## E. Failure-model and invariant coverage map (steps 2-4 share)
@@ -146,9 +148,17 @@ Selection `Select(q, U) -> (C, J, rho)` (invariants 3, 11; failure 2):
 | Failure 1 | A1, C1 |
 | Failure 2 | A3, C19-C25 |
 | Failure 3 | D9 |
-| Failure 4 | D3, D4, D8 |
+| Failure 4 | D3, D4, D8, D8s |
 
-Failures 5-10 and I03's write receipt belong to steps 5-7 (codex).
+Failures 5-8 and 10, I03's write receipt, E001/E002 (F below) belong to steps 5-7 (codex); failure 9 (worker isolation) to step 8.
 
-Not covered here: E001/E002 rejection (board §10 step 9) is not yet mapped to
-steps 2-4; its source must be named before a condition is written.
+## F. E001/E002 (ARCHITECTURE_SPEC.md@5901a5a:154-162; steps 5-6, codex)
+
+The spec reports E001 (empty evidence addresses) and E002 (an address the
+decision was not produced from) as negative results of the old writer; the
+rebuild must close them.
+
+| # | Setup | Expected |
+|---|---|---|
+| F1 (E001) | Proposal with no evidence addresses, every other gate passing | Bind fails; no capability, no write, no-write receipt |
+| F2 (E002) | Proposal citing an address outside the decision's admitted set, every other gate passing | Bind fails; no capability, no write, no-write receipt |
