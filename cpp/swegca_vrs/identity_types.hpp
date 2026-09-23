@@ -26,6 +26,10 @@ void require_identity_text(std::string_view value, std::string_view field);
 // throwing (for texts viewed in place, such as decoded journal records).
 [[nodiscard]] bool is_identity_text(std::string_view value) noexcept;
 
+// Whether Python's str.strip removes `code_point`: the blank set the identity
+// rule uses (Unicode 16.0, as measured on Python 3.14.7).
+[[nodiscard]] bool is_python_strip_space(std::uint32_t code_point) noexcept;
+
 }  // namespace detail
 
 // A distinct Tag creates a non-convertible identity type. The source files are

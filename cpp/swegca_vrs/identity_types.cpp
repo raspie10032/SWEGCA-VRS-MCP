@@ -109,6 +109,11 @@ bool is_identity_text(std::string_view value) noexcept {
 }
 
 // SWEGCA: src/swegca/mosaic_cognitive_kernel.py@5901a5a:19-21
+bool is_python_strip_space(std::uint32_t code_point) noexcept {
+    return python_strip_space(code_point);
+}
+
+// SWEGCA: src/swegca/mosaic_cognitive_kernel.py@5901a5a:19-21
 void require_identity_text(std::string_view value, std::string_view field) {
     if (value.size() > identity_text_max_bytes)
         throw std::invalid_argument(std::string(field) + "_too_long");
