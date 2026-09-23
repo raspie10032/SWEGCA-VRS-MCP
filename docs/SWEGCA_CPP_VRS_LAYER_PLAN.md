@@ -21,6 +21,17 @@ Rules, in the user's words where given:
   combining them.
 - (user 16:10, 16:13) usage counting and budget judgment belong to VRS; the
   baseline resource profile is a floor, not a ceiling.
+- (user 18:4x, terms) "정확하게는 시냅스 강도자체가 경험의 저장임.
+  겪은것은 기억이고, 이것의 연관성을 수치화하면 경험." A memory is what
+  was lived: an original record at one published address (what this plan and
+  the code call an experience record or "original experience"). An
+  experience is the quantified association between memories: the synapse
+  (endpoint-sign group) strength. The strength table is the experience
+  store, so it is primary durable data owned by Main, published and
+  recovered with the journal, never a rebuildable derived view; the author
+  saves it (`vrs_strengths.f16`) and resumes the next generation from it
+  (`initial_vrs_strengths`, tinylm slicer hybrid organizer :54, :841,
+  :873-878). Renaming code types is put to the user.
 
 So the core verifies and only verifies: from addressed evidence it judges a
 claim accept, reject or abstain. Everything that finds, replays, admits or
