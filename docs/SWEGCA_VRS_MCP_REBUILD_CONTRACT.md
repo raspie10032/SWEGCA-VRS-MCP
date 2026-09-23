@@ -337,9 +337,14 @@ still missing, so this is not yet the product dependency read path.
 One cold-open numerical view now binds an immutable page-map generation, its
 node and edge page files, and the disk endpoint index to the same exact
 `EventVrsInputView` identity. It validates the full numerical source before
-the wrapper can escape. Reads currently open and verify a physical page on
-each field access; a generation-bound bounded page cache and manifest-driven
-recovery remain required before this view can enter the hot product path.
+the wrapper can escape. The numerical view can now share an explicitly
+budgeted 16-shard direct page cache across pinned generations. A slot retains
+the immutable file object, physical offset and logical page ID; misses still
+execute the existing file, generation, page and checksum validation. Slot
+allocation is fixed at cache construction from the caller's byte budget, so
+Main size cannot expand it. The enclosing Main memory owner must account for
+allocator overhead and all other directories within the global 4 GB limit;
+no RSS acceptance is claimed.
 After a committed batch is written, the prepared sparse successor can be
 reopened through those immutable pages and its native endpoint segments. This
 keeps the resident Main generation from retaining an ever-growing chain of

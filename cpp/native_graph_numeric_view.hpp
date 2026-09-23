@@ -5,6 +5,7 @@
 #include "native_endpoint_index.hpp"
 #include "native_graph_map_journal.hpp"
 #include "native_graph_numeric_append.hpp"
+#include "native_graph_page_cache.hpp"
 #include "native_graph_page_file.hpp"
 
 #include <cstdint>
@@ -34,7 +35,8 @@ public:
         std::filesystem::path endpoint_directory,
         std::uint64_t endpoint_base_edge_count,
         std::vector<NativeEndpointSegment> endpoint_segments,
-        OwnerLock* writer = nullptr);
+        OwnerLock* writer = nullptr,
+        std::shared_ptr<NativeGraphPageCache> page_cache = nullptr);
 
     // Rebase a just-prepared EventDelta successor onto its immutable pages
     // and native endpoint segments. This prevents the sparse delta chain from
@@ -46,7 +48,8 @@ public:
         std::shared_ptr<const NativeGraphPageFile> node_file,
         std::shared_ptr<const NativeGraphPageFile> edge_file,
         const ValidatedEventVrsInputs& prepared_successor,
-        OwnerLock* writer = nullptr);
+        OwnerLock* writer = nullptr,
+        std::shared_ptr<NativeGraphPageCache> page_cache = nullptr);
 
     // Recovery may expose a numerical generation only when both independent
     // derived journals identify the same original boundary and pair.
@@ -57,7 +60,8 @@ public:
         const NativeEndpointManifestCursor& endpoints,
         std::shared_ptr<const NativeGraphPageFile> node_file,
         std::shared_ptr<const NativeGraphPageFile> edge_file,
-        OwnerLock* writer = nullptr);
+        OwnerLock* writer = nullptr,
+        std::shared_ptr<NativeGraphPageCache> page_cache = nullptr);
 
     // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_event_kernel.py@7536139:34-76
     [[nodiscard]] std::string snapshot_id() const override {
@@ -90,14 +94,16 @@ private:
     NativeGraphNumericView(
         NativeGraphNumericPageState state,
         std::shared_ptr<const NativeGraphPageFile> node_file,
-        std::shared_ptr<const NativeGraphPageFile> edge_file);
+        std::shared_ptr<const NativeGraphPageFile> edge_file,
+        std::shared_ptr<NativeGraphPageCache> page_cache);
 
-    [[nodiscard]] NativeGraphNodePage node_page(std::uint32_t node) const;
-    [[nodiscard]] NativeGraphEdgePage edge_page(std::uint32_t edge) const;
+    [[nodiscard]] GraphNumericNodeRecord node_record(std::uint32_t node) const;
+    [[nodiscard]] GraphNumericEdgeRecord edge_record(std::uint32_t edge) const;
 
     NativeGraphNumericPageState state_;
     std::shared_ptr<const NativeGraphPageFile> node_file_;
     std::shared_ptr<const NativeGraphPageFile> edge_file_;
+    std::shared_ptr<NativeGraphPageCache> page_cache_;
     std::shared_ptr<const NativeEndpointDependencyIndex> dependencies_;
 };
 

@@ -29,10 +29,11 @@ std::uint64_t required_pages(std::uint64_t records) {
 NativeGraphNumericView::NativeGraphNumericView(
     NativeGraphNumericPageState state,
     std::shared_ptr<const NativeGraphPageFile> node_file,
-    std::shared_ptr<const NativeGraphPageFile> edge_file)
+    std::shared_ptr<const NativeGraphPageFile> edge_file,
+    std::shared_ptr<NativeGraphPageCache> page_cache)
     // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_event_kernel.py@7536139:34-76
     : state_(std::move(state)), node_file_(std::move(node_file)),
-      edge_file_(std::move(edge_file)) {}
+      edge_file_(std::move(edge_file)), page_cache_(std::move(page_cache)) {}
 
 // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_event_kernel.py@7536139:34-76
 std::shared_ptr<const ValidatedEventVrsInputs>
@@ -43,7 +44,9 @@ NativeGraphNumericView::open_validated(
     std::filesystem::path endpoint_directory,
     std::uint64_t endpoint_base_edge_count,
     std::vector<NativeEndpointSegment> endpoint_segments,
-    OwnerLock* writer) {
+    OwnerLock* writer,
+    // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_event_kernel.py@7536139:34-76
+    std::shared_ptr<NativeGraphPageCache> page_cache) {
     if (!node_file || !edge_file || endpoint_directory.empty() ||
         state.journal_generation != node_file->journal_generation() ||
         state.journal_generation != edge_file->journal_generation() ||
@@ -55,7 +58,8 @@ NativeGraphNumericView::open_validated(
         throw std::runtime_error("graph_numeric_view_generation_invalid");
     auto view = std::shared_ptr<NativeGraphNumericView>(
         new NativeGraphNumericView(
-            std::move(state), std::move(node_file), std::move(edge_file)));
+            std::move(state), std::move(node_file), std::move(edge_file),
+            std::move(page_cache)));
     view->dependencies_ = NativeEndpointDependencyIndex::open_pinned(
         *view, std::move(endpoint_directory),
         view->state_.journal_generation, endpoint_base_edge_count,
@@ -71,7 +75,8 @@ NativeGraphNumericView::rebase_validated_successor(
     std::shared_ptr<const NativeGraphPageFile> node_file,
     std::shared_ptr<const NativeGraphPageFile> edge_file,
     const ValidatedEventVrsInputs& prepared_successor,
-    OwnerLock* writer) {
+    OwnerLock* writer,
+    std::shared_ptr<NativeGraphPageCache> page_cache) {
     const auto& prepared = prepared_successor.require_validated_immutable();
     const auto* endpoints = dynamic_cast<const NativeEndpointDependencyIndex*>(
         &prepared.dependencies());
@@ -83,7 +88,7 @@ NativeGraphNumericView::rebase_validated_successor(
     return open_validated(
         std::move(state), std::move(node_file), std::move(edge_file),
         endpoints->directory(), endpoints->base_edge_count(),
-        endpoints->segments(), writer);
+        endpoints->segments(), writer, std::move(page_cache));
 }
 
 // SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:136-194
@@ -93,7 +98,8 @@ NativeGraphNumericView::open_recovered(
     const NativeEndpointManifestCursor& endpoints,
     std::shared_ptr<const NativeGraphPageFile> node_file,
     std::shared_ptr<const NativeGraphPageFile> edge_file,
-    OwnerLock* writer) {
+    OwnerLock* writer,
+    std::shared_ptr<NativeGraphPageCache> page_cache) {
     if (numeric.pages.journal_generation != endpoints.journal_generation ||
         numeric.pages.graph_snapshot_id != endpoints.graph_snapshot_id ||
         numeric.pair_snapshot_id != endpoints.pair_snapshot_id ||
@@ -104,11 +110,11 @@ NativeGraphNumericView::open_recovered(
     return open_validated(
         numeric.pages, std::move(node_file), std::move(edge_file),
         endpoints.endpoint_directory, endpoints.base_edge_count,
-        endpoints.segments, writer);
+        endpoints.segments, writer, std::move(page_cache));
 }
 
 // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_event_kernel.py@7536139:34-76
-NativeGraphNodePage NativeGraphNumericView::node_page(
+GraphNumericNodeRecord NativeGraphNumericView::node_record(
     std::uint32_t node) const {
     if (node >= state_.node_count)
         throw std::out_of_range("graph_numeric_node_address_invalid");
@@ -116,14 +122,17 @@ NativeGraphNodePage NativeGraphNumericView::node_page(
     const auto physical = state_.node_pages.offset(page_id);
     if (!physical)
         throw std::runtime_error("graph_numeric_node_page_missing");
+    const auto record = node % NativeGraphPageMap::records_per_page;
+    if (page_cache_)
+        return page_cache_->node_record(node_file_, *physical, page_id, record);
     auto page = node_file_->read_node(*physical, page_id);
-    if (node % NativeGraphPageMap::records_per_page >= page.valid_records)
+    if (record >= page.valid_records)
         throw std::runtime_error("graph_numeric_node_page_changed");
-    return page;
+    return page.records[record];
 }
 
 // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_event_kernel.py@7536139:34-76
-NativeGraphEdgePage NativeGraphNumericView::edge_page(
+GraphNumericEdgeRecord NativeGraphNumericView::edge_record(
     std::uint32_t edge) const {
     if (edge >= state_.edge_count)
         throw std::out_of_range("graph_numeric_edge_address_invalid");
@@ -131,40 +140,38 @@ NativeGraphEdgePage NativeGraphNumericView::edge_page(
     const auto physical = state_.edge_pages.offset(page_id);
     if (!physical)
         throw std::runtime_error("graph_numeric_edge_page_missing");
+    const auto record = edge % NativeGraphPageMap::records_per_page;
+    if (page_cache_)
+        return page_cache_->edge_record(edge_file_, *physical, page_id, record);
     auto page = edge_file_->read_edge(*physical, page_id);
-    if (edge % NativeGraphPageMap::records_per_page >= page.valid_records)
+    if (record >= page.valid_records)
         throw std::runtime_error("graph_numeric_edge_page_changed");
-    return page;
+    return page.records[record];
 }
 
 // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_event_kernel.py@7536139:34-76
 float NativeGraphNumericView::direct(std::uint32_t node) const {
-    return node_page(node).records[
-        node % NativeGraphPageMap::records_per_page].direct;
+    return node_record(node).direct;
 }
 
 // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_event_kernel.py@7536139:34-76
 float NativeGraphNumericView::score(std::uint32_t node) const {
-    return node_page(node).records[
-        node % NativeGraphPageMap::records_per_page].score;
+    return node_record(node).score;
 }
 
 // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_event_kernel.py@7536139:34-76
 bool NativeGraphNumericView::unresolved(std::uint32_t node) const {
-    return node_page(node).records[
-        node % NativeGraphPageMap::records_per_page].unresolved;
+    return node_record(node).unresolved;
 }
 
 // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_event_kernel.py@7536139:34-76
 EventEdge NativeGraphNumericView::edge(std::uint32_t address) const {
-    return edge_page(address).records[
-        address % NativeGraphPageMap::records_per_page].edge;
+    return edge_record(address).edge;
 }
 
 // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_event_kernel.py@7536139:34-76
 float NativeGraphNumericView::strength(std::uint32_t address) const {
-    return edge_page(address).records[
-        address % NativeGraphPageMap::records_per_page].strength;
+    return edge_record(address).strength;
 }
 
 // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_event_kernel.py@7536139:66-76
