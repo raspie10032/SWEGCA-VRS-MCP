@@ -53,6 +53,11 @@ crash cases before code uses it.
    guarded write, its state content digest and latest state-head publication
    record identity must exactly match the published HEAD and its verified
    native state root. Content identity and publication order remain separate.
+   Re-evidence and the accumulator judge against the content digest; proposal
+   `based_on` and publication compare-and-swap use the publication identity.
+   If bit-exact rollback restores earlier content, a judgment about that
+   content can be current again, subject to the accumulator's own revision
+   and new-observation checks.
 2. Only a fresh genesis HEAD with zero state digest can be initialized from
    the one `MainInitialState` supplied to Main. Initialization publishes that
    state's real content root and publication record before any state-changing
