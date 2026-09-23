@@ -61,7 +61,12 @@ journal::RecordDraft StatePartBatcher::draft_for(
 // Lineage: native mechanism — at most one exact part address enters a detached generation.
 // SWEGCA: docs/SWEGCA_CPP_VRS_LAYER_PLAN.md@472d23225c973fa0a33581afd6bd9026df6fc98a:64
 void StatePartBatcher::add(const DigestBytes& digest, std::span<const std::byte> payload) {
-    if (finished_ || failed_ || payload.empty() || payload.size() > part_tree::part_bytes ||
+    if (finished_ || failed_) throw std::logic_error("state_part_batch_not_live");
+    // A caller that catches a validation or probe failure must not be able to
+    // finish a root which silently omitted this part. Every attempted add is
+    // one-use until its complete proof or staging has succeeded.
+    failed_ = true;
+    if (payload.empty() || payload.size() > part_tree::part_bytes ||
         Sha256::of(payload) != digest)
         throw std::invalid_argument("state_part_batch_invalid");
     for (const auto& existing : parts_) {
@@ -69,9 +74,13 @@ void StatePartBatcher::add(const DigestBytes& digest, std::span<const std::byte>
         if (existing.payload.size() != payload.size() ||
             !std::equal(existing.payload.begin(), existing.payload.end(), payload.begin()))
             throw std::invalid_argument("state_part_digest_collision");
+        failed_ = false;
         return;
     }
-    if (probe_(digest, payload)) return;
+    if (probe_(digest, payload)) {
+        failed_ = false;
+        return;
+    }
 
     const auto address = state_part_address(digest);
     const auto draft = draft_for(std::string_view(address.data(), address.size()), payload);
