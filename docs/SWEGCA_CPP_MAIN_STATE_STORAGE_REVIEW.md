@@ -12,11 +12,11 @@ crash cases before code uses it.
   Its §4.5 specifies the intended decision/proposal evidence binding and
   reports the old writer's E001/E002 gap. These sections describe the old
   local protocol, not a native byte format.
-- `SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md` §9 requires one
-  Main-published root as the authority for recovery, bounded immutable linked
-  segments, exact digests, and a manifest naming the state generation. The
-  journal's local HEAD cannot override Main's selected root. Derived views
-  remain rebuildable.
+- `SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md` §9 requires Main's
+  selected committed receipt as the recovery authority, bounded immutable
+  linked segments, exact digests, and a manifest naming the state generation.
+  The journal's local HEAD cannot override the generation named by that
+  receipt. Derived views remain rebuildable.
 - `MainOwner` currently constructs generation 0 with a computed state digest.
   A new `JournalStore` starts with a zero state digest in its genesis HEAD.
   There is no C++ state or transaction record codec or state recovery.
@@ -27,8 +27,8 @@ crash cases before code uses it.
 - `JournalStore::open_at_root` can open and verify the exact manifest that a
   Main-supplied root names without adopting the lower journal's HEAD. It
   retains and charges bytes outside that generation and is read-only. Main's
-  durable root publisher and safe write resumption after such a selection
-  are not implemented.
+  append-only committed receipt writer, restart selection, and safe write
+  resumption after such a selection are not implemented.
 - User correction (2026-09-23 18:3x): state content has no separate
   generation number. Recording time stays outside the state as a human
   timeline hint. The current `StateGeneration::ordinal` and manifest
@@ -57,6 +57,14 @@ crash cases before code uses it.
 - The user's earlier `mosaic_world_memory_transaction.py` prepares a transaction
   for semantic-memory promotion linked to an existing World-write receipt.
   It does not define a required transaction around state-part staging.
+- The user's `mosaic_vrs_event_durable.py@3bddcb7:3-5,152` restores only a
+  digest selected by Main and writes no mutable current pointer.
+  `mosaic_paper_resident_assimilation.py@3bddcb7:491-535` creates a new
+  exclusive pending receipt, fsyncs it, swaps Main's in-memory owner pair,
+  renames that receipt to committed, and fsyncs its directory. Its receipt
+  names the previous and replacement pair IDs. The native C++ receipt must
+  additionally bind its exact journal manifest and state publication; its
+  restart selection rule remains undecided.
 - The user's earlier bounded writer keeps prior write metadata in `self_state`.
   C++ candidate `SelfState` now holds an opaque caller payload alongside an
   optional typed `BoundedWriteHead` (policy version, receipt digest, revision,
@@ -82,24 +90,26 @@ crash cases before code uses it.
 
 1. Main holds one current state and one journal owner. Before Bind or any
    guarded write, its state content digest and latest state-head publication
-   record identity must exactly match the published HEAD and its verified
-   native state root. Content identity and publication order remain separate.
+   record identity must exactly match the journal generation named by Main's
+   selected committed receipt and its verified native state root. Content
+   identity and publication order remain separate.
    Re-evidence and the accumulator judge against the content digest; proposal
    `based_on` and publication compare-and-swap use the publication identity.
    If bit-exact rollback restores earlier content, a judgment about that
    content can be current again, subject to the accumulator's own revision
    and new-observation checks.
-2. Only a fresh genesis HEAD with zero state digest can be initialized from
-   the one `MainInitialState` supplied to Main. Initialization publishes that
-   state's real content root and publication record before any state-changing
-   operation. An existing nonzero HEAD is recovered from its own root and is
-   never replaced by the caller's input.
-3. Recovery reads the HEAD-selected root by exact address and verifies its
+2. Only a fresh genesis with no committed Main receipt and zero state digest
+   can be initialized from the one `MainInitialState` supplied to Main.
+   Initialization publishes that state's real content root and publication
+   record before any state-changing operation. An existing committed receipt
+   is recovered from its named root and is never replaced by caller input.
+3. Recovery reads the committed-receipt-selected root by exact address and verifies its
    root record, latest publication record position/digest, state content
    digest, bounded parts, and reconstructed canonical state. It fails closed
    on missing or mismatched data. Cold recovery may read the state bytes;
    Déjà vu through Recall must not do this work.
-4. A guarded successor checks the current HEAD and prior state, stages only
+4. A guarded successor checks Main's selected committed receipt, the current
+   lower journal HEAD, and the prior state; it stages only
    changed bounded state parts, then stages the successor root and write
    receipt. The receipt includes before/after state hashes, before/after
    verification-slot hashes, applied-delta hash, target role and revision,
@@ -107,19 +117,25 @@ crash cases before code uses it.
    exact decision/proposal/evidence Bind must be checked separately: merely
    having a receipt does not establish it. The native writer cannot publish
    until its currently opaque `SelfState` has a defined way to bind and
-   restore bounded-write metadata. Only the final Main-published HEAD names
-   the successor state. Main swaps its current pointer only after that
-   publication succeeds.
+   restore bounded-write metadata. The final lower journal HEAD names the
+   candidate successor; a new committed Main receipt makes that selection
+   durable authority. Following the author's commit order, Main writes and
+   fsyncs a pending receipt, swaps its in-memory owner pair by compare-and-swap,
+   renames the new receipt to its committed name, then fsyncs the directory.
+   A failed final marker leaves the pending marker and blocks further writes
+   until reconciliation.
 5. Intermediate part publication, if necessary to respect the 64 MiB
    generation limit, keeps the prior state-head publication identity. Part
    records confer no decision or write authority. A crash before the final
-   HEAD leaves the prior state current; a retry may verify and reuse them.
+   Main commit receipt leaves the prior state durably selected; a retry may
+   verify and reuse already written parts.
    The final stage must be built on the latest journal HEAD while comparing
    the state-head publication identity with the one read before preparation,
    since unrelated experience appends may advance the journal generation.
-   If publication throws, Main cannot infer the durable state from its old
-   pointer because HEAD replacement may already have happened. It stops
-   guarded work and reopens from the published HEAD before another write.
+   If publication throws, Main cannot infer durable state from its in-memory
+   pointer or the lower journal HEAD. It retains any pending marker, stops
+   guarded work, and recovers from Main's selected committed receipt before
+   another write.
 6. Initialization, cold recovery, and guarded writes must fit the VRS host's
    configured memory profile and preserve the canonical state content byte
    stream. Its content digest excludes generation ordinal, as the user's earlier
@@ -134,10 +150,11 @@ crash cases before code uses it.
    Reclamation must preserve this reachability before freeing orphan parts.
 9. Main also owns the current VRS synapse-strength data as first-class
    persistent experience. Its published values and lineage must survive
-   recovery from HEAD; they are not a rebuildable search view of memory
-   records. The strength root is separate from `CognitiveState`, as in the
-   user's later implementation. The user's current rule is to update the live
-   session VRS immediately, without waiting for a queued worker. The proposed
+   recovery from Main's selected committed receipt; they are not a rebuildable
+   search view of memory records. The strength root is separate from
+   `CognitiveState`, as in the user's later implementation. The user's current
+   rule updates the live session VRS immediately, without waiting for a
+   queued worker. The proposed
    C++ publication invariant is to expose new session memory and its live VRS
    effect together, so a read cannot see one without the other; a read lease
    would bind their published generation. At session end the live VRS becomes
@@ -181,7 +198,7 @@ crash cases before code uses it.
   snapshot. Main can therefore keep one journal generation through all cue
   lookups and exact reads. Main's combined memory/VRS strength read lease is
   still pending and must bind that journal snapshot to the strength root
-  named by the same HEAD.
+  named by the same Main committed receipt.
 - Proposal `based_on`, Bind, arbitration, gated capabilities, and CAS compare
   the publication identifier. Re-evidence, admission, and accumulator
   `judged_against` compare only the content digest. Replay can inspect
@@ -191,23 +208,28 @@ crash cases before code uses it.
   bounded writer's self-state write revision remains content, since rollback
   must restore it. A typed `BoundedWriteHead` in `SelfState` is included in
   content-digest domain v2; its writer and recovery path are still pending.
-- State publication uses two HEAD replacements because the current journal
-  encoder needs a record position before it can encode a manifest naming
-  that position. First, Main publishes root and candidate receipt records
-  while retaining the prior state head. It verifies the receipt and stages a
-  record-free final generation from the latest HEAD, comparing that HEAD's
-  state publication identity to the prior one. Only the final HEAD exposes
-  the new state content digest and receipt position. An intervening memory
-  append can advance the journal generation without changing that state
-  identity; the final stage is rebuilt from the latest HEAD. No staged
-  object manufactures a published `StateSnapshot`. Failure after either
-  publication starts requires HEAD recovery before guarded work resumes.
+- The current lower-journal candidate uses two local HEAD publications
+  because its encoder needs a record position before it can encode a
+  manifest naming that position. First, Main publishes root and candidate
+  state-write records while retaining the prior state head. It verifies the
+  state-write record and stages a record-free final generation from the
+  latest lower HEAD, comparing that HEAD's state publication identity to the
+  prior one. Only the final lower HEAD names the new state content digest
+  and publication position; it is still not Main's durable commit. An
+  intervening experience append can advance the journal generation without
+  changing the state identity, so the final stage is rebuilt from the latest
+  lower HEAD. Main then follows the append-only pending/committed receipt
+  protocol above. No staged object manufactures a published `StateSnapshot`.
+  Failure after either lower publication starts requires recovery from
+  Main's committed receipt before guarded work resumes.
 - A candidate receipt in a published record is not itself a committed-write
   receipt. Recovery, rollback eligibility, and audit count it only if a
-  published manifest state head has named its exact record position and
-  digest. An orphan after a crash before final HEAD has no write authority.
-  Immutable records carry no mutable `committed` flag. This two-HEAD layout
-  was cross-checked against SWEGCA §4.7 and inventory §9 with Claude.
+  Main committed receipt selects the final manifest that names its exact
+  record position and digest. An orphan after a crash before that Main
+  commit has no write authority, even if the local journal HEAD advanced.
+  Immutable records carry no mutable `committed` flag. This two-local-HEAD
+  layout is a C++ journal mechanism under review, while the append-only
+  Main receipt follows the author's commit order.
 
 This is an interface contract, not a claim that state publication or the
 four-stage VRS path is already implemented.
@@ -221,8 +243,8 @@ four-stage VRS path is already implemented.
 - The first bounded pass builds an unpublished exact-address tree from the
   verified record chain. Once its pages are flushed, a second bounded pass
   may ask each record's Main-owned decoder to validate its kind and payload
-  before the final HEAD publishes the replacement view. That second pass is
-  cold recovery work outside the input-to-Recall latency budget.
+  before the lower journal HEAD publishes the replacement view. That second
+  pass is cold recovery work outside the input-to-Recall latency budget.
 - A cue binding that carries a target `RecordPosition` must prove that the
   rebuilt address tree resolves its target address to that same position.
   Reading bytes at the supplied position alone does not establish that it
@@ -300,7 +322,7 @@ four-stage VRS path is already implemented.
 ## Decisions before implementation
 
 - Confirm that intermediate part HEADs with an unchanged state generation
-  preserve §9's rule that one final HEAD exposes a state successor.
+  preserve §9's rule that one Main committed receipt exposes a state successor.
 - Reconcile the reserved kind-7 name `state_publication_record_kind` with
   this review's state-write-receipt term before defining its payload or
   publication semantics.
@@ -318,8 +340,10 @@ four-stage VRS path is already implemented.
   journal recovery and confirm that its producer can stream without keeping
   a second full tensor copy. Keep the same canonical validation as the span
   input route.
-- List crash points around part publication, final HEAD publication, and
-  Main pointer swap; assert the published state is always recoverable.
+- List crash points around part publication, final lower HEAD publication,
+  pending Main receipt fsync, Main owner compare-and-swap, committed receipt
+  rename, and directory fsync; assert the selected durable state is always
+  recoverable and a pending receipt blocks further writes.
 - Decide how to reclaim published parts that no state root uses. The
   semantic-memory `prepared` protocol does not itself free their storage
   and is not a source-backed prerequisite for staging state parts.

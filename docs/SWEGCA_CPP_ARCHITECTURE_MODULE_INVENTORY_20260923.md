@@ -572,26 +572,39 @@ hash chain is **re-created (user@2026-09-23)** to provide the immutable lineage
 and revision binding required by SWEGCA I03 and I07 without SQLite.
 
 Journal data is split into bounded immutable segments linked by predecessor and
-successor manifests. Publication order is fixed: write detached segment, page,
-and manifest files; fsync every file; then atomically publish Main's root naming
-the exact manifest and state publication, and fsync the containing directory.
-Main's published root is the authoritative recovery root. The lower journal's
-own HEAD may support standalone use but cannot override the generation that
-Main names. Readers ignore detached files outside Main's selected generation;
-those bytes remain accounted for until an explicit reconciliation rule permits
-their cleanup. A bad checksum or digest in a selected segment fails closed and
-is never automatically truncated. Transaction recovery starts from Main's
-published root and appends compensation records. Segment linking prevents any
-requirement to rewrite an unbounded Main file. Segmented manifests and atomic
-root replacement are **re-created (user@2026-09-23)** to implement the
-one-current-generation, recoverable publication requirements of I01, I07,
-and §4.8. The Main root publisher and write resumption after a selected older
+successor manifests. The lower journal writes detached segment, page, and
+manifest files and fsyncs them. Main's durable commit then records the exact
+manifest location and digest and the state publication in a new, append-only
+receipt: create the pending receipt exclusively, fsync it, compare-and-swap
+Main's in-memory owner pair, rename that new receipt to its committed name,
+and fsync its directory. No mutable current pointer is written on disk. The
+committed receipt Main selects is the authoritative recovery root; its
+predecessor chain must verify. A pending receipt has no recovery authority,
+is retained, and blocks further writes until reconciliation. The exact cold
+selection rule among committed receipts remains to be defined.
+
+The lower journal's own HEAD may support standalone use but cannot override a
+generation named by Main's committed receipt. Under Main-selected recovery,
+readers ignore detached files outside the selected generation while retaining
+and charging their bytes until explicit reconciliation. Standalone `open`
+still removes or truncates bytes past its own HEAD; it is not Main's recovery
+path. A bad checksum or digest in a selected segment fails closed and is never
+automatically truncated; torn-write cleanup applies only to unpublished
+bytes in standalone mode or a future explicitly reconciled Main mode.
+Transaction recovery starts from Main's selected committed receipt and appends
+compensation records. Segment linking prevents any requirement to rewrite an
+unbounded Main file. Segmented manifests and append-only commit receipts are
+**re-created (user@2026-09-23)** to implement the one-current-generation,
+recoverable publication requirements of I01, I07, and §4.8. The native Main
+receipt writer, restart selection, and write resumption after an older selected
 generation remain implementation work.
 
 Main prepares records and derived pages in a detached generation. The selected
 manifest names the journal tail, state generation, view generations, and exact
-digests. One atomic Main-root replacement exposes the successor. Derived views
-are rebuildable and never become the source of truth.
+digests. A newly committed Main receipt exposes the successor on disk; Main's
+in-memory owner pair is replaced between writing its pending and committed
+receipt names. Derived views are rebuildable and never become the source of
+truth.
 
 The native read path consists of exact address lookup, cue/region navigation,
 and replay of the minimum exact original experience required by the current
