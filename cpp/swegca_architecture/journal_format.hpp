@@ -262,7 +262,7 @@ void append_record(LedgerBytes& out, const RecordDraft& draft, std::uint64_t seq
 // published length; bytes past it are unpublished and never read.
 struct SegmentExtent {
     std::uint64_t ordinal = 0;         // contiguous from 1
-    std::uint64_t file_id = 0;         // physical segment name, never reused
+    std::uint64_t file_id = 0;         // physical segment name, distinct among retained files
     std::uint64_t first_sequence = 0;  // contiguous across segments
     std::uint64_t record_count = 0;    // nonzero
     std::uint64_t byte_length = 0;     // header + records

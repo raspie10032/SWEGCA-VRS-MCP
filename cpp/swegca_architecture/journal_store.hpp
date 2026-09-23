@@ -605,8 +605,11 @@ private:
     std::unique_ptr<PageCache> cache_;  // shared by every reader; internally locked
     std::mutex publish_mutex_;
     std::atomic<std::shared_ptr<const PublishedSnapshot>> snapshot_;
-    // Cold scan includes unpublished segment names, so a later physical
-    // file id cannot collide with bytes left by a failed publication.
+    // Cold scan includes unpublished segment names, so a physical file id
+    // cannot collide with bytes retained during this open. The current
+    // own-HEAD cleanup may delete orphan files; a later restart may then
+    // reuse their numbers. Root-selected recovery needs a durable high-water
+    // mark or preserved orphan names before claiming global non-reuse.
     std::atomic<std::uint64_t> max_physical_segment_id_{0};
     std::atomic<bool> poisoned_{false};
     LedgerVector<RetiredLogs> retired_;  // guarded by publish_mutex_
