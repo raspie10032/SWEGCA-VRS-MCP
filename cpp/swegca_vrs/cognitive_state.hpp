@@ -307,7 +307,7 @@ public:
 
     // SWEGCA: src/swegca/mosaic_autonomous_cognition.py@5901a5a:150-186
     [[nodiscard]] std::span<const std::byte> bytes() const noexcept {
-        return payload_.bytes();
+        return payload_->bytes();
     }
     // The control these bytes encode, decoded onto `account`.
     // SWEGCA: src/swegca/mosaic_autonomous_cognition.py@5901a5a:150-186
@@ -315,9 +315,10 @@ public:
 
 private:
     // SWEGCA: src/swegca/mosaic_autonomous_cognition.py@5901a5a:167-186
-    explicit AutonomyState(CanonicalPayload payload) : payload_(std::move(payload)) {}
+    explicit AutonomyState(std::shared_ptr<const CanonicalPayload> payload)
+        : payload_(std::move(payload)) {}
 
-    CanonicalPayload payload_;
+    std::shared_ptr<const CanonicalPayload> payload_;
 };
 
 // The only persistent state type. Construction requires either Main's initial
@@ -337,7 +338,9 @@ public:
                    GoalState goals, ValueState values, SelfState self,
                    std::optional<AutonomyState> autonomy);
 
-    // A successor keeps the prior state's autonomy control unchanged.
+    // Main retains the general successor route for slot, evidence and
+    // metadata changes beyond bounded World writes. Only its one-use key
+    // can construct one, and cross-field validation still applies.
     CognitiveState(SuccessorStateKey, const AllocationContext& memory,
                    const CognitiveState& prior,
                    RoleRegistry roles,
@@ -345,6 +348,13 @@ public:
                    CognitiveTensor scratch, StructuredWorldGraph world_graph,
                    EvidenceReferences evidence_references,
                    GoalState goals, ValueState values, SelfState self);
+
+    // A bounded World write changes only scratch and self. All other state
+    // fields and the autonomy control remain the prior state's exact values.
+    // SWEGCA: src/tinylm_slicer/mosaic_bounded_world_write.py@3bddcb7:446-456
+    CognitiveState(SuccessorStateKey, const AllocationContext& memory,
+                   const CognitiveState& prior,
+                   CognitiveTensor scratch, SelfState self);
 
     // A Main-only autonomy successor shares the immutable World/body exactly;
     // only its typed control and the canonical content digest change.
@@ -404,6 +414,7 @@ public:
     }
 
 private:
+    struct StateCommon;
     struct StateBody;
     void validate() const;
     [[nodiscard]] Digest256 validated_content_digest(

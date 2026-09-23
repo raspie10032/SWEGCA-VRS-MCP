@@ -721,12 +721,20 @@ The autonomy route would need its own transition receipt; the inventory's
 `StateWriteReceipt` names claim, decision, bound proposal and role-delta
 fields of a World-role write and cannot be silently reused for this route.
 
-The native state now keeps its non-autonomy fields in one immutable, host-
-accounted shared body. An autonomy-only successor shares that exact body and
-finishes a checked SHA-256 checkpoint taken just before the v5 autonomy
-presence byte. This preserves the canonical full-stream digest without
-copying the graph or rereading World tensor bytes for **in-memory successor
-construction**. It creates no Main apply route or publication authority.
+The native state keeps its non-autonomy fields in a host-accounted shared
+body. An autonomy-only successor shares that exact body and finishes a
+checked SHA-256 checkpoint taken just before the v5 autonomy presence byte.
+The body also holds a separate immutable common group for owner, roles,
+semantic/executive tensors, graph, evidence refs, goals and values. A bounded
+World write, its rollback and its retraction share that common group and
+construct only their changed scratch tensor and self state; they share the
+unchanged, account-allocated autonomy control bytes as well. The general
+Main-keyed successor constructor remains for the other audited mutation
+routes. This removes unchanged graph/metadata copies from bounded writes,
+but their validation and v5 digest still scan the full state. The autonomy
+successor preserves the canonical full-stream digest without copying the
+graph or rereading World tensor bytes for **in-memory successor construction**.
+Neither path creates a Main apply route or publication authority.
 `split_state_content` still visits the complete canonical stream when it
 materializes a state root; incremental disk publication and its verification
 remain open and must be reviewed separately before any end-to-end speed claim.

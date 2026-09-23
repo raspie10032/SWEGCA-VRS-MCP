@@ -253,22 +253,16 @@ SlotSum add_slots(const AllocationContext& memory, ScalarType before_type,
     return {type, std::move(result)};
 }
 
-// The author's `replace(state, scratch_slots=..., self_state=...)`: every
-// other field of the prior state is kept as it is.
+// The author's `replace(state, scratch_slots=..., self_state=...)`: the
+// native successor shares all untouched fields from the prior state.
 // Lineage: direct — dataclasses.replace over the prior state.
 // SWEGCA: src/tinylm_slicer/mosaic_bounded_world_write.py@3bddcb7:446-456
 std::shared_ptr<const CognitiveState> successor_state(
     SuccessorStateKey key, const AllocationContext& memory,
     const CognitiveState& prior, CognitiveTensor scratch, SelfState self) {
-    const auto evidence = prior.evidence_references();
     return std::allocate_shared<CognitiveState>(
         memory.allocator<CognitiveState>(), std::move(key), memory, prior,
-        RoleRegistry(prior.roles()), CognitiveTensor(prior.semantic()),
-        CognitiveTensor(prior.executive()), std::move(scratch),
-        StructuredWorldGraph(prior.world_graph()),
-        EvidenceReferences(evidence.begin(), evidence.end(),
-                           memory.allocator<ExperienceAddress>()),
-        GoalState(prior.goals()), ValueState(prior.values()), std::move(self));
+        std::move(scratch), std::move(self));
 }
 
 // The result keeps the preview's candidate (the author's proposed_delta).
