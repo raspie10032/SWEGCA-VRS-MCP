@@ -55,8 +55,24 @@ static_assert(envelope_fixed_bytes + 4 + detail::identity_text_max_bytes +
 constexpr std::string_view part_source = "experience";
 constexpr std::string_view part_source_revision = "part.v1";
 // A cue entry keeps its token when its key (kind, token, separator,
-// address) is an identity text; a longer token is kept by its digest ('h').
+// address) is an identity text under the address of the record carrying
+// it; a longer token is kept by its digest ('h'). A memory keeps tokens up
+// to the first bound (as it always has), a cue binding, whose address is
+// longer, up to the second; a lookup of a token between them asks both.
 constexpr std::size_t max_inline_cue_bytes = detail::identity_text_max_bytes - 2 - address_bytes;
+constexpr std::size_t max_inline_bound_cue_bytes = detail::identity_text_max_bytes - 2 - cue_binding_address_bytes;
+// A cue binding's payload: magic, version, target, the target record's
+// exact position (segment ordinal, byte offset, sequence, record digest:
+// where it is, so rebuild reads it exactly and checks it against the
+// address view it rebuilt), cue count (the cues follow).
+constexpr std::array<std::byte, 4> binding_magic{std::byte{'S'}, std::byte{'W'}, std::byte{'X'},
+                                                 std::byte{'C'}};
+constexpr std::uint16_t binding_version = 1;
+static_assert(4 + 2 + 4 + address_bytes + 3 * 8 + 32 + 4 + max_bound_cues * (4 + detail::identity_text_max_bytes) <=
+                  journal::max_payload_bytes,
+              "a cue binding must always fit one record");
+static_assert(max_bound_cues <= journal::max_record_index_entries,
+              "a cue binding's index entries must always fit one record");
 // Every entry an experience can carry fits one record: the tokens of the
 // source and of its revision (at most one per byte), lineage, resources,
 // and source, content, revised address, namespace and transaction.
@@ -191,6 +207,58 @@ char32_t decode_at(std::string_view text, std::size_t& at) noexcept {
     return value;
 }
 
+// Whitespace of the bound-cue rule: what Python's str.split and `\s` treat
+// as space (ASCII controls 09-0D and 1C-1F, space, U+0085, U+00A0, U+1680,
+// U+2000-200A, U+2028, U+2029, U+202F, U+205F, U+3000), listed here as this
+// module's own rule.
+// SWEGCA: src/tinylm_slicer/mosaic_memory_activation.py@3bddcb7:34-35
+bool is_cue_space(char32_t value) noexcept {
+    return (value >= 0x09 && value <= 0x0d) || (value >= 0x1c && value <= 0x20) || value == 0x85 ||
+           value == 0xa0 || value == 0x1680 || (value >= 0x2000 && value <= 0x200a) || value == 0x2028 ||
+           value == 0x2029 || value == 0x202f || value == 0x205f || value == 0x3000;
+}
+
+// A bound cue as the user's rule keeps it (`_cue`): the whole phrase,
+// stripped, each run of whitespace one space, lowered. Lowering is ASCII
+// only, as in the cue-token rule; Python's casefold of other scripts
+// (ß to ss, final sigma) is not re-created. Empty when nothing is left.
+// SWEGCA: src/tinylm_slicer/mosaic_memory_activation.py@3bddcb7:34-35
+LedgerBytes normalized_cue(const AllocationContext& memory, std::string_view text) {
+    if (!detail::is_strict_utf8(text)) fail("cue_text_not_utf8");
+    LedgerBytes out(memory.allocator<std::byte>());
+    out.reserve(text.size());
+    bool space = false;
+    for (std::size_t at = 0; at < text.size();) {
+        const auto begin = at;
+        const auto value = decode_at(text, at);
+        if (is_cue_space(value)) {
+            space = !out.empty();
+            continue;
+        }
+        if (space) out.push_back(std::byte{' '});
+        space = false;
+        if (value < 0x80) {
+            const auto ascii = static_cast<char>(value >= 'A' && value <= 'Z' ? value - 'A' + 'a' : value);
+            out.push_back(static_cast<std::byte>(ascii));
+            continue;
+        }
+        const auto* bytes = reinterpret_cast<const std::byte*>(text.data() + begin);
+        out.insert(out.end(), bytes, bytes + (at - begin));
+    }
+    return out;
+}
+
+// SWEGCA: src/tinylm_slicer/mosaic_memory_activation.py@3bddcb7:34-35
+std::string_view text_of(const LedgerBytes& bytes) noexcept {
+    return std::string_view(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+}
+
+// Whether `text` is a bound cue already in its kept form.
+// SWEGCA: src/tinylm_slicer/mosaic_memory_activation.py@3bddcb7:34-35
+bool is_normalized_cue(const AllocationContext& memory, std::string_view text) {
+    return detail::is_identity_text(text) && text_of(normalized_cue(memory, text)) == text;
+}
+
 // Non-ASCII letters of the cue rule: every code point from U+00C0 except
 // the listed marks, punctuation, symbol, byte-order-mark and private blocks.
 // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:413-418
@@ -254,25 +322,33 @@ void scan_cue_tokens(std::string_view text, Emit emit) {
     }
 }
 
-// True when `text` is exactly one token of the cue rule (so it is already
-// lowered): what an authored cue and a cue-view key must be.
-// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:411-431
-bool is_single_token(const AllocationContext& memory, std::string_view text) {
-    if (!detail::is_identity_text(text)) return false;
-    const CueTokens tokens(memory, text);
-    return tokens.tokens().size() == 1 && tokens.tokens().front() == text;
-}
 
-// The cue-view entry of one token: the token itself, or its digest when its
-// key would not be an identity text.
+// The cue-view entry of one token in a record whose address is
+// `address_size` bytes: the token itself, or its digest when its key would
+// not be an identity text.
 // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:293-339
 template <class Visit>
-void with_cue_entry(std::string_view token, Visit&& visit) {
-    if (token.size() <= max_inline_cue_bytes) {
+void with_cue_entry(std::string_view token, std::size_t address_size, Visit&& visit) {
+    if (token.size() + 2 + address_size <= detail::identity_text_max_bytes) {
         visit('c', token);
         return;
     }
     const auto hex = hex_of(text_digest(token));
+    visit('h', std::string_view(hex.data(), hex.size()));
+}
+
+// Every entry a lookup of one token asks: the token for memories and
+// bindings alike while both keep it inline, both forms between the bounds,
+// the digest past them.
+// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:293-339
+template <class Visit>
+void with_cue_lookup(std::string_view token, Visit&& visit) {
+    if (token.size() <= max_inline_bound_cue_bytes) {
+        visit('c', token);
+        return;
+    }
+    const auto hex = hex_of(text_digest(token));
+    if (token.size() <= max_inline_cue_bytes) visit('c', token);
     visit('h', std::string_view(hex.data(), hex.size()));
 }
 
@@ -307,8 +383,8 @@ public:
     }
 
     // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:293-339
-    void add_cue(std::string_view token) {
-        with_cue_entry(token, [this](char kind, std::string_view value) { add(kind, value); });
+    void add_cue(std::string_view token, std::size_t address_size) {
+        with_cue_entry(token, address_size, [this](char kind, std::string_view value) { add(kind, value); });
     }
 
     // Views every entry, sorted and unique; nothing is added after this.
@@ -358,7 +434,7 @@ struct IndexFields {
 void add_automatic(IndexEntries& index, const AllocationContext& memory, const IndexFields& fields) {
     for (const auto text : {fields.source, fields.source_revision}) {
         const CueTokens tokens(memory, text);
-        for (const auto token : tokens.tokens()) index.add_cue(token);
+        for (const auto token : tokens.tokens()) index.add_cue(token, address_bytes);
     }
     index.add_digest(static_cast<char>(ExperienceView::source), text_digest(fields.source));
     index.add_digest(static_cast<char>(ExperienceView::content), fields.raw_digest);
@@ -395,7 +471,7 @@ bool same_observed_index(std::span<const std::string_view> left, std::span<const
 
 // The record identity an address is the digest of: kind, source, revision,
 // revised address, outcome and payload digest. Index entries are derived
-// from these fields or authored, never identity.
+// from these fields, never identity.
 // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:31-35
 std::array<char, address_bytes> address_of(std::uint16_t kind, std::string_view source,
                                            std::string_view source_revision,
@@ -421,6 +497,46 @@ std::array<char, address_bytes> address_of(std::uint16_t kind, std::string_view 
 template <std::size_t N>
 std::string_view view_of(const std::array<char, N>& address) noexcept {
     return std::string_view(address.data(), address.size());
+}
+
+// A cue binding's address: its memory's address, the infix, and the digest
+// of everything it binds (target, author, revision and the distinct cues in
+// increasing order), so equal bindings are one record.
+// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:31-35
+std::array<char, cue_binding_address_bytes> binding_address_of(std::string_view target, std::string_view source,
+                                                               std::string_view source_revision,
+                                                               std::span<const std::string_view> cues) {
+    Sha256 hash;
+    hash_field(hash, "swegca.cue_binding.v1");
+    hash_u64(hash, cue_binding_kind);
+    hash_field(hash, target);
+    hash_field(hash, source);
+    hash_field(hash, source_revision);
+    hash_u64(hash, cues.size());
+    for (const auto cue : cues) hash_field(hash, cue);
+    const auto hex = hex_of(hash.finish());
+    std::array<char, cue_binding_address_bytes> out{};
+    auto at = std::copy(target.begin(), target.end(), out.begin());
+    at = std::copy(cue_binding_infix.begin(), cue_binding_infix.end(), at);
+    std::copy(hex.begin(), hex.end(), at);
+    return out;
+}
+
+// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:398-436
+LedgerBytes encode_binding(const AllocationContext& memory, std::string_view target,
+                           const journal::RecordPosition& at, std::span<const std::string_view> cues) {
+    LedgerBytes out(memory.allocator<std::byte>());
+    ByteWriter writer(out);
+    writer.raw(binding_magic);
+    writer.u16(binding_version);
+    writer.text(target, detail::identity_text_max_bytes);
+    writer.u64(at.segment_ordinal);
+    writer.u64(at.byte_offset);
+    writer.u64(at.sequence);
+    writer.digest(at.record_digest);
+    writer.u32(static_cast<std::uint32_t>(cues.size()));
+    for (const auto cue : cues) writer.text(cue, detail::identity_text_max_bytes);
+    return out;
 }
 
 // A record text as an optional: empty on disk means absent.
@@ -922,18 +1038,76 @@ void ExperienceRecord::verify_parts() const {
     if (contexts_.parted()) for_each_digest(contexts_, every);
 }
 
+// Checks the kind, the payload byte for byte, the address against the
+// binding's digest under its target, the entries against its cues, and
+// that the target is a memory the journal holds (the author refuses keys
+// for an unknown address, mosaic_unrestricted_experience.py@5901a5a:408-410).
+// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:398-436
+CueBindingRecord CueBindingRecord::decode(journal::PublishedRecord published, const AllocationContext& memory,
+                                          const journal::JournalStore& journal) {
+    const auto& view = published.view();
+    if (view.kind != cue_binding_kind) fail("experience_cue_binding_kind_invalid");
+    if (view.authority || !view.claim.empty() || !view.previous_revision_address.empty() || !view.outcome.empty())
+        fail("experience_cue_binding_invalid");
+    ByteReader reader(view.payload);
+    const auto magic = reader.raw(binding_magic.size());
+    if (!std::equal(magic.begin(), magic.end(), binding_magic.begin()) || reader.u16() != binding_version)
+        fail("experience_cue_binding_invalid");
+    const auto target = reader.text_view(detail::identity_text_max_bytes);
+    if (!is_experience_address(target)) fail("experience_cue_binding_invalid");
+    journal::RecordPosition named;
+    named.segment_ordinal = reader.u64();
+    named.byte_offset = reader.u64();
+    named.sequence = reader.u64();
+    named.record_digest = reader.digest();
+    const auto count = reader.u32();
+    if (count == 0 || count > max_bound_cues) fail("experience_cue_binding_invalid");
+    auto cues = read_sorted_texts(reader, count, memory,
+                                  [&memory](std::string_view cue) { return is_normalized_cue(memory, cue); });
+    if (reader.remaining() != 0) fail("experience_cue_binding_invalid");
+    if (view.address != view_of(binding_address_of(target, view.source, view.source_revision, cues)))
+        fail("experience_cue_binding_address_mismatch");
+
+    IndexEntries expected(memory);
+    for (const auto cue : cues) expected.add_cue(cue, cue_binding_address_bytes);
+    const auto entries = expected.finish();
+    std::size_t next = 0;
+    bool exact = true;
+    journal::for_each_index_entry(view, [&](std::string_view entry) {
+        exact = exact && next < entries.size() && entries[next] == entry;
+        ++next;
+    });
+    if (!exact || next != entries.size()) fail("experience_cue_binding_index_invalid");
+
+    const ExperienceAddress address(memory, target);
+    const auto target_at = journal.resolve(address);
+    // The target is the memory at the position the binding names, published
+    // before it.
+    if (!target_at || target_at->segment_ordinal != named.segment_ordinal ||
+        target_at->byte_offset != named.byte_offset || target_at->sequence != named.sequence ||
+        target_at->record_digest != named.record_digest || !(named.sequence < published.position().sequence))
+        fail("experience_cue_binding_target_unknown");
+    const auto held = journal.replay(address);
+    const auto kind = held.view().kind;
+    if (kind != original_experience_kind && kind != derived_experience_kind)
+        fail("experience_cue_binding_target_unknown");
+    return CueBindingRecord(std::move(published), target, std::move(cues));
+}
+
 // Everything is checked, encoded and cut into parts here, before anything
 // is staged; a failure stages nothing. An observation already in the
 // journal (or earlier in `observations`) gets the existing address and no
 // second record, and must carry the same index entries apart from the
-// transaction; its parts are not appended.
+// transaction; its parts are not appended. A cue binding equal to one the
+// journal holds (or an earlier one here) is not appended again.
 // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3f:282-283
 ExperienceAppend::ExperienceAppend(const ExperienceJournal& journal, const AllocationContext& memory,
-                                   std::span<const Observation> observations, std::string_view operation_id,
-                                   std::optional<std::string_view> transaction_id)
+                                   std::span<const Observation> observations, std::span<const CueBinding> bindings,
+                                   std::string_view operation_id, std::optional<std::string_view> transaction_id)
     : journal_(&journal), memory_(memory), observations_(observations), operation_id_(operation_id),
       transaction_id_(transaction_id), heads_(memory.allocator<Head>()), parts_(memory.allocator<Part>()),
-      owned_(memory.allocator<LedgerBytes>()), addresses_(memory.allocator<ExperienceAddress>()) {
+      owned_(memory.allocator<LedgerBytes>()), addresses_(memory.allocator<ExperienceAddress>()),
+      binding_inputs_(bindings), bindings_(memory.allocator<Binding>()) {
     detail::require_identity_text(operation_id, journal::OperationIdTag::name);
     if (transaction_id) detail::require_identity_text(*transaction_id, TransactionIdTag::name);
     const auto& store = journal.journal_;
@@ -1101,6 +1275,92 @@ ExperienceAppend::ExperienceAppend(const ExperienceJournal& journal, const Alloc
     }
     std::sort(parts_.begin(), parts_.end());
     parts_.erase(std::unique(parts_.begin(), parts_.end()), parts_.end());
+
+    // Each cue binding: its target is a memory the journal holds or one this
+    // append gives; its cues, single tokens, distinct and increasing.
+    // Each distinct target the journal must hold is looked up once.
+    LedgerVector<std::string_view> given(memory_.allocator<std::string_view>());
+    given.reserve(addresses_.size());
+    for (const auto& address : addresses_) given.push_back(address.value());
+    std::sort(given.begin(), given.end());
+    LedgerVector<std::string_view> held_targets(memory_.allocator<std::string_view>());
+    for (const auto& binding : bindings) {
+        if (!is_experience_address(binding.target)) fail("experience_cue_binding_target_unknown");
+        if (!std::binary_search(given.begin(), given.end(), binding.target)) held_targets.push_back(binding.target);
+    }
+    std::sort(held_targets.begin(), held_targets.end());
+    held_targets.erase(std::unique(held_targets.begin(), held_targets.end()), held_targets.end());
+    for (const auto target_text : held_targets) {
+        const ExperienceAddress target(memory_, target_text);
+        if (!store.resolve(target)) fail("experience_cue_binding_target_unknown");
+        const auto held = store.replay(target);
+        const auto kind = held.view().kind;
+        if (kind != original_experience_kind && kind != derived_experience_kind)
+            fail("experience_cue_binding_target_unknown");
+    }
+    bindings_.reserve(bindings.size());
+    for (std::size_t at = 0; at < bindings.size(); ++at) {
+        const auto& binding = bindings[at];
+        detail::require_identity_text(binding.source, ProducerIdTag::name);
+        detail::require_identity_text(binding.source_revision, journal::SourceRevisionTag::name);
+        // Each cue kept whole in its normalized form (held in `owned_`, whose
+        // moved buffers stay put); cues equal once normalized are one.
+        if (binding.cues.size() > max_bound_cues) fail("experience_too_many_cues");
+        LedgerVector<std::string_view> cues(memory_.allocator<std::string_view>());
+        cues.reserve(binding.cues.size());
+        for (const auto cue : binding.cues) {
+            owned_.push_back(normalized_cue(memory_, cue));
+            const auto kept = text_of(owned_.back());
+            if (kept.empty() || !detail::is_identity_text(kept)) fail("experience_cue_invalid");
+            cues.push_back(kept);
+        }
+        std::sort(cues.begin(), cues.end());
+        cues.erase(std::unique(cues.begin(), cues.end()), cues.end());
+        if (cues.empty()) fail("experience_cue_binding_empty");
+        if (cues.size() > max_bound_cues) fail("experience_too_many_cues");
+        IndexEntries index(memory_);
+        for (const auto cue : cues) index.add_cue(cue, cue_binding_address_bytes);
+        (void)index.finish();
+        const auto address = binding_address_of(binding.target, binding.source, binding.source_revision, cues);
+        bindings_.push_back(Binding{at, address, std::move(cues), LedgerBytes(memory_.allocator<std::byte>()),
+                                    index.take_entries(), index.take_bytes(), false, std::nullopt});
+    }
+    // Equal bindings have equal addresses (the address digests all they
+    // bind): only the first is appended, and none the journal holds.
+    LedgerVector<std::size_t> by_address(memory_.allocator<std::size_t>());
+    by_address.reserve(bindings_.size());
+    for (std::size_t at = 0; at < bindings_.size(); ++at) by_address.push_back(at);
+    std::sort(by_address.begin(), by_address.end(), [this](std::size_t left, std::size_t right) {
+        return bindings_[left].address != bindings_[right].address ? bindings_[left].address < bindings_[right].address
+                                                                   : left < right;
+    });
+    for (std::size_t rank = 0; rank < by_address.size(); ++rank) {
+        auto& binding = bindings_[by_address[rank]];
+        if (rank != 0 && bindings_[by_address[rank - 1]].address == binding.address) {
+            binding.skip = true;
+            continue;
+        }
+        const ExperienceAddress address(memory_, view_of(binding.address));
+        if (store.resolve(address)) {
+            (void)CueBindingRecord::decode(store.replay(address), memory_, store);
+            binding.skip = true;
+        }
+    }
+}
+
+// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:398-436
+journal::RecordDraft ExperienceAppend::binding_draft(const Binding& binding) const {
+    const auto& input = binding_inputs_[binding.input];
+    journal::RecordDraft draft;
+    draft.kind = cue_binding_kind;
+    draft.address = view_of(binding.address);
+    draft.source = input.source;
+    draft.source_revision = input.source_revision;
+    draft.operation_id = operation_id_;
+    draft.transaction_id = transaction_id_;
+    draft.index = binding.index;
+    draft.payload = binding.payload;
+    return draft;
 }
 
 // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3f:282-283
@@ -1190,6 +1450,22 @@ std::optional<journal::StagedGeneration> ExperienceAppend::next(const StateGener
             }
             head.staged.reset();
         }
+    } else if (pending_ == 3) {
+        // As for heads: another writer's record at a binding's address is
+        // the same binding and is decoded to check it.
+        for (auto at = pending_from_; at < next_binding_; ++at) {
+            auto& binding = bindings_[at];
+            if (!binding.staged) continue;
+            const ExperienceAddress address(memory_, view_of(binding.address));
+            const auto position = store.resolve(address);
+            if (!position) {
+                next_binding_ = pending_from_;
+                break;
+            }
+            if (position->record_digest != *binding.staged)
+                (void)CueBindingRecord::decode(store.replay(address), memory_, store);
+            binding.staged.reset();
+        }
     }
     pending_ = 0;
 
@@ -1264,8 +1540,45 @@ std::optional<journal::StagedGeneration> ExperienceAppend::next(const StateGener
         drafts.push_back(draft);
         drafted.push_back(head_at);
     }
-    if (drafts.empty()) {
+    if (!drafts.empty()) {
+        auto staged = store.stage_experience_records(journal::ExperienceStageKey{},
+                                                     drafts, state, views);
+        const auto positions = staged.positions();  // in draft order
+        for (std::size_t at = 0; at < drafted.size(); ++at)
+            heads_[drafted[at]].staged = positions[at].record_digest;
+        pending_ = 2;
+        pending_from_ = next_head_;
         next_head_ = head_at;
+        return staged;
+    }
+    next_head_ = head_at;
+
+    // The cue bindings, once every memory is published: each names where
+    // its target was published (a memory this append gave is published by
+    // now; every head generation was confirmed above).
+    auto binding_at = next_binding_;
+    for (; binding_at < bindings_.size(); ++binding_at) {
+        auto& binding = bindings_[binding_at];
+        if (binding.skip) continue;
+        const ExperienceAddress address(memory_, view_of(binding.address));
+        if (store.resolve(address)) {  // bound meanwhile: the same binding (its address digests it)
+            (void)CueBindingRecord::decode(store.replay(address), memory_, store);
+            continue;
+        }
+        const auto target = binding_inputs_[binding.input].target;
+        const auto target_at = store.resolve(ExperienceAddress(memory_, target));
+        if (!target_at) fail("experience_cue_binding_target_unpublished");
+        binding.payload = encode_binding(memory_, target, *target_at, binding.cues);
+        const auto draft = binding_draft(binding);
+        if (!budget.add(draft)) {
+            if (drafts.empty()) fail("experience_record_too_large");
+            break;
+        }
+        drafts.push_back(draft);
+        drafted.push_back(binding_at);
+    }
+    if (drafts.empty()) {
+        next_binding_ = binding_at;
         done_ = true;
         return std::nullopt;
     }
@@ -1273,17 +1586,24 @@ std::optional<journal::StagedGeneration> ExperienceAppend::next(const StateGener
                                                  drafts, state, views);
     const auto positions = staged.positions();  // in draft order
     for (std::size_t at = 0; at < drafted.size(); ++at)
-        heads_[drafted[at]].staged = positions[at].record_digest;
-    pending_ = 2;
-    pending_from_ = next_head_;
-    next_head_ = head_at;
+        bindings_[drafted[at]].staged = positions[at].record_digest;
+    pending_ = 3;
+    pending_from_ = next_binding_;
+    next_binding_ = binding_at;
     return staged;
 }
 
 // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3f:282-283
 ExperienceAppend ExperienceJournal::stage(std::span<const Observation> observations, std::string_view operation_id,
                                           std::optional<std::string_view> transaction_id) const {
-    return ExperienceAppend(*this, memory_, observations, operation_id, transaction_id);
+    return ExperienceAppend(*this, memory_, observations, {}, operation_id, transaction_id);
+}
+
+// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:398-436
+ExperienceAppend ExperienceJournal::stage(std::span<const Observation> observations,
+                                          std::span<const CueBinding> bindings, std::string_view operation_id,
+                                          std::optional<std::string_view> transaction_id) const {
+    return ExperienceAppend(*this, memory_, observations, bindings, operation_id, transaction_id);
 }
 
 // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:137-155
@@ -1300,8 +1620,8 @@ void ExperienceJournal::for_each_in_view(ExperienceView view, std::string_view k
     const auto kind = static_cast<char>(view);
     switch (view) {
     case ExperienceView::cue:
-        if (!is_single_token(memory_, key)) fail("experience_view_key_invalid");
-        with_cue_entry(key, [&](char entry_kind, std::string_view value) {
+        if (!is_normalized_cue(memory_, key)) fail("experience_view_key_invalid");
+        with_cue_lookup(key, [&](char entry_kind, std::string_view value) {
             journal_.for_each_index_match(entry_kind, value, visit);
         });
         return;
@@ -1419,38 +1739,52 @@ SelectionReceipt<NoAuthority> ExperienceSelector::select(const SelectionQuery& q
     QueryText text(memory, query.text);
     const auto universe = journal.universe();
 
+    // The query text's tokens reach memories and single-word bound cues; a
+    // whole bound phrase is reached by that phrase as a cue (the Déjà vu
+    // input cues of the four-stage split, not built yet).
     CueTokens tokens(memory, query.text);
     LedgerVector<std::string_view> cues(tokens.tokens().begin(), tokens.tokens().end(),
                                         memory.allocator<std::string_view>());
     std::sort(cues.begin(), cues.end());
     cues.erase(std::unique(cues.begin(), cues.end()), cues.end());
 
+    // A hit on a memory's own entry carries its position; a hit on a cue
+    // binding beside it names the memory by the first
+    // `experience_address_bytes` of its address, and the memory's position
+    // is looked up once for a memory only bindings retrieved.
     struct Hit {
-        std::size_t key = 0;  // offset of the address in `keys`
-        std::size_t size = 0;
+        std::size_t key = 0;  // offset of the memory's address in `keys`
+        std::size_t cue = 0;  // which query cue retrieved it
+        bool bound = false;   // through a cue binding
         journal::RecordPosition position;
     };
     LedgerBytes keys(memory.allocator<std::byte>());
     LedgerVector<Hit> hits(memory.allocator<Hit>());
-    for (const auto cue : cues) {
-        with_cue_entry(cue, [&](char kind, std::string_view value) {
+    for (std::size_t cue = 0; cue < cues.size(); ++cue) {
+        with_cue_lookup(cues[cue], [&](char kind, std::string_view value) {
             journal.for_each_index_match(kind, value, [&](std::string_view address,
                                                           const journal::RecordPosition& position) {
                 if (position.sequence > universe.record_count) return true;  // after U
+                const bool bound = address.size() == cue_binding_address_bytes &&
+                                   address.substr(address_bytes, cue_binding_infix.size()) == cue_binding_infix;
+                if (!bound && address.size() != address_bytes) fail("experience_select_index_inconsistent");
                 if (hits.size() >= policy_.max_retrieved) fail("experience_select_over_policy");
                 const auto at = keys.size();
                 const auto* bytes = reinterpret_cast<const std::byte*>(address.data());
-                keys.insert(keys.end(), bytes, bytes + address.size());
-                hits.push_back(Hit{at, address.size(), position});
+                keys.insert(keys.end(), bytes, bytes + address_bytes);
+                hits.push_back(Hit{at, cue, bound, position});
                 return true;
             });
         });
     }
     const auto key_of = [&keys](const Hit& hit) {
-        return std::string_view(reinterpret_cast<const char*>(keys.data()) + hit.key, hit.size);
+        return std::string_view(reinterpret_cast<const char*>(keys.data()) + hit.key, address_bytes);
     };
-    std::sort(hits.begin(), hits.end(),
-              [&](const Hit& left, const Hit& right) { return key_of(left) < key_of(right); });
+    std::sort(hits.begin(), hits.end(), [&](const Hit& left, const Hit& right) {
+        const auto left_key = key_of(left);
+        const auto right_key = key_of(right);
+        return left_key != right_key ? left_key < right_key : left.cue < right.cue;
+    });
 
     LedgerVector<CandidateJudgment> judgments(memory.allocator<CandidateJudgment>());
     LedgerVector<SelectedExperience> selected(memory.allocator<SelectedExperience>());
@@ -1458,12 +1792,24 @@ SelectionReceipt<NoAuthority> ExperienceSelector::select(const SelectionQuery& q
         std::size_t last = first + 1;
         while (last < hits.size() && key_of(hits[last]) == key_of(hits[first])) ++last;
         const auto address = key_of(hits[first]);
-        const auto& position = hits[first].position;
-        for (std::size_t same = first + 1; same < last; ++same)
-            if (hits[same].position.sequence != position.sequence ||
-                hits[same].position.record_digest != position.record_digest)
+        // Distinct cues (a cue may reach a memory and bindings beside it),
+        // and the memory's own position, the same on every direct hit.
+        std::uint32_t matched = 0;
+        std::optional<journal::RecordPosition> own;
+        for (std::size_t same = first; same < last; ++same) {
+            if (same == first || hits[same].cue != hits[same - 1].cue) ++matched;
+            if (hits[same].bound) continue;
+            const auto& position = hits[same].position;
+            if (own && (own->sequence != position.sequence || own->record_digest != position.record_digest))
                 fail("experience_select_index_inconsistent");
-        const SelectionCandidate candidate{address, position, static_cast<std::uint32_t>(last - first)};
+            own = position;
+        }
+        if (!own) {
+            own = journal.resolve(ExperienceAddress(memory, address));
+            if (!own || own->sequence > universe.record_count) fail("experience_select_index_inconsistent");
+        }
+        const auto& position = *own;
+        const SelectionCandidate candidate{address, position, matched};
         VerdictSink sink(memory, candidate);
         judge(candidate, query, sink);
         if (!sink.judgment_) fail("experience_judgment_missing");

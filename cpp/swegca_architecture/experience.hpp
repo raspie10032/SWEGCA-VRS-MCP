@@ -55,12 +55,23 @@ inline constexpr std::size_t experience_part_bytes = 8u * 1024u * 1024u;
 // A blob (raw bytes, structured bytes, root sources) up to this size is kept
 // in the experience record itself; a larger one is kept as parts.
 inline constexpr std::size_t experience_inline_blob_bytes = 2u * 1024u * 1024u;
+// A caller's cues for one memory are kept beside it, never in it: a record
+// of their own kind addressed under the memory's address (the memory's
+// address, this infix, and the digest of the binding), so a cue lookup that
+// finds it names the memory by its first `experience_address_bytes`.
+inline constexpr std::uint16_t cue_binding_kind = journal::cue_binding_record_kind;
+inline constexpr std::string_view cue_binding_infix = "/cue-binding:";
+inline constexpr std::size_t cue_binding_address_bytes =
+    experience_address_bytes + cue_binding_infix.size() + 2 * digest256_width;
+// Distinct cues one binding carries at most.
+inline constexpr std::size_t max_bound_cues = 2048;
 
 // The index views of experience (board §3B :122-123). Each record carries
 // its entries; the journal's index tree answers a lookup by kind and value.
 // - cue: every token of the source and its revision under the cue rule
 //   (L3 hot cue index); a caller's authored cues are not the memory's and
-//   are kept apart from its record (user 2026-09-23 18:0x);
+//   are kept apart from its record (user 2026-09-23 18:0x), in cue
+//   bindings that carry the same view;
 // - source: looked up by the exact source text (the entry holds its
 //   SHA-256); content: the SHA-256 of the raw bytes;
 // - lineage: each address the experience was derived from (its derivations);
@@ -162,6 +173,20 @@ struct Observation {
     // 2026-09-23 18:0x; the author's artifact has none, its semantic keys
     // come beside it, mosaic_unrestricted_experience.py@5901a5a:34-55,
     // :398-436). The tokens of the source and its revision are derived.
+    // A caller's cues are bound beside it (`CueBinding`).
+};
+
+// A caller's cues for one memory (the caller's retrieval keys, beside the
+// memory as the author's semantic postings are beside its artifact). Who
+// authored them and at what revision is kept with them; equal bindings are
+// one record. Binding grants nothing and changes no strength.
+struct CueBinding {
+    std::string_view target;  // a published memory's address, or one the same append gives
+    std::string_view source;  // who authored the cues
+    std::string_view source_revision;
+    // Each kept whole, normalized as the user's `_cue` (strip, one space
+    // per run, ASCII lowered); equal ones count once.
+    std::span<const std::string_view> cues;
 };
 
 // The cue rule (author regex `n\d+|r\d+|[a-z]+|\d+|[^\W\d_]+` over lowered
@@ -375,11 +400,51 @@ private:
     ExperienceBlob contexts_;  // derived only: the root-context digests, 32 bytes each
 };
 
+// One cue binding read back. Its texts view the record's bytes and are
+// valid while this object lives.
+class CueBindingRecord final {
+public:
+    // Requires the cue-binding kind without authority, claim, revised
+    // address or outcome, a well-formed payload, an address that is the
+    // binding's digest under its target, index entries that are exactly its
+    // cues' entries, and a target the journal holds as a memory (kind 1 or 2).
+    [[nodiscard]] static CueBindingRecord decode(journal::PublishedRecord record, const AllocationContext& memory,
+                                                 const journal::JournalStore& journal);
+
+    CueBindingRecord(CueBindingRecord&& other) noexcept = default;
+    CueBindingRecord& operator=(CueBindingRecord&&) = delete;
+    CueBindingRecord(const CueBindingRecord&) = delete;
+    CueBindingRecord& operator=(const CueBindingRecord&) = delete;
+    ~CueBindingRecord() = default;
+
+    // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:398-436
+    [[nodiscard]] const journal::RecordView& record() const noexcept { return record_.view(); }
+    // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:398-436
+    [[nodiscard]] const journal::RecordPosition& position() const noexcept { return record_.position(); }
+    // The memory's address.
+    // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:398-436
+    [[nodiscard]] std::string_view target() const noexcept { return target_; }
+    // Normalized phrases, increasing, distinct.
+    // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:425-427
+    [[nodiscard]] std::span<const std::string_view> cues() const noexcept { return cues_; }
+
+private:
+    // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:398-436
+    CueBindingRecord(journal::PublishedRecord record, std::string_view target,
+                     journal::LedgerVector<std::string_view> cues) noexcept
+        : record_(std::move(record)), target_(target), cues_(std::move(cues)) {}
+
+    journal::PublishedRecord record_;
+    std::string_view target_;                     // views the record's bytes
+    journal::LedgerVector<std::string_view> cues_;  // views the record's bytes
+};
+
 class ExperienceJournal;
 
 // What appending staged, handed out one generation at a time. The parts of
-// every new experience come first, then the experience records, so an
-// experience becomes visible only with its record, after all its parts:
+// every new experience come first, then the experience records, then the
+// cue bindings, so an experience becomes visible only with its record,
+// after all its parts, and a binding only once its memory is:
 // a crash in between leaves only unreferenced parts, which an append-only
 // journal keeps harmlessly and a retry reuses (equal parts are one record).
 // `next` stages the next generation on the state and views Main passes;
@@ -442,11 +507,24 @@ private:
         auto operator<=>(const Part& other) const noexcept { return digest <=> other.digest; }
         bool operator==(const Part& other) const noexcept { return digest == other.digest; }
     };
+    struct Binding {
+        std::size_t input = 0;  // index into `binding_inputs_`
+        std::array<char, cue_binding_address_bytes> address{};
+        journal::LedgerVector<std::string_view> cues;  // distinct, increasing; view the caller's
+        // Encoded when staged: it names where the target was published,
+        // which a target this append gives is only then.
+        journal::LedgerBytes payload;
+        journal::LedgerVector<std::string_view> index;  // views `index_bytes`
+        journal::LedgerBytes index_bytes;
+        bool skip = false;  // equal to an earlier binding of this append, or already bound
+        std::optional<DigestBytes> staged;  // as for heads
+    };
     // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3f:282-283
     ExperienceAppend(const ExperienceJournal& journal, const AllocationContext& memory,
-                     std::span<const Observation> observations, std::string_view operation_id,
-                     std::optional<std::string_view> transaction_id);
+                     std::span<const Observation> observations, std::span<const CueBinding> bindings,
+                     std::string_view operation_id, std::optional<std::string_view> transaction_id);
     [[nodiscard]] journal::RecordDraft head_draft(const Head& head) const;
+    [[nodiscard]] journal::RecordDraft binding_draft(const Binding& binding) const;
 
     const ExperienceJournal* journal_;
     AllocationContext memory_;
@@ -457,12 +535,16 @@ private:
     journal::LedgerVector<Part> parts_;  // sorted by digest, unique
     journal::LedgerVector<journal::LedgerBytes> owned_;  // bytes parts view that the caller did not give
     journal::LedgerVector<ExperienceAddress> addresses_;
+    std::span<const CueBinding> binding_inputs_;
+    journal::LedgerVector<Binding> bindings_;
     std::size_t next_part_ = 0;
-    // The generation `next` last returned: 1 parts, 2 records, 0 none, and
-    // where it began. The next call rewinds to it unless all of it is published.
+    // The generation `next` last returned: 1 parts, 2 records, 3 bindings,
+    // 0 none, and where it began. The next call rewinds to it unless all of
+    // it is published.
     std::uint8_t pending_ = 0;
     std::size_t pending_from_ = 0;
     std::size_t next_head_ = 0;
+    std::size_t next_binding_ = 0;
     bool parts_checked_ = false;
     bool done_ = false;
 };
@@ -496,6 +578,15 @@ public:
     [[nodiscard]] ExperienceAppend stage(std::span<const Observation> observations,
                                          std::string_view operation_id,
                                          std::optional<std::string_view> transaction_id) const;
+    // As above, and binds each caller's cues beside its memory once every
+    // memory is published. A target is a published memory (kind 1 or 2) or
+    // an address this append gives (`experience_cue_binding_target_unknown`);
+    // each cue is kept whole in its normalized form (empty or invalid:
+    // `experience_cue_invalid`),
+    // at least one and at most `max_bound_cues` distinct per binding.
+    [[nodiscard]] ExperienceAppend stage(std::span<const Observation> observations,
+                                         std::span<const CueBinding> bindings, std::string_view operation_id,
+                                         std::optional<std::string_view> transaction_id) const;
 
     // Replays one exact experience (`journal_address_unknown` when absent).
     [[nodiscard]] ExperienceRecord replay(const ExperienceAddress& address) const;
@@ -505,7 +596,9 @@ public:
 
     // Visits, in address order over one published snapshot, every experience
     // `view` names for `key` until `visit` returns false: for `cue` a single
-    // cue token; for `source`, `name_space`, `resource` and `transaction` the
+    // cue in its kept form: a token of the memory cue rule or a whole bound
+    // phrase (it visits memories and the cue bindings beside them, whose
+    // address begins with their memory's); for `source`, `name_space`, `resource` and `transaction` the
     // exact text; for `content` the 64 lowercase hex digits of the raw
     // bytes' SHA-256; for `lineage` and `successor` an experience address.
     // Another key fails with `experience_view_key_invalid`.
@@ -723,7 +816,9 @@ private:
 
 // Main's limits on one selection. More retrieved entries than
 // `max_retrieved` fail closed (`experience_select_over_policy`) rather than
-// being cut: no retrieved candidate is ever dropped unjudged.
+// being cut: no retrieved candidate is ever dropped unjudged. Every index
+// entry a lookup returns counts, a memory's own and each cue binding's
+// beside it alike: the bound is on the work of one selection.
 struct SelectionPolicy {
     std::uint32_t max_retrieved = 1u << 16;
 };
