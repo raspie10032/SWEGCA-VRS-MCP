@@ -21,6 +21,17 @@ std::uint64_t checked_elements(const TensorShape3& shape) {
     return rows * shape.width;
 }
 
+// Validate the request before the allocator reserves and allocates its bytes.
+// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:243-251
+std::size_t checked_bytes(ScalarType type, const TensorShape3& shape) {
+    const auto elements = checked_elements(shape);
+    const auto width = scalar_width(type);
+    if (elements > std::numeric_limits<std::size_t>::max() / width ||
+        elements > ResourceLimits::max_resident_bytes / width)
+        throw std::overflow_error("cognitive_tensor_byte_count_overflow");
+    return static_cast<std::size_t>(elements) * width;
+}
+
 // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:243-251
 std::uint64_t little_u64(std::span<const std::byte> bytes) noexcept {
     std::uint64_t value = 0;
@@ -76,8 +87,19 @@ std::size_t scalar_width(ScalarType scalar_type) {
 }
 
 // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:243-251
+CognitiveTensor::CognitiveTensor(const MemoryLedger::Account& account,
+                                 ScalarType scalar_type, TensorShape3 shape,
+                                 std::span<const std::byte> canonical_bytes)
+    : CognitiveTensor(scalar_type, shape, [&] {
+          if (canonical_bytes.size() != checked_bytes(scalar_type, shape))
+              throw std::invalid_argument("cognitive_tensor_byte_count_mismatch");
+          return Storage(canonical_bytes.begin(), canonical_bytes.end(),
+                         account.allocator<std::byte>());
+      }()) {}
+
+// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:243-251
 CognitiveTensor::CognitiveTensor(ScalarType scalar_type, TensorShape3 shape,
-                                 std::vector<std::byte> canonical_bytes)
+                                 Storage canonical_bytes)
     : scalar_type_(scalar_type), shape_(shape),
       canonical_bytes_(std::move(canonical_bytes)) {
     const auto elements = checked_elements(shape_);
@@ -98,16 +120,13 @@ CognitiveTensor::CognitiveTensor(ScalarType scalar_type, TensorShape3 shape,
 }
 
 // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:243-251
-CognitiveTensor CognitiveTensor::zeroed(ScalarType scalar_type,
+CognitiveTensor CognitiveTensor::zeroed(const MemoryLedger::Account& account,
+                                         ScalarType scalar_type,
                                          TensorShape3 shape) {
-    const auto elements = checked_elements(shape);
-    const auto width = scalar_width(scalar_type);
-    if (elements > std::numeric_limits<std::size_t>::max() / width ||
-        elements * width > ResourceLimits::max_resident_bytes)
-        throw std::overflow_error("cognitive_tensor_byte_count_overflow");
+    const auto bytes = checked_bytes(scalar_type, shape);
     return CognitiveTensor(
         scalar_type, shape,
-        std::vector<std::byte>(static_cast<std::size_t>(elements) * width));
+        Storage(bytes, std::byte{0}, account.allocator<std::byte>()));
 }
 
 // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:243-251

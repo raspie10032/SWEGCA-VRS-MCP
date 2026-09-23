@@ -39,6 +39,8 @@ namespace swegca::architecture {
 
 class MemoryLedger final {
     struct State {
+        // Keeps Main's exclusive process lifetime while accounts/snapshots live.
+        std::shared_ptr<const void> owner_lifetime;
         std::atomic<std::uint64_t> used{0};
         std::uint64_t limit = 0;
     };
@@ -168,7 +170,7 @@ private:
     friend class MainOwner;
     // `limit` must be nonzero and at most ResourceLimits::max_resident_bytes
     // (`memory_ledger_limit_invalid`).
-    explicit MemoryLedger(std::uint64_t limit);
+    MemoryLedger(std::uint64_t limit, std::shared_ptr<const void> owner_lifetime);
 
     // Cap before add: `used` never passes `limit`, even transiently.
     static void charge(State& state, std::uint64_t bytes);

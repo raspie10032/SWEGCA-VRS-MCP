@@ -1,5 +1,7 @@
 #pragma once
 
+#include "swegca_architecture/memory_ledger.hpp"
+
 #include <compare>
 #include <cstddef>
 #include <cstdint>
@@ -32,10 +34,12 @@ struct TensorShape3 final {
 // Rule: native tensor value, reconstruction board@7c0b62f:243-251.
 class CognitiveTensor final {
 public:
-    CognitiveTensor(ScalarType scalar_type, TensorShape3 shape,
-                    std::vector<std::byte> canonical_bytes);
+    CognitiveTensor(const MemoryLedger::Account& account,
+                    ScalarType scalar_type, TensorShape3 shape,
+                    std::span<const std::byte> canonical_bytes);
 
-    [[nodiscard]] static CognitiveTensor zeroed(ScalarType scalar_type,
+    [[nodiscard]] static CognitiveTensor zeroed(const MemoryLedger::Account& account,
+                                                ScalarType scalar_type,
                                                 TensorShape3 shape);
 
     // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:243-251
@@ -59,9 +63,12 @@ public:
     auto operator<=>(const CognitiveTensor&) const = default;
 
 private:
+    using Storage = std::vector<std::byte, MemoryLedger::Allocator<std::byte>>;
+    CognitiveTensor(ScalarType scalar_type, TensorShape3 shape, Storage bytes);
+
     ScalarType scalar_type_;
     TensorShape3 shape_;
-    std::vector<std::byte> canonical_bytes_;
+    Storage canonical_bytes_;
 };
 
 [[nodiscard]] std::size_t scalar_width(ScalarType scalar_type);
