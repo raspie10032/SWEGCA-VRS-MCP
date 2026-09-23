@@ -1,7 +1,6 @@
 #include "swegca_architecture/journal_store.hpp"
 
 #include "swegca_architecture/journal_file_io.hpp"
-#include "swegca_architecture/resource_limits.hpp"
 
 #include <algorithm>
 #include <array>
@@ -234,7 +233,7 @@ public:
     // Fails with `memory_budget_exhausted` when Main's ledger cannot give
     // `capacity` bytes.
     // SWEGCA: user@2026-09-22:72-79
-    PageCache(const MemoryLedger::Account& memory, std::uint64_t capacity)
+    PageCache(const MemoryLedger::Account& memory, std::uint64_t capacity, std::size_t shard_count)
         : memory_(memory.carve(capacity)), shards_(memory_.allocator<std::shared_ptr<Shard>>()) {
         shards_.reserve(shard_count);
         for (std::size_t at = 0; at < shard_count; ++at)
@@ -311,8 +310,8 @@ private:
     // SWEGCA: user@2026-09-22:72-79
     bool evict_one() const {
         const auto first = next_shard_.fetch_add(1, std::memory_order_relaxed);
-        for (std::size_t step = 0; step < shard_count; ++step) {
-            auto& shard = *shards_[(first + step) % shard_count];
+        for (std::size_t step = 0; step < shards_.size(); ++step) {
+            auto& shard = *shards_[(first + step) % shards_.size()];
             std::lock_guard guard(shard.mutex);
             auto& slots = shard.slots;
             for (std::size_t turns = 0; !slots.empty() && turns < 2 * slots.size() + 1; ++turns) {
@@ -333,7 +332,6 @@ private:
         return false;
     }
 
-    static constexpr std::size_t shard_count = ResourceLimits::worker_count;
     struct Slot {
         PageRef ref;
         PageHandle page;  // empty for a free slot
@@ -355,7 +353,7 @@ private:
     // SWEGCA: user@2026-09-22:72-79
     [[nodiscard]] Shard& shard_of(const PageRef& ref) const noexcept {
         const auto mixed = (ref.log_ordinal * 0x9e3779b97f4a7c15ull) ^ ref.offset;
-        return *shards_[static_cast<std::size_t>(mixed % shard_count)];
+        return *shards_[static_cast<std::size_t>(mixed % shards_.size())];
     }
 
     MemoryLedger::Account memory_;  // the carved budget
@@ -1120,11 +1118,11 @@ StagedGeneration::StagedGeneration(StagedGeneration&& other) noexcept
 JournalStore::JournalStore(fs::path directory, JournalIdentity identity,
                            std::uint64_t storage_bytes, const MemoryLedger::Account& memory,
                            std::uint64_t allocation_unit, std::unique_ptr<io::OwnerLock> lock,
-                           std::uint64_t page_cache_bytes)
+                           std::uint64_t page_cache_bytes, std::size_t page_cache_shards)
     : directory_(std::move(directory)), identity_(std::move(identity)),
       storage_bytes_(storage_bytes), memory_(memory), allocation_unit_(allocation_unit),
       lock_(std::move(lock)),
-      cache_(page_cache_bytes == 0 ? nullptr : std::make_unique<PageCache>(memory, page_cache_bytes)),
+      cache_(page_cache_bytes == 0 ? nullptr : std::make_unique<PageCache>(memory, page_cache_bytes, page_cache_shards)),
       retired_(memory.allocator<RetiredLogs>()) {}
 
 // SWEGCA: user@2026-09-22:72-79
@@ -1135,17 +1133,17 @@ std::unique_ptr<JournalStore> JournalStore::open(const fs::path& directory,
                                                  std::string_view identity,
                                                  std::uint64_t storage_bytes,
                                                  const MemoryLedger::Account& memory,
-                                                 std::uint64_t page_cache_bytes) {
-    if (storage_bytes == 0 || storage_bytes > ResourceLimits::max_storage_bytes)
-        fail("journal_budget_invalid");
-    if (page_cache_bytes > ResourceLimits::max_resident_bytes) fail("journal_page_cache_invalid");
+                                                 std::uint64_t page_cache_bytes,
+                                                 std::size_t page_cache_shards) {
+    if (storage_bytes == 0) fail("journal_budget_invalid");
+    if (page_cache_bytes != 0 && page_cache_shards == 0) fail("journal_page_cache_invalid");
     JournalIdentity owned(memory, identity);  // checked before anything is created
     if (!fs::exists(directory)) create_initial(directory, identity, memory);
     auto lock = std::make_unique<io::OwnerLock>(directory);
     const auto unit = io::allocation_unit(directory);
     std::unique_ptr<JournalStore> store(new JournalStore(directory, std::move(owned), storage_bytes,
                                                          memory, unit, std::move(lock),
-                                                         page_cache_bytes));
+                                                         page_cache_bytes, page_cache_shards));
     store->load_published_head();
     return store;
 }

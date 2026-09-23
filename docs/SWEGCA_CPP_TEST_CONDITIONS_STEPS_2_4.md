@@ -13,12 +13,18 @@ Sources: board `docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md`
 `mosaic_versioned_memory.py`, L2 `mosaic_evidence_accumulator.py`.
 Code under test: `claude/arch-integrate` @ac097ba.
 
-Resource frame for every run: 16 workers, Main ledger at most 4 GB, journal
-storage at most 500 GB, a lookup from input to Recall within 1 ms (board §1
-nano-core, user 2026-09-22). A condition that states a bound is checked
-against that bound, not a smaller convenient one.
+The architecture fixes no product budget: memory, storage and the worker
+count are injected by the host (user 2026-09-23 via codex 16:01). Every run
+here uses the SWEGCA-VRS host frame: 16 workers, Main ledger 4 GB, journal
+storage 500 GB, input to Recall within 1 ms (board §1 nano-core, user
+2026-09-22). A condition that states a bound is checked against that bound,
+not a smaller convenient one; A0 checks that the core has no such constant.
 
 ## A. Compile-rejection cases (must not compile)
+
+A0 (source check, not a compile case): no file under `cpp/swegca_architecture/`
+names a product budget (4 GB, 500 GB, 16 workers, `ResourceLimits`); the
+ledger, the journal and the page cache take theirs from the host.
 
 | # | Case | Rule |
 |---|---|---|
@@ -65,12 +71,12 @@ Budgets (board §11 limits):
 
 | # | Setup | Expected |
 |---|---|---|
-| B21 | Storage use would pass `storage_bytes` (up to 500 GB) | stage and publish fail `journal_storage_budget_exhausted` with nothing written; a directory whose published use already exceeds `storage_bytes` fails `open` with `journal_storage_budget_exceeded` |
+| B21 | Storage use would pass `storage_bytes` (the host's budget; 500 GB in the VRS frame) | stage and publish fail `journal_storage_budget_exhausted` with nothing written; a directory whose published use already exceeds `storage_bytes` fails `open` with `journal_storage_budget_exceeded` |
 | B22 | Recovery chain over `max_recovery_bytes` | `journal_recovery_over_budget` |
 | B23 | Main ledger usage during stage, publish, lookup, compaction, rebuild at full scale | never above the ledger limit; every buffer charged; after each call Main's `used()` equals its prior value (the page-cache carve is a constant part of it, charged at open) |
 | B24 | Page cache with a carve of C bytes under a lookup storm | carve usage never above C; cached pages stay until evicted and are charged to the carve only; when a read needs carve budget, a page no reader holds is evicted and its bytes return to the carve; with every cached page held by a reader, the read is served on Main's account and not kept |
 | B25 | Main ledger smaller than the requested carve | `open` fails `memory_budget_exhausted`; with 0, no cache and every lookup still correct |
-| B26 | User input to first Recall, end to end (query tokenization, every index lookup including page-cache misses that read page logs, candidate judgment hand-off, replay of selected records), largest tested journal, 16 workers | within 1 ms; measured only at step 10. A single lookup's time is not this measure |
+| B26 | User input to first Recall, end to end (query tokenization, every index lookup including page-cache misses that read page logs, candidate judgment hand-off, replay of selected records), largest tested journal, the host's workers (16 in the VRS frame) | within 1 ms; measured only at step 10. A single lookup's time is not this measure |
 
 ## C. Experience (step 3; board §3B, §4, §5)
 

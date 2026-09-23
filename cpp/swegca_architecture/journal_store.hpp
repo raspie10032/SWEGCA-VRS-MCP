@@ -214,7 +214,6 @@ private:
     const void* target_;
     Call call_;
 };
-inline constexpr std::uint64_t default_page_cache_bytes = 256u << 20;
 
 class JournalStore final {
 public:
@@ -242,11 +241,14 @@ public:
     // `identity` must satisfy the identity rule; the store keeps its own copy
     // on `memory`. `page_cache_bytes` of `memory` are carved out for the
     // verified view pages lookups keep (see PageCache; failing with
-    // `memory_budget_exhausted` when they do not fit); 0 keeps none.
+    // `memory_budget_exhausted` when they do not fit); 0 keeps none. The
+    // cache is split into `page_cache_shards` independently locked shards
+    // (the host sets it to its worker count; nonzero when a cache is kept).
+    // Every budget is the host's: the journal fixes none.
     [[nodiscard]] static std::unique_ptr<JournalStore> open(
         const std::filesystem::path& directory, std::string_view identity,
         std::uint64_t storage_bytes, const MemoryLedger::Account& memory,
-        std::uint64_t page_cache_bytes = default_page_cache_bytes);
+        std::uint64_t page_cache_bytes, std::size_t page_cache_shards);
 
     JournalStore(JournalStore&&) = delete;
     JournalStore(const JournalStore&) = delete;
@@ -357,7 +359,7 @@ private:
     JournalStore(std::filesystem::path directory, JournalIdentity identity,
                  std::uint64_t storage_bytes, const MemoryLedger::Account& memory,
                  std::uint64_t allocation_unit, std::unique_ptr<io::OwnerLock> lock,
-                 std::uint64_t page_cache_bytes);
+                 std::uint64_t page_cache_bytes, std::size_t page_cache_shards);
 
     // Page logs a view rewrite left behind, and the lease that keeps them.
     struct RetiredLogs {

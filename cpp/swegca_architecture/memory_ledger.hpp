@@ -1,7 +1,6 @@
 #pragma once
 
 #include "swegca_architecture/authority_roles.hpp"
-#include "swegca_architecture/resource_limits.hpp"
 
 #include <atomic>
 #include <cstddef>
@@ -12,8 +11,8 @@
 #include <utility>
 
 // Main's resident-memory ledger. What this type guarantees: only MainOwner
-// can construct one (limit nonzero and at most
-// ResourceLimits::max_resident_bytes), it cannot be copied or moved, and a
+// can construct one (with the nonzero limit its host gives it), it cannot
+// be copied or moved, and a
 // component can only charge it through an Account it was given. What it does
 // not guarantee by itself: that the process has one ledger. That is a
 // premise of Main integration (MainOwner owns exactly one and hands the same
@@ -176,7 +175,7 @@ public:
 
 private:
     friend class MainOwner;
-    // `limit` must be nonzero and at most ResourceLimits::max_resident_bytes
+    // `limit` is the host's budget and must be nonzero
     // (`memory_ledger_limit_invalid`).
     MemoryLedger(std::uint64_t limit, std::shared_ptr<const void> owner_lifetime);
 

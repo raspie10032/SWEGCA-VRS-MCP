@@ -4,7 +4,6 @@
 #include "swegca_architecture/digest_bytes.hpp"
 #include "swegca_architecture/journal_position.hpp"
 #include "swegca_architecture/memory_ledger.hpp"
-#include "swegca_architecture/resource_limits.hpp"
 #include "swegca_architecture/sha256.hpp"
 #include "swegca_architecture/strong_types.hpp"
 
@@ -24,9 +23,11 @@
 // Rules: SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md §3B, §9;
 // ARCHITECTURE_SPEC.md@5901a5a:205-207,214-216 (I03, I07).
 // re-created (user@2026-09-23): replaces SQLite, which the user removed.
-// Every size here is bounded by the product ceilings in ResourceLimits: the
-// extent table by the storage ceiling (codex J8), and recovery by a fixed
-// read budget rather than by a count of generations (codex J10).
+// Every size here is bounded by this format's own limits, never by a
+// product's (the host injects memory and storage budgets; user 2026-09-23
+// via codex 16:01): the extent table by what one manifest holds (codex J8),
+// and recovery by a fixed read budget rather than by a count of
+// generations (codex J10).
 // Memory (codex J13): every buffer this format fills is a LedgerBytes or
 // LedgerVector, so each allocation is charged to Main's ledger with its
 // exact requested size before it is made. Decoded records, manifests and
@@ -45,9 +46,6 @@ inline constexpr std::size_t max_segment_bytes = 64u * 1024u * 1024u;
 inline constexpr std::size_t max_generation_bytes = 64u * 1024u * 1024u;
 inline constexpr std::size_t max_manifest_bytes = 16u * 1024u * 1024u;
 inline constexpr std::size_t max_manifest_log_bytes = 64u * 1024u * 1024u;
-// Enough full segments to hold the whole storage ceiling, and no more.
-inline constexpr std::size_t max_extents = static_cast<std::size_t>(
-    (ResourceLimits::max_storage_bytes + max_segment_bytes - 1) / max_segment_bytes);
 inline constexpr std::size_t max_manifest_views = 4096;
 // A checkpoint is written at least every `checkpoint_interval` generations
 // and whenever recovery would otherwise read more than `max_recovery_bytes`
@@ -79,6 +77,8 @@ inline constexpr std::uint16_t original_experience_record_kind = 1;
 inline constexpr std::uint16_t derived_experience_record_kind = 2;
 // ordinal, first sequence, record count, byte length, last record digest.
 inline constexpr std::size_t encoded_extent_bytes = 4 * 8 + 32;
+// As many segments as one manifest can list (a checkpoint lists them all).
+inline constexpr std::size_t max_extents = max_manifest_bytes / encoded_extent_bytes;
 
 // Derived views (board §3B :122, §9 :569-592): the exact-address tree (one
 // entry per record, keyed by address) and the index tree (one entry per
