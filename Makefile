@@ -212,7 +212,7 @@ build/region_membership_cache.o: cpp/region_membership_cache.cpp cpp/region_memb
 build/graph_regions.o: cpp/graph_regions.cpp cpp/graph_regions.hpp cpp/connectivity_regions.hpp cpp/graph_append.hpp cpp/memory_vrs_pair.hpp cpp/python_fsum.hpp cpp/json.hpp | build
 	$(CXX) $(CXXFLAGS) $(NUMERIC_CXXFLAGS) -Icpp -c $< -o $@
 
-build/region_preactivation.o: cpp/region_preactivation.cpp cpp/region_preactivation.hpp cpp/graph_regions.hpp cpp/deja_vu.hpp cpp/python_fsum.hpp | build
+build/region_preactivation.o: cpp/region_preactivation.cpp cpp/region_preactivation.hpp cpp/graph_regions.hpp cpp/deja_vu.hpp | build
 	$(CXX) $(CXXFLAGS) $(NUMERIC_CXXFLAGS) -Icpp -c $< -o $@
 
 build/region_navigation.o: cpp/region_navigation.cpp cpp/region_navigation.hpp cpp/graph_regions.hpp cpp/connectivity_regions.hpp | build
@@ -227,7 +227,7 @@ build/coactivation_associations.o: cpp/coactivation_associations.cpp cpp/coactiv
 build/portal_lifecycle.o: cpp/portal_lifecycle.cpp cpp/portal_lifecycle.hpp cpp/coactivation_associations.hpp cpp/python_fsum.hpp cpp/unicode.hpp | build
 	$(CXX) $(CXXFLAGS) $(NUMERIC_CXXFLAGS) -Icpp -c $< -o $@
 
-build/portal_navigation.o: cpp/portal_navigation.cpp cpp/portal_navigation.hpp cpp/portal_lifecycle.hpp cpp/region_navigation.hpp cpp/region_preactivation.hpp cpp/memory_recall.hpp | build
+build/portal_navigation.o: cpp/portal_navigation.cpp cpp/portal_navigation.hpp cpp/portal_lifecycle.hpp cpp/region_navigation.hpp cpp/region_preactivation.hpp cpp/memory_recall.hpp cpp/python_fsum.hpp | build
 	$(CXX) $(CXXFLAGS) -Icpp -c $< -o $@
 
 build/session_first_read.o: cpp/session_first_read.cpp cpp/session_first_read.hpp cpp/exact_journal_replay.hpp cpp/portal_navigation.hpp cpp/keys.hpp | build

@@ -157,11 +157,12 @@ for the ordinary four-stage read. The read directory must prove that the
 published memory and Graph belong to the same generation. This materializes
 candidate sets and has no demonstrated 4 GB bound or pre-Replay latency.
 The author portal activation at tinylm revision `3bddcb7` begins with
-`preactivate_regions` after Déjà vu. The C++ component-local translation now
-maps matched literal cues to existing graph node addresses, sums overlapping
-memberships, normalizes with `fsum`, and ranks regions without reading an
-original body. It does not select a portal or measure the input-to-Recall
-boundary yet.
+`preactivate_regions` after Déjà vu. The C++ translation maps matched literal
+cues to existing graph node addresses and accumulates component-local raw
+group masses in the author's global node order. All raw group masses then
+share one `fsum` denominator across every disconnected component; region
+weights and receipts use that global normalization before ranking. It reads
+no original body.
 The graph-adapted local navigator now validates a shared original against the
 current pair, leads with its destination-core cue nodes, and retains the
 author's seed-first cursor, bounded visits, skipped-seed accounting and
@@ -195,9 +196,10 @@ The pre-Replay navigation prefix now accepts a completed Déjà vu signal,
 preactivates the matched graph components in first-seen cue order, queries
 observed associations, plans eligible source-bound portals, navigates at most
 one indexed cue page, and passes those cues to ordinary complete Recall.
-Unvisited origins remain explicit. Component order is a physical adaptation
-because the product Graph has separate connected-component topologies; it
-does not compare coefficient magnitudes across unrelated topologies. No
+Unvisited origins remain explicit. Separate component topology IDs are a
+physical adaptation, while their region coefficients remain directly
+comparable because every one uses the same author denominator. Component ID
+breaks only equal-weight ties. No
 Replay or Re-evidence occurs inside this prefix. Session-first selection,
 Main generation pinning, host hook dispatch and the full `<1 ms` measurement
 remain unfinished.

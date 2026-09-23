@@ -12,9 +12,9 @@
 
 namespace swegca::vrs {
 
-// Disconnected Graph components keep separate topology identities. Component
-// order follows the first matched cue; each component retains source region
-// weight order without comparing coefficients from unrelated topologies.
+// Disconnected Graph components keep separate topology identities. Every
+// region coefficient uses the one author global mass denominator; component
+// and region IDs only break equal-weight ties.
 struct RegionOrigin {
     std::uint32_t component;
     std::string topology_id;

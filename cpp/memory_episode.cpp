@@ -42,36 +42,6 @@ std::vector<std::string> unique_cues(std::vector<std::string> cues) {
     return result;
 }
 
-// A whitespace-only source segment cannot pass the author's nonblank
-// observation field. The session ingress journals its JSON string literal;
-// Replay restores the literal content before it becomes experience evidence.
-// SWEGCA: src/swegca_vrs2/session_capture.py@c06092a:316-328
-// SWEGCA: user@2026-09-22:54-62
-std::string source_observation_text(const Json& row) {
-    const auto& stored = row.at("text").string();
-    const auto& metadata = row.at("metadata");
-    if (!std::holds_alternative<Json::Object>(metadata.data) ||
-        !metadata.contains("origin") ||
-        !std::holds_alternative<std::string>(metadata.at("origin").data) ||
-        metadata.at("origin").string() != "session_transcript" ||
-        !metadata.contains("content_encoding"))
-        return stored;
-    const auto& encoding = metadata.at("content_encoding").string();
-    std::string original;
-    if (encoding == "raw_utf8") {
-        original = stored;
-    } else if (encoding == "json_string_literal") {
-        const auto decoded = Json::parse(stored);
-        original = decoded.string();
-    } else {
-        throw std::runtime_error("session_content_encoding_invalid");
-    }
-    if (!metadata.contains("part_sha256") ||
-        metadata.at("part_sha256").string() != sha256_hex(original))
-        throw std::runtime_error("session_content_digest_changed");
-    return original;
-}
-
 }  // namespace
 
 // SWEGCA: src/swegca_vrs2/engine/mosaic_memory_activation.py@7536139:44-67
@@ -114,7 +84,7 @@ MemoryEpisode::MemoryEpisode(std::string new_episode_id,
 
 // SWEGCA: src/swegca_vrs2/store.py@7536139:154-158
 std::vector<std::string> postings_cues_from_observation(const Json& row) {
-    auto cues = lexical_keys(source_observation_text(row));
+    auto cues = lexical_keys(row.at("text").string());
     std::unordered_set<std::string> seen(cues.begin(), cues.end());
     for (const auto& extra : row.at("cues").array()) {
         auto folded = casefold_text(extra.string());
@@ -140,7 +110,7 @@ MemoryEpisode episode_from_observation(const Json& row) {
     auto cues = postings_cues_from_observation(row);
     const auto& proposition = row.at("proposition");
     Json::Object evidence;
-    evidence.emplace("text", Json(source_observation_text(row)));
+    evidence.emplace("text", row.at("text"));
     evidence.emplace("metadata", row.at("metadata"));
     evidence.emplace("proposition_id", proposition);
     evidence.emplace("evidence_polarity", row.at("polarity"));

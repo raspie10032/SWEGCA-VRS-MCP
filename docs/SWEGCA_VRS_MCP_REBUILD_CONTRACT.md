@@ -17,24 +17,23 @@ sessions. MCP transport, host hooks, workers, and a language model are
 producers or readers; they cannot turn a retrieved record into truth or an
 action permission. No internal language-model call belongs in this runtime.
 
-Every admitted host-visible record is an observation in a native session VRS
+Every complete host record is an observation in a native session VRS
 generation with its exact source address and uncertainty. The transcript is an
 ingress stream, never a recall store. During an active session, Déjà vu reads
 that session VRS first. Only empty session `matched_cues` at Déjà vu
 opens the long-term main. Session VRS shards become main-owned only after the
 host's real `SessionEnd`; idle time and `Interrupt` cannot attach them.
-Host-visible tool results are records too. Oversized records are split into
+Tool results, reasoning records, compacted summaries and unknown future record
+kinds are records too. Oversized records are split into
 ordered, source-bound observations within the author's field limits; their
 content enters the session VRS instead of remaining only as transcript
 addresses. The original byte and line spans, content digest, role, revision,
 and part order remain attached so Replay can open the exact original segment.
-The new C++ source adapter now extracts Codex and Claude host-visible records,
-filters private reasoning payload fields, and streams normalized observation
-parts with stable request IDs, source addresses, raw-line and content byte
-spans, and content digests. Whitespace-only parts are journaled as explicit
-JSON string literals because the author's observation text field rejects
-blank text; episode construction decodes them back to the exact original
-content and checks each part digest. This adapter is not yet connected to
+The new C++ source adapter admits the complete canonical Codex or Claude JSON
+record without removing any field or content block, then streams bounded
+observation parts with stable request IDs, source addresses, raw-line and
+content byte spans, and content digests. Episode construction uses that stored
+text exactly for cues and evidence, as the author HotIndex does. This adapter is not yet connected to
 the host file watcher, session journal commit, or SessionEnd ownership link.
 The native transcript scanner now holds a private per-source cursor lock,
 reads only complete JSONL lines, batches validated observations beneath the

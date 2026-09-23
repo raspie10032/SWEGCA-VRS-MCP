@@ -4,7 +4,6 @@
 
 #include <cstdint>
 #include <functional>
-#include <optional>
 #include <string>
 #include <string_view>
 
@@ -12,16 +11,17 @@ namespace swegca::vrs {
 
 enum class SessionHost { codex, claude };
 
-struct HostVisibleRecord {
+struct CompleteHostRecord {
     std::string role;
     std::string content;
     std::string record_type;
 };
 
-// Source transcripts are ingress only. Private reasoning payloads are never
-// admitted as public experience; visible summaries and tool results are.
-// SWEGCA: src/swegca_vrs2/session_capture.py@c06092a:42-111
-[[nodiscard]] std::optional<HostVisibleRecord> host_visible_record(
+// Source transcripts are ingress only. Every field of every complete record
+// enters the session experience text; role classification never filters or
+// rewrites the record content.
+// SWEGCA: user@2026-09-22:54-62
+[[nodiscard]] CompleteHostRecord complete_host_record(
     SessionHost host, const Json& row);
 
 // Every emitted row passes the author's observation validator. One source

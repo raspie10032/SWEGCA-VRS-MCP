@@ -1,7 +1,5 @@
 #include "region_preactivation.hpp"
 
-#include "python_fsum.hpp"
-
 #include <algorithm>
 #include <map>
 #include <set>
@@ -10,7 +8,7 @@
 namespace swegca::vrs {
 
 // SWEGCA: src/tinylm_slicer/mosaic_vrs_portal_activation.py@3bddcb7:29-47
-RegionPreactivation preactivate_graph_regions(
+RegionPreactivation preactivate_graph_region_masses(
     const FullCurrentMemoryVrsSnapshot& pair, const DejaVuSignal& signal,
     std::uint32_t component, const EventVrsInputView& inputs,
     const GraphNodeDirectory& nodes, const GraphRegionDirectory& directory) {
@@ -36,26 +34,22 @@ RegionPreactivation preactivate_graph_regions(
         local_terms.insert(local);
     }
     std::map<std::uint32_t, double> masses;
-    std::vector<std::uint32_t> first_seen;
     for (const auto local : local_terms)
         for (const auto& [group, weight] : topology->memberships_for_term(local)) {
             const auto [found, inserted] = masses.try_emplace(group, 0.0);
-            if (inserted) first_seen.push_back(group);
+            (void)inserted;
             found->second += weight;
         }
-    PythonFsum sum;
-    for (const auto group : first_seen) sum.add(masses.at(group));
-    const auto total = sum.finish();
-    std::vector<std::pair<std::uint32_t, double>> weighted;
-    if (total != 0)
-        for (const auto& [group, weight] : masses)
-            weighted.emplace_back(group, weight / total);
-    std::sort(weighted.begin(), weighted.end(), [](const auto& left, const auto& right) {
+    std::vector<std::pair<std::uint32_t, double>> raw;
+    for (const auto& [group, weight] : masses)
+        raw.emplace_back(group, weight);
+    std::sort(raw.begin(), raw.end(), [](const auto& left, const auto& right) {
         if (left.second != right.second) return left.second > right.second;
         return left.first < right.first;
     });
-    return RegionPreactivation{pair.snapshot_id(), topology->topology_id(), signal,
-        std::move(weighted), static_cast<std::uint32_t>(local_terms.size()), false, false};
+    return RegionPreactivation{pair.snapshot_id(), topology->topology_id(), component, signal,
+        std::move(raw), 0.0, {}, static_cast<std::uint32_t>(local_terms.size()),
+        false, false};
 }
 
 }  // namespace swegca::vrs

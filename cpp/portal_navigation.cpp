@@ -1,5 +1,7 @@
 #include "portal_navigation.hpp"
 
+#include "python_fsum.hpp"
+
 #include <algorithm>
 #include <cstddef>
 #include <set>
@@ -38,11 +40,8 @@ PortalNavigationRecall recall_after_deja_vu_navigation(
     std::vector<PortalNavigationFailure> failures;
     for (const auto component : components) {
         try {
-            auto preactivation = preactivate_graph_regions(pair, signal, component,
-                                                            inputs, nodes, regions);
-            for (const auto& [region, weight] : preactivation.regions)
-                origins.push_back(RegionOrigin{component, preactivation.topology_id,
-                                               region, weight});
+            auto preactivation = preactivate_graph_region_masses(
+                pair, signal, component, inputs, nodes, regions);
             preactivations.push_back(std::move(preactivation));
         } catch (const std::runtime_error& error) {
             failures.push_back(PortalNavigationFailure{component, std::nullopt,
@@ -52,10 +51,32 @@ PortalNavigationRecall recall_after_deja_vu_navigation(
                                                        error.what()});
         }
     }
-    // The author compares all region masses in one normalized topology. The
-    // product stores disconnected components separately, so compare their
-    // already normalized masses globally and use component only as the stable
-    // adaptation tie break.
+    PythonFsum global_sum;
+    for (const auto& preactivation : preactivations)
+        for (const auto& [region, mass] : preactivation.raw_region_masses) {
+            (void)region;
+            global_sum.add(mass);
+        }
+    const auto global_mass = global_sum.finish();
+    if (global_mass != 0.0) {
+        for (auto& preactivation : preactivations) {
+            preactivation.global_mass = global_mass;
+            preactivation.regions.reserve(
+                preactivation.raw_region_masses.size());
+            for (const auto& [region, mass] :
+                 preactivation.raw_region_masses) {
+                const auto weight = mass / global_mass;
+                preactivation.regions.emplace_back(region, weight);
+                origins.push_back(RegionOrigin{
+                    preactivation.component,
+                    preactivation.topology_id, region, weight});
+            }
+        }
+    }
+    // The author divides every group mass by one fsum across all matched
+    // nodes. Product components retain separate topology IDs, but never get
+    // separate normalization denominators. Component is only a stable tie
+    // break after the author weight.
     // SWEGCA: src/tinylm_slicer/mosaic_vrs_portal_activation.py@3bddcb7:33-47
     std::sort(origins.begin(), origins.end(), [](const auto& left,
                                                   const auto& right) {
