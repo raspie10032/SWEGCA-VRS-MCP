@@ -7,7 +7,6 @@ add_library(swegca_core STATIC
     cpp/swegca_architecture/sha256.cpp
     cpp/swegca_architecture/strong_types.cpp
     cpp/swegca_architecture/evidence_rules.cpp
-    cpp/swegca_architecture/evidence_accumulator.cpp
 )
 target_include_directories(swegca_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/cpp")
 target_compile_features(swegca_core PUBLIC cxx_std_20)
