@@ -13,6 +13,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -66,8 +67,8 @@ std::string ordinal_name(char prefix, std::uint64_t value, const char* suffix) {
 }
 
 // SWEGCA: user@2026-09-22:72-79
-fs::path segment_path(const fs::path& directory, std::uint64_t ordinal) {
-    return directory / ordinal_name(segment_prefix, ordinal, segment_suffix);
+fs::path segment_path(const fs::path& directory, std::uint64_t file_id) {
+    return directory / ordinal_name(segment_prefix, file_id, segment_suffix);
 }
 
 // SWEGCA: user@2026-09-22:72-79
@@ -118,7 +119,8 @@ void apply_manifest(RecoveryExtentTable& extents, const Manifest& manifest) {
         if (found != extents.end()) {
             auto& old = found->second;
             const bool same = next.record_count == old.record_count;
-            if (next.first_sequence != old.first_sequence) fail("journal_extent_conflict");
+            if (next.first_sequence != old.first_sequence || next.file_id != old.file_id)
+                fail("journal_extent_conflict");
             if (same ? (next.byte_length != old.byte_length ||
                         next.last_record_digest != old.last_record_digest)
                      : (next.record_count < old.record_count ||
@@ -127,7 +129,9 @@ void apply_manifest(RecoveryExtentTable& extents, const Manifest& manifest) {
             old = next;
             continue;
         }
-        if (next.ordinal != tail_ordinal + 1) fail("journal_extent_not_contiguous");
+        if (next.ordinal != tail_ordinal + 1 || next.file_id == 0 ||
+            (!extents.empty() && next.file_id <= extents.rbegin()->second.file_id))
+            fail("journal_extent_not_contiguous");
         const auto expected_first =
             extents.empty() ? 1
                             : extents.rbegin()->second.first_sequence +
@@ -1150,7 +1154,10 @@ std::unique_ptr<JournalStore> JournalStore::open(const fs::path& directory,
     return store;
 }
 
-// On-disk charge of the published journal: every file is charged by
+// On-disk charge of the lower journal's published files. A future
+// Main-selected root must additionally charge every preserved orphan byte;
+// this function does not claim to implement that root recovery.
+// Every published file is charged by
 // `file_charge`. Sealed manifest and page logs are charged by their exact
 // published bytes plus the rounding bound per log. HEAD is charged twice:
 // its replacement is written beside it before the move.
@@ -1197,20 +1204,27 @@ void JournalStore::load_published_head() {
     // an interrupted publication only under a name the journal publishes, and
     // then it goes; any other entry fails closed. Nothing is collected.
     bool removed = false;
+    std::uint64_t max_seen_file_id = 0;
     for (const auto& entry : fs::directory_iterator(directory_)) {
         const auto name = entry.path().filename().string();
         if (!entry.is_regular_file()) fail("journal_unknown_entry");
         if (name == head_name || name == lock_name) continue;
         const std::string_view part(io::part_suffix);
         if (name.ends_with(part)) {
-            if (!is_published_name(std::string_view(name).substr(0, name.size() - part.size())))
+            const auto base = std::string_view(name).substr(0, name.size() - part.size());
+            if (!is_published_name(base))
                 fail("journal_unknown_entry");
+            max_seen_file_id = std::max(
+                max_seen_file_id, parse_ordinal(base, segment_prefix, segment_suffix));
             io::remove_file(entry.path());
             removed = true;
             continue;
         }
         if (!is_published_name(name)) fail("journal_unknown_entry");
+        max_seen_file_id = std::max(
+            max_seen_file_id, parse_ordinal(name, segment_prefix, segment_suffix));
     }
+    max_physical_segment_id_.store(max_seen_file_id, std::memory_order_relaxed);
 
     std::array<std::byte, head_bytes> head_image{};
     io::read_exact_file(directory_ / head_name, head_image, "journal_head_missing");
@@ -1276,17 +1290,24 @@ void JournalStore::load_published_head() {
     // names is not this journal's. A missing page log in the view's range
     // leaves the view unavailable until it is rebuilt from the records.
     // Then bytes past each published end are cut.
-    const auto tail_ordinal = fields.tail_segment_ordinal;
+    const auto* tail_extent = loaded->extents.tail();
+    const auto tail_file_id = tail_extent == nullptr ? 0 : tail_extent->file_id;
+    std::set<std::uint64_t, std::less<>, AllocationAdapter<std::uint64_t>> published_files(
+        std::less<>{}, memory_.allocator<std::uint64_t>());
+    loaded->extents.for_each([&](std::uint64_t, const SegmentExtent& extent) {
+        if (!published_files.emplace(extent.file_id).second)
+            fail("journal_segment_file_id_reused");
+    });
     const auto& view = fields.view_pages;
     std::uint64_t page_logs = 0;
     bool last_log_present = false;
     for (const auto& entry : fs::directory_iterator(directory_)) {
         const auto name = entry.path().filename().string();
-        if (const auto ordinal = parse_ordinal(name, segment_prefix, segment_suffix)) {
-            if (ordinal > tail_ordinal) {
+        if (const auto file_id = parse_ordinal(name, segment_prefix, segment_suffix)) {
+            if (file_id > tail_file_id) {
                 io::remove_file(entry.path());
                 removed = true;
-            } else if (loaded->extents.get_if(ordinal) == nullptr) {
+            } else if (!published_files.contains(file_id)) {
                 fail("journal_segment_unaccounted");
             }
         } else if (const auto log = parse_ordinal(name, manifest_log_prefix, manifest_log_suffix)) {
@@ -1307,9 +1328,9 @@ void JournalStore::load_published_head() {
     const auto expected_page_logs =
         view.page_log_ordinal == 0 ? 0 : view.page_log_ordinal - view.first_page_log + 1;
     if (page_logs != expected_page_logs) loaded->view_unavailable = true;
-    if (tail_ordinal != 0)
-        io::append_at_published_end(segment_path(directory_, tail_ordinal),
-                                    loaded->extents.at(tail_ordinal).byte_length, {});
+    if (tail_extent != nullptr)
+        io::append_at_published_end(segment_path(directory_, tail_extent->file_id),
+                                    tail_extent->byte_length, {});
     io::append_at_published_end(manifest_log_path(directory_, loaded->location.log_ordinal),
                                 loaded->location.offset + loaded->location.length, {});
     // The last log is cut whenever it exists, so no unpublished byte stays
@@ -1386,7 +1407,7 @@ void JournalStore::verify_extent(const PublishedSnapshot& current,
         entering = before->last_record_digest;
     }
     LedgerBytes bytes(static_cast<std::size_t>(extent.byte_length), memory_.allocator<std::byte>());
-    io::read_range(segment_path(directory_, extent.ordinal), extent.byte_length, 0, bytes,
+    io::read_range(segment_path(directory_, extent.file_id), extent.byte_length, 0, bytes,
                    "journal_published_segment_missing");
     decode_segment_range(bytes, 0, extent, extent.first_sequence, extent.record_count, entering,
                          extent.last_record_digest, nullptr);
@@ -1436,11 +1457,17 @@ StagedGeneration JournalStore::stage_from(const std::shared_ptr<const PublishedS
     if (parent.generation == std::numeric_limits<std::uint64_t>::max())
         fail("journal_generation_exhausted");
 
-    // One planned piece per segment file this generation writes to. A piece
+    // One planned piece per segment file this generation writes to. Logical
+    // ordinal follows the record chain; physical file id advances past every
+    // file seen at cold open, including an interrupted unpublished segment.
+    // A future root-selected recovery must also seal a tail with an orphan
+    // suffix before planning any new append.
+    // A piece
     // either extends the published tail (offset = its published length) or
     // starts a new file (offset 0, length starting with the header).
     struct PlannedPiece {
         std::uint64_t ordinal = 0;
+        std::uint64_t file_id = 0;
         bool new_file = false;
         std::uint64_t offset = 0;
         std::uint64_t first_sequence = 0;
@@ -1454,6 +1481,9 @@ StagedGeneration JournalStore::stage_from(const std::shared_ptr<const PublishedS
 
     const SegmentExtent* tail = current->extents.tail();
     std::uint64_t last_ordinal = tail ? tail->ordinal : 0;
+    std::uint64_t last_file_id = std::max(
+        max_physical_segment_id_.load(std::memory_order_relaxed),
+        tail ? tail->file_id : std::uint64_t{0});
     std::uint64_t new_files = 0;
     std::uint64_t record_bytes = 0;
     std::uint64_t sequence = parent.tail_sequence;
@@ -1466,12 +1496,17 @@ StagedGeneration JournalStore::stage_from(const std::shared_ptr<const PublishedS
         record_bytes += size;
         if (plan.empty() || plan.back().offset + plan.back().length + size > max_segment_bytes) {
             if (plan.empty() && tail != nullptr && tail->byte_length + size <= max_segment_bytes) {
-                plan.push_back({tail->ordinal, false, tail->byte_length, sequence + 1, 0, 0});
+                plan.push_back({tail->ordinal, tail->file_id, false, tail->byte_length,
+                                sequence + 1, 0, 0});
             } else {
                 if (last_ordinal + 1 > max_extents) fail("journal_capacity_exhausted");
+                if (last_file_id == std::numeric_limits<std::uint64_t>::max())
+                    fail("journal_segment_file_id_exhausted");
                 ++last_ordinal;
+                ++last_file_id;
                 ++new_files;
-                plan.push_back({last_ordinal, true, 0, sequence + 1, segment_header_bytes, 0});
+                plan.push_back({last_ordinal, last_file_id, true, 0, sequence + 1,
+                                segment_header_bytes, 0});
             }
         }
         plan.back().length += size;
@@ -1534,16 +1569,19 @@ StagedGeneration JournalStore::stage_from(const std::shared_ptr<const PublishedS
     auto chain = parent.tail_record_digest;
     std::size_t next_draft = 0;
     for (const auto& planned : plan) {
-        staged.pieces_.push_back(SegmentPiece{planned.ordinal, planned.new_file, planned.offset,
+        staged.pieces_.push_back(SegmentPiece{planned.ordinal, planned.file_id,
+                                              planned.new_file, planned.offset,
                                               LedgerBytes(memory_.allocator<std::byte>())});
         auto& piece = staged.pieces_.back();
         piece.bytes.reserve(static_cast<std::size_t>(planned.length));
         SegmentExtent extent = planned.new_file
-                                   ? SegmentExtent{planned.ordinal, planned.first_sequence, 0,
+                                   ? SegmentExtent{planned.ordinal, planned.file_id,
+                                                   planned.first_sequence, 0,
                                                    segment_header_bytes, zero_digest}
                                    : *tail;
         if (planned.new_file)
-            append_segment_header(piece.bytes, planned.ordinal, planned.first_sequence);
+            append_segment_header(piece.bytes, planned.ordinal, planned.file_id,
+                                  planned.first_sequence);
         for (std::uint64_t at = 0; at < planned.record_count; ++at, ++next_draft) {
             const auto offset = piece.offset + piece.bytes.size();
             Digest digest{};
@@ -1716,7 +1754,7 @@ void JournalStore::publish_locked(StagedGeneration&& staged) {
     try {
         bool new_entries = new_log;
         for (const auto& piece : local.pieces_) {
-            const auto path = segment_path(directory_, piece.ordinal);
+            const auto path = segment_path(directory_, piece.file_id);
             if (piece.new_file) {
                 io::publish_file(path, piece.bytes);
                 new_entries = true;
@@ -1752,6 +1790,10 @@ void JournalStore::publish_locked(StagedGeneration&& staged) {
     io::make_entries_durable(directory_);
     std::shared_ptr<const PublishedSnapshot> published = std::move(local.next_);
     snapshot_.store(published);  // noexcept
+    if (const auto* tail = published->extents.tail())
+        max_physical_segment_id_.store(
+            std::max(max_physical_segment_id_.load(std::memory_order_relaxed),
+                     tail->file_id), std::memory_order_relaxed);
     poisoned_.store(false);
 }
 
@@ -1851,7 +1893,7 @@ PublishedRecord JournalStore::read_in(const PublishedSnapshot& current,
         position.byte_offset < segment_header_bytes ||
         position.byte_offset > extent.byte_length - minimum_record_bytes)
         fail("journal_position_invalid");
-    const auto path = segment_path(directory_, extent.ordinal);
+    const auto path = segment_path(directory_, extent.file_id);
     std::array<std::byte, record_prefix_bytes> prefix{};
     io::read_range(path, extent.byte_length, position.byte_offset, prefix,
                    "journal_published_segment_missing");
@@ -1877,7 +1919,7 @@ void JournalStore::for_each_record_impl(
     current->extents.for_each([&](std::uint64_t ordinal, const SegmentExtent& extent) {
         LedgerBytes bytes(static_cast<std::size_t>(extent.byte_length),
                           memory_.allocator<std::byte>());
-        io::read_range(segment_path(directory_, ordinal), extent.byte_length, 0, bytes,
+        io::read_range(segment_path(directory_, extent.file_id), extent.byte_length, 0, bytes,
                        "journal_published_segment_missing");
         const std::uint64_t segment = ordinal;
         const auto forward_record = [target, visit, segment](const RecordView& record,
@@ -2179,7 +2221,7 @@ void JournalStore::rebuild_view(RebuildValidator validate) {
         current->extents.for_each([&](std::uint64_t ordinal, const SegmentExtent& extent) {
             LedgerBytes bytes(static_cast<std::size_t>(extent.byte_length),
                               memory_.allocator<std::byte>());
-            io::read_range(segment_path(directory_, ordinal), extent.byte_length, 0, bytes,
+            io::read_range(segment_path(directory_, extent.file_id), extent.byte_length, 0, bytes,
                            "journal_published_segment_missing");
             struct FirstVisitContext {
                 decltype(collect)& add;
@@ -2256,7 +2298,7 @@ void JournalStore::rebuild_view(RebuildValidator validate) {
         current->extents.for_each([&](std::uint64_t ordinal, const SegmentExtent& extent) {
             LedgerBytes bytes(static_cast<std::size_t>(extent.byte_length),
                               memory_.allocator<std::byte>());
-            io::read_range(segment_path(directory_, ordinal), extent.byte_length, 0, bytes,
+            io::read_range(segment_path(directory_, extent.file_id), extent.byte_length, 0, bytes,
                            "journal_published_segment_missing");
             struct ValidationVisitContext {
                 RebuildValidator& validate;

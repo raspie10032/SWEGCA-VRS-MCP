@@ -23,7 +23,7 @@ constexpr std::array<std::byte, 4> address_page_magic{
     std::byte{'S'}, std::byte{'W'}, std::byte{'J'}, std::byte{'A'}};
 constexpr std::array<std::byte, 4> page_log_magic{
     std::byte{'S'}, std::byte{'W'}, std::byte{'J'}, std::byte{'P'}};
-constexpr std::uint16_t format_version = 7;
+constexpr std::uint16_t format_version = 8;
 constexpr std::uint8_t leaf_page_kind = 1;
 constexpr std::uint8_t branch_page_kind = 2;
 // Fixed part of a manifest: magic, version, identity length, generation,
@@ -478,11 +478,13 @@ RecordView decode_record(ByteReader& reader) {
 }
 
 // SWEGCA: user@2026-09-22:72-79
-void append_segment_header(LedgerBytes& out, std::uint64_t ordinal, std::uint64_t first_sequence) {
+void append_segment_header(LedgerBytes& out, std::uint64_t ordinal,
+                           std::uint64_t file_id, std::uint64_t first_sequence) {
     ByteWriter writer(out);
     writer.raw(segment_magic);
     writer.u16(format_version);
     writer.u64(ordinal);
+    writer.u64(file_id);
     writer.u64(first_sequence);
 }
 
@@ -511,7 +513,8 @@ void decode_segment_range(std::span<const std::byte> bytes, std::uint64_t base_o
     if (base_offset == 0) {
         require_magic(reader, segment_magic, "journal_segment_magic_invalid");
         if (reader.u16() != format_version) fail("journal_segment_version_invalid");
-        if (reader.u64() != extent.ordinal || reader.u64() != extent.first_sequence)
+        if (reader.u64() != extent.ordinal || reader.u64() != extent.file_id ||
+            reader.u64() != extent.first_sequence)
             fail("journal_segment_header_invalid");
     } else if (base_offset < segment_header_bytes) {
         fail("journal_segment_offset_invalid");
@@ -695,6 +698,7 @@ Manifest Manifest::encode(const ManifestFields& fields, std::string_view journal
     for (std::size_t index = 0; index < extents.size(); ++index) {
         const auto extent = extents.at(index);
         writer.u64(extent.ordinal);
+        writer.u64(extent.file_id);
         writer.u64(extent.first_sequence);
         writer.u64(extent.record_count);
         writer.u64(extent.byte_length);
@@ -747,11 +751,13 @@ Manifest Manifest::decode(LedgerBytes bytes, const AllocationContext& memory) {
     for (std::uint32_t at = 0; at < extent_count; ++at) {
         SegmentExtent extent;
         extent.ordinal = reader.u64();
+        extent.file_id = reader.u64();
         extent.first_sequence = reader.u64();
         extent.record_count = reader.u64();
         extent.byte_length = reader.u64();
         extent.last_record_digest = reader.digest();
-        if (extent.ordinal == 0 || extent.first_sequence == 0 || extent.record_count == 0 ||
+        if (extent.ordinal == 0 || extent.file_id == 0 || extent.first_sequence == 0 ||
+            extent.record_count == 0 ||
             extent.byte_length > max_segment_bytes ||
             extent.record_count > (extent.byte_length - std::min<std::uint64_t>(
                                                             extent.byte_length,
@@ -760,6 +766,7 @@ Manifest Manifest::decode(LedgerBytes bytes, const AllocationContext& memory) {
             fail("journal_manifest_invalid:extent");
         if (at != 0 &&
             (extent.ordinal != add(last.ordinal, 1, "journal_manifest_invalid:ordinal") ||
+             extent.file_id <= last.file_id ||
              extent.first_sequence !=
                  add(last.first_sequence, last.record_count, "journal_manifest_invalid:sequence")))
             fail("journal_manifest_invalid:extent_order");
@@ -845,6 +852,7 @@ SegmentExtent Manifest::extent(std::size_t index) const {
         extents_offset_ + index * encoded_extent_bytes, encoded_extent_bytes));
     SegmentExtent extent;
     extent.ordinal = reader.u64();
+    extent.file_id = reader.u64();
     extent.first_sequence = reader.u64();
     extent.record_count = reader.u64();
     extent.byte_length = reader.u64();

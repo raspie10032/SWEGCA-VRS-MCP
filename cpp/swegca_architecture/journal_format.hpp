@@ -55,7 +55,7 @@ inline constexpr std::uint64_t checkpoint_interval = 4096;
 inline constexpr std::uint64_t max_recovery_bytes = 64u * 1024u * 1024u;
 static_assert(max_recovery_bytes >= max_manifest_bytes,
               "a checkpoint alone must always fit the recovery budget");
-inline constexpr std::size_t segment_header_bytes = 4 + 2 + 8 + 8;
+inline constexpr std::size_t segment_header_bytes = 4 + 2 + 8 + 8 + 8;
 inline constexpr std::size_t manifest_log_header_bytes = 4 + 2 + 8;
 inline constexpr std::size_t record_prefix_bytes = 4 + 2 + 4;
 // magic, version, length, kind, authority, reserved, sequence, 8 text lengths,
@@ -88,8 +88,10 @@ inline constexpr std::uint16_t cue_binding_record_kind = 4;
 inline constexpr std::uint16_t state_part_record_kind = 5;
 inline constexpr std::uint16_t state_root_record_kind = 6;
 inline constexpr std::uint16_t state_publication_record_kind = 7;
-// ordinal, first sequence, record count, byte length, last record digest.
-inline constexpr std::size_t encoded_extent_bytes = 4 * 8 + 32;
+// Logical ordinal, physical file id, first sequence, record count, byte
+// length and last record digest. The file id can advance independently after
+// a root-selected recovery leaves later unadopted files on disk.
+inline constexpr std::size_t encoded_extent_bytes = 5 * 8 + 32;
 // As many segments as one manifest can list (a checkpoint lists them all).
 inline constexpr std::size_t max_extents = max_manifest_bytes / encoded_extent_bytes;
 
@@ -260,13 +262,15 @@ void append_record(LedgerBytes& out, const RecordDraft& draft, std::uint64_t seq
 // published length; bytes past it are unpublished and never read.
 struct SegmentExtent {
     std::uint64_t ordinal = 0;         // contiguous from 1
+    std::uint64_t file_id = 0;         // physical segment name, never reused
     std::uint64_t first_sequence = 0;  // contiguous across segments
     std::uint64_t record_count = 0;    // nonzero
     std::uint64_t byte_length = 0;     // header + records
     Digest last_record_digest{};
 };
 
-void append_segment_header(LedgerBytes& out, std::uint64_t ordinal, std::uint64_t first_sequence);
+void append_segment_header(LedgerBytes& out, std::uint64_t ordinal,
+                           std::uint64_t file_id, std::uint64_t first_sequence);
 
 // Verifies records [first_sequence, first_sequence + record_count) held in
 // `bytes`, which start at file offset `base_offset` (0 means the bytes begin

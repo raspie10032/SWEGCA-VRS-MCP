@@ -230,6 +230,7 @@ struct ReplayAtHead {
 // length of the tail segment, or a new file starting with its header.
 struct SegmentPiece {
     std::uint64_t ordinal = 0;
+    std::uint64_t file_id = 0;
     bool new_file = false;
     std::uint64_t offset = 0;
     LedgerBytes bytes;
@@ -353,6 +354,10 @@ private:
 
 class JournalStore final {
 public:
+    // This lower-journal open still adopts its own HEAD and removes or cuts
+    // unpublished tails. It is not the Main-owned durable publication-root
+    // recovery API. Root-selected generations, orphan byte accounting, and
+    // sealed-tail append after rollback remain required before product use.
     // Opens `directory`, creating it atomically when it does not exist
     // (generation 0 is built in a sibling directory and renamed into place
     // without replacement). An existing directory must be exactly a journal;
@@ -600,6 +605,9 @@ private:
     std::unique_ptr<PageCache> cache_;  // shared by every reader; internally locked
     std::mutex publish_mutex_;
     std::atomic<std::shared_ptr<const PublishedSnapshot>> snapshot_;
+    // Cold scan includes unpublished segment names, so a later physical
+    // file id cannot collide with bytes left by a failed publication.
+    std::atomic<std::uint64_t> max_physical_segment_id_{0};
     std::atomic<bool> poisoned_{false};
     LedgerVector<RetiredLogs> retired_;  // guarded by publish_mutex_
     std::atomic<std::uint64_t> retained_bytes_{0};  // charge of retired_, not yet removed

@@ -34,7 +34,9 @@ public:
         const AllocationContext& memory, const RecoveryExtentTable& table) {
         ExtentIndex result(memory);
         for (const auto& [ordinal, extent] : table) {
-            if (ordinal != result.count_ + 1 || extent.ordinal != ordinal)
+            if (ordinal != result.count_ + 1 || extent.ordinal != ordinal ||
+                extent.file_id == 0 ||
+                (result.tail() != nullptr && extent.file_id <= result.tail()->file_id))
                 throw std::runtime_error("journal_extent_not_contiguous");
             if (result.count_ >= max_extents)
                 throw std::runtime_error("journal_capacity_exhausted");
@@ -92,6 +94,7 @@ public:
             if (const auto* old = next.get_if(extent.ordinal)) {
                 const bool same_count = extent.record_count == old->record_count;
                 if (extent.first_sequence != old->first_sequence ||
+                    extent.file_id != old->file_id ||
                     (same_count ? (extent.byte_length != old->byte_length ||
                                    extent.last_record_digest != old->last_record_digest)
                                 : (extent.record_count < old->record_count ||
@@ -110,7 +113,9 @@ public:
             const auto* prior = next.tail();
             const auto first = prior == nullptr ? 1 : add(prior->first_sequence,
                                                          prior->record_count);
-            if (extent.first_sequence != first)
+            if (extent.file_id == 0 ||
+                (prior != nullptr && extent.file_id <= prior->file_id) ||
+                extent.first_sequence != first)
                 throw std::runtime_error("journal_extent_not_contiguous");
             next.root_ = put(next.root_, 3, extent.ordinal - 1, extent, memory_);
             next.record_bytes_ = add(next.record_bytes_, extent.byte_length);
