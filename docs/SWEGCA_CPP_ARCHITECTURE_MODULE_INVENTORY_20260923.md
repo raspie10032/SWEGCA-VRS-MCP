@@ -760,6 +760,13 @@ architecture and its test-condition list have passed static review
   A candidate is still only proposed data: Main's
   receipt/state/journal checks, promotion decision authority, mutation and
   persistent codec remain open.
+- Stage 7 transaction-stage slice (claude, 2026-09-24; not Stage 7 complete):
+  `memory_transaction_stage_kernel.hpp` admits only the six agreed stages
+  and the author's forward, rollback and incomplete-recovery edges. It
+  rejects unknown values and leaves its output untouched on a refused edge.
+  The `state_committed` name alone does not prove a Main publication.
+  Main's stored-stage compare-and-swap, native journal records, publication
+  ordering, compensation and restart recovery remain open.
 - `MainStateWriter` publication: it returns an immutable successor and its
   receipt; Main's current-state replacement (synchronized with snapshot
   reads) waits for the Main experience/evidence integration. Main must build
