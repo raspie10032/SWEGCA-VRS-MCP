@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <iostream>
+#include <limits>
 #include <span>
 
 #ifdef __FAST_MATH__
@@ -155,6 +156,44 @@ int main() {
         lower != before_lower || upper != before_upper || samples != before_samples ||
         regimes != before_regimes) {
         std::cerr << "invalid batch shape changed output\n";
+        ++failures;
+    }
+
+    // Finite input values can still overflow an intermediate posterior sum.
+    auto overflow = supporting();
+    overflow.axis_support.fill(std::numeric_limits<double>::max() * 0.225);
+    auto large_prior = sa::EvidencePolicy{};
+    large_prior.prior_alpha = std::numeric_limits<double>::max() * 0.2;
+    const auto overflow_verdict =
+        sk::judge_evidence(sa::make_evidence_rules(large_prior), overflow);
+    if (overflow_verdict.status != sk::EvidenceStatus::abstain ||
+        overflow_verdict.reason != sk::EvidenceReason::invalid_input) {
+        std::cerr << "derived nonfinite posterior did not fail closed\n";
+        ++failures;
+    }
+
+    // At a zero regime threshold, the source algorithm compares the
+    // unmeasured score of zero against the threshold too.
+    auto zero_regime = sa::EvidencePolicy{};
+    zero_regime.regime_change_threshold = 0;
+    const auto zero_verdict =
+        sk::judge_evidence(sa::make_evidence_rules(zero_regime), supporting());
+    if (zero_verdict.status != sk::EvidenceStatus::abstain ||
+        zero_verdict.reason != sk::EvidenceReason::regime_change_suspected) {
+        std::cerr << "zero regime threshold differs from source decision\n";
+        ++failures;
+    }
+
+    // Aliased output columns can write into an item outside [first, last).
+    std::array<double, count + 1> aliased{};
+    aliased.fill(-1);
+    const sk::EvidenceJudgmentColumns overlapping{
+        statuses, reasons, std::span<double>(aliased).first(count),
+        std::span<double>(aliased).subspan(1), upper, samples, regimes};
+    if (sk::judge_evidence_batch(rules, input, overlapping, 0, 1) ||
+        aliased != std::array<double, count + 1>{-1, -1, -1, -1, -1,
+                                                -1, -1, -1, -1, -1}) {
+        std::cerr << "overlapping output columns were accepted or mutated\n";
         ++failures;
     }
     return failures == 0 ? 0 : 1;
