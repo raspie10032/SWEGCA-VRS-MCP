@@ -446,6 +446,36 @@ define the current lower-journal mechanism; the author's
 retraction, and `mosaic_paper_resident_assimilation.py@3bddcb7:491-535`
 supplies the Main commit ordering.
 
+### Publication-identity migration scope
+
+Replacing the two manifest state fields alone is insufficient. The current
+`StateGeneration(ordinal, digest)` crosses eighteen C++ files. The migration
+must preserve each existing freshness check while moving the ordinal out of
+content and using the exact Main-published `RecordPosition` where publication
+order matters:
+
+- `CognitiveState` computes content and currently constructs the provisional
+  ordinal. `StateSnapshot` already has the separate `PublishedStateId` slot.
+  Initial content has no publication identity until Main publishes genesis.
+- Proposals, arbitration, gate capabilities and the guarded writer currently
+  bind `based_on` or a capability to `CognitiveState::generation()`. Their
+  compare-and-swap boundary must use the Main snapshot's publication ID;
+  comparing only a content digest would admit an old occurrence after a
+  bit-exact rollback.
+- Re-evidence results and accumulator coverage currently carry or compare
+  `StateGeneration`. Their claim-relative judgment remains tied to the
+  canonical content digest, with the journal replay and the Main snapshot
+  obtained under the same selected head. No provisional ordinal may survive
+  inside an evidence digest merely because it is present in today's code.
+- `JournalStore`, `ExperienceAppend`, `ExperienceJournal`, `EvidenceAdmission`,
+  `EvidenceGate` and `MainStateWriter` currently pass or reconstruct that
+  type. Experience appends and view rewrites keep the selected state-head
+  identity unchanged; only Main's final state-publication generation may
+  advance it. An initial journal has zero content digest and no publication.
+
+This map records the work needed to uphold the existing checks; it does not
+claim the migration or a cold-recovery path has been implemented.
+
 ## Decisions before implementation
 
 - Enumerate every Main-owned state-changing transition before fixing the
