@@ -724,6 +724,17 @@ architecture and its test-condition list have passed static review
   The 08-25 Python `_proposal_digest` has no generation field because its
   `SynapseProposal` has none. Keep the C++ field for the native snapshot and
   Bind identity; do not claim byte-equivalence with the Python digest.
+- Stage 7, first slice only (claude, 2026-09-24; not Stage 7 complete):
+  `kernel::decide_memory_promotion` (`memory_promotion_kernel.hpp`) is the
+  author's five-branch decision (tinylm
+  `mosaic_memory_promotion.py`@3bddcb7:193-246, unchanged since the
+  2026-08-25 9aa5f555cf) as a pure core function. An input the author cannot
+  reach (a tier outside the five, a status/reason pair the author's
+  accumulator does not produce, `invalid_input`) returns no decision rather
+  than a new action (codex 02:31). Main-owned and still open: the
+  authenticity of the judgment, the provenance and counterfactual facts
+  behind the two flags, promotion authority bound to an exact receipt, and
+  applying the decision to the memory stores (:165-190, :249-344).
 - `MainStateWriter` publication: it returns an immutable successor and its
   receipt; Main's current-state replacement (synchronized with snapshot
   reads) waits for the Main experience/evidence integration. Main must build
