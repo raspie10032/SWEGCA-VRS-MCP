@@ -59,8 +59,8 @@ public:
 
     // A Re-evidence event key can keep two publications of identical content
     // distinct while coverage itself remains keyed by the content digest.
-    // Lineage: native mechanism — a nonzero locator prevents a mixed-zero
-    // native state head from becoming a Main-published identity.
+    // Lineage: native mechanism — exact locator ordering keeps separate
+    // publications of identical content distinct for Re-evidence keys.
     // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:199-215
     [[nodiscard]] auto operator<=>(const PublishedStateId& other) const noexcept {
         return std::tie(content_digest_, publication_.segment_ordinal,
@@ -74,7 +74,9 @@ public:
 private:
     friend class MainOwner;
 
-    // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:196-205
+    // Lineage: native mechanism — a nonzero locator prevents a mixed-zero
+    // native state head from becoming a Main-published identity.
+    // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:199-215
     PublishedStateId(Digest256 content_digest, journal::RecordPosition publication)
         : content_digest_(std::move(content_digest)), publication_(publication) {
         // Reject the manifest's mixed-zero state head before a snapshot can

@@ -111,8 +111,8 @@ void encode_bounded_write_receipt(const BoundedWriteReceipt& receipt, StateConte
 // and what the receipt keeps. The slot's type and width must equal
 // `expected` before its length is read; the slot buffer is then sized from
 // that checked length and hashed as its bytes arrive. A malformed byte or a
-// failed check throws `bounded_write_receipt_invalid:<rule>`, and the reader
-// stays failed after any throw.
+// failed check throws `bounded_write_receipt_invalid:<rule>` or the typed
+// identity's own error for invalid text. The reader stays failed after any throw.
 class BoundedWriteReceiptParser final {
 public:
     // SWEGCA: src/tinylm_slicer/mosaic_bounded_world_write.py@3bddcb7:273-306
