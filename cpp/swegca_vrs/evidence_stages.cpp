@@ -23,10 +23,12 @@ ReEvidenceRecorded ReEvidence::apply(EvidenceAccumulator& accumulator,
                                      ReEvidenceJudge judge) const {
     // One journal snapshot gives both the head and the original. Main's
     // snapshot must name that exact head before its content is judged.
-    auto at_head = journal_.replay_at_head(address);
-    if (!state.head().matches(at_head.head))
+    auto pinned = journal_.pin_records();
+    if (!state.head().matches(pinned.coordinates().state_head))
         throw std::invalid_argument("re_evidence_state_not_current");
-    const auto experience = ExperienceRecord::decode(std::move(at_head.record), memory_, journal_);
+    auto original = pinned.replay(address.value());
+    const auto experience = ExperienceRecord::decode(
+        std::move(original), memory_, journal_, std::move(pinned));
     experience.verify_parts();  // codex 16:32: fail closed before it counts
     const auto& view = experience.record();
     if (view.address != address.value())
@@ -51,12 +53,13 @@ AdmissionResult EvidenceAdmission::admit(EvidenceAccumulator& accumulator,
                                          std::uint64_t current_step) {
     detail::require_identity_text(observation.address, ExperienceAddressTag::name);
     detail::require_identity_text(observation.source_family, SourceFamilyTag::name);
-    auto at_head =
-        journal_.replay_at_head(ExperienceAddress(accumulator.memory_, observation.address));
-    if (!state.head().matches(at_head.head))
+    auto pinned = journal_.pin_records();
+    if (!state.head().matches(pinned.coordinates().state_head))
         throw std::invalid_argument("evidence_state_not_current");
+    auto original = pinned.replay(observation.address);
     const auto experience =
-        ExperienceRecord::decode(std::move(at_head.record), accumulator.memory_, journal_);
+        ExperienceRecord::decode(std::move(original), accumulator.memory_,
+                                 journal_, std::move(pinned));
     experience.verify_parts();  // codex 16:32: fail closed before it counts
     // Provenance is the experience's (COMPONENT_LEDGER.md@5901a5a:44-50), and
     // the evidence is linked to all of it: every root context (already

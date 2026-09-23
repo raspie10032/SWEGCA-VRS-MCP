@@ -251,14 +251,6 @@ private:
     Call call_;
 };
 
-// One exact original replayed within one published snapshot, with the
-// state head that snapshot's manifest names: both belong to the
-// same generation, whatever is published meanwhile.
-struct ReplayAtHead {
-    PublishedRecord record;
-    StateHeadReference head;
-};
-
 // Bytes one generation places in one segment file: appended at the published
 // length of the tail segment, or a new file starting with its header.
 struct SegmentPiece {
@@ -613,10 +605,6 @@ public:
     // not published).
     [[nodiscard]] PublishedRecord replay(const ExperienceAddress& address) const;
 
-    // Replay of one exact original together with the state generation HEAD
-    // names, both from one snapshot (codex 14:46).
-    [[nodiscard]] ReplayAtHead replay_at_head(const ExperienceAddress& address) const;
-
     // Visits every published record in sequence order over one snapshot,
     // verifying the whole record chain. No lock is held while `visit` runs.
     // Lineage: native mechanism — type-erased entry to for_each_record_impl, which verifies the chain.
@@ -780,6 +768,9 @@ public:
     [[nodiscard]] std::optional<RecordPosition> resolve(std::string_view address) const;
     // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:569-570
     [[nodiscard]] PublishedRecord read_at(const RecordPosition& position) const;
+    // Exact-address Replay in the same pinned generation as coordinates().
+    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:569-570
+    [[nodiscard]] PublishedRecord replay(std::string_view address) const;
     // The root and head used for Main's marker check come from this same
     // pinned generation as every record resolved and read through this lease.
     // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:587-590

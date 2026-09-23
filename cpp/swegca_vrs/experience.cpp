@@ -868,6 +868,21 @@ journal::PublishedRecord replay_part(const journal::JournalStore& journal, const
     return part;
 }
 
+// The evidence path reads every part from the same generation as its original
+// and state head. The part's address, kind, digest and length are still checked.
+// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:569-570
+journal::PublishedRecord replay_part(const journal::JournalReadSnapshot& pinned,
+                                     const DigestBytes& digest, std::uint64_t expected) {
+    const auto address = part_address_of(digest);
+    auto part = pinned.replay(view_of(address));
+    const auto& view = part.view();
+    if (view.kind != experience_part_kind || view.authority || !view.claim.empty() ||
+        view.index_count != 0 || view.payload_digest != digest ||
+        view.payload.size() != expected)
+        fail("experience_part_invalid");
+    return part;
+}
+
 // The length of part `place` of `level` in a parted blob of `size` bytes: a
 // full part, or what is left for the last one of its level.
 // Lineage: native mechanism — the length each part must have from its place in the tree, so a part of any other size fails.
@@ -889,8 +904,10 @@ std::uint64_t part_length(const PartLevels& levels, std::uint64_t size, std::uin
 class BlobCursor final {
 public:
     // SWEGCA: user@2026-09-22:91-92
-    BlobCursor(const journal::JournalStore& journal, const AllocationContext& memory, const ExperienceBlob& blob)
-        : journal_(&journal), memory_(memory), blob_(blob), levels_(part_levels(blob.size)) {
+    BlobCursor(const journal::JournalStore& journal, const AllocationContext& memory,
+               const ExperienceBlob& blob, const journal::JournalReadSnapshot* pinned = nullptr)
+        : journal_(&journal), pinned_(pinned), memory_(memory), blob_(blob),
+          levels_(part_levels(blob.size)) {
         if (!blob.parted()) {
             chunk_ = blob.inline_bytes;
             return;
@@ -983,8 +1000,9 @@ private:
         while (true) {
             auto& list = lists_[level];
             const auto digest = digest_at(list.list, list.at++);
-            auto part = replay_part(*journal_, memory_, digest,
-                                    part_length(levels_, blob_.size, level, placed_[level]++));
+            const auto expected = part_length(levels_, blob_.size, level, placed_[level]++);
+            auto part = pinned_ ? replay_part(*pinned_, digest, expected)
+                                : replay_part(*journal_, memory_, digest, expected);
             if (level == 0) {
                 leaf_.reset();
                 leaf_.emplace(std::move(part));
@@ -1001,6 +1019,7 @@ private:
     }
 
     const journal::JournalStore* journal_;
+    const journal::JournalReadSnapshot* pinned_;
     AllocationContext memory_;
     ExperienceBlob blob_;
     PartLevels levels_;
@@ -1512,9 +1531,11 @@ CueTokens::CueTokens(const AllocationContext& memory, std::string_view source)
 // Lineage: weak analogy — the author's artifact holds its root, path, byte count and time; here a replayed journal record with its decoded lineage, resources and index.
 // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:35-39
 ExperienceRecord::ExperienceRecord(journal::PublishedRecord record, const AllocationContext& memory,
-                                   const journal::JournalStore& journal, LedgerVector<std::string_view> derived,
+                                   const journal::JournalStore& journal,
+                                   std::optional<journal::JournalReadSnapshot> pinned,
+                                   LedgerVector<std::string_view> derived,
                                    LedgerVector<std::string_view> resources, LedgerVector<std::string_view> index)
-    : record_(std::move(record)), journal_(&journal), memory_(memory),
+    : record_(std::move(record)), journal_(&journal), pinned_(std::move(pinned)), memory_(memory),
       derived_from_(std::move(derived)), resources_(std::move(resources)), index_(std::move(index)),
       listed_(memory.allocator<std::string_view>()), section_texts_(memory.allocator<std::string_view>()),
       steps_(memory.allocator<StepView>()), observed_(memory.allocator<ResourceView>()) {}
@@ -1525,7 +1546,8 @@ ExperienceRecord::ExperienceRecord(journal::PublishedRecord record, const Alloca
 // Lineage: native mechanism — moving a record keeps every view into its buffers valid.
 // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:50
 ExperienceRecord::ExperienceRecord(ExperienceRecord&& other) noexcept : record_(std::move(other.record_)),
-      journal_(other.journal_), memory_(other.memory_), observed_at_(other.observed_at_), context_(other.context_),
+      journal_(other.journal_), pinned_(std::move(other.pinned_)), memory_(other.memory_),
+      observed_at_(other.observed_at_), context_(other.context_),
       uncertainty_(other.uncertainty_), contradiction_(other.contradiction_), span_(other.span_),
       derived_from_(std::move(other.derived_from_)), name_space_(std::exchange(other.name_space_, std::nullopt)),
       resources_(std::move(other.resources_)), index_(std::move(other.index_)), raw_(std::exchange(other.raw_, {})),
@@ -1533,6 +1555,7 @@ ExperienceRecord::ExperienceRecord(ExperienceRecord&& other) noexcept : record_(
       contexts_(std::exchange(other.contexts_, {})), listed_(std::move(other.listed_)),
       has_section_(std::exchange(other.has_section_, false)), section_(std::exchange(other.section_, {})),
       section_texts_(std::move(other.section_texts_)), episode_(std::exchange(other.episode_, std::nullopt)),
+      // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:50
       steps_(std::move(other.steps_)), observed_(std::move(other.observed_)) {}
 
 // Checks the kind, the envelope byte for byte, that the address is the
@@ -1545,8 +1568,13 @@ ExperienceRecord::ExperienceRecord(ExperienceRecord&& other) noexcept : record_(
 // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:41-47
 ExperienceRecord ExperienceRecord::decode(journal::PublishedRecord published,
                                           const AllocationContext& memory,
-                                          const journal::JournalStore& journal) {
+                                          const journal::JournalStore& journal,
+                                          std::optional<journal::JournalReadSnapshot> pinned) {
     const auto& view = published.view();
+    if (pinned) {
+        const auto at = pinned->resolve(view.address);
+        if (!at || *at != published.position()) fail("experience_pinned_record_mismatch");
+    }
     if (view.kind != original_experience_kind && view.kind != derived_experience_kind)
         fail("experience_kind_invalid");
     // An experience documents; it carries no authority and judges no claim.
@@ -1734,8 +1762,8 @@ ExperienceRecord ExperienceRecord::decode(journal::PublishedRecord published,
     }
     if (next != expected.size()) fail("experience_index_incomplete");
 
-    ExperienceRecord out(std::move(published), memory, journal, std::move(derived), std::move(resources),
-                         std::move(index));
+    ExperienceRecord out(std::move(published), memory, journal, std::move(pinned),
+                         std::move(derived), std::move(resources), std::move(index));
     out.observed_at_ = observed_at;
     if (has_context == 1) out.context_.emplace(context);
     out.uncertainty_ = uncertainty;
@@ -1802,7 +1830,7 @@ void ExperienceRecord::for_each_chunk(const ExperienceBlob& blob, ChunkVisitor v
         (void)visit(blob.inline_bytes);
         return;
     }
-    BlobCursor in(*journal_, memory_, blob);
+    BlobCursor in(*journal_, memory_, blob, pinned_ ? &*pinned_ : nullptr);
     while (in.remaining() != 0)
         if (!visit(in.next(in.remaining()))) return;
     in.finish();
@@ -1860,7 +1888,7 @@ void ExperienceRecord::verify_parts() const {
     if (!has_section_) return;
     // The section, read and checked whole; each resource's parted bytes read
     // to their end, a text resource's as strict UTF-8 of its code point count.
-    BlobCursor in(*journal_, memory_, section_);
+    BlobCursor in(*journal_, memory_, section_, pinned_ ? &*pinned_ : nullptr);
     (void)read_section(in, resources_, listed_, memory_, [this, &whole](const SectionEvent& event) {
         if (event.part != SectionPart::resource_bytes || !event.parted) return true;
         const ExperienceBlob bytes{event.size, *event.content_digest, part_levels(event.size).depth, {}, event.piece};
@@ -1882,7 +1910,7 @@ void ExperienceRecord::verify_parts() const {
 // SWEGCA: src/tinylm_slicer/mosaic_memory_activation.py@3bddcb7:63-106
 void ExperienceRecord::for_each_section(SectionVisitor visit) const {
     if (!has_section_) return;
-    BlobCursor in(*journal_, memory_, section_);
+    BlobCursor in(*journal_, memory_, section_, pinned_ ? &*pinned_ : nullptr);
     (void)read_section(in, resources_, listed_, memory_, visit);
 }
 
@@ -1901,7 +1929,7 @@ void ExperienceRecord::for_each_resource_chunk(std::size_t resource, ChunkVisito
     bool found = false;
     bool received = false;
     bool done = false;
-    BlobCursor in(*journal_, memory_, section_);
+    BlobCursor in(*journal_, memory_, section_, pinned_ ? &*pinned_ : nullptr);
     (void)read_section(in, resources_, listed_, memory_, [&](const SectionEvent& event) {
         if (done) return false;
         if (event.part != SectionPart::resource && event.part != SectionPart::storage_locator &&

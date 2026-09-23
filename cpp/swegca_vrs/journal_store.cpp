@@ -1796,6 +1796,18 @@ PublishedRecord JournalReadSnapshot::read_at(const RecordPosition& position) con
     return store_->read_in(*pinned_, position);
 }
 
+// Lineage: native mechanism — an address and its record are read from one pinned view.
+// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:569-570
+PublishedRecord JournalReadSnapshot::replay(std::string_view address) const {
+    if (!pinned_) fail("journal_read_snapshot_invalid");
+    store_->require_usable();
+    const auto position = store_->resolve_in(*pinned_, address);
+    if (!position) fail("journal_address_unknown");
+    auto record = store_->read_in(*pinned_, *position);
+    if (record.view().address != address) fail("journal_address_view_mismatch");
+    return record;
+}
+
 // Lineage: native mechanism — Main's marker check and cold reads share one generation.
 // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:587-590
 PublishedCoordinates JournalReadSnapshot::coordinates() const {
@@ -2302,17 +2314,6 @@ PublishedRecord JournalStore::replay(const ExperienceAddress& address) const {
     require_usable();
     const auto current = snapshot();
     return replay_in(*current, address);
-}
-
-// Rule, weak source: Replay is bound to the state generation of the same
-// snapshot. The user's lines bind evidence to a state hash, not Replay.
-// Lineage: weak analogy — the author binds an evidence revision to a state hash; here Replay to its snapshot.
-// SWEGCA: src/swegca/mosaic_evidence_revision.py@5901a5a:29-43
-ReplayAtHead JournalStore::replay_at_head(const ExperienceAddress& address) const {
-    require_usable();
-    const auto current = snapshot();
-    const auto& fields = current->head.fields();
-    return ReplayAtHead{replay_in(*current, address), state_head_of(fields)};
 }
 
 // Rule (Replay): an unknown address, or a view naming another address, fails.

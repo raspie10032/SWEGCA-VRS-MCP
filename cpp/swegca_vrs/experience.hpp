@@ -432,16 +432,20 @@ using SectionVisitor = ExperienceVisitor<const SectionEvent&>;
 // the experience fields decoded from its payload. Every text and span it
 // hands out views the record's bytes and is valid while this object lives.
 // A parted blob is read part by part from the journal it was decoded with,
-// which must outlive this object.
+// which must outlive this object. Evidence decoding also retains its pinned
+// journal generation so the original, state head and every part agree.
 class ExperienceRecord final {
 public:
     // Requires an experience kind without authority or claim, a well-formed
     // payload, an address that is the digest of the record's identity, and
     // index entries that are exactly the automatic ones.
     // Its lists are kept on `memory`; parts are replayed from `journal`.
+    // When `pinned` is supplied, the exact record position must be present
+    // there and every later part read stays in that same generation.
     [[nodiscard]] static ExperienceRecord decode(journal::PublishedRecord record,
                                                  const AllocationContext& memory,
-                                                 const journal::JournalStore& journal);
+                                                 const journal::JournalStore& journal,
+                                                 std::optional<journal::JournalReadSnapshot> pinned = std::nullopt);
 
     // The source keeps nothing that views the bytes it gave away (like
     // PublishedRecord).
@@ -569,7 +573,9 @@ public:
 
 private:
     ExperienceRecord(journal::PublishedRecord record, const AllocationContext& memory,
-                     const journal::JournalStore& journal, journal::LedgerVector<std::string_view> derived,
+                     const journal::JournalStore& journal,
+                     std::optional<journal::JournalReadSnapshot> pinned,
+                     journal::LedgerVector<std::string_view> derived,
                      journal::LedgerVector<std::string_view> resources,
                      journal::LedgerVector<std::string_view> index);
     void for_each_chunk(const ExperienceBlob& blob, ChunkVisitor visit) const;
@@ -577,6 +583,7 @@ private:
 
     journal::PublishedRecord record_;
     const journal::JournalStore* journal_;
+    std::optional<journal::JournalReadSnapshot> pinned_;
     AllocationContext memory_;
     std::uint64_t observed_at_ = 0;
     std::optional<Digest256> context_;
