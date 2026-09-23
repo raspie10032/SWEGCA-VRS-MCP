@@ -27,11 +27,11 @@ crash cases before code uses it.
   64 MiB. An initial state may exceed both limits. The experience module
   already streams large blobs through content-addressed 8 MiB parts and a
   bounded-depth digest tree.
-- `JournalStore::stage_from` still copies the full published segment extent
-  map for every generation, so preparation remains proportional to segment
-  count even for one small state part. The extra full storage recount was
-  replaced with checked deltas for changed extents, manifest bytes, and view
-  pages; HEAD publication serialization does not require the map copy.
+- `JournalStore::stage_from` now shares unchanged immutable extent-index
+  paths and copies only changed paths when staging a generation. Its storage
+  charge uses checked deltas for changed extents, manifest bytes, and view
+  pages. Checkpoint manifest encoding still enumerates every extent by design;
+  ordinary staging no longer copies the full extent map.
 - The earlier C++ `CognitiveTensor` owned one contiguous byte vector.
   Candidate `462a6f7` replaces it with immutable shared chunks, but the
   writer and large-state startup paths are not connected yet. A disk part
@@ -278,9 +278,10 @@ four-stage VRS path is already implemented.
   zero state digest, including what initial input may be accepted.
 - Verify that all tensor readers and digest users can read a chunked
   canonical stream without constructing a full contiguous copy.
-- Replace the whole-tensor startup input for the large-state route with a
-  bounded stream, so its producer and Main never require simultaneous full
-  copies. Use the same canonical validation as the small input route.
+- Connect the existing bounded `TensorByteReader` startup input to cold
+  journal recovery and confirm that its producer can stream without keeping
+  a second full tensor copy. Keep the same canonical validation as the span
+  input route.
 - List crash points around part publication, final HEAD publication, and
   Main pointer swap; assert the published state is always recoverable.
 - Decide how to reclaim published parts that no state root uses. The
