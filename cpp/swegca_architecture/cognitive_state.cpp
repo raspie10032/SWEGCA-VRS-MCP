@@ -12,8 +12,10 @@
 namespace swegca::architecture {
 namespace {
 
-// Canonical state fields use fixed order, little-endian integers and explicit
-// lengths. The domain tag separates this digest from every other SWEGCA hash.
+// Canonical state content uses fixed order, little-endian integers and
+// explicit lengths. The provisional generation ordinal is outside this
+// content digest; rollback restores the before-content hash.
+// The domain tag separates this digest from every other SWEGCA hash.
 // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3f:567-572
 void hash_u8(Sha256& hash, std::uint8_t value) {
     const std::array bytes{static_cast<std::byte>(value)};
@@ -49,7 +51,10 @@ void hash_tensor(Sha256& hash, std::uint8_t partition,
     hash_u64(hash, tensor.shape().batches);
     hash_u64(hash, tensor.shape().slots);
     hash_u64(hash, tensor.shape().width);
-    hash_bytes(hash, tensor.bytes());
+    hash_u64(hash, tensor.byte_count());
+    tensor.for_each_chunk([&hash](std::span<const std::byte> chunk) {
+        hash.update(chunk);
+    });
 }
 
 // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:83-93
@@ -64,17 +69,16 @@ EvidenceReferences canonical_evidence(EvidenceReferences addresses) {
     return addresses;
 }
 
-// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3f:567-572
+// SWEGCA: src/swegca/mosaic_bounded_world_write.py@5901a5a:262-283
 Digest256 state_digest(
-    const OwnerId& owner, std::uint64_t ordinal, const RoleRegistry& roles,
+    const OwnerId& owner, const RoleRegistry& roles,
     const CognitiveTensor& semantic, const CognitiveTensor& executive,
     const CognitiveTensor& scratch, const StructuredWorldGraph& graph,
     std::span<const ExperienceAddress> evidence, const GoalState& goals,
     const ValueState& values, const SelfState& self) {
     Sha256 hash;
-    hash.update("swegca.cognitive_state.v1");
+    hash.update("swegca.cognitive_state.content.v2");
     hash_text(hash, owner.value());
-    hash_u64(hash, ordinal);
 
     hash_u64(hash, roles.size());
     for (const auto& role : roles.definitions()) {
@@ -106,6 +110,17 @@ Digest256 state_digest(
     hash_bytes(hash, goals.payload().bytes());
     hash_bytes(hash, values.payload().bytes());
     hash_bytes(hash, self.payload().bytes());
+    hash_u8(hash, self.write_head().has_value() ? 1 : 0);
+    if (self.write_head()) {
+        const auto& write = *self.write_head();
+        hash_text(hash, write.policy_version.value());
+        hash.update(write.receipt_id.bytes());
+        hash_u64(hash, write.revision);
+        hash_text(hash, write.target_role.value());
+        hash_u64(hash, write.evidence_references.size());
+        for (const auto& address : write.evidence_references)
+            hash_text(hash, address.value());
+    }
     return Digest256(hash.finish());
 }
 
@@ -232,9 +247,11 @@ StateGeneration CognitiveState::validated_generation(
             scratch_.shape().slots}))
             throw std::invalid_argument("initial_role_registry_shape_mismatch");
     } else {
-        if (semantic_.scalar_type() != prior->semantic_.scalar_type() ||
-            semantic_.shape().width != prior->semantic_.shape().width)
-            throw std::invalid_argument("successor_tensor_format_changed");
+        // A guarded write may promote all three partitions; an exact rollback
+        // may restore their earlier dtype. The writer checks the operation's
+        // dtype rule, while validate() checks their common successor dtype.
+        if (semantic_.shape().width != prior->semantic_.shape().width)
+            throw std::invalid_argument("successor_tensor_width_changed");
         if (semantic_.shape().slots < prior->semantic_.shape().slots ||
             executive_.shape().slots < prior->executive_.shape().slots ||
             scratch_.shape().slots < prior->scratch_.shape().slots)
@@ -247,7 +264,7 @@ StateGeneration CognitiveState::validated_generation(
     }
     const auto ordinal = prior == nullptr ? 0 : next_ordinal(*prior);
     return StateGeneration(ordinal, state_digest(
-        owner_, ordinal, roles_, semantic_, executive_, scratch_, world_graph_,
+        owner_, roles_, semantic_, executive_, scratch_, world_graph_,
         evidence_references_, goals_, values_, self_));
 }
 
@@ -293,6 +310,15 @@ void CognitiveState::validate() const {
     account(goals_.payload().bytes().size());
     account(values_.payload().bytes().size());
     account(self_.payload().bytes().size());
+    if (self_.write_head()) {
+        const auto& write = *self_.write_head();
+        if (write.revision == 0)
+            throw std::invalid_argument("bounded_write_revision_invalid");
+        account(write.policy_version.value().size());
+        account(write.target_role.value().size());
+        for (const auto& address : write.evidence_references)
+            account(address.value().size());
+    }
 
     for (const auto& definition : roles_.definitions()) {
         std::uint64_t capacity = 0;

@@ -8,6 +8,8 @@
 #include "swegca_architecture/gate_rules.hpp"
 #include "swegca_architecture/allocation.hpp"
 #include "swegca_architecture/strong_types.hpp"
+#include "swegca_architecture/proposal.hpp"
+#include "swegca_architecture/proposal_arbiter.hpp"
 
 #include <cstdint>
 #include <optional>
@@ -30,30 +32,19 @@
 //   :155-162 Nonempty and Bind (E001/E002);
 //   :135     decisions and registered accumulator state are process-local
 //            authority; a forged object with matching fields is not one.
-// The gate reads no journal: Replay and Re-evidence happened before it, in
-// Main (order @30b73e7:24-29), and the gate judges their recorded metadata.
+// Bind replays admitted records from Main journal; authorization consumes
+// the bound evidence metadata after Replay and Re-evidence.
 namespace swegca::architecture {
 
-// What the producer proposes, as borrowed input: the claim revision it
-// relies on, the evidence it names, the role it targets and the state
-// generation it was made against. Nothing in it is trusted; it is bound.
-struct VerificationProposal {
-    std::string_view claim;
-    std::uint64_t claim_revision = 0;
-    std::span<const std::string_view> addresses;
-    std::string_view target;
-    StateGeneration based_on;
-};
-
-// What only Main decides. Main evaluates the delta and mask from the actual
-// tensors it would commit (not from the producer's description) and its own
+// What only Main decides. Main hashes the proposal's actual delta tensors and
+// target mask (not the producer's description) before arbitration, and its own
 // evaluators decide the conditions the gate cannot compute itself. The gate
 // computes the rest (issuing accumulator and its revision, evidence
 // currentness, generation, target, registry, binding) and never takes them
 // from the caller.
 struct MainGateEvaluation {
-    Digest256 delta_digest;  // canonical digest of the actual delta tensor
-    Digest256 mask_digest;   // canonical digest of the actual role mask
+    Digest256 delta_digest;  // canonical digest of the bound proposal tensors
+    Digest256 mask_digest;   // canonical digest of the bound target mask
     bool runtime_context_safe = false;
     bool definitions_complete = false;
     bool counterfactual_support = false;
@@ -71,6 +62,9 @@ enum GateShellFailure : std::uint32_t {
     gate_rules_not_main = 1u << 21,           // :135, decided under an unregistered policy
     gate_target_not_verification = 1u << 22,  // :152, target is not the scratch verification role
     gate_generation_stale = 1u << 23,         // :142,150, proposal not made against the current state
+    gate_bound_mismatch = 1u << 24,
+    gate_preview_mismatch = 1u << 25,
+    gate_journal_stale = 1u << 26,
 };
 
 struct GateOutcome {
@@ -85,9 +79,34 @@ struct GateOutcome {
 // from what it is about to commit and the ledger compares.
 [[nodiscard]] Digest256 verification_commit_operation(const Digest256& decision_digest,
                                                       const Digest256& binding,
+                                                      const Digest256& bound_receipt,
+                                                      const Digest256& preview_receipt,
                                                       std::string_view target,
                                                       const Digest256& registry_digest,
                                                       const StateGeneration& generation);
+
+class ExperienceJournal;
+
+enum BindFailure : std::uint32_t {
+    bind_foreign_decision = 1u << 0,
+    bind_foreign_policy = 1u << 1,
+    bind_wrong_claim = 1u << 2,
+    bind_stale_evidence = 1u << 3,
+    bind_decision_not_accepted = 1u << 4,
+    bind_stale_state = 1u << 5,
+    bind_empty_targets = 1u << 6,
+    bind_empty_evidence = 1u << 7,
+    bind_evidence_set_mismatch = 1u << 8,
+    bind_delta_or_mask_mismatch = 1u << 9,
+    bind_noncanonical_address = 1u << 10,
+    bind_record_changed = 1u << 11,
+};
+
+struct BindOutcome final {
+    std::uint32_t failures = 0;
+    Digest256 receipt{Digest256::Bytes{}};
+    std::optional<BoundProposal> bound;
+};
 
 class EvidenceGate final {
 public:
@@ -96,6 +115,13 @@ public:
     EvidenceGate(EvidenceGate&&) = delete;
     EvidenceGate& operator=(EvidenceGate&&) = delete;
     ~EvidenceGate() = default;
+
+    // Replays admitted citations and binds a producer proposal to Main evidence.
+    [[nodiscard]] BindOutcome bind(const EvidenceDecision& decision,
+                                   const EvidenceAccumulator& accumulator,
+                                   SynapseProposal proposal,
+                                   const CognitiveState& state,
+                                   std::uint64_t current_step) const;
 
     // Judges `proposal` against `decision` for the current `state` and issues
     // commit authority only when every condition holds. A failed condition is
@@ -107,7 +133,8 @@ public:
     // conflicting result on it). Metadata only; O(log n).
     [[nodiscard]] GateOutcome authorize(const EvidenceDecision& decision,
                                         const EvidenceAccumulator& accumulator,
-                                        const VerificationProposal& proposal,
+                                        const BoundProposal& bound,
+                                        const ArbitrationResult& preview,
                                         const MainGateEvaluation& evaluation,
                                         const CognitiveState& state,
                                         std::uint64_t current_step) const;
@@ -115,9 +142,11 @@ public:
 private:
     friend class MainOwner;
 
-    EvidenceGate(MainAuthorityLedger& ledger, const AllocationContext& memory,
+    EvidenceGate(const ExperienceJournal& journal, MainAuthorityLedger& ledger,
+                 const AllocationContext& memory,
                  const GatePolicy& gate_policy, const EvidencePolicy& evidence_policy);
 
+    const ExperienceJournal& journal_;
     MainAuthorityLedger& ledger_;
     AllocationContext memory_;  // Main's allocation context for binding scratch
     kernel::GateRules rules_;

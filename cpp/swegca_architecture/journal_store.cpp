@@ -1399,7 +1399,7 @@ StagedGeneration JournalStore::stage(std::span<const RecordDraft> drafts,
                                      std::span<const ViewGeneration> views) const {
     for (const auto& draft : drafts)
         if (draft.kind == original_experience_record_kind || draft.kind == derived_experience_record_kind ||
-            draft.kind == experience_part_record_kind)
+            draft.kind == experience_part_record_kind || draft.kind == cue_binding_record_kind)
             fail("journal_experience_kind_reserved");
     return stage_records(drafts, state, views);
 }

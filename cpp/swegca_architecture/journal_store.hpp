@@ -3,6 +3,7 @@
 #include "swegca_architecture/journal_file_io.hpp"
 #include "swegca_architecture/journal_format.hpp"
 #include "swegca_architecture/journal_position.hpp"
+#include "swegca_architecture/authority_roles.hpp"
 #include "swegca_architecture/allocation.hpp"
 #include "swegca_architecture/strong_types.hpp"
 
@@ -231,6 +232,19 @@ private:
     Call call_;
 };
 
+// Only ExperienceAppend can form this key. It permits staging verified
+// experience kinds without granting the publication methods to that class.
+class ExperienceStageKey final {
+public:
+    ExperienceStageKey(const ExperienceStageKey&) = delete;
+    ExperienceStageKey& operator=(const ExperienceStageKey&) = delete;
+    ~ExperienceStageKey() = default;
+
+private:
+    ExperienceStageKey() = default;
+    friend class swegca::architecture::ExperienceAppend;
+};
+
 class JournalStore final {
 public:
     // Opens `directory`, creating it atomically when it does not exist
@@ -291,7 +305,7 @@ public:
     // with the view pages, before anything is written. Fails with
     // `journal_generation_too_large`, `journal_address_duplicate`,
     // `journal_storage_budget_exhausted`, or the host's allocation refusal.
-    // Records of the experience kinds (original, derived, part) are staged
+    // Records of the memory/cue kinds (original, derived, part, cue binding) are staged
     // only through ExperienceJournal, which derives a derived record's root
     // sources and contexts from its published lineage; here they fail
     // `journal_experience_kind_reserved`, so no record's provenance is
@@ -300,13 +314,31 @@ public:
                                          const StateGeneration& state,
                                          std::span<const ViewGeneration> views) const;
 
+    // The experience appender may stage its reserved record kinds but cannot
+    // publish or rewrite HEAD. Only MainOwner can perform those mutations.
+    // SWEGCA: docs/SWEGCA_CPP_MAIN_STATE_STORAGE_REVIEW.md@7c4d419:108-110
+    [[nodiscard]] StagedGeneration stage_experience_records(
+        const ExperienceStageKey&, std::span<const RecordDraft> drafts,
+        const StateGeneration& state, std::span<const ViewGeneration> views) const {
+        for (const auto& draft : drafts)
+            if (draft.kind != original_experience_record_kind &&
+                draft.kind != derived_experience_record_kind &&
+                draft.kind != experience_part_record_kind &&
+                draft.kind != cue_binding_record_kind)
+                throw std::invalid_argument("journal_memory_kind_required");
+        return stage_records(drafts, state, views);
+    }
+
     // Publishes `staged` only if the head is still its parent. Order: segment
     // bytes and view pages (appends flushed, new files published), manifest
     // log bytes, entries made durable, then HEAD published by an atomic move,
     // entries made durable, and a noexcept snapshot swap. Nothing is
     // allocated here from the data; any I/O failure poisons the store, which
     // must then be reopened, and reopening removes unpublished leftovers.
+private:
     void publish(StagedGeneration&& staged);
+
+public:
 
     // The published generation readers see now.
     [[nodiscard]] PublishedUniverse universe() const;
@@ -358,6 +390,7 @@ public:
     // logs stay, charged, until no snapshot holds their
     // lease; the next publication removes them, and a reopen removes any
     // left. A failure before HEAD removes the new logs and publishes nothing.
+private:
     void compact_view();
 
     // Rebuilds both views from the records alone, never reading the old
@@ -380,9 +413,9 @@ public:
     // failed for storage while `storage_charged` still includes them.
     void reclaim_retired();
 
-private:
-    friend class swegca::architecture::ExperienceAppend;
-    // `stage` without the kind rule: ExperienceAppend's only.
+    friend class swegca::architecture::MainOwner;
+    // `stage` without the kind rule: reachable outside JournalStore only
+    // through stage_experience_records with ExperienceStageKey.
     [[nodiscard]] StagedGeneration stage_records(std::span<const RecordDraft> drafts,
                                                  const StateGeneration& state,
                                                  std::span<const ViewGeneration> views) const;
@@ -443,3 +476,7 @@ private:
 };
 
 }  // namespace swegca::architecture::journal
+
+// Complete the stage key's friend in every translation unit that sees it. A
+// forward declaration alone permits a caller to define a substitute friend.
+#include "swegca_architecture/experience.hpp"

@@ -5,7 +5,9 @@
 #include <compare>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <span>
+#include <utility>
 #include <vector>
 
 namespace swegca::architecture {
@@ -30,7 +32,9 @@ struct TensorShape3 final {
 };
 
 // Owned canonical storage for a fixed-rank [batch, slot, width] tensor. Bytes
-// are always little-endian and expose no mutable view.
+// are always little-endian and expose no mutable view. Immutable bounded
+// chunks can be shared by successive states; a verification-slot update
+// copies only chunks intersecting that slot.
 // Rule: native tensor value, reconstruction board@7c0b62f:243-251.
 class CognitiveTensor final {
 public:
@@ -53,22 +57,43 @@ public:
     [[nodiscard]] std::uint64_t element_count() const noexcept;
     // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:243-251
     [[nodiscard]] std::uint64_t byte_count() const noexcept {
-        return canonical_bytes_.size();
-    }
-    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:243-251
-    [[nodiscard]] std::span<const std::byte> bytes() const noexcept {
-        return canonical_bytes_;
+        return byte_count_;
     }
 
-    auto operator<=>(const CognitiveTensor&) const = default;
+    // Visits the canonical byte stream in order without materializing a
+    // second full tensor. Each span remains valid while this tensor lives.
+    template <class Visit>
+    void for_each_chunk(Visit&& visit) const {
+        for (const auto& chunk : chunks_) visit(std::span<const std::byte>(chunk->bytes));
+    }
+    void copy_bytes(std::uint64_t offset, std::span<std::byte> destination) const;
+
+    // Batch-one persistent-state operation. The value has one full slot's
+    // canonical bytes; it is validated and normalized by the same rules as
+    // construction. Other chunks are shared without mutation.
+    [[nodiscard]] CognitiveTensor with_replaced_slot(
+        const AllocationContext& account, std::uint64_t slot,
+        std::span<const std::byte> value) const;
+
+    [[nodiscard]] bool operator==(const CognitiveTensor& other) const noexcept;
+    [[nodiscard]] std::strong_ordering operator<=>(const CognitiveTensor& other) const noexcept;
 
 private:
     using Storage = std::vector<std::byte, AllocationAdapter<std::byte>>;
-    CognitiveTensor(ScalarType scalar_type, TensorShape3 shape, Storage bytes);
+    struct Chunk final {
+        Storage bytes;
+        Chunk(Storage value, ScalarType type);
+    };
+    using ChunkPtr = std::shared_ptr<const Chunk>;
+    using Chunks = std::vector<ChunkPtr, AllocationAdapter<ChunkPtr>>;
+    static constexpr std::size_t chunk_bytes = 8u * 1024u * 1024u;
+    CognitiveTensor(ScalarType scalar_type, TensorShape3 shape,
+                    std::uint64_t byte_count, Chunks chunks) noexcept;
 
     ScalarType scalar_type_;
     TensorShape3 shape_;
-    Storage canonical_bytes_;
+    std::uint64_t byte_count_;
+    Chunks chunks_;
 };
 
 [[nodiscard]] std::size_t scalar_width(ScalarType scalar_type);

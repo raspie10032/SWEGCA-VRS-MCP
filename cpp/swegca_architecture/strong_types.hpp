@@ -62,6 +62,9 @@ struct RelationKindTag { static constexpr std::string_view name = "relation_kind
 struct TransactionIdTag {
     static constexpr std::string_view name = "transaction_id";
 };
+struct PolicyVersionTag {
+    static constexpr std::string_view name = "policy_version";
+};
 
 using OwnerId = TextIdentity<OwnerIdTag>;
 using ProducerId = TextIdentity<ProducerIdTag>;
@@ -73,6 +76,7 @@ using EntityKind = TextIdentity<EntityKindTag>;
 using RelationId = TextIdentity<RelationIdTag>;
 using RelationKind = TextIdentity<RelationKindTag>;
 using TransactionId = TextIdentity<TransactionIdTag>;
+using PolicyVersion = TextIdentity<PolicyVersionTag>;
 
 class Digest256 final {
 public:
@@ -99,6 +103,9 @@ private:
 
 class StateGeneration final {
 public:
+    // The ordinal names a successor; the digest names canonical state
+    // content. Bit-exact rollback may restore an earlier digest at a new
+    // ordinal (mosaic_bounded_world_write.py@5901a5a:262-283,424-442).
     // Rule: one current Main-owned state, ARCHITECTURE_SPEC.md@5901a5a:103-109.
     // SWEGCA: src/swegca/mosaic_bounded_world_write.py@5901a5a:175-188
     StateGeneration(std::uint64_t ordinal, Digest256 digest);

@@ -1223,7 +1223,8 @@ std::optional<journal::StagedGeneration> ExperienceAppend::next(const StateGener
         drafts.push_back(draft);
     }
     if (!drafts.empty()) {
-        auto staged = store.stage_records(drafts, state, views);
+        auto staged = store.stage_experience_records(journal::ExperienceStageKey{},
+                                                     drafts, state, views);
         // Staged, not published: another writer may publish a record under
         // one of these addresses first and this generation then fail, so a
         // part is known only once the record published there is the one
@@ -1268,7 +1269,8 @@ std::optional<journal::StagedGeneration> ExperienceAppend::next(const StateGener
         done_ = true;
         return std::nullopt;
     }
-    auto staged = store.stage_records(drafts, state, views);
+    auto staged = store.stage_experience_records(journal::ExperienceStageKey{},
+                                                 drafts, state, views);
     const auto positions = staged.positions();  // in draft order
     for (std::size_t at = 0; at < drafted.size(); ++at)
         heads_[drafted[at]].staged = positions[at].record_digest;
@@ -1342,6 +1344,11 @@ void VerdictSink::record(const CandidateVerdict& verdict) {
                                         RevisionText(memory_, verdict.revision),
                                         Rationale(memory_, verdict.rationale),
                                         std::move(evidence)});
+}
+
+// SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:141-150
+StateGeneration ExperienceJournal::state_generation() const {
+    return journal_.state_generation();
 }
 
 // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:208-243

@@ -67,8 +67,10 @@ inline constexpr std::size_t minimum_record_bytes =
 // must itself be an identity text, so the separator splits every key exactly
 // and the keys of one kind and value are contiguous. Lowercase kinds belong
 // to experience records (the two kinds below, experience.hpp); a record of
-// any other kind may carry only uppercase kinds. The journal enforces the
-// kind rule, and that only the experience module stages kinds 1, 2 and 3
+// cue-binding kind 4 may also carry lowercase retrieval keys. State kinds
+// 5-7 carry no index entries. Other kinds may carry only uppercase kinds.
+// The journal enforces the kind rule, and only the experience module stages
+// kinds 1-4
 // (JournalStore::stage refuses them; ExperienceAppend stages them), and
 // decoding an experience rejects any record it did not write.
 inline constexpr std::size_t max_record_index_entries = 16384;
@@ -78,6 +80,13 @@ inline constexpr std::uint16_t derived_experience_record_kind = 2;
 // One slice of an experience's bytes too large for its record
 // (experience.hpp); it carries no index entries.
 inline constexpr std::uint16_t experience_part_record_kind = 3;
+// Reserved for the Main-owned C++ reconstruction. A cue binding is a caller
+// retrieval attachment, not an experience; state records likewise cannot be
+// decoded or admitted as experience. Their codecs are added separately.
+inline constexpr std::uint16_t cue_binding_record_kind = 4;
+inline constexpr std::uint16_t state_part_record_kind = 5;
+inline constexpr std::uint16_t state_root_record_kind = 6;
+inline constexpr std::uint16_t state_publication_record_kind = 7;
 // ordinal, first sequence, record count, byte length, last record digest.
 inline constexpr std::size_t encoded_extent_bytes = 4 * 8 + 32;
 // As many segments as one manifest can list (a checkpoint lists them all).
