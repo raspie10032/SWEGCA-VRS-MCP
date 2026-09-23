@@ -1,5 +1,6 @@
 #pragma once
 
+#include "swegca_architecture/authority_roles.hpp"
 #include "swegca_architecture/strong_types.hpp"
 
 #include <compare>
@@ -10,20 +11,6 @@
 #include <utility>
 
 namespace swegca::architecture {
-
-class MainOwner;
-class EvidenceGate;
-class MainStateWriter;
-class SemanticMemoryGate;
-class SemanticMemoryWriter;
-class ExternalActionGate;
-class ExternalActionExecutor;
-class TrainingModelUpdateGate;
-class TrainingModelUpdateExecutor;
-class DistributionGate;
-class DistributionExecutor;
-class P3PromotionGate;
-class P3PromotionExecutor;
 
 enum class AuthorityDomain : std::uint8_t {
     cognitive_state_commit = 1,
