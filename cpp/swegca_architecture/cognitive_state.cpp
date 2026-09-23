@@ -232,18 +232,9 @@ StateGeneration CognitiveState::validated_generation(
             scratch_.shape().slots}))
             throw std::invalid_argument("initial_role_registry_shape_mismatch");
     } else {
-        // The author's arbiter may promote every partition together when a
-        // proposal delta or its weight has a wider dtype. validate() requires
-        // the three successor partitions to share that dtype. Addition does
-        // not narrow the prior state or exchange f16 and bf16 directly.
-        const auto prior_type = prior->semantic_.scalar_type();
-        const auto next_type = semantic_.scalar_type();
-        const bool promoted = prior_type == next_type ||
-            ((prior_type == ScalarType::float16 || prior_type == ScalarType::bfloat16) &&
-             (next_type == ScalarType::float32 || next_type == ScalarType::float64)) ||
-            (prior_type == ScalarType::float32 && next_type == ScalarType::float64);
-        if (!promoted)
-            throw std::invalid_argument("successor_tensor_dtype_not_promoted");
+        // A guarded write may promote all three partitions; an exact rollback
+        // may restore their earlier dtype. The writer checks the operation's
+        // dtype rule, while validate() checks their common successor dtype.
         if (semantic_.shape().width != prior->semantic_.shape().width)
             throw std::invalid_argument("successor_tensor_width_changed");
         if (semantic_.shape().slots < prior->semantic_.shape().slots ||
