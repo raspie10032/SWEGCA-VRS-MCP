@@ -365,16 +365,16 @@ four-stage VRS path is already implemented.
   each chunk before returning.
   A writer failure may stop the stream mid-part; no partial part or state HEAD
   may publish, and unpublished bytes must be removed before guarded work resumes.
-- The current canonical v4 byte order is prefix (domain, owner, roles), then
+- The current canonical v5 byte order is prefix (domain, owner, roles), then
   each of three tensors' partition and header followed by its chunks, then
-  suffix (graph, evidence, goals, values, self and write head). A state tensor
+  suffix (graph, evidence, goals, values, self, write head and typed autonomy control). A state tensor
   tree root can hold its partition/header and ordered top digest list, with
   lower digest lists in bounded parts when needed;
   unchanged tensors keep their exact root addresses. A zero-byte tensor has a
   root with an empty level-0 list. A small tensor uses the same form, with no
   tensor-specific inline exception. The writer must keep the immutable Main
   state snapshot alive through every borrowed chunk and prove that prefix,
-  each reconstructed tensor and suffix concatenate to the existing v4 digest
+  each reconstructed tensor and suffix concatenate to the existing v5 digest
   preimage. A tensor root contains only partition, header and content digest
   lists: generation, owner, time and predecessor addresses stay outside it,
   so an unchanged tensor retains its exact root address. The canonical emitter
@@ -395,10 +395,10 @@ four-stage VRS path is already implemented.
 Claude's record graph proposal uses the three already reserved Main-only kinds:
 kind 5 for immutable state parts and bounded section descriptors, kind 6 for a
 fixed-size state-content root, and kind 7 for each state-head publication.
-The canonical v4 emitter has eight ordered sections: prefix, three tensors,
+The canonical v5 emitter has eight ordered sections: prefix, three tensors,
 entities, relations, evidence, and final fields. A descriptor per section
 would let the root link unchanged sections while recovery reconstructs the
-exact existing v4 stream and recomputes `content_digest`. This is a storage
+exact existing v5 stream and recomputes `content_digest`. This is a storage
 proposal, not a new state or VRS decision rule. The exact payload codec and
 non-tensor inline representation remain undecided.
 
@@ -413,7 +413,7 @@ non-tensor inline representation remain undecided.
   links the eight section descriptors in canonical order. This fixed-size
   root can be reused when rollback returns to bit-identical content.
   Recovery must verify every referenced kind, address and digest, then hash
-  the reconstructed v4 stream; a tree digest alone does not prove the state
+  the reconstructed v5 stream; a tree digest alone does not prove the state
   digest.
 - A kind-7 publication is separate from the reusable root and must include
   predecessor publication identity, root address, content digest and its
@@ -664,3 +664,15 @@ temporal-window pruning and physical correction change
 `value_state`. Lease evidence references belong to slot-manager metadata in
 `self_state`. No source route was found that changes world-graph content or
 roles after initial construction.
+
+The native `AutonomyState` representation (integration `b3df625`) now keeps
+one optional canonical `AutonomyControl` inside `CognitiveState`. The v5
+content stream binds its presence and bytes after the write head; genesis
+recovery checks the same bytes before Main constructs a state. A present
+step-zero control is distinct from absent control. Existing bounded-write,
+rollback and retraction successors preserve it unchanged. The source machine
+reads its goal/self keys with `.get()`, so this typed representation preserves
+those reads while normalizing per-key absent versus `None` and partial initial
+mappings. It does not claim Python mapping or byte equivalence. No Main writer
+route yet applies an accepted `AutonomyTransition`, and the representation
+does not assign a publication body tag or give action intent authority.
