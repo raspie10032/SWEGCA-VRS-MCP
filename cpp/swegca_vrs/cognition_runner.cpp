@@ -22,7 +22,7 @@ const ProducerDefinition* find_producer(
 }
 
 // The constructor validates proposal shape, scores, finite deltas, and
-// generation; this check additionally binds the returned source to the
+// publication; this check additionally binds the returned source to the
 // immutable registered route member as in the author's execute closure.
 // SWEGCA: src/swegca/mosaic_synapse_arbiter.py@5901a5a:400-407
 SynapseProposal execute_producer(const ProducerDefinition& producer,
@@ -31,8 +31,8 @@ SynapseProposal execute_producer(const ProducerDefinition& producer,
                                  const AllocationContext& memory) {
     auto proposal = producer.run(StateSnapshot(snapshot), request,
                                  producer.immutable_definition, memory);
-    if (proposal.based_on() != snapshot.state().generation())
-        throw std::invalid_argument("proposal_snapshot_generation_mismatch");
+    if (proposal.based_on() != snapshot.head())
+        throw std::invalid_argument("proposal_snapshot_head_mismatch");
     if (proposal.source().value() != producer.name)
         throw std::invalid_argument("cognition_core_source_identity_changed");
     return proposal;
@@ -136,7 +136,7 @@ ProducerRunIntermediate run_request_producers(
 
     const auto started = std::chrono::steady_clock::now();
     const auto snapshot = main.snapshot();
-    const auto before = snapshot.state().generation();
+    const auto before = snapshot.head();
     const auto content_before = snapshot.content_digest();
     ProducerRunIntermediate::Proposals proposals{
         request_memory.allocator<SynapseProposal>()};
@@ -184,7 +184,7 @@ ProducerRunIntermediate run_request_producers(
     // changed Main head before this request's outputs proceed to Bind.
     // SWEGCA: src/swegca/mosaic_synapse_arbiter.py@5901a5a:434-438
     const auto after = main.snapshot();
-    if (after.state().generation() != before ||
+    if (after.head() != before ||
         after.content_digest() != content_before)
         throw std::runtime_error("dynamic_cognition_mutated_main_persistent_state");
 
