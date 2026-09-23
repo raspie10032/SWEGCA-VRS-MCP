@@ -65,6 +65,21 @@ Publication and recovery:
 | B13 | Publish a stale StagedGeneration (HEAD moved) | `journal_head_changed`; nothing published |
 | B14 | Any I/O failure during publish | store poisoned; every later call fails `journal_store_poisoned` until reopened |
 
+Main strength-root publication conditions (route pending; these require a
+native strength-record format, a manifest locator, and Main marker selection
+before they can be run):
+
+| # | Setup | Expected |
+|---|---|---|
+| B28 | A committed Main marker carries a nonzero strength-root digest, but its selected journal generation contains no locatable strength-root record | Main refuses to select or expose that publication; a digest alone is not reconstructed strength experience |
+| B29 | Change one strength value, canonical member/group link, root part, or root locator while leaving the committed marker unchanged; then restart | Exact root and part checks fail closed before Main publishes a state/strength pair; no derived search view substitutes for the damaged source |
+| B30 | Publish a valid nonempty strength generation with f32 values and canonical member/group links, then restart from Main's selected marker while the lower journal HEAD points to another generation | Recovered strengths, lineage and Cognitive State match the selected marker's generation exactly; the lower HEAD cannot select another pair |
+
+Fresh-genesis strength content is still a route decision, not a test fixture:
+the author's `CanonicalVRSMemberLineage` rejects an empty member set
+(`mosaic_vrs_canonicalization.py@3bddcb7:18-30`). The new store cannot pass
+B28-B30 by inventing an empty canonical lineage or importing the old store.
+
 Views:
 
 | # | Setup | Expected |
