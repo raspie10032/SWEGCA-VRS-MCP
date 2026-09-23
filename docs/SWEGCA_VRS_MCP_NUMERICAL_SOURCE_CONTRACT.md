@@ -239,8 +239,18 @@ The native topology catalog is an append-only, direct-offset directory of
 checksummed component, VRS snapshot, topology ID and safe relative file-name
 records. A component root binding can therefore open one exact cold-validated
 topology without a graph-wide RAM map or directory scan. Catalog append and
-file sync still precede, and do not replace, the missing generation manifest
-and Main publication gate.
+file sync still precede the generation manifest and Main publication gate.
+The native region manifest is a derived journal under the canonical Main
+owner lock. Each row binds one complete binding-page map to the current
+canonical source head, memory snapshot, Graph snapshot and pair certificate;
+it explicitly grants no authority. A changed Graph snapshot resets the map
+and requires every logical binding page, preventing topology files from an
+older VRS snapshot from entering a new generation through COW reuse. A
+same-Graph navigation replacement may reuse unchanged pages. Recovery checks
+the complete manifest chain, the final source pair, every active binding page
+and every component root's immutable topology. Main still needs a concrete
+bounded `GraphRegionDirectory` and a coordinator that exposes it through the
+existing exact-generation CAS.
 
 Existing VRS 2.2 pair certificates and numerical arrays are historical
 evidence. A new source implementation must account for their lineage and

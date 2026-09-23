@@ -23,6 +23,7 @@ CORE_OBJECTS += build/native_region_topology_file.o
 CORE_OBJECTS += build/native_region_binding_page.o
 CORE_OBJECTS += build/native_region_binding_view.o
 CORE_OBJECTS += build/native_region_topology_catalog.o
+CORE_OBJECTS += build/native_region_manifest.o
 
 .PHONY: all clean
 all: build/libswegca-vrs.a
@@ -202,6 +203,9 @@ build/native_region_binding_view.o: cpp/native_region_binding_view.cpp cpp/nativ
 	$(CXX) $(CXXFLAGS) -Icpp -c $< -o $@
 
 build/native_region_topology_catalog.o: cpp/native_region_topology_catalog.cpp cpp/native_region_topology_catalog.hpp cpp/native_region_topology_file.hpp cpp/owner_lock.hpp cpp/journal_files.hpp | build
+	$(CXX) $(CXXFLAGS) -Icpp -c $< -o $@
+
+build/native_region_manifest.o: cpp/native_region_manifest.cpp cpp/native_region_manifest.hpp cpp/native_region_binding_view.hpp cpp/native_region_binding_page.hpp cpp/native_region_topology_catalog.hpp cpp/native_region_topology_file.hpp cpp/native_graph_page_map.hpp cpp/native_journal.hpp cpp/memory_vrs_pair.hpp cpp/digest.hpp cpp/json.hpp | build
 	$(CXX) $(CXXFLAGS) -Icpp -c $< -o $@
 
 build/graph_regions.o: cpp/graph_regions.cpp cpp/graph_regions.hpp cpp/connectivity_regions.hpp cpp/graph_append.hpp cpp/memory_vrs_pair.hpp cpp/python_fsum.hpp cpp/json.hpp | build
