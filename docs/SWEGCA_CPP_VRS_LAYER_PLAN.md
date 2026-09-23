@@ -83,8 +83,10 @@ and portals are the VRS blocks and their connection points (§6). All four
 stages are VRS, and each ends in the core verifier or feeds it.
 
 Corrected by the user on 2026-09-23 18:0x (6.2 governs): Recall yields
-addresses only; Replay opens one original, not "relevant opposing ones";
-Re-evidence runs only when the current input conflicts with it. "The
+addresses only; the first Replay selects the highest-strength originals
+with the tie rule in 6.2; Re-evidence runs only when the current and replayed
+states differ, and may additionally Replay relevant opposing originals
+as the approved order requires. "The
 author's Recall order" above is the prior engine's (-cue_overlap, address)
 order (mosaic_memory_activation.py@7536139:301-348), not the author's
 (SWEGCA-Architecture@5901a5a has no such order), and cue overlap is
@@ -407,14 +409,17 @@ Definition, the user (18:0x; same meaning as the corrections of 2026-09-22
 입력과 경험이 충돌할때 재검증하기 야".
 
 Withdrawn: the wording in claude's msg 193-194 that Re-evidence runs after
-every Replay and also opens opposing originals. Re-evidence is conditional.
+every Replay. Re-evidence is conditional; when it finds relevant opposing
+evidence or a conflict, it additionally Replays only the relevant opposing
+originals, separately from the first Replay set's five-original limit
+(approved order :26-29, :101-102).
 
 | Stage | Does | Does not | Core parts used | Source |
 |---|---|---|---|---|
 | Déjà vu | reacts first to the input's keys: which caller keys hit, and how many addresses each key holds | build a union of postings; open any record | none (exact key lookup, no verdict) | user 18:0x; author `HotExperienceIndex.lookup_semantic_key` (mosaic_unrestricted_experience.py@5901a5a:294-320: prebuilt, no I/O or hashing on lookup, "Building the index is deliberately separate from lookup") |
 | Recall | yields the complete original-address set; transport pages do not discard addresses | open content; judge | none | user 18:0x ("리콜이 원경험 주소"); approved order :20-23 |
 | Replay | opens the highest-strength current original; up to five when the top strength ties | open every candidate | digest check of each exact record on read | user 18:0x, 18:3x; author exact `lookup_address` (:314-318) |
-| Re-evidence | re-judges when the current and replayed states differ among accept, reject and abstain; the verdict updates strength (6.1 parts 5, 6, 8) | run on every read | evidence kernel and accumulator (tally, decide) | user 18:0x, 18:3x; author accumulator (mosaic_evidence_accumulator.py@5901a5a:285-428) |
+| Re-evidence | re-judges when the current and replayed states differ among accept, reject and abstain; if relevant opposing evidence or conflict is found, additionally Replays only relevant opposing originals and preserves unresolved conflict; the verdict updates strength (6.1 parts 5, 6, 8) | run on every read | evidence kernel and accumulator (tally, decide) | user 18:0x, 18:3x; approved order :26-29, :101-102; author accumulator (mosaic_evidence_accumulator.py@5901a5a:285-428) |
 
 Budget: Déjà vu to Recall together under 1 ms, at the store's scale; the
 budget does not extend to Replay or Re-evidence. Neither the author nor the
