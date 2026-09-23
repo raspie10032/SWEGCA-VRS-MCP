@@ -199,6 +199,9 @@ validates each proposal and its source identity, joins workers even when a
 worker fails, checks that Main's state stayed unchanged, and returns the
 proposals with a trace of operation type, executed cores, fanout decision,
 elapsed time, primary weights, and false manager/worker retention flags.
+It refuses an empty operation type or producer registry, a decisive threshold
+outside [0, 1], an unknown operation route, an empty or duplicate route, and
+any route entry absent from the registered immutable producer definitions.
 The current C++ proposal is batch-one, so the author's all-batch decisive
 check reduces to its one score; `fanout_used` records that additional route
 members ran, not how many threads ran simultaneously. The VRS host owns any
