@@ -55,6 +55,9 @@ public:
     [[nodiscard]] std::span<const std::uint8_t> conflicted_roles() const;
     // SWEGCA: src/swegca/mosaic_synapse_arbiter.py@5901a5a:96-122
     [[nodiscard]] const Digest256& receipt() const;
+    // A guarded verification write uses exactly one bound proposal. This
+    // identity is absent for multi-proposal previews, which grant no write.
+    [[nodiscard]] std::optional<Digest256> single_binding_receipt() const;
 
 private:
     friend class ProposalArbiter;
@@ -62,7 +65,8 @@ private:
     using Flags = std::vector<std::uint8_t, AllocationAdapter<std::uint8_t>>;
     ArbitrationResult(StateGeneration based_on, std::uint64_t step, RoleMask changed,
                       ScalarType type, std::uint64_t width, Bytes delta, Flags accepted,
-                      Flags conflict, Digest256 receipt);
+                      Flags conflict, Digest256 receipt,
+                      std::optional<Digest256> single_binding_receipt);
     void require_live() const;
 
     StateGeneration based_on_;
@@ -74,6 +78,7 @@ private:
     Flags accepted_;
     Flags conflict_;
     Digest256 receipt_;
+    std::optional<Digest256> single_binding_receipt_;
     bool live_ = true;
 };
 

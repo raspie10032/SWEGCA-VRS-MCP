@@ -8,6 +8,7 @@
 #include "swegca_architecture/allocation.hpp"
 #include "swegca_architecture/strong_types.hpp"
 #include "swegca_architecture/proposal.hpp"
+#include "swegca_architecture/proposal_arbiter.hpp"
 
 #include <cstdint>
 #include <optional>
@@ -34,26 +35,15 @@
 // the bound evidence metadata after Replay and Re-evidence.
 namespace swegca::architecture {
 
-// What the producer proposes, as borrowed input: the claim revision it
-// relies on, the evidence it names, the role it targets and the state
-// generation it was made against. Nothing in it is trusted; it is bound.
-struct VerificationProposal {
-    std::string_view claim;
-    std::uint64_t claim_revision = 0;
-    std::span<const std::string_view> addresses;
-    std::string_view target;
-    StateGeneration based_on;
-};
-
-// What only Main decides. Main evaluates the delta and mask from the actual
-// tensors it would commit (not from the producer's description) and its own
+// What only Main decides. Main hashes the proposal's actual delta tensors and
+// target mask (not the producer's description) before arbitration, and its own
 // evaluators decide the conditions the gate cannot compute itself. The gate
 // computes the rest (issuing accumulator and its revision, evidence
 // currentness, generation, target, registry, binding) and never takes them
 // from the caller.
 struct MainGateEvaluation {
-    Digest256 delta_digest;  // canonical digest of the actual delta tensor
-    Digest256 mask_digest;   // canonical digest of the actual role mask
+    Digest256 delta_digest;  // canonical digest of the bound proposal tensors
+    Digest256 mask_digest;   // canonical digest of the bound target mask
     bool runtime_context_safe = false;
     bool definitions_complete = false;
     bool counterfactual_support = false;
@@ -71,6 +61,9 @@ enum GateShellFailure : std::uint32_t {
     gate_rules_not_main = 1u << 21,           // :135, decided under an unregistered policy
     gate_target_not_verification = 1u << 22,  // :152, target is not the scratch verification role
     gate_generation_stale = 1u << 23,         // :142,150, proposal not made against the current state
+    gate_bound_mismatch = 1u << 24,
+    gate_preview_mismatch = 1u << 25,
+    gate_journal_stale = 1u << 26,
 };
 
 struct GateOutcome {
@@ -85,6 +78,8 @@ struct GateOutcome {
 // from what it is about to commit and the ledger compares.
 [[nodiscard]] Digest256 verification_commit_operation(const Digest256& decision_digest,
                                                       const Digest256& binding,
+                                                      const Digest256& bound_receipt,
+                                                      const Digest256& preview_receipt,
                                                       std::string_view target,
                                                       const Digest256& registry_digest,
                                                       const StateGeneration& generation);
@@ -137,7 +132,8 @@ public:
     // conflicting result on it). Metadata only; O(log n).
     [[nodiscard]] GateOutcome authorize(const EvidenceDecision& decision,
                                         const EvidenceAccumulator& accumulator,
-                                        const VerificationProposal& proposal,
+                                        const BoundProposal& bound,
+                                        const ArbitrationResult& preview,
                                         const MainGateEvaluation& evaluation,
                                         const CognitiveState& state,
                                         std::uint64_t current_step) const;

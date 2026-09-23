@@ -54,13 +54,18 @@ bool experience_address_form(std::string_view address) noexcept {
 
 // SWEGCA: src/swegca/mosaic_bounded_world_write.py@5901a5a:153-172
 Digest256 verification_commit_operation(const Digest256& decision_digest,
-                                        const Digest256& binding, std::string_view target,
+                                        const Digest256& binding,
+                                        const Digest256& bound_receipt,
+                                        const Digest256& preview_receipt,
+                                        std::string_view target,
                                         const Digest256& registry_digest,
                                         const StateGeneration& generation) {
     Sha256 hash;
     hash_text(hash, "swegca.verification_commit.v1");
     hash.update(decision_digest.bytes());
     hash.update(binding.bytes());
+    hash.update(bound_receipt.bytes());
+    hash.update(preview_receipt.bytes());
     hash_text(hash, target);
     hash.update(registry_digest.bytes());
     hash_generation(hash, generation);
@@ -81,31 +86,55 @@ EvidenceGate::EvidenceGate(const ExperienceJournal& journal, MainAuthorityLedger
 // SWEGCA: src/swegca/mosaic_bounded_world_write.py@5901a5a:286-375
 GateOutcome EvidenceGate::authorize(const EvidenceDecision& decision,
                                     const EvidenceAccumulator& accumulator,
-                                    const VerificationProposal& proposal,
+                                    const BoundProposal& bound,
+                                    const ArbitrationResult& preview,
                                     const MainGateEvaluation& evaluation,
                                     const CognitiveState& state,
                                     std::uint64_t current_step) const {
     std::uint32_t shell = 0;
+    const auto& proposal = bound.proposal();
     // :135 — the decision must come from this very registered accumulator,
     // for its claim revision, under the policy Main registered.
     const bool same_claim =
         decision.issued_by(accumulator) && decision.claim() == accumulator.claim();
     if (!same_claim) shell |= gate_decision_foreign;
     if (decision.rules_digest() != evidence_policy_digest_) shell |= gate_rules_not_main;
+    if (bound.decision_digest() != decision.decision_digest() ||
+        bound.binding_digest() != decision.binding() ||
+        proposal.claim() != decision.claim() ||
+        evaluation.delta_digest != proposal_delta_digest(proposal) ||
+        evaluation.mask_digest != proposal_mask_digest(proposal))
+        shell |= gate_bound_mismatch;
+    if (journal_.state_generation() != state.generation()) shell |= gate_journal_stale;
     // :152 — only the verification role, which lives in scratch. Batch one is
     // an invariant of CognitiveState itself.
-    const auto* role = state.roles().find(proposal.target);
-    if (proposal.target != verification_role || role == nullptr ||
-        role->partition != TensorPartition::scratch)
+    const auto* role = state.roles().find(verification_role);
+    const auto definitions = state.roles().definitions();
+    const auto role_index = role == nullptr ? definitions.size() :
+                            static_cast<std::size_t>(role - definitions.data());
+    if (role == nullptr || role->partition != TensorPartition::scratch ||
+        !proposal.targets().matches(state.roles()) ||
+        proposal.targets().selected_count() != 1 ||
+        !proposal.targets().test(role_index))
         shell |= gate_target_not_verification;
     // :142, :150 — the proposal was made against the current state.
-    if (proposal.based_on != state.generation()) shell |= gate_generation_stale;
+    if (proposal.based_on() != state.generation() ||
+        bound.validated_at_step() != current_step ||
+        preview.based_on() != state.generation() ||
+        preview.validated_at_step() != current_step)
+        shell |= gate_generation_stale;
+    const auto preview_binding = preview.single_binding_receipt();
+    if (!preview_binding || *preview_binding != bound.binding_receipt() ||
+        preview.accepted().size() != 1 || preview.accepted()[0] == 0 ||
+        !preview.changed_roles().matches(state.roles()) ||
+        preview.changed_roles().selected_count() != 1 ||
+        (role != nullptr && !preview.changed_roles().test(role_index)) ||
+        preview.width() != state.semantic().shape().width)
+        shell |= gate_preview_mismatch;
 
     // :155-162 — Bind over the proposal's claim and named evidence and the
     // delta and mask Main evaluated from the actual tensors.
-    const auto binding =
-        evidence_binding_digest(memory_, proposal.claim, proposal.claim_revision,
-                                proposal.addresses, evaluation.delta_digest, evaluation.mask_digest);
+    const auto& binding = bound.binding_digest();
 
     // :142 — current evidence and accumulator revision, both computed. The
     // author derives currentness from pinned artifacts matching and every
@@ -142,7 +171,7 @@ GateOutcome EvidenceGate::authorize(const EvidenceDecision& decision,
     input.source_diversity = judgment.source_diversity;
     input.context_diversity = judgment.context_diversity;
     input.conditions = conditions;
-    input.address_count = proposal.addresses.size();
+    input.address_count = proposal.evidence_addresses().size();
     input.decision_binding = decision.binding().bytes();
     input.proposal_binding = binding.bytes();
     const std::uint32_t failures = kernel::authorize_target(rules_, input) | shell;
@@ -154,17 +183,26 @@ GateOutcome EvidenceGate::authorize(const EvidenceDecision& decision,
     receipt.update(decision.decision_digest().bytes());
     receipt.update(decision.evidence_digest().bytes());
     receipt.update(binding.bytes());
-    hash_text(receipt, proposal.target);
-    hash_generation(receipt, proposal.based_on);
+    receipt.update(bound.binding_receipt().bytes());
+    receipt.update(preview.receipt().bytes());
+    hash_text(receipt, verification_role);
+    hash_generation(receipt, proposal.based_on());
     hash_generation(receipt, state.generation());
-    hash_u64(receipt, failures);
+    hash_u64(receipt, conditions);
+    if (journal_.state_generation() != state.generation()) shell |= gate_journal_stale;
+    if (shell != 0) {
+        outcome.failures |= shell;
+        // The receipt below must name the final failure set.
+    }
+    hash_u64(receipt, outcome.failures);
     outcome.receipt = Digest256(receipt.finish());
-    if (failures != 0) return outcome;
+    if (outcome.failures != 0) return outcome;
 
     // :150 — authentic capability bound to exactly what was authorized.
     outcome.authority = ledger_.issue<AuthorityDomain::cognitive_state_commit>(
         IssueKey<AuthorityDomain::cognitive_state_commit>{}, state.owner(), state.generation(),
-        verification_commit_operation(decision.decision_digest(), binding, role->id.value(),
+        verification_commit_operation(decision.decision_digest(), binding,
+                                      bound.binding_receipt(), preview.receipt(), role->id.value(),
                                       state.roles().digest(), state.generation()));
     return outcome;
 }

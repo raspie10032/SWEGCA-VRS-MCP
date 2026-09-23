@@ -52,10 +52,12 @@ const CognitiveTensor& partition_delta(const SynapseProposal& proposal,
 ArbitrationResult::ArbitrationResult(StateGeneration based_on, std::uint64_t step,
                                      RoleMask changed, ScalarType type, std::uint64_t width,
                                      Bytes delta, Flags accepted, Flags conflict,
-                                     Digest256 receipt)
+                                     Digest256 receipt,
+                                     std::optional<Digest256> single_binding_receipt)
     : based_on_(std::move(based_on)), step_(step), changed_(std::move(changed)),
       type_(type), width_(width), delta_(std::move(delta)),
-      accepted_(std::move(accepted)), conflict_(std::move(conflict)), receipt_(receipt) {}
+      accepted_(std::move(accepted)), conflict_(std::move(conflict)), receipt_(receipt),
+      single_binding_receipt_(single_binding_receipt) {}
 
 // SWEGCA: src/swegca/mosaic_synapse_arbiter.py@5901a5a:96-122
 ArbitrationResult::ArbitrationResult(ArbitrationResult&& other) noexcept
@@ -63,6 +65,7 @@ ArbitrationResult::ArbitrationResult(ArbitrationResult&& other) noexcept
       changed_(std::move(other.changed_)), type_(other.type_), width_(other.width_),
       delta_(std::move(other.delta_)), accepted_(std::move(other.accepted_)),
       conflict_(std::move(other.conflict_)), receipt_(other.receipt_),
+      single_binding_receipt_(other.single_binding_receipt_),
       live_(std::exchange(other.live_, false)) {}
 
 // SWEGCA: src/swegca/mosaic_synapse_arbiter.py@5901a5a:96-122
@@ -122,6 +125,11 @@ std::span<const std::uint8_t> ArbitrationResult::conflicted_roles() const {
 const Digest256& ArbitrationResult::receipt() const {
     require_live();
     return receipt_;
+}
+
+std::optional<Digest256> ArbitrationResult::single_binding_receipt() const {
+    require_live();
+    return single_binding_receipt_;
 }
 
 // SWEGCA: src/swegca/mosaic_synapse_arbiter.py@5901a5a:219-236
@@ -342,7 +350,9 @@ ArbitrationOutcome ProposalArbiter::arbitrate_typed(
     }
     ArbitrationResult result(state.generation(), current_step, std::move(changed_mask),
                              result_type, W, std::move(encoded), std::move(accepted),
-                             std::move(conflict), digest);
+                             std::move(conflict), digest,
+                             P == 1 ? std::optional<Digest256>(proposals.front().binding_receipt())
+                                    : std::nullopt);
     ArbitrationOutcome out;
     out.receipt = digest;
     out.candidate.emplace(std::move(result));
