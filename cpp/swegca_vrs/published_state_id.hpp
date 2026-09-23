@@ -71,7 +71,12 @@ private:
     // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:196-205
     PublishedStateId(Digest256 content_digest, journal::RecordPosition publication)
         : content_digest_(std::move(content_digest)), publication_(publication) {
-        if (publication.sequence == 0 ||
+        // Reject the manifest's mixed-zero state head before a snapshot can
+        // expose it to proposals or the authority ledger. Main still verifies
+        // the full record geometry and selected marker before construction.
+        if (content_digest_.bytes() == DigestBytes{} ||
+            publication.segment_ordinal == 0 || publication.byte_offset == 0 ||
+            publication.sequence == 0 ||
             publication.record_digest == DigestBytes{})
             throw std::invalid_argument("state_head_publication_invalid");
     }
