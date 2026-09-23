@@ -38,8 +38,8 @@ CORE_STANDARD_HEADERS = frozenset({
     "cstring", "limits", "span", "stdexcept", "string", "string_view",
 })
 CORE_LOCAL_INCLUDE = re.compile(r'"swegca_architecture/[a-z0-9_]+\.hpp"\Z')
-CORE_INCLUDE_DIRECTIVE = re.compile(r'^\s*#\s*(include|include_next|import)\b')
-CORE_INCLUDE_OPERAND = re.compile(r'^\s*#\s*include\s+(\S+)\s*\Z')
+CORE_INCLUDE_DIRECTIVE = re.compile(r'^[ \t]*(?:#|%:)[ \t]*(include|include_next|import)\b')
+CORE_INCLUDE_OPERAND = re.compile(r'^[ \t]*(?:#|%:)[ \t]*include[ \t]+(\S+)[ \t]*\Z')
 CODEX_ROOT = Path(__file__).resolve().parents[2]
 SOURCE_ROOTS = (
     Path(__file__).resolve().parents[1],
@@ -418,6 +418,11 @@ def check_layering(path: str, source: str) -> list[str]:
         return []
     issues: list[str] = []
     code = without_comments_and_strings(source)
+    # C++ joins backslash-newline before recognizing preprocessing directives.
+    # The verifier currently needs none; reject it so a split directive cannot
+    # evade the line-based include check.
+    if "\\\n" in source or "\\\r\n" in source:
+        issues.append(f"{path}: SWEGCA verifier line splice is forbidden")
     # The masked source identifies actual directives without mistaking comments
     # or strings for code. Validate the original operand, including its quotes.
     for line_number, (masked, original) in enumerate(
