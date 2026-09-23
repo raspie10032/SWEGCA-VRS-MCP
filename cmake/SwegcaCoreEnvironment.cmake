@@ -38,9 +38,10 @@
 # Explicitly permitted from the build's environment: LANG, LANGUAGE and
 # LC_* (the language of diagnostics; the include probe sets the C locale),
 # SOURCE_DATE_EPOCH (which can change __DATE__ and __TIME__ and therefore
-# compiled bytes), TZ, and on Windows SYSTEMROOT, WINDIR, COMSPEC and
-# PATHEXT, which are needed to start programs. Their effects are within this
-# stated boundary; they are not claimed to leave compiled bytes unchanged.
+# compiled bytes), and TZ (the local time used by those macros). On Windows,
+# SYSTEMROOT, WINDIR, COMSPEC and PATHEXT are also permitted because they are
+# needed to start programs. Their effects are within this stated boundary;
+# they are not claimed to leave compiled bytes unchanged.
 # Not trusted: every other variable of the build's environment, PATH and
 # TMPDIR included; each changes what the compiler does only once the
 # compiler reads it (CPATH, COMPILER_PATH, PATH, ...) and is removed or
