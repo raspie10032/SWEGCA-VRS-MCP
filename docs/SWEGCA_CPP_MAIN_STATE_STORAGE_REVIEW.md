@@ -141,12 +141,23 @@ crash cases before code uses it.
   bounded writer's self-state write revision remains content, since rollback
   must restore it. A typed `BoundedWriteHead` in `SelfState` is included in
   content-digest domain v2; its writer and recovery path are still pending.
-- State staging must return the exact new publication position before its
-  manifest can name it. A move-only, one-use stage handle is finalized with
-  that position and the content digest, then passed to Main's single
-  publisher. No staged object may manufacture a published `StateSnapshot`.
-  Failure after publication starts requires HEAD recovery before guarded
-  work resumes.
+- State publication uses two HEAD replacements because the current journal
+  encoder needs a record position before it can encode a manifest naming
+  that position. First, Main publishes root and candidate receipt records
+  while retaining the prior state head. It verifies the receipt and stages a
+  record-free final generation from the latest HEAD, comparing that HEAD's
+  state publication identity to the prior one. Only the final HEAD exposes
+  the new state content digest and receipt position. An intervening memory
+  append can advance the journal generation without changing that state
+  identity; the final stage is rebuilt from the latest HEAD. No staged
+  object manufactures a published `StateSnapshot`. Failure after either
+  publication starts requires HEAD recovery before guarded work resumes.
+- A candidate receipt in a published record is not itself a committed-write
+  receipt. Recovery, rollback eligibility, and audit count it only if a
+  published manifest state head has named its exact record position and
+  digest. An orphan after a crash before final HEAD has no write authority.
+  Immutable records carry no mutable `committed` flag. This two-HEAD layout
+  was cross-checked against SWEGCA §4.7 and inventory §9 with Claude.
 
 This is an interface contract, not a claim that state publication or the
 four-stage VRS path is already implemented.
