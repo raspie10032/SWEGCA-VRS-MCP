@@ -239,10 +239,10 @@ StateGeneration CognitiveState::validated_generation(
             executive_.shape().slots < prior->executive_.shape().slots ||
             scratch_.shape().slots < prior->scratch_.shape().slots)
             throw std::invalid_argument("successor_tensor_capacity_shrank");
-        if (roles_.size() < prior->roles_.size() ||
-            !std::equal(prior->roles_.definitions().begin(),
-                    prior->roles_.definitions().end(),
-                    roles_.definitions().begin()))
+        const auto previous_roles = prior->roles_.definitions();
+        const auto next_roles = roles_.definitions();
+        if (next_roles.size() < previous_roles.size() ||
+            !std::equal(previous_roles.begin(), previous_roles.end(), next_roles.begin()))
             throw std::invalid_argument("successor_role_registry_not_append_only");
     }
     const auto ordinal = prior == nullptr ? 0 : next_ordinal(*prior);
@@ -318,6 +318,14 @@ StateSnapshot::StateSnapshot(std::shared_ptr<const CognitiveState> state)
     : state_(std::move(state)) {
     if (!state_)
         throw std::invalid_argument("state_snapshot_must_not_be_null");
+}
+
+// Moving a snapshot transfers its ownership; the emptied handle cannot expose
+// a state. Reject it explicitly instead of dereferencing an empty shared_ptr.
+// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:222-230
+const CognitiveState& StateSnapshot::state() const {
+    if (!state_) throw std::logic_error("state_snapshot_not_live");
+    return *state_;
 }
 
 }  // namespace swegca::architecture

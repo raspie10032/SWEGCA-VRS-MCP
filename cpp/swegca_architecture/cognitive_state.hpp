@@ -226,7 +226,7 @@ public:
     StateSnapshot& operator=(StateSnapshot&&) noexcept = default;
 
     // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:199-200
-    [[nodiscard]] const CognitiveState& state() const noexcept { return *state_; }
+    [[nodiscard]] const CognitiveState& state() const;
 
 private:
     friend class MainOwner;
