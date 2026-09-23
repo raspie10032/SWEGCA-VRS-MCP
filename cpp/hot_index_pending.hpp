@@ -31,7 +31,7 @@ public:
     [[nodiscard]] bool contains_episode(std::string_view identifier) const override;
     // SWEGCA: src/swegca_vrs2/store.py@7536139:216-240
     [[nodiscard]] HotIndexEpisodeHeader episode_header(std::string_view identifier) const override;
-    // SWEGCA: src/swegca_vrs2/store.py@7536139:222-236
+    // SWEGCA: src/swegca_vrs2/store.py@7536139:216-217
     [[nodiscard]] std::vector<std::string> proposition_ids(std::string_view proposition) const override;
     // SWEGCA: src/swegca_vrs2/store.py@7536139:149-153
     [[nodiscard]] std::optional<std::string> successor_of(std::string_view identifier) const override;

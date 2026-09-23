@@ -11,7 +11,7 @@
 namespace swegca::vrs {
 namespace {
 
-// SWEGCA: src/swegca_vrs2/engine/mosaic_memory_promotion.py@7536139:25-26
+// SWEGCA: src/swegca_vrs2/engine/mosaic_memory_promotion.py@7536139:21-22
 bool nonblank(std::string_view value) {
     const auto points = decode_utf8(value);
     return std::any_of(points.begin(), points.end(),
@@ -21,7 +21,7 @@ bool nonblank(std::string_view value) {
 // SWEGCA: src/swegca_vrs2/engine/mosaic_memory_promotion.py@7536139:4-4
 constexpr double verified_experience_promotion_strength = 1.0;
 
-// SWEGCA: src/swegca_vrs2/engine/mosaic_memory_promotion.py@7536139:32-42
+// SWEGCA: src/swegca_vrs2/engine/mosaic_memory_promotion.py@7536139:32-40
 std::string promotion_action(bool was_promoted, bool is_promoted) {
     if (was_promoted && is_promoted) return "retain";
     if (was_promoted) return "revoke";
@@ -30,14 +30,14 @@ std::string promotion_action(bool was_promoted, bool is_promoted) {
 
 }  // namespace
 
-// SWEGCA: src/swegca_vrs2/engine/mosaic_memory_promotion.py@7536139:9-45
+// SWEGCA: src/swegca_vrs2/engine/mosaic_memory_promotion.py@7536139:7-52
 VRSExperiencePromotionDecision::VRSExperiencePromotionDecision(
     std::string new_snapshot_id, std::string new_connection_id,
     double new_previous_strength, double new_current_strength,
     std::string new_action, bool new_promoted, bool new_semantic_evidence_allowed,
     bool new_underlying_experience_preserved, bool new_action_authorized,
     bool new_persistent_write_authorized)
-    // SWEGCA: src/swegca_vrs2/engine/mosaic_memory_promotion.py@7536139:9-45
+    // SWEGCA: src/swegca_vrs2/engine/mosaic_memory_promotion.py@7536139:7-52
     : snapshot_id(std::move(new_snapshot_id)),
       connection_id(std::move(new_connection_id)),
       previous_strength(new_previous_strength), current_strength(new_current_strength),
@@ -60,7 +60,7 @@ VRSExperiencePromotionDecision::VRSExperiencePromotionDecision(
         throw std::runtime_error("VRS promotion changed its authority boundary");
 }
 
-// SWEGCA: src/swegca_vrs2/engine/mosaic_memory_promotion.py@7536139:48-83
+// SWEGCA: src/swegca_vrs2/engine/mosaic_memory_promotion.py@7536139:55-83
 VRSExperiencePromotionDecision assess_vrs_experience_promotion(
     std::string snapshot_id, std::string connection_id,
     double previous_strength, double current_strength) {

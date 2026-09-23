@@ -56,35 +56,35 @@ protected:
 class EventVrsInputView {
 public:
     virtual ~EventVrsInputView() = default;
-    // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_event_kernel.py@7536139:34-76
+    // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_event_kernel.py@7536139:42-51
     [[nodiscard]] virtual std::string snapshot_id() const = 0;
-    // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_event_kernel.py@7536139:34-76
+    // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_event_kernel.py@7536139:42-51
     [[nodiscard]] virtual std::uint64_t node_count() const = 0;
-    // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_event_kernel.py@7536139:34-76
+    // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_event_kernel.py@7536139:42-51
     [[nodiscard]] virtual std::uint64_t edge_count() const = 0;
-    // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_event_kernel.py@7536139:34-76
+    // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_event_kernel.py@7536139:42-51
     [[nodiscard]] virtual float direct(std::uint32_t node) const = 0;
-    // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_event_kernel.py@7536139:34-76
+    // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_event_kernel.py@7536139:42-51
     [[nodiscard]] virtual float score(std::uint32_t node) const = 0;
-    // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_event_kernel.py@7536139:34-76
+    // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_event_kernel.py@7536139:42-51
     [[nodiscard]] virtual bool unresolved(std::uint32_t node) const = 0;
-    // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_event_kernel.py@7536139:34-76
+    // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_event_kernel.py@7536139:42-51
     [[nodiscard]] virtual EventEdge edge(std::uint32_t address) const = 0;
-    // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_event_kernel.py@7536139:34-76
+    // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_event_kernel.py@7536139:42-51
     [[nodiscard]] virtual float strength(std::uint32_t address) const = 0;
-    // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_event_kernel.py@7536139:66-76
+    // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_event_kernel.py@7536139:75-86
     virtual void require_immutable_binding() const = 0;
-    // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_event_kernel.py@7536139:34-76
+    // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_event_kernel.py@7536139:42-51
     [[nodiscard]] virtual const EndpointDependencyIndex& dependencies() const = 0;
 };
 
 // Only this cold-validated wrapper may enter numerical event advancement.
 class ValidatedEventVrsInputs {
 public:
-    // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_event_kernel.py@7536139:34-65
+    // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_event_kernel.py@7536139:53-73
     explicit ValidatedEventVrsInputs(std::shared_ptr<const EventVrsInputView> source);
 
-    // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_event_kernel.py@7536139:68-76
+    // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_event_kernel.py@7536139:80-86
     [[nodiscard]] const EventVrsInputView& require_validated_immutable() const;
 
 private:

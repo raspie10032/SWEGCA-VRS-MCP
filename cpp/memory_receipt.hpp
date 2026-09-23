@@ -33,7 +33,7 @@ public:
 
 // Product source guarded every returned opened row against all three stage
 // identities. The C++ receipt checks all opened rows before publication.
-// SWEGCA: src/swegca_vrs2/native_context.py@c06092a:177-224
+// SWEGCA: src/swegca_vrs2/native_context.py@7536139:172-193
 void validate_opened_identity(const MemoryActivationReceipt& receipt);
 
 }  // namespace swegca::vrs

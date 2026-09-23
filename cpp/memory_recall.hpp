@@ -48,7 +48,8 @@ public:
 // Keep the full candidate set in the caller's memory_selection. The receipt
 // gets only the first active original, or the first address if all are
 // superseded, as in the author product path.
-// SWEGCA: src/swegca_vrs2/store.py@c06092a:1719-1723
+// SWEGCA: src/swegca_vrs2/store.py@7536139:421-427
+// SWEGCA: user@2026-09-22:24-25
 [[nodiscard]] RecallResult select_replay_original(const PublishedHotIndex& index,
                                                   const RecallResult& complete);
 

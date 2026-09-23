@@ -102,11 +102,13 @@ bool NativePublishedHotIndex::contains_episode(
 }
 
 // SWEGCA: src/swegca_vrs2/store.py@7536139:129-135
+// SWEGCA: src/swegca_vrs2/store.py@7536139:149-153
 HotIndexEpisodeHeader NativePublishedHotIndex::episode_header(
     std::string_view identifier) const {
     const auto address = originals_->find_header(identifier,
                                                   published_row_limit_);
-    if (!address) throw std::out_of_range("native_hot_index_episode_missing");
+    if (!address)
+        throw std::out_of_range("'" + std::string(identifier) + "'");
     return headers_->read_at(*address, identifier, published_row_limit_).header;
 }
 

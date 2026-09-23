@@ -49,7 +49,7 @@ HotIndexEpisodeHeader HotIndexPending::episode_header(std::string_view identifie
     return published_.episode_header(identifier);
 }
 
-// SWEGCA: src/swegca_vrs2/store.py@7536139:222-236
+// SWEGCA: src/swegca_vrs2/store.py@7536139:216-217
 std::vector<std::string> HotIndexPending::proposition_ids(std::string_view proposition) const {
     ensure_valid();
     auto ids = published_.proposition_ids(proposition);

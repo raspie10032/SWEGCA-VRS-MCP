@@ -39,9 +39,10 @@ public:
     virtual ~HotIndexRead() = default;
     // SWEGCA: src/swegca_vrs2/store.py@7536139:146-153
     [[nodiscard]] virtual bool contains_episode(std::string_view identifier) const = 0;
+    // Missing identifiers preserve Python KeyError's quoted identifier text.
     // SWEGCA: src/swegca_vrs2/store.py@7536139:149-153
     [[nodiscard]] virtual HotIndexEpisodeHeader episode_header(std::string_view identifier) const = 0;
-    // SWEGCA: src/swegca_vrs2/store.py@7536139:222-236
+    // SWEGCA: src/swegca_vrs2/store.py@7536139:216-217
     [[nodiscard]] virtual std::vector<std::string> proposition_ids(std::string_view proposition) const = 0;
     // SWEGCA: src/swegca_vrs2/store.py@7536139:149-153
     [[nodiscard]] virtual std::optional<std::string> successor_of(std::string_view identifier) const = 0;

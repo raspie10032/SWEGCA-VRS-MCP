@@ -9,7 +9,7 @@
 namespace swegca::vrs {
 namespace {
 
-// SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_event_kernel.py@7536139:44-45
+// SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_event_kernel.py@7536139:54-55
 bool sha256_id(std::string_view identifier) {
     return identifier.size() == 64 &&
         std::all_of(identifier.begin(), identifier.end(), [](char c) {
@@ -19,7 +19,7 @@ bool sha256_id(std::string_view identifier) {
 
 }  // namespace
 
-// SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_event_kernel.py@7536139:34-65
+// SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_event_kernel.py@7536139:53-73
 ValidatedEventVrsInputs::ValidatedEventVrsInputs(
     std::shared_ptr<const EventVrsInputView> source)
     : source_(std::move(source)), snapshot_id_(source_ ? source_->snapshot_id() : std::string()),
@@ -70,7 +70,7 @@ ValidatedEventVrsInputs::ValidatedEventVrsInputs(
     source_->dependencies().require_source(*source_);
 }
 
-// SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_event_kernel.py@7536139:68-76
+// SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_event_kernel.py@7536139:80-86
 const EventVrsInputView& ValidatedEventVrsInputs::require_validated_immutable() const {
     source_->require_immutable_binding();
     if (source_->snapshot_id() != snapshot_id_ ||
