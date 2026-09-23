@@ -1,4 +1,4 @@
-# SWEGCA C++ four-stage memory activation — design v1.7 (for cross-review, no code yet)
+# SWEGCA C++ four-stage memory activation — design v1.8 (for cross-review, no code yet)
 
 Status: draft for Claude–Codex cross-review. Nothing here is implemented.
 It replaces the single-stage `ExperienceSelector::select` with Déjà vu → Recall → Replay → Re-evidence.
@@ -27,10 +27,11 @@ It replaces the single-stage `ExperienceSelector::select` with Déjà vu → Rec
 3. SWEGCA-Architecture@5901a5a mosaic_unrestricted_experience.py:179-290, :440-532. This is the runtime selection that the current C++ `select` follows: every retrieved candidate is judged, and a receipt is kept.
 4. The user-approved flow docs/SWEGCA_VRS_MCP_ORDER_FOR_REVIEW.md (「순서맞음 ㄱㄱ」 2026-09-22): session layer :62-78 (see §4).
 
-## 1. One snapshot for all four stages
-All four stages run over one published journal universe U, and the VRS strength root is named by the same Main HEAD (b2c2f33). A stage handed a result from another snapshot fails, as :663-664 and :733-734 do. The query text is the same in every stage (:936-943). This is the user's one memory+VRS pair swapped atomically (:463-508): our Main HEAD names the memory watermark and the VRS strength root in one CAS.
+## 1. One pinned universe per route for all four stages
+All four stages of one route run over one pinned published universe (the session U_s or the main U_m, see below) and that universe's VRS strengths (main: named by Main HEAD, b2c2f33). A stage handed a result from another snapshot fails, as :663-664 and :733-734 do. The query text is the same in every stage (:936-943). This is the user's one memory+VRS pair swapped atomically (:463-508): our Main HEAD names the memory watermark and the VRS strength root in one CAS.
 - **Not true of today's API (Codex 19:51).** `for_each_index_match`, `resolve` and `replay_at_head` each take a fresh `snapshot()` (journal_store.cpp:1815-1826 and others). Several cue lookups and up to 5 replays could see different HEADs.
-- **Needed first:** a Main-owned pinned read lease. It is taken once per activation, and every cue lookup, resolve, replay and strength read (the main root and the session VRS, §4) takes that lease. Codex designs and implements the journal side. The four-stage code is built on the lease, never on `snapshot()` per call.
+- **Needed first:** a Main-owned activation lease, taken once per activation. It pins **both** the session universe U_s (the session-local native journal and its session VRS) and the main universe U_m (the main journal and its VRS root), because the approved flow keeps them apart (:59-69). Déjà vu runs on U_s. Its `matched_cues` decides one route: U_s, or U_m on a miss (:13-15, :46). Every later stage (navigation, Recall, Replay, strength reads, Re-evidence) uses that one chosen universe. The same-U contract holds per route. Codex designs and implements the journal side. The four-stage code is built on the lease, never on `snapshot()` per call.
+- **Not designed yet:** how Main HEAD and a session HEAD are published relative to each other, and whether a memory is visible in both during the atomic link at SessionEnd (:68).
   - Codex 683fe27: `for_each_index_match_in`, `resolve_in` and `replay_in` take one pinned `PublishedSnapshot` through a private Main path. The upper lease that pins the memory and the strength root together (main root, closed session blocks, live session VRS) is not built yet, and it is a precondition here.
 
 ## 1.5 The user-approved read route (ORDER_FOR_REVIEW, 「순서맞음 ㄱㄱ」 2026-09-22)
@@ -106,7 +107,7 @@ Versions up to v1.5 left these approved rules out. They are binding, and the sta
       - :64 session-local admission and **session-first reads** until SessionEnd. Memory records also live in the session-local native journal during a session, so both memory and strength are read session first.
       - :68 at SessionEnd, atomically link the complete native session journals to main ownership. :78 the original session journals stay available.
       - :69 then, in the background, replay the VRS observations through main append and graph update (an immediate merge).
-    - **What the user's 2026-09-23 words change:** only :69. At SessionEnd the session VRS becomes one block plus its connection points; replay into main (merging) happens only for some blocks in periodic idle time. And :62's session VRS generation runs without lag (20:0x). Whether to amend the approved document itself is asked of the user; this plan records the supersession.
+    - **What the user's 2026-09-23 words change:** only :69. At SessionEnd the session VRS becomes one block plus its connection points; replay into main (merging) happens only for some blocks in periodic idle time. And :62's session VRS generation runs without lag (20:0x). The user approved amending the approved document itself (「고쳐서 반영」); done in fcab35b, edited in place with an amendment section.
     - Keep the session-end block, and keep the existing lookup path: session first, main fallback.
     - Compare in full with the user's live path and the user's actual block and connection-point code first. The live-path files are mosaic_live_vrs_pipeline.py (:1), mosaic_live_action_vrs_transaction.py (:1), mosaic_live_durable_vrs.py (:1) and mosaic_vrs_event_hot_publication.py (:1-7). A survey is running.
     - Then design with Codex: block storage, the connection-point record, the size cap, idle selection and the idle signal, and crash behaviour of a live session.
