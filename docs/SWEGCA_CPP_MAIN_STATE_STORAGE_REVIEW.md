@@ -596,24 +596,37 @@ changes or observation admission. It must be reconciled before assigning
 kind-7 successor body tags or a cold-recovery rule. The existing kind-7 tag 0
 encodes genesis only.
 
-| Source transition | Content changed | Current C++ route | Publication gap |
-|---|---|---|---|
-| Initial construction (`mosaic_cognitive_kernel.py@5901a5a:220-254`) | Initial tensors, graph, references, goals, values, self | `MainOwner::make_initial_state` uses `InitialStateKey` | The checked genesis candidate is not yet a committed Main pair. |
-| Guarded bounded write (`mosaic_bounded_world_write.py@3bddcb7:379-475`) | Verification slot and write-head self metadata | `MainStateWriter::write` uses `SuccessorStateKey` | Returns a successor and receipt without kind-7 successor publication or Main pair swap. |
-| Strict rollback (`mosaic_bounded_world_write.py@3bddcb7:478-496`) | Restores slot and prior write-head metadata, requiring exact prior state digest | `MainStateWriter::rollback` uses `SuccessorStateKey` | No persistent transition receipt or cold replay. |
-| Retraction (`mosaic_bounded_world_write.py@3bddcb7:499-541`) | Restores the current verification slot and prior write-head metadata while preserving later unrelated fields | `MainStateWriter::retract` uses `SuccessorStateKey` | No persistent transition receipt or cold replay. |
-| Autonomous cognition (`mosaic_autonomous_cognition.py@5901a5a:167-186`) | Goal phase, step and event identity, plus event-specific goal/self fields | `cognition_runner` returns a proposal; no `SuccessorStateKey` route for these content changes | Main authority, publication body and recovery rule remain open. |
-| Slot archive/protect/apply (`mosaic_cognitive_slot_memory.py@5901a5a:226-266,269-367`) | Slot-manager self metadata; apply also changes a role-addressed tensor slot | No C++ successor route for these operations | Main authority, publication body and recovery rule remain open. |
+`S` below is `SWEGCA-Architecture@5901a5a/src/swegca/`; `T` is
+`tinylm-slicer-sanabi-bazzite@3bddcb7/src/tinylm_slicer/`. Each row names a
+source function that returns changed state, including wrappers that delegate
+to another row. Source checks are described as written; a plain `authorized`
+boolean is not a Main capability.
 
-Preview, rejected bounded writes, detached proposals and evidence reads do not
-produce a successor. Only `MainStateWriter` currently exercises
-`SuccessorStateKey` (`main_state_writer.cpp` lines 456, 513 and 557). A
-decoder for three writer variants alone would omit the other state mutations
-above. The record header, receipt body and transition tags remain unspecified
-until the complete route and authority boundary are reviewed.
-`mosaic_recurrent_cognition.py@3bddcb7:242-253` also constructs a
-`CognitiveState` as a recurrent-core output. No source-backed Main commit of
-that output was found in the resident path; treat it as a detached candidate
-until an explicit Main transition and authority route is established.
-`mosaic_world_bundle_training.py@3bddcb7:132-144` constructs a training batch
-state, outside resident Main publication.
+| Source transition | Content changed and source check | Current C++ route |
+|---|---|---|
+| Initial construction (`S/mosaic_cognitive_kernel.py:220-254`) | Initial tensors, graph, references, goals, values and self | `MainOwner::make_initial_state` uses `InitialStateKey`; genesis is not yet a committed Main pair. |
+| Bounded verification write (`T/mosaic_bounded_world_write.py:379-477`) | Verification slot and write-head self metadata; authoritative decision capability bound to the exact proposal | `MainStateWriter::write` uses `SuccessorStateKey` and returns a receipt, without kind-7 publication or Main pair swap. |
+| Strict rollback (`T/mosaic_bounded_world_write.py:478-496`) | Restores slot and prior write-head metadata; receipt and exact prior-state hashes | `MainStateWriter::rollback` uses `SuccessorStateKey`; no publication or caller. |
+| Retraction (`T/mosaic_bounded_world_write.py:499-541`) | Restores current verification slot and write-head metadata, keeping later unrelated fields; receipt LIFO and slot checks | `MainStateWriter::retract` uses `SuccessorStateKey`; no publication or caller. |
+| World-linked rollback/retraction (`S/mosaic_world_memory_transaction.py:276-343`) | Delegates to rollback/retraction above and changes semantic memory transaction stages | No linked C++ transaction route. |
+| Autonomous cognition (`S/mosaic_autonomous_cognition.py:167-189`) | Goal phase, step, event ID and event-specific goal/self fields; pure state-machine checks, no Main capability | `cognition_runner` returns a proposal; no successor route for these fields. |
+| Slot apply/archive/protect (`S/mosaic_cognitive_slot_memory.py:226-367`) | Role-addressed tensor slot and/or slot-manager self metadata; revision, lease and content-hash checks, no Main capability | No C++ successor route. |
+| Arbiter commit (`S/mosaic_synapse_arbiter.py:238-360`) | Semantic, executive or scratch slots when `commit=True`; no Main capability and no source caller found | C++ arbiter is commit-free; no successor route. |
+| Accelerated/hybrid verification (`T/mosaic_accelerated_verification.py:89-110`; `T/mosaic_hybrid_verification.py:59-89`) | Delegate to recurrent state update below; no separate Main gate | No C++ successor route. |
+| Continuous-soak audio lease (`T/mosaic_continuous_soak.py:72-119`) | Delegates to slot apply/archive; updates audio slot, evidence references and manager self metadata | No C++ successor route. |
+| Semantic consolidation (`T/mosaic_semantic_consolidation.py:399-457`) | Delegates to slot apply after promoted VRS context and semantic-promotion decision | No C++ successor route or linked transaction. |
+| Consolidation rollback and verified reload (`T/mosaic_semantic_consolidation.py:497-578`) | Returns exact prior state on receipt/journal checks; reload changes semantic slot after accepted accumulator decision and promoted context | No C++ successor route. |
+| Temporal evidence window (`T/mosaic_temporal_evidence_stream.py:71-112`) | Recurrent update and evidence-reference TTL pruning; passes a plain `authorized` boolean | No C++ successor route. |
+| Physical correction (`T/mosaic_physical_backend.py:162-205`) | Evidence references and value-state correction records; physical-correction capability derived from verified evidence | No C++ successor route. |
+| Recurrent cognition and evidence integration (`T/mosaic_recurrent_cognition.py:127-253,302-342`) | Rebuilds all three tensor partitions and optionally merges evidence references; integration uses a plain `authorized` boolean | No C++ successor route or Main publication. |
+
+Only `MainStateWriter` currently exercises `SuccessorStateKey`
+(`main_state_writer.cpp` lines 456, 513 and 557). Preview, rejected bounded
+writes and evidence reads do not produce a successor. Training batch state
+construction (`T/mosaic_world_bundle_training.py:132-144`) is outside resident
+Main publication. A decoder for three writer variants alone would omit the
+other state changes above. For each row, the architecture must determine from
+its source whether the output is request-local or Main-published, then provide
+an authorized Main route for every persistent change. None of the source
+behavior is silently removed. The record header, receipt body and transition
+tags remain unspecified until that boundary is reviewed.
