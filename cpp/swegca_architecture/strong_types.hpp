@@ -18,13 +18,6 @@ inline constexpr std::size_t identity_text_max_bytes = 4096;
 
 [[nodiscard]] bool is_strict_utf8(std::string_view value) noexcept;
 
-// Source _text accepts a value when Python strip leaves content. This native
-// string-view predicate has no identity byte limit and preserves whitespace
-// in the caller's value. Invalid UTF-8 fails closed; NUL is ordinary content
-// under the source predicate. The Unicode blank set is fixed to 16.0 here.
-// SWEGCA: src/tinylm_slicer/mosaic_memory_activation.py@3bddcb7:27-31
-[[nodiscard]] bool has_python_nonspace(std::string_view value) noexcept;
-
 void require_identity_text(std::string_view value, std::string_view field);
 
 // The same rule as `require_identity_text`, judged without allocating or
