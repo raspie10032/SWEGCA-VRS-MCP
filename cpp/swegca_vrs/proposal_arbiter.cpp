@@ -1,7 +1,7 @@
 #include "swegca_vrs/proposal_arbiter.hpp"
 
 #include "swegca_vrs/scalar_codec.hpp"
-#include "swegca_architecture/sha256.hpp"
+#include "swegca_vrs/core_sha256.hpp"
 
 #include <array>
 #include <bit>

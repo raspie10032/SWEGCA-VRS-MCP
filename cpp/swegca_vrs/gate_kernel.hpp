@@ -1,6 +1,6 @@
 #pragma once
 
-#include "swegca_vrs/core_imports.hpp"
+#include "swegca_vrs/core_kernel.hpp"
 
 #include "swegca_architecture/evidence_kernel.hpp"
 

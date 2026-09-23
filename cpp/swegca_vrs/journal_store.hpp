@@ -1,6 +1,6 @@
 #pragma once
 
-#include "swegca_vrs/core_imports.hpp"
+#include "swegca_vrs/core_allocation.hpp"
 
 #include "swegca_vrs/journal_file_io.hpp"
 #include "swegca_vrs/journal_extent_index.hpp"

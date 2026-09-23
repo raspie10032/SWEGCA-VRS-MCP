@@ -1,6 +1,6 @@
 #include "swegca_vrs/role_registry.hpp"
 
-#include "swegca_architecture/sha256.hpp"
+#include "swegca_vrs/core_sha256.hpp"
 
 #include <array>
 #include <bit>

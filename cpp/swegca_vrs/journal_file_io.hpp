@@ -1,6 +1,5 @@
 #pragma once
 
-#include "swegca_vrs/core_imports.hpp"
 
 #include <cstddef>
 #include <cstdint>

@@ -1,12 +1,11 @@
 # SWEGCA core and VRS layer: relocation plan
 
-Status (2026-09-23 17:4x): the core phase (steps 3-4) is closed: the core
-is split out, matches the author's judgment to the bit and passes its
-C++-only tests. The VRS steps (5-7), the accumulator and stages
-correction and section 6 are pending; nothing in `cpp/swegca_vrs/` is
-moved yet. 2026-09-23 18:2x: the four stages are drafted in 6.2 with the
-user's decisions; the author's VRS kernel is located in the original
-experiment repository (6.1).
+Status (2026-09-23 22:2x): the core phase (steps 3-4) and VRS module move
+(step 5) are done. The core judgment passes its C++-only test; the relocated
+VRS candidate compiles and links but is not the resident product. Main
+composition, writer, four-stage route and source-tag review remain open.
+The four stages follow the user's decisions in section 6.2; the author's
+VRS kernel is located in the original experiment repository (6.1).
 
 Rules, in the user's words where given:
 
@@ -51,9 +50,10 @@ type change. Build and test gates stay closed (board §10 steps 9-10).
 The core holds the verifier and the values it needs. It names no file,
 journal or index, counts no resource, and writes no state.
 
-| Module (today, `cpp/swegca_architecture/`) | Layer | Reason |
+| Module (before step 5, `cpp/swegca_architecture/`) | Layer | Reason |
 |---|---|---|
-| digest_bytes, sha256, strong_types | core | values and identity rules the verifier uses |
+| digest_bytes, sha256, strong_types | core | digest values the verifier uses |
+| identity_types | VRS | identity validation, owner and experience tags, state generation and claim revision |
 | allocation (codex 408d4e2/3923503) | core | the abstract allocator the host supplies |
 | byte codec (`ByteReader`, `ByteWriter`, buffer aliases, in journal_format.hpp) | VRS | the core does not use it: the accumulator hashes its own length-prefixed fields; it encodes records, envelopes and cognition |
 | evidence_kernel (was judgment_kernel): EvidenceStatus, EvidenceReason, EvidenceTally, EvidenceJudgment, columns, EvidenceRules, wilson_interval, judge_evidence(_batch); evidence_rules (was judgment_rules): EvidencePolicy, make_evidence_rules, evidence_policy_digest, standard_normal_quantile | core | the ternary judgment itself (accept, reject, abstain) and its configuration |
@@ -270,6 +270,13 @@ VRS (pending; the core has passed):
    gate/arbiter kernels and rules. Codex: proposal, evidence_gate, arbiter,
    writer, cognitive_state, native_tensor, authority*, role_registry,
    main_owner. Claude: cognition.
+   Done in codex `734c9be` and `6139d22`: 45 VRS files moved, then VRS
+   identities split from core strong_types. Claude's parallel `6e0715e`
+   supplied narrower verifier imports and stronger CMake layer checks,
+   integrated on this branch. The candidate builds with `-Werror` and its
+   core test passes. The staged lineage gate still reports existing
+   unverified journal source spans; logic review and product composition
+   are not complete.
 6. Claude: 3.2. Codex: 3.3, 3.4, the Main composition and the writer (3.6).
 7. Both: a layering check in the lineage gate (no `swegca_architecture/`
    file includes `swegca_vrs/`), test conditions regrouped by layer (A,

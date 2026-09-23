@@ -1,15 +1,15 @@
 #pragma once
 
-#include "swegca_vrs/core_imports.hpp"
-
 #include <cstdint>
 #include <memory>
+
+namespace swegca::architecture { class AllocationContext; }
 
 namespace swegca::vrs {
 
 class StateSnapshot;
 struct MainInitialState;
-class AllocationContext;
+using architecture::AllocationContext;
 namespace detail { struct MainOwnerState; }
 
 // Complete owner definition prevents a caller defining a substitute friend.

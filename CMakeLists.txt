@@ -53,17 +53,46 @@ target_link_libraries(swegca_vrs_candidate PUBLIC swegca_core)
 set_target_properties(swegca_vrs_candidate PROPERTIES CXX_EXTENSIONS OFF)
 
 file(GLOB architecture_sources CONFIGURE_DEPENDS
-    "${CMAKE_CURRENT_SOURCE_DIR}/cpp/swegca_architecture/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/cpp/swegca_architecture/*.cpp")
+file(GLOB vrs_directory_sources CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/cpp/swegca_vrs/*.cpp")
 get_target_property(core_sources swegca_core SOURCES)
 get_target_property(vrs_sources swegca_vrs_candidate SOURCES)
-list(APPEND core_sources ${vrs_sources})
 list(TRANSFORM core_sources PREPEND "${CMAKE_CURRENT_SOURCE_DIR}/")
+list(TRANSFORM vrs_sources PREPEND "${CMAKE_CURRENT_SOURCE_DIR}/")
 list(SORT core_sources)
+list(SORT vrs_sources)
 list(SORT architecture_sources)
+list(SORT vrs_directory_sources)
 if(NOT core_sources STREQUAL architecture_sources)
-    message(FATAL_ERROR "Every SWEGCA core and VRS source must be assigned to a CMake target")
+    message(FATAL_ERROR "Every cpp/swegca_architecture source must be in swegca_core, and only those")
 endif()
+if(NOT vrs_sources STREQUAL vrs_directory_sources)
+    message(FATAL_ERROR "Every cpp/swegca_vrs source must be in swegca_vrs_candidate, and only those")
+endif()
+
+# The core is the verifier alone: nothing under cpp/swegca_architecture may
+# include a VRS header. Both directories stay flat so the globs above see
+# every source, and a change to a core file reruns this check.
+foreach(layer_directory IN ITEMS swegca_architecture swegca_vrs)
+    file(GLOB layer_entries LIST_DIRECTORIES true
+        "${CMAKE_CURRENT_SOURCE_DIR}/cpp/${layer_directory}/*")
+    foreach(layer_entry IN LISTS layer_entries)
+        if(IS_DIRECTORY "${layer_entry}")
+            message(FATAL_ERROR "${layer_entry}: cpp/${layer_directory} must stay flat")
+        endif()
+    endforeach()
+endforeach()
+file(GLOB architecture_files CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/cpp/swegca_architecture/*")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${architecture_files})
+foreach(architecture_file IN LISTS architecture_files)
+    file(STRINGS "${architecture_file}" vrs_includes
+        REGEX "^[ \t]*#[ \t]*include[ \t]*[<\"]swegca_vrs/")
+    if(vrs_includes)
+        message(FATAL_ERROR "${architecture_file} includes a VRS header; the core must not depend on the VRS")
+    endif()
+endforeach()
 
 include(CTest)
 if(BUILD_TESTING)

@@ -10,10 +10,10 @@ Its own header carries the Unicode copyright and terms of use.
 runs the user's `_cue` (tinylm-slicer-sanabi-bazzite@3bddcb7
 src/tinylm_slicer/mosaic_memory_activation.py:34-35, `str.casefold`).
 
-`cpp/swegca_architecture/unicode_casefold.hpp` is generated from it:
+`cpp/swegca_vrs/unicode_casefold.hpp` is generated from it:
 
     awk -f tools/generate_casefold_table.awk third_party/unicode/CaseFolding-16.0.0.txt \
-        > cpp/swegca_architecture/unicode_casefold.hpp
+        > cpp/swegca_vrs/unicode_casefold.hpp
 
 The generator and this file are not part of the running store; only the
 generated header is compiled.

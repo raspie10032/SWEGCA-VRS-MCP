@@ -1,6 +1,6 @@
 #include "swegca_vrs/cognitive_state.hpp"
 
-#include "swegca_architecture/sha256.hpp"
+#include "swegca_vrs/core_sha256.hpp"
 
 #include <algorithm>
 #include <array>

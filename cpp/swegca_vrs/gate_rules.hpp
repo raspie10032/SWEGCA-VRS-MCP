@@ -1,6 +1,5 @@
 #pragma once
 
-#include "swegca_vrs/core_imports.hpp"
 
 #include "swegca_vrs/gate_kernel.hpp"
 
