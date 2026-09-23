@@ -33,7 +33,7 @@ public:
 // Called only by the host's real SessionEnd dispatcher. Interrupt calls the
 // capture-only path and cannot create this marker.
 // Lineage: weak analogy — the author writes an ending intent atomically; here one idempotent intent marker bound to the transcript, only at real SessionEnd.
-// SWEGCA: src/swegca_vrs2/session_capture.py@c06092a:436-453
+// SWEGCA: src/swegca_vrs2/session_capture.py@c06092a:449-453
 // SWEGCA: user@2026-09-22:75
 void mark_session_end_intent(
     const std::filesystem::path& state_root, SessionHost host,
@@ -46,6 +46,7 @@ void mark_session_end_intent(
 // Main ownership registry; the transcript itself is never the recall store.
 // Lineage: weak analogy — the author's stable-tail loop, then ended marker and merge; here the loop, then verified seals in the ended marker, no merge.
 // SWEGCA: src/swegca_vrs2/conversation_finalize.py@c06092a:14-47
+// SWEGCA: src/swegca_vrs2/session_capture.py@c06092a:469-485
 // SWEGCA: user@2026-09-22:66-67
 [[nodiscard]] std::vector<SessionShardSeal> finalize_session_end(
     const std::filesystem::path& state_root, SessionHost host,
@@ -55,7 +56,8 @@ void mark_session_end_intent(
 
 // Main reopens the durable real-SessionEnd certificate and verifies the
 // sealed native journals before accepting ownership. No transcript is read.
-// SWEGCA: src/swegca_vrs2/session_capture.py@c06092a:461-494
+// Lineage: weak analogy — the author lists ended markers and opens each shard generation before attaching; here Main rereads the ended marker and verifies its seals.
+// SWEGCA: src/swegca_vrs2/session_capture.py@c06092a:455-468
 // SWEGCA: src/swegca_vrs2/linked_shards.py@c06092a:39-66
 [[nodiscard]] std::vector<SessionShardSeal> read_verified_ended_session(
     const std::filesystem::path& state_root, SessionHost host,

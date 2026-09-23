@@ -49,7 +49,7 @@ Json read_marker(const std::filesystem::path& path) {
     return Json::parse(bytes);
 }
 
-// SWEGCA: src/swegca_vrs2/session_capture.py@c06092a:436-453
+// SWEGCA: src/swegca_vrs2/session_capture.py@c06092a:449-453
 Json intent_body(SessionHost host, std::string_view key,
                  std::string_view path_digest) {
     Json::Object body;
@@ -61,7 +61,7 @@ Json intent_body(SessionHost host, std::string_view key,
     return Json(std::move(body));
 }
 
-// SWEGCA: src/swegca_vrs2/session_capture.py@c06092a:436-453
+// SWEGCA: src/swegca_vrs2/session_capture.py@c06092a:210-211
 std::filesystem::path intent_path(const std::filesystem::path& root,
                                   SessionHost host, std::string_view key) {
     return root / "session-capture" / "ending" / host_name(host) /
@@ -156,7 +156,7 @@ std::filesystem::path ended_path(const std::filesystem::path& root,
 }  // namespace
 
 // Lineage: weak analogy — the author writes an ending intent atomically; here one idempotent intent marker bound to the transcript, only at real SessionEnd.
-// SWEGCA: src/swegca_vrs2/session_capture.py@c06092a:436-453
+// SWEGCA: src/swegca_vrs2/session_capture.py@c06092a:449-453
 // SWEGCA: user@2026-09-22:75
 void mark_session_end_intent(
     const std::filesystem::path& state_root, SessionHost host,
@@ -180,7 +180,7 @@ void mark_session_end_intent(
 
 // Lineage: weak analogy — the author's stable-tail loop, then ended marker and merge; here the loop, then verified seals in the ended marker, no merge.
 // SWEGCA: src/swegca_vrs2/conversation_finalize.py@c06092a:14-47
-// SWEGCA: src/swegca_vrs2/session_capture.py@c06092a:461-494
+// SWEGCA: src/swegca_vrs2/session_capture.py@c06092a:469-485
 // SWEGCA: user@2026-09-22:66-67
 std::vector<SessionShardSeal> finalize_session_end(
     const std::filesystem::path& state_root, SessionHost host,
@@ -245,7 +245,8 @@ std::vector<SessionShardSeal> finalize_session_end(
     return seals;
 }
 
-// SWEGCA: src/swegca_vrs2/session_capture.py@c06092a:461-494
+// Lineage: weak analogy — the author lists ended markers and opens each shard generation before attaching; here Main rereads the ended marker and verifies its seals.
+// SWEGCA: src/swegca_vrs2/session_capture.py@c06092a:455-468
 // SWEGCA: src/swegca_vrs2/linked_shards.py@c06092a:39-66
 std::vector<SessionShardSeal> read_verified_ended_session(
     const std::filesystem::path& state_root, SessionHost host,

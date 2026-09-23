@@ -13,8 +13,9 @@ namespace swegca::vrs {
 // Main owns the transaction. Staged rows are fed in their original journal
 // order; commit must be durable and idempotent by request ID and fingerprint.
 // A retried source group cannot create another original experience.
-// Lineage: weak analogy — the author's batch ingest commits in order, idempotent by request ID; here an abstract Main sink per source group.
+// Lineage: withdrawn flow — the author's batch ingest commits in order, idempotent by request ID; here the Main sink the withdrawn session replay (ORDER 30b73e7:69,76-78) feeds.
 // SWEGCA: src/swegca_vrs2/store.py@c06092a:1389-1460
+// SWEGCA: user@2026-09-23:112-114
 class MainVrsIntegrationSink {
 public:
     virtual ~MainVrsIntegrationSink() = default;
@@ -38,10 +39,9 @@ struct SessionIntegrationReceipt {
 // The source journal is the only content source; the transcript is not read.
 // A durable cursor advances only after Main's group commit. Crash retry uses
 // the author's request-ID idempotence instead of copying experience bodies.
-// Lineage: weak analogy — the author's batch ingest is idempotent by request ID; here a linked, ended session is replayed into Main, never the transcript.
-// SWEGCA: src/swegca_vrs2/linked_shards.py@c06092a:97-138
+// Lineage: withdrawn flow — replays a linked, ended session into Main by batch ingest, never the transcript; first ordered by ORDER 30b73e7:69,76-78, then replaced by the user on 2026-09-23 with one kept block and its connection points.
 // SWEGCA: src/swegca_vrs2/store.py@c06092a:1389-1460
-// SWEGCA: user@2026-09-22:79
+// SWEGCA: user@2026-09-23:112-114
 [[nodiscard]] SessionIntegrationReceipt integrate_linked_session_shard(
     const std::filesystem::path& state_root,
     const LinkedSessionShard& linked,

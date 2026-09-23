@@ -509,8 +509,8 @@ void append_segment_header(LedgerBytes& out, std::uint64_t ordinal,
     writer.u64(first_sequence);
 }
 
-// Lineage: weak analogy — the author rotates its head file into a segment; here the next manifest goes behind the last or first in the next log.
-// SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:249-257
+// Lineage: native mechanism — segments are linked by predecessor and successor manifests; the next manifest goes behind the last or first in the next log.
+// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:574-575
 bool follows(const ManifestLocation& previous, const ManifestLocation& next) noexcept {
     if (previous.log_ordinal == 0 || next.length == 0) return false;
     if (next.log_ordinal == previous.log_ordinal)
@@ -657,6 +657,7 @@ AddressPageView decode_address_page(std::span<const std::byte> bytes,
 
 // Lineage: weak analogy — the author has no page log; only its file-magic header is reused, with version and log ordinal.
 // SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:255
+// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:567-568
 void append_page_log_header(LedgerBytes& out, std::uint64_t log_ordinal) {
     ByteWriter writer(out);
     writer.raw(page_log_magic);
@@ -666,6 +667,7 @@ void append_page_log_header(LedgerBytes& out, std::uint64_t log_ordinal) {
 
 // Lineage: weak analogy — the author has no page log; only its file-magic check is reused, with version and log ordinal.
 // SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:140-141
+// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:567-568
 void check_page_log_header(std::span<const std::byte> bytes, std::uint64_t log_ordinal) {
     ByteReader reader(bytes);
     require_magic(reader, page_log_magic, "journal_page_log_magic_invalid");
@@ -913,6 +915,7 @@ ViewGeneration Manifest::view(std::size_t index) const {
 
 // Lineage: weak analogy — the author has no manifest log; only its file-magic header is reused, with version and log ordinal.
 // SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:255
+// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:567-568
 void append_manifest_log_header(LedgerBytes& out, std::uint64_t log_ordinal) {
     ByteWriter writer(out);
     writer.raw(manifest_log_magic);
@@ -922,6 +925,7 @@ void append_manifest_log_header(LedgerBytes& out, std::uint64_t log_ordinal) {
 
 // Lineage: weak analogy — the author has no manifest log; only its file-magic check is reused, with version and log ordinal.
 // SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:140-141
+// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:567-568
 void check_manifest_log_header(std::span<const std::byte> bytes, std::uint64_t log_ordinal) {
     ByteReader reader(bytes);
     require_magic(reader, manifest_log_magic, "journal_manifest_log_magic_invalid");
