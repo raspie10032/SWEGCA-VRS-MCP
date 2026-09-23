@@ -1,6 +1,7 @@
 #include "swegca_architecture/evidence_accumulator.hpp"
 
 #include "swegca_architecture/cognitive_state.hpp"
+#include "swegca_architecture/experience.hpp"
 #include "swegca_architecture/journal_store.hpp"
 #include "swegca_architecture/sha256.hpp"
 
@@ -228,7 +229,7 @@ std::uint32_t EvidenceAccumulator::identity_id(const Map<Text, std::uint32_t>& t
 // exactly as it was.
 // SWEGCA: src/swegca/mosaic_evidence_accumulator.py@5901a5a:359-428
 AdmissionResult EvidenceAccumulator::admit(const EvidenceObservation& observation,
-                                           const journal::PublishedRecord& replayed,
+                                           const ExperienceRecord& replayed,
                                            const StateGeneration& current,
                                            std::uint64_t current_step) {
     if (observation.claim != claim_.claim().value() || observation.claim_revision != claim_.revision())
@@ -245,7 +246,7 @@ AdmissionResult EvidenceAccumulator::admit(const EvidenceObservation& observatio
           observation.producer_confidence >= 0 && observation.producer_confidence <= 1))
         throw std::invalid_argument("evidence_producer_confidence_invalid");
     // Spec :118 — the observation cites the record Main replayed, nothing else.
-    if (replayed.view().address != observation.address.value())
+    if (replayed.record().address != observation.address)
         throw std::invalid_argument("evidence_record_address_mismatch");
 
     if (originals_.contains(observation.address))
@@ -312,7 +313,7 @@ AdmissionResult EvidenceAccumulator::admit(const EvidenceObservation& observatio
         coverage_node = detached(coverage_, observation.judged_against, Coverage{});
     reserve_one_more(admitted_evidence_);
     AdmittedEvidence kept{ExperienceAddress(memory_, observation.address),
-                          replayed.view().record_digest,
+                          replayed.record().record_digest,
                           observation.judged_against, observation.expires_at, observation.outcome,
                           observation.axis, SourceFamily(memory_, source_text),
                           observation.context, ProducerId(memory_, producer_text),
@@ -539,13 +540,14 @@ ReEvidenceRecorded ReEvidence::apply(EvidenceAccumulator& accumulator,
                                      const CognitiveState& state, std::string_view by,
                                      ReEvidenceJudge judge) const {
     // One snapshot gives both the generation HEAD names and the original.
-    const auto at_head = journal_.replay_at_head(address);
+    auto at_head = journal_.replay_at_head(address);
     if (state.generation() != at_head.state)
         throw std::invalid_argument("re_evidence_state_not_current");
-    const auto& view = at_head.record.view();
+    const auto experience = ExperienceRecord::decode(std::move(at_head.record), memory_);
+    const auto& view = experience.record();
     if (view.address != address.value())
         throw std::invalid_argument("re_evidence_replay_address_mismatch");
-    const auto outcome = judge(view, accumulator.claim(), state);
+    const auto outcome = judge(experience, accumulator.claim(), state);
     if (!outcome_valid(outcome)) throw std::invalid_argument("re_evidence_outcome_invalid");
     ReEvidenceResult result(accumulator.claim(), address, view.record_digest, state.generation(),
                             ProducerId(memory_, by), outcome);
@@ -560,9 +562,10 @@ AdmissionResult EvidenceAdmission::admit(EvidenceAccumulator& accumulator,
                                          const EvidenceObservation& observation,
                                          std::uint64_t current_step) const {
     detail::require_identity_text(observation.address, ExperienceAddressTag::name);
-    const auto at_head =
+    auto at_head =
         journal_.replay_at_head(ExperienceAddress(accumulator.memory_, observation.address));
-    return accumulator.admit(observation, at_head.record, at_head.state, current_step);
+    const auto experience = ExperienceRecord::decode(std::move(at_head.record), accumulator.memory_);
+    return accumulator.admit(observation, experience, at_head.state, current_step);
 }
 
 }  // namespace swegca::architecture

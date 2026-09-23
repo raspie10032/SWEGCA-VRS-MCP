@@ -46,6 +46,7 @@ struct RecordView;
 }  // namespace journal
 
 class CognitiveState;
+class ExperienceRecord;
 
 struct SourceFamilyTag {
     static constexpr std::string_view name = "source_family";
@@ -56,9 +57,10 @@ enum class EvidenceOutcome : std::uint8_t { support = 1, refute = 2, insufficien
 
 // One observation judged against one claim revision: the producer's borrowed
 // input. Its texts must satisfy the identity rule; Main copies what it keeps
-// onto its own account. `address` must name a published journal record
-// (spec :118); Main replays it and hands the replayed record to `admit`, so
-// no caller-supplied position or digest is ever trusted. `judged_against` is
+// onto its own account. `address` must name a published experience record
+// (spec :118, board §4 :213-214); Main replays it, decodes it as experience
+// and hands it to `admit`, so no caller-supplied position or digest is ever
+// trusted. `judged_against` is
 // the Cognitive State generation the producer judged on; it is admitted only
 // when it is the generation Main's journal HEAD names (the author's audit row
 // requires the world hash to be the current state's), and then it is the
@@ -290,16 +292,15 @@ private:
     EvidenceAccumulator(const MemoryLedger::Account& memory, ClaimRevision claim,
                         const EvidencePolicy& policy);
 
-    // Called by EvidenceAdmission only. `replayed` is Main's Replay of
-    // `observation.address` (its content digest is what the original binds)
-    // and `current` the state generation HEAD names. Throws on an observation
+    // Called by EvidenceAdmission only. `replayed` is the experience Main
+    // replayed at `observation.address` (its record digest is what the
+    // original binds) and `current` the state generation HEAD names. Throws on an observation
     // for another claim revision, an unknown axis, invalid fields or a record
     // for another address. A duplicate (address already admitted), stale
     // (judged on another generation than `current`), expired or insufficient
     // observation leaves the tally unchanged and is recorded as rejected. Any
     // throw leaves the accumulator exactly as it was.
-    AdmissionResult admit(const EvidenceObservation& observation,
-                          const journal::PublishedRecord& replayed,
+    AdmissionResult admit(const EvidenceObservation& observation, const ExperienceRecord& replayed,
                           const StateGeneration& current, std::uint64_t current_step);
 
     using Text = std::basic_string<char, std::char_traits<char>, MemoryLedger::Allocator<char>>;
@@ -430,7 +431,7 @@ private:
 };
 
 // The judgment Main runs on a replayed original: it receives the replayed
-// record, the claim revision and the Cognitive State it re-judges against,
+// experience, the claim revision and the Cognitive State it re-judges against,
 // and returns the outcome (the author's runtime judge sees the artifact it
 // judges, never a caller's verdict). It must not touch the accumulator.
 // Borrowed for one call, like a function reference: it owns and allocates
@@ -442,24 +443,24 @@ public:
     template <class F>
         requires(!std::is_same_v<std::remove_cvref_t<F>, ReEvidenceJudge> &&
                  std::is_invocable_r_v<EvidenceOutcome, std::remove_reference_t<F>&,
-                                       const journal::RecordView&, const ClaimRevision&,
+                                       const ExperienceRecord&, const ClaimRevision&,
                                        const CognitiveState&>)
     ReEvidenceJudge(F&& judge) noexcept  // NOLINT(google-explicit-constructor)
         : target_(static_cast<const void*>(std::addressof(judge))),
           call_(&invoke<std::remove_reference_t<F>>) {}
 
     // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:508-512
-    EvidenceOutcome operator()(const journal::RecordView& record, const ClaimRevision& claim,
+    EvidenceOutcome operator()(const ExperienceRecord& record, const ClaimRevision& claim,
                                const CognitiveState& state) const {
         return call_(target_, record, claim, state);
     }
 
 private:
-    using Call = EvidenceOutcome (*)(const void*, const journal::RecordView&,
+    using Call = EvidenceOutcome (*)(const void*, const ExperienceRecord&,
                                      const ClaimRevision&, const CognitiveState&);
     // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:508-512
     template <class T>
-    static EvidenceOutcome invoke(const void* target, const journal::RecordView& record,
+    static EvidenceOutcome invoke(const void* target, const ExperienceRecord& record,
                                   const ClaimRevision& claim, const CognitiveState& state) {
         auto& judge = *static_cast<T*>(const_cast<void*>(target));
         return static_cast<EvidenceOutcome>(judge(record, claim, state));
