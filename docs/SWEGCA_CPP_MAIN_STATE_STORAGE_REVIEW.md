@@ -331,8 +331,9 @@ four-stage VRS path is already implemented.
   staging. Otherwise duplicate-address checks would reject a valid tensor.
 - `CognitiveState::for_each_content_chunk` and `content_digest()` now use one
   canonical byte emitter. Its optional section callback now marks prefix,
-  each tensor, entities, relations, evidence and final fields without adding
-  bytes to the digest preimage. A future bounded state-part writer can consume
+  each tensor, the start of its chunks, entities, relations, evidence and final
+  fields without adding bytes to the digest preimage. A future bounded
+  state-part writer can consume
   exactly that preimage. The experience `plan_blob` pulls from a span
   or random-access reader and rereads it when staging; the state emitter
   pushes chunks into a sink. Share only the input-independent upper digest
@@ -358,7 +359,9 @@ four-stage VRS path is already implemented.
   lists: generation, owner, time and predecessor addresses stay outside it,
   so an unchanged tensor retains its exact root address. The canonical emitter
   now reports section boundaries while retaining one byte-encoding
-  implementation; the writer is not yet connected.
+  implementation. Each tensor's `tensor_chunks` marker follows its header,
+  including when it has zero chunks, so a writer need not infer the header
+  length or chunk start from write calls. The writer is not yet connected.
 - Prefix and suffix may themselves exceed one record and need bounded parts.
   Splitting suffix into stable sections could avoid rewriting an unbounded
   graph when the write head changes. One section-boundary callback in the

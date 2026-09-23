@@ -197,6 +197,7 @@ enum class StateContentSection {
     semantic_tensor,
     executive_tensor,
     scratch_tensor,
+    tensor_chunks,
     entities,
     relations,
     evidence,
@@ -205,8 +206,8 @@ enum class StateContentSection {
 
 class StateContentSectionSink final {
 public:
-    // Weak source analogy: the author's state hash binds all of these fields.
-    // This callback marks C++ storage sections without changing their bytes.
+    // Lineage: weak analogy — the author's state hash binds all of these
+    // fields. This callback marks C++ storage sections without changing bytes.
     // SWEGCA: src/swegca/mosaic_bounded_world_write.py@5901a5a:262-283
     template <class F>
         requires(!std::is_same_v<std::remove_cvref_t<F>, StateContentSectionSink> &&
@@ -318,8 +319,10 @@ public:
     // before the sink returns; no full-state buffer is materialized.
     void for_each_content_chunk(StateContentSink write) const;
     // The section callback runs immediately before that section's first byte.
-    // An empty tensor still has partition/header bytes. Both forms use the
-    // same canonical emitter and therefore the same digest preimage.
+    // Each tensor section has a partition/header followed by tensor_chunks;
+    // the latter fires even for an empty tensor. Thereafter each write call
+    // carries exactly one complete tensor chunk at its stored boundary.
+    // Both forms use the same canonical digest preimage.
     // SWEGCA: src/swegca/mosaic_bounded_world_write.py@5901a5a:262-283
     void for_each_content_chunk(StateContentSink write,
                                 StateContentSectionSink section) const;

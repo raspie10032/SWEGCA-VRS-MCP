@@ -45,7 +45,8 @@ void emit_text(StateContentSink write, std::string_view text) {
 }
 
 // SWEGCA: src/swegca/mosaic_bounded_world_write.py@5901a5a:262-283
-void emit_tensor(StateContentSink write, std::uint8_t partition,
+void emit_tensor(StateContentSink write, const StateContentSectionSink* section,
+                 std::uint8_t partition,
                  const CognitiveTensor& tensor) {
     emit_u8(write, partition);
     emit_u8(write, static_cast<std::uint8_t>(tensor.scalar_type()));
@@ -54,6 +55,7 @@ void emit_tensor(StateContentSink write, std::uint8_t partition,
     emit_u64(write, tensor.shape().slots);
     emit_u64(write, tensor.shape().width);
     emit_u64(write, tensor.byte_count());
+    if (section) (*section)(StateContentSection::tensor_chunks);
     tensor.for_each_chunk([write](std::span<const std::byte> chunk) {
         write(chunk);
     });
@@ -83,11 +85,11 @@ void emit_state_content(
         emit_u64(write, role.slot);
     }
     if (section) (*section)(StateContentSection::semantic_tensor);
-    emit_tensor(write, 1, semantic);
+    emit_tensor(write, section, 1, semantic);
     if (section) (*section)(StateContentSection::executive_tensor);
-    emit_tensor(write, 2, executive);
+    emit_tensor(write, section, 2, executive);
     if (section) (*section)(StateContentSection::scratch_tensor);
-    emit_tensor(write, 3, scratch);
+    emit_tensor(write, section, 3, scratch);
 
     if (section) (*section)(StateContentSection::entities);
     emit_u64(write, graph.entities().size());
