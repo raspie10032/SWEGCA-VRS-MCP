@@ -71,7 +71,8 @@ crash cases before code uses it.
 - The user's earlier bounded writer keeps prior write metadata in `self_state`.
   C++ candidate `SelfState` now holds an opaque caller payload alongside an
   optional typed `BoundedWriteHead` (policy version, receipt digest, revision,
-  target role, evidence references). The content digest uses domain v4 and binds that
+  target role, evidence references, claim and proposal digest). The content
+  digest uses domain v4 and binds that
   head's presence and canonical fields. The writer and recovery codec still
   need to update and restore it; the opaque payload's reserved-key boundary
   must be checked before calling this complete. Caller self payload bytes
@@ -402,7 +403,13 @@ non-tensor inline representation remain undecided.
   contents. A rollback or retraction publishes a new identity even when it
   reuses an existing root. A bounded-write body needs all fields of the
   `BoundedWriteReceipt`; variable fields must have a bounded part form so a
-  large receipt never exceeds one 16 MiB record.
+  large receipt never exceeds one 16 MiB record. The predecessor is Main's
+  last selected committed publication, never a newer orphan in the lower
+  journal. If a retry encounters an already published kind-6 root or kind-7
+  candidate, it resolves and verifies that record's kind and full canonical
+  payload before reusing its exact position; the journal refuses staging a
+  duplicate address. Whether a selected-root writable resumption retains
+  such orphan records remains the open resumption decision below.
 - Retraction cannot be verified by asserting that its result equals the
   referenced receipt's `before_state_hash`: it preserves later unrelated
   cognition. Cold recovery must reproduce the author's active-receipt and
@@ -435,7 +442,7 @@ overrides the last selected committed marker. Source boundaries:
 `CognitiveState::for_each_content_chunk` and `part_tree.hpp` define the native
 stream/part limits; `JournalStore::stage_state_records` and `ManifestFields`
 define the current lower-journal mechanism; the author's
-`mosaic_bounded_world_write.py@3bddcb7:478-546` distinguishes rollback from
+`mosaic_bounded_world_write.py@3bddcb7:478-541` distinguishes rollback from
 retraction, and `mosaic_paper_resident_assimilation.py@3bddcb7:491-535`
 supplies the Main commit ordering.
 
