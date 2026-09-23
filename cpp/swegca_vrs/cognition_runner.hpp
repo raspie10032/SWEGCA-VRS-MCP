@@ -70,11 +70,11 @@ public:
     ProducerRunIntermediate& operator=(const ProducerRunIntermediate&) = delete;
     ~ProducerRunIntermediate() = default;
 
-    // SWEGCA: src/swegca/mosaic_synapse_arbiter.py@5901a5a:113-121
+    // SWEGCA: src/swegca/mosaic_synapse_arbiter.py@5901a5a:108-115
     [[nodiscard]] std::string_view operation_type() const noexcept { return operation_type_; }
-    // SWEGCA: src/swegca/mosaic_synapse_arbiter.py@5901a5a:123-128
+    // SWEGCA: src/swegca/mosaic_synapse_arbiter.py@5901a5a:118-122
     [[nodiscard]] const Proposals& proposals() const noexcept { return proposals_; }
-    // SWEGCA: src/swegca/mosaic_synapse_arbiter.py@5901a5a:113-121
+    // SWEGCA: src/swegca/mosaic_synapse_arbiter.py@5901a5a:108-115
     [[nodiscard]] bool fanout_used() const noexcept { return fanout_used_; }
     // SWEGCA: src/swegca/mosaic_synapse_arbiter.py@5901a5a:113-121
     [[nodiscard]] double primary_weight() const noexcept { return primary_weight_; }

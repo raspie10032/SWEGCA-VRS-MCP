@@ -182,7 +182,7 @@ ProducerRunIntermediate run_request_producers(
 
     // An immutable lease cannot be mutated by a producer. Also refuse a
     // changed Main head before this request's outputs proceed to Bind.
-    // SWEGCA: src/swegca/mosaic_synapse_arbiter.py@5901a5a:431-435
+    // SWEGCA: src/swegca/mosaic_synapse_arbiter.py@5901a5a:434-438
     const auto after = main.snapshot();
     if (after.state().generation() != before ||
         after.content_digest() != content_before)
