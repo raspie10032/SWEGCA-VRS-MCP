@@ -9,10 +9,11 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <functional>
+#include <memory>
 #include <optional>
 #include <span>
 #include <string_view>
+#include <type_traits>
 #include <vector>
 
 // Byte format of the Main-owned native journal (v7): append-only record
@@ -273,7 +274,45 @@ void append_segment_header(LedgerBytes& out, std::uint64_t ordinal, std::uint64_
 // enter at `entering` and end at `expected_last` exactly at the end of
 // `bytes`. `visit`, when set, receives each record and its file offset; the
 // record views `bytes`.
-using RecordVisitor = std::function<void(const RecordView&, std::uint64_t byte_offset)>;
+// A decode callback borrows its callable for this invocation. Unlike a
+// std::function target, it never allocates outside the host's ledger.
+// SWEGCA: docs/SWEGCA_CPP_MAIN_STATE_STORAGE_REVIEW.md@9da0813:187-206
+class RecordVisitor final {
+public:
+    RecordVisitor(const RecordVisitor&) = delete;
+    RecordVisitor& operator=(const RecordVisitor&) = delete;
+    RecordVisitor(RecordVisitor&&) = delete;
+    RecordVisitor& operator=(RecordVisitor&&) = delete;
+
+    // SWEGCA: docs/SWEGCA_CPP_MAIN_STATE_STORAGE_REVIEW.md@9da0813:187-206
+    template <class F>
+        requires(!std::is_same_v<std::remove_cvref_t<F>, RecordVisitor> &&
+                 std::is_object_v<F> &&
+                 std::is_invocable_v<F&, const RecordView&, std::uint64_t>)
+    explicit RecordVisitor(F& visit) noexcept
+        : target_(static_cast<const void*>(std::addressof(visit))),
+          call_(&invoke<F>) {}
+    template <class F>
+    RecordVisitor(const F&&) = delete;
+
+    // SWEGCA: docs/SWEGCA_CPP_MAIN_STATE_STORAGE_REVIEW.md@9da0813:187-206
+    void operator()(const RecordView& record, std::uint64_t offset) const {
+        call_(target_, record, offset);
+    }
+
+private:
+    using Call = void (*)(const void*, const RecordView&, std::uint64_t);
+    // SWEGCA: docs/SWEGCA_CPP_MAIN_STATE_STORAGE_REVIEW.md@9da0813:187-206
+    template <class F>
+    static void invoke(const void* target, const RecordView& record,
+                       std::uint64_t offset) {
+        auto& visit = *static_cast<F*>(const_cast<void*>(target));
+        visit(record, offset);
+    }
+
+    const void* target_;
+    Call call_;
+};
 void decode_segment_range(std::span<const std::byte> bytes, std::uint64_t base_offset,
                           const SegmentExtent& extent, std::uint64_t first_sequence,
                           std::uint64_t record_count, const Digest& entering,

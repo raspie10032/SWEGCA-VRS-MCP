@@ -520,7 +520,7 @@ void decode_segment_range(std::span<const std::byte> bytes, std::uint64_t base_o
         if (record.sequence != first_sequence + at) fail("journal_segment_sequence_invalid");
         if (record.previous_record_digest != chain) fail("journal_segment_chain_invalid");
         chain = record.record_digest;
-        if (visit != nullptr && *visit) (*visit)(record, offset);
+        if (visit != nullptr) (*visit)(record, offset);
     }
     if (reader.remaining() != 0) fail("journal_segment_trailing_bytes");
     if (chain != expected_last) fail("journal_segment_tail_invalid");

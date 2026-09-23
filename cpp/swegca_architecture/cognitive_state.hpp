@@ -142,8 +142,9 @@ using ValueState = StateSection<ValueStateTag>;
 using EvidenceReferences =
     std::vector<ExperienceAddress, AllocationAdapter<ExperienceAddress>>;
 
-// Borrowed sink for the exact canonical state-content stream. Main can write
-// bounded persistent parts from this stream without a whole-state copy.
+// C++ storage adapter for the user's state content; the prior Python source
+// has no corresponding type. Main can write bounded persistent parts from
+// this exact canonical stream without a whole-state copy.
 class StateContentSink final {
 public:
     // SWEGCA: docs/SWEGCA_CPP_MAIN_STATE_STORAGE_REVIEW.md@9da0813:232-239
@@ -155,6 +156,8 @@ public:
     explicit StateContentSink(F& write) noexcept
         : target_(static_cast<const void*>(std::addressof(write))),
           call_(&invoke<F>) {}
+    template <class F>
+    StateContentSink(const F&&) = delete;
 
     // SWEGCA: docs/SWEGCA_CPP_MAIN_STATE_STORAGE_REVIEW.md@9da0813:232-239
     void operator()(std::span<const std::byte> bytes) const { call_(target_, bytes); }

@@ -117,18 +117,25 @@ private:
 // Borrowed exact-address reader for owner validation during a view rebuild.
 // It reads from the unpublished rebuilt address tree and the published record
 // extents. The callable and this adapter live only through rebuild_view.
-// C++ rebuild contract: docs/SWEGCA_CPP_MAIN_STATE_STORAGE_REVIEW.md@9da0813:187-206.
+// C++ rebuild adapter, not a claim of an identical type in the user's prior
+// implementation. Contract: docs/SWEGCA_CPP_MAIN_STATE_STORAGE_REVIEW.md.
 class RebuildReader final {
 public:
+    RebuildReader(const RebuildReader&) = delete;
+    RebuildReader& operator=(const RebuildReader&) = delete;
+    RebuildReader(RebuildReader&&) = delete;
+    RebuildReader& operator=(RebuildReader&&) = delete;
     // SWEGCA: docs/SWEGCA_CPP_MAIN_STATE_STORAGE_REVIEW.md@9da0813:187-206
     template <class F>
         requires(!std::is_same_v<std::remove_cvref_t<F>, RebuildReader> &&
-                 std::is_object_v<std::remove_reference_t<F>> &&
-                 std::is_invocable_r_v<PublishedRecord, std::remove_reference_t<F>&,
+                 std::is_object_v<F> &&
+                 std::is_invocable_r_v<PublishedRecord, F&,
                                        std::string_view>)
-    RebuildReader(F&& replay) noexcept  // NOLINT(google-explicit-constructor)
+    explicit RebuildReader(F& replay) noexcept
         : target_(static_cast<const void*>(std::addressof(replay))),
-          call_(&invoke<std::remove_reference_t<F>>) {}
+          call_(&invoke<F>) {}
+    template <class F>
+    RebuildReader(const F&&) = delete;
 
     // SWEGCA: docs/SWEGCA_CPP_MAIN_STATE_STORAGE_REVIEW.md@9da0813:187-206
     [[nodiscard]] PublishedRecord replay(std::string_view address) const {
@@ -154,15 +161,21 @@ private:
 // publication lock.
 class RebuildValidator final {
 public:
+    RebuildValidator(const RebuildValidator&) = delete;
+    RebuildValidator& operator=(const RebuildValidator&) = delete;
+    RebuildValidator(RebuildValidator&&) = delete;
+    RebuildValidator& operator=(RebuildValidator&&) = delete;
     // SWEGCA: docs/SWEGCA_CPP_MAIN_STATE_STORAGE_REVIEW.md@9da0813:187-206
     template <class F>
         requires(!std::is_same_v<std::remove_cvref_t<F>, RebuildValidator> &&
-                 std::is_object_v<std::remove_reference_t<F>> &&
-                 std::is_invocable_v<std::remove_reference_t<F>&, const RecordView&,
+                 std::is_object_v<F> &&
+                 std::is_invocable_v<F&, const RecordView&,
                                      const RecordPosition&, const RebuildReader&>)
-    RebuildValidator(F&& validate) noexcept  // NOLINT(google-explicit-constructor)
+    explicit RebuildValidator(F& validate) noexcept
         : target_(static_cast<const void*>(std::addressof(validate))),
-          call_(&invoke<std::remove_reference_t<F>>) {}
+          call_(&invoke<F>) {}
+    template <class F>
+    RebuildValidator(const F&&) = delete;
 
     // SWEGCA: docs/SWEGCA_CPP_MAIN_STATE_STORAGE_REVIEW.md@9da0813:187-206
     void operator()(const RecordView& record, const RecordPosition& position,

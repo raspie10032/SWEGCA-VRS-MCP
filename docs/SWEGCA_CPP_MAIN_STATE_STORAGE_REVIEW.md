@@ -208,6 +208,14 @@ four-stage VRS path is already implemented.
   rebuild a view. A callback failure leaves the previous HEAD authoritative
   and removes unpublished rebuild logs. The callback must use the borrowed
   reader and must not reenter JournalStore publication while its lock is held.
+  The borrowed adapters cannot be copied or moved and must not outlive their
+  callable. The
+  validator must have no external side effects: record visitors run before
+  the segment's trailing chain digest is checked. The second pass releases
+  its first-pass collector buffers and runs before decoding, but it still
+  reads one whole published segment into an accounted buffer of at most
+  64 MiB. Its memory bound is therefore not merely page depth plus one
+  record; streaming segment verification remains an open implementation task.
 
 - Reserve native state-part, state-root, and state-write-receipt record kinds
   distinct from experience kinds 1–3. Reuse the existing bounded part-tree
@@ -241,6 +249,8 @@ four-stage VRS path is already implemented.
   canonical byte emitter, so a future bounded state-part writer can consume
   exactly the digest preimage. This emitter alone does not persist or recover
   state parts, and its borrowed sink must finish each chunk before returning.
+  A writer failure may stop the stream mid-part; no partial part or state HEAD
+  may publish, and unpublished bytes must be removed before guarded work resumes.
 
 ## Decisions before implementation
 

@@ -1876,10 +1876,11 @@ void JournalStore::for_each_record(
         io::read_range(segment_path(directory_, ordinal), extent.byte_length, 0, bytes,
                        "journal_published_segment_missing");
         const std::uint64_t segment = ordinal;
-        const RecordVisitor forward = [&visit, segment](const RecordView& record,
-                                                         std::uint64_t offset) {
+        const auto forward_record = [&visit, segment](const RecordView& record,
+                                                       std::uint64_t offset) {
             visit(record, RecordPosition{segment, offset, record.sequence, record.record_digest});
         };
+        const RecordVisitor forward(forward_record);
         decode_segment_range(bytes, 0, extent, extent.first_sequence, extent.record_count,
                              entering, extent.last_record_digest, &forward);
         entering = extent.last_record_digest;
@@ -2167,14 +2168,21 @@ void JournalStore::rebuild_view(RebuildValidator validate) {
                               memory_.allocator<std::byte>());
             io::read_range(segment_path(directory_, ordinal), extent.byte_length, 0, bytes,
                            "journal_published_segment_missing");
-            const std::uint64_t segment = ordinal;
-            const RecordVisitor visit = [&](const RecordView& record, std::uint64_t offset) {
-                const RecordPosition position{segment, offset, record.sequence, record.record_digest};
-                collect(addresses, {}, record.address, position);
-                for_each_index_entry(record, [&](std::string_view index_entry) {
-                    collect(index, index_entry, record.address, position);
+            struct FirstVisitContext {
+                decltype(collect)& add;
+                Collector& addresses;
+                Collector& index;
+                std::uint64_t segment;
+            } context{collect, addresses, index, ordinal};
+            const auto on_record = [&context](const RecordView& record, std::uint64_t offset) {
+                const RecordPosition position{context.segment, offset, record.sequence,
+                                              record.record_digest};
+                context.add(context.addresses, {}, record.address, position);
+                for_each_index_entry(record, [&context, &record, &position](std::string_view entry) {
+                    context.add(context.index, entry, record.address, position);
                 });
             };
+            const RecordVisitor visit(on_record);
             decode_segment_range(bytes, 0, extent, extent.first_sequence, extent.record_count,
                                  entering, extent.last_record_digest, &visit);
             entering = extent.last_record_digest;
@@ -2202,6 +2210,18 @@ void JournalStore::rebuild_view(RebuildValidator validate) {
         const auto address_bytes = merged->page_bytes();
         const auto built_index = build(index);
         merged->close();
+        // The merged tree no longer depends on the sorted runs. Remove their
+        // unpublished logs and release both collectors before validating the
+        // full record chain a second time.
+        for (const auto* each : {&addresses, &index})
+            for (const auto& run : each->runs)
+                if (!run.writer.remove_written()) fail("journal_page_log_remove_failed");
+        const auto release_collector = [&](Collector& used) {
+            Collector empty = collector();
+            std::swap(used, empty);
+        };
+        release_collector(addresses);
+        release_collector(index);
         const PageSource rebuilt_pages{directory_, memory_, nullptr};
         const auto replay_rebuilt = [&](std::string_view address) -> PublishedRecord {
             LeafCursor cursor(rebuilt_pages, built_addresses, address);
@@ -2219,19 +2239,21 @@ void JournalStore::rebuild_view(RebuildValidator validate) {
                               memory_.allocator<std::byte>());
             io::read_range(segment_path(directory_, ordinal), extent.byte_length, 0, bytes,
                            "journal_published_segment_missing");
-            const RecordVisitor visit = [&](const RecordView& record, std::uint64_t offset) {
-                const RecordPosition position{ordinal, offset, record.sequence,
+            struct ValidationVisitContext {
+                RebuildValidator& validate;
+                const RebuildReader& reader;
+                std::uint64_t ordinal;
+            } context{validate, reader, ordinal};
+            const auto on_record = [&context](const RecordView& record, std::uint64_t offset) {
+                const RecordPosition position{context.ordinal, offset, record.sequence,
                                               record.record_digest};
-                validate(record, position, reader);
+                context.validate(record, position, context.reader);
             };
+            const RecordVisitor visit(on_record);
             decode_segment_range(bytes, 0, extent, extent.first_sequence, extent.record_count,
                                  validation_entering, extent.last_record_digest, &visit);
             validation_entering = extent.last_record_digest;
         }
-        // No snapshot ever named a run.
-        for (const auto* each : {&addresses, &index})
-            for (const auto& run : each->runs)
-                if (!run.writer.remove_written()) fail("journal_page_log_remove_failed");
         if (built_addresses.count != fields.tail_sequence) fail("journal_address_view_count_mismatch");
         io::make_entries_durable(directory_);
         const auto pages = merged->pages(
