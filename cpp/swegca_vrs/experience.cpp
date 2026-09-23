@@ -2624,7 +2624,8 @@ SelectionReceipt<NoAuthority>::SelectionReceipt(QueryText query, const Digest256
       digest_(compute_digest()) {}
 
 // Covers the query, context, universe, method, rationale, every judgment,
-// every selected experience in order, and the authority flags.
+// every selected experience in order, the two fixed selection flags, and
+// the authority flags. The native digest format is a C++ receipt mechanism.
 // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:274-290
 Digest256 SelectionReceipt<NoAuthority>::compute_digest() const {
     Sha256 hash;
@@ -2665,7 +2666,8 @@ Digest256 SelectionReceipt<NoAuthority>::compute_digest() const {
         hash_field(hash, item.verification_state.value());
         hash_field(hash, item.revision.value());
     }
-    for (const bool flag : {external_action_authorized, memory_write_authorized, world_write_authorized,
+    for (const bool flag : {rozephine_selected, codex_per_item_approval_used,
+                            external_action_authorized, memory_write_authorized, world_write_authorized,
                             training_write_authorized, p3_promotion_authorized})
         hash_u64(hash, flag ? 1 : 0);
     return Digest256(hash.finish());

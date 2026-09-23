@@ -1011,6 +1011,11 @@ template <>
 class SelectionReceipt<NoAuthority> final {
 public:
     using Authority = NoAuthority;
+    // The author fixes both receipt flags and validates them on construction.
+    // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:218-225
+    // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:245-247
+    static constexpr bool rozephine_selected = true;
+    static constexpr bool codex_per_item_approval_used = false;
     static constexpr bool external_action_authorized = false;
     static constexpr bool memory_write_authorized = false;
     static constexpr bool world_write_authorized = false;
