@@ -7,6 +7,7 @@
 #include <iostream>
 #include <limits>
 #include <span>
+#include <stdexcept>
 
 #ifdef __FAST_MATH__
 #error "SWEGCA evidence tests require fast math to be disabled"
@@ -100,6 +101,31 @@ int main() {
             std::cerr << scenario.name << ": incorrect three-state decision\n";
             ++failures;
         }
+    }
+
+    // A confident producer supplies no evidence to this verifier. A fresh
+    // revision with an empty tally must therefore never become accepted.
+    sk::EvidenceTally empty;
+    empty.revision = 1;
+    if (sk::judge_evidence(rules, empty).status != sk::EvidenceStatus::abstain) {
+        std::cerr << "empty evidence was accepted\n";
+        ++failures;
+    }
+
+    const auto default_digest = sa::evidence_policy_digest(sa::EvidencePolicy{});
+    auto changed_policy = sa::EvidencePolicy{};
+    changed_policy.accept_margin += 0.01;
+    if (sa::evidence_policy_digest(changed_policy) == default_digest) {
+        std::cerr << "policy change left digest unchanged\n";
+        ++failures;
+    }
+    auto invalid_policy = sa::EvidencePolicy{};
+    invalid_policy.axis_count = 0;
+    try {
+        static_cast<void>(sa::make_evidence_rules(invalid_policy));
+        std::cerr << "invalid policy was accepted\n";
+        ++failures;
+    } catch (const std::invalid_argument&) {
     }
 
     std::array<double, axes * count> support{};
