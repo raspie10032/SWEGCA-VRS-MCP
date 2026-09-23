@@ -103,6 +103,111 @@ int main() {
             ++failures;
         }
     }
+    // Fixed output bits from the author's Python formula for the four
+    // baseline cases. These also catch a changed Wilson evaluation order.
+    struct ExpectedBits {
+        std::size_t scenario;
+        std::uint64_t posterior, lower, upper, regime;
+    };
+    constexpr std::array expected_bits{
+        ExpectedBits{0, 0x3fefeb9f34380a30ULL, 0x3fef28334f77f496ULL,
+                     0x3fefffffffffffffULL, 0x0ULL},
+        ExpectedBits{6, 0x3f6460cbc7f5cf9aULL, 0x0ULL,
+                     0x3f7b84c51ef969ccULL, 0x0ULL},
+        ExpectedBits{7, 0x3fe0000000000000ULL, 0x3fd13bbfe0617c6eULL,
+                     0x3fe406f7be2b5adcULL, 0x0ULL},
+        ExpectedBits{5, 0x3fefeb9f34380a30ULL, 0x3fef28334f77f496ULL,
+                     0x3fefffffffffffffULL, 0x3fefeb9f34380a30ULL},
+    };
+    for (const auto& expected : expected_bits) {
+        const auto value = sk::judge_evidence(rules, scenarios[expected.scenario].tally);
+        if (std::bit_cast<std::uint64_t>(value.posterior_mean) != expected.posterior ||
+            std::bit_cast<std::uint64_t>(value.causal_lower_bound) != expected.lower ||
+            std::bit_cast<std::uint64_t>(value.overall_upper_bound) != expected.upper ||
+            std::bit_cast<std::uint64_t>(value.regime_change_score) != expected.regime) {
+            std::cerr << scenarios[expected.scenario].name
+                      << ": numeric result differs from source bits\n";
+            ++failures;
+        }
+    }
+    const auto expect_invalid = [&](const char* label, sk::EvidenceTally tally) {
+        const auto value = sk::judge_evidence(rules, tally);
+        if (value.status != sk::EvidenceStatus::abstain ||
+            value.reason != sk::EvidenceReason::invalid_input) {
+            std::cerr << label << ": invalid tally was not rejected\n";
+            ++failures;
+        }
+    };
+    auto invalid_tally = supporting();
+    invalid_tally.axis_support[0] = std::numeric_limits<double>::quiet_NaN();
+    expect_invalid("nan_axis", invalid_tally);
+    invalid_tally = supporting();
+    invalid_tally.axis_refute[0] = std::numeric_limits<double>::infinity();
+    expect_invalid("infinite_axis", invalid_tally);
+    invalid_tally = supporting();
+    invalid_tally.axis_support[0] = -1;
+    expect_invalid("negative_axis", invalid_tally);
+    invalid_tally = supporting();
+    invalid_tally.recent_count = 7;
+    expect_invalid("long_window", invalid_tally);
+    invalid_tally = supporting();
+    invalid_tally.recent_count = 4;
+    invalid_tally.recent_sum = 5;
+    expect_invalid("oversized_recent_sum", invalid_tally);
+    invalid_tally = supporting();
+    invalid_tally.recent_sum = std::numeric_limits<double>::quiet_NaN();
+    expect_invalid("nan_recent_sum", invalid_tally);
+
+    auto short_and_narrow = supporting();
+    short_and_narrow.axis_support[0] = 3;
+    short_and_narrow.source_diversity = 1;
+    if (sk::judge_evidence(rules, short_and_narrow).reason !=
+        sk::EvidenceReason::minimum_effective_samples) {
+        std::cerr << "sample gate lost priority over source gate\n";
+        ++failures;
+    }
+    auto context_and_regime = supporting();
+    context_and_regime.context_diversity = 3;
+    context_and_regime.recent_count = 4;
+    if (sk::judge_evidence(rules, context_and_regime).reason !=
+        sk::EvidenceReason::context_diversity) {
+        std::cerr << "context gate lost priority over regime gate\n";
+        ++failures;
+    }
+    auto at_sample_minimum = supporting();
+    at_sample_minimum.axis_support.fill(4);
+    if (sk::judge_evidence(rules, at_sample_minimum).reason ==
+        sk::EvidenceReason::minimum_effective_samples) {
+        std::cerr << "exact minimum samples were refused\n";
+        ++failures;
+    }
+    auto at_accept = sa::EvidencePolicy{};
+    at_accept.accept_margin = 0;
+    at_accept.chance_rate = sk::judge_evidence(rules, supporting()).causal_lower_bound;
+    const auto accept_boundary =
+        sk::judge_evidence(sa::make_evidence_rules(at_accept), supporting());
+    if (accept_boundary.status == sk::EvidenceStatus::accept) {
+        std::cerr << "equal lower bound was accepted\n";
+        ++failures;
+    }
+    auto at_reject = sa::EvidencePolicy{};
+    at_reject.accept_margin = 0;
+    at_reject.chance_rate = sk::judge_evidence(rules, scenarios[6].tally).overall_upper_bound;
+    const auto reject_boundary =
+        sk::judge_evidence(sa::make_evidence_rules(at_reject), scenarios[6].tally);
+    if (reject_boundary.status != sk::EvidenceStatus::reject) {
+        std::cerr << "equal upper bound was not rejected\n";
+        ++failures;
+    }
+    auto at_regime = sa::EvidencePolicy{};
+    at_regime.regime_change_threshold =
+        sk::judge_evidence(rules, scenarios[5].tally).regime_change_score;
+    const auto regime_boundary =
+        sk::judge_evidence(sa::make_evidence_rules(at_regime), scenarios[5].tally);
+    if (regime_boundary.reason != sk::EvidenceReason::regime_change_suspected) {
+        std::cerr << "equal regime score was not suspected\n";
+        ++failures;
+    }
 
     // A confident producer supplies no evidence to this verifier. A fresh
     // revision with an empty tally must therefore never become accepted.
@@ -258,6 +363,38 @@ int main() {
     if (sk::judge_evidence_batch(rules, input, input_alias, 0, 1) ||
         support != before_support) {
         std::cerr << "output overlapping input was accepted or mutated\n";
+        ++failures;
+    }
+
+    auto two_axis_policy = sa::EvidencePolicy{};
+    two_axis_policy.axis_count = 2;
+    const auto two_axis_rules = sa::make_evidence_rules(two_axis_policy);
+    auto two_axis_tally = supporting();
+    two_axis_tally.axis_support[2] = -1;  // beyond the configured axes
+    if (sk::judge_evidence(two_axis_rules, two_axis_tally).status !=
+        sk::EvidenceStatus::accept) {
+        std::cerr << "two-axis scalar judgment used an inactive axis\n";
+        ++failures;
+    }
+    std::array<double, 2> two_support{100, 100}, two_refute{0, 0};
+    std::array<std::uint32_t, 2> two_axis_sources{1, 1};
+    std::array<std::uint32_t, 1> two_sources{2}, two_contexts{4},
+        two_recent_counts{0};
+    std::array<double, 1> two_recent_sums{0};
+    std::array<std::uint64_t, 1> two_revisions{400};
+    const sk::EvidenceColumns two_input{
+        1, two_support, two_refute, two_axis_sources, two_sources,
+        two_contexts, two_recent_counts, two_recent_sums, two_revisions};
+    std::array<sk::EvidenceStatus, 1> two_statuses{};
+    std::array<sk::EvidenceReason, 1> two_reasons{};
+    std::array<double, 1> two_means{}, two_lower{}, two_upper{},
+        two_samples{}, two_regimes{};
+    const sk::EvidenceJudgmentColumns two_output{
+        two_statuses, two_reasons, two_means, two_lower,
+        two_upper, two_samples, two_regimes};
+    if (!sk::judge_evidence_batch(two_axis_rules, two_input, two_output, 0, 1) ||
+        !same(sk::judge_evidence(two_axis_rules, supporting()), two_output, 0)) {
+        std::cerr << "two-axis batch differed from scalar\n";
         ++failures;
     }
     return failures == 0 ? 0 : 1;
