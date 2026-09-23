@@ -31,7 +31,7 @@ crash cases before code uses it.
   extent map and recalculates storage across it for every generation. This
   is a preparation cost proportional to segment count even for one small
   state part; HEAD publication serialization does not require that cost.
-- The original C++ `CognitiveTensor` owned one contiguous byte vector.
+- The earlier C++ `CognitiveTensor` owned one contiguous byte vector.
   Candidate `462a6f7` replaces it with immutable shared chunks, but the
   writer and large-state startup paths are not connected yet. A disk part
   tree alone would not solve the in-memory copy.
@@ -41,10 +41,10 @@ crash cases before code uses it.
   It checks EOF after the expected byte count, matching the span path's exact
   length rule. The borrowed reader must honestly report bytes it writes.
   Main's cold journal recovery has not been connected to this reader yet.
-- The original `mosaic_world_memory_transaction.py` prepares a transaction
+- The user's earlier `mosaic_world_memory_transaction.py` prepares a transaction
   for semantic-memory promotion linked to an existing World-write receipt.
   It does not define a required transaction around state-part staging.
-- The original bounded writer keeps prior write metadata in `self_state`.
+- The user's earlier bounded writer keeps prior write metadata in `self_state`.
   C++ candidate `SelfState` now holds an opaque caller payload alongside an
   optional typed `BoundedWriteHead` (policy version, receipt digest, revision,
   target role, evidence references). The content digest uses domain v2 and binds that
@@ -59,11 +59,11 @@ crash cases before code uses it.
   `initial_vrs_strengths`. The later canonicalization path at
   `mosaic_vrs_canonicalization.py@3bddcb7:319-400` requires and emits f32.
   Its strength history is not reconstructible from memory records alone.
-- The later original `mosaic_memory_activation.py@3bddcb7:462-488` keeps a
+- The user's later `mosaic_memory_activation.py@3bddcb7:462-488` keeps a
   memory index and VRS snapshot as a Main-owned atomic pair. Its
   `replay_memory` (`:725-746`) does not rank by strength. Strength-ordered
   Replay and the five-way tie cap are user instructions from 2026-09-23;
-  they are not attributed to the original Replay function.
+  they are not attributed to that earlier Replay function.
 
 ## Required contract
 
@@ -109,7 +109,7 @@ crash cases before code uses it.
    guarded work and reopens from the published HEAD before another write.
 6. Initialization, cold recovery, and guarded writes must fit the VRS host's
    configured memory profile and preserve the canonical state content byte
-   stream. Its content digest excludes generation ordinal, as the original
+   stream. Its content digest excludes generation ordinal, as the user's earlier
    bounded writer's bit-exact rollback check requires. The host VRS layer
    counts memory and judges its configured limit; the SWEGCA code uses its
    injected allocator.
@@ -123,11 +123,12 @@ crash cases before code uses it.
    persistent experience. Its published values and lineage must survive
    recovery from HEAD; they are not a rebuildable search view of memory
    records. The strength root is separate from `CognitiveState`, as in the
-   later original. One Main-published HEAD binds the memory watermark, state
-   root, and VRS strength root so readers never see a half-updated pair;
+   user's later implementation. One Main-published HEAD binds the memory
+   watermark, state root, and VRS strength root so readers never see a
+   half-updated pair;
    permitted VRS processing lag remains explicit in that published tuple.
-   New C++ strength persistence and computation use f32, matching the later
-   canonicalization path. The old f16 artifact is source history, not a
+   New C++ strength persistence and computation use f32, matching the user's
+   later canonicalization path. The old f16 artifact is source history, not a
    compatibility format or a per-edge rounding rule.
 10. A VRS worker proposal carries the memory watermark it read and the
     parent strength root identity. Main alone checks that the source memory
@@ -135,7 +136,7 @@ crash cases before code uses it.
     skipped or counted twice, and that the parent root is still current
     before publishing. Memory-record positions are not `PublishedStateId`:
     that type names a CognitiveState publication. Raw cue hit counts grant no
-    strength mutation authority. The original `refine_vrs` stability bit is
+    strength mutation authority. The user's `refine_vrs` stability bit is
     a geometry test, not a SWEGCA three-state decision; their exact interface
     remains open, including abstention.
 
@@ -159,7 +160,7 @@ crash cases before code uses it.
   `judged_against` compare only the content digest. Replay can inspect
   `StateSnapshot::state()` to judge the current content.
 - The receipt carries display time outside `CognitiveState`. Neither that
-  time nor a new ordinal determines succession or authority. The original
+  time nor a new ordinal determines succession or authority. The user's earlier
   bounded writer's self-state write revision remains content, since rollback
   must restore it. A typed `BoundedWriteHead` in `SelfState` is included in
   content-digest domain v2; its writer and recovery path are still pending.
@@ -183,6 +184,26 @@ crash cases before code uses it.
 
 This is an interface contract, not a claim that state publication or the
 four-stage VRS path is already implemented.
+
+### Derived address-view rebuild and record validation
+
+- `JournalStore::rebuild_view` currently checks the journal record chain and
+  builds the address and index trees, but it does not decode experience,
+  part, or cue-binding payloads. A recovered view cannot be called fully
+  validated on that basis alone.
+- The first bounded pass builds an unpublished exact-address tree from the
+  verified record chain. Once its pages are flushed, a second bounded pass
+  may ask each record's Main-owned decoder to validate its kind and payload
+  before the final HEAD publishes the replacement view. That second pass is
+  cold recovery work outside the input-to-Recall latency budget.
+- A cue binding that carries a target `RecordPosition` must prove that the
+  rebuilt address tree resolves its target address to that same position.
+  Reading bytes at the supplied position alone does not establish that it
+  is the position in the verified chain. The target record must also have
+  the expected address and kind, and precede the binding in record order.
+- The owner-validation callback and exact access interface are not yet
+  implemented. Any failure must leave the previous HEAD authoritative and
+  remove unpublished rebuild logs; no partially validated view is exposed.
 
 - Reserve native state-part, state-root, and state-write-receipt record kinds
   distinct from experience kinds 1–3. Reuse the existing bounded part-tree
