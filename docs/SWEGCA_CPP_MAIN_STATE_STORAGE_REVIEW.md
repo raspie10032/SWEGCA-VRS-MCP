@@ -237,6 +237,10 @@ four-stage VRS path is already implemented.
   large initial tensors without simultaneous whole-tensor copies. Hashing
   the canonical stream may still take time on a write, but it does not
   belong to the input-to-Recall latency budget.
+- `CognitiveState::for_each_content_chunk` and `content_digest()` now use one
+  canonical byte emitter, so a future bounded state-part writer can consume
+  exactly the digest preimage. This emitter alone does not persist or recover
+  state parts, and its borrowed sink must finish each chunk before returning.
 
 ## Decisions before implementation
 

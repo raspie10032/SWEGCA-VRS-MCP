@@ -11,6 +11,7 @@
 #include <memory>
 #include <optional>
 #include <span>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -141,6 +142,36 @@ using ValueState = StateSection<ValueStateTag>;
 using EvidenceReferences =
     std::vector<ExperienceAddress, AllocationAdapter<ExperienceAddress>>;
 
+// Borrowed sink for the exact canonical state-content stream. Main can write
+// bounded persistent parts from this stream without a whole-state copy.
+class StateContentSink final {
+public:
+    // SWEGCA: docs/SWEGCA_CPP_MAIN_STATE_STORAGE_REVIEW.md@9da0813:232-239
+    template <class F>
+        requires(!std::is_same_v<std::remove_cvref_t<F>, StateContentSink> &&
+                 std::is_object_v<F> &&
+                 std::is_invocable_v<F&,
+                                     std::span<const std::byte>>)
+    explicit StateContentSink(F& write) noexcept
+        : target_(static_cast<const void*>(std::addressof(write))),
+          call_(&invoke<F>) {}
+
+    // SWEGCA: docs/SWEGCA_CPP_MAIN_STATE_STORAGE_REVIEW.md@9da0813:232-239
+    void operator()(std::span<const std::byte> bytes) const { call_(target_, bytes); }
+
+private:
+    using Call = void (*)(const void*, std::span<const std::byte>);
+    // SWEGCA: docs/SWEGCA_CPP_MAIN_STATE_STORAGE_REVIEW.md@9da0813:232-239
+    template <class F>
+    static void invoke(const void* target, std::span<const std::byte> bytes) {
+        auto& write = *static_cast<F*>(const_cast<void*>(target));
+        write(bytes);
+    }
+
+    const void* target_;
+    Call call_;
+};
+
 // The original bounded writer stores this current-write head under
 // self_state["bounded_verification_write"]. It is state content: rollback
 // restores the prior head exactly, and retraction checks receipt/revision.
@@ -216,6 +247,10 @@ public:
     [[nodiscard]] const Digest256& content_digest() const noexcept {
         return generation_.digest();
     }
+    // The same bytes, in the same order, that content_digest hashes. Each
+    // borrowed span lives only through this call and must be copied or hashed
+    // before the sink returns; no full-state buffer is materialized.
+    void for_each_content_chunk(StateContentSink write) const;
     // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:83-93
     [[nodiscard]] const RoleRegistry& roles() const noexcept { return roles_; }
     // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:83-93
