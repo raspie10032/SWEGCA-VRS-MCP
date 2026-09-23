@@ -155,8 +155,9 @@ std::filesystem::path ended_path(const std::filesystem::path& root,
 
 }  // namespace
 
+// Lineage: weak analogy — the author writes an ending intent atomically; here one idempotent intent marker bound to the transcript, only at real SessionEnd.
 // SWEGCA: src/swegca_vrs2/session_capture.py@c06092a:436-453
-// SWEGCA: user@2026-09-22:72-79
+// SWEGCA: user@2026-09-22:75
 void mark_session_end_intent(
     const std::filesystem::path& state_root, SessionHost host,
     std::string_view session_id,
@@ -177,9 +178,10 @@ void mark_session_end_intent(
     write_atomic_file(marker, std::as_bytes(std::span(bytes)));
 }
 
+// Lineage: weak analogy — the author's stable-tail loop, then ended marker and merge; here the loop, then verified seals in the ended marker, no merge.
 // SWEGCA: src/swegca_vrs2/conversation_finalize.py@c06092a:14-47
 // SWEGCA: src/swegca_vrs2/session_capture.py@c06092a:461-494
-// SWEGCA: user@2026-09-22:63-79
+// SWEGCA: user@2026-09-22:66-67
 std::vector<SessionShardSeal> finalize_session_end(
     const std::filesystem::path& state_root, SessionHost host,
     std::string_view session_id,

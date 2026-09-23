@@ -143,9 +143,10 @@ void require_registered(const std::filesystem::path& root,
 
 }  // namespace
 
+// Lineage: weak analogy — the author's batch ingest is idempotent by request ID; here a linked, ended session is replayed into Main, never the transcript.
 // SWEGCA: src/swegca_vrs2/linked_shards.py@c06092a:97-138
 // SWEGCA: src/swegca_vrs2/store.py@c06092a:1389-1460
-// SWEGCA: user@2026-09-22:72-79
+// SWEGCA: user@2026-09-22:79
 SessionIntegrationReceipt integrate_linked_session_shard(
     const std::filesystem::path& state_root,
     const LinkedSessionShard& linked,

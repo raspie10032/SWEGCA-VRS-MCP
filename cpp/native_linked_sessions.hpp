@@ -33,8 +33,9 @@ void visit_linked_sessions(
 
 // The whole ended-session shard batch is published atomically. Identical
 // retries are no-ops; ID, path or generation reassignment is rejected.
+// Lineage: weak analogy — the author rewrites a JSON registry under a lock; here one journal link event per ended session, reassignment rejected.
 // SWEGCA: src/swegca_vrs2/linked_shards.py@c06092a:97-138
-// SWEGCA: user@2026-09-22:72-79
+// SWEGCA: user@2026-09-22:68
 [[nodiscard]] SessionLinkReceipt attach_ended_session(
     const std::filesystem::path& state_root, SessionHost host,
     std::string_view session_id);
