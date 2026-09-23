@@ -1083,14 +1083,26 @@ void ExperienceRecord::verify_parts() const {
     if (contexts_.parted()) for_each_digest(contexts_, every);
 }
 
+namespace {
+
+// What a binding record names once checked: its target and its cues,
+// both viewing the record's bytes.
+struct CheckedBinding {
+    std::string_view target;
+    LedgerVector<std::string_view> cues;
+};
+
 // Checks the kind, the payload byte for byte, the address against the
 // binding's digest under its target, the entries against its cues, and
-// that the target is a memory the journal holds (the author refuses keys
-// for an unknown address, mosaic_unrestricted_experience.py@5901a5a:408-410).
+// that the target is a memory held before the binding (the author refuses
+// keys for an unknown address, mosaic_unrestricted_experience.py@5901a5a:408-410).
+// `resolve` gives the target's position, `kind_of` its record kind: from
+// the published journal when decoding, from the rebuilt view when a
+// rebuild validates the record before it is published.
 // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:398-436
-CueBindingRecord CueBindingRecord::decode(journal::PublishedRecord published, const AllocationContext& memory,
-                                          const journal::JournalStore& journal) {
-    const auto& view = published.view();
+template <class Resolve, class KindOf>
+CheckedBinding checked_binding(const journal::RecordView& view, const journal::RecordPosition& at,
+                               const AllocationContext& memory, const Resolve& resolve, const KindOf& kind_of) {
     if (view.kind != cue_binding_kind) fail("experience_cue_binding_kind_invalid");
     if (view.authority || !view.claim.empty() || !view.previous_revision_address.empty() || !view.outcome.empty())
         fail("experience_cue_binding_invalid");
@@ -1124,19 +1136,46 @@ CueBindingRecord CueBindingRecord::decode(journal::PublishedRecord published, co
     });
     if (!exact || next != entries.size()) fail("experience_cue_binding_index_invalid");
 
-    const ExperienceAddress address(memory, target);
-    const auto target_at = journal.resolve(address);
+    const std::optional<journal::RecordPosition> target_at = resolve(target);
     // The target is the memory at the position the binding names, published
     // before it.
     if (!target_at || target_at->segment_ordinal != named.segment_ordinal ||
         target_at->byte_offset != named.byte_offset || target_at->sequence != named.sequence ||
-        target_at->record_digest != named.record_digest || !(named.sequence < published.position().sequence))
+        target_at->record_digest != named.record_digest || !(named.sequence < at.sequence))
         fail("experience_cue_binding_target_unknown");
-    const auto held = journal.replay(address);
-    const auto kind = held.view().kind;
+    const std::uint16_t kind = kind_of(target);
     if (kind != original_experience_kind && kind != derived_experience_kind)
         fail("experience_cue_binding_target_unknown");
-    return CueBindingRecord(std::move(published), target, std::move(cues));
+    return CheckedBinding{target, std::move(cues)};
+}
+
+}  // namespace
+
+// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:398-436
+CueBindingRecord CueBindingRecord::decode(journal::PublishedRecord published, const AllocationContext& memory,
+                                          const journal::JournalStore& journal) {
+    auto checked = checked_binding(
+        published.view(), published.position(), memory,
+        [&](std::string_view target) { return journal.resolve(ExperienceAddress(memory, target)); },
+        [&](std::string_view target) {
+            const auto held = journal.replay(ExperienceAddress(memory, target));
+            return held.view().kind;
+        });
+    return CueBindingRecord(std::move(published), checked.target, std::move(checked.cues));
+}
+
+// The same checks for a binding a view rebuild meets before publishing it:
+// its target is resolved and read in the rebuilt view, so a target that the
+// rebuild has not seen earlier in record order fails.
+// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:398-436
+void CueBindingRecord::validate_rebuilt(const journal::RecordView& record, const journal::RecordPosition& position,
+                                        const journal::RebuildReader& reader, const AllocationContext& memory) {
+    (void)checked_binding(
+        record, position, memory, [&reader](std::string_view target) { return reader.resolve(target); },
+        [&reader](std::string_view target) {
+            const auto held = reader.replay(target);
+            return held.view().kind;
+        });
 }
 
 // Everything is checked, encoded and cut into parts here, before anything

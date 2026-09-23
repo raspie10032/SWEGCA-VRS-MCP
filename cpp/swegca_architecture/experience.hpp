@@ -414,6 +414,11 @@ public:
     // cues' entries, and a target the journal holds as a memory (kind 1 or 2).
     [[nodiscard]] static CueBindingRecord decode(journal::PublishedRecord record, const AllocationContext& memory,
                                                  const journal::JournalStore& journal);
+    // The same checks for a binding a view rebuild meets before it is
+    // published, its target read through the rebuilt view (`reader`).
+    // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:398-436
+    static void validate_rebuilt(const journal::RecordView& record, const journal::RecordPosition& position,
+                                 const journal::RebuildReader& reader, const AllocationContext& memory);
 
     CueBindingRecord(CueBindingRecord&& other) noexcept = default;
     CueBindingRecord& operator=(CueBindingRecord&&) = delete;
