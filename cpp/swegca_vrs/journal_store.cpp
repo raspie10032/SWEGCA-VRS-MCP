@@ -35,17 +35,20 @@ constexpr const char* manifest_log_suffix = ".swjm";
 constexpr const char* page_log_suffix = ".swjp";
 constexpr std::size_t ordinal_digits = 20;
 
-// SWEGCA: user@2026-09-22:72-79
+// Lineage: native mechanism — one throw point for journal error codes.
+// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:50
 [[noreturn]] void fail(const char* code) { throw std::runtime_error(code); }
 
 // Checked accumulation for byte counts.
-// SWEGCA: user@2026-09-22:72-79
+// Lineage: native mechanism — checked uint64 addition for byte counts (Python integers do not overflow).
+// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:50
 std::uint64_t plus(std::uint64_t left, std::uint64_t right, const char* code) {
     if (right > std::numeric_limits<std::uint64_t>::max() - left) fail(code);
     return left + right;
 }
 
-// SWEGCA: user@2026-09-22:72-79
+// Lineage: native mechanism — checked uint64 multiplication for byte counts.
+// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:50
 std::uint64_t times(std::uint64_t left, std::uint64_t right, const char* code) {
     if (left != 0 && right > std::numeric_limits<std::uint64_t>::max() / left) fail(code);
     return left * right;
@@ -54,35 +57,41 @@ std::uint64_t times(std::uint64_t left, std::uint64_t right, const char* code) {
 // On-disk charge of one file: its length rounded up to the allocation unit,
 // plus one unit for its metadata. Lengths here are at most a segment or a
 // log, so the arithmetic cannot overflow.
-// SWEGCA: user@2026-09-22:72-79
+// Lineage: native mechanism — allocation-unit charge of one file, so the host's budget sees disk use.
+// SWEGCA: docs/SWEGCA_CPP_VRS_LAYER_PLAN.md@472d23225c973fa0a33581afd6bd9026df6fc98a:170-173
 std::uint64_t file_charge(std::uint64_t length, std::uint64_t unit) noexcept {
     return (length + unit - 1) / unit * unit + unit;
 }
 
-// SWEGCA: user@2026-09-22:72-79
+// Lineage: weak analogy — the author's 20-digit name numbers a segment by its last sequence; here any file ordinal.
+// SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:252-253
 std::string ordinal_name(char prefix, std::uint64_t value, const char* suffix) {
     char buffer[ordinal_digits + 1];
     std::snprintf(buffer, sizeof buffer, "%020llu", static_cast<unsigned long long>(value));
     return std::string(1, prefix) + buffer + suffix;
 }
 
-// SWEGCA: user@2026-09-22:72-79
+// Lineage: weak analogy — the author names a sealed segment by its last row sequence; here by its physical file id.
+// SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:252-253
 fs::path segment_path(const fs::path& directory, std::uint64_t file_id) {
     return directory / ordinal_name(segment_prefix, file_id, segment_suffix);
 }
 
-// SWEGCA: user@2026-09-22:72-79
+// Lineage: weak analogy — the author has no manifest log; only its 20-digit segment naming is reused.
+// SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:253
 fs::path manifest_log_path(const fs::path& directory, std::uint64_t ordinal) {
     return directory / ordinal_name(manifest_log_prefix, ordinal, manifest_log_suffix);
 }
 
-// SWEGCA: user@2026-09-22:72-79
+// Lineage: weak analogy — the author has no page log; only its 20-digit segment naming is reused.
+// SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:253
 fs::path page_log_path(const fs::path& directory, std::uint64_t ordinal) {
     return directory / ordinal_name(page_log_prefix, ordinal, page_log_suffix);
 }
 
 // Parses `<prefix><20 digits><suffix>`; returns 0 when `name` is not one.
-// SWEGCA: user@2026-09-22:72-79
+// Lineage: weak analogy — the author matches level file names by regex; here one fixed-width ordinal is parsed.
+// SWEGCA: src/swegca_vrs2/exact_replay.py@c06092a:233-237
 std::uint64_t parse_ordinal(std::string_view name, char prefix, std::string_view suffix) {
     if (name.size() != 1 + ordinal_digits + suffix.size() || name.front() != prefix ||
         name.substr(1 + ordinal_digits) != suffix)
@@ -100,7 +109,8 @@ std::uint64_t parse_ordinal(std::string_view name, char prefix, std::string_view
 
 // True for a name the journal publishes through `io::publish_file`; only a
 // `.part` file under such a name is an interrupted publication.
-// SWEGCA: user@2026-09-22:72-79
+// Lineage: weak analogy — the author globs segment files; here every name a HEAD can publish, others fail closed.
+// SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:179-181
 bool is_published_name(std::string_view name) {
     return name == head_name || parse_ordinal(name, segment_prefix, segment_suffix) != 0 ||
            parse_ordinal(name, manifest_log_prefix, manifest_log_suffix) != 0 ||
@@ -110,7 +120,9 @@ bool is_published_name(std::string_view name) {
 // Applies one manifest's extents on top of the published extent table: an
 // existing ordinal may only grow when it is the tail, a new ordinal must
 // follow the tail contiguously, and a checkpoint must name every extent.
-// SWEGCA: user@2026-09-22:72-79
+// Lineage: weak analogy — the author checks row sequences across files; here manifest extents must chain.
+// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:574-575
+// SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:183-194
 void apply_manifest(RecoveryExtentTable& extents, const Manifest& manifest) {
     for (std::size_t index = 0; index < manifest.extent_count(); ++index) {
         const auto next = manifest.extent(index);
@@ -153,7 +165,8 @@ void apply_manifest(RecoveryExtentTable& extents, const Manifest& manifest) {
 }
 
 // Reads and decodes the manifest stored at `location` into bytes from the host's allocator.
-// SWEGCA: user@2026-09-22:72-79
+// Lineage: weak analogy — the author reads a digest-named report under a size bound; here a HEAD-located manifest.
+// SWEGCA: src/tinylm_slicer/mosaic_vrs_event_durable.py@3bddcb7:158-167
 Manifest read_manifest(const fs::path& directory, const ManifestLocation& location,
                        const AllocationContext& memory) {
     if (location.log_ordinal == 0 || location.length == 0 ||
@@ -173,7 +186,8 @@ Manifest read_manifest(const fs::path& directory, const ManifestLocation& locati
 // Generation 0 is built in a sibling directory and renamed into place without
 // replacement, so a directory that exists either has a published HEAD or is
 // not a journal (and then fails closed on open).
-// SWEGCA: user@2026-09-22:72-79
+// Lineage: direct — a missing store is created as an empty first generation whose HEAD is written atomically.
+// SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:96-106
 void create_initial(const fs::path& directory, std::string_view identity,
                     const AllocationContext& memory) {
     const auto parent = directory.has_parent_path() ? directory.parent_path() : fs::path(".");
@@ -236,7 +250,9 @@ using PageHandle = std::shared_ptr<const LoadedPage>;
 // pages every lookup passes (the roots).
 class PageCache final {
 public:
-    // SWEGCA: user@2026-09-22:72-79
+    // Lineage: weak analogy — the author bounds mapped segments by descriptors; here pages use the host's cache context.
+    // SWEGCA: docs/SWEGCA_CPP_VRS_LAYER_PLAN.md@472d23225c973fa0a33581afd6bd9026df6fc98a:167-170
+    // SWEGCA: src/swegca_vrs2/exact_replay.py@c06092a:216-217
     PageCache(const AllocationContext& cache, std::size_t shard_count)
         : memory_(cache), shards_(memory_.allocator<std::shared_ptr<Shard>>()) {
         shards_.reserve(shard_count);
@@ -244,7 +260,8 @@ public:
             shards_.push_back(std::allocate_shared<Shard>(memory_.allocator<Shard>(), memory_));
     }
 
-    // SWEGCA: user@2026-09-22:72-79
+    // Lineage: weak analogy — the author's hit refreshes LRU order; here a hit sets the CLOCK bit under a shard lock.
+    // SWEGCA: src/swegca_vrs2/exact_replay.py@c06092a:345-351
     [[nodiscard]] PageHandle find(const PageRef& ref) const {
         auto& shard = shard_of(ref);
         std::lock_guard guard(shard.mutex);
@@ -257,7 +274,8 @@ public:
 
     // Reads `ref` on the cache's budget and keeps it; empty when the budget
     // cannot hold it even after evicting every unused page.
-    // SWEGCA: user@2026-09-22:72-79
+    // Lineage: weak analogy — the author evicts by count; here a host refusal evicts one unused page and retries.
+    // SWEGCA: src/swegca_vrs2/exact_replay.py@c06092a:352-360
     template <class Read>
     [[nodiscard]] PageHandle load(const PageRef& ref, Read read) const {
         for (;;) {
@@ -281,7 +299,8 @@ private:
     // Indexes `page`. An index that cannot grow within the budget leaves the
     // page unindexed: it is still returned, and its charge ends with its
     // last reader.
-    // SWEGCA: user@2026-09-22:72-79
+    // Lineage: weak analogy — the author inserts into an OrderedDict; here a slot is kept only within the host budget.
+    // SWEGCA: src/swegca_vrs2/exact_replay.py@c06092a:356
     void keep(const PageRef& ref, const PageHandle& page) const {
         auto& shard = shard_of(ref);
         std::lock_guard guard(shard.mutex);
@@ -309,7 +328,8 @@ private:
     // page whose handle count is one, and a new holder needs the shard lock
     // held here, so its eviction returns its budget. False when every cached
     // page is held by a reader.
-    // SWEGCA: user@2026-09-22:72-79
+    // Lineage: weak analogy — the author pops the oldest mapping; here CLOCK skips pages a reader holds.
+    // SWEGCA: src/swegca_vrs2/exact_replay.py@c06092a:357-359
     bool evict_one() const {
         const auto first = next_shard_.fetch_add(1, std::memory_order_relaxed);
         for (std::size_t step = 0; step < shards_.size(); ++step) {
@@ -340,7 +360,8 @@ private:
         bool used = false;
     };
     struct Shard {
-        // SWEGCA: user@2026-09-22:72-79
+        // Lineage: native mechanism — one independently locked cache shard allocated on the cache's own context.
+        // SWEGCA: docs/SWEGCA_CPP_VRS_LAYER_PLAN.md@472d23225c973fa0a33581afd6bd9026df6fc98a:167-170
         explicit Shard(const AllocationContext& memory)
             : slots(memory.allocator<Slot>()), free(memory.allocator<std::size_t>()),
               index(memory.allocator<std::pair<const PageRef, std::size_t>>()) {}
@@ -352,7 +373,8 @@ private:
         std::size_t hand = 0;
     };
 
-    // SWEGCA: user@2026-09-22:72-79
+    // Lineage: native mechanism — spreads pages over independently locked shards.
+    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:50
     [[nodiscard]] Shard& shard_of(const PageRef& ref) const noexcept {
         const auto mixed = (ref.log_ordinal * 0x9e3779b97f4a7c15ull) ^ ref.offset;
         return *shards_[static_cast<std::size_t>(mixed % shards_.size())];
@@ -367,7 +389,8 @@ namespace {
 
 // Reads one published page and requires the digest its parent (or the
 // manifest) names.
-// SWEGCA: user@2026-09-22:72-79
+// Lineage: weak analogy — the author checks a block file's digest; here a page range against its parent's digest.
+// SWEGCA: src/tinylm_slicer/mosaic_vrs_block_store.py@3bddcb7:211-215
 PageHandle read_page(const fs::path& directory, const AllocationContext& memory,
                      const PageRef& ref) {
     LedgerBytes bytes(ref.length, memory.allocator<std::byte>());
@@ -387,7 +410,8 @@ struct PageSource {
     const AllocationContext& memory;
     const PageCache* cache = nullptr;
 
-    // SWEGCA: user@2026-09-22:72-79
+    // Lineage: weak analogy — the author reuses verified blocks when saving; here verified pages when reading.
+    // SWEGCA: src/tinylm_slicer/mosaic_vrs_block_store.py@3bddcb7:169-173
     [[nodiscard]] PageHandle load(const PageRef& ref) const {
         if (cache != nullptr) {
             if (auto hit = cache->find(ref)) return hit;
@@ -403,7 +427,8 @@ struct PageSource {
 // Places the pages one generation writes into page logs: after the published
 // end of the current log, or in new logs when it is full. Every page buffer
 // stays where it was placed until publication, so views into it stay valid.
-// SWEGCA: user@2026-09-22:72-79
+// Lineage: weak analogy — the author rotates one head file; here pages go to the next log when one is full.
+// SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:245-257
 struct PageWriter {
     const AllocationContext& memory;
     LedgerVector<PagePiece>& pieces;
@@ -412,7 +437,8 @@ struct PageWriter {
     std::uint64_t written = 0;  // bytes added to page logs, headers included
     std::uint64_t page_bytes = 0;
 
-    // SWEGCA: user@2026-09-22:72-79
+    // Lineage: weak analogy — the author rotates after an append; here a page that would overflow starts a new log.
+    // SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:245-257
     std::span<const std::byte> place(LedgerBytes page, PageRef& ref) {
         const auto size = page.size();
         if (log_ordinal == 0 || log_end + size > max_page_log_bytes) {
@@ -448,7 +474,8 @@ struct PageWriter {
 // Splits `items` into pages of at most `address_page_max_bytes`, spread
 // evenly, and writes them; returns one child per page, keyed by its first
 // address viewed in the written page.
-// SWEGCA: user@2026-09-22:72-79
+// Lineage: weak analogy — the author batches nodes into frames under a byte target; here items into even pages.
+// SWEGCA: src/tinylm_slicer/mosaic_resident_framed_header.py@3bddcb7:97-107
 template <class Item, class Key, class Size, class Append>
 LedgerVector<AddressChildItem> write_pages(PageWriter& writer, std::span<const Item> items,
                                            Key key, Size size_of, Append append) {
@@ -481,7 +508,8 @@ LedgerVector<AddressChildItem> write_pages(PageWriter& writer, std::span<const I
     return out;
 }
 
-// SWEGCA: user@2026-09-22:72-79
+// Lineage: native mechanism — leaf pages of the exact-address and index B+ trees.
+// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:587-588
 LedgerVector<AddressChildItem> write_leaf_pages(PageWriter& writer,
                                                 std::span<const AddressLeafItem> items) {
     return write_pages(
@@ -490,7 +518,8 @@ LedgerVector<AddressChildItem> write_leaf_pages(PageWriter& writer,
         [](LedgerBytes& out, std::span<const AddressLeafItem> page) { append_leaf_page(out, page); });
 }
 
-// SWEGCA: user@2026-09-22:72-79
+// Lineage: native mechanism — branch pages of the exact-address and index B+ trees.
+// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:587-588
 LedgerVector<AddressChildItem> write_branch_pages(PageWriter& writer,
                                                   std::span<const AddressChildItem> items) {
     return write_pages(
@@ -508,8 +537,8 @@ LedgerVector<AddressChildItem> write_branch_pages(PageWriter& writer,
 // kept children view the page read here, which lives until the replacement
 // is written.
 // Rule: an address already in the view is refused, never overwritten.
-// SWEGCA: src/swegca/mosaic_versioned_memory.py@5901a5a:159-167
-// SWEGCA: user@2026-09-22:72-79
+// Lineage: weak analogy — the author patches bytes sharing untouched blocks; here a B+ tree insert shares pages.
+// SWEGCA: src/tinylm_slicer/mosaic_vrs_block_store.py@3bddcb7:95-112
 LedgerVector<AddressChildItem> insert_into(PageWriter& writer, const PageSource& pages,
                                            const PageRef& ref, std::uint32_t height,
                                            std::span<const AddressLeafItem> added,
@@ -563,7 +592,8 @@ LedgerVector<AddressChildItem> insert_into(PageWriter& writer, const PageSource&
 
 // The tree after adding `added` (sorted, unique): new pages for every changed
 // path and a taller root when the old root split.
-// SWEGCA: user@2026-09-22:72-79
+// Lineage: weak analogy — the author's patch keeps the block layout; here copy on write may split the root.
+// SWEGCA: src/tinylm_slicer/mosaic_vrs_block_store.py@3bddcb7:95-112
 ViewTree update_tree(PageWriter& writer, const PageSource& pages, const ViewTree& tree,
                      std::span<const AddressLeafItem> added) {
     if (added.empty()) return tree;
@@ -590,7 +620,9 @@ ViewTree update_tree(PageWriter& writer, const PageSource& pages, const ViewTree
 
 // The view pages after both trees took their additions through `writer`,
 // which places every page of this generation in the shared page logs.
-// SWEGCA: user@2026-09-22:72-79
+// Lineage: weak analogy — the user's line names session publication of derived addresses; here page updates.
+// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:587-588
+// SWEGCA: user@2026-09-22:62
 ViewPages update_views(PageWriter& writer, const PageSource& source, const ViewPages& pages,
                        std::span<const AddressLeafItem> addresses,
                        std::span<const AddressLeafItem> index) {
@@ -606,7 +638,8 @@ ViewPages update_views(PageWriter& writer, const PageSource& source, const ViewP
 }
 
 // Appends `text` to `keys`, which has capacity for it (so nothing moves).
-// SWEGCA: user@2026-09-22:72-79
+// Lineage: native mechanism — appends into reserved capacity so earlier key views never move.
+// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:50
 void append_text(LedgerBytes& keys, std::string_view text) {
     if (text.size() > keys.capacity() - keys.size()) fail("journal_key_capacity");
     const auto* bytes = reinterpret_cast<const std::byte*>(text.data());
@@ -616,7 +649,8 @@ void append_text(LedgerBytes& keys, std::string_view text) {
 // Appends the key of one view entry to `keys`, which has capacity for it,
 // and views it there: the address itself when `index_entry` is empty,
 // otherwise the index-view key (entry, separator, address).
-// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:398-437
+// Lineage: weak analogy — the author keeps key-to-address postings in memory; here one sorted view key per pair.
+// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:425-430
 std::string_view append_view_key(LedgerBytes& keys, std::string_view index_entry, std::string_view address) {
     const auto at = keys.size();
     const auto size = index_entry.empty() ? address.size() : index_key_size(index_entry, address);
@@ -630,7 +664,8 @@ std::string_view append_view_key(LedgerBytes& keys, std::string_view index_entry
 }
 
 // The tree a builder finished, with the bytes of its pages.
-// SWEGCA: user@2026-09-22:72-79
+// Lineage: native mechanism — descriptor of a finished tree, checked against its page bytes.
+// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:50
 ViewTree tree_of(std::uint64_t count, std::uint32_t height, const PageRef& root,
                  std::uint64_t page_bytes) {
     if (count == 0) {
@@ -654,10 +689,12 @@ constexpr std::size_t max_page_items =
 // the storage rule (its bytes plus two allocation units) and the host's
 // StorageBudget must allow the journal's use with it (`used` plus what this
 // writer charged) before any of its bytes is written.
-// SWEGCA: user@2026-09-22:72-79
+// Lineage: native mechanism — streams rewritten view pages to new logs, each charged before any byte is written.
+// SWEGCA: docs/SWEGCA_CPP_VRS_LAYER_PLAN.md@472d23225c973fa0a33581afd6bd9026df6fc98a:170-174
 class StreamWriter {
 public:
-    // SWEGCA: user@2026-09-22:72-79
+    // Lineage: native mechanism — binds the host's budget and the journal's prior use to one writer.
+    // SWEGCA: docs/SWEGCA_CPP_VRS_LAYER_PLAN.md@472d23225c973fa0a33581afd6bd9026df6fc98a:170-174
     StreamWriter(const fs::path& directory, const AllocationContext& memory,
                  std::uint64_t first_log, const StorageBudget& storage, std::uint64_t used,
                  std::uint64_t unit)
@@ -667,7 +704,8 @@ public:
         pending_.reserve(stream_flush_bytes);
     }
 
-    // SWEGCA: user@2026-09-22:72-79
+    // Lineage: weak analogy — the author rotates after the append; here an overflowing page first opens a new log.
+    // SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:245-257
     PageRef write(std::span<const std::byte> page) {
         const auto size = page.size();
         if (log_ordinal_ == 0 || log_end_ + size > max_page_log_bytes) {
@@ -691,7 +729,8 @@ public:
     }
 
     // Appends what is pending to the current log and makes it durable.
-    // SWEGCA: user@2026-09-22:72-79
+    // Lineage: weak analogy — the author appends and fsyncs one frame of its head file; here buffered view pages.
+    // SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:233-242
     void flush() {
         if (pending_.empty()) return;
         const auto path = page_log_path(*directory_, log_ordinal_);
@@ -705,7 +744,8 @@ public:
 
     // Removes every log written here; true when none is left. No HEAD may
     // name them (they are removed only before publication or when replaced).
-    // SWEGCA: user@2026-09-22:72-79
+    // Lineage: weak analogy — the author removes an unpublished generation directory; here a range of written logs.
+    // SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:322-325
     [[nodiscard]] bool remove_written() const noexcept {
         if (log_ordinal_ == 0) return true;
         try {
@@ -725,13 +765,15 @@ public:
     }
 
     // Flushes and gives back the write buffer; the logs stay as written.
-    // SWEGCA: user@2026-09-22:72-79
+    // Lineage: native mechanism — flushes and returns the write buffer to the host's allocator.
+    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:50
     void close() {
         flush();
         pending_ = LedgerBytes(pending_.get_allocator());
     }
 
-    // SWEGCA: user@2026-09-22:72-79
+    // Lineage: native mechanism — the next page-log ordinal, exhaustion checked.
+    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:50
     [[nodiscard]] std::uint64_t next_ordinal() const {
         if (log_ordinal_ == 0) return first_log_;
         if (log_ordinal_ == std::numeric_limits<std::uint64_t>::max())
@@ -741,7 +783,8 @@ public:
 
     // The view pages over the two trees written here (each given with the
     // bytes of its pages; every page written here is live) and their logs.
-    // SWEGCA: user@2026-09-22:72-79
+    // Lineage: native mechanism — view descriptor over the trees and logs this writer wrote.
+    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:587-589
     [[nodiscard]] ViewPages pages(const ViewTree& addresses, const ViewTree& index) const {
         if (addresses.live_page_bytes + index.live_page_bytes != page_bytes_)
             fail("journal_address_view_corrupt");
@@ -756,14 +799,18 @@ public:
         return out;
     }
 
-    // SWEGCA: user@2026-09-22:72-79
+    // Lineage: native mechanism — reports the page bytes this writer wrote.
+    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:50
     [[nodiscard]] std::uint64_t page_bytes() const noexcept { return page_bytes_; }
 
-    // SWEGCA: user@2026-09-22:72-79
+    // Lineage: native mechanism — reports what this writer charged against the host's budget.
+    // SWEGCA: docs/SWEGCA_CPP_VRS_LAYER_PLAN.md@472d23225c973fa0a33581afd6bd9026df6fc98a:170-174
     [[nodiscard]] std::uint64_t charged() const noexcept { return charged_; }
 
 private:
-    // SWEGCA: user@2026-09-22:72-79
+    // Lineage: weak analogy — the author judges free space itself; here the host's budget must allow the use first.
+    // SWEGCA: docs/SWEGCA_CPP_VRS_LAYER_PLAN.md@472d23225c973fa0a33581afd6bd9026df6fc98a:170-174
+    // SWEGCA: src/tinylm_slicer/mosaic_live_durable_vrs.py@3bddcb7:111-116
     void charge(std::uint64_t bytes) {
         const auto after = plus(charged_, bytes, "journal_storage_overflow");
         if (!storage_->allows(plus(used_, after, "journal_storage_overflow")))
@@ -793,10 +840,12 @@ struct BuiltTree {
 
 // Walks the leaf items of a tree in address order, holding one verified page
 // per level; the item it shows is valid until `next`.
-// SWEGCA: user@2026-09-22:72-79
+// Lineage: native mechanism — B+ tree leaf cursor holding one verified page per level.
+// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:592-595
 class LeafCursor {
 public:
-    // SWEGCA: user@2026-09-22:72-79
+    // Lineage: native mechanism — cursor at the first leaf item of a tree.
+    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:50
     LeafCursor(const PageSource& pages, const BuiltTree& tree)
         : pages_(pages), frames_(pages.memory.allocator<Frame>()) {
         frames_.reserve(max_address_height);  // frames never move
@@ -805,7 +854,8 @@ public:
 
     // Positioned at the first item whose key is not below `from`: one page
     // per level on the way down.
-    // SWEGCA: user@2026-09-22:72-79
+    // Lineage: native mechanism — positions by descending one page per level, never scanning.
+    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:592-595
     LeafCursor(const PageSource& pages, const BuiltTree& tree, std::string_view from)
         : pages_(pages), frames_(pages.memory.allocator<Frame>()) {
         frames_.reserve(max_address_height);  // frames never move
@@ -837,16 +887,19 @@ public:
         }
     }
 
-    // SWEGCA: user@2026-09-22:72-79
+    // Lineage: native mechanism — cursor state.
+    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:50
     [[nodiscard]] bool valid() const noexcept { return !frames_.empty(); }
 
-    // SWEGCA: user@2026-09-22:72-79
+    // Lineage: native mechanism — cursor item access.
+    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:50
     [[nodiscard]] const AddressLeafItem& item() const {
         const auto& leaf = frames_.back();
         return leaf.page->view.leaves[leaf.at];
     }
 
-    // SWEGCA: user@2026-09-22:72-79
+    // Lineage: native mechanism — cursor advance.
+    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:50
     void next() {
         ++frames_.back().at;
         settle();
@@ -860,7 +913,8 @@ private:
     };
 
     // Moves past exhausted pages to the next item, down to its leaf.
-    // SWEGCA: user@2026-09-22:72-79
+    // Lineage: native mechanism — cursor moves past exhausted pages.
+    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:50
     void settle() {
         for (;;) {
             const auto& top = frames_.back();
@@ -875,7 +929,8 @@ private:
         if (!top.page->view.leaf) descend(top.page->view.children[top.at].page, top.height - 1);
     }
 
-    // SWEGCA: user@2026-09-22:72-79
+    // Lineage: native mechanism — cursor descent to the first leaf.
+    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:50
     void descend(PageRef ref, std::uint32_t height) {
         for (;;) {
             if (height == 0) fail("journal_address_view_corrupt");
@@ -903,10 +958,12 @@ struct Run {
 // order, writing each page as soon as it is full, so memory holds one open
 // page per level whatever the tree size. Keys are copied into each level's
 // own buffer, so an item need live only for the call that adds it.
-// SWEGCA: user@2026-09-22:72-79
+// Lineage: native mechanism — bottom-up B+ tree builder for view rewrites, one open page per level.
+// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:587-590
 class TreeBuilder {
 public:
-    // SWEGCA: user@2026-09-22:72-79
+    // Lineage: native mechanism — builder with one open page per level.
+    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:50
     TreeBuilder(StreamWriter& writer, const AllocationContext& memory)
         : writer_(writer), memory_(memory), levels_(memory.allocator<Level>()),
           last_(memory.allocator<std::byte>()) {
@@ -916,8 +973,8 @@ public:
     }
 
     // Rule: the same address arriving twice in a rebuild is refused.
-    // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:69-71
-    // SWEGCA: user@2026-09-22:72-79
+    // Lineage: weak analogy — the author refuses a repeated address in a record table; here in a sorted tree build.
+    // SWEGCA: src/tinylm_slicer/mosaic_lossless_blocks.py@3bddcb7:221-222
     void add(const AddressLeafItem& item) {
         const std::string_view last(reinterpret_cast<const char*>(last_.data()), last_.size());
         if (count_ != 0 && item.address <= last)
@@ -935,7 +992,8 @@ public:
 
     // Writes the open pages bottom-up; the single page of the top level is
     // the root. An empty tree writes nothing.
-    // SWEGCA: user@2026-09-22:72-79
+    // Lineage: native mechanism — writes the open pages bottom-up to the root.
+    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:50
     BuiltTree finish() {
         if (count_ == 0) return BuiltTree{};
         for (std::size_t at = 0;; ++at) {
@@ -948,7 +1006,8 @@ public:
 
 private:
     struct Level {
-        // SWEGCA: user@2026-09-22:72-79
+        // Lineage: native mechanism — one builder level with reserved buffers.
+        // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:50
         Level(const AllocationContext& memory, bool leaf_level)
             : leaf(leaf_level), keys(memory.allocator<std::byte>()),
               leaves(memory.allocator<AddressLeafItem>()),
@@ -966,7 +1025,8 @@ private:
         std::uint64_t pages = 0;
     };
 
-    // SWEGCA: user@2026-09-22:72-79
+    // Lineage: native mechanism — copies a key into the level's reserved buffer.
+    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:50
     static std::string_view keep(Level& level, std::string_view key) {
         const auto at = level.keys.size();
         if (key.size() > level.keys.capacity() - at) fail("journal_address_page_invalid");
@@ -975,7 +1035,8 @@ private:
         return std::string_view(reinterpret_cast<const char*>(level.keys.data()) + at, key.size());
     }
 
-    // SWEGCA: user@2026-09-22:72-79
+    // Lineage: native mechanism — encodes and writes one open page.
+    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:50
     PageRef write_page(const Level& level) {
         LedgerBytes page(memory_.allocator<std::byte>());
         page.reserve(level.bytes);
@@ -986,7 +1047,8 @@ private:
         return writer_.write(page);
     }
 
-    // SWEGCA: user@2026-09-22:72-79
+    // Lineage: native mechanism — adds a child to the level above, growing the tree.
+    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:50
     void push_child(std::size_t at, std::string_view first, const PageRef& ref) {
         if (at == levels_.size()) {
             if (at == max_address_height) fail("journal_address_view_too_tall");
@@ -1002,7 +1064,8 @@ private:
     // Writes the open page of level `at` and hands its first key and
     // reference to the level above, which copies the key before this level's
     // buffer is reused.
-    // SWEGCA: user@2026-09-22:72-79
+    // Lineage: native mechanism — writes a full page and pushes its first key up.
+    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:50
     void flush(std::size_t at) {
         auto& level = levels_[at];
         if (level.bytes == address_page_header_bytes) return;
@@ -1026,7 +1089,8 @@ private:
 // Feeds `builder` the union of `runs` in address order with a binary heap of
 // cursors: O(log k) per item, one page per level per run in memory. An
 // address in two runs fails as a duplicate.
-// SWEGCA: user@2026-09-22:72-79
+// Lineage: native mechanism — k-way heap merge of the sorted runs of a view rebuild.
+// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:589-590
 void merge_runs(TreeBuilder& builder, const PageSource& pages, std::span<const Run> runs) {
     LedgerVector<LeafCursor> cursors(pages.memory.allocator<LeafCursor>());
     cursors.reserve(runs.size());
@@ -1055,7 +1119,8 @@ void merge_runs(TreeBuilder& builder, const PageSource& pages, std::span<const R
 
 // Visits the leaf items of the tree at `ref` in address order, holding one
 // verified page per level.
-// SWEGCA: user@2026-09-22:72-79
+// Lineage: native mechanism — in-order leaf walk with one verified page per level.
+// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:50
 template <class Visit>
 void visit_leaves(const PageSource& pages, const PageRef& ref, std::uint32_t height, Visit& visit) {
     if (height == 0) fail("journal_address_view_corrupt");
@@ -1070,7 +1135,8 @@ void visit_leaves(const PageSource& pages, const PageRef& ref, std::uint32_t hei
 
 // Feeds `builder` the union of the tree `previous` (when given) and `batch`
 // (sorted), in address order; an address in both fails as a duplicate.
-// SWEGCA: user@2026-09-22:72-79
+// Lineage: native mechanism — merges one tree with a sorted batch into a builder.
+// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:50
 void merge_into(TreeBuilder& builder, const PageSource& pages, const BuiltTree* previous,
                 std::span<const AddressLeafItem> batch) {
     std::size_t next = 0;
@@ -1083,7 +1149,8 @@ void merge_into(TreeBuilder& builder, const PageSource& pages, const BuiltTree* 
     for (; next < batch.size(); ++next) builder.add(batch[next]);
 }
 
-// SWEGCA: user@2026-09-22:72-79
+// Lineage: native mechanism — the next page-log ordinal after a view, exhaustion checked.
+// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:50
 std::uint64_t next_page_log(const ViewPages& view) {
     if (view.page_log_ordinal == std::numeric_limits<std::uint64_t>::max())
         fail("journal_page_log_exhausted");
@@ -1092,7 +1159,8 @@ std::uint64_t next_page_log(const ViewPages& view) {
 
 }  // namespace
 
-// SWEGCA: user@2026-09-22:72-79
+// Lineage: weak analogy — the author checks a capsule's length and CRC; here the decoded sequence and digest.
+// SWEGCA: src/swegca_vrs2/exact_replay.py@c06092a:662-671
 PublishedRecord::PublishedRecord(LedgerBytes bytes, const RecordPosition& position)
     : bytes_(std::move(bytes)), position_(position) {
     ByteReader reader(bytes_);
@@ -1104,20 +1172,23 @@ PublishedRecord::PublishedRecord(LedgerBytes bytes, const RecordPosition& positi
 
 // The source keeps no view of the bytes it gave away. A vector move carries
 // the buffer itself, so the moved view still points into owned bytes.
-// SWEGCA: user@2026-09-22:72-79
+// Lineage: native mechanism — move leaves the source with no view of bytes it gave away.
+// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:50
 PublishedRecord::PublishedRecord(PublishedRecord&& other) noexcept
     : bytes_(std::move(other.bytes_)),
       view_(std::exchange(other.view_, RecordView{})),
       position_(std::exchange(other.position_, RecordPosition{})) {}
 
-// SWEGCA: user@2026-09-22:72-79
+// Lineage: native mechanism — buffers of a staged generation on the host's allocator.
+// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:50
 StagedGeneration::StagedGeneration(const AllocationContext& memory)
     : head_bytes_(memory.allocator<std::byte>()), log_header_(memory.allocator<std::byte>()),
       pieces_(memory.allocator<SegmentPiece>()), page_pieces_(memory.allocator<PagePiece>()),
       positions_(memory.allocator<RecordPosition>()) {}
 
 // A moved-from staged generation is invalid and can never be published.
-// SWEGCA: user@2026-09-22:72-79
+// Lineage: native mechanism — move leaves the source invalid, so it can never be published.
+// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:50
 StagedGeneration::StagedGeneration(StagedGeneration&& other) noexcept
     : valid_(std::exchange(other.valid_, false)), parent_generation_(other.parent_generation_),
       parent_manifest_digest_(other.parent_manifest_digest_),
@@ -1125,7 +1196,8 @@ StagedGeneration::StagedGeneration(StagedGeneration&& other) noexcept
       pieces_(std::move(other.pieces_)), page_pieces_(std::move(other.page_pieces_)),
       positions_(std::move(other.positions_)), next_(std::move(other.next_)) {}
 
-// SWEGCA: user@2026-09-22:72-79
+// Lineage: native mechanism — binds the owner lock, budget, allocator and page cache.
+// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:50
 JournalStore::JournalStore(fs::path directory, JournalIdentity identity,
                            std::shared_ptr<const StorageBudget> storage, const AllocationContext& memory,
                            std::uint64_t allocation_unit, std::unique_ptr<io::OwnerLock> lock,
@@ -1136,10 +1208,13 @@ JournalStore::JournalStore(fs::path directory, JournalIdentity identity,
       cache_(page_cache ? std::make_unique<PageCache>(*page_cache, page_cache_shards) : nullptr),
       retired_(memory.allocator<RetiredLogs>()) {}
 
-// SWEGCA: user@2026-09-22:72-79
+// Lineage: native mechanism — default destruction.
+// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:50
 JournalStore::~JournalStore() = default;
 
-// SWEGCA: user@2026-09-22:72-79
+// Lineage: weak analogy — the author opens or creates and repairs its head file; here recovery from HEAD.
+// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:577-578
+// SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:91-127
 std::unique_ptr<JournalStore> JournalStore::open(const fs::path& directory,
                                                  std::string_view identity,
                                                  std::shared_ptr<const StorageBudget> storage,
@@ -1165,7 +1240,9 @@ std::unique_ptr<JournalStore> JournalStore::open(const fs::path& directory,
 // `file_charge`. Sealed manifest and page logs are charged by their exact
 // published bytes plus the rounding bound per log. HEAD is charged twice:
 // its replacement is written beside it before the move.
-// SWEGCA: user@2026-09-22:72-79
+// Lineage: weak analogy — the author sums file sizes after the fact; here the charge follows from the manifest.
+// SWEGCA: docs/SWEGCA_CPP_VRS_LAYER_PLAN.md@472d23225c973fa0a33581afd6bd9026df6fc98a:170-173
+// SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:327-332
 std::uint64_t JournalStore::storage_of(const ExtentIndex& extents, const ManifestFields& head,
                                        const ManifestLocation& location) const {
     constexpr const char* code = "journal_storage_overflow";
@@ -1182,7 +1259,8 @@ std::uint64_t JournalStore::storage_of(const ExtentIndex& extents, const Manifes
 }
 
 // The views' page logs: their exact bytes plus two allocation units per log.
-// SWEGCA: user@2026-09-22:72-79
+// Lineage: native mechanism — charge of the view's page logs: bytes plus two units per log.
+// SWEGCA: docs/SWEGCA_CPP_VRS_LAYER_PLAN.md@472d23225c973fa0a33581afd6bd9026df6fc98a:170-173
 std::uint64_t JournalStore::page_log_charge(const ViewPages& view) const {
     constexpr const char* code = "journal_storage_overflow";
     if (view.page_log_ordinal == 0) return 0;
@@ -1191,7 +1269,8 @@ std::uint64_t JournalStore::page_log_charge(const ViewPages& view) const {
 }
 
 // The journal's use: the published use and the logs a rewrite left behind.
-// SWEGCA: user@2026-09-22:72-79
+// Lineage: native mechanism — the journal's whole use: published generation plus retired logs.
+// SWEGCA: docs/SWEGCA_CPP_VRS_LAYER_PLAN.md@472d23225c973fa0a33581afd6bd9026df6fc98a:170-173
 std::uint64_t JournalStore::used_bytes(const PublishedSnapshot& current) const {
     return plus(current.storage, retained_bytes_.load(), "journal_storage_overflow");
 }
@@ -1202,7 +1281,9 @@ std::uint64_t JournalStore::used_bytes(const PublishedSnapshot& current) const {
 // `max_recovery_bytes`; nothing past HEAD is read. Then unpublished
 // leftovers and unreachable page logs are removed so disk use equals what is
 // charged.
-// SWEGCA: user@2026-09-22:72-79
+// Lineage: weak analogy — the author truncates torn frames of its head file; here bytes past published ends.
+// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:577-581
+// SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:143-165
 void JournalStore::load_published_head() {
     // First pass: the directory holds only journal entries. A `.part` file is
     // an interrupted publication only under a name the journal publishes.
@@ -1392,26 +1473,30 @@ void JournalStore::load_published_head() {
     snapshot_.store(published);
 }
 
-// SWEGCA: user@2026-09-22:72-79
+// Lineage: weak analogy — the author refuses writes after a partial precommit; here every call until reopen.
+// SWEGCA: src/tinylm_slicer/mosaic_paper_resident_assimilation.py@3bddcb7:507-511
 void JournalStore::require_usable() const {
     if (poisoned_.load()) fail("journal_store_poisoned");
 }
 
-// SWEGCA: user@2026-09-22:72-79
+// Lineage: weak analogy — the author returns Main's hot-memory/VRS pair; here the published journal generation.
+// SWEGCA: src/tinylm_slicer/mosaic_memory_activation.py@3bddcb7:494-496
 std::shared_ptr<const PublishedSnapshot> JournalStore::snapshot() const {
     auto current = snapshot_.load();
     if (!current) fail("journal_store_not_loaded");
     return current;
 }
 
-// SWEGCA: user@2026-09-22:72-79
+// Lineage: weak analogy — the author returns Main's hot-memory/VRS pair; here the published manifest.
+// SWEGCA: src/tinylm_slicer/mosaic_memory_activation.py@3bddcb7:494-496
 std::shared_ptr<const Manifest> JournalStore::head() const {
     require_usable();
     auto current = snapshot();
     return std::shared_ptr<const Manifest>(current, &current->head);
 }
 
-// SWEGCA: user@2026-09-22:72-79
+// Lineage: native mechanism — reads the state generation the published manifest names.
+// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:587-589
 StateGeneration JournalStore::state_generation() const {
     require_usable();
     const auto current = snapshot();
@@ -1420,7 +1505,8 @@ StateGeneration JournalStore::state_generation() const {
                            Digest256(fields.state_generation_digest));
 }
 
-// SWEGCA: user@2026-09-22:72-79
+// Lineage: native mechanism — reports the use the host's budget judges.
+// SWEGCA: docs/SWEGCA_CPP_VRS_LAYER_PLAN.md@472d23225c973fa0a33581afd6bd9026df6fc98a:170-174
 std::uint64_t JournalStore::storage_charged() const {
     require_usable();
     const auto current = snapshot();  // before the retained charge (see stage)
@@ -1428,7 +1514,8 @@ std::uint64_t JournalStore::storage_charged() const {
 }
 
 // Verifies one published extent's whole record chain from its header.
-// SWEGCA: user@2026-09-22:72-79
+// Lineage: weak analogy — the author verifies a whole ledger chain; here one segment extent from its predecessor.
+// SWEGCA: src/tinylm_slicer/mosaic_evidence_ledger.py@3bddcb7:40-56
 void JournalStore::verify_extent(const PublishedSnapshot& current,
                                  const SegmentExtent& extent) const {
     Digest entering = zero_digest;
@@ -1454,8 +1541,8 @@ void JournalStore::verify_extent(const PublishedSnapshot& current,
 // lines name no kind reservation; the nearest is that only Main-owned
 // staging and publication make a source episode persistent (weak: stated
 // for the dialogue teacher, a principle and not this mechanism).
-// SWEGCA: src/tinylm_slicer/mosaic_dialogic_novel_teacher.py@3bddcb7:4-6
-// SWEGCA: user@2026-09-22:72-79
+// Lineage: native mechanism — C++ authority boundary: the generic stage refuses the memory/cue kinds.
+// SWEGCA: docs/SWEGCA_CPP_VRS_LAYER_PLAN.md@472d23225c973fa0a33581afd6bd9026df6fc98a:159-165
 StagedGeneration JournalStore::stage(std::span<const RecordDraft> drafts,
                                      const StateGeneration& state,
                                      std::span<const ViewGeneration> views) const {
@@ -1466,7 +1553,8 @@ StagedGeneration JournalStore::stage(std::span<const RecordDraft> drafts,
     return stage_records(drafts, state, views);
 }
 
-// SWEGCA: user@2026-09-22:72-79
+// Lineage: weak analogy — the author's save makes a candidate for Main's CAS; here a detached generation.
+// SWEGCA: src/tinylm_slicer/mosaic_vrs_block_store.py@3bddcb7:134-135
 StagedGeneration JournalStore::stage_records(std::span<const RecordDraft> drafts,
                                              const StateGeneration& state,
                                              std::span<const ViewGeneration> views) const {
@@ -1483,8 +1571,9 @@ StagedGeneration JournalStore::stage_records(std::span<const RecordDraft> drafts
 // `retained` is the charge of page logs on disk that no view reaches.
 // Rule: an address repeated within one generation is refused. Refusing a
 // repeated index key too is the C++ index's extension of that rule.
-// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:69-71
-// SWEGCA: user@2026-09-22:72-79
+// Lineage: weak analogy — the author appends chained ledger rows; here a detached generation with views.
+// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:587-590
+// SWEGCA: src/tinylm_slicer/mosaic_evidence_ledger.py@3bddcb7:60-83
 StagedGeneration JournalStore::stage_from(const std::shared_ptr<const PublishedSnapshot>& current,
                                           std::span<const RecordDraft> drafts,
                                           const StateGeneration& state,
@@ -1767,14 +1856,17 @@ StagedGeneration JournalStore::stage_from(const std::shared_ptr<const PublishedS
 // Only writes and moves: the next snapshot and every byte to write were
 // built and charged by `stage`. What is still allocated here is the
 // file-name paths, whose size does not depend on the data.
-// SWEGCA: user@2026-09-22:72-79
+// Lineage: weak analogy — the author's CAS holds one lock; here one publisher also reclaims retired logs.
+// SWEGCA: src/tinylm_slicer/mosaic_memory_activation.py@3bddcb7:498-507
 void JournalStore::publish(StagedGeneration&& staged) {
     std::lock_guard guard(publish_mutex_);
     reclaim_locked();
     publish_locked(std::move(staged));
 }
 
-// SWEGCA: user@2026-09-22:72-79
+// Lineage: weak analogy — the author's CAS swaps an in-memory pair; here files, fsync and HEAD precede it.
+// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:575-578
+// SWEGCA: src/tinylm_slicer/mosaic_memory_activation.py@3bddcb7:498-507
 void JournalStore::publish_locked(StagedGeneration&& staged) {
     require_usable();
     if (!staged.valid_) fail("journal_staged_generation_invalid");
@@ -1837,7 +1929,8 @@ void JournalStore::publish_locked(StagedGeneration&& staged) {
     poisoned_.store(false);
 }
 
-// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:137-155
+// Lineage: weak analogy — the author validates an enumerated artifact list; here HEAD's counters are read.
+// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:55-73
 PublishedUniverse JournalStore::universe() const {
     require_usable();
     const auto current = snapshot();
@@ -1846,13 +1939,15 @@ PublishedUniverse JournalStore::universe() const {
                              fields.tail_sequence, current->extents.record_bytes()};
 }
 
-// SWEGCA: user@2026-09-22:72-79
+// Lineage: native mechanism — reports a derived view that must be rebuilt from the records.
+// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:589-590
 bool JournalStore::view_available() const {
     require_usable();
     return !snapshot()->view_unavailable;
 }
 
-// SWEGCA: user@2026-09-22:72-79
+// Lineage: direct — tests an exact address against the published view without opening the record.
+// SWEGCA: src/swegca_vrs2/exact_replay.py@c06092a:758-761
 std::optional<RecordPosition> JournalStore::resolve(const ExperienceAddress& address) const {
     require_usable();
     const auto current = snapshot();
@@ -1861,7 +1956,8 @@ std::optional<RecordPosition> JournalStore::resolve(const ExperienceAddress& add
 
 // Lookup within one snapshot; the caller holds it, and with it the lease on
 // the page logs its view reaches.
-// SWEGCA: user@2026-09-22:72-79
+// Lineage: weak analogy — the author probes fixed-slot hash levels; here a B+ tree, one verified page per level.
+// SWEGCA: src/swegca_vrs2/exact_replay.py@c06092a:691-713
 std::optional<RecordPosition> JournalStore::resolve_in(const PublishedSnapshot& current,
                                                        std::string_view key) const {
     if (current.view_unavailable) fail("journal_view_unavailable");
@@ -1894,7 +1990,8 @@ std::optional<RecordPosition> JournalStore::resolve_in(const PublishedSnapshot& 
 
 // One snapshot for the whole replay: the view that resolves the address and
 // the extents the record is read from belong to the same generation.
-// SWEGCA: user@2026-09-22:72-79
+// Lineage: direct — replays one selected exact original by its address.
+// SWEGCA: user@2026-09-22:25
 PublishedRecord JournalStore::replay(const ExperienceAddress& address) const {
     require_usable();
     const auto current = snapshot();
@@ -1903,8 +2000,8 @@ PublishedRecord JournalStore::replay(const ExperienceAddress& address) const {
 
 // Rule, weak source: Replay is bound to the state generation of the same
 // snapshot. The user's lines bind evidence to a state hash, not Replay.
+// Lineage: weak analogy — the author binds an evidence revision to a state hash; here Replay to its snapshot.
 // SWEGCA: src/swegca/mosaic_evidence_revision.py@5901a5a:29-43
-// SWEGCA: user@2026-09-22:72-79
 ReplayAtHead JournalStore::replay_at_head(const ExperienceAddress& address) const {
     require_usable();
     const auto current = snapshot();
@@ -1914,8 +2011,8 @@ ReplayAtHead JournalStore::replay_at_head(const ExperienceAddress& address) cons
 }
 
 // Rule (Replay): an unknown address, or a view naming another address, fails.
-// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:89-111
-// SWEGCA: user@2026-09-22:72-79
+// Lineage: direct — locates the address, reads the stored bytes there and requires the same address.
+// SWEGCA: src/swegca_vrs2/exact_replay.py@c06092a:763-770
 PublishedRecord JournalStore::replay_in(const PublishedSnapshot& current,
                                         const ExperienceAddress& address) const {
     const auto position = resolve_in(current, address.value());
@@ -1927,7 +2024,8 @@ PublishedRecord JournalStore::replay_in(const PublishedSnapshot& current,
 
 // Reads the record at a position the view resolved; the record's digest must
 // be the one the view names.
-// SWEGCA: user@2026-09-22:72-79
+// Lineage: direct — reads the stored record at the located position and checks it against the index.
+// SWEGCA: src/swegca_vrs2/exact_replay.py@c06092a:662-671
 PublishedRecord JournalStore::read_in(const PublishedSnapshot& current,
                                       const RecordPosition& position) const {
     const auto* found = current.extents.get_if(position.segment_ordinal);
@@ -1954,7 +2052,8 @@ PublishedRecord JournalStore::read_in(const PublishedSnapshot& current,
     return PublishedRecord(std::move(bytes), position);
 }
 
-// SWEGCA: user@2026-09-22:72-79
+// Lineage: direct — reads every record in sequence from genesis, requiring the previous-digest chain.
+// SWEGCA: src/tinylm_slicer/mosaic_evidence_ledger.py@3bddcb7:35-57
 void JournalStore::for_each_record_impl(
     const void* target,
     void (*visit)(const void*, const RecordView&, const RecordPosition&)) const {
@@ -1982,7 +2081,8 @@ void JournalStore::for_each_record_impl(
 // The keys of one index entry are contiguous from (kind, value, separator);
 // the cursor starts at the first of them and stops at the first key past
 // them.
-// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:475-507
+// Lineage: weak analogy — the author returns in-memory postings; here one snapshot's index tree read from disk.
+// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:320-321
 void JournalStore::for_each_index_match(char kind, std::string_view value, IndexVisitor visit) const {
     const auto current = snapshot();
     for_each_index_match_in(*current, kind, value, visit);
@@ -1990,7 +2090,9 @@ void JournalStore::for_each_index_match(char kind, std::string_view value, Index
 
 // Main may pin one PublishedSnapshot and pass it through every cue lookup,
 // exact resolve and replay in one four-stage activation.
-// SWEGCA: src/tinylm_slicer/mosaic_memory_activation.py@3bddcb7:463-508
+// Lineage: weak analogy — the author's posting lookup does no I/O; here a cursor reads verified index pages.
+// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:592-595
+// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:320-321
 void JournalStore::for_each_index_match_in(const PublishedSnapshot& current, char kind,
                                            std::string_view value, IndexVisitor visit) const {
     require_usable();
@@ -2019,7 +2121,8 @@ void JournalStore::for_each_index_match_in(const PublishedSnapshot& current, cha
 // The generation that publishes `view`, a rewrite of the current view over
 // the same entries: no records, the parent's state generation and derived
 // views, and the old view's logs still charged (they stay until reclaimed).
-// SWEGCA: user@2026-09-22:72-79
+// Lineage: weak analogy — the author replaces the whole journal generation; here only the view is replaced.
+// SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:295-296
 StagedGeneration JournalStore::stage_view(const std::shared_ptr<const PublishedSnapshot>& current,
                                           const ViewPages& view) const {
     const auto& head = current->head;
@@ -2038,7 +2141,8 @@ StagedGeneration JournalStore::stage_view(const std::shared_ptr<const PublishedS
 // They are counted as retained before HEAD moves, so no concurrent stage
 // can see the new head without their charge; if publication fails the store
 // is poisoned and a reopen recounts.
-// SWEGCA: user@2026-09-22:72-79
+// Lineage: weak analogy — the author removes the old generation at once; here old logs are retired on a lease.
+// SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:316-321
 void JournalStore::publish_replacing_view(StagedGeneration&& staged,
                                           const std::shared_ptr<const PublishedSnapshot>& old) {
     const auto& view = old->head.fields().view_pages;
@@ -2065,13 +2169,15 @@ void JournalStore::publish_replacing_view(StagedGeneration&& staged,
     }
 }
 
-// SWEGCA: user@2026-09-22:72-79
+// Lineage: native mechanism — reserves capacity so retiring logs allocates nothing after pages are written.
+// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:50
 void JournalStore::reserve_retired() {
     if (retired_.size() == retired_.capacity())
         retired_.reserve(std::max<std::size_t>(4, retired_.capacity() * 2));
 }
 
-// SWEGCA: user@2026-09-22:72-79
+// Lineage: weak analogy — the author's weak cache lets an old generation go; here unleased logs are removed.
+// SWEGCA: src/tinylm_slicer/mosaic_vrs_block_store.py@3bddcb7:142-143
 void JournalStore::reclaim_retired() {
     std::lock_guard guard(publish_mutex_);
     reclaim_locked();
@@ -2079,7 +2185,8 @@ void JournalStore::reclaim_retired() {
 
 // Removes retired logs whose lease no snapshot holds. A log that cannot be
 // removed now stays retired and charged, and is tried again next time.
-// SWEGCA: user@2026-09-22:72-79
+// Lineage: weak analogy — the author's weak cache lets an old generation go; here unleased logs are removed.
+// SWEGCA: src/tinylm_slicer/mosaic_vrs_block_store.py@3bddcb7:142-143
 void JournalStore::reclaim_locked() noexcept {
     auto kept = retired_.begin();
     for (auto logs = retired_.begin(); logs != retired_.end(); ++logs) {
@@ -2093,7 +2200,8 @@ void JournalStore::reclaim_locked() noexcept {
     retired_.erase(kept, retired_.end());
 }
 
-// SWEGCA: user@2026-09-22:72-79
+// Lineage: weak analogy — the author removes an old generation directory; here one range of retired page logs.
+// SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:321
 bool JournalStore::remove_page_logs(const RetiredLogs& logs) const noexcept {
     try {
         for (auto ordinal = logs.first;; ++ordinal) {
@@ -2107,7 +2215,8 @@ bool JournalStore::remove_page_logs(const RetiredLogs& logs) const noexcept {
     }
 }
 
-// SWEGCA: user@2026-09-22:72-79
+// Lineage: native mechanism — a threshold keeping view disk use within twice the live pages plus one log.
+// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:50
 bool JournalStore::compaction_due() const {
     require_usable();
     const auto current = snapshot();
@@ -2120,7 +2229,8 @@ bool JournalStore::compaction_due() const {
 namespace {
 
 // Writes `tree` again through `writer`, in key order.
-// SWEGCA: user@2026-09-22:72-79
+// Lineage: weak analogy — the author rewrites rows in batches; here one tree's leaves in key order.
+// SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:303-314
 BuiltTree rewrite_tree(StreamWriter& writer, const PageSource& pages, const ViewTree& tree) {
     TreeBuilder builder(writer, pages.memory);
     const BuiltTree previous{tree.entry_count, tree.height, tree.root};
@@ -2137,7 +2247,8 @@ BuiltTree rewrite_tree(StreamWriter& writer, const PageSource& pages, const View
 // poisoned it, and a reopen removes what was not published. Once this
 // rewrite's own snapshot is released, the old logs are reclaimed at once
 // when no reader holds them.
-// SWEGCA: user@2026-09-22:72-79
+// Lineage: weak analogy — the author rewrites the whole generation; here only the view pages to new logs.
+// SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:295-325
 void JournalStore::compact_view() {
     std::lock_guard guard(publish_mutex_);
     require_usable();
@@ -2168,7 +2279,9 @@ void JournalStore::compact_view() {
     reclaim_locked();
 }
 
-// SWEGCA: user@2026-09-22:72-79
+// Lineage: weak analogy — the author restores ordinary views from resident blocks; here views from records.
+// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:589-590
+// SWEGCA: src/tinylm_slicer/mosaic_lossless_restore.py@3bddcb7:1-3
 void JournalStore::rebuild_view(RebuildValidator validate) {
     std::lock_guard guard(publish_mutex_);
     require_usable();

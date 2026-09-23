@@ -48,7 +48,8 @@ namespace swegca::vrs::journal {
 // One published generation as readers see it. Immutable once published; the
 // object and its control block are allocated through the host's allocator.
 struct PublishedSnapshot {
-    // SWEGCA: user@2026-09-22:72-79
+    // Lineage: weak analogy — the author's snapshot pairs Main hot memory with a VRS id; here one journal generation.
+    // SWEGCA: src/tinylm_slicer/mosaic_memory_activation.py@3bddcb7:462-468
     PublishedSnapshot(const AllocationContext& memory, Manifest manifest)
         : head(std::move(manifest)), extents(memory) {}
 
@@ -93,10 +94,12 @@ public:
     PublishedRecord& operator=(const PublishedRecord&) = delete;
     ~PublishedRecord() = default;
 
-    // SWEGCA: user@2026-09-22:72-79
+    // Lineage: native mechanism — a lifetime-bound accessor: the view is valid only while its record owns the bytes.
+    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:50
     [[nodiscard]] const RecordView& view() const& noexcept { return view_; }
     const RecordView& view() const&& = delete;
-    // SWEGCA: user@2026-09-22:72-79
+    // Lineage: native mechanism — exposes the exact position (segment, offset, sequence, digest) naming the record.
+    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:569-570
     [[nodiscard]] const RecordPosition& position() const noexcept { return position_; }
 
 private:
@@ -122,7 +125,6 @@ public:
     RebuildReader& operator=(const RebuildReader&) = delete;
     RebuildReader(RebuildReader&&) = delete;
     RebuildReader& operator=(RebuildReader&&) = delete;
-    // SWEGCA: src/tinylm_slicer/mosaic_vrs_block_store.py@3bddcb7:187-225
     template <class R, class Q>
         requires(std::is_lvalue_reference_v<R&&> && std::is_lvalue_reference_v<Q&&> &&
                  std::is_object_v<std::remove_reference_t<R>> &&
@@ -130,21 +132,24 @@ public:
                  std::is_invocable_r_v<PublishedRecord, R&, std::string_view> &&
                  std::is_invocable_r_v<std::optional<RecordPosition>, Q&,
                                        std::string_view>)
-    // SWEGCA: src/tinylm_slicer/mosaic_vrs_block_store.py@3bddcb7:187-225
+    // Lineage: native mechanism — type-erased borrowed reader so rebuild validation reads the unpublished view.
+    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:589-590
     RebuildReader(R&& replay, Q&& resolve) noexcept
         : target_(static_cast<const void*>(std::addressof(replay))),
           call_(&invoke<R>),
           resolve_target_(static_cast<const void*>(std::addressof(resolve))),
           resolve_call_(&invoke_resolve<Q>) {}
 
-    // SWEGCA: src/tinylm_slicer/mosaic_vrs_block_store.py@3bddcb7:187-225
+    // Lineage: native mechanism — reads an original through the unpublished rebuilt address view.
+    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:589-590
     [[nodiscard]] PublishedRecord replay(std::string_view address) const {
         return call_(target_, address);
     }
 
     // Resolves against the unpublished rebuilt address tree, not caller
     // supplied positions. The returned position must be compared exactly.
-    // SWEGCA: src/tinylm_slicer/mosaic_vrs_block_store.py@3bddcb7:187-225
+    // Lineage: native mechanism — resolves against the unpublished rebuilt address view for exact comparison.
+    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:589-590
     [[nodiscard]] std::optional<RecordPosition> resolve(std::string_view address) const {
         return resolve_call_(resolve_target_, address);
     }
@@ -152,14 +157,16 @@ public:
 private:
     using Call = PublishedRecord (*)(const void*, std::string_view);
     using ResolveCall = std::optional<RecordPosition> (*)(const void*, std::string_view);
-    // SWEGCA: src/tinylm_slicer/mosaic_vrs_block_store.py@3bddcb7:187-225
+    // Lineage: native mechanism — call trampoline of the type-erased borrowed reader; allocates nothing.
+    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:50
     template <class F>
     static PublishedRecord invoke(const void* target, std::string_view address) {
         auto& replay = *static_cast<std::remove_reference_t<F>*>(const_cast<void*>(target));
         return replay(address);
     }
 
-    // SWEGCA: src/tinylm_slicer/mosaic_vrs_block_store.py@3bddcb7:187-225
+    // Lineage: native mechanism — call trampoline of the type-erased borrowed resolver; allocates nothing.
+    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:50
     template <class Q>
     static std::optional<RecordPosition> invoke_resolve(const void* target,
                                                          std::string_view address) {
@@ -187,7 +194,8 @@ public:
     RebuildValidator& operator=(const RebuildValidator&) = delete;
     RebuildValidator(RebuildValidator&&) = delete;
     RebuildValidator& operator=(RebuildValidator&&) = delete;
-    // SWEGCA: src/tinylm_slicer/mosaic_vrs_block_store.py@3bddcb7:187-225
+    // Lineage: native mechanism — type-erased borrowed validator for the second pass of a view rebuild.
+    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:589-590
     template <class F>
         requires(!std::is_same_v<std::remove_cvref_t<F>, RebuildValidator> &&
                  std::is_object_v<F> &&
@@ -199,7 +207,8 @@ public:
     template <class F>
     RebuildValidator(const F&&) = delete;
 
-    // SWEGCA: src/tinylm_slicer/mosaic_vrs_block_store.py@3bddcb7:187-225
+    // Lineage: native mechanism — hands each verified record to Main's validator before the rebuilt view is published.
+    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:589-590
     void operator()(const RecordView& record, const RecordPosition& position,
                     const RebuildReader& reader) const {
         call_(target_, record, position, reader);
@@ -208,7 +217,8 @@ public:
 private:
     using Call = void (*)(const void*, const RecordView&, const RecordPosition&,
                           const RebuildReader&);
-    // SWEGCA: src/tinylm_slicer/mosaic_vrs_block_store.py@3bddcb7:187-225
+    // Lineage: native mechanism — call trampoline of the type-erased borrowed validator; allocates nothing.
+    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:50
     template <class F>
     static void invoke(const void* target, const RecordView& record,
                        const RecordPosition& position, const RebuildReader& reader) {
@@ -262,16 +272,19 @@ public:
     StagedGeneration& operator=(const StagedGeneration&) = delete;
     ~StagedGeneration() = default;
 
-    // SWEGCA: user@2026-09-22:72-79
+    // Lineage: native mechanism — one-use flag: a detached generation can be published at most once.
+    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:587-589
     [[nodiscard]] bool valid() const noexcept { return valid_; }
     // The manifest it would publish; an invalid staged generation has none
     // (`journal_staged_generation_invalid`).
-    // SWEGCA: user@2026-09-22:72-79
+    // Lineage: weak analogy — the author's save yields a candidate for Main's CAS; here a one-use staged manifest.
+    // SWEGCA: src/tinylm_slicer/mosaic_vrs_block_store.py@3bddcb7:134-135
     [[nodiscard]] const Manifest& manifest() const {
         if (!valid_) throw std::logic_error("journal_staged_generation_invalid");
         return next_->head;
     }
-    // SWEGCA: user@2026-09-22:72-79
+    // Lineage: native mechanism — the exact positions (segment, offset, sequence, digest) the staged records will take.
+    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:569-570
     [[nodiscard]] std::span<const RecordPosition> positions() const noexcept {
         return positions_;
     }
@@ -296,7 +309,8 @@ private:
 // whether the journal may use `used` bytes in all (published generation,
 // logs a rewrite left behind, and what a write in progress adds). It must
 // not throw, and must be safe to call from any thread the journal writes on.
-// SWEGCA: user@2026-09-22:72-79
+// Lineage: native mechanism — a host port that makes the hard disk budget executable: the journal asks, the host judges.
+// SWEGCA: docs/SWEGCA_CPP_VRS_LAYER_PLAN.md@472d23225c973fa0a33581afd6bd9026df6fc98a:170-176
 class StorageBudget {
 public:
     virtual ~StorageBudget() = default;
@@ -311,7 +325,8 @@ class PageCache;
 // never keep one; nothing is allocated for it. It returns false to stop.
 class IndexVisitor final {
 public:
-    // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:475-507
+    // Lineage: native mechanism — type-erased borrowed index visitor; nothing is allocated for it.
+    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:50
     template <class F>
         requires(!std::is_same_v<std::remove_cvref_t<F>, IndexVisitor> &&
                  std::is_object_v<F> &&
@@ -323,14 +338,16 @@ public:
     template <class F>
     IndexVisitor(const F&&) = delete;
 
-    // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:475-507
+    // Lineage: native mechanism — calls the borrowed visitor for one index match.
+    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:50
     bool operator()(std::string_view address, const RecordPosition& position) const {
         return call_(target_, address, position);
     }
 
 private:
     using Call = bool (*)(const void*, std::string_view, const RecordPosition&);
-    // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:475-507
+    // Lineage: native mechanism — call trampoline of the type-erased borrowed visitor.
+    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:50
     template <class T>
     static bool invoke(const void* target, std::string_view address, const RecordPosition& position) {
         auto& visit = *static_cast<T*>(const_cast<void*>(target));
@@ -430,7 +447,8 @@ public:
 
     // The experience appender may stage its reserved record kinds but cannot
     // publish or rewrite HEAD. Only MainOwner can perform those mutations.
-    // SWEGCA: user@2026-09-22:61
+    // Lineage: native mechanism — C++ authority boundary: memory/cue kinds are staged only through ExperienceAppend.
+    // SWEGCA: docs/SWEGCA_CPP_VRS_LAYER_PLAN.md@472d23225c973fa0a33581afd6bd9026df6fc98a:159-165
     [[nodiscard]] StagedGeneration stage_experience_records(
         const ExperienceStageKey&, std::span<const RecordDraft> drafts,
         const StateGeneration& state, std::span<const ViewGeneration> views) const {
@@ -479,7 +497,8 @@ public:
 
     // Visits every published record in sequence order over one snapshot,
     // verifying the whole record chain. No lock is held while `visit` runs.
-    // SWEGCA: user@2026-09-22:72-79
+    // Lineage: native mechanism — type-erased entry to for_each_record_impl, which verifies the chain.
+    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:50
     template <class F>
         requires(std::is_object_v<F> &&
                  std::is_invocable_v<F&, const RecordView&, const RecordPosition&>)
