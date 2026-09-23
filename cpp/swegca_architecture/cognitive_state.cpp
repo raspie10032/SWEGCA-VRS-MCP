@@ -69,7 +69,7 @@ EvidenceReferences canonical_evidence(EvidenceReferences addresses) {
     return addresses;
 }
 
-// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3f:567-572
+// SWEGCA: src/swegca/mosaic_bounded_world_write.py@5901a5a:262-283,424-442
 Digest256 state_digest(
     const OwnerId& owner, const RoleRegistry& roles,
     const CognitiveTensor& semantic, const CognitiveTensor& executive,

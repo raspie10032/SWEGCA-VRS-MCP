@@ -99,6 +99,9 @@ private:
 
 class StateGeneration final {
 public:
+    // The ordinal names a successor; the digest names canonical state
+    // content. Bit-exact rollback may restore an earlier digest at a new
+    // ordinal (mosaic_bounded_world_write.py@5901a5a:262-283,424-442).
     // Rule: one current Main-owned state, ARCHITECTURE_SPEC.md@5901a5a:103-109.
     // SWEGCA: src/swegca/mosaic_bounded_world_write.py@5901a5a:175-188
     StateGeneration(std::uint64_t ordinal, Digest256 digest);
