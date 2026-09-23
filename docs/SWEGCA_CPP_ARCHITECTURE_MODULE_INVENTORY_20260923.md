@@ -165,6 +165,12 @@ system is divided by ownership and authority.
   as journaled states over original experience addresses.
 - Semantic promotion requires the authoritative decision, exact state-write
   receipt, matching claim and evidence set, and current native journal heads.
+- The user's linked-promotion source
+  (`mosaic_world_memory_transaction.py@3bddcb7:234-239`) requires candidate
+  references to contain every write-receipt evidence reference and
+  `world-write:{receipt_id}`.
+  Native candidate references must represent that receipt link as well as
+  original-experience addresses; an address-only list would drop it.
 - Validity intervals and revision chains are append-only. Historical versions
   remain replayable.
 
