@@ -55,8 +55,8 @@ The resource list is part of the payload, so it is part of the address identity.
 ## 3. Canonical encoding
 - The step list and the resource list are typed sections of the envelope (a new envelope version). Each is decoded and checked on read. None is an opaque blob.
 - Step observation and resource metadata use the core's canonical structured payload (the same CanonicalPayload the state uses). Decode checks that they are canonical.
-- The user's step bytes are JSON with sorted keys (episode_atoms :21-26). Whether the C++ canonical form must reproduce those bytes exactly is **open question Q1**. It matters if the user's step artifact addresses have to match.
-- A step's derived address is `memory-step-artifact:<index>:sha256:<digest of its canonical bytes>` (:59-60). It is a view, not a record.
+- The user's step bytes are JSON with sorted keys (episode_atoms :21-26). The C++ canonical form does not promise the same bytes (Q1).
+- A step's derived address is `<memory address>/step:<index>:<digest of its C++ canonical bytes>`. It is a view, not a record. The name differs from the user's `memory-step-artifact:` (:59-60) on purpose, so the two are never mixed.
 - Sections larger than a record go to parts, as blobs do now.
 
 ## 4. Selectors (parts of a memory)
