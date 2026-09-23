@@ -1,6 +1,10 @@
 # SWEGCA core and VRS layer: relocation plan
 
-Status: plan for review (claude, 2026-09-23). Nothing here is moved yet.
+Status (2026-09-23 17:4x): the core phase (steps 3-4) is closed: the core
+is split out, matches the author's judgment to the bit and passes its
+C++-only tests. The VRS steps (5-7), the accumulator and stages
+correction and section 6 are pending; nothing in `cpp/swegca_vrs/` is
+moved yet.
 
 Rules, in the user's words where given:
 
@@ -195,8 +199,8 @@ Done:
    storage budget port; PageCache on its own resource (581f9b2, 6642262).
    VRS work stops here until the core is tested.
 
-Core (claude/core-close):
-3. Claude: split judgment_kernel/judgment_rules into core
+Core (claude/core-close; closed 2026-09-23 17:4x):
+3. Done (claude c26a14a, 1d4fd2d). Claude: split judgment_kernel/judgment_rules into core
    `evidence_kernel.hpp`/`evidence_rules.*` and VRS `gate_kernel.hpp`,
    `arbiter_kernel.hpp` with their policies (pure moves, tags kept, no
    condition bit or check removed). The core is then
@@ -207,7 +211,12 @@ Core (claude/core-close):
    accumulator taking `ReplayedOriginal` (3.1) and counting an experience
    once by its content (user 17:0x), its friends complete wherever it is
    visible (codex 17:24). The byte codec stays in journal_format: the
-   core does not use it, so it is VRS.
+   core does not use it, so it is VRS. The accumulator part was taken
+   out of c26a14a and waits for VRS step 5 (below). 1d4fd2d makes the
+   kernel judge as the author does (codex 17:28): an unmeasured regime
+   window scores 0 and is still compared, and the Wilson z is AS241 as
+   CPython computes NormalDist().inv_cdf (equal to the bit on 50,597
+   probabilities).
 4. Codex: a C++-only build of the core alone (no Python), with the
    arithmetic flags of evidence_kernel.hpp (-ffp-contract=off, no fast
    math), and its tests: A for core types, D8 (each negative condition
@@ -216,8 +225,19 @@ Core (claude/core-close):
    nanoseconds on the baseline profile. Claude cross-reviews. Board
    section 10 steps 9-10 open for the core here. D1-D7, D8s, D10-D16 and
    the duplicate rule test the accumulator and stages: VRS tests.
+   Done (codex/swegca-core-test-prep 6eac79a, claude cross-review):
+   CMake target `swegca_core` (sha256, strong_types, evidence_rules) and
+   `cpp/tests/evidence_core_test.cpp`; a fail-closed guard on
+   nonfinite derived values and on overlapping batch columns (c13c9af;
+   D8(h), I04: the author's Python would accept on a NaN posterior).
+   The judgment equals the author's code (5901a5a:261-357, run
+   verbatim) to the bit in status, reason and the four outputs on seven
+   cases, pinned in the test. GCC 16.2.1, -Wall -Wextra -Werror
+   -ffp-contract=off -fno-fast-math, -O0 and -O2: exit 0.
+   `cpp/tests/evidence_core_bench.cpp` (-O2, one thread, AMD Ryzen 7
+   9800X3D): about 41 ns per judgment, 54 ns per batch item.
 
-VRS (after the core passes):
+VRS (pending; the core has passed):
 5. `git mv` into `cpp/swegca_vrs/`, namespace `swegca::vrs`, includes and
    qualifiers only; the lineage gate checks every moved definition keeps
    its tag. Claude: journal_*, experience.*, evidence_stages.*,
