@@ -73,10 +73,11 @@ crash cases before code uses it.
   optional typed `BoundedWriteHead` (policy version, receipt digest, revision,
   target role, evidence references, claim and proposal digest). The content
   digest uses domain v4 and binds that
-  head's presence and canonical fields. The writer and recovery codec still
-  need to update and restore it; the opaque payload's reserved-key boundary
-  must be checked before calling this complete. Caller self payload bytes
-  cannot represent the reserved write head; only the typed field does.
+  head's presence and canonical fields. The writer now updates it and its
+  rollback/retraction paths restore the prior typed head. Cold recovery of
+  that field and the opaque payload's reserved-key boundary remain open.
+  Caller self payload bytes cannot represent the reserved write head; only
+  the typed field does.
 - User clarification (2026-09-23 18:37 KST): a remembered occurrence and
   its immutable source record are memory; the numerical synapse strength
   linking memories is experience. The old hybrid organizer persists
@@ -119,11 +120,11 @@ crash cases before code uses it.
    verification-slot hashes, applied-delta hash, target role and revision,
    proposal evidence references, and prior bounded-write metadata. The
    exact decision/proposal/evidence Bind must be checked separately: merely
-   having a receipt does not establish it. The native writer cannot publish
-   until its currently opaque `SelfState` has a defined way to bind and
-   restore bounded-write metadata. The final lower journal HEAD names the
-   candidate successor; a new committed Main receipt makes that selection
-   durable authority. Following the author's commit order, Main writes and
+   having a receipt does not establish it. The typed `SelfState` now binds
+   and restores bounded-write metadata in memory; durable publication still
+   requires the state codec, Main receipt and cold recovery. The final lower
+   journal HEAD names the candidate successor; a new committed Main receipt
+   makes that selection durable authority. Following the author's commit order, Main writes and
    fsyncs a pending receipt, swaps its in-memory owner pair by compare-and-swap,
    renames the new receipt to its committed name, then fsyncs the directory.
    A failed final rename or directory fsync leaves a pending or unconfirmed
