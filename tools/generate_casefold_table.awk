@@ -1,8 +1,8 @@
-# Writes cpp/swegca_architecture/unicode_casefold.hpp from Unicode
+# Writes cpp/swegca_vrs/unicode_casefold.hpp from Unicode
 # CaseFolding.txt: every mapping of status C or F, the full case folding
 # that Python's str.casefold applies (the user's `_cue`). Usage:
 #   awk -f tools/generate_casefold_table.awk third_party/unicode/CaseFolding-16.0.0.txt \
-#       > cpp/swegca_architecture/unicode_casefold.hpp
+#       > cpp/swegca_vrs/unicode_casefold.hpp
 BEGIN { FS = "; "; count = 0; version = "" }
 NR == 1 {
     if (match($0, /CaseFolding-[0-9.]+[0-9]/) == 0) { print "no version line" > "/dev/stderr"; exit 1 }
@@ -28,7 +28,7 @@ END {
     print "#include <cstdint>"
     print "#include <string_view>"
     print ""
-    print "namespace swegca::architecture::detail {"
+    print "namespace swegca::vrs::detail {"
     print ""
     print "inline constexpr std::string_view case_folding_unicode_version = \"" version "\";"
     print ""
@@ -46,7 +46,7 @@ END {
     for (i = 0; i < count; ++i) print rows[i]
     print "}};"
     print ""
-    print "}  // namespace swegca::architecture::detail"
+    print "}  // namespace swegca::vrs::detail"
 }
 function strtonum_hex(h,    i, c, v) {
     v = 0

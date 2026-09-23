@@ -27,25 +27,25 @@ endif()
 # Keep this list explicit so a new translation unit cannot silently bypass
 # the build when the source layout changes.
 add_library(swegca_vrs_candidate STATIC
-    cpp/swegca_architecture/arbiter_rules.cpp
-    cpp/swegca_architecture/authority.cpp
-    cpp/swegca_architecture/cognition.cpp
-    cpp/swegca_architecture/cognitive_state.cpp
-    cpp/swegca_architecture/evidence_accumulator.cpp
-    cpp/swegca_architecture/evidence_gate.cpp
-    cpp/swegca_architecture/evidence_stages.cpp
-    cpp/swegca_architecture/experience.cpp
-    cpp/swegca_architecture/gate_rules.cpp
-    cpp/swegca_architecture/journal_file_io.cpp
-    cpp/swegca_architecture/journal_format.cpp
-    cpp/swegca_architecture/journal_store.cpp
-    cpp/swegca_architecture/main_owner.cpp
-    cpp/swegca_architecture/native_tensor.cpp
-    cpp/swegca_architecture/proposal.cpp
-    cpp/swegca_architecture/proposal_arbiter.cpp
-    cpp/swegca_architecture/role_registry.cpp
-    cpp/swegca_architecture/scalar_codec.cpp
-    cpp/swegca_architecture/vrs_strength_compile.cpp
+    cpp/swegca_vrs/arbiter_rules.cpp
+    cpp/swegca_vrs/authority.cpp
+    cpp/swegca_vrs/cognition.cpp
+    cpp/swegca_vrs/cognitive_state.cpp
+    cpp/swegca_vrs/evidence_accumulator.cpp
+    cpp/swegca_vrs/evidence_gate.cpp
+    cpp/swegca_vrs/evidence_stages.cpp
+    cpp/swegca_vrs/experience.cpp
+    cpp/swegca_vrs/gate_rules.cpp
+    cpp/swegca_vrs/journal_file_io.cpp
+    cpp/swegca_vrs/journal_format.cpp
+    cpp/swegca_vrs/journal_store.cpp
+    cpp/swegca_vrs/main_owner.cpp
+    cpp/swegca_vrs/native_tensor.cpp
+    cpp/swegca_vrs/proposal.cpp
+    cpp/swegca_vrs/proposal_arbiter.cpp
+    cpp/swegca_vrs/role_registry.cpp
+    cpp/swegca_vrs/scalar_codec.cpp
+    cpp/swegca_vrs/vrs_strength_compile.cpp
     cpp/swegca_vrs/resource_budget.cpp
 )
 target_link_libraries(swegca_vrs_candidate PUBLIC swegca_core)
