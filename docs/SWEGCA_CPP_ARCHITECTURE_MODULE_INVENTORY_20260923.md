@@ -192,7 +192,11 @@ system is divided by ownership and authority.
 - Keeps real-time internal LLM calls at zero. A replaceable language model may
   only express Main-owned content.
 
-The request-local producer runner is still missing. The author's
+The request-local producer stage now exists in
+`cpp/swegca_vrs/cognition_runner.hpp/.cpp` as `ProducerRunIntermediate`.
+It has passed static lineage and diff review but has not been built or tested
+under the step-10 gate below. The completed request scope is still missing.
+The author's
 `run_dynamic_cognition` (`mosaic_synapse_arbiter.py@5901a5a:365-455`)
 runs the first route member before optional fanout,
 validates each proposal and its source identity, joins workers even when a
