@@ -47,8 +47,13 @@ class AllocationAdapter {
 public:
     using value_type = T;
 
+    // Standard containers may inspect whether their value types can be
+    // default-constructed, even when every real value is created with Main's
+    // allocator. Such a probe must compile, while an actual resource-less
+    // construction still fails before an allocator object can exist.
     // SWEGCA: user@2026-09-22:89-92
-    AllocationAdapter() = delete;
+    AllocationAdapter() { throw std::invalid_argument("allocation_resource_missing"); }
+    // SWEGCA: user@2026-09-22:89-92
     explicit AllocationAdapter(std::shared_ptr<AllocationResource> resource)
         : resource_(std::move(resource)) {
         if (!resource_) throw std::invalid_argument("allocation_resource_missing");
