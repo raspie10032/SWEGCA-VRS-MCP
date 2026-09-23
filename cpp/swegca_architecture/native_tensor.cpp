@@ -1,7 +1,5 @@
 #include "swegca_architecture/native_tensor.hpp"
 
-#include "swegca_architecture/resource_limits.hpp"
-
 #include <limits>
 #include <stdexcept>
 #include <utility>
@@ -26,8 +24,7 @@ std::uint64_t checked_elements(const TensorShape3& shape) {
 std::size_t checked_bytes(ScalarType type, const TensorShape3& shape) {
     const auto elements = checked_elements(shape);
     const auto width = scalar_width(type);
-    if (elements > std::numeric_limits<std::size_t>::max() / width ||
-        elements > ResourceLimits::max_resident_bytes / width)
+    if (elements > std::numeric_limits<std::size_t>::max() / width)
         throw std::overflow_error("cognitive_tensor_byte_count_overflow");
     return static_cast<std::size_t>(elements) * width;
 }
@@ -107,8 +104,6 @@ CognitiveTensor::CognitiveTensor(ScalarType scalar_type, TensorShape3 shape,
     if (elements > std::numeric_limits<std::size_t>::max() / width ||
         canonical_bytes_.size() != static_cast<std::size_t>(elements) * width)
         throw std::invalid_argument("cognitive_tensor_byte_count_mismatch");
-    if (canonical_bytes_.size() > ResourceLimits::max_resident_bytes)
-        throw std::length_error("cognitive_tensor_exceeds_resident_limit");
     for (std::size_t offset = 0; offset < canonical_bytes_.size(); offset += width) {
         normalize_signed_zero(
             std::span<std::byte>(canonical_bytes_).subspan(offset, width));

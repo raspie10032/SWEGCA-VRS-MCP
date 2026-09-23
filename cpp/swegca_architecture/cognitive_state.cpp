@@ -1,6 +1,5 @@
 #include "swegca_architecture/cognitive_state.hpp"
 
-#include "swegca_architecture/resource_limits.hpp"
 #include "swegca_architecture/sha256.hpp"
 
 #include <algorithm>
@@ -133,13 +132,12 @@ void SuccessorStateKey::consume() {
 }
 
 // Callers define the schema of each payload and must supply its already
-// canonical bytes. This type bounds and preserves those bytes exactly.
+// canonical bytes. The caller's MemoryLedger account enforces its injected
+// budget when these bytes are allocated.
 // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:83-93
 CanonicalPayload::CanonicalPayload(const MemoryLedger::Account& account,
                                    std::span<const std::byte> bytes)
     : bytes_(account.allocator<std::byte>()) {
-    if (bytes.size() > ResourceLimits::max_resident_bytes)
-        throw std::length_error("canonical_payload_exceeds_resident_limit");
     if (!bytes.empty()) bytes_.assign(bytes.begin(), bytes.end());
 }
 
@@ -269,8 +267,8 @@ void CognitiveState::validate() const {
         throw std::invalid_argument("cognitive_state_scalar_type_mismatch");
     std::uint64_t logical_bytes = 0;
     const auto account = [&logical_bytes](std::uint64_t bytes) {
-        if (bytes > ResourceLimits::max_resident_bytes - logical_bytes)
-            throw std::length_error("cognitive_state_exceeds_resident_limit");
+        if (bytes > std::numeric_limits<std::uint64_t>::max() - logical_bytes)
+            throw std::overflow_error("cognitive_state_logical_byte_count_overflow");
         logical_bytes += bytes;
     };
     account(semantic_.byte_count());
