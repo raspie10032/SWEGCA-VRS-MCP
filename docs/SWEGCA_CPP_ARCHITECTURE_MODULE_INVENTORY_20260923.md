@@ -789,16 +789,17 @@ architecture and its test-condition list have passed static review
 - Main genesis publication depends on a **real primary strength root**.
   The user chose to issue that first VRS root when the first **new original
   experience** enters (2026-09-24); Main must not prepublish an empty VRS root
-  or import an old store to create it.
+  or import an old store to create it. If that first experience has no VRS
+  connection, the user permits an empty connection/member lineage **for the
+  first root only** (2026-09-24). This is a first-root rule, not a global
+  relaxation of canonical member-lineage validation.
   `MainCommitMarkerFields` already requires a nonzero `strength_root_digest`,
   but `ManifestFields` has no strength-root position and the journal has no
   strength-record codec. A digest with no published record cannot verify the
   Main-owned synapse strengths after restart. The architecture phase must
   define the durable strength-root locator, bounded parts and
-  marker-to-manifest binding before Main selects genesis. The initial-root
-  **content** remains unresolved if that first original experience has no
-  connection: the source canonical lineage rejects an empty member set
-  (`mosaic_vrs_canonicalization.py@3bddcb7:18-30`). Whether the first root
-  alone admits an empty connection set or requires a source-backed connection
-  rule was put to the user; do not infer either. The VRS update and four-stage
-  read behavior remain in step 11.
+  marker-to-manifest binding before Main selects genesis. The first-root codec
+  must encode the user's scoped empty case explicitly, while the source
+  canonical lineage continues to reject an empty member set for ordinary
+  nonempty-lineage validation (`mosaic_vrs_canonicalization.py@3bddcb7:18-30`).
+  The VRS update and four-stage read behavior remain in step 11.
