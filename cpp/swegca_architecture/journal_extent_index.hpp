@@ -23,6 +23,7 @@ using RecoveryExtentTable =
 // Four 5-bit levels cover every ordinal in a 16 MiB checkpoint manifest.
 // Nodes and shared_ptr control blocks use the host allocator. Readers keep
 // their exact old root while a writer prepares paths for a successor.
+static_assert(max_extents <= (std::uint64_t{1} << 20));
 class ExtentIndex final {
 public:
     // SWEGCA: user@2026-09-22:72-79
@@ -33,9 +34,10 @@ public:
         const AllocationContext& memory, const RecoveryExtentTable& table) {
         ExtentIndex result(memory);
         for (const auto& [ordinal, extent] : table) {
-            if (ordinal != result.count_ + 1 || extent.ordinal != ordinal ||
-                result.count_ >= max_extents)
+            if (ordinal != result.count_ + 1 || extent.ordinal != ordinal)
                 throw std::runtime_error("journal_extent_not_contiguous");
+            if (result.count_ >= max_extents)
+                throw std::runtime_error("journal_capacity_exhausted");
             result.root_ = put(result.root_, 3, ordinal - 1, extent, result.memory_);
             result.record_bytes_ = add(result.record_bytes_, extent.byte_length);
             ++result.count_;
@@ -101,8 +103,10 @@ public:
                 next.root_ = put(next.root_, 3, extent.ordinal - 1, extent, memory_);
                 continue;
             }
-            if (extent.ordinal != next.count_ + 1 || next.count_ >= max_extents)
+            if (extent.ordinal != next.count_ + 1)
                 throw std::runtime_error("journal_extent_not_contiguous");
+            if (next.count_ >= max_extents)
+                throw std::runtime_error("journal_capacity_exhausted");
             const auto* prior = next.tail();
             const auto first = prior == nullptr ? 1 : add(prior->first_sequence,
                                                          prior->record_count);
