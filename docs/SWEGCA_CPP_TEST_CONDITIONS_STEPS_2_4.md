@@ -156,7 +156,7 @@ plan §6), never from a verdict, and no test here reads a verdict as one.
 |---|---|---|
 | D1 | Admission of an observation citing a published experience | replayed and decoded from one snapshot with the HEAD generation; `applied` |
 | D2 | Citing a non-experience record or an unknown address | decode / `journal_address_unknown` failure; tally unchanged |
-| D3 | Same address admitted twice | `duplicate` (checked before stale); tally counts it once |
+| D3 | Same address admitted twice | `duplicate` (checked after expired and insufficient, before stale: the author's order, mosaic_evidence_accumulator.py@5901a5a:374-400); tally counts it once |
 | D4 | Judged on a generation other than HEAD's | `stale`; tally unchanged |
 | D5 | Expired, insufficient outcome | `expired` / `insufficient`; tally unchanged |
 | D6 | Re-evidence at a new HEAD generation | only with the state of that generation (`re_evidence_state_not_current` otherwise); only an admitted original (`re_evidence_original_not_admitted`); the judge receives the decoded experience |
