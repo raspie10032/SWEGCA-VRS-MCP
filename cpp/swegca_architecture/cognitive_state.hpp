@@ -9,6 +9,7 @@
 #include <compare>
 #include <cstddef>
 #include <memory>
+#include <optional>
 #include <span>
 #include <utility>
 #include <vector>
@@ -133,14 +134,41 @@ private:
 
 struct GoalStateTag;
 struct ValueStateTag;
-struct SelfStateTag;
 
 using GoalState = StateSection<GoalStateTag>;
 using ValueState = StateSection<ValueStateTag>;
-using SelfState = StateSection<SelfStateTag>;
 
 using EvidenceReferences =
     std::vector<ExperienceAddress, AllocationAdapter<ExperienceAddress>>;
+
+// The original bounded writer stores this current-write head under
+// self_state["bounded_verification_write"]. It is state content: rollback
+// restores the prior head exactly, and retraction checks receipt/revision.
+struct BoundedWriteHead final {
+    Digest256 receipt_id;
+    std::uint64_t revision;
+    RoleId target_role;
+    EvidenceReferences evidence_references;
+};
+
+class SelfState final {
+public:
+    explicit SelfState(CanonicalPayload payload)
+        : payload_(std::move(payload)) {}
+    SelfState(CanonicalPayload payload, BoundedWriteHead write_head)
+        : payload_(std::move(payload)), write_head_(std::move(write_head)) {}
+
+    [[nodiscard]] const CanonicalPayload& payload() const noexcept {
+        return payload_;
+    }
+    [[nodiscard]] const std::optional<BoundedWriteHead>& write_head() const noexcept {
+        return write_head_;
+    }
+
+private:
+    CanonicalPayload payload_;
+    std::optional<BoundedWriteHead> write_head_;
+};
 
 // The only persistent state type. Construction requires either Main's initial
 // key or the guarded writer's successor key; producers receive StateSnapshot.

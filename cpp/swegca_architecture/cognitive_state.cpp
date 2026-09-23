@@ -13,8 +13,8 @@ namespace swegca::architecture {
 namespace {
 
 // Canonical state content uses fixed order, little-endian integers and
-// explicit lengths. Generation ordinal is a separate identity component:
-// rollback restores the before-content hash at a new ordinal.
+// explicit lengths. The provisional generation ordinal is outside this
+// content digest; rollback restores the before-content hash.
 // The domain tag separates this digest from every other SWEGCA hash.
 // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3f:567-572
 void hash_u8(Sha256& hash, std::uint8_t value) {
@@ -77,7 +77,7 @@ Digest256 state_digest(
     std::span<const ExperienceAddress> evidence, const GoalState& goals,
     const ValueState& values, const SelfState& self) {
     Sha256 hash;
-    hash.update("swegca.cognitive_state.content.v1");
+    hash.update("swegca.cognitive_state.content.v2");
     hash_text(hash, owner.value());
 
     hash_u64(hash, roles.size());
@@ -110,6 +110,17 @@ Digest256 state_digest(
     hash_bytes(hash, goals.payload().bytes());
     hash_bytes(hash, values.payload().bytes());
     hash_bytes(hash, self.payload().bytes());
+    hash_u8(hash, self.write_head().has_value() ? 1 : 0);
+    if (self.write_head()) {
+        const auto& write = *self.write_head();
+        hash.update("bounded-verification-v1");
+        hash.update(write.receipt_id.bytes());
+        hash_u64(hash, write.revision);
+        hash_text(hash, write.target_role.value());
+        hash_u64(hash, write.evidence_references.size());
+        for (const auto& address : write.evidence_references)
+            hash_text(hash, address.value());
+    }
     return Digest256(hash.finish());
 }
 
@@ -299,6 +310,14 @@ void CognitiveState::validate() const {
     account(goals_.payload().bytes().size());
     account(values_.payload().bytes().size());
     account(self_.payload().bytes().size());
+    if (self_.write_head()) {
+        const auto& write = *self_.write_head();
+        if (write.revision == 0)
+            throw std::invalid_argument("bounded_write_revision_invalid");
+        account(write.target_role.value().size());
+        for (const auto& address : write.evidence_references)
+            account(address.value().size());
+    }
 
     for (const auto& definition : roles_.definitions()) {
         std::uint64_t capacity = 0;

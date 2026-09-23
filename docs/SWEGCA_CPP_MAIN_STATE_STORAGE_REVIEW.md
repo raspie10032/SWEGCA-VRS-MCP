@@ -43,9 +43,12 @@ crash cases before code uses it.
   for semantic-memory promotion linked to an existing World-write receipt.
   It does not define a required transaction around state-part staging.
 - The original bounded writer keeps prior write metadata in `self_state`.
-  Current C++ `SelfState` is an opaque `CanonicalPayload`, so the native
-  writer still needs a typed, digest-bound way to update and restore that
-  metadata without assuming an undocumented payload schema.
+  C++ candidate `SelfState` now holds an opaque caller payload alongside an
+  optional typed `BoundedWriteHead` (receipt digest, revision, target role,
+  evidence references). The content digest uses domain v2 and binds that
+  head's presence and canonical fields. The writer and recovery codec still
+  need to update and restore it; the opaque payload's reserved-key boundary
+  must be checked before calling this complete.
 - User clarification (2026-09-23 18:37 KST): a remembered occurrence and
   its immutable source record are memory; the numerical synapse strength
   linking memories is experience. The original hybrid organizer persists
@@ -136,8 +139,8 @@ crash cases before code uses it.
 - The receipt carries display time outside `CognitiveState`. Neither that
   time nor a new ordinal determines succession or authority. The original
   bounded writer's self-state write revision remains content, since rollback
-  must restore it. A typed `BoundedWriteHead` in `SelfState` will be included
-  in the next content-digest domain version.
+  must restore it. A typed `BoundedWriteHead` in `SelfState` is included in
+  content-digest domain v2; its writer and recovery path are still pending.
 - State staging must return the exact new publication position before its
   manifest can name it. A move-only, one-use stage handle is finalized with
   that position and the content digest, then passed to Main's single
