@@ -71,7 +71,7 @@ crash cases before code uses it.
 - The user's earlier bounded writer keeps prior write metadata in `self_state`.
   C++ candidate `SelfState` now holds an opaque caller payload alongside an
   optional typed `BoundedWriteHead` (policy version, receipt digest, revision,
-  target role, evidence references). The content digest uses domain v3 and binds that
+  target role, evidence references). The content digest uses domain v4 and binds that
   head's presence and canonical fields. The writer and recovery codec still
   need to update and restore it; the opaque payload's reserved-key boundary
   must be checked before calling this complete. Caller self payload bytes
@@ -218,7 +218,7 @@ crash cases before code uses it.
   time nor a new ordinal determines succession or authority. The user's earlier
   bounded writer's self-state write revision remains content, since rollback
   must restore it. A typed `BoundedWriteHead` in `SelfState` is included in
-  content-digest domain v3; its writer and recovery path are still pending.
+  content-digest domain v4; its writer and recovery path are still pending.
 - The current lower-journal candidate uses two local HEAD publications
   because its encoder needs a record position before it can encode a
   manifest naming that position. First, Main publishes root and candidate
@@ -345,7 +345,7 @@ four-stage VRS path is already implemented.
   each chunk before returning.
   A writer failure may stop the stream mid-part; no partial part or state HEAD
   may publish, and unpublished bytes must be removed before guarded work resumes.
-- The current canonical v3 byte order is prefix (domain, owner, roles), then
+- The current canonical v4 byte order is prefix (domain, owner, roles), then
   each of three tensors' partition and header followed by its chunks, then
   suffix (graph, evidence, goals, values, self and write head). A state tensor
   tree root can hold its partition/header and ordered top digest list, with
@@ -354,7 +354,7 @@ four-stage VRS path is already implemented.
   root with an empty level-0 list. A small tensor uses the same form, with no
   tensor-specific inline exception. The writer must keep the immutable Main
   state snapshot alive through every borrowed chunk and prove that prefix,
-  each reconstructed tensor and suffix concatenate to the existing v3 digest
+  each reconstructed tensor and suffix concatenate to the existing v4 digest
   preimage. A tensor root contains only partition, header and content digest
   lists: generation, owner, time and predecessor addresses stay outside it,
   so an unchanged tensor retains its exact root address. The canonical emitter
@@ -369,6 +369,75 @@ four-stage VRS path is already implemented.
   evidence and final fields. Which sections become separate trees and how
   their roots are referenced remain format decisions. The writer must not
   introduce a second serializer or content-defined split.
+
+## Native record graph cross-check (2026-09-24, candidate)
+
+Claude's record graph proposal uses the three already reserved Main-only kinds:
+kind 5 for immutable state parts and bounded section descriptors, kind 6 for a
+fixed-size state-content root, and kind 7 for each state-head publication.
+The canonical v4 emitter has eight ordered sections: prefix, three tensors,
+entities, relations, evidence, and final fields. A descriptor per section
+would let the root link unchanged sections while recovery reconstructs the
+exact existing v4 stream and recomputes `content_digest`. This is a storage
+proposal, not a new state or VRS decision rule. The exact payload codec and
+non-tensor inline representation remain undecided.
+
+- Each tensor descriptor must retain the emitter's header and an ordered
+  chunk-digest list. The level-0 list is empty for a zero-byte tensor; a small
+  tensor still uses that list and has no tensor-specific inline exception.
+  Part splitting is at fixed 8 MiB chunk boundaries. A changed verification
+  slot can reuse every unaffected chunk and descriptor. The non-tensor
+  sections may need bounded 8 MiB parts as they grow; an inline rule for
+  those sections still requires an explicit format decision.
+- A kind-6 root is content-addressed as `state-root:<content_digest>` and
+  links the eight section descriptors in canonical order. This fixed-size
+  root can be reused when rollback returns to bit-identical content.
+  Recovery must verify every referenced kind, address and digest, then hash
+  the reconstructed v4 stream; a tree digest alone does not prove the state
+  digest.
+- A kind-7 publication is separate from the reusable root and must include
+  predecessor publication identity, root address, content digest and its
+  transition body. Its address must hash the **entire canonical payload**:
+  hashing only predecessor and body would collide for distinct genesis
+  contents. A rollback or retraction publishes a new identity even when it
+  reuses an existing root. A bounded-write body needs all fields of the
+  `BoundedWriteReceipt`; variable fields must have a bounded part form so a
+  large receipt never exceeds one 16 MiB record.
+- Retraction cannot be verified by asserting that its result equals the
+  referenced receipt's `before_state_hash`: it preserves later unrelated
+  cognition. Cold recovery must reproduce the author's active-receipt and
+  slot checks on the predecessor and verify the resulting content, or use an
+  equivalent exact proof. Strict rollback has different preconditions and
+  does restore the receipt's exact before-state hash.
+- Publishing parts across several intermediate generations and then a root
+  and publication record is possible only if each encoded `RecordDraft`
+  satisfies its required source, source revision and operation ID, each
+  record fits 16 MiB, and each segment **including headers and record
+  framing** and each generation fit 64 MiB. No empty-budget assumption can
+  replace those encoded-size checks. Intermediate lower HEADs confer no Main
+  state authority; only Main's committed marker selects a final manifest.
+- The final record-free generation cannot yet bind the new kind-7 identity:
+  `ManifestFields` still has a provisional state ordinal and content digest,
+  but no publication `RecordPosition` and digest. That manifest format, its
+  codec and recovery checks must change before state publication code can
+  use this graph. The Main marker then has to bind that exact final
+  `JournalRoot`, publication identity, content digest and strength root.
+  The migration also reaches `stage_from`, `stage_state_records`, `stage_view`,
+  `state_generation` and `replay_at_head`, which currently pass or reconstruct
+  the ordinal-bearing `StateGeneration`; changing only the manifest bytes
+  would leave the public snapshot and Replay bound to the old identity.
+
+The predecessor chain, writable resumption after `open_at_root`, orphan
+genesis, pending-marker restart selection, part reclamation and strength-root
+format remain open. The author's pending → fsync → in-memory swap → rename →
+directory-fsync order governs the Main marker; a candidate lower HEAD never
+overrides the last selected committed marker. Source boundaries:
+`CognitiveState::for_each_content_chunk` and `part_tree.hpp` define the native
+stream/part limits; `JournalStore::stage_state_records` and `ManifestFields`
+define the current lower-journal mechanism; the author's
+`mosaic_bounded_world_write.py@3bddcb7:478-546` distinguishes rollback from
+retraction, and `mosaic_paper_resident_assimilation.py@3bddcb7:491-535`
+supplies the Main commit ordering.
 
 ## Decisions before implementation
 

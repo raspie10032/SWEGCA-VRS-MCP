@@ -87,6 +87,11 @@ struct SemanticPromotionThresholds {
 // must separately authenticate the EvidenceDecision, verify the current state
 // against the write receipt, check candidate references, and own the native
 // transaction and capability. It does not add a second judgment-validity rule.
+// The source refuses a lower bound only when `value < minimum`; NaN would
+// pass that one comparison. This `>=` fails closed for NaN. An authoritative
+// accepted judgment cannot carry NaN: its accumulator requires a lower bound
+// above its threshold, which is false for NaN. The difference is unreachable
+// after Main authenticates that judgment.
 // Lineage: direct — the author's accepted-status and three minima checks.
 // SWEGCA: src/tinylm_slicer/mosaic_world_memory_transaction.py@3bddcb7:226-233
 [[nodiscard]] constexpr bool semantic_promotion_evidence_eligible(
