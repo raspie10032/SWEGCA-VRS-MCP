@@ -435,7 +435,7 @@ bool is_cue_letter(char32_t value) noexcept {
 }
 
 // Calls `emit(begin, end)` for each token of lowered `text` in order.
-// Lineage: direct — the author's cue tokens n\d+|r\d+|[a-z]+|\d+|[^\W\d_]+ of lowered text, left to right (digits are ASCII only here).
+// Lineage: weak analogy — the author's cue tokens n\d+|r\d+|[a-z]+|\d+|[^\W\d_]+ of lowered text, left to right (digits are ASCII only here).
 // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:414
 // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:495
 template <class Emit>
@@ -1514,7 +1514,7 @@ void SectionSource::operator()(std::uint64_t offset, std::span<std::byte> out) c
 
 }  // namespace detail
 
-// Lineage: direct — the author lowercases the text and takes every match of its cue regex; here lowercasing is ASCII only and the text must be strict UTF-8.
+// Lineage: weak analogy — the author lowercases the text and takes every match of its cue regex; here lowercasing is ASCII only and the text must be strict UTF-8.
 // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:413-415
 // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:495
 CueTokens::CueTokens(const AllocationContext& memory, std::string_view source)
