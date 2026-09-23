@@ -1,4 +1,4 @@
-# SWEGCA C++ four-stage memory activation — design v1.8 (for cross-review, no code yet)
+# SWEGCA C++ four-stage memory activation — design v1.9 (for cross-review, no code yet)
 
 Status: draft for Claude–Codex cross-review. Nothing here is implemented.
 It replaces the single-stage `ExperienceSelector::select` with Déjà vu → Recall → Replay → Re-evidence.
@@ -31,7 +31,25 @@ It replaces the single-stage `ExperienceSelector::select` with Déjà vu → Rec
 All four stages of one route run over one pinned published universe (the session U_s or the main U_m, see below) and that universe's VRS strengths (main: named by Main HEAD, b2c2f33). A stage handed a result from another snapshot fails, as :663-664 and :733-734 do. The query text is the same in every stage (:936-943). This is the user's one memory+VRS pair swapped atomically (:463-508): our Main HEAD names the memory watermark and the VRS strength root in one CAS.
 - **Not true of today's API (Codex 19:51).** `for_each_index_match`, `resolve` and `replay_at_head` each take a fresh `snapshot()` (journal_store.cpp:1815-1826 and others). Several cue lookups and up to 5 replays could see different HEADs.
 - **Needed first:** a Main-owned activation lease, taken once per activation. It pins **both** the session universe U_s (the session-local native journal and its session VRS) and the main universe U_m (the main journal and its VRS root), because the approved flow keeps them apart (:59-69). Déjà vu runs on U_s. Its `matched_cues` decides one route: U_s, or U_m on a miss (:13-15, :46). Every later stage (navigation, Recall, Replay, strength reads, Re-evidence) uses that one chosen universe. The same-U contract holds per route. Codex designs and implements the journal side. The four-stage code is built on the lease, never on `snapshot()` per call.
-- **Not designed yet:** how Main HEAD and a session HEAD are published relative to each other, and whether a memory is visible in both during the atomic link at SessionEnd (:68).
+- **Publication boundary (v1.9, Claude msg 240 / Codex 20:37-20:38).** Three layers, kept apart.
+  - **User rules (fixed).**
+    - Approved flow :61-70: a session-local native journal, a session VRS generation published at admission, an atomic link of complete session journals to main ownership at SessionEnd, the session VRS kept as one block with only its connection points, and some blocks merged with one VRS run in periodic idle time. Original session journals stay available (:78).
+    - User 2026-09-23 20:0x: the live session VRS reflects each memory in real time, without waiting for an update. An active session therefore has no normal lag between a published memory and its strength. The user's old pipeline lag (tinylm HEAD mosaic_live_vrs_pipeline.py:424-428) is what this directive replaces.
+  - **User source principles (existing implementation, tinylm origin/main 3bddcb7).**
+    - A lower record's digest is a storage identity, not authority. Main selects the committed digest. Files are never discovered or adopted automatically (mosaic_vrs_event_durable.py:3-5, :150-157).
+    - A commit is ordered: pending marker fsync → pair CAS → rename to committed and directory fsync (mosaic_paper_resident_assimilation.py:502-530). A partial pending marker is no authority (:508-509). A leftover pending marker refuses further commits until explicit reconciliation (:447-449).
+    - The user's code never finished restart selection of the committed digest (user ledger VRS2_EVENT_DURABLE_PUBLICATION_LEDGER_20260911.md:123-125).
+  - **C++ candidate (agreed direction, not built).**
+    - One Main-owned immutable publication root is the authority. It names (a) the current session journal generation and its session VRS generation, published together; a memory and its live strength appear in the same root or neither does. (b) The main journal generation, the VRS block list and the connection-point root. (c) The CognitiveState publication.
+    - Lower files (journal segments, VRS blocks, connection points) may reach disk first. They carry no authority until a committed root names them.
+    - The input hook pins the root once. Session Déjà vu runs on it, and a miss falls back to main in the same root. SessionEnd and idle merges become visible only through a successor root. Old roots stay readable while a lease holds them.
+  - **Preconditions in today's code (Codex 20:37-20:38).**
+    - `JournalStore::open` loads its own HEAD. There is no path to open the historical generation that a root names by manifest digest.
+    - `load_published_head` removes segment, manifest and page-log bytes outside its own HEAD and truncates to the published end (codex/swegca-cpp-vrs journal_store.cpp). Under root authority this must not happen. Journal recovery and cleanup must first become subordinate to the root-selected generation and live leases, and bytes past the root are kept, not adopted.
+  - **Open.**
+    - Pending reconciliation. Keep the user's fail-closed rule and preserve the pending file. No automatic "abandoned" rule is fixed.
+    - How experiences received or answered around a restart are related explicitly (correction relation).
+    - Root file format, root history retention and its storage bound.
   - Codex 683fe27: `for_each_index_match_in`, `resolve_in` and `replay_in` take one pinned `PublishedSnapshot` through a private Main path. The upper lease that pins the memory and the strength root together (main root, closed session blocks, live session VRS) is not built yet, and it is a precondition here.
 
 ## 1.5 The user-approved read route (ORDER_FOR_REVIEW, 「순서맞음 ㄱㄱ」 2026-09-22)
@@ -171,7 +189,7 @@ It carries no authority (:927-946). This extends today's SelectionReceipt<NoAuth
 ## 9. Open questions
 - A: closed. 「구절 cue + 질의 토큰」.
 - B: closed. The user answered 「맞은 cue 개수」.
-- C: answered by the user with the live session VRS directive (§4, verbatim). No rank rule for a memory without strength is chosen. The structure is not fixed yet.
+- C: answered by the user with the live session VRS directive (§4, verbatim). No rank rule for a memory without strength is chosen. In an active session a memory and its live strength publish in the same root (§1 publication boundary), so none lacks a strength.
 - D: closed with Codex. Integrate after typed steps.
 - E: closed. The user chose Option 1 (「Re-evidence 로 옮김」).
 - F: casefold. Closed by the user: 「유니코드 casefold 그대로」. See §2.1.
