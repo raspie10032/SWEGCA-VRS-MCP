@@ -719,8 +719,8 @@ public:
     // observation already in the journal is not appended again; one found
     // there with other index entries, which its fields all derive, fails
     // `experience_index_conflict`).
-    [[nodiscard]] std::optional<journal::StagedGeneration> next(const StateGeneration& state,
-                                                                std::span<const journal::ViewGeneration> views);
+    [[nodiscard]] std::optional<journal::StagedGeneration> next(
+        std::span<const journal::ViewGeneration> views);
 
 private:
     friend class ExperienceJournal;
@@ -845,7 +845,7 @@ public:
     [[nodiscard]] ExperienceRecord replay(const ExperienceAddress& address) const;
 
     // The state generation named by the current published journal HEAD.
-    [[nodiscard]] StateGeneration state_generation() const;
+    [[nodiscard]] journal::StateHeadReference state_head() const;
 
     // Visits, in address order over one published snapshot, every experience
     // `view` names for `key` until `visit` returns false: for `cue` a single

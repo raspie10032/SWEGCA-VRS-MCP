@@ -39,6 +39,13 @@ constexpr std::size_t ordinal_digits = 20;
 // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:50
 [[noreturn]] void fail(const char* code) { throw std::runtime_error(code); }
 
+// Lineage: native mechanism — copy the two manifest fields as no-authority
+// data; Main separately verifies them against its selected committed marker.
+// SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:196-205
+StateHeadReference state_head_of(const ManifestFields& fields) {
+    return StateHeadReference{fields.state_content_digest, fields.state_publication};
+}
+
 // Checked accumulation for byte counts.
 // Lineage: native mechanism — checked uint64 addition for byte counts (Python integers do not overflow).
 // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:50
@@ -1748,14 +1755,12 @@ std::shared_ptr<const Manifest> JournalStore::head() const {
     return std::shared_ptr<const Manifest>(current, &current->head);
 }
 
-// Lineage: native mechanism — reads the state generation the published manifest names.
+// Lineage: native mechanism — reads the state head the published manifest names.
 // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:587-589
-StateGeneration JournalStore::state_generation() const {
+StateHeadReference JournalStore::state_head() const {
     require_usable();
     const auto current = snapshot();
-    const auto& fields = current->head.fields();
-    return StateGeneration(fields.state_generation_ordinal,
-                           Digest256(fields.state_generation_digest));
+    return state_head_of(current->head.fields());
 }
 
 // Lineage: native mechanism — reports the use the host's budget judges.
@@ -1796,7 +1801,6 @@ void JournalStore::verify_extent(const PublishedSnapshot& current,
 // SWEGCA: docs/SWEGCA_CPP_VRS_LAYER_PLAN.md@472d23225c973fa0a33581afd6bd9026df6fc98a:159-165
 // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:17
 StagedGeneration JournalStore::stage(std::span<const RecordDraft> drafts,
-                                     const StateGeneration& state,
                                      std::span<const ViewGeneration> views) const {
     for (const auto& draft : drafts)
         if (draft.kind == original_experience_record_kind || draft.kind == derived_experience_record_kind ||
@@ -1805,19 +1809,20 @@ StagedGeneration JournalStore::stage(std::span<const RecordDraft> drafts,
         else if (draft.kind == state_part_record_kind || draft.kind == state_root_record_kind ||
                  draft.kind == state_publication_record_kind)
             fail("journal_state_kind_reserved");
-    return stage_records(drafts, state, views);
+    return stage_records(drafts, views, std::nullopt);
 }
 
 // Lineage: weak analogy — the author's save makes a candidate for Main's CAS; here a detached generation.
 // SWEGCA: src/tinylm_slicer/mosaic_vrs_block_store.py@3bddcb7:134-135
 StagedGeneration JournalStore::stage_records(std::span<const RecordDraft> drafts,
-                                             const StateGeneration& state,
-                                             std::span<const ViewGeneration> views) const {
+                                             std::span<const ViewGeneration> views,
+                                             std::optional<StateHeadReference> state_override) const {
     require_usable();
     // The snapshot is read before the retained charge: a rewrite adds the old
     // logs to the retained charge before it swaps the snapshot, so this order
     // never misses them (it may count them twice, which only overcharges).
     const auto current = snapshot();
+    const auto state = state_override.value_or(state_head_of(current->head.fields()));
     return stage_from(current, drafts, state, views, nullptr, retained_bytes_.load());
 }
 
@@ -1831,7 +1836,7 @@ StagedGeneration JournalStore::stage_records(std::span<const RecordDraft> drafts
 // SWEGCA: src/tinylm_slicer/mosaic_evidence_ledger.py@3bddcb7:60-83
 StagedGeneration JournalStore::stage_from(const std::shared_ptr<const PublishedSnapshot>& current,
                                           std::span<const RecordDraft> drafts,
-                                          const StateGeneration& state,
+                                          const StateHeadReference& state,
                                           std::span<const ViewGeneration> views,
                                           const ViewPages* replacement,
                                           std::uint64_t retained) const {
@@ -2045,8 +2050,8 @@ StagedGeneration JournalStore::stage_from(const std::shared_ptr<const PublishedS
     fields.recovery_bytes_before = fields.checkpoint ? 0 : parent_recovery;
     fields.manifest_bytes_before = plus(parent.manifest_bytes_before, current->location.length,
                                         "journal_manifest_bytes_overflow");
-    fields.state_generation_ordinal = state.ordinal();
-    fields.state_generation_digest = state.digest().bytes();
+    fields.state_content_digest = state.content_digest;
+    fields.state_publication = state.publication;
     fields.tail_sequence = sequence;
     fields.tail_record_digest = chain;
     fields.tail_segment_ordinal =
@@ -2264,8 +2269,7 @@ ReplayAtHead JournalStore::replay_at_head(const ExperienceAddress& address) cons
     require_usable();
     const auto current = snapshot();
     const auto& fields = current->head.fields();
-    StateGeneration state(fields.state_generation_ordinal, Digest256(fields.state_generation_digest));
-    return ReplayAtHead{replay_in(*current, address), std::move(state)};
+    return ReplayAtHead{replay_in(*current, address), state_head_of(fields)};
 }
 
 // Rule (Replay): an unknown address, or a view naming another address, fails.
@@ -2388,8 +2392,7 @@ StagedGeneration JournalStore::stage_view(const std::shared_ptr<const PublishedS
     views.reserve(head.view_count());
     for (std::size_t at = 0; at < head.view_count(); ++at) views.push_back(head.view(at));
     const auto& fields = head.fields();
-    const StateGeneration state(fields.state_generation_ordinal,
-                                Digest256(fields.state_generation_digest));
+    const auto state = state_head_of(fields);
     const auto retained = plus(retained_bytes_.load(), page_log_charge(fields.view_pages),
                                "journal_storage_overflow");
     return stage_from(current, {}, state, views, &view, retained);

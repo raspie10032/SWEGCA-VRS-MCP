@@ -2397,8 +2397,8 @@ journal::RecordDraft ExperienceAppend::head_draft(const Head& head) const {
 // through a reader is read into a buffer held until the journal has copied
 // it, and must hash to what staging read (`experience_source_changed`).
 // SWEGCA: user@2026-09-22:61
-std::optional<journal::StagedGeneration> ExperienceAppend::next(const StateGeneration& state,
-                                                                std::span<const journal::ViewGeneration> views) {
+std::optional<journal::StagedGeneration> ExperienceAppend::next(
+    std::span<const journal::ViewGeneration> views) {
     if (done_) return std::nullopt;
     const auto& store = journal_->journal_;
     // Whether the part's address resolves. It is this part without reading it
@@ -2508,7 +2508,7 @@ std::optional<journal::StagedGeneration> ExperienceAppend::next(const StateGener
     }
     if (!drafts.empty()) {
         auto staged = store.stage_experience_records(journal::ExperienceStageKey{},
-                                                     drafts, state, views);
+                                                     drafts, views);
         // Staged, not published: another writer may publish a record under
         // one of these addresses first and this generation then fail, so a
         // part is known only once the record published there is the one
@@ -2550,7 +2550,7 @@ std::optional<journal::StagedGeneration> ExperienceAppend::next(const StateGener
     }
     if (!drafts.empty()) {
         auto staged = store.stage_experience_records(journal::ExperienceStageKey{},
-                                                     drafts, state, views);
+                                                     drafts, views);
         const auto positions = staged.positions();  // in draft order
         for (std::size_t at = 0; at < drafted.size(); ++at)
             heads_[drafted[at]].staged = positions[at].record_digest;
@@ -2591,7 +2591,7 @@ std::optional<journal::StagedGeneration> ExperienceAppend::next(const StateGener
         return std::nullopt;
     }
     auto staged = store.stage_experience_records(journal::ExperienceStageKey{},
-                                                 drafts, state, views);
+                                                 drafts, views);
     const auto positions = staged.positions();  // in draft order
     for (std::size_t at = 0; at < drafted.size(); ++at)
         bindings_[drafted[at]].staged = positions[at].record_digest;
@@ -2682,8 +2682,8 @@ void VerdictSink::record(const CandidateVerdict& verdict) {
 }
 
 // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:141-150
-StateGeneration ExperienceJournal::state_generation() const {
-    return journal_.state_generation();
+journal::StateHeadReference ExperienceJournal::state_head() const {
+    return journal_.state_head();
 }
 
 // Lineage: weak analogy — these field families match the author's runtime

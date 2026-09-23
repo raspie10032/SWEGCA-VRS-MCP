@@ -250,11 +250,11 @@ private:
 };
 
 // One exact original replayed within one published snapshot, with the
-// Cognitive State generation that snapshot's HEAD names: both belong to the
+// state head that snapshot's manifest names: both belong to the
 // same generation, whatever is published meanwhile.
 struct ReplayAtHead {
     PublishedRecord record;
-    StateGeneration state;
+    StateHeadReference head;
 };
 
 // Bytes one generation places in one segment file: appended at the published
@@ -500,7 +500,7 @@ public:
     // The published head manifest, shared with its snapshot: no copy is made
     // and the snapshot lives as long as the returned pointer.
     [[nodiscard]] std::shared_ptr<const Manifest> head() const;
-    [[nodiscard]] StateGeneration state_generation() const;
+    [[nodiscard]] StateHeadReference state_head() const;
     // Charged on-disk use of the published journal, in bytes, including page
     // logs a view rewrite left behind that are not yet removed.
     [[nodiscard]] std::uint64_t storage_charged() const;
@@ -517,24 +517,26 @@ public:
     // record's root sources and contexts from its published lineage; here
     // they fail `journal_experience_kind_reserved`. State kinds 5–7 require
     // Main's StateStageKey and fail `journal_state_kind_reserved` here.
+    // This route inherits the parent's state head; a generic record cannot
+    // name a different Cognitive State publication.
     [[nodiscard]] StagedGeneration stage(std::span<const RecordDraft> drafts,
-                                         const StateGeneration& state,
                                          std::span<const ViewGeneration> views) const;
 
     // The experience appender may stage its reserved record kinds but cannot
     // publish or rewrite HEAD. Only MainOwner can perform those mutations.
+    // It also inherits the parent's state head without a caller-supplied one.
     // Lineage: native mechanism — the plan's three experience kinds, plus cue bindings (this code's addition), only through ExperienceAppend.
     // SWEGCA: docs/SWEGCA_CPP_VRS_LAYER_PLAN.md@472d23225c973fa0a33581afd6bd9026df6fc98a:159-165
     [[nodiscard]] StagedGeneration stage_experience_records(
         const ExperienceStageKey&, std::span<const RecordDraft> drafts,
-        const StateGeneration& state, std::span<const ViewGeneration> views) const {
+        std::span<const ViewGeneration> views) const {
         for (const auto& draft : drafts)
             if (draft.kind != original_experience_record_kind &&
                 draft.kind != derived_experience_record_kind &&
                 draft.kind != experience_part_record_kind &&
                 draft.kind != cue_binding_record_kind)
                 throw std::invalid_argument("journal_memory_kind_required");
-        return stage_records(drafts, state, views);
+        return stage_records(drafts, views, std::nullopt);
     }
 
     // Main alone may stage the reserved state kinds. This key excludes other
@@ -545,12 +547,12 @@ public:
     // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:17
     [[nodiscard]] StagedGeneration stage_state_records(
         const StateStageKey&, std::span<const RecordDraft> drafts,
-        const StateGeneration& state, std::span<const ViewGeneration> views) const {
+        const StateHeadReference& state, std::span<const ViewGeneration> views) const {
         for (const auto& draft : drafts)
             if (draft.kind != state_part_record_kind && draft.kind != state_root_record_kind &&
                 draft.kind != state_publication_record_kind)
                 throw std::invalid_argument("journal_state_kind_required");
-        return stage_records(drafts, state, views);
+        return stage_records(drafts, views, std::optional<StateHeadReference>{state});
     }
 
     // Publishes `staged` only if the head is still its parent. Order: segment
@@ -662,8 +664,8 @@ private:
     // `stage` without the kind rule: reachable outside JournalStore only
     // through the experience and Main-only state staging keys.
     [[nodiscard]] StagedGeneration stage_records(std::span<const RecordDraft> drafts,
-                                                 const StateGeneration& state,
-                                                 std::span<const ViewGeneration> views) const;
+                                                 std::span<const ViewGeneration> views,
+                                                 std::optional<StateHeadReference> state_override) const;
     JournalStore(std::filesystem::path directory, JournalIdentity identity,
                  std::shared_ptr<const StorageBudget> storage, const AllocationContext& memory,
                  std::uint64_t allocation_unit, std::shared_ptr<io::OwnerLock> lock,
@@ -699,7 +701,7 @@ private:
     void verify_extent(const PublishedSnapshot& snapshot, const SegmentExtent& extent) const;
     [[nodiscard]] StagedGeneration stage_from(const std::shared_ptr<const PublishedSnapshot>& current,
                                               std::span<const RecordDraft> drafts,
-                                              const StateGeneration& state,
+                                              const StateHeadReference& state,
                                               std::span<const ViewGeneration> views,
                                               const ViewPages* replacement,
                                               std::uint64_t retained) const;
