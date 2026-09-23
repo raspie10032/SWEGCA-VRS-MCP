@@ -141,10 +141,11 @@ GateOutcome EvidenceGate::authorize(const EvidenceDecision& decision,
     // author derives currentness from pinned artifacts matching and every
     // update having been made against the current state
     // (mosaic_evidence_revision.py@5901a5a:81-180); natively the accumulator
-    // holds each original's replayed content digest and observation
-    // generation, and Main's Re-evidence results per generation, so the gate
-    // compares metadata only. Any admission or Re-evidence after the
-    // decision advances the revision, so a stale decision fails here.
+    // holds each original's replayed record digest and observed state content
+    // digest, plus Main's Re-evidence results; their currentness is grouped
+    // by state content. The gate compares metadata only. Any admission or
+    // Re-evidence after the decision advances the revision, so a stale
+    // decision fails here.
     const bool revision_current =
         same_claim && decision.accumulator_revision() == accumulator.revision();
     const bool evidence_current =

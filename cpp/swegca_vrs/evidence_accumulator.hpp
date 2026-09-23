@@ -75,11 +75,11 @@ enum class EvidenceOutcome : std::uint8_t { support = 1, refute = 2, insufficien
 // onto its own account. `address` must name a published experience record
 // (spec :118, board §4 :213-214); Main replays it, decodes it as experience
 // and hands it to `admit`, so no caller-supplied position or digest is ever
-// trusted. `judged_against` is
-// the Cognitive State generation the producer judged on; it is admitted only
-// when it is the generation Main's journal HEAD names (the author's audit row
-// requires the world hash to be the current state's), and then it is the
-// observation generation, which Re-evidence never rewrites.
+// trusted. `judged_against` is the content digest the producer judged on.
+// Main admits it only when that digest matches the content of its current
+// state (the author's audit row compares world hashes). It is retained as
+// the observation's content claim; Re-evidence never rewrites it. Publication
+// identity belongs to Main's state head, not to this producer observation.
 // Provenance is the replayed experience's (COMPONENT_LEDGER.md@5901a5a:
 // 44-50, codex 15:40): `source_family` must be the family (SourceFamilies,
 // evidence_stages.hpp) of one of the experience's root sources, `context`
@@ -93,7 +93,7 @@ struct EvidenceObservation {
     std::string_view claim;  // claim id of the revision judged
     std::uint64_t claim_revision = 0;
     std::string_view address;
-    StateGeneration judged_against;
+    Digest256 judged_against;
     std::string_view source_family;
     Digest256 context;
     std::uint32_t axis = 0;  // index into the policy's axes
@@ -116,14 +116,14 @@ template <class T>
 using EvidenceVector = std::vector<T, AllocationAdapter<T>>;
 
 // What an admitted original still binds after admission: the published
-// record's content digest (from Replay), the observation generation, its
+// record's content digest (from Replay), the observed state content digest, its
 // expiry and outcome, and every provenance field of the author's audit row
 // (axis, source family, context, producer, observation step, producer
 // confidence). It is never rewritten.
 struct AdmittedEvidence {
     ExperienceAddress address;
     DigestBytes record_digest{};
-    StateGeneration judged_against;
+    Digest256 judged_against;
     std::optional<std::uint64_t> expires_at;
     EvidenceOutcome outcome = EvidenceOutcome::insufficient;
     std::uint32_t axis = 0;

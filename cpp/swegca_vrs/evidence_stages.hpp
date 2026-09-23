@@ -88,12 +88,11 @@ struct ReEvidenceRecorded {
 
 // Main's evidence admission (spec :118, order @30b73e7:24-29): replays the
 // observation's address from Main's journal and admits it against the state
-// generation the journal's HEAD names, both from one snapshot, so neither the
-// record nor the current generation is the caller's to choose. A HEAD
-// published after that snapshot leaves the admission judged against the
-// earlier generation: evidence_current then requires Re-evidence at the new
-// one, so the pair is never mixed. The only caller of the accumulator's
-// admission step.
+// content the journal's HEAD names, both from one snapshot, so neither the
+// record nor the current content is the caller's to choose. A later HEAD
+// with different content requires Re-evidence before that original is current;
+// a bit-exact rollback to the same content can reuse its judgment. This is
+// the only caller of the accumulator's admission step.
 class EvidenceAdmission final {
 public:
     EvidenceAdmission(const EvidenceAdmission&) = delete;

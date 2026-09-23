@@ -106,8 +106,8 @@ void reserve_one_more(Vector& vector) {
     vector.reserve(std::max<std::size_t>(doubled, 8));
 }
 
-// Every admitted original exactly (address, content digest, observation
-// generation, expiry, outcome, axis, source family, context, producer,
+// Every admitted original exactly (address, record digest, observed state
+// content digest, expiry, outcome, axis, source family, context, producer,
 // observation step, producer confidence bits) in admission order, then every Re-evidence
 // result (original, content digest, re-evidence generation, re-evidencer,
 // outcome) in recording order, then the positions of exactly repeated results.
@@ -117,12 +117,12 @@ Digest256 evidence_record_digest(std::span<const AdmittedEvidence> evidence,
                                  std::span<const ReEvidenceResult> results,
                                  const Positions& repeated) {
     Sha256 hash;
-    hash_field(hash, "swegca.admitted_evidence.v3");
+    hash_field(hash, "swegca.admitted_evidence.v4");
     hash_u64(hash, evidence.size());
     for (const auto& item : evidence) {
         hash_field(hash, item.address.value());
         hash.update(item.record_digest);
-        hash_generation(hash, item.judged_against);
+        hash.update(item.judged_against.bytes());
         hash_u64(hash, item.expires_at ? 1 : 0);
         hash_u64(hash, item.expires_at.value_or(0));
         hash_u64(hash, static_cast<std::uint64_t>(item.outcome));
@@ -262,10 +262,11 @@ AdmissionResult EvidenceAccumulator::admit(const EvidenceObservation& observatio
         return reject(observation.address, AdmissionResult::insufficient);
     if (originals_.contains(observation.address))
         return reject(observation.address, AdmissionResult::duplicate);
-    // Author: every audit row's world hash is the current state's. Compare
-    // content, not the provisional publication ordinal: bit-exact rollback
-    // can publish the same state content under another head.
-    if (observation.judged_against.digest() != current.digest())
+    // Author: every audit row's world hash is the current state's. The
+    // producer names content only; bit-exact rollback can publish that same
+    // content under another head without giving the producer publication
+    // identity or letting it invent a publication ordinal.
+    if (observation.judged_against != current.digest())
         return reject(observation.address, AdmissionResult::stale);
     if (tally_.revision == std::numeric_limits<std::uint64_t>::max())
         throw std::overflow_error("evidence_revision_exhausted");
@@ -347,10 +348,10 @@ AdmissionResult EvidenceAccumulator::admit(const EvidenceObservation& observatio
     if (!context_set.contains(context)) context_node = detached(context_set, context);
     Set<std::uint32_t>::node_type producer_node;
     if (!producers_.contains(producer)) producer_node = detached(producers_, producer);
-    const auto coverage_found = coverage_.find(observation.judged_against.digest());
+    const auto coverage_found = coverage_.find(observation.judged_against);
     Map<Digest256, Coverage>::node_type coverage_node;
     if (coverage_found == coverage_.end())
-        coverage_node = detached(coverage_, observation.judged_against.digest(), Coverage{});
+        coverage_node = detached(coverage_, observation.judged_against, Coverage{});
     reserve_one_more(admitted_evidence_);
     AdmittedEvidence kept{ExperienceAddress(memory_, observation.address),
                           replayed.record_digest,
@@ -378,7 +379,7 @@ AdmissionResult EvidenceAccumulator::admit(const EvidenceObservation& observatio
     splice(context_set, context_node);
     splice(producers_, producer_node);
     splice(coverage_, coverage_node);
-    coverage_.find(observation.judged_against.digest())->second.observed += 1;
+    coverage_.find(observation.judged_against)->second.observed += 1;
     admitted_evidence_.push_back(std::move(kept));
     if (observation.expires_at)
         earliest_expiry_ = std::min(earliest_expiry_.value_or(*observation.expires_at),
@@ -527,7 +528,7 @@ AdmissionResult EvidenceAccumulator::record(ReEvidenceResult result) {
     const Cover before = cover_found == covers_.end() ? Cover{} : cover_found->second;
     Cover after = before;
     (result.outcome() == admitted.outcome ? after.consistent : after.conflicted) = true;
-    const bool observed_here = admitted.judged_against.digest() == result.generation().digest();
+    const bool observed_here = admitted.judged_against == result.generation().digest();
     const bool newly_re_evidenced = !observed_here && after.consistent && !before.consistent;
     const bool newly_conflicted = after.conflicted && !before.conflicted;
 
