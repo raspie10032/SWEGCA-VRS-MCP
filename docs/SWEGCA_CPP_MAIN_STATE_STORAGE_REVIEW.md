@@ -596,6 +596,16 @@ changes or observation admission. It must be reconciled before assigning
 kind-7 successor body tags or a cold-recovery rule. The existing kind-7 tag 0
 encodes genesis only.
 
+The reconstruction inventory §3A/E makes `MainStateWriter` the sole native
+successor constructor. Its L2 slot-memory row says a slot plan can only be
+applied there, and its L3 autonomy row calls an accepted phase transition a
+proposed Main state update, with no action capability. Thus an author function
+returning a changed in-memory `CognitiveState` is not, by itself, a committed
+native Main state. The native route must validate and publish the exact change
+through Main or keep it explicitly as a detached candidate. This is an
+existing ownership constraint, not a claim that every source caller already
+had a disk journal.
+
 `S` below is `SWEGCA-Architecture@5901a5a/src/swegca/`; `T` is
 `tinylm-slicer-sanabi-bazzite@3bddcb7/src/tinylm_slicer/`. Each row names a
 source function that returns changed state, including wrappers that delegate
@@ -630,6 +640,24 @@ its source whether the output is request-local or Main-published, then provide
 an authorized Main route for every persistent change. None of the source
 behavior is silently removed. The record header, receipt body and transition
 tags remain unspecified until that boundary is reviewed.
+
+The existing reconstruction contract already fixes several dispositions:
+bounded write, rollback and retraction require Main successor publication;
+world-linked operations additionally require their native journal transaction
+stages. An accepted autonomous step is an input to a Main
+goal/self update, with its memory/action intents still carrying no authority.
+Slot apply/archive/protect, including the audio caller, require Main's writer
+to apply a checked plan. Accelerated/hybrid verification delegates its goal/
+self change to that same autonomy route. The arbiter's direct `commit=True`
+path is explicitly removed by the inventory; its candidate goes through the
+decision, Bind, commit-free arbitration and guarded writer path. Detached
+recurrent outputs and training batches do not acquire publication identity.
+The tinylm semantic consolidation, its rollback and verified reload, together
+with temporal evidence-reference updates, physical correction and recurrent
+evidence integration, need explicit Main checks and transition receipts before
+they can persist. The source's plain `authorized` boolean is not a native
+capability. This paragraph fixes no body tags or disk format.
+
 Among the listed post-genesis source routes, only recurrent integration,
 temporal-window pruning and physical correction change
 `CognitiveState.evidence_refs`; only physical correction changes
