@@ -5,6 +5,7 @@
 #include "swegca_vrs/identity_types.hpp"
 
 #include <cstdint>
+#include <tuple>
 #include <stdexcept>
 #include <utility>
 
@@ -41,6 +42,18 @@ public:
                publication_.byte_offset == other.publication_.byte_offset &&
                publication_.sequence == other.publication_.sequence &&
                publication_.record_digest == other.publication_.record_digest;
+    }
+
+    // A Re-evidence event key can keep two publications of identical content
+    // distinct while coverage itself remains keyed by the content digest.
+    // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:196-205
+    [[nodiscard]] auto operator<=>(const PublishedStateId& other) const noexcept {
+        return std::tie(content_digest_, publication_.segment_ordinal,
+                        publication_.byte_offset, publication_.sequence,
+                        publication_.record_digest) <=>
+               std::tie(other.content_digest_, other.publication_.segment_ordinal,
+                        other.publication_.byte_offset, other.publication_.sequence,
+                        other.publication_.record_digest);
     }
 
 private:

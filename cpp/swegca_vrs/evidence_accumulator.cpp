@@ -44,10 +44,16 @@ void hash_u64(Sha256& hash, std::uint64_t value) {
     hash.update(bytes);
 }
 
-// SWEGCA: src/swegca/mosaic_evidence_revision.py@5901a5a:81-180
-void hash_generation(Sha256& hash, const StateGeneration& generation) {
-    hash_u64(hash, generation.ordinal());
-    hash.update(generation.digest().bytes());
+// Lineage: native mechanism — a Re-evidence event records the exact Main
+// publication it observed; coverage still uses the content digest alone.
+// SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:196-205
+void hash_publication(Sha256& hash, const PublishedStateId& head) {
+    hash.update(head.content_digest().bytes());
+    const auto& position = head.publication();
+    hash_u64(hash, position.segment_ordinal);
+    hash_u64(hash, position.byte_offset);
+    hash_u64(hash, position.sequence);
+    hash.update(position.record_digest);
 }
 
 // The author's group ratio, unchanged: part / total as an IEEE double
@@ -117,7 +123,7 @@ Digest256 evidence_record_digest(std::span<const AdmittedEvidence> evidence,
                                  std::span<const ReEvidenceResult> results,
                                  const Positions& repeated) {
     Sha256 hash;
-    hash_field(hash, "swegca.admitted_evidence.v4");
+    hash_field(hash, "swegca.admitted_evidence.v5");
     hash_u64(hash, evidence.size());
     for (const auto& item : evidence) {
         hash_field(hash, item.address.value());
@@ -137,7 +143,7 @@ Digest256 evidence_record_digest(std::span<const AdmittedEvidence> evidence,
     for (const auto& result : results) {
         hash_field(hash, result.address().value());
         hash.update(result.record_digest());
-        hash_generation(hash, result.generation());
+        hash_publication(hash, result.head());
         hash_field(hash, result.re_evidenced_by().value());
         hash_u64(hash, static_cast<std::uint64_t>(result.outcome()));
     }
@@ -184,10 +190,10 @@ Digest256 evidence_binding_digest(const AllocationContext& memory, std::string_v
 
 // SWEGCA: user@2026-09-22:25-29
 ReEvidenceResult::ReEvidenceResult(ClaimRevision claim, ExperienceAddress address,
-                                   DigestBytes record_digest, StateGeneration generation,
+                                   DigestBytes record_digest, PublishedStateId head,
                                    ProducerId by, EvidenceOutcome outcome)
     : claim_(std::move(claim)), address_(std::move(address)), record_digest_(record_digest),
-      generation_(std::move(generation)), by_(std::move(by)), outcome_(outcome) {}
+      head_(std::move(head)), by_(std::move(by)), outcome_(outcome) {}
 
 // SWEGCA: src/swegca/mosaic_evidence_accumulator.py@5901a5a:222-236
 EvidenceAccumulator::EvidenceAccumulator(const AllocationContext& memory, ClaimRevision claim,
@@ -223,7 +229,7 @@ std::uint32_t EvidenceAccumulator::identity_id(const Map<Text, std::uint32_t>& t
 // SWEGCA: src/swegca/mosaic_evidence_accumulator.py@5901a5a:359-428
 AdmissionResult EvidenceAccumulator::admit(const EvidenceObservation& observation,
                                            const ReplayedOriginal& replayed,
-                                           const StateGeneration& current,
+                                           const Digest256& current_content,
                                            std::uint64_t current_step) {
     if (observation.claim != claim_.claim().value() || observation.claim_revision != claim_.revision())
         throw std::invalid_argument("evidence_claim_mismatch");
@@ -267,7 +273,7 @@ AdmissionResult EvidenceAccumulator::admit(const EvidenceObservation& observatio
     // producer names content only; bit-exact rollback can publish that same
     // content under another head without giving the producer publication
     // identity or letting it invent a publication ordinal.
-    if (observation.judged_against != current.digest())
+    if (observation.judged_against != current_content)
         return reject(observation.address, AdmissionResult::stale);
     if (tally_.revision == std::numeric_limits<std::uint64_t>::max())
         throw std::overflow_error("evidence_revision_exhausted");
@@ -516,7 +522,7 @@ AdmissionResult EvidenceAccumulator::record(ReEvidenceResult result) {
     const auto by = identity_id(producer_ids_, by_text);
     if (tally_.revision == std::numeric_limits<std::uint64_t>::max())
         throw std::overflow_error("evidence_revision_exhausted");
-    const ResultKey result_key{original, result.generation(), by, result.outcome()};
+    const ResultKey result_key{original, result.head(), by, result.outcome()};
     if (const auto kept = results_.find(result_key); kept != results_.end()) {
         // An exact repeat: nothing new to count or to conflict, but the
         // refusal is kept, and a new refusal advances the revision.
@@ -524,12 +530,12 @@ AdmissionResult EvidenceAccumulator::record(ReEvidenceResult result) {
         return AdmissionResult::duplicate;
     }
 
-    const CoverKey cover_key{original, result.generation().digest()};
+    const CoverKey cover_key{original, result.head().content_digest()};
     const auto cover_found = covers_.find(cover_key);
     const Cover before = cover_found == covers_.end() ? Cover{} : cover_found->second;
     Cover after = before;
     (result.outcome() == admitted.outcome ? after.consistent : after.conflicted) = true;
-    const bool observed_here = admitted.judged_against == result.generation().digest();
+    const bool observed_here = admitted.judged_against == result.head().content_digest();
     const bool newly_re_evidenced = !observed_here && after.consistent && !before.consistent;
     const bool newly_conflicted = after.conflicted && !before.conflicted;
 
@@ -539,12 +545,12 @@ AdmissionResult EvidenceAccumulator::record(ReEvidenceResult result) {
     auto result_node = detached(results_, result_key, re_evidence_.size());
     Map<CoverKey, Cover>::node_type cover_node;
     if (cover_found == covers_.end()) cover_node = detached(covers_, cover_key, after);
-    const auto coverage_found = coverage_.find(result.generation().digest());
+    const auto coverage_found = coverage_.find(result.head().content_digest());
     Map<Digest256, Coverage>::node_type coverage_node;
     if (coverage_found == coverage_.end())
-        coverage_node = detached(coverage_, result.generation().digest(), Coverage{});
+        coverage_node = detached(coverage_, result.head().content_digest(), Coverage{});
     reserve_one_more(re_evidence_);
-    const auto content_digest = result.generation().digest();
+    const auto content_digest = result.head().content_digest();
 
     // Commit phase.
     const auto splice = [](auto& container, auto& node) {
@@ -564,10 +570,10 @@ AdmissionResult EvidenceAccumulator::record(ReEvidenceResult result) {
 }
 
 // SWEGCA: src/swegca/mosaic_evidence_revision.py@5901a5a:81-180
-bool EvidenceAccumulator::evidence_current(const StateGeneration& generation,
+bool EvidenceAccumulator::evidence_current(const Digest256& content_digest,
                                            std::uint64_t current_step) const {
     if (earliest_expiry_ && current_step > *earliest_expiry_) return false;
-    const auto found = coverage_.find(generation.digest());
+    const auto found = coverage_.find(content_digest);
     const Coverage coverage = found == coverage_.end() ? Coverage{} : found->second;
     return coverage.conflicted == 0 &&
            coverage.observed + coverage.re_evidenced == admitted_evidence_.size();

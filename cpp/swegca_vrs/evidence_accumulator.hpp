@@ -11,6 +11,7 @@
 #include "swegca_vrs/allocation.hpp"
 #include "swegca_vrs/authority_roles.hpp"
 #include "swegca_vrs/identity_types.hpp"
+#include "swegca_vrs/published_state_id.hpp"
 
 #include <algorithm>
 #include <cstdint>
@@ -161,15 +162,15 @@ struct ReplayedOriginal {
 };
 
 // Main's Re-evidence of one admitted original: the record Main replayed (its
-// address and content digest), the claim revision, the generation it was
-// re-judged against (the re-evidence generation), who re-judged it and the
+// address and content digest), the claim revision, the Main publication it was
+// re-judged against, who re-judged it and the
 // outcome. Only Main's Re-evidence component constructs one, after Replay.
 // It adds nothing to the tally (the original is counted once); it decides
-// whether the original is current at that generation, and a result whose
+// whether the original is current at that content, and a result whose
 // outcome differs from the original's is an unresolved conflict, kept. A
-// re-evidencer that changes its outcome on the same generation adds a second
+// re-evidencer that changes its outcome on the same publication adds a second
 // result; only an exact repeat is refused, and the refusal is kept.
-// The typed generation, actor and digest fields are the C++ receipt
+// The typed publication, actor and digest fields are the C++ receipt
 // representation of the approved Replay and Re-evidence order.
 class ReEvidenceResult final {
 public:
@@ -180,7 +181,7 @@ public:
     // SWEGCA: user@2026-09-22:25-29
     [[nodiscard]] const DigestBytes& record_digest() const noexcept { return record_digest_; }
     // SWEGCA: user@2026-09-22:25-29
-    [[nodiscard]] const StateGeneration& generation() const noexcept { return generation_; }
+    [[nodiscard]] const PublishedStateId& head() const noexcept { return head_; }
     // SWEGCA: user@2026-09-22:25-29
     [[nodiscard]] const ProducerId& re_evidenced_by() const noexcept { return by_; }
     // SWEGCA: user@2026-09-22:25-29
@@ -189,12 +190,12 @@ public:
 private:
     friend class ReEvidence;
     ReEvidenceResult(ClaimRevision claim, ExperienceAddress address, DigestBytes record_digest,
-                     StateGeneration generation, ProducerId by, EvidenceOutcome outcome);
+                     PublishedStateId head, ProducerId by, EvidenceOutcome outcome);
 
     ClaimRevision claim_;
     ExperienceAddress address_;
     DigestBytes record_digest_;
-    StateGeneration generation_;
+    PublishedStateId head_;
     ProducerId by_;
     EvidenceOutcome outcome_;
 };
@@ -331,10 +332,10 @@ public:
     }
 
     // Spec :142 from metadata only: every admitted original is unexpired at
-    // `current_step` and current at `generation`'s state content — observed on it, or
+    // `current_step` and current at `content_digest` — observed on it, or
     // re-evidenced on it with the original's outcome — and no Re-evidence
-    // result at `generation` conflicts with its original. O(log n).
-    [[nodiscard]] bool evidence_current(const StateGeneration& generation,
+    // result at that content conflicts with its original. O(log n).
+    [[nodiscard]] bool evidence_current(const Digest256& content_digest,
                                         std::uint64_t current_step) const;
 
     // Judges the current tally and binds the decision to the admitted set and
@@ -354,7 +355,7 @@ private:
     // Main replayed at `observation.address` (its record digest is what the
     // original binds; its root families and contexts must hold the
     // observation's, `evidence_correlation_invalid`) and `current` is the
-    // state generation HEAD names. Throws on an observation
+    // state content digest HEAD names. Throws on an observation
     // for another claim revision, an unknown axis, invalid fields or a record
     // for another address. A duplicate (the address already admitted: the
     // address is the digest of the experience's identity, so the same
@@ -363,7 +364,7 @@ private:
     // observation leaves the tally unchanged and is recorded as rejected. Any
     // throw leaves the accumulator exactly as it was.
     AdmissionResult admit(const EvidenceObservation& observation, const ReplayedOriginal& replayed,
-                          const StateGeneration& current, std::uint64_t current_step);
+                          const Digest256& current_content, std::uint64_t current_step);
 
     using Text = std::basic_string<char, std::char_traits<char>, AllocationAdapter<char>>;
     template <class K, class V>
@@ -434,13 +435,12 @@ private:
         std::uint64_t re_evidenced = 0;
         std::uint64_t conflicted = 0;
     };
-    // Re-evidence events keep their provisional full generation until Main's
-    // PublishedStateId replaces its ordinal. A new publication of the same
-    // content remains a distinct event; CoverKey counts each original at that
-    // content only once.
+    // Re-evidence events keep the exact Main publication. A new publication
+    // of the same content remains a distinct event; CoverKey counts each
+    // original at that content only once.
     struct ResultKey {
         std::size_t original = 0;
-        StateGeneration generation;
+        PublishedStateId head;
         std::uint32_t by = 0;
         EvidenceOutcome outcome = EvidenceOutcome::insufficient;
         auto operator<=>(const ResultKey&) const = default;
