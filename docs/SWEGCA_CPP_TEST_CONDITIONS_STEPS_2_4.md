@@ -72,8 +72,8 @@ generation, and Main marker selection before they can be run):
 | # | Setup | Expected |
 |---|---|---|
 | B28 | A committed Main marker carries a nonzero strength-root digest, but its selected journal generation contains no locatable strength-root record | Main refuses to select or expose that publication; a digest alone is not reconstructed strength experience |
-| B29 | Change one current/base strength, canonical member/group link, term identity, per-term score/support/refute value, evidence request, root part, or root locator while leaving the committed marker unchanged; then restart | Exact root and part checks fail closed before Main publishes a state/VRS pair; no derived search view substitutes for the damaged source |
-| B30 | Publish a valid nonempty VRS generation with f32 strengths, terms, per-term score/support/refute, evidence requests and canonical member/group links, then restart from Main's selected marker while the lower journal HEAD points to another generation | Recovered VRS data and Cognitive State match the selected marker's generation exactly; the lower HEAD cannot select another pair |
+| B29 | Change one current/base strength, canonical member/group link, term identity, any of the ten per-term state columns, evidence request, root part, or root locator while leaving the committed marker unchanged; then restart | Exact root and part checks fail closed before Main publishes a state/VRS pair; no derived search view substitutes for the damaged source |
+| B30 | Publish a valid nonempty VRS generation with f32 strengths, terms, all ten per-term state columns, evidence requests and canonical member/group links, then restart from Main's selected marker while the lower journal HEAD points to another generation | Recovered VRS data and Cognitive State match the selected marker's generation exactly; the lower HEAD cannot select another pair |
 | B31 | Encode or decode a VRS group base strength or current strength containing NaN, infinity or a negative value, including a corrupted part that would produce one | Reject the generation before Main publishes or restores it; both strength arrays remain finite and nonnegative (`mosaic_vrs_canonicalization.py@3bddcb7:329-332`) |
 | B32 (`VRS route pending`) | End a session with its live VRS as one block, preserve its connection points, then publish and recover a Main root; later merge selected blocks during idle work | The selected root restores the exact block list and connection-point source with their original experiences still addressable; a flat strength array alone cannot stand in for the block/connection topology (`SWEGCA_CPP_FOUR_STAGE_ACTIVATION_PLAN.md` §1) |
 | B33 (`VRS route pending`) | Publish a term with support/refute counts above `UINT32_MAX` and an evidence-request row carrying a valid extra provenance field; recover it from Main's selected root | Counts and the complete request row survive without narrowing or silent key removal; the source live dialogue uses u64 counts (`mosaic_vrs_dialogue.py@3bddcb7:187-191`), and the bridge copies entire request mappings (`mosaic_vrs_memory_bridge.py@3bddcb7:823-834`) |
@@ -88,6 +88,12 @@ does not define the entire new C++ strength-root payload. The full source
 requests (`mosaic_vrs_memory_bridge.py@3bddcb7:231-246`); a complete native
 publication must retain these either in the root or in explicitly selected
 source records. Its address index is derived and cannot replace those values.
+The original durable VRS state also writes `shuffle_stability`, `direct`,
+`visual_count`, `visual_consistency`, `source_bits`, `wiki_count` and
+`literary_count` alongside score/support/refute
+(`organize_rozephine_mixed_experience_connections_hybrid.py@3bddcb7:984-1011`);
+the continuation reads several of them when forming evidence requests
+(`continue_rozephine_mixed_experience_vrs.py@3bddcb7:1490-1527`).
 
 Fresh-genesis strength content is still a route decision, not a test fixture:
 the author's `CanonicalVRSMemberLineage` rejects an empty member set
