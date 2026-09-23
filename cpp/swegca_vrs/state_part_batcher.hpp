@@ -84,21 +84,30 @@ private:
 class StatePartBatcher final {
 public:
     // `source` lives through finish(). `transition_digest` is SHA-256 of the
-    // planned kind-7 body; its operation id is common to all records.
-    // The probe must return true only after checking the published kind,
-    // address, digest, length, authority/index absence and full payload.
+    // entire planned kind-7 payload; its operation id is common to all records.
+    // The probe reads the current journal HEAD after each consumed batch.
+    // It returns false only when the address does not resolve; when it does,
+    // it returns true only after checking published kind, address, digest,
+    // length, authority/index absence and full payload, and throws on any
+    // mismatch. The batch consumer must not retain drafts or their spans.
     // Lineage: native mechanism — Main checks a prior immutable part before reusing it.
     // SWEGCA: docs/SWEGCA_CPP_VRS_LAYER_PLAN.md@472d23225c973fa0a33581afd6bd9026df6fc98a:522-526
     StatePartBatcher(const AllocationContext& memory, std::string_view source,
                      const DigestBytes& content_digest,
                      const DigestBytes& transition_digest,
                      PublishedStatePartProbe probe, StateDraftBatchSink consume);
+    StatePartBatcher(const StatePartBatcher&) = delete;
+    StatePartBatcher& operator=(const StatePartBatcher&) = delete;
+    StatePartBatcher(StatePartBatcher&&) = delete;
+    StatePartBatcher& operator=(StatePartBatcher&&) = delete;
 
     // Calls `probe` for a previously published address, or copies a new part
     // into one bounded batch. Identical addresses inside the batch are reused
     // only if their full bytes match. Flushes before the next part would put
     // that generation over the journal's 64 MiB encoded-size limit, reserving
     // one segment header even when the journal may append to an existing tail.
+    // It checks the digest again at this trust boundary, though the state
+    // codec already hashes it; failed allocation poisons this batcher.
     // Lineage: native mechanism — the state root reuses immutable part addresses across generations.
     // SWEGCA: docs/SWEGCA_CPP_VRS_LAYER_PLAN.md@472d23225c973fa0a33581afd6bd9026df6fc98a:64
     void add(const DigestBytes& digest, std::span<const std::byte> payload);

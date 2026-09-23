@@ -80,18 +80,23 @@ void StatePartBatcher::add(const DigestBytes& digest, std::span<const std::byte>
         throw std::invalid_argument("state_part_batch_too_large");
     if (bytes > journal::max_generation_bytes - encoded_bytes_) flush();
 
+    // After a successful flush, a later allocation failure must not let the
+    // caller finish a root whose last part was never staged.
+    failed_ = true;
     Part part(memory_);
     part.digest = digest;
     part.address = address;
     part.payload.assign(payload.begin(), payload.end());
     parts_.push_back(std::move(part));
     encoded_bytes_ += bytes;
+    failed_ = false;
 }
 
 // Lineage: native mechanism — each batch's drafts borrow its charged, immutable part bytes until Main consumes them.
 // SWEGCA: docs/SWEGCA_CPP_VRS_LAYER_PLAN.md@472d23225c973fa0a33581afd6bd9026df6fc98a:64
 void StatePartBatcher::flush() {
     if (parts_.empty()) return;
+    failed_ = true;
     drafts_.clear();
     for (const auto& part : parts_)
         drafts_.push_back(draft_for(std::string_view(part.address.data(), part.address.size()),
@@ -99,12 +104,11 @@ void StatePartBatcher::flush() {
                                                                part.payload.size())));
     // The consumer may have published before reporting a failure. Never
     // retry this batch from the same object without Main reconciliation.
-    failed_ = true;
     consume_(std::span<const journal::RecordDraft>(drafts_.data(), drafts_.size()));
-    failed_ = false;
     parts_.clear();
     drafts_.clear();
     encoded_bytes_ = journal::segment_header_bytes;
+    failed_ = false;
 }
 
 // Lineage: native mechanism — every emitted state part is handed to Main before the root is staged.
