@@ -62,6 +62,9 @@ struct RelationKindTag { static constexpr std::string_view name = "relation_kind
 struct TransactionIdTag {
     static constexpr std::string_view name = "transaction_id";
 };
+struct PolicyVersionTag {
+    static constexpr std::string_view name = "policy_version";
+};
 
 using OwnerId = TextIdentity<OwnerIdTag>;
 using ProducerId = TextIdentity<ProducerIdTag>;
@@ -73,6 +76,7 @@ using EntityKind = TextIdentity<EntityKindTag>;
 using RelationId = TextIdentity<RelationIdTag>;
 using RelationKind = TextIdentity<RelationKindTag>;
 using TransactionId = TextIdentity<TransactionIdTag>;
+using PolicyVersion = TextIdentity<PolicyVersionTag>;
 
 class Digest256 final {
 public:

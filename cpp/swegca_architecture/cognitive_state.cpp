@@ -69,7 +69,7 @@ EvidenceReferences canonical_evidence(EvidenceReferences addresses) {
     return addresses;
 }
 
-// SWEGCA: src/swegca/mosaic_bounded_world_write.py@5901a5a:262-283,424-442
+// SWEGCA: src/swegca/mosaic_bounded_world_write.py@5901a5a:262-283
 Digest256 state_digest(
     const OwnerId& owner, const RoleRegistry& roles,
     const CognitiveTensor& semantic, const CognitiveTensor& executive,
@@ -113,7 +113,7 @@ Digest256 state_digest(
     hash_u8(hash, self.write_head().has_value() ? 1 : 0);
     if (self.write_head()) {
         const auto& write = *self.write_head();
-        hash.update("bounded-verification-v1");
+        hash_text(hash, write.policy_version.value());
         hash.update(write.receipt_id.bytes());
         hash_u64(hash, write.revision);
         hash_text(hash, write.target_role.value());
@@ -314,6 +314,7 @@ void CognitiveState::validate() const {
         const auto& write = *self_.write_head();
         if (write.revision == 0)
             throw std::invalid_argument("bounded_write_revision_invalid");
+        account(write.policy_version.value().size());
         account(write.target_role.value().size());
         for (const auto& address : write.evidence_references)
             account(address.value().size());

@@ -316,6 +316,7 @@ public:
 
     // The experience appender may stage its reserved record kinds but cannot
     // publish or rewrite HEAD. Only MainOwner can perform those mutations.
+    // SWEGCA: docs/SWEGCA_CPP_MAIN_STATE_STORAGE_REVIEW.md@7c4d419:108-110
     [[nodiscard]] StagedGeneration stage_experience_records(
         const ExperienceStageKey&, std::span<const RecordDraft> drafts,
         const StateGeneration& state, std::span<const ViewGeneration> views) const {

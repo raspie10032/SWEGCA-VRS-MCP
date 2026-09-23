@@ -44,11 +44,12 @@ crash cases before code uses it.
   It does not define a required transaction around state-part staging.
 - The original bounded writer keeps prior write metadata in `self_state`.
   C++ candidate `SelfState` now holds an opaque caller payload alongside an
-  optional typed `BoundedWriteHead` (receipt digest, revision, target role,
-  evidence references). The content digest uses domain v2 and binds that
+  optional typed `BoundedWriteHead` (policy version, receipt digest, revision,
+  target role, evidence references). The content digest uses domain v2 and binds that
   head's presence and canonical fields. The writer and recovery codec still
   need to update and restore it; the opaque payload's reserved-key boundary
-  must be checked before calling this complete.
+  must be checked before calling this complete. Caller self payload bytes
+  cannot represent the reserved write head; only the typed field does.
 - User clarification (2026-09-23 18:37 KST): a remembered occurrence and
   its immutable source record are memory; the numerical synapse strength
   linking memories is experience. The original hybrid organizer persists

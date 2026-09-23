@@ -145,22 +145,31 @@ using EvidenceReferences =
 // self_state["bounded_verification_write"]. It is state content: rollback
 // restores the prior head exactly, and retraction checks receipt/revision.
 struct BoundedWriteHead final {
+    PolicyVersion policy_version;
     Digest256 receipt_id;
     std::uint64_t revision;
     RoleId target_role;
+    // Preserve proposal order, including repeats, as in the original
+    // receipt seed; do not sort this list during the guarded write.
     EvidenceReferences evidence_references;
 };
 
 class SelfState final {
 public:
+    // The caller's opaque payload cannot encode or impersonate write_head_.
+    // The original reserved _WRITE_KEY is represented only by the typed head.
+    // SWEGCA: src/swegca/mosaic_bounded_world_write.py@5901a5a:380-400
     explicit SelfState(CanonicalPayload payload)
         : payload_(std::move(payload)) {}
+    // SWEGCA: src/swegca/mosaic_bounded_world_write.py@5901a5a:380-400
     SelfState(CanonicalPayload payload, BoundedWriteHead write_head)
         : payload_(std::move(payload)), write_head_(std::move(write_head)) {}
 
+    // SWEGCA: src/swegca/mosaic_bounded_world_write.py@5901a5a:262-283
     [[nodiscard]] const CanonicalPayload& payload() const noexcept {
         return payload_;
     }
+    // SWEGCA: src/swegca/mosaic_bounded_world_write.py@5901a5a:380-400
     [[nodiscard]] const std::optional<BoundedWriteHead>& write_head() const noexcept {
         return write_head_;
     }
@@ -203,6 +212,7 @@ public:
     }
     // Content only. The provisional StateGeneration wrapper is removed when
     // Main's journal-backed StateSnapshot can carry PublishedStateId.
+    // SWEGCA: src/swegca/mosaic_bounded_world_write.py@5901a5a:262-283
     [[nodiscard]] const Digest256& content_digest() const noexcept {
         return generation_.digest();
     }

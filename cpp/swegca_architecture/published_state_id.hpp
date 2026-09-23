@@ -22,13 +22,16 @@ public:
     PublishedStateId& operator=(const PublishedStateId&) = default;
     PublishedStateId& operator=(PublishedStateId&&) noexcept = default;
 
+    // SWEGCA: docs/SWEGCA_CPP_MAIN_STATE_STORAGE_REVIEW.md@7c4d419:125-139
     [[nodiscard]] const Digest256& content_digest() const noexcept {
         return content_digest_;
     }
+    // SWEGCA: docs/SWEGCA_CPP_MAIN_STATE_STORAGE_REVIEW.md@7c4d419:125-139
     [[nodiscard]] const journal::RecordPosition& publication() const noexcept {
         return publication_;
     }
 
+    // SWEGCA: docs/SWEGCA_CPP_MAIN_STATE_STORAGE_REVIEW.md@7c4d419:125-139
     [[nodiscard]] bool operator==(const PublishedStateId& other) const noexcept {
         return content_digest_ == other.content_digest_ &&
                publication_.segment_ordinal == other.publication_.segment_ordinal &&
@@ -40,6 +43,7 @@ public:
 private:
     friend class MainOwner;
 
+    // SWEGCA: docs/SWEGCA_CPP_MAIN_STATE_STORAGE_REVIEW.md@7c4d419:125-139
     PublishedStateId(Digest256 content_digest, journal::RecordPosition publication)
         : content_digest_(std::move(content_digest)), publication_(publication) {
         if (publication.sequence == 0 ||

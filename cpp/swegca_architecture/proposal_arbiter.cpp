@@ -127,6 +127,7 @@ const Digest256& ArbitrationResult::receipt() const {
     return receipt_;
 }
 
+// SWEGCA: src/swegca/mosaic_synapse_arbiter.py@5901a5a:96-122
 std::optional<Digest256> ArbitrationResult::single_binding_receipt() const {
     require_live();
     return single_binding_receipt_;
