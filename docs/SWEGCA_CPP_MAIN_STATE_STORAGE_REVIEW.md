@@ -194,17 +194,21 @@ crash cases before code uses it.
 
 ### C++ identity boundary agreed with Claude (2026-09-23 18:36 KST)
 
-- `CognitiveState` holds only canonical content and its `content_digest()`.
-  It has no publication ordinal, wall clock, or journal position. Main creates
-  the initial content; a guarded writer creates successor content.
+- The target `CognitiveState` holds only canonical content and its
+  `content_digest()`, with no publication ordinal, wall clock, or journal
+  position. The current C++ class still holds a provisional
+  `StateGeneration(ordinal, digest)`. Main creates the initial content; a
+  guarded writer creates successor content.
 - `PublishedStateId` is `(content_digest, publication RecordPosition)`, where
   the position has segment, byte offset, sequence, and record digest. Only a
   successful Main-owned state-head publication may construct it. The latest
   publication record changes on every transition, including a bit-exact
   rollback that reuses an older content root.
-- `StateSnapshot` holds a `shared_ptr<const CognitiveState>` and that exact
-  `PublishedStateId`; only Main constructs snapshots. It exposes `state()`
-  and `head()`. A producer cannot construct or replace a head identifier.
+- `StateSnapshot` must hold a `shared_ptr<const CognitiveState>` and that
+  exact `PublishedStateId`; only Main constructs snapshots. The current C++
+  `StateSnapshot` holds the state and Main lifetime but has no `head()` or
+  publication field yet. The target interface exposes `state()` and `head()`;
+  a producer cannot construct or replace a head identifier.
 - The journal now has a private `for_each_index_match_in` over a caller-pinned
   `PublishedSnapshot`; `resolve_in` and `replay_in` already accept that same
   snapshot. Main can therefore keep one journal generation through all cue
@@ -455,8 +459,10 @@ content and using the exact Main-published `RecordPosition` where publication
 order matters:
 
 - `CognitiveState` computes content and currently constructs the provisional
-  ordinal. `StateSnapshot` already has the separate `PublishedStateId` slot.
-  Initial content has no publication identity until Main publishes genesis.
+  ordinal. The separate `PublishedStateId` type exists, but `StateSnapshot`
+  does not yet hold it; Main must add and fill that slot only after a verified
+  publication. Initial content has no publication identity until Main
+  publishes genesis.
 - Proposals, arbitration, gate capabilities and the guarded writer currently
   bind `based_on` or a capability to `CognitiveState::generation()`. Their
   compare-and-swap boundary must use the Main snapshot's publication ID;
