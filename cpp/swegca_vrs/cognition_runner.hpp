@@ -39,10 +39,10 @@ struct CognitionRoute final {
     std::span<const std::string_view> producers;
 };
 
-// VRS supplies an executor with its own CPU limit. `run_joined` invokes each
-// index exactly once, joins every submitted worker before returning OR
-// throwing (including submission failure), and never retains task/context or
-// their borrowed request/snapshot beyond this call. The runner catches task
+// VRS supplies an executor with its own CPU limit. On success, `run_joined`
+// invokes each index exactly once. On failure, including submission failure,
+// it joins every submitted worker before throwing. It never retains task/context
+// or their borrowed request/snapshot beyond this call. The runner catches task
 // exceptions inside the noexcept callback, then reports the first one in
 // route order. `fanout_used` means extra route members ran, independent of
 // physical simultaneous worker count.
