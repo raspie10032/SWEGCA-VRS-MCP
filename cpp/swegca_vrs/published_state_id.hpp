@@ -30,7 +30,9 @@ public:
     [[nodiscard]] const Digest256& content_digest() const noexcept {
         return content_digest_;
     }
-    // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:196-205
+    // Lineage: native mechanism — the author's current-hash/head checks need
+    // a native publication locator distinct from state content.
+    // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:199-215
     [[nodiscard]] const journal::RecordPosition& publication() const noexcept {
         return publication_;
     }
@@ -38,13 +40,15 @@ public:
     // A lower-journal manifest is data until Main's selected marker and
     // state record are verified. This compares that data with an already
     // Main-published identity; it never constructs or grants one.
-    // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:196-205
+    // Lineage: native mechanism — comparison with a verified native head.
+    // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:199-215
     [[nodiscard]] bool matches(const journal::StateHeadReference& head) const noexcept {
         return head.publication && head.content_digest == content_digest_.bytes() &&
                *head.publication == publication_;
     }
 
-    // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:196-205
+    // Lineage: native mechanism — exact locator comparison for rollback/head checks.
+    // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:199-215
     [[nodiscard]] bool operator==(const PublishedStateId& other) const noexcept {
         return content_digest_ == other.content_digest_ &&
                publication_.segment_ordinal == other.publication_.segment_ordinal &&
@@ -55,7 +59,9 @@ public:
 
     // A Re-evidence event key can keep two publications of identical content
     // distinct while coverage itself remains keyed by the content digest.
-    // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:196-205
+    // Lineage: native mechanism — a nonzero locator prevents a mixed-zero
+    // native state head from becoming a Main-published identity.
+    // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:199-215
     [[nodiscard]] auto operator<=>(const PublishedStateId& other) const noexcept {
         return std::tie(content_digest_, publication_.segment_ordinal,
                         publication_.byte_offset, publication_.sequence,

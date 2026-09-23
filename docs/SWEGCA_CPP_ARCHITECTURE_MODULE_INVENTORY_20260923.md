@@ -773,9 +773,13 @@ architecture and its test-condition list have passed static review
   the gate and the writer from one `BoundedWriteConfig`; a mismatch fails
   closed, because the commit operation binds `gate_policy_digest` and the
   writer recomputes it from its own configuration.
-  The receipt's persistent codec (the author's to_dict/from_dict,
-  mosaic_bounded_world_write.py@3bddcb7:243-306) belongs to the linked
-  transaction layer and is not yet native.
+  The receipt's logical streaming codec (the author's to_dict/from_dict,
+  mosaic_bounded_world_write.py@3bddcb7:243-306) is now native in
+  `bounded_write_receipt_codec.hpp/.cpp`. It preserves every C++ receipt
+  field, checks the writer's slot and receipt-ID preimages, and keeps the
+  decoded predecessor publication as raw data. Durable record placement,
+  Main's selected-publication verification, predecessor retention, and
+  linked-transaction recovery remain open.
 - Float16/bfloat16 arithmetic, Unicode normalization/case folding, and inverse
   standard-normal behavior need explicit native numerical contracts only where
   the reconstructed logic uses them.
