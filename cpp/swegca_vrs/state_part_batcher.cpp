@@ -31,9 +31,9 @@ void hex_digest(const DigestBytes& digest, char* out) noexcept {
 // SWEGCA: docs/SWEGCA_CPP_VRS_LAYER_PLAN.md@472d23225c973fa0a33581afd6bd9026df6fc98a:522-526
 bool probe_published_state_part(const journal::JournalStore& store,
                                 const AllocationContext& memory,
-                                const DigestBytes& digest,
+                                std::string_view source, const DigestBytes& digest,
                                 std::span<const std::byte> payload) {
-    if (payload.empty() || payload.size() > part_tree::part_bytes)
+    if (source.empty() || payload.empty() || payload.size() > part_tree::part_bytes)
         throw std::invalid_argument("state_part_probe_invalid");
     const auto address_bytes = state_part_address(digest);
     const ExperienceAddress address(
@@ -43,7 +43,8 @@ bool probe_published_state_part(const journal::JournalStore& store,
     const auto record = store.replay(address);
     const auto& view = record.view();
     if (record.position() != *position || view.kind != journal::state_part_record_kind ||
-        view.address != address.value() || view.authority || !view.claim.empty() ||
+        view.address != address.value() || view.source != source ||
+        view.authority || !view.claim.empty() ||
         !view.outcome.empty() || !view.previous_revision_address.empty() ||
         !view.transaction_id.empty() || view.index_count != 0 ||
         view.payload_digest != digest || view.payload.size() != payload.size() ||
