@@ -66,7 +66,7 @@ inline constexpr std::size_t minimum_record_bytes =
 // Cues one record carries. A cue is an identity text without the cue
 // separator; its cue-view key is (cue, separator, address), which must itself
 // be an identity text, so the separator splits every key exactly.
-inline constexpr std::size_t max_record_cues = 1024;
+inline constexpr std::size_t max_record_cues = 16384;
 inline constexpr char cue_separator = '\x1f';
 // ordinal, first sequence, record count, byte length, last record digest.
 inline constexpr std::size_t encoded_extent_bytes = 4 * 8 + 32;

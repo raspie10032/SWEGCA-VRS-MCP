@@ -65,6 +65,16 @@ struct PublishedSnapshot {
     bool view_unavailable = false;
 };
 
+// What one published generation holds, from one snapshot: its number and
+// manifest digest, and its records' count and bytes (the universe a read
+// ran over).
+struct PublishedUniverse {
+    std::uint64_t generation = 0;
+    Digest manifest_digest{};
+    std::uint64_t record_count = 0;
+    std::uint64_t record_bytes = 0;
+};
+
 // One published record read back: its exact bytes, allocated through the
 // ledger, and the view decoded from them. The view, and every text and span
 // it hands out, is valid while this object lives. It can only be moved
@@ -220,6 +230,9 @@ public:
     // must then be reopened, and reopening removes unpublished leftovers.
     void publish(StagedGeneration&& staged);
 
+    // The published generation readers see now.
+    [[nodiscard]] PublishedUniverse universe() const;
+
     // False when open found the derived view damaged; `rebuild_view` makes
     // it available again.
     [[nodiscard]] bool view_available() const;
@@ -270,7 +283,8 @@ public:
     // collected in batches of bounded memory; each sorted batch is written as
     // a run of leaf pages in new logs, each tree's runs are merged in one
     // k-way pass into its final tree (reading one page per level per run),
-    // both final trees going to one set of new logs, the runs are removed,
+    // both final trees going to one set of new logs (a tree that fits one
+    // batch is built straight into them, without a run), the runs are removed,
     // and the result, whose address tree must hold one entry per record, is
     // published like a compaction. I/O is linear in the views' size.
     //

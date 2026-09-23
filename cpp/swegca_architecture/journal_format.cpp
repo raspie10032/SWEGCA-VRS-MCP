@@ -179,12 +179,13 @@ void encode_view_pages(ByteWriter& writer, const ViewPages& pages) {
 }
 
 // An empty tree has no root; any other tree's root sits in the page logs the
-// view pages name.
+// view pages name, and its live pages include at least the root.
 // SWEGCA: user@2026-09-22:72-79
 bool view_tree_valid(const ViewTree& tree, const ViewPages& pages) noexcept {
     if (tree.entry_count == 0)
         return tree.height == 0 && tree.root == PageRef{} && tree.live_page_bytes == 0;
     return tree.height != 0 && tree.height <= max_address_height && page_ref_valid(tree.root) &&
+           tree.live_page_bytes >= tree.root.length &&
            tree.root.log_ordinal >= pages.first_page_log &&
            tree.root.log_ordinal <= pages.page_log_ordinal &&
            (tree.root.log_ordinal != pages.page_log_ordinal ||
@@ -203,6 +204,9 @@ ViewPages decode_view_pages(ByteReader& reader, std::uint64_t tail_sequence) {
     pages.page_log_end = reader.u64();
     pages.page_log_bytes = reader.u64();
     if (pages.addresses.entry_count != tail_sequence) fail("journal_manifest_invalid:address_count");
+    // A cue entry names a record, so there are none without records.
+    if (pages.addresses.entry_count == 0 && pages.cues.entry_count != 0)
+        fail("journal_manifest_invalid:cue_count");
     if (!view_tree_valid(pages.addresses, pages)) fail("journal_manifest_invalid:address_root");
     if (!view_tree_valid(pages.cues, pages)) fail("journal_manifest_invalid:cue_root");
     const bool empty = pages.addresses.entry_count == 0 && pages.cues.entry_count == 0;

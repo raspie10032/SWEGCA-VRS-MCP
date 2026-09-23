@@ -1378,14 +1378,18 @@ StagedGeneration JournalStore::stage_from(const std::shared_ptr<const PublishedS
         if (added[at - 1].address == added[at].address) fail("journal_address_duplicate");
 
     // The cue view: one entry per cue of every record, keyed by (cue,
-    // separator, address) in one exactly reserved key buffer. Its size is
-    // bounded like the generation's records, since a key repeats the address.
+    // separator, address) in one exactly reserved key buffer. A key repeats
+    // the address, so the entries' encoded size is bounded by itself, like
+    // the generation's records: at most `max_generation_bytes` of leaf items.
     std::size_t cue_count = 0;
     std::size_t cue_key_bytes = 0;
+    std::size_t cue_item_bytes = 0;
     for (const auto& draft : drafts) {
         for (const auto cue : draft.cues) {
             const auto size = cue_key_size(cue, draft.address);
-            if (size > max_generation_bytes - cue_key_bytes) fail("journal_generation_too_large");
+            const auto item = size + encoded_leaf_item_size(std::string_view());
+            if (item > max_generation_bytes - cue_item_bytes) fail("journal_generation_too_large");
+            cue_item_bytes += item;
             cue_key_bytes += size;
             ++cue_count;
         }
@@ -1543,6 +1547,17 @@ void JournalStore::publish_locked(StagedGeneration&& staged) {
     std::shared_ptr<const PublishedSnapshot> published = std::move(local.next_);
     snapshot_.store(published);  // noexcept
     poisoned_.store(false);
+}
+
+// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:137-155
+PublishedUniverse JournalStore::universe() const {
+    require_usable();
+    const auto current = snapshot();
+    const auto& fields = current->head.fields();
+    std::uint64_t bytes = 0;
+    for (const auto& [ordinal, extent] : current->extents)
+        bytes = plus(bytes, extent.byte_length, "journal_storage_overflow");
+    return PublishedUniverse{fields.generation, current->head.digest(), fields.tail_sequence, bytes};
 }
 
 // SWEGCA: user@2026-09-22:72-79
@@ -1840,31 +1855,27 @@ void JournalStore::rebuild_view() {
     auto current = snapshot();
     const auto& fields = current->head.fields();
     reserve_retired();
-    // Batches never exceed what the journal holds, so a small journal
-    // reserves little: a record is at least `minimum_record_bytes`, and each
-    // of its cues at least five bytes of it.
-    std::uint64_t segment_bytes = 0;
-    for (const auto& [ordinal, extent] : current->extents)
-        segment_bytes = plus(segment_bytes, extent.byte_length, "journal_storage_overflow");
-    // One collector per tree: its key buffer and batch (both never grow) and
-    // the sorted runs written so far.
+    // One collector per tree: its keys, its batch (key offsets, so the key
+    // buffer may grow) and the sorted runs written so far. Both buffers grow
+    // with what is collected, up to the batch bounds, so a small journal
+    // holds little; a batch that would pass a bound is written as a run.
+    struct Entry {
+        std::size_t key = 0;  // offset in `keys`
+        std::size_t size = 0;
+        RecordPosition position;
+    };
     struct Collector {
         LedgerBytes keys;
-        LedgerVector<AddressLeafItem> batch;
+        LedgerVector<Entry> batch;
         LedgerVector<Run> runs;
     };
-    const auto key_room = static_cast<std::size_t>(
-        std::min<std::uint64_t>(rebuild_batch_key_bytes, segment_bytes));
-    const auto collector = [&](std::uint64_t most_items) {
-        Collector out{LedgerBytes(memory_.allocator<std::byte>()),
-                      LedgerVector<AddressLeafItem>(memory_.allocator<AddressLeafItem>()),
-                      LedgerVector<Run>(memory_.allocator<Run>())};
-        out.keys.reserve(key_room);
-        out.batch.reserve(static_cast<std::size_t>(std::min<std::uint64_t>(rebuild_batch_items, most_items)));
-        return out;
+    const auto collector = [&] {
+        return Collector{LedgerBytes(memory_.allocator<std::byte>()),
+                         LedgerVector<Entry>(memory_.allocator<Entry>()),
+                         LedgerVector<Run>(memory_.allocator<Run>())};
     };
-    Collector addresses = collector(fields.tail_sequence);
-    Collector cues = collector(segment_bytes / 5);
+    Collector addresses = collector();
+    Collector cues = collector();
     std::optional<StreamWriter> merged;
     const auto room = allowance(*current);
     std::uint64_t held = 0;  // charge of the logs written so far
@@ -1876,20 +1887,28 @@ void JournalStore::rebuild_view() {
         if (merged) removed = merged->remove_written() && removed;
         return removed;
     };
+    const auto key_of = [](const Collector& from, const Entry& entry) {
+        return std::string_view(reinterpret_cast<const char*>(from.keys.data()) + entry.key, entry.size);
+    };
+    const auto sort_batch = [&](Collector& into) {
+        std::sort(into.batch.begin(), into.batch.end(), [&](const Entry& left, const Entry& right) {
+            return key_of(into, left) < key_of(into, right);
+        });
+    };
+    const auto feed = [&](TreeBuilder& builder, const Collector& from) {
+        for (const auto& entry : from.batch) builder.add(AddressLeafItem{key_of(from, entry), entry.position});
+    };
     try {
         const auto write_run = [&](Collector& into) {
             if (into.runs.size() == into.runs.capacity())
                 into.runs.reserve(std::max<std::size_t>(4, into.runs.capacity() * 2));
-            std::sort(into.batch.begin(), into.batch.end(),
-                      [](const AddressLeafItem& left, const AddressLeafItem& right) {
-                          return left.address < right.address;
-                      });
+            sort_batch(into);
             StreamWriter writer(directory_, memory_, next_log, room - std::min(room, held),
                                 allocation_unit_);
             BuiltTree tree;
             try {
                 TreeBuilder builder(writer, memory_);
-                for (const auto& item : into.batch) builder.add(item);
+                feed(builder, into);
                 tree = builder.finish();
                 writer.close();
             } catch (...) {
@@ -1903,17 +1922,23 @@ void JournalStore::rebuild_view() {
             into.batch.clear();
         };
         // Adds one entry (an address key when `cue` is empty, else a cue
-        // key), its key copied into the collector's buffer.
+        // key), its key copied into the collector's buffer, which grows by
+        // doubling up to the batch bounds.
         const auto collect = [&](Collector& into, std::string_view cue, std::string_view address,
                                  const RecordPosition& position) {
             const auto size = cue.empty() ? address.size() : cue_key_size(cue, address);
-            const auto fits = [&] {
-                return into.batch.size() < into.batch.capacity() &&
-                       size <= into.keys.capacity() - into.keys.size();
-            };
-            if (!fits()) write_run(into);
-            if (!fits()) fail("journal_rebuild_batch_invalid");  // more than the journal holds
-            into.batch.push_back(AddressLeafItem{append_view_key(into.keys, cue, address), position});
+            if (into.batch.size() == rebuild_batch_items ||
+                size > rebuild_batch_key_bytes - into.keys.size())
+                write_run(into);
+            if (into.keys.capacity() - into.keys.size() < size)
+                into.keys.reserve(std::min(rebuild_batch_key_bytes,
+                                           std::max(into.keys.capacity() * 2, into.keys.size() + size)));
+            if (into.batch.size() == into.batch.capacity())
+                into.batch.reserve(std::min(rebuild_batch_items,
+                                            std::max<std::size_t>(into.batch.capacity() * 2, 64)));
+            const auto at = into.keys.size();
+            (void)append_view_key(into.keys, cue, address);
+            into.batch.push_back(Entry{at, size, position});
         };
         Digest entering = zero_digest;
         for (const auto& [ordinal, extent] : current->extents) {
@@ -1933,22 +1958,29 @@ void JournalStore::rebuild_view() {
                                  entering, extent.last_record_digest, &visit);
             entering = extent.last_record_digest;
         }
-        if (!addresses.batch.empty()) write_run(addresses);
-        if (!cues.batch.empty()) write_run(cues);
-
-        // Both trees are merged into one set of new logs, so the published
-        // view names one contiguous log range; no snapshot ever named a run.
+        // A tree whose entries fit one batch is built straight from it into
+        // the final logs; a larger one writes its last batch as a run too and
+        // is merged. Runs are written before the final logs are started, so
+        // the published view names one contiguous log range.
+        for (auto* each : {&addresses, &cues})
+            if (!each->runs.empty() && !each->batch.empty()) write_run(*each);
         merged.emplace(directory_, memory_, next_log, room - std::min(room, held),
                        allocation_unit_);
-        const auto merge = [&](const Collector& from) {
+        const auto build = [&](Collector& from) {
             TreeBuilder builder(*merged, memory_);
-            merge_runs(builder, directory_, memory_, from.runs);
+            if (from.runs.empty()) {
+                sort_batch(from);
+                feed(builder, from);
+            } else {
+                merge_runs(builder, directory_, memory_, from.runs);
+            }
             return builder.finish();
         };
-        const auto built_addresses = merge(addresses);
+        const auto built_addresses = build(addresses);
         const auto address_bytes = merged->page_bytes();
-        const auto built_cues = merge(cues);
+        const auto built_cues = build(cues);
         merged->close();
+        // No snapshot ever named a run.
         for (const auto* each : {&addresses, &cues})
             for (const auto& run : each->runs)
                 if (!run.writer.remove_written()) fail("journal_page_log_remove_failed");
