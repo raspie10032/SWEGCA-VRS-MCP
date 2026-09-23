@@ -714,6 +714,10 @@ architecture and its test-condition list have passed static review
   source-equivalent; the choice is with the user (asked 2026-09-24). Until
   then the writer keeps the enforced BoundProposal contract and assumes
   neither rule is the source's.
+- The C++ `proposal_content_digest` also includes `based_on` state generation.
+  The 08-25 Python `_proposal_digest` has no generation field because its
+  `SynapseProposal` has none. Keep the C++ field for the native snapshot and
+  Bind identity; do not claim byte-equivalence with the Python digest.
 - `MainStateWriter` publication: it returns an immutable successor and its
   receipt; Main's current-state replacement (synchronized with snapshot
   reads) waits for the Main experience/evidence integration. Main must build

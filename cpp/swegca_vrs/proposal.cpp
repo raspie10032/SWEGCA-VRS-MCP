@@ -167,7 +167,10 @@ Digest256 proposal_mask_digest(const SynapseProposal& proposal) {
 
 // Re-created (user@2026-09-23): one canonical identity for every immutable
 // field the Bind gate and conflict arbiter may inspect. Every score's own
-// tensor dtype and stored bits are part of its identity.
+// tensor dtype and stored bits are part of its identity. This native digest
+// also binds based_on; the author's 2026-08-25 _proposal_digest has no state
+// generation because its SynapseProposal has no such field. It is therefore
+// not byte-equivalent to the Python digest.
 // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:154-162
 Digest256 proposal_content_digest(const SynapseProposal& proposal) {
     Sha256 hash;
