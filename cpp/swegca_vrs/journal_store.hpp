@@ -371,6 +371,19 @@ private:
     friend class swegca::vrs::ExperienceAppend;
 };
 
+// Only Main can form this key. It admits reserved state record kinds to
+// detached staging; publication still requires Main's owner authority.
+class StateStageKey final {
+public:
+    StateStageKey(const StateStageKey&) = delete;
+    StateStageKey& operator=(const StateStageKey&) = delete;
+    ~StateStageKey() = default;
+
+private:
+    StateStageKey() = default;
+    friend class swegca::vrs::MainOwner;
+};
+
 class JournalStore final {
 public:
     // This lower-journal open still adopts its own HEAD and removes or cuts
@@ -436,11 +449,11 @@ public:
     // with the view pages, before anything is written. Fails with
     // `journal_generation_too_large`, `journal_address_duplicate`,
     // `journal_storage_budget_exhausted`, or the host's allocation refusal.
-    // Records of the memory/cue kinds (original, derived, part, cue binding) are staged
-    // only through ExperienceJournal, which derives a derived record's root
-    // sources and contexts from its published lineage; here they fail
-    // `journal_experience_kind_reserved`, so no record's provenance is
-    // declared by whoever staged it (codex 16:53).
+    // Records of the memory/cue kinds (original, derived, part, cue binding)
+    // are staged only through ExperienceJournal, which derives a derived
+    // record's root sources and contexts from its published lineage; here
+    // they fail `journal_experience_kind_reserved`. State kinds 5–7 require
+    // Main's StateStageKey and fail `journal_state_kind_reserved` here.
     [[nodiscard]] StagedGeneration stage(std::span<const RecordDraft> drafts,
                                          const StateGeneration& state,
                                          std::span<const ViewGeneration> views) const;
@@ -458,6 +471,20 @@ public:
                 draft.kind != experience_part_record_kind &&
                 draft.kind != cue_binding_record_kind)
                 throw std::invalid_argument("journal_memory_kind_required");
+        return stage_records(drafts, state, views);
+    }
+
+    // Main alone may stage the reserved state kinds. This is the authority
+    // boundary only; state payload codecs and the final state publication
+    // protocol are implemented in Main's later storage step.
+    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:151-153
+    [[nodiscard]] StagedGeneration stage_state_records(
+        const StateStageKey&, std::span<const RecordDraft> drafts,
+        const StateGeneration& state, std::span<const ViewGeneration> views) const {
+        for (const auto& draft : drafts)
+            if (draft.kind != state_part_record_kind && draft.kind != state_root_record_kind &&
+                draft.kind != state_publication_record_kind)
+                throw std::invalid_argument("journal_state_kind_required");
         return stage_records(drafts, state, views);
     }
 
@@ -563,7 +590,7 @@ private:
 
     friend class swegca::vrs::MainOwner;
     // `stage` without the kind rule: reachable outside JournalStore only
-    // through stage_experience_records with ExperienceStageKey.
+    // through the experience and Main-only state staging keys.
     [[nodiscard]] StagedGeneration stage_records(std::span<const RecordDraft> drafts,
                                                  const StateGeneration& state,
                                                  std::span<const ViewGeneration> views) const;

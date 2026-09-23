@@ -1537,13 +1537,11 @@ void JournalStore::verify_extent(const PublishedSnapshot& current,
 // buffers reserved to their exact size, builds the view pages and the
 // complete next snapshot, and checks the full disk use again before
 // returning, so publishing only writes and moves.
-// Rule, a new C++ authority boundary: the generic stage refuses experience
-// kinds 1-4, so only Main's experience staging writes them. The user's
-// lines name no kind reservation; the nearest is that only Main-owned
-// staging and publication make a source episode persistent (weak: stated
-// for the dialogue teacher, a principle and not this mechanism).
-// Lineage: native mechanism — the generic stage refuses the plan's three experience kinds; cue bindings are this code's addition.
-// SWEGCA: docs/SWEGCA_CPP_VRS_LAYER_PLAN.md@472d23225c973fa0a33581afd6bd9026df6fc98a:159-165
+// The generic stage refuses all reserved experience and state kinds. Their
+// separate staging routes require a key formed by ExperienceAppend or Main.
+// Lineage: native mechanism — state publication authority belongs to Main;
+// record-kind reservation is this C++ journal's enforcement of that boundary.
+// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:151-153
 StagedGeneration JournalStore::stage(std::span<const RecordDraft> drafts,
                                      const StateGeneration& state,
                                      std::span<const ViewGeneration> views) const {
@@ -1551,6 +1549,9 @@ StagedGeneration JournalStore::stage(std::span<const RecordDraft> drafts,
         if (draft.kind == original_experience_record_kind || draft.kind == derived_experience_record_kind ||
             draft.kind == experience_part_record_kind || draft.kind == cue_binding_record_kind)
             fail("journal_experience_kind_reserved");
+        else if (draft.kind == state_part_record_kind || draft.kind == state_root_record_kind ||
+                 draft.kind == state_publication_record_kind)
+            fail("journal_state_kind_reserved");
     return stage_records(drafts, state, views);
 }
 
