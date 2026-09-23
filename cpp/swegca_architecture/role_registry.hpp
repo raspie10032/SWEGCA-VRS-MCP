@@ -64,12 +64,13 @@ public:
 private:
     friend class RoleMask;
     using Definitions = std::vector<RoleDefinition, MemoryLedger::Allocator<RoleDefinition>>;
-    using IdEntry = std::pair<const std::string, std::size_t>;
+    using IdText = std::basic_string<char, std::char_traits<char>, MemoryLedger::Allocator<char>>;
+    using IdEntry = std::pair<const IdText, std::size_t>;
     RoleRegistry(const MemoryLedger::Account& account, Definitions definitions);
 
     MemoryLedger::Account memory_;
     Definitions definitions_;
-    std::map<std::string, std::size_t, std::less<>, MemoryLedger::Allocator<IdEntry>> by_id_;
+    std::map<IdText, std::size_t, std::less<>, MemoryLedger::Allocator<IdEntry>> by_id_;
     Digest256 digest_;
 };
 
@@ -86,7 +87,10 @@ public:
     [[nodiscard]] std::size_t selected_count() const noexcept;
     // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:83-93
     [[nodiscard]] bool matches(const RoleRegistry& registry) const noexcept {
-        return registry_digest_ == registry.digest();
+        // A moved-from word buffer must not keep a usable registry binding.
+        return role_count_ == registry.size() &&
+               words_.size() == role_count_ / 64 + (role_count_ % 64 != 0) &&
+               registry_digest_ == registry.digest();
     }
     // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:83-93
     [[nodiscard]] const Digest256& registry_digest() const noexcept {

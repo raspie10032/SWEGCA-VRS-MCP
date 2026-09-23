@@ -100,7 +100,12 @@ RoleRegistry::RoleRegistry(const MemoryLedger::Account& account, Definitions def
             definition.partition != TensorPartition::executive &&
             definition.partition != TensorPartition::scratch)
             throw std::invalid_argument("role_registry_partition_invalid");
-        if (!by_id_.emplace(definition.id.value(), index).second)
+        // The map node and any key character buffer share Main's account.
+        // Small-string storage is already covered by the map node allocation.
+        // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3f:638-640
+        if (!by_id_.emplace(
+                IdText(definition.id.value().data(), definition.id.value().size(),
+                       account.allocator<char>()), index).second)
             throw std::invalid_argument("role_registry_duplicate_id");
         if (!locations.emplace(definition.partition, definition.slot).second)
             throw std::invalid_argument("role_registry_duplicate_location");
@@ -214,6 +219,8 @@ RoleMask RoleMask::from_indices(
 bool RoleMask::test(std::size_t index) const {
     if (index >= role_count_)
         throw std::out_of_range("role_mask_index_out_of_range");
+    if (index / 64 >= words_.size())
+        throw std::logic_error("role_mask_not_live");
     return (words_[index / 64] & (std::uint64_t{1} << (index % 64))) != 0;
 }
 
