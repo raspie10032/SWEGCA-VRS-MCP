@@ -19,7 +19,7 @@
 #include <string_view>
 #include <type_traits>
 
-// Main-owned native journal directory (format v7): exclusive owner lock, detached
+// Main-owned native journal directory (format v8): exclusive owner lock, detached
 // staging, one serialized publisher, snapshot readers (each read holds one
 // immutable published snapshot for its whole duration and takes no journal
 // lock; the atomic snapshot pointer itself is not promised lock-free),

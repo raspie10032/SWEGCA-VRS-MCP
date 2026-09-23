@@ -16,7 +16,7 @@
 #include <type_traits>
 #include <vector>
 
-// Byte format of the Main-owned native journal (v7): append-only record
+// Byte format of the Main-owned native journal (v8): append-only record
 // segments, an append-only manifest log, checkpoint manifests, append-only
 // page logs of the derived exact-address and index views, and a fixed-size HEAD
 // pointer, all as flat files in one directory. Storage format only; no record grants
