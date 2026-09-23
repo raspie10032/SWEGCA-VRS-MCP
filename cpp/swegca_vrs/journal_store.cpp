@@ -1773,6 +1773,29 @@ PublishedCoordinates JournalStore::publication_coordinates() const {
         state_head_of(current->head.fields())};
 }
 
+// Lineage: native mechanism — Main's cold state reader keeps one exact journal snapshot.
+// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:587-590
+JournalReadSnapshot JournalStore::pin_records() const {
+    require_usable();
+    return JournalReadSnapshot(*this, snapshot());
+}
+
+// Lineage: native mechanism — resolve an exact address in the pinned view.
+// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:569-570
+std::optional<RecordPosition> JournalReadSnapshot::resolve(std::string_view address) const {
+    if (!pinned_) fail("journal_read_snapshot_invalid");
+    store_->require_usable();
+    return store_->resolve_in(*pinned_, address);
+}
+
+// Lineage: native mechanism — read only the record at a position in the same pinned view.
+// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:569-570
+PublishedRecord JournalReadSnapshot::read_at(const RecordPosition& position) const {
+    if (!pinned_) fail("journal_read_snapshot_invalid");
+    store_->require_usable();
+    return store_->read_in(*pinned_, position);
+}
+
 // Lineage: native mechanism — reports the use the host's budget judges.
 // SWEGCA: docs/SWEGCA_CPP_VRS_LAYER_PLAN.md@472d23225c973fa0a33581afd6bd9026df6fc98a:170-174
 std::uint64_t JournalStore::storage_charged() const {

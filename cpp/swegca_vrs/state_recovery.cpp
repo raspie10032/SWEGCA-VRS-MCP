@@ -17,6 +17,25 @@
 
 namespace swegca::vrs {
 
+// Lineage: native mechanism — keep every state record read on one journal snapshot.
+// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:587-590
+PinnedJournalStateSource::PinnedJournalStateSource(journal::JournalReadSnapshot pinned) noexcept
+    : pinned_(std::move(pinned)) {}
+
+// Lineage: native mechanism — address resolution uses the pinned view.
+// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:569-570
+std::optional<journal::RecordPosition> PinnedJournalStateSource::resolve(
+    std::string_view address) const {
+    return pinned_.resolve(address);
+}
+
+// Lineage: native mechanism — exact position reading uses that same view.
+// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:569-570
+journal::PublishedRecord PinnedJournalStateSource::read_at(
+    const journal::RecordPosition& position) const {
+    return pinned_.read_at(position);
+}
+
 namespace {
 
 using Bytes = part_tree::Bytes;

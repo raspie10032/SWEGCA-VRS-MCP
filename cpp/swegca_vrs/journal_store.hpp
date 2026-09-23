@@ -45,6 +45,7 @@ class ExperienceAppend;
 namespace swegca::vrs::journal {
 
 class JournalStore;
+class JournalReadSnapshot;
 
 // The unique owner keeps the host allocator alive through store destruction.
 // A nullable owner is represented by optional<JournalStoreOwner> at the host
@@ -515,6 +516,11 @@ public:
     // Lineage: native mechanism — one manifest names one state publication.
     // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:587-590
     [[nodiscard]] PublishedCoordinates publication_coordinates() const;
+    // Pins one immutable record/address generation for a multi-record read.
+    // The lease and JournalStore must both outlive every read through it.
+    // Lineage: native mechanism — recovery follows one selected journal root.
+    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:587-590
+    [[nodiscard]] JournalReadSnapshot pin_records() const;
     // Charged on-disk use of the published journal, in bytes, including page
     // logs a view rewrite left behind that are not yet removed.
     [[nodiscard]] std::uint64_t storage_charged() const;
@@ -678,6 +684,7 @@ private:
     void reclaim_retired();
 
     friend class swegca::vrs::MainOwner;
+    friend class JournalReadSnapshot;
     // `stage` without the kind rule: reachable outside JournalStore only
     // through the experience and Main-only state staging keys.
     [[nodiscard]] StagedGeneration stage_records(std::span<const RecordDraft> drafts,
@@ -756,6 +763,33 @@ private:
     bool root_selected_ = false;  // opened by open_at_root: read-only; set before the store is returned
     LedgerVector<RetiredLogs> retired_;  // guarded by publish_mutex_
     std::atomic<std::uint64_t> retained_bytes_{0};  // charge of retired_, not yet removed
+};
+
+// Read-only lease over one published journal snapshot. It cannot stage,
+// publish, select a Main marker or manufacture a PublishedStateId. Its store
+// must outlive it; holding the snapshot keeps its page-log lease alive.
+class JournalReadSnapshot final {
+public:
+    JournalReadSnapshot(const JournalReadSnapshot&) = delete;
+    JournalReadSnapshot& operator=(const JournalReadSnapshot&) = delete;
+    JournalReadSnapshot(JournalReadSnapshot&&) noexcept = default;
+    JournalReadSnapshot& operator=(JournalReadSnapshot&&) = delete;
+
+    // Lineage: native mechanism — exact address and position checks use one generation.
+    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:569-570
+    [[nodiscard]] std::optional<RecordPosition> resolve(std::string_view address) const;
+    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:569-570
+    [[nodiscard]] PublishedRecord read_at(const RecordPosition& position) const;
+
+private:
+    friend class JournalStore;
+    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:587-590
+    JournalReadSnapshot(const JournalStore& store,
+                        std::shared_ptr<const PublishedSnapshot> pinned) noexcept
+        : store_(&store), pinned_(std::move(pinned)) {}
+
+    const JournalStore* store_;
+    std::shared_ptr<const PublishedSnapshot> pinned_;
 };
 
 }  // namespace swegca::vrs::journal

@@ -53,6 +53,30 @@ public:
         const journal::RecordPosition& position) const = 0;
 };
 
+// Concrete no-authority adapter over one pinned journal snapshot. Main first
+// opens the store at its selected committed root; this adapter never chooses
+// a root or treats a lower HEAD as Main authority.
+class PinnedJournalStateSource final : public StateRecordSource {
+public:
+    // Lineage: native mechanism — exact state recovery reads one journal generation.
+    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:587-590
+    explicit PinnedJournalStateSource(journal::JournalReadSnapshot pinned) noexcept;
+    PinnedJournalStateSource(const PinnedJournalStateSource&) = delete;
+    PinnedJournalStateSource& operator=(const PinnedJournalStateSource&) = delete;
+    PinnedJournalStateSource(PinnedJournalStateSource&&) = delete;
+    PinnedJournalStateSource& operator=(PinnedJournalStateSource&&) = delete;
+
+    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:569-570
+    [[nodiscard]] std::optional<journal::RecordPosition> resolve(
+        std::string_view address) const override;
+    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:569-570
+    [[nodiscard]] journal::PublishedRecord read_at(
+        const journal::RecordPosition& position) const override;
+
+private:
+    journal::JournalReadSnapshot pinned_;
+};
+
 // The checked input for one Main construction. Move-only. Its tensor readers
 // stream once: a second construction from the same input fails closed. The
 // source it was read from must outlive it. `content_digest()` and
