@@ -129,7 +129,7 @@ CognitiveTensor::CognitiveTensor(const AllocationContext& account,
 
 // The user's CognitiveState source defines the tensor shape and value
 // contract. Borrowed, bounded byte reading is a C++ recovery extension.
-// SWEGCA: src/tinylm_slicer/mosaic_cognitive_kernel.py@5901a5a:220-254
+// SWEGCA: src/swegca/mosaic_cognitive_kernel.py@5901a5a:220-254
 CognitiveTensor::CognitiveTensor(const AllocationContext& account,
                                  ScalarType scalar_type, TensorShape3 shape,
                                  const TensorByteReader& source)
