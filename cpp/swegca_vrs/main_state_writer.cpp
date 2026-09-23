@@ -1,6 +1,7 @@
 #include "swegca_vrs/main_state_writer.hpp"
 
 #include "swegca_vrs/arbiter_kernel.hpp"
+#include "swegca_vrs/bounded_write_digests.hpp"
 #include "swegca_vrs/core_sha256.hpp"
 #include "swegca_vrs/evidence_gate.hpp"
 #include "swegca_vrs/experience.hpp"
@@ -71,82 +72,7 @@ ArbiterPolicy bounded_preview_policy(const BoundedWriteConfig& config) {
                          config.minimum_proposal_weight};
 }
 
-// Lineage: direct — str(tensor.dtype) as slot_tensor_hash spells it.
-// SWEGCA: src/tinylm_slicer/mosaic_cognitive_slot_memory.py@3bddcb7:22-28
-std::string_view torch_dtype_name(ScalarType type) {
-    switch (type) {
-        case ScalarType::bfloat16: return "torch.bfloat16";
-        case ScalarType::float16: return "torch.float16";
-        case ScalarType::float32: return "torch.float32";
-        case ScalarType::float64: return "torch.float64";
-    }
-    throw std::invalid_argument("bounded_write_scalar_type_invalid");
-}
-
-// The author's slot_tensor_hash of a [1, width] slot: SHA-256 over the dtype
-// name, the JSON shape "[1,<width>]" and the little-endian element bytes.
-// Lineage: direct — the same preimage bytes. For bfloat16 the author's
-// tensor.numpy() raises (numpy has no bfloat16) although its receipt codec
-// lists bfloat16; this native form hashes the stored bits instead.
-// SWEGCA: src/tinylm_slicer/mosaic_cognitive_slot_memory.py@3bddcb7:22-28
-Digest256 slot_digest(ScalarType type, std::uint64_t width,
-                      std::span<const std::byte> bytes) {
-    Sha256 hash;
-    hash.update(torch_dtype_name(type));
-    std::array<char, 32> shape{};
-    shape[0] = '[';
-    shape[1] = '1';
-    shape[2] = ',';
-    const auto written = std::to_chars(shape.data() + 3, shape.data() + shape.size() - 1, width);
-    if (written.ec != std::errc{})
-        throw std::invalid_argument("bounded_write_slot_width_invalid");
-    *written.ptr = ']';
-    hash.update(std::string_view(shape.data(),
-                                 static_cast<std::size_t>(written.ptr + 1 - shape.data())));
-    hash.update(bytes);
-    return Digest256(hash.finish());
-}
-
-// Length-prefixed text so no two field sequences hash the same bytes.
-// SWEGCA: src/tinylm_slicer/mosaic_bounded_world_write.py@3bddcb7:433-445
-void hash_text(Sha256& hash, std::string_view text) {
-    const auto length = static_cast<std::uint64_t>(text.size());
-    std::array<std::byte, 8> prefix{};
-    for (std::size_t at = 0; at < prefix.size(); ++at)
-        prefix[at] = static_cast<std::byte>((length >> (8 * at)) & 0xff);
-    hash.update(prefix);
-    hash.update(text);
-}
-
-// SWEGCA: src/tinylm_slicer/mosaic_bounded_world_write.py@3bddcb7:433-445
-void hash_u64(Sha256& hash, std::uint64_t value) {
-    std::array<std::byte, 8> bytes{};
-    for (std::size_t at = 0; at < bytes.size(); ++at)
-        bytes[at] = static_cast<std::byte>((value >> (8 * at)) & 0xff);
-    hash.update(bytes);
-}
-
-// The receipt id over the author's seed: before-state hash, delta hash,
-// revision, evidence references in proposal order, the claim (the author's
-// hypothesis_id) and the proposal digest (its proposal_binding_digest).
-// Lineage: weak analogy — the author hashes a sorted-key JSON of the seed;
-// this is a native length-prefixed preimage over the same fields.
-// SWEGCA: src/tinylm_slicer/mosaic_bounded_world_write.py@3bddcb7:433-445
-Digest256 receipt_id(const Digest256& before_state, const Digest256& delta,
-                     std::uint64_t revision, const EvidenceReferences& evidence,
-                     const ClaimRevision& claim, const Digest256& proposal_digest) {
-    Sha256 hash;
-    hash_text(hash, "swegca.bounded_write_receipt_id.v1");
-    hash.update(before_state.bytes());
-    hash.update(delta.bytes());
-    hash_u64(hash, revision);
-    hash_u64(hash, evidence.size());
-    for (const auto& address : evidence) hash_text(hash, address.value());
-    hash_text(hash, claim.claim().value());
-    hash_u64(hash, claim.revision());
-    hash.update(proposal_digest.bytes());
-    return Digest256(hash.finish());
-}
+using detail::slot_digest;
 
 struct VerificationRole final {
     const RoleDefinition* role;
@@ -439,8 +365,8 @@ BoundedWriteResult MainStateWriter::write(const StateSnapshot& snapshot,
         evidence.emplace_back(memory, std::string_view(address));
     const ClaimRevision claim(proposal.claim());
     const auto proposal_digest = proposal_content_digest(proposal);
-    const auto id = receipt_id(before_hash, delta_hash, revision, evidence, claim,
-                               proposal_digest);
+    const auto id = detail::bounded_write_receipt_id(before_hash, delta_hash, revision, evidence,
+                                                     claim, proposal_digest);
 
     // :446-457 the successor carries the new head.
     BoundedWriteHead head{PolicyVersion(memory, write_policy_version), id, revision,

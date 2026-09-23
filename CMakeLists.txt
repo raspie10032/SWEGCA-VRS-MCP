@@ -45,6 +45,8 @@ add_library(swegca_vrs_candidate STATIC
     cpp/swegca_vrs/authority.cpp
     cpp/swegca_vrs/autonomy_event_codec.cpp
     cpp/swegca_vrs/autonomy_event_record.cpp
+    cpp/swegca_vrs/bounded_write_digests.cpp
+    cpp/swegca_vrs/bounded_write_receipt_codec.cpp
     cpp/swegca_vrs/cognition.cpp
     cpp/swegca_vrs/cognition_runner.cpp
     cpp/swegca_vrs/cognitive_state.cpp
