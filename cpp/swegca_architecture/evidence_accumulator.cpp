@@ -252,18 +252,21 @@ AdmissionResult EvidenceAccumulator::admit(const EvidenceObservation& observatio
         !std::binary_search(root_contexts.begin(), root_contexts.end(), observation.context.bytes()))
         throw std::invalid_argument("evidence_correlation_invalid");
 
-    // One experience counts once (user 2026-09-23): the author refuses a
-    // seen address (mosaic_evidence_accumulator.py@5901a5a:392-400), and
-    // the address is the digest of the experience's identity.
-    if (originals_.contains(observation.address))
-        return reject(observation.address, AdmissionResult::duplicate);
-    // Author: every audit row's world hash is the current state's.
-    if (observation.judged_against != current)
-        return reject(observation.address, AdmissionResult::stale);
+    // The author's order: expired, insufficient, then a seen address
+    // (mosaic_evidence_accumulator.py@5901a5a:374-400). One experience
+    // counts once (user 2026-09-23): the address is the digest of the
+    // experience's identity.
     if (observation.expires_at && current_step > *observation.expires_at)
         return reject(observation.address, AdmissionResult::expired);
     if (observation.outcome == EvidenceOutcome::insufficient)
         return reject(observation.address, AdmissionResult::insufficient);
+    if (originals_.contains(observation.address))
+        return reject(observation.address, AdmissionResult::duplicate);
+    // Author: every audit row's world hash is the current state's. The
+    // author binds it in the audit row after the update, so it is checked
+    // after the author's own rejections.
+    if (observation.judged_against != current)
+        return reject(observation.address, AdmissionResult::stale);
     if (tally_.revision == std::numeric_limits<std::uint64_t>::max())
         throw std::overflow_error("evidence_revision_exhausted");
 
