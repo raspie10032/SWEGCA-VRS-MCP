@@ -72,16 +72,19 @@ generation, and Main marker selection before they can be run):
 | # | Setup | Expected |
 |---|---|---|
 | B28 | A committed Main marker carries a nonzero strength-root digest, but its selected journal generation contains no locatable strength-root record | Main refuses to select or expose that publication; a digest alone is not reconstructed strength experience |
-| B29 | Change one strength value, canonical member/group link, root part, or root locator while leaving the committed marker unchanged; then restart | Exact root and part checks fail closed before Main publishes a state/strength pair; no derived search view substitutes for the damaged source |
-| B30 | Publish a valid nonempty strength generation with f32 values and canonical member/group links, then restart from Main's selected marker while the lower journal HEAD points to another generation | Recovered strengths, lineage and Cognitive State match the selected marker's generation exactly; the lower HEAD cannot select another pair |
+| B29 | Change one current/base strength, canonical member/group link, term identity, per-term score/support/refute value, evidence request, root part, or root locator while leaving the committed marker unchanged; then restart | Exact root and part checks fail closed before Main publishes a state/VRS pair; no derived search view substitutes for the damaged source |
+| B30 | Publish a valid nonempty VRS generation with f32 strengths, terms, per-term score/support/refute, evidence requests and canonical member/group links, then restart from Main's selected marker while the lower journal HEAD points to another generation | Recovered VRS data and Cognitive State match the selected marker's generation exactly; the lower HEAD cannot select another pair |
 
 The f32 persisted strength in B30 is the new C++ storage contract from
 `SWEGCA_CPP_MAIN_STATE_STORAGE_REVIEW.md` §Required contract 9, following
 `mosaic_vrs_canonicalization.py@3bddcb7:319-400`. The older
 `mosaic_vrs_event_durable.py@3bddcb7:150-199` saves an f16 strength and f32
 score **numeric event** against an already restored full-current parent; it
-does not define the entire new C++ strength-root payload. Whether its score
-belongs in that root remains to be resolved with the full VRS data model.
+does not define the entire new C++ strength-root payload. The full source
+`VRSHotMemorySource` carries terms, per-term score/support/refute and evidence
+requests (`mosaic_vrs_memory_bridge.py@3bddcb7:231-246`); a complete native
+publication must retain these either in the root or in explicitly selected
+source records. Its address index is derived and cannot replace those values.
 
 Fresh-genesis strength content is still a route decision, not a test fixture:
 the author's `CanonicalVRSMemberLineage` rejects an empty member set
