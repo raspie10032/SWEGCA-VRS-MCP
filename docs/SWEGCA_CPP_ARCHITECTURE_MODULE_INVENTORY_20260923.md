@@ -245,6 +245,12 @@ lock prevents a second live Main for the same identity. `MainOwner` creates
 short-lived `StateSnapshot` values and request scopes. Producer scopes own only
 detached snapshots and terminate before their proposals are accepted. No
 producer object, proposal, receipt, or read view holds a mutable Main pointer.
+In this C++ design, detached means a leased `shared_ptr<const CognitiveState>`
+captured before the request; the snapshot cannot follow a later Main head swap
+and exposes no mutable state. Its immutable tensor chunks may be shared rather
+than copied for every producer. This is the C++ counterpart of cloning mutable
+Python tensors before a producer runs, not permission to retain the request
+snapshot after the producer scope ends.
 Every request destroys its producer instances and request-local identity state
 after joining its workers; only explicitly registered immutable producer
 definitions survive between requests.
