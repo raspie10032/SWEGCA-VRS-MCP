@@ -209,6 +209,17 @@ values are checked before binding. It takes the author's trusted delta route
 after those checks, avoiding a full cold scan of every old node and edge per
 append. The current in-memory radix and retained parent generations still
 need a bounded disk representation and a generation-pinning publication path.
+The first native region read primitive stores the author's complete term,
+core-label, overlapping-membership and reverse stable region-node arrays in
+fixed-width checksummed blocks bound to one journal generation, component,
+VRS snapshot and topology ID. Cold open validates every block, array shape,
+offset boundary, region address and membership weight without retaining the
+whole arrays in RAM; individual reads fetch only addressed blocks. This file
+is an unpublished region read representation. The exact Graph edge arrays
+remain owned by the source-bound numerical Graph pages, and topology
+directory publication, generation manifest, bounded block cache, retirement
+and Main atomic ownership are still unimplemented. Therefore this primitive
+is neither a complete topology publication nor a 4 GB or latency result.
 
 Existing VRS 2.2 pair certificates and numerical arrays are historical
 evidence. A new source implementation must account for their lineage and

@@ -86,6 +86,12 @@ public:
     // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_connectivity_regions.py@7536139:138-157
     [[nodiscard]] const std::vector<std::uint32_t>& core_labels() const { return core_labels_; }
     // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_connectivity_regions.py@7536139:138-157
+    [[nodiscard]] const std::vector<std::uint64_t>& member_offsets() const { return member_offsets_; }
+    // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_connectivity_regions.py@7536139:138-157
+    [[nodiscard]] const std::vector<std::uint32_t>& member_regions() const { return member_regions_; }
+    // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_connectivity_regions.py@7536139:138-157
+    [[nodiscard]] const std::vector<double>& member_weights() const { return member_weights_; }
+    // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_connectivity_regions.py@7536139:138-157
     [[nodiscard]] const std::vector<std::uint64_t>& region_offsets() const { return region_offsets_; }
     // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_connectivity_regions.py@7536139:138-157
     [[nodiscard]] const std::vector<std::uint32_t>& region_nodes() const { return region_nodes_; }
