@@ -20,9 +20,8 @@ using journal::ByteWriter;
 using journal::LedgerBytes;
 using journal::LedgerVector;
 
-constexpr std::uint16_t control_version = 1;
+constexpr std::uint16_t control_version = 2;
 constexpr auto text_limit = detail::identity_text_max_bytes;
-constexpr auto payload_limit = journal::max_payload_bytes;
 
 // SWEGCA: user@2026-09-22:60-61
 [[noreturn]] void fail(const std::string& code) { throw std::invalid_argument(code); }
@@ -161,7 +160,20 @@ std::optional<double> read_optional_double(ByteReader& reader) {
 // SWEGCA: src/swegca/mosaic_autonomous_cognition.py@5901a5a:167-186
 void write_optional(ByteWriter& writer, const std::optional<PayloadText>& text) {
     writer.u8(text ? 1 : 0);
-    if (text) writer.bytes(std::as_bytes(std::span<const char>(text->data(), text->size())), payload_limit);
+    if (text) {
+        writer.u64(text->size());
+        writer.raw(std::as_bytes(std::span<const char>(text->data(), text->size())));
+    }
+}
+
+// A control value is part of a segmented state, not one bounded journal
+// record. The author's value has no 16 MiB per-string cap; host allocation
+// remains the VRS runtime's responsibility.
+// SWEGCA: src/swegca/mosaic_autonomous_cognition.py@5901a5a:167-186
+std::span<const std::byte> read_payload_bytes(ByteReader& reader) {
+    const auto length = reader.u64();
+    if (length > reader.remaining()) fail("autonomy_control_invalid");
+    return reader.raw(static_cast<std::size_t>(length));
 }
 
 // SWEGCA: src/swegca/mosaic_autonomous_cognition.py@5901a5a:167-186
@@ -174,7 +186,7 @@ std::optional<PayloadText> read_optional_payload(ByteReader& reader, const Alloc
     const auto flag = reader.u8();
     if (flag > 1) fail("autonomy_control_invalid");
     if (flag == 0) return std::nullopt;
-    return payload_text(memory, reader.bytes_view(payload_limit));
+    return payload_text(memory, read_payload_bytes(reader));
 }
 
 }  // namespace
@@ -301,11 +313,11 @@ LedgerBytes AutonomyControl::encode(const AllocationContext& memory) const {
     write_optional(writer, active_hypothesis_id);
     write_optional(writer, verified_hypothesis_id);
     write_optional(writer, hypothesis_confidence);
-    if (requested_axes.size() > std::numeric_limits<std::uint32_t>::max()) fail("autonomy_control_invalid");
-    writer.u32(static_cast<std::uint32_t>(requested_axes.size()));
+    writer.u64(requested_axes.size());
     for (const auto& axis : requested_axes) {
         if (axis.empty()) fail("autonomy_control_invalid");
-        writer.bytes(std::as_bytes(std::span<const char>(axis.data(), axis.size())), payload_limit);
+        writer.u64(axis.size());
+        writer.raw(std::as_bytes(std::span<const char>(axis.data(), axis.size())));
     }
     writer.u8(static_cast<std::uint8_t>(verification_status));
     write_optional(writer, verification_lower_bound);
@@ -331,11 +343,11 @@ AutonomyControl AutonomyControl::decode(const AllocationContext& memory, std::sp
     out.active_hypothesis_id = read_optional<HypothesisId>(reader, memory);
     out.verified_hypothesis_id = read_optional<HypothesisId>(reader, memory);
     out.hypothesis_confidence = read_optional_double(reader);
-    const auto axes = reader.u32();
-    if (axes > reader.remaining() / 4) fail("autonomy_control_invalid");
-    out.requested_axes.reserve(axes);
-    for (std::uint32_t at = 0; at < axes; ++at) {
-        auto axis = payload_text(memory, reader.bytes_view(payload_limit));
+    const auto axes = reader.u64();
+    if (axes > reader.remaining() / 8) fail("autonomy_control_invalid");
+    out.requested_axes.reserve(static_cast<std::size_t>(axes));
+    for (std::uint64_t at = 0; at < axes; ++at) {
+        auto axis = payload_text(memory, read_payload_bytes(reader));
         if (axis.empty()) fail("autonomy_control_invalid");
         out.requested_axes.push_back(std::move(axis));
     }
@@ -357,7 +369,7 @@ AutonomyControl AutonomyControl::decode(const AllocationContext& memory, std::sp
 Digest256 AutonomyControl::digest(const AllocationContext& memory) const {
     const auto bytes = encode(memory);
     Sha256 hash;
-    hash_field(hash, "swegca.autonomy_control.v1");
+    hash_field(hash, "swegca.autonomy_control.v2");
     hash.update(bytes);
     return Digest256(hash.finish());
 }

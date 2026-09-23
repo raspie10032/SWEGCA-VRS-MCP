@@ -735,6 +735,14 @@ but their validation and v5 digest still scan the full state. The autonomy
 successor preserves the canonical full-stream digest without copying the
 graph or rereading World tensor bytes for **in-memory successor construction**.
 Neither path creates a Main apply route or publication authority.
+The typed autonomy-control byte format is now version 2: its requested-axis
+count and payload-text lengths use 64-bit fields. The former 16 MiB per-text
+and 32-bit axis-count limits came from a journal-record helper, although the
+author's control values are not single journal records. The complete control
+still materializes in account-charged memory, so VRS may refuse it under its
+runtime budget; segmented state publication and its cold verification remain
+the storage boundary. Version 1 control bytes are not accepted as migration
+input.
 `split_state_content` still visits the complete canonical stream when it
 materializes a state root; incremental disk publication and its verification
 remain open and must be reviewed separately before any end-to-end speed claim.
