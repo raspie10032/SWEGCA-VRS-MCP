@@ -202,7 +202,7 @@ CapabilityDescriptor MainAuthorityLedger::consume_token(
     const Digest256& actual_operation) {
     if (!capability)
         throw std::invalid_argument("authority_capability_not_live");
-    const auto descriptor = capability->descriptor();
+    const auto& descriptor = capability->descriptor();
     {
         std::lock_guard guard(registry_->mutex);
         if (descriptor.domain != expected ||
@@ -221,11 +221,12 @@ CapabilityDescriptor MainAuthorityLedger::consume_token(
         mark_spent_locked(*registry_, descriptor.nonce, std::move(retirement));
         capability->retired_ = true;
     }
+    auto consumed = std::move(capability->descriptor_);
     capability.reset();
-    if (descriptor.generation != current_generation ||
-        descriptor.operation != actual_operation)
+    if (consumed.generation != current_generation ||
+        consumed.operation != actual_operation)
         throw std::invalid_argument("authority_capability_binding_mismatch");
-    return descriptor;
+    return consumed;
 }
 
 }  // namespace swegca::architecture
