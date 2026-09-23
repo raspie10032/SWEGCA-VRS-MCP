@@ -79,7 +79,7 @@ generation, and Main marker selection before they can be run):
 | B33 (`VRS route pending`) | Publish a term with support/refute counts above `UINT32_MAX` and an evidence-request row carrying a valid extra provenance field; recover it from Main's selected root | Counts and the complete request row survive without narrowing or silent key removal; the source live dialogue uses u64 counts (`mosaic_vrs_dialogue.py@3bddcb7:187-191`), and the bridge copies entire request mappings (`mosaic_vrs_memory_bridge.py@3bddcb7:823-834`) |
 | B34 (`VRS route pending`) | Publish VRS source data with visual centroid rows, append a term, and recover the selected generation; separately damage a centroid value or its term-row alignment | Valid recovery preserves every source centroid value and its term association, including the zero-extended new row; damaged centroid data is refused before publication (`rozephine_vrs_array_storage.py@3bddcb7:16-65,107`, `continue_rozephine_mixed_experience_vrs.py@3bddcb7:2101-2111`) |
 | B35 (`VRS route pending`) | Publish a VRS generation carrying relation evidence and its provenance/authority report, recover the selected generation, then damage either selected source | Recovery retains the complete relation-evidence and report content needed to establish the selected generation; changed or missing selected artifact bytes fail the report digest/path checks before Main exposes the pair (`rozephine_vrs_block_recovery.py@3bddcb7:20-60`, `rozephine_warm_outcome_vrs.py@3bddcb7:62-75`) |
-| B36 (`VRS route pending`) | Before any original experience, inspect the VRS root; admit the first new original experience with no VRS connection; recover it; then try to publish a later root with an empty connection/member lineage | No VRS root precedes the first original; that first original and its first root publish together and recover with their source identity intact, with the empty-lineage exception confined to the first root; a later root cannot reuse that exception (user, 2026-09-24; source ordinary lineage rejection: `mosaic_vrs_canonicalization.py@3bddcb7:18-30`) |
+| B36 (`VRS route pending`) | Before any original experience, inspect the VRS root; admit two new originals that create no connection and recover each publication; admit the first connection; then try to publish a later root with an empty connection/member lineage | No VRS root precedes the first original; both no-connection originals and their live VRS roots publish and recover with source identity intact; empty lineage is allowed only while the selected history has never had a connection, and the post-connection empty root is refused (user, 2026-09-24; source ordinary lineage rejection: `mosaic_vrs_canonicalization.py@3bddcb7:19-30`) |
 
 The f32 persisted strength in B30 is the new C++ storage contract from
 `SWEGCA_CPP_MAIN_STATE_STORAGE_REVIEW.md` §Required contract 9, following
@@ -118,11 +118,11 @@ digest match for evidence authority.
 
 The first VRS root is published when the first new original experience enters
 (user, 2026-09-24). It is not prepublished empty or imported from the old
-store. If the first experience has no connection, the user permits an empty
-connection/member lineage for that first root alone. The source
+store. If successive experiences still have no connection, the user permits
+an empty connection/member lineage until the first connection appears. The source
 `CanonicalVRSMemberLineage` rejects an empty member set in its ordinary
-validator (`mosaic_vrs_canonicalization.py@3bddcb7:18-30`); B28-B30 and B36
-must not turn the first-root exception into a general bypass.
+validator (`mosaic_vrs_canonicalization.py@3bddcb7:19-30`); B28-B30 and B36
+must not turn the pre-connection exception into a general bypass.
 
 Views:
 
