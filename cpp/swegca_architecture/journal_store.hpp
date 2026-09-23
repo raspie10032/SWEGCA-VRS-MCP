@@ -232,6 +232,19 @@ private:
     Call call_;
 };
 
+// Only ExperienceAppend can form this key. It permits staging verified
+// experience kinds without granting the publication methods to that class.
+class ExperienceStageKey final {
+public:
+    ExperienceStageKey(const ExperienceStageKey&) = delete;
+    ExperienceStageKey& operator=(const ExperienceStageKey&) = delete;
+    ~ExperienceStageKey() = default;
+
+private:
+    ExperienceStageKey() = default;
+    friend class swegca::architecture::ExperienceAppend;
+};
+
 class JournalStore final {
 public:
     // Opens `directory`, creating it atomically when it does not exist
@@ -300,6 +313,14 @@ public:
     [[nodiscard]] StagedGeneration stage(std::span<const RecordDraft> drafts,
                                          const StateGeneration& state,
                                          std::span<const ViewGeneration> views) const;
+
+    // The experience appender may stage its reserved record kinds but cannot
+    // publish or rewrite HEAD. Only MainOwner can perform those mutations.
+    [[nodiscard]] StagedGeneration stage_experience_records(
+        const ExperienceStageKey&, std::span<const RecordDraft> drafts,
+        const StateGeneration& state, std::span<const ViewGeneration> views) const {
+        return stage_records(drafts, state, views);
+    }
 
     // Publishes `staged` only if the head is still its parent. Order: segment
     // bytes and view pages (appends flushed, new files published), manifest
@@ -385,7 +406,6 @@ private:
     // failed for storage while `storage_charged` still includes them.
     void reclaim_retired();
 
-    friend class swegca::architecture::ExperienceAppend;
     friend class swegca::architecture::MainOwner;
     // `stage` without the kind rule: ExperienceAppend's only.
     [[nodiscard]] StagedGeneration stage_records(std::span<const RecordDraft> drafts,
@@ -449,7 +469,6 @@ private:
 
 }  // namespace swegca::architecture::journal
 
-// Complete the only staging friend in every translation unit that sees
-// JournalStore. A forward declaration alone permits a caller to define a
-// substitute ExperienceAppend with access to stage_records.
+// Complete the stage key's friend in every translation unit that sees it. A
+// forward declaration alone permits a caller to define a substitute friend.
 #include "swegca_architecture/experience.hpp"
