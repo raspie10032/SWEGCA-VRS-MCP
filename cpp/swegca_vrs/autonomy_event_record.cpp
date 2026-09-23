@@ -1,5 +1,7 @@
 #include "swegca_vrs/autonomy_event_record.hpp"
 
+#include <cstddef>
+#include <span>
 #include <stdexcept>
 #include <utility>
 
