@@ -19,13 +19,22 @@ crash cases before code uses it.
 - `MainOwner` currently constructs generation 0 with a computed state digest.
   A new `JournalStore` starts with a zero state digest in its genesis HEAD.
   There is no C++ state or transaction record codec or state recovery.
+- User correction (2026-09-23 18:3x): state content has no separate
+  generation number. Recording time stays outside the state as a human
+  timeline hint. The current `StateGeneration::ordinal` and manifest
+  `state_generation_ordinal` are therefore provisional code to replace.
 - The journal limits one record payload to 16 MiB and one generation to
   64 MiB. An initial state may exceed both limits. The experience module
   already streams large blobs through content-addressed 8 MiB parts and a
   bounded-depth digest tree.
-- `CognitiveTensor` currently owns one contiguous byte vector. A disk part
-  tree alone cannot prevent a verification-slot write from copying an entire
-  large scratch tensor in memory.
+- `JournalStore::stage_from` currently copies the full published segment
+  extent map and recalculates storage across it for every generation. This
+  is a preparation cost proportional to segment count even for one small
+  state part; HEAD publication serialization does not require that cost.
+- The original C++ `CognitiveTensor` owned one contiguous byte vector.
+  Candidate `462a6f7` replaces it with immutable shared chunks, but the
+  writer and large-state startup paths are not connected yet. A disk part
+  tree alone would not solve the in-memory copy.
 - `MainInitialState::TensorInput` currently borrows one full byte span, and
   Main copies it into a tensor. A large caller-held initial tensor plus that
   copy can exceed a 4 GB VRS host profile before any write. Large
@@ -41,17 +50,19 @@ crash cases before code uses it.
 ## Required contract
 
 1. Main holds one current state and one journal owner. Before Bind or any
-   guarded write, the current state generation must exactly equal the
-   published HEAD's state generation and a verified native state root.
+   guarded write, its state content digest and latest state-head publication
+   record identity must exactly match the published HEAD and its verified
+   native state root. Content identity and publication order remain separate.
 2. Only a fresh genesis HEAD with zero state digest can be initialized from
    the one `MainInitialState` supplied to Main. Initialization publishes that
-   state's real generation and root before any state-changing operation. An
-   existing nonzero HEAD is recovered from its own root and is never replaced
-   by the caller's input.
+   state's real content root and publication record before any state-changing
+   operation. An existing nonzero HEAD is recovered from its own root and is
+   never replaced by the caller's input.
 3. Recovery reads the HEAD-selected root by exact address and verifies its
-   record, ordinal, state digest, bounded parts, and reconstructed canonical
-   state. It fails closed on missing or mismatched data. Cold recovery may
-   read the state bytes; Déjà vu through Recall must not do this work.
+   root record, latest publication record position/digest, state content
+   digest, bounded parts, and reconstructed canonical state. It fails closed
+   on missing or mismatched data. Cold recovery may read the state bytes;
+   Déjà vu through Recall must not do this work.
 4. A guarded successor checks the current HEAD and prior state, stages only
    changed bounded state parts, then stages the successor root and write
    receipt. The receipt includes before/after state hashes, before/after
@@ -64,12 +75,12 @@ crash cases before code uses it.
    the successor state. Main swaps its current pointer only after that
    publication succeeds.
 5. Intermediate part publication, if necessary to respect the 64 MiB
-   generation limit, keeps the prior state generation. Part records confer no
-   decision or write authority. A crash before the final HEAD leaves the
-   prior state current; a retry may verify and reuse immutable parts.
+   generation limit, keeps the prior state-head publication identity. Part
+   records confer no decision or write authority. A crash before the final
+   HEAD leaves the prior state current; a retry may verify and reuse them.
    The final stage must be built on the latest journal HEAD while comparing
-   the state generation with the one read before preparation, since unrelated
-   experience appends may advance the journal generation.
+   the state-head publication identity with the one read before preparation,
+   since unrelated experience appends may advance the journal generation.
    If publication throws, Main cannot infer the durable state from its old
    pointer because HEAD replacement may already have happened. It stops
    guarded work and reopens from the published HEAD before another write.
@@ -94,15 +105,19 @@ crash cases before code uses it.
   These state records carry no experience search index entries, and the
   experience decoder must reject their kinds.
 - Derive the state-root exact address from the state digest with a reserved
-  prefix. The manifest already holds state ordinal and digest, so recovery
-  can use the same verified address tree without a memory-size scan. Main is
+  prefix. The manifest must name the content digest and the latest state-head
+  publication record position/digest, so recovery can use the same verified
+  address tree without a memory-size scan. Main is
   already a `JournalStore` friend and can use one held snapshot with its
   private `resolve_in` and `read_in`; an `ExperienceAddress` wrapper is wrong
   for a state record.
-- The state content digest excludes generation ordinal. A bit-exact rollback
-  may reuse the former content root at a new ordinal; the manifest names that
-  ordinal separately. Keep write receipts separate from the state root. The
-  root binds canonical content while receipts record write lineage.
+- The state content digest excludes publication identity and recording time.
+  A bit-exact rollback may reuse the former content root at a new state-head
+  publication record.
+  Keep write receipts separate from the state root. The root binds canonical
+  content while receipts record write lineage. Each publication record must
+  be new even when its content root is reused, so compare-and-swap can
+  distinguish rollback from the earlier occurrence of that content.
 - Encode enough canonical state fields and typed tensor-part references in
   the root to reconstruct and recompute the existing state digest exactly.
   A root payload that exceeds one record must itself use bounded parts.
@@ -133,6 +148,13 @@ crash cases before code uses it.
   and is not a source-backed prerequisite for staging state parts.
 - Define the native typed bounded-write metadata and its state-digest
   binding before implementing receipts, rollback, or retraction.
+- Move publication identity out of immutable `CognitiveState` into Main's
+  published-state snapshot boundary. Replace the separate ordinal with the
+  exact state-head publication record position/digest. Keep recording time
+  only in external transition metadata, never in content hash or CAS.
+- Replace whole-extent-table cloning and full storage recount on every
+  staged part with shared persistent extents and checked incremental
+  accounting, preserving exact recovery and storage-budget decisions.
 
 This storage path is outside the hot Déjà vu → Recall path. It cannot be used
 as a substitute for the SWEGCA-based four-stage VRS navigation and judgment.
