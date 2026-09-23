@@ -12,11 +12,20 @@
 # script's process before it runs the compiler.
 #
 # Trusted: the compiler command CMake was given (CXX, including a wrapper
-# named as the compiler and CMAKE_CXX_COMPILER_ARG1) and CMake's own
-# toolchain settings (sysroot, target, external toolchain, Apple sysroot).
-# Not trusted: the ambient environment. A compiler that needs its own
-# library path or SDK must get it from those, e.g. a wrapper script named as
-# CXX, not from the environment.
+# named as the compiler and CMAKE_CXX_COMPILER_ARG1), CMake's own toolchain
+# settings (sysroot, target, external toolchain, Apple sysroot), and the
+# dynamic loader's variables (LD_PRELOAD, LD_LIBRARY_PATH, LD_AUDIT, DYLD_*)
+# of the process that starts the build. Those loader variables are read
+# when each program is loaded: make, ninja and `cmake --build` are already
+# loaded under them, and so is every `cmake -P` or `env -i` the build could
+# start before this script runs. No check inside the build can run ahead of
+# them, so whoever starts the build must trust them; they are still removed
+# here, so the compiler, cc1plus and nm are not loaded under them.
+# Not trusted: every other ambient variable, which changes what the
+# compiler does only once it reads it (CPATH, COMPILER_PATH, ...) and is
+# removed before it runs. A compiler that needs its own library path or SDK
+# must get it from the trusted settings, e.g. a wrapper script named as CXX,
+# not from the environment.
 
 # Names compared in upper case: Windows names are case-insensitive (`Path`).
 set(swegca_core_kept_variables
