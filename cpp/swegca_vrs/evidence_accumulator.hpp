@@ -431,9 +431,10 @@ private:
         std::uint64_t re_evidenced = 0;
         std::uint64_t conflicted = 0;
     };
-    // Re-evidence events keep their publication identity. A new publication
-    // of the same content is still a distinct event, while CoverKey below
-    // counts each original at that content only once.
+    // Re-evidence events keep their provisional full generation until Main's
+    // PublishedStateId replaces its ordinal. A new publication of the same
+    // content remains a distinct event; CoverKey counts each original at that
+    // content only once.
     struct ResultKey {
         std::size_t original = 0;
         StateGeneration generation;
