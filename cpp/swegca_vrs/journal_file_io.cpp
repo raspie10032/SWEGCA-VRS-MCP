@@ -239,6 +239,47 @@ OwnerLock::OwnerLock(const fs::path& directory) {
     handle_ = reinterpret_cast<std::intptr_t>(handle);
 }
 
+// OPEN_EXISTING creates nothing; FILE_FLAG_OPEN_REPARSE_POINT opens a link
+// itself, which the attribute check then refuses.
+// Lineage: native mechanism — locks an existing journal's owner file without creating it or following a link.
+// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:50
+OwnerLock::OwnerLock(const fs::path& directory, ExistingLock) {
+    const auto path = directory / "owner.lock";
+    HANDLE handle = ::CreateFileW(path.c_str(), GENERIC_READ | GENERIC_WRITE,
+                                  FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING,
+                                  FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
+    if (handle == INVALID_HANDLE_VALUE) {
+        const auto error = ::GetLastError();
+        if (error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND)
+            fail("journal_root_lock_missing");
+        ::SetLastError(error);
+        fail_last_error("journal_owner_lock_open_failed");
+    }
+    BY_HANDLE_FILE_INFORMATION information{};
+    if (!::GetFileInformationByHandle(handle, &information)) {
+        const auto error = ::GetLastError();
+        ::CloseHandle(handle);
+        ::SetLastError(error);
+        fail_last_error("journal_owner_lock_open_failed");
+    }
+    if (::GetFileType(handle) != FILE_TYPE_DISK ||
+        (information.dwFileAttributes &
+         (FILE_ATTRIBUTE_REPARSE_POINT | FILE_ATTRIBUTE_DIRECTORY)) != 0) {
+        ::CloseHandle(handle);
+        fail("journal_root_lock_missing");
+    }
+    OVERLAPPED whole{};
+    if (!::LockFileEx(handle, LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY, 0, MAXDWORD,
+                      MAXDWORD, &whole)) {
+        const auto error = ::GetLastError();
+        ::CloseHandle(handle);
+        if (error == ERROR_LOCK_VIOLATION) fail("journal_already_owned");
+        ::SetLastError(error);
+        fail_last_error("journal_owner_lock_failed");
+    }
+    handle_ = reinterpret_cast<std::intptr_t>(handle);
+}
+
 // Lineage: weak analogy — the author unlocks then closes the lock file; here closing it releases the lock.
 // SWEGCA: src/swegca_vrs2/native_lock.py@c06092a:88-92
 OwnerLock::~OwnerLock() {
@@ -376,6 +417,40 @@ OwnerLock::OwnerLock(const fs::path& directory) {
     const auto path = directory / "owner.lock";
     const int descriptor = ::open(path.c_str(), O_RDWR | O_CREAT | O_CLOEXEC, 0600);
     if (descriptor < 0) fail_errno("journal_owner_lock_open_failed");
+    if (::flock(descriptor, LOCK_EX | LOCK_NB) != 0) {
+        const int error = errno;
+        ::close(descriptor);
+        if (error == EWOULDBLOCK) fail("journal_already_owned");
+        errno = error;
+        fail_errno("journal_owner_lock_failed");
+    }
+    handle_ = descriptor;
+}
+
+// No O_CREAT, so nothing is created; O_NOFOLLOW refuses a link as the last
+// component; O_NONBLOCK keeps a FIFO put in its place from blocking the open
+// and O_NOCTTY a terminal from becoming this process's, and fstat then
+// refuses anything but a regular file.
+// Lineage: native mechanism — locks an existing journal's owner file without creating it or following a link.
+// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:50
+OwnerLock::OwnerLock(const fs::path& directory, ExistingLock) {
+    const auto path = directory / "owner.lock";
+    const int descriptor = ::open(path.c_str(), O_RDWR | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK | O_NOCTTY);
+    if (descriptor < 0) {
+        if (errno == ENOENT || errno == ELOOP) fail("journal_root_lock_missing");
+        fail_errno("journal_owner_lock_open_failed");
+    }
+    struct stat status{};
+    if (::fstat(descriptor, &status) != 0) {
+        const int error = errno;
+        ::close(descriptor);
+        errno = error;
+        fail_errno("journal_owner_lock_open_failed");
+    }
+    if (!S_ISREG(status.st_mode)) {
+        ::close(descriptor);
+        fail("journal_root_lock_missing");
+    }
     if (::flock(descriptor, LOCK_EX | LOCK_NB) != 0) {
         const int error = errno;
         ::close(descriptor);

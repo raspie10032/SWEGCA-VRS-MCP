@@ -1234,9 +1234,9 @@ std::unique_ptr<JournalStore> JournalStore::open(const fs::path& directory,
     return store;
 }
 
-// On-disk charge of the lower journal's published files. A future
-// Main-selected root must additionally charge every preserved orphan byte;
-// this function does not claim to implement that root recovery.
+// On-disk charge of the lower journal's published files. A Main-selected
+// root additionally charges every preserved orphan byte, which
+// `load_root_generation` does; this function does not.
 // Every published file is charged by
 // `file_charge`. Sealed manifest and page logs are charged by their exact
 // published bytes plus the rounding bound per log. HEAD is charged twice:
@@ -1315,58 +1315,9 @@ void JournalStore::load_published_head() {
     std::array<std::byte, head_bytes> head_image{};
     io::read_exact_file(directory_ / head_name, head_image, "journal_head_missing");
     const auto pointer = decode_head(head_image);
-    std::uint64_t read_bytes = pointer.location.length;
-    if (read_bytes > max_recovery_bytes) fail("journal_recovery_over_budget");
-
-    auto loaded = std::allocate_shared<PublishedSnapshot>(
-        memory_.allocator<PublishedSnapshot>(), memory_,
-        read_manifest(directory_, pointer.location, memory_));
+    auto loaded = load_generation(pointer);
     const auto& head = loaded->head;
     const auto& fields = head.fields();
-    if (head.digest() != pointer.manifest_digest) fail("journal_head_digest_mismatch");
-    if (head.journal_identity() != identity_.value()) fail("journal_identity_mismatch");
-    if (fields.recovery_bytes_before > max_recovery_bytes - pointer.location.length)
-        fail("journal_recovery_over_budget");
-
-    RecoveryExtentTable recovered(
-        memory_.allocator<std::pair<const std::uint64_t, SegmentExtent>>());
-    {
-        // `older` runs from the head's parent back to the checkpoint. Its
-        // capacity is fixed up front, so `walk` stays valid while it grows.
-        LedgerVector<Manifest> older(memory_.allocator<Manifest>());
-        older.reserve(checkpoint_interval);
-        const Manifest* walk = &head;
-        auto walk_location = pointer.location;
-        while (!walk->fields().checkpoint) {
-            const auto& after = walk->fields();
-            const auto previous_location = after.previous_location;
-            if (!follows(previous_location, walk_location)) fail("journal_manifest_chain_invalid");
-            read_bytes = plus(read_bytes, previous_location.length, "journal_recovery_over_budget");
-            if (read_bytes > max_recovery_bytes) fail("journal_recovery_over_budget");
-            if (older.size() + 1 >= checkpoint_interval) fail("journal_manifest_chain_invalid");
-            auto previous = read_manifest(directory_, previous_location, memory_);
-            const auto& before = previous.fields();
-            if (previous.digest() != after.previous_manifest_digest ||
-                before.generation + 1 != after.generation ||
-                previous.journal_identity() != identity_.value() ||
-                after.manifest_bytes_before !=
-                    plus(before.manifest_bytes_before, previous_location.length,
-                         "journal_manifest_chain_invalid") ||
-                after.recovery_bytes_before !=
-                    before.recovery_bytes_before + previous_location.length ||
-                after.checkpoint_generation != before.checkpoint_generation)
-                fail("journal_manifest_chain_invalid");
-            older.push_back(std::move(previous));
-            walk = &older.back();
-            walk_location = previous_location;
-        }
-        for (auto manifest = older.rbegin(); manifest != older.rend(); ++manifest)
-            apply_manifest(recovered, *manifest);
-    }
-    apply_manifest(recovered, head);
-    loaded->extents = ExtentIndex::from_recovery(memory_, recovered);
-    loaded->location = pointer.location;
-    loaded->page_logs = std::allocate_shared<int>(memory_.allocator<int>(), 0);
     loaded->storage = storage_of(loaded->extents, fields, pointer.location);
     if (!storage_->allows(loaded->storage)) fail("journal_storage_budget_exceeded");
 
@@ -1472,6 +1423,274 @@ void JournalStore::load_published_head() {
 
     std::shared_ptr<const PublishedSnapshot> published = std::move(loaded);
     snapshot_.store(published);
+}
+
+// Reads the manifest `pointer` names and walks back to its checkpoint: each
+// step checks that the manifest sits exactly where its successor says, that
+// the byte counters chain, and that the total read stays within
+// `max_recovery_bytes`. Returns the generation's extents; its storage charge
+// is left to the caller. Shared by `open` (its HEAD) and `open_at_root`
+// (Main's root), so both check the chain the same way.
+// Lineage: native mechanism — walks the predecessor-linked manifest chain from a published pointer to its checkpoint.
+// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:574-585
+std::shared_ptr<PublishedSnapshot> JournalStore::load_generation(const HeadPointer& pointer) const {
+    std::uint64_t read_bytes = pointer.location.length;
+    if (read_bytes > max_recovery_bytes) fail("journal_recovery_over_budget");
+
+    auto loaded = std::allocate_shared<PublishedSnapshot>(
+        memory_.allocator<PublishedSnapshot>(), memory_,
+        read_manifest(directory_, pointer.location, memory_));
+    const auto& head = loaded->head;
+    const auto& fields = head.fields();
+    if (head.digest() != pointer.manifest_digest) fail("journal_head_digest_mismatch");
+    if (head.journal_identity() != identity_.value()) fail("journal_identity_mismatch");
+    if (fields.recovery_bytes_before > max_recovery_bytes - pointer.location.length)
+        fail("journal_recovery_over_budget");
+
+    RecoveryExtentTable recovered(
+        memory_.allocator<std::pair<const std::uint64_t, SegmentExtent>>());
+    {
+        // `older` runs from the head's parent back to the checkpoint. Its
+        // capacity is fixed up front, so `walk` stays valid while it grows.
+        LedgerVector<Manifest> older(memory_.allocator<Manifest>());
+        older.reserve(checkpoint_interval);
+        const Manifest* walk = &head;
+        auto walk_location = pointer.location;
+        while (!walk->fields().checkpoint) {
+            const auto& after = walk->fields();
+            const auto previous_location = after.previous_location;
+            if (!follows(previous_location, walk_location)) fail("journal_manifest_chain_invalid");
+            read_bytes = plus(read_bytes, previous_location.length, "journal_recovery_over_budget");
+            if (read_bytes > max_recovery_bytes) fail("journal_recovery_over_budget");
+            if (older.size() + 1 >= checkpoint_interval) fail("journal_manifest_chain_invalid");
+            auto previous = read_manifest(directory_, previous_location, memory_);
+            const auto& before = previous.fields();
+            if (previous.digest() != after.previous_manifest_digest ||
+                before.generation + 1 != after.generation ||
+                previous.journal_identity() != identity_.value() ||
+                after.manifest_bytes_before !=
+                    plus(before.manifest_bytes_before, previous_location.length,
+                         "journal_manifest_chain_invalid") ||
+                after.recovery_bytes_before !=
+                    before.recovery_bytes_before + previous_location.length ||
+                after.checkpoint_generation != before.checkpoint_generation)
+                fail("journal_manifest_chain_invalid");
+            older.push_back(std::move(previous));
+            walk = &older.back();
+            walk_location = previous_location;
+        }
+        for (auto manifest = older.rbegin(); manifest != older.rend(); ++manifest)
+            apply_manifest(recovered, *manifest);
+    }
+    apply_manifest(recovered, head);
+    loaded->extents = ExtentIndex::from_recovery(memory_, recovered);
+    loaded->location = pointer.location;
+    loaded->page_logs = std::allocate_shared<int>(memory_.allocator<int>(), 0);
+    return loaded;
+}
+
+// Main selects the committed generation; the journal neither discovers nor
+// adopts one (the user's recovery rule for numeric VRS events). The HEAD
+// file is not read, so a HEAD a later generation wrote carries no authority.
+// Lineage: weak analogy — the author restores the event report main selects, discovering none; here the journal generation.
+// SWEGCA: src/tinylm_slicer/mosaic_vrs_event_durable.py@3bddcb7:3-5
+// SWEGCA: src/tinylm_slicer/mosaic_vrs_event_durable.py@3bddcb7:152
+std::unique_ptr<JournalStore> JournalStore::open_at_root(const fs::path& directory,
+                                                         std::string_view identity,
+                                                         std::shared_ptr<const StorageBudget> storage,
+                                                         const AllocationContext& memory,
+                                                         const std::optional<AllocationContext>& page_cache,
+                                                         std::size_t page_cache_shards,
+                                                         const JournalRoot& root) {
+    if (!storage) fail("journal_budget_missing");
+    if (page_cache && page_cache_shards == 0) fail("journal_page_cache_invalid");
+    JournalIdentity owned(memory, identity);
+    // A root names an existing generation; nothing is created for it.
+    if (!fs::is_directory(directory)) fail("journal_root_directory_missing");
+    // The lock opens an existing regular file, never a link: taking it must
+    // not create an entry here, or a file wherever a link points. The open
+    // itself refuses a link, so swapping the path after this check does not
+    // help; the check only fails early.
+    if (!fs::is_regular_file(fs::symlink_status(directory / lock_name)))
+        fail("journal_root_lock_missing");
+    auto lock = std::make_unique<io::OwnerLock>(directory, io::existing_lock);
+    const auto unit = io::allocation_unit(directory);
+    std::unique_ptr<JournalStore> store(new JournalStore(directory, std::move(owned), std::move(storage), memory, unit,
+                                                         std::move(lock), page_cache, page_cache_shards));
+    store->load_root_generation(root);
+    store->root_selected_ = true;
+    return store;
+}
+
+// Checks the generation Main's root names, then charges every byte outside
+// it, removing and cutting nothing: a partial or later write is not
+// authority to recover, and it is retained (the user's commit path keeps an
+// unreconciled marker and refuses further writes).
+// Lineage: weak analogy — the author retains a partial precommit marker; here every byte outside Main's root is kept and charged.
+// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:574-585
+// SWEGCA: src/tinylm_slicer/mosaic_paper_resident_assimilation.py@3bddcb7:508-511
+void JournalStore::load_root_generation(const JournalRoot& root) {
+    constexpr const char* charge_code = "journal_storage_overflow";
+    const auto size_of = [](const fs::path& path) {
+        std::error_code error;
+        const auto size = fs::file_size(path, error);
+        if (error) fail("journal_root_entry_unreadable");
+        return static_cast<std::uint64_t>(size);
+    };
+
+    // First pass, as in `open`: only journal entries; a `.part` file only
+    // under a name the journal publishes. A symbolic link is not followed:
+    // it would bring in bytes from outside the directory. The highest
+    // segment id seen, kept or not, bounds the next one while the kept files
+    // stay.
+    std::uint64_t max_seen_file_id = 0;
+    for (const auto& entry : fs::directory_iterator(directory_)) {
+        const auto name = entry.path().filename().string();
+        if (!fs::is_regular_file(entry.symlink_status())) fail("journal_unknown_entry");
+        if (name == head_name || name == lock_name) continue;
+        const std::string_view part(io::part_suffix);
+        if (name.ends_with(part)) {
+            const auto base = std::string_view(name).substr(0, name.size() - part.size());
+            if (!is_published_name(base)) fail("journal_unknown_entry");
+            max_seen_file_id = std::max(
+                max_seen_file_id, parse_ordinal(base, segment_prefix, segment_suffix));
+            continue;
+        }
+        if (!is_published_name(name)) fail("journal_unknown_entry");
+        max_seen_file_id = std::max(
+            max_seen_file_id, parse_ordinal(name, segment_prefix, segment_suffix));
+    }
+    max_physical_segment_id_.store(max_seen_file_id, std::memory_order_relaxed);
+
+    auto loaded = load_generation(HeadPointer{root.location, root.manifest_digest});
+    const auto& head = loaded->head;
+    const auto& fields = head.fields();
+    std::uint64_t charge = storage_of(loaded->extents, fields, root.location);
+
+    // Every segment the generation names exists with at least its published
+    // length. Only the tail may be longer (a later generation appended to
+    // it); a longer segment below the tail is not this journal's history.
+    const auto* tail = loaded->extents.tail();
+    const auto tail_file_id = tail == nullptr ? 0 : tail->file_id;
+    std::set<std::uint64_t, std::less<>, AllocationAdapter<std::uint64_t>> published_files(
+        std::less<>{}, memory_.allocator<std::uint64_t>());
+    loaded->extents.for_each([&](std::uint64_t, const SegmentExtent& extent) {
+        if (!published_files.emplace(extent.file_id).second)
+            fail("journal_segment_file_id_reused");
+        const auto path = segment_path(directory_, extent.file_id);
+        if (!fs::is_regular_file(path)) fail("journal_published_segment_missing");
+        const auto size = size_of(path);
+        if (size < extent.byte_length) fail("journal_published_file_truncated");
+        const bool is_tail = tail != nullptr && extent.ordinal == tail->ordinal;
+        if (size > extent.byte_length) {
+            if (!is_tail) fail("journal_segment_length_mismatch");
+            charge = plus(charge, file_charge(size, allocation_unit_) -
+                                      file_charge(extent.byte_length, allocation_unit_),
+                          charge_code);
+        }
+    });
+    // The extents this generation wrote are checked record by record, and its
+    // tail. A checkpoint lists every extent, so for it the last two are
+    // checked: a generation writes at most two (it may extend the old tail and
+    // start one more).
+    bool verified_tail = false;
+    if (!fields.checkpoint) {
+        for (std::size_t index = 0; index < head.extent_count(); ++index) {
+            const auto& extent = loaded->extents.at(head.extent(index).ordinal);
+            verify_extent(*loaded, extent);
+            verified_tail = verified_tail || (tail != nullptr && extent.ordinal == tail->ordinal);
+        }
+    } else if (tail != nullptr && tail->ordinal > 1) {
+        verify_extent(*loaded, loaded->extents.at(tail->ordinal - 1));
+    }
+    if (tail != nullptr && !verified_tail) verify_extent(*loaded, *tail);
+
+    // Everything else is kept and charged; a segment below the tail that no
+    // extent names is not this journal's and fails.
+    const auto& view = fields.view_pages;
+    const auto manifest_end = plus(root.location.offset, root.location.length, charge_code);
+    std::uint64_t page_logs = 0;
+    bool last_log_present = false;
+    // Bytes of the manifest logs up to the root's manifest and of the page
+    // logs in the view's range, compared below with what `storage_of`
+    // charges for them: bytes added to a sealed log are charged too.
+    std::uint64_t manifest_log_bytes = 0;
+    std::uint64_t page_log_bytes = 0;
+    for (const auto& entry : fs::directory_iterator(directory_)) {
+        const auto name = entry.path().filename().string();
+        const auto size = size_of(entry.path());
+        // `storage_of` charges HEAD (twice) and the lock at their fixed
+        // sizes; a larger file kept here is charged for what it adds.
+        if (name == head_name) {
+            if (size > head_bytes)
+                charge = plus(charge, file_charge(size, allocation_unit_) -
+                                          file_charge(head_bytes, allocation_unit_),
+                              charge_code);
+        } else if (name == lock_name) {
+            charge = plus(charge, file_charge(size, allocation_unit_) - file_charge(0, allocation_unit_),
+                          charge_code);
+        } else if (name.ends_with(io::part_suffix)) {
+            charge = plus(charge, file_charge(size, allocation_unit_), charge_code);
+        } else if (const auto file_id = parse_ordinal(name, segment_prefix, segment_suffix)) {
+            if (published_files.contains(file_id)) continue;
+            if (file_id <= tail_file_id) fail("journal_segment_unaccounted");
+            charge = plus(charge, file_charge(size, allocation_unit_), charge_code);
+        } else if (const auto log = parse_ordinal(name, manifest_log_prefix, manifest_log_suffix)) {
+            if (log > root.location.log_ordinal) {
+                charge = plus(charge, file_charge(size, allocation_unit_), charge_code);
+            } else if (log == root.location.log_ordinal) {
+                if (size < manifest_end) fail("journal_published_file_truncated");
+                charge = plus(charge, size - manifest_end, charge_code);
+                manifest_log_bytes = plus(manifest_log_bytes, manifest_end, charge_code);
+            } else {
+                manifest_log_bytes = plus(manifest_log_bytes, size, charge_code);
+            }
+        } else if (const auto page_log = parse_ordinal(name, page_log_prefix, page_log_suffix)) {
+            if (view.page_log_ordinal == 0 || page_log > view.page_log_ordinal ||
+                page_log < view.first_page_log) {
+                charge = plus(charge, file_charge(size, allocation_unit_), charge_code);
+                continue;
+            }
+            ++page_logs;
+            if (page_log == view.page_log_ordinal) {
+                last_log_present = true;
+                // A last log short of its end cannot be cut back here: the
+                // derived view is unavailable until Main rebuilds it.
+                if (size < view.page_log_end) loaded->view_unavailable = true;
+                else charge = plus(charge, size - view.page_log_end, charge_code);
+                page_log_bytes = plus(page_log_bytes, std::min(size, view.page_log_end), charge_code);
+            } else {
+                page_log_bytes = plus(page_log_bytes, size, charge_code);
+            }
+        }
+    }
+    // Every manifest log holds its header and then manifests back to back,
+    // and `page_log_bytes` counts headers too; anything beyond is charged.
+    const auto manifest_published =
+        plus(plus(fields.manifest_bytes_before, root.location.length, charge_code),
+             times(root.location.log_ordinal, manifest_log_header_bytes, charge_code), charge_code);
+    if (manifest_log_bytes > manifest_published)
+        charge = plus(charge, manifest_log_bytes - manifest_published, charge_code);
+    if (page_log_bytes > view.page_log_bytes)
+        charge = plus(charge, page_log_bytes - view.page_log_bytes, charge_code);
+    const auto expected_page_logs =
+        view.page_log_ordinal == 0 ? 0 : view.page_log_ordinal - view.first_page_log + 1;
+    if (page_logs != expected_page_logs || (expected_page_logs != 0 && !last_log_present))
+        loaded->view_unavailable = true;
+
+    loaded->storage = charge;
+    if (!storage_->allows(loaded->storage)) fail("journal_storage_budget_exceeded");
+    std::shared_ptr<const PublishedSnapshot> published = std::move(loaded);
+    snapshot_.store(published);
+}
+
+// Writing past kept bytes needs rules not decided yet (codex 22:53), so a
+// store opened at a root refuses it, as the user's commit path refuses
+// writes while a retained marker is unreconciled.
+// Lineage: weak analogy — the author refuses writes while a partial marker is unreconciled; here while opened at a root.
+// SWEGCA: src/tinylm_slicer/mosaic_paper_resident_assimilation.py@3bddcb7:508-511
+void JournalStore::require_writable() const {
+    if (root_selected_) fail("journal_root_read_only");
 }
 
 // Lineage: weak analogy — the author refuses writes after a partial precommit; here every call until reopen.
@@ -1582,6 +1801,7 @@ StagedGeneration JournalStore::stage_from(const std::shared_ptr<const PublishedS
                                           std::span<const ViewGeneration> views,
                                           const ViewPages* replacement,
                                           std::uint64_t retained) const {
+    require_writable();
     const auto& parent = current->head.fields();
     if (replacement != nullptr && !drafts.empty()) fail("journal_view_replacement_with_records");
     if (replacement == nullptr && current->view_unavailable) fail("journal_view_unavailable");
@@ -1862,6 +2082,7 @@ StagedGeneration JournalStore::stage_from(const std::shared_ptr<const PublishedS
 // SWEGCA: src/tinylm_slicer/mosaic_memory_activation.py@3bddcb7:498-507
 void JournalStore::publish(StagedGeneration&& staged) {
     std::lock_guard guard(publish_mutex_);
+    require_writable();
     reclaim_locked();
     publish_locked(std::move(staged));
 }
@@ -1871,6 +2092,7 @@ void JournalStore::publish(StagedGeneration&& staged) {
 // SWEGCA: src/tinylm_slicer/mosaic_memory_activation.py@3bddcb7:498-507
 void JournalStore::publish_locked(StagedGeneration&& staged) {
     require_usable();
+    require_writable();
     if (!staged.valid_) fail("journal_staged_generation_invalid");
     StagedGeneration local(std::move(staged));  // one use: the source is now invalid
     const auto current = snapshot();
@@ -2254,6 +2476,7 @@ BuiltTree rewrite_tree(StreamWriter& writer, const PageSource& pages, const View
 void JournalStore::compact_view() {
     std::lock_guard guard(publish_mutex_);
     require_usable();
+    require_writable();
     reclaim_locked();
     auto current = snapshot();
     if (current->view_unavailable) fail("journal_view_unavailable");
@@ -2287,6 +2510,7 @@ void JournalStore::compact_view() {
 void JournalStore::rebuild_view(RebuildValidator validate) {
     std::lock_guard guard(publish_mutex_);
     require_usable();
+    require_writable();
     reclaim_locked();
     auto current = snapshot();
     const auto& fields = current->head.fields();

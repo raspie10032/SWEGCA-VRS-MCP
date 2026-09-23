@@ -384,12 +384,23 @@ private:
     friend class swegca::vrs::MainOwner;
 };
 
+// Main's publication root names one journal generation by where its
+// manifest was published and that manifest's digest. The journal treats the
+// pair as a storage identity chosen by Main, never as something it
+// discovers (tinylm mosaic_vrs_event_durable.py@3bddcb7:3-5, :152).
+struct JournalRoot {
+    ManifestLocation location;
+    Digest manifest_digest{};
+};
+
 class JournalStore final {
 public:
     // This lower-journal open still adopts its own HEAD and removes or cuts
     // unpublished tails. It is not the Main-owned durable publication-root
-    // recovery API. Root-selected generations, orphan byte accounting, and
-    // sealed-tail append after rollback remain required before product use.
+    // recovery API; `open_at_root` below opens the generation Main's root
+    // names and keeps and charges the bytes outside it. Writing after such a
+    // rollback (reconciling the kept bytes, sealed tail and logs) remains
+    // required before product use.
     // Opens `directory`, creating it atomically when it does not exist
     // (generation 0 is built in a sibling directory and renamed into place
     // without replacement). An existing directory must be exactly a journal;
@@ -427,6 +438,39 @@ public:
         const std::filesystem::path& directory, std::string_view identity,
         std::shared_ptr<const StorageBudget> storage, const AllocationContext& memory,
         const std::optional<AllocationContext>& page_cache, std::size_t page_cache_shards);
+
+    // Opens the generation `root` names (Main's choice; the journal's own
+    // HEAD file is neither read nor changed). Nothing is created, removed or
+    // cut. Before it is used the chosen generation is checked like `open`
+    // checks its HEAD: the manifest at `root.location` must have
+    // `root.manifest_digest` and this identity, the manifest chain back to
+    // its checkpoint must hold, every segment it names must exist with at
+    // least its published length, and the extents it wrote plus its tail
+    // (for a checkpoint generation, its last two extents, since a generation
+    // writes at most two) are verified record by record. Every byte outside
+    // the chosen generation is kept and charged to `storage` with the
+    // published files: segments it does not name above its tail, the tail's
+    // bytes past its published end, manifest logs after its log and bytes
+    // past its manifest, page logs outside its view's range and bytes past
+    // the last one's end, bytes added to earlier logs, HEAD and the lock
+    // beyond their sizes, and `.part` files. These fail closed, removing
+    // nothing: a missing directory or owner.lock, an entry that is not a
+    // regular file when the directory is listed (a link entry is refused,
+    // not followed; links in `directory` and above are), a digest or chain
+    // mismatch, a segment below the tail that no extent names, a segment
+    // other than the tail longer than published, and a total over the
+    // budget. A page log missing in the view's range, or a last one shorter
+    // than its published end, leaves the view unavailable.
+    // The store is read-only: stage, publish, compact_view and rebuild_view
+    // fail with `journal_root_read_only`. How writing resumes past kept
+    // bytes (reconciling them, sealed logs) is not decided yet (codex 22:53);
+    // until then this refuses writes the way the user's commit path refuses
+    // them while an unreconciled marker is retained.
+    [[nodiscard]] static std::unique_ptr<JournalStore> open_at_root(
+        const std::filesystem::path& directory, std::string_view identity,
+        std::shared_ptr<const StorageBudget> storage, const AllocationContext& memory,
+        const std::optional<AllocationContext>& page_cache, std::size_t page_cache_shards,
+        const JournalRoot& root);
 
     JournalStore(JournalStore&&) = delete;
     JournalStore(const JournalStore&) = delete;
@@ -608,6 +652,9 @@ private:
     };
 
     void load_published_head();
+    [[nodiscard]] std::shared_ptr<PublishedSnapshot> load_generation(const HeadPointer& pointer) const;
+    void load_root_generation(const JournalRoot& root);
+    void require_writable() const;
     void for_each_record_impl(
         const void* target,
         void (*visit)(const void*, const RecordView&, const RecordPosition&)) const;
@@ -661,6 +708,7 @@ private:
     // mark or preserved orphan names before claiming global non-reuse.
     std::atomic<std::uint64_t> max_physical_segment_id_{0};
     std::atomic<bool> poisoned_{false};
+    bool root_selected_ = false;  // opened by open_at_root: read-only; set before the store is returned
     LedgerVector<RetiredLogs> retired_;  // guarded by publish_mutex_
     std::atomic<std::uint64_t> retained_bytes_{0};  // charge of retired_, not yet removed
 };

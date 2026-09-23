@@ -25,11 +25,25 @@ namespace swegca::vrs::journal::io {
 
 inline constexpr const char* part_suffix = ".part";
 
+// Selects the OwnerLock constructor that opens only an existing lock file.
+struct ExistingLock {};
+inline constexpr ExistingLock existing_lock{};
+
 // Exclusive, process-held lock on `<dir>/owner.lock`, taken without waiting.
 // A second live owner fails with `journal_already_owned`.
 class OwnerLock final {
 public:
     explicit OwnerLock(const std::filesystem::path& directory);
+    // Opens only an existing regular `owner.lock`: nothing is created, and
+    // when `owner.lock` itself is a symbolic link (a reparse point on
+    // Windows) it is refused, not followed, in the same call that opens it,
+    // so that name cannot be swapped between a check and the open. Links
+    // in `directory` and above are followed, as every journal path is. A
+    // missing lock, a link, or an opened entry that is not a regular file
+    // fails with `journal_root_lock_missing`; one that cannot be opened as
+    // a file at all (e.g. a directory) fails with
+    // `journal_owner_lock_open_failed`.
+    OwnerLock(const std::filesystem::path& directory, ExistingLock);
     ~OwnerLock();
     OwnerLock(const OwnerLock&) = delete;
     OwnerLock& operator=(const OwnerLock&) = delete;
