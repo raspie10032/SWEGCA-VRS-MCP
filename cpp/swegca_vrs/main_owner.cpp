@@ -67,6 +67,15 @@ struct MainPublishedPair final {
     PublishedStateId head;
 };
 
+// A recovered record graph is still journal data. Its position and digest
+// cannot become Main publication authority until marker selection and the
+// strength root have been checked by Main.
+struct MainRecoveredGenesis final {
+    std::shared_ptr<const CognitiveState> state;
+    DigestBytes content_digest;
+    journal::RecordPosition publication;
+};
+
 struct detail::MainOwnerState final {
     // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:17-27
     MainOwnerState(std::shared_ptr<MainLifetime> lifetime, AllocationContext allocation,
@@ -114,11 +123,11 @@ std::shared_ptr<const CognitiveState> MainOwner::make_initial_state(
         std::move(goals), std::move(values), std::move(self));
 }
 
-// A checked genesis record graph can produce a detached candidate only.
-// Main must first select a durable marker and verify the VRS strength root
-// before it may install this state/head pair as its live publication.
+// A checked genesis record graph can produce a data candidate only. Main must
+// select a durable marker and verify the VRS strength root before it constructs
+// a PublishedStateId and installs the state/head pair as a live publication.
 // SWEGCA: src/tinylm_slicer/mosaic_paper_resident_assimilation.py@3bddcb7:491-535
-std::shared_ptr<const MainPublishedPair> MainOwner::reconstruct_genesis_candidate(
+MainRecoveredGenesis MainOwner::reconstruct_genesis_candidate(
     const journal::JournalStore& selected, const MainCommitMarkerFields& marker,
     const AllocationContext& account) {
     validate_main_marker_journal_binding(marker, selected);
@@ -128,9 +137,8 @@ std::shared_ptr<const MainPublishedPair> MainOwner::reconstruct_genesis_candidat
     auto current = make_initial_state(recovered.input(), account);
     if (current->content_digest().bytes() != recovered.content_digest())
         throw std::invalid_argument("main_recovered_content_mismatch");
-    return std::allocate_shared<MainPublishedPair>(
-        account.allocator<MainPublishedPair>(), std::move(current),
-        PublishedStateId(Digest256(recovered.content_digest()), recovered.publication()));
+    return MainRecoveredGenesis{std::move(current), recovered.content_digest(),
+                                recovered.publication()};
 }
 
 // Only this non-inline member exercises Main's private construction rights.

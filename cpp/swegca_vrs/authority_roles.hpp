@@ -19,6 +19,7 @@ struct BoundedWriteReceipt;
 struct BoundedWriteResult;
 struct MainCommitMarkerFields;
 struct MainPublishedPair;
+struct MainRecoveredGenesis;
 namespace journal {
 class JournalStore;
 }
@@ -43,13 +44,13 @@ public:
 
 private:
     // Only Main can use the initial-state key or turn a verified journal
-    // candidate into a publication identity. The candidate stays detached
-    // until the marker chain and strength root have also been verified.
+    // candidate into a publication identity. The candidate has no publication
+    // identity until the marker chain and strength root have been verified.
     // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:103-107
     static std::shared_ptr<const CognitiveState> make_initial_state(
         MainInitialState initial, const AllocationContext& allocation);
     // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:196-205
-    static std::shared_ptr<const MainPublishedPair> reconstruct_genesis_candidate(
+    static MainRecoveredGenesis reconstruct_genesis_candidate(
         const journal::JournalStore& selected, const MainCommitMarkerFields& marker,
         const AllocationContext& allocation);
     // Non-member storage receives no MainOwner friendship. In particular,
