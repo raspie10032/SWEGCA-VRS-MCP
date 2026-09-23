@@ -136,13 +136,17 @@ crash cases before code uses it.
    The final stage must be built on the latest journal HEAD while comparing
    the state-head publication identity with the one read before preparation,
    since unrelated experience appends may advance the journal generation.
-   A lower journal publication failure or a pending-receipt write failure
-   before Main's owner swap leaves the prior pair current. Main cannot infer
-   durable state from the lower journal HEAD; it retains any partial pending
-   marker and stops guarded work until reconciliation. After Main's owner
-   swap, a failed marker rename or directory fsync does not roll the live
-   pair back: reads keep using it while further writes are refused. Cold
-   recovery must choose only a proven committed Main receipt.
+   A lower journal publication failure before Main's owner swap leaves the
+   prior pair current. The native C++ path takes a stricter rule than the
+   author's pending-receipt code: it stops guarded work until the lower
+   candidate is reconciled, because the lower HEAD may have advanced. A
+   failed pending-receipt write also leaves the prior pair current; the
+   author's code retains and blocks on a partial marker only if a pending
+   file actually exists (`mosaic_paper_resident_assimilation.py@3bddcb7:507-512`).
+   After Main's owner swap, a failed marker rename or directory fsync does
+   not roll the live pair back: reads keep using it while further writes are
+   refused. After restart, recovery considers a receipt visible under its
+   committed name and verifies its native chain and named content.
 6. Initialization, cold recovery, and guarded writes must fit the VRS host's
    configured memory profile and preserve the canonical state content byte
    stream. Its content digest excludes generation ordinal, as the user's earlier
@@ -277,8 +281,9 @@ four-stage VRS path is already implemented.
   64 MiB. Its memory bound is therefore not merely page depth plus one
   record; streaming segment verification remains an open implementation task.
 
-- Reserve native state-part, state-root, and state-write-receipt record kinds
-  distinct from experience kinds 1–3. Reuse the existing bounded part-tree
+- Reserve native state-part, state-root, and state-publication record kinds
+  distinct from experience kinds 1–3 and cue binding kind 4. Reuse the
+  existing bounded part-tree
   *mechanism*; do not inherit an old VRS ranking or reinforcement policy.
   These state records carry no experience search index entries, and the
   experience decoder must reject their kinds. Kinds 5–7 are reserved, the

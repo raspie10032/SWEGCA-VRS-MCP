@@ -45,13 +45,22 @@ namespace swegca::vrs::journal {
 
 class JournalStore;
 
-// The unique owner keeps the host allocator alive through the store's
-// destruction, including when construction or opening fails.
-struct JournalStoreDeleter {
-    AllocationAdapter<JournalStore> allocation;
+// The unique owner keeps the host allocator alive through store destruction.
+// A nullable owner is represented by optional<JournalStoreOwner> at the host
+// boundary; constructing one without a host allocator is not valid.
+class JournalStoreDeleter final {
+public:
     // Lineage: native mechanism — host-owned storage for the journal object.
     // SWEGCA: user@2026-09-22:89-92
     void operator()(JournalStore* store) noexcept;
+
+private:
+    // Lineage: native mechanism — bind deallocation to the host allocator used at construction.
+    // SWEGCA: user@2026-09-22:89-92
+    explicit JournalStoreDeleter(AllocationAdapter<JournalStore> allocation) noexcept
+        : allocation_(allocation) {}
+    friend class JournalStore;
+    AllocationAdapter<JournalStore> allocation_;
 };
 using JournalStoreOwner = std::unique_ptr<JournalStore, JournalStoreDeleter>;
 
@@ -533,7 +542,7 @@ public:
     // rights or grant a state-write capability. State codecs and final
     // publication remain Main storage work.
     // Lineage: native mechanism — reserved state staging follows the sole Main-owned state rule; kind numbers and this key are C++ storage choices.
-    // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:103-107
+    // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:17
     [[nodiscard]] StagedGeneration stage_state_records(
         const StateStageKey&, std::span<const RecordDraft> drafts,
         const StateGeneration& state, std::span<const ViewGeneration> views) const {

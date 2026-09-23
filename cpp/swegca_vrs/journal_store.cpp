@@ -1220,7 +1220,7 @@ JournalStore::~JournalStore() = default;
 void JournalStoreDeleter::operator()(JournalStore* store) noexcept {
     if (!store) return;
     store->~JournalStore();
-    allocation.deallocate(store, 1);
+    allocation_.deallocate(store, 1);
 }
 
 // Lineage: native mechanism — the journal object is charged to the VRS host
@@ -1242,7 +1242,7 @@ JournalStoreOwner JournalStore::make_owned(fs::path directory, JournalIdentity i
         allocation.deallocate(raw, 1);
         throw;
     }
-    return JournalStoreOwner(raw, JournalStoreDeleter{allocation});
+    return JournalStoreOwner(raw, JournalStoreDeleter(allocation));
 }
 
 // Lineage: weak analogy — the author opens or creates and repairs its head file; here recovery from HEAD.
@@ -1792,9 +1792,9 @@ void JournalStore::verify_extent(const PublishedSnapshot& current,
 // The generic stage refuses all reserved experience and state kinds. Their
 // separate staging routes require a key formed by ExperienceAppend or Main.
 // This stages only; it does not publish or grant a state-write capability.
-// Lineage: native mechanism — the plan reserves experience staging; the state-kind reservation is a C++ storage boundary for the source's sole Main-owned state.
+// Lineage: native mechanism — the plan reserves three experience kinds; cue bindings are this C++ path's addition, and state-kind reservation protects the source's sole Main-owned state.
 // SWEGCA: docs/SWEGCA_CPP_VRS_LAYER_PLAN.md@472d23225c973fa0a33581afd6bd9026df6fc98a:159-165
-// SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:103-107
+// SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:17
 StagedGeneration JournalStore::stage(std::span<const RecordDraft> drafts,
                                      const StateGeneration& state,
                                      std::span<const ViewGeneration> views) const {
