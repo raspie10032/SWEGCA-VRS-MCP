@@ -1,4 +1,4 @@
-# SWEGCA C++ multimodal memory — design v3 (for cross-review, no code yet)
+# SWEGCA C++ multimodal memory — design v3.1 (for cross-review, no code yet)
 
 Status: draft for Claude–Codex cross-review. Nothing here is implemented.
 
@@ -37,8 +37,10 @@ A step and a selector are never a separate memory or a separate evidence vote (e
 `ObservedResource`:
 - `resource_id`: identity text.
 - `modality`: one of text, image, audio, video.
-- `content_digest`: SHA-256 of the source bytes. Always required: the user's records name `content_sha256` / `storage_sha256` even when the bytes are not kept.
-- `bytes`: optional `BlobInput`, present only when the original bytes were actually received. Main keeps them as the original (semantic_encoding :6-7). Large ones use the existing parts, so video fits. When present, SHA-256(bytes) must equal content_digest. When absent, the record says so and names its provenance. Bytes are never made up, and a derived record never claims bytes can be recovered from it (wd14 :21-24, video_native :115 `raw_media_retained_as_experience = False`).
+- `bytes`: optional `BlobInput`, present only when the original bytes were actually received. Main keeps them as the original (semantic_encoding :6-7). Large ones use the existing parts, so video fits. When absent, the record says so and names its provenance. Bytes are never made up, and a derived record never claims bytes can be recovered from it (wd14 :21-24, video_native :115 `raw_media_retained_as_experience = False`).
+- `content_digest`: optional SHA-256 of the source bytes (the user's `content_sha256` / `storage_sha256`).
+  - When bytes are present it is SHA-256(bytes), computed here.
+  - When bytes are absent it is kept only if the source record actually names one. If the source names none, the absence is recorded. A digest is never estimated or made up. (Codex 19:25)
 - `storage_locator`: optional text. This is the source's storage_path, kept as provenance only and never opened by the store.
 - `item_index`: optional u64, the source's own value, kept as given (not rewritten to list order).
 - `descriptor`, by modality, checked like Anchor (:111-134) and media_atoms:
@@ -84,7 +86,10 @@ The resource list is part of the payload, so it is part of the address identity.
 Edges carry no modality column (vrs_connectivity_regions :170-176). Strength stays per synapse group.
 
 ## 8. Open questions
-- **Q1.** Must the C++ canonical step bytes equal the user's sorted-key JSON bytes, so that step artifact addresses match the user's records?
-- **Q2.** Record kind and index entries for selectors. Are they stored at append time (a durable generation, as the user's immutable build/prepare) or recomputed cold at Replay? Draft: stored.
-- **Q3.** Where familiarity vectors are kept and what the non-text Déjà vu input looks like.
-- **Q4.** The episode_id text and our digest address are both kept. Which one do lineage and supersession name? Draft: our address. episode_id is kept as the user's identity field.
+- **Q1 (settled for now, Codex 19:25).** No promise that C++ canonical step bytes equal the user's sorted-key JSON bytes. C++ canonical addresses and the user's past `memory-step-artifact:` addresses are named differently and never mixed. Compare against the user's JSON input and encoding rules separately before any such promise.
+- **Q2 (direction agreed).** Selectors are stored as durable metadata that depends on the memory (the user's immutable build → prepare). Kind, index entries and schema are fixed after a separate design review.
+- **Q3 (deferred).** Where familiarity vectors are kept is decided only after the input contract of the <1 ms path is set.
+- **Q4 (to investigate).** Keep both episode_id and our content address. Which one lineage and supersession use is decided after reading which identifier the user's supersession and lineage functions actually use.
+
+## 9. Compatibility
+The C++ store starts new memory. It is not a reader of the old store (user 2026-09-23: 「c++ 버전은 기존 호환이 아니라 어차피 경험 새로 만들건데」). The user's existing records are a specification source, not data this store must decode.
