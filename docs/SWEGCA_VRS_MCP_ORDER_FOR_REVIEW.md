@@ -66,16 +66,16 @@ flowchart TD
     F -- Yes --> H[Capture final stable transcript tail and close session writers]
     H --> I[Validate all complete session VRS shards and their source lineage]
     I --> J[Atomically link complete native session journals to main ownership]
-    J --> K[In background, replay VRS observations through main SWEGCA append and graph update]
-    K --> L[Publish main generation and derived read projections]
+    J --> K[Keep the session VRS as one block and write only its connection points]
+    K --> L[In periodic idle time, merge some blocks, run VRS once, publish main generation]
 ```
 
 The transcript cursor keeps positions and exact VRS addresses, not recalled
 content. A record is not promoted to semantic truth simply because it was
 admitted. `Interrupt`, silence, and elapsed time are not SessionEnd. The link
-transfers ownership durably after SessionEnd; main generation integration
-then replays already admitted VRS observations through the author's append
-path in the background. Original session journals remain available. Neither
+transfers ownership durably after SessionEnd; the session VRS is then kept as
+one block with only its connection points written (user 2026-09-23), and some
+blocks are merged with one VRS run in periodic idle time. Original session journals remain available. Neither
 step reads the transcript as a recall source or runs before SessionEnd.
 Visible tool results are admitted as ordered source-bound VRS observations as
 well. A result longer than one author observation field is split while
@@ -103,3 +103,20 @@ limits without deleting experiences, regions, portals, or evidence logic.
 4. The current input is a recall key immediately; it becomes an admitted
    observation when the host-visible transcript record is captured, without
    holding up the pre-Replay <1 ms boundary.
+
+## Amendment 2026-09-23
+
+The user amended SessionEnd integration (lines 69-70 and 76-78) on
+2026-09-23 and approved writing it into this flow (「고쳐서 반영」):
+
+- 「세션 종료되면 라이브로 만들어진 VRS를 병합이 아니라 하나의 블록으로 치면 되잖아」
+- 「연결부만 만들면 저장소나 메모리에 무리도 안갈거고」
+- 「주기적으로 유휴시간이 생길때 일부 블럭을 병합해서 vrs 한번씩 돌려주면 되지 않겠나」
+- 「실시간 라이브용 세션 vrs를 실시간으로 돌려서 갱신을 기다리지 않고 반영한다」
+  (the session VRS generation of line 62 runs without lag)
+
+Before this amendment, line 69 replayed every closed session into main in
+the background right after SessionEnd. Session-local admission and
+session-first reads (line 64), the atomic link to main ownership (line 68)
+and the kept original session journals are unchanged. Line numbers above
+this section are kept as they were, because lineage tags cite them.
