@@ -28,7 +28,7 @@
 //            counterfactual and intervention support, no suspected regime
 //            change, slot/device/capacity gates, authentic capability and
 //            digest at commit time;
-//   :152     batch-one Cognitive State, proposal targeting only verification;
+//   :152     guarded write requires batch one and verification target;
 //   :155-162 Nonempty and Bind (E001/E002);
 //   :135     decisions and registered accumulator state are process-local
 //            authority; a forged object with matching fields is not one.
@@ -65,6 +65,7 @@ enum GateShellFailure : std::uint32_t {
     gate_bound_mismatch = 1u << 24,
     gate_preview_mismatch = 1u << 25,
     gate_journal_stale = 1u << 26,
+    gate_state_batch_invalid = 1u << 27,
 };
 
 struct GateOutcome {
@@ -100,6 +101,7 @@ enum BindFailure : std::uint32_t {
     bind_delta_or_mask_mismatch = 1u << 9,
     bind_noncanonical_address = 1u << 10,
     bind_record_changed = 1u << 11,
+    bind_state_batch_invalid = 1u << 12,
 };
 
 struct BindOutcome final {

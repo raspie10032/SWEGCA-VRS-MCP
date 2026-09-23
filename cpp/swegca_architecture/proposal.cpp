@@ -110,6 +110,13 @@ SynapseProposal::SynapseProposal(const AllocationContext& memory,
       contradiction_(keep_unit_score(input.contradiction)),
       uncertainty_(keep_unit_score(input.uncertainty)) {
     const auto& state = snapshot.state();
+    // The source proposal has a [batch] score, [batch,slots] mask and
+    // batch-indexed evidence addresses. This C++ proposal currently carries
+    // one scalar score/mask/address set, so only batch one is representable.
+    // Reject before Bind instead of silently treating batch zero as complete.
+    // SWEGCA: src/swegca/mosaic_synapse_arbiter.py@5901a5a:65-93
+    if (state.semantic().shape().batches != 1)
+        throw std::invalid_argument("proposal_batch_not_representable");
     if (based_on_ != state.generation())
         throw std::invalid_argument("proposal_snapshot_generation_mismatch");
     require_matching_delta_shape(semantic_delta_, state.semantic());

@@ -106,8 +106,9 @@ GateOutcome EvidenceGate::authorize(const EvidenceDecision& decision,
         evaluation.mask_digest != proposal_mask_digest(proposal))
         shell |= gate_bound_mismatch;
     if (journal_.state_generation() != state.generation()) shell |= gate_journal_stale;
-    // :152 — only the verification role, which lives in scratch. Batch one is
-    // an invariant of CognitiveState itself.
+    // :152 — only batch one and the verification role in scratch may pass
+    // this guarded write. General CognitiveState can have any common batch.
+    if (state.semantic().shape().batches != 1) shell |= gate_state_batch_invalid;
     const auto* role = state.roles().find(verification_role);
     const auto definitions = state.roles().definitions();
     const auto role_index = role == nullptr ? definitions.size() :
@@ -225,6 +226,7 @@ BindOutcome EvidenceGate::bind(const EvidenceDecision& decision,
     if (decision.claim() != proposal.claim()) failures |= bind_wrong_claim;
     if (proposal.based_on() != state.generation() ||
         !proposal.targets().matches(state.roles())) failures |= bind_stale_state;
+    if (state.semantic().shape().batches != 1) failures |= bind_state_batch_invalid;
     if (journal_.state_generation() != state.generation()) failures |= bind_stale_state;
     if (proposal.targets().selected_count() == 0) failures |= bind_empty_targets;
     if (decision.judgment().status != kernel::EvidenceStatus::accept)

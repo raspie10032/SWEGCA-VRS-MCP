@@ -11,8 +11,10 @@ namespace {
 
 // SWEGCA: src/swegca/mosaic_cognitive_kernel.py@5901a5a:175-254
 std::uint64_t checked_elements(const TensorShape3& shape) {
-    if (shape.batches == 0 || shape.slots == 0 || shape.width == 0)
-        throw std::invalid_argument("cognitive_tensor_shape_must_be_positive");
+    // The source state constructor permits an empty batch. Its configured
+    // slot count and hidden width remain positive.
+    if (shape.slots == 0 || shape.width == 0)
+        throw std::invalid_argument("cognitive_tensor_slot_or_width_zero");
     if (shape.batches > std::numeric_limits<std::uint64_t>::max() / shape.slots)
         throw std::overflow_error("cognitive_tensor_shape_overflow");
     const auto rows = shape.batches * shape.slots;
@@ -74,7 +76,7 @@ CognitiveTensor::CognitiveTensor(const AllocationContext& account,
       chunks_(account.allocator<ChunkPtr>()) {
     if (canonical_bytes.size() != byte_count_)
         throw std::invalid_argument("cognitive_tensor_byte_count_mismatch");
-    chunks_.reserve(1 + (byte_count_ - 1) / chunk_bytes);
+    if (byte_count_ != 0) chunks_.reserve(1 + (byte_count_ - 1) / chunk_bytes);
     for (std::size_t offset = 0; offset < byte_count_; offset += chunk_bytes) {
         const auto count = std::min<std::size_t>(chunk_bytes, byte_count_ - offset);
         Storage part(canonical_bytes.begin() + offset,
@@ -94,7 +96,7 @@ CognitiveTensor::CognitiveTensor(const AllocationContext& account,
     : scalar_type_(scalar_type), shape_(shape),
       byte_count_(checked_bytes(scalar_type, shape)),
       chunks_(account.allocator<ChunkPtr>()) {
-    chunks_.reserve(1 + (byte_count_ - 1) / chunk_bytes);
+    if (byte_count_ != 0) chunks_.reserve(1 + (byte_count_ - 1) / chunk_bytes);
     for (std::size_t offset = 0; offset < byte_count_; offset += chunk_bytes) {
         const auto count = std::min<std::size_t>(chunk_bytes, byte_count_ - offset);
         Storage part(count, std::byte{0}, account.allocator<std::byte>());
@@ -120,7 +122,7 @@ CognitiveTensor CognitiveTensor::zeroed(const AllocationContext& account,
                                          TensorShape3 shape) {
     const auto bytes = checked_bytes(scalar_type, shape);
     Chunks chunks(account.allocator<ChunkPtr>());
-    chunks.reserve(1 + (bytes - 1) / chunk_bytes);
+    if (bytes != 0) chunks.reserve(1 + (bytes - 1) / chunk_bytes);
     const auto full_count = bytes / chunk_bytes;
     if (full_count != 0) {
         Storage zeros(chunk_bytes, std::byte{0}, account.allocator<std::byte>());
@@ -160,7 +162,8 @@ void CognitiveTensor::copy_bytes(std::uint64_t offset,
     }
 }
 
-// SWEGCA: src/swegca/mosaic_bounded_world_write.py@5901a5a:317-329
+// The source's bounded write requires batch one before replacing a slot.
+// SWEGCA: src/swegca/mosaic_bounded_world_write.py@5901a5a:341-342
 CognitiveTensor CognitiveTensor::with_replaced_slot(
     const AllocationContext& account, std::uint64_t slot,
     std::span<const std::byte> value) const {

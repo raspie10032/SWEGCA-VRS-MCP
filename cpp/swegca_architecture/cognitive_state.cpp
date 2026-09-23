@@ -285,7 +285,7 @@ void CognitiveState::for_each_content_chunk(StateContentSink write) const {
                        world_graph_, evidence_references_, goals_, values_, self_);
 }
 
-// The original state accepts any positive common batch dimension. The
+// The original state accepts any common batch dimension, including zero. The
 // separate guarded writer currently accepts only batch one; that narrower
 // operation must not narrow the general state itself.
 // SWEGCA: src/swegca/mosaic_cognitive_kernel.py@5901a5a:234-254
