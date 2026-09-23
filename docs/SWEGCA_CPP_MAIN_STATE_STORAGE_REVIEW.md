@@ -1,0 +1,85 @@
+# Main state storage review (2026-09-23)
+
+Status: design candidate. It does not authorize a new VRS decision rule or
+claim a working Main writer. Claude and Codex must cross-check the format and
+crash cases before code uses it.
+
+## Source and current-code facts
+
+- SWEGCA `ARCHITECTURE_SPEC.md` §4.7–4.9 requires a bounded verification-slot
+  commit, exact before/after and evidence-bound receipt, rollback/retraction,
+  and recovery. It describes the old local protocol, not a native byte format.
+- `SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md` §9 requires one
+  published HEAD as the recovery root, bounded immutable linked segments,
+  exact digests, and a manifest naming the state generation. Derived views
+  remain rebuildable.
+- `MainOwner` currently constructs generation 0 with a computed state digest.
+  A new `JournalStore` starts with a zero state digest in its genesis HEAD.
+  There is no C++ state or transaction record codec or state recovery.
+- The journal limits one record payload to 16 MiB and one generation to
+  64 MiB. An initial state may exceed both limits. The experience module
+  already streams large blobs through content-addressed 8 MiB parts and a
+  bounded-depth digest tree.
+- `CognitiveTensor` currently owns one contiguous byte vector. A disk part
+  tree alone cannot prevent a verification-slot write from copying an entire
+  large scratch tensor in memory.
+
+## Required contract
+
+1. Main holds one current state and one journal owner. Before Bind or any
+   guarded write, the current state generation must exactly equal the
+   published HEAD's state generation and a verified native state root.
+2. Fresh initialization publishes the initial state's real generation and
+   root before any state-changing operation. An existing HEAD is never
+   silently replaced by the caller's `MainInitialState`.
+3. Recovery reads the HEAD-selected root by exact address and verifies its
+   record, ordinal, state digest, bounded parts, and reconstructed canonical
+   state. It fails closed on missing or mismatched data. Cold recovery may
+   read the state bytes; Déjà vu through Recall must not do this work.
+4. A guarded successor checks the current HEAD and prior state, stages only
+   changed bounded state parts, then stages the successor root and complete
+   write receipt. Only the final Main-published HEAD names the successor
+   state. Main swaps its current pointer only after that publication succeeds.
+5. Intermediate part publication, if necessary to respect the 64 MiB
+   generation limit, keeps the prior state generation. Part records confer no
+   decision or write authority. A crash before the final HEAD leaves the
+   prior state current; a retry may verify and reuse immutable parts.
+6. A state tensor update shares unchanged immutable byte chunks, copies only
+   touched chunks, and preserves the current canonical byte stream and
+   `swegca.cognitive_state.v1` digest. The host VRS layer counts memory and
+   judges its configured limit; the SWEGCA code uses its injected allocator.
+
+## Candidate representation for review
+
+- Reserve native state-part, state-root, and state-write-receipt record kinds
+  distinct from experience kinds 1–3. Reuse the existing bounded part-tree
+  *mechanism*; do not inherit an old VRS ranking or reinforcement policy.
+- Derive the state-root exact address from the state digest with a reserved
+  prefix. The manifest already holds state ordinal and digest, so recovery
+  can use the same verified address tree without a memory-size scan. Main is
+  already a `JournalStore` friend and can use one held snapshot with its
+  private `resolve_in` and `read_in`; an `ExperienceAddress` wrapper is wrong
+  for a state record.
+- Encode enough canonical state fields and typed tensor-part references in
+  the root to reconstruct and recompute the existing state digest exactly.
+  A root payload that exceeds one record must itself use bounded parts.
+- Keep state parts immutable and content addressed. A single-slot write
+  changes only intersecting chunks; the root links unchanged chunks from
+  the prior state. Hashing the canonical stream may still take time on a
+  write, but it does not belong to the input-to-Recall latency budget.
+
+## Decisions before implementation
+
+- Confirm that intermediate part HEADs with an unchanged state generation
+  preserve §9's rule that one final HEAD exposes a state successor.
+- Define exact state-root and receipt payloads and how a root larger than
+  16 MiB is parted without a second unrelated codec.
+- Define restart behavior when genesis or intermediate HEAD still has a
+  zero state digest, including what initial input may be accepted.
+- Verify that all tensor readers and digest users can read a chunked
+  canonical stream without constructing a full contiguous copy.
+- List crash points around part publication, final HEAD publication, and
+  Main pointer swap; assert the published state is always recoverable.
+
+This storage path is outside the hot Déjà vu → Recall path. It cannot be used
+as a substitute for the SWEGCA-based four-stage VRS navigation and judgment.
