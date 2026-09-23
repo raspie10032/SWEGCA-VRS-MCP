@@ -642,7 +642,7 @@ private:
                                                  std::span<const ViewGeneration> views) const;
     JournalStore(std::filesystem::path directory, JournalIdentity identity,
                  std::shared_ptr<const StorageBudget> storage, const AllocationContext& memory,
-                 std::uint64_t allocation_unit, std::unique_ptr<io::OwnerLock> lock,
+                 std::uint64_t allocation_unit, std::shared_ptr<io::OwnerLock> lock,
                  const std::optional<AllocationContext>& page_cache, std::size_t page_cache_shards);
 
     // Page logs a view rewrite left behind, and the lease that keeps them.
@@ -699,7 +699,7 @@ private:
     std::shared_ptr<const StorageBudget> storage_;  // the host's, shared
     AllocationContext memory_;
     std::uint64_t allocation_unit_;
-    std::unique_ptr<io::OwnerLock> lock_;
+    std::shared_ptr<io::OwnerLock> lock_;  // control block charged to Main's allocator
     std::shared_ptr<PageCache> cache_;  // charged to its host context; internally locked
     std::mutex publish_mutex_;
     std::atomic<std::shared_ptr<const PublishedSnapshot>> snapshot_;

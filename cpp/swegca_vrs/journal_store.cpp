@@ -1201,7 +1201,7 @@ StagedGeneration::StagedGeneration(StagedGeneration&& other) noexcept
 // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:50
 JournalStore::JournalStore(fs::path directory, JournalIdentity identity,
                            std::shared_ptr<const StorageBudget> storage, const AllocationContext& memory,
-                           std::uint64_t allocation_unit, std::unique_ptr<io::OwnerLock> lock,
+                           std::uint64_t allocation_unit, std::shared_ptr<io::OwnerLock> lock,
                            const std::optional<AllocationContext>& page_cache, std::size_t page_cache_shards)
     : directory_(std::move(directory)), identity_(std::move(identity)),
       storage_(std::move(storage)), memory_(memory), allocation_unit_(allocation_unit),
@@ -1227,7 +1227,7 @@ std::unique_ptr<JournalStore> JournalStore::open(const fs::path& directory,
     if (page_cache && page_cache_shards == 0) fail("journal_page_cache_invalid");
     JournalIdentity owned(memory, identity);  // checked before anything is created
     if (!fs::exists(directory)) create_initial(directory, identity, memory);
-    auto lock = std::make_unique<io::OwnerLock>(directory);
+    auto lock = std::allocate_shared<io::OwnerLock>(memory.allocator<io::OwnerLock>(), directory);
     const auto unit = io::allocation_unit(directory);
     std::unique_ptr<JournalStore> store(new JournalStore(directory, std::move(owned), std::move(storage), memory, unit,
                                                          std::move(lock), page_cache, page_cache_shards));
@@ -1514,7 +1514,8 @@ std::unique_ptr<JournalStore> JournalStore::open_at_root(const fs::path& directo
     // help; the check only fails early.
     if (!fs::is_regular_file(fs::symlink_status(directory / lock_name)))
         fail("journal_root_lock_missing");
-    auto lock = std::make_unique<io::OwnerLock>(directory, io::existing_lock);
+    auto lock = std::allocate_shared<io::OwnerLock>(memory.allocator<io::OwnerLock>(),
+                                                    directory, io::existing_lock);
     const auto unit = io::allocation_unit(directory);
     std::unique_ptr<JournalStore> store(new JournalStore(directory, std::move(owned), std::move(storage), memory, unit,
                                                          std::move(lock), page_cache, page_cache_shards));
