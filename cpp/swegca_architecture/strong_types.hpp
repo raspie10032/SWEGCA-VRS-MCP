@@ -1,6 +1,7 @@
 #pragma once
 
-#include <array>
+#include "swegca_architecture/digest_bytes.hpp"
+
 #include <compare>
 #include <cstddef>
 #include <cstdint>
@@ -47,6 +48,10 @@ struct ExperienceAddressTag {
     static constexpr std::string_view name = "experience_address";
 };
 struct RoleIdTag { static constexpr std::string_view name = "role_id"; };
+struct EntityIdTag { static constexpr std::string_view name = "entity_id"; };
+struct EntityKindTag { static constexpr std::string_view name = "entity_kind"; };
+struct RelationIdTag { static constexpr std::string_view name = "relation_id"; };
+struct RelationKindTag { static constexpr std::string_view name = "relation_kind"; };
 struct TransactionIdTag {
     static constexpr std::string_view name = "transaction_id";
 };
@@ -56,12 +61,16 @@ using ProducerId = TextIdentity<ProducerIdTag>;
 using ClaimId = TextIdentity<ClaimIdTag>;
 using ExperienceAddress = TextIdentity<ExperienceAddressTag>;
 using RoleId = TextIdentity<RoleIdTag>;
+using EntityId = TextIdentity<EntityIdTag>;
+using EntityKind = TextIdentity<EntityKindTag>;
+using RelationId = TextIdentity<RelationIdTag>;
+using RelationKind = TextIdentity<RelationKindTag>;
 using TransactionId = TextIdentity<TransactionIdTag>;
 
 class Digest256 final {
 public:
-    static constexpr std::size_t width = 32;
-    using Bytes = std::array<std::byte, width>;
+    static constexpr std::size_t width = digest256_width;
+    using Bytes = DigestBytes;
 
     // Rule: provenance and immutable artifact identity, SWEGCA I03 and I07.
     // SWEGCA: src/swegca/mosaic_evidence_revision.py@5901a5a:23-45
