@@ -3,6 +3,7 @@
 #include "swegca_architecture/journal_file_io.hpp"
 #include "swegca_architecture/journal_format.hpp"
 #include "swegca_architecture/journal_position.hpp"
+#include "swegca_architecture/authority_roles.hpp"
 #include "swegca_architecture/allocation.hpp"
 #include "swegca_architecture/strong_types.hpp"
 
@@ -306,7 +307,10 @@ public:
     // entries made durable, and a noexcept snapshot swap. Nothing is
     // allocated here from the data; any I/O failure poisons the store, which
     // must then be reopened, and reopening removes unpublished leftovers.
+private:
     void publish(StagedGeneration&& staged);
+
+public:
 
     // The published generation readers see now.
     [[nodiscard]] PublishedUniverse universe() const;
@@ -358,6 +362,7 @@ public:
     // logs stay, charged, until no snapshot holds their
     // lease; the next publication removes them, and a reopen removes any
     // left. A failure before HEAD removes the new logs and publishes nothing.
+private:
     void compact_view();
 
     // Rebuilds both views from the records alone, never reading the old
@@ -380,8 +385,8 @@ public:
     // failed for storage while `storage_charged` still includes them.
     void reclaim_retired();
 
-private:
     friend class swegca::architecture::ExperienceAppend;
+    friend class swegca::architecture::MainOwner;
     // `stage` without the kind rule: ExperienceAppend's only.
     [[nodiscard]] StagedGeneration stage_records(std::span<const RecordDraft> drafts,
                                                  const StateGeneration& state,
@@ -443,3 +448,8 @@ private:
 };
 
 }  // namespace swegca::architecture::journal
+
+// Complete the only staging friend in every translation unit that sees
+// JournalStore. A forward declaration alone permits a caller to define a
+// substitute ExperienceAppend with access to stage_records.
+#include "swegca_architecture/experience.hpp"
