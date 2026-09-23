@@ -338,6 +338,26 @@ void publish_file_parts(const fs::path& path, std::span<const std::span<const st
         fail_last_error("journal_file_publish_failed");
 }
 
+// Main's pending marker is exclusive and fsynced before the live owner swap.
+// A failed write or flush leaves the file under its pending name for review.
+// SWEGCA: src/tinylm_slicer/mosaic_paper_resident_assimilation.py@3bddcb7:491-535
+void write_new_file_fsynced(const fs::path& path, std::span<const std::byte> bytes) {
+    auto handle = open_file(path, GENERIC_WRITE, CREATE_NEW, nullptr);
+    write_at(handle, bytes, 0);
+    flush(handle, "journal_file_fsync_failed");
+    handle.close_checked("journal_file_close_failed");
+}
+
+// The committed marker name cannot replace an existing immutable receipt.
+// SWEGCA: src/tinylm_slicer/mosaic_paper_resident_assimilation.py@3bddcb7:491-535
+bool rename_file_no_replace(const fs::path& from, const fs::path& to) {
+    if (::MoveFileExW(from.c_str(), to.c_str(), MOVEFILE_WRITE_THROUGH)) return true;
+    const auto error = ::GetLastError();
+    if (error == ERROR_ALREADY_EXISTS || error == ERROR_FILE_EXISTS) return false;
+    ::SetLastError(error);
+    fail_last_error("journal_file_publish_failed");
+}
+
 // Lineage: weak analogy — the author appends, fsyncs and cuts back on failure; here unpublished bytes are cut first.
 // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:579-581
 // SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:233-242
@@ -361,10 +381,10 @@ void append_parts_at_published_end(const fs::path& path, std::uint64_t published
     handle.close_checked("journal_file_close_failed");
 }
 
-// Every entry the journal creates or replaces on Windows arrives through
-// publish_file or rename_directory_no_replace, whose MOVEFILE_WRITE_THROUGH
-// move is documented to return only once it is on disk; nothing is left to
-// flush here, and no directory-handle flush is relied on (codex J11).
+// Journal entries arrive through publish_file or rename_directory_no_replace;
+// Main's committed marker arrives through rename_file_no_replace. Those moves
+// use WRITE_THROUGH, so nothing is left to flush here and no undocumented
+// directory-handle flush is relied on (codex J11).
 // Lineage: direct — the author's directory fsync returns at once on Windows; so does this.
 // SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:39-41
 void make_entries_durable(const fs::path& directory) { (void)directory; }
@@ -516,6 +536,25 @@ void publish_file_parts(const fs::path& path, std::span<const std::span<const st
         descriptor.close_checked("journal_file_close_failed");
     }
     if (::rename(part.c_str(), path.c_str()) != 0) fail_errno("journal_file_publish_failed");
+}
+
+// Main's pending marker is exclusive and fsynced before the live owner swap.
+// A failed write or flush leaves the file under its pending name for review.
+// SWEGCA: src/tinylm_slicer/mosaic_paper_resident_assimilation.py@3bddcb7:491-535
+void write_new_file_fsynced(const fs::path& path, std::span<const std::byte> bytes) {
+    auto descriptor = open_file(path, O_WRONLY | O_CREAT | O_EXCL, nullptr);
+    write_at(descriptor, bytes, 0);
+    flush(descriptor, "journal_file_fsync_failed");
+    descriptor.close_checked("journal_file_close_failed");
+}
+
+// The committed marker name cannot replace an existing immutable receipt.
+// SWEGCA: src/tinylm_slicer/mosaic_paper_resident_assimilation.py@3bddcb7:491-535
+bool rename_file_no_replace(const fs::path& from, const fs::path& to) {
+    if (::renameat2(AT_FDCWD, from.c_str(), AT_FDCWD, to.c_str(), RENAME_NOREPLACE) == 0)
+        return true;
+    if (errno == EEXIST) return false;
+    fail_errno("journal_file_publish_failed");
 }
 
 // Lineage: weak analogy — the author appends, fsyncs and cuts back on failure; here unpublished bytes are cut first.

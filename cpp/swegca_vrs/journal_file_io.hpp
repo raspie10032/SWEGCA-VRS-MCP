@@ -13,7 +13,7 @@
 // (user@2026-09-23: any environment; no "unsupported platform" omission).
 // Every failure throws; nothing here decides what is published.
 //
-// Entry publication protocol (codex J11): a new name only ever appears by
+// Lower-journal entry publication protocol (codex J11): a new name appears by
 // an atomic move of a fully written and flushed `.part` file.
 //   POSIX:   write, fsync(file), rename, then `make_entries_durable` fsyncs
 //            the directory.
@@ -21,6 +21,8 @@
 //            MOVEFILE_WRITE_THROUGH, which is documented not to return until
 //            the move is on disk; `make_entries_durable` has nothing left to
 //            do, and no undocumented directory flush is relied on.
+// Main's pending commit marker is different: it is created exclusively and
+// flushed under its own pending name, then moved after Main's owner swap.
 namespace swegca::vrs::journal::io {
 
 inline constexpr const char* part_suffix = ".part";
@@ -72,6 +74,22 @@ void publish_file(const std::filesystem::path& path, std::span<const std::byte> 
 // The same with any number of parts written back to back, flushed once.
 void publish_file_parts(const std::filesystem::path& path,
                         std::span<const std::span<const std::byte>> parts);
+
+// Main's append-only commit marker has a different publication order from a
+// replaceable journal HEAD. Create its unique pending name exclusively and
+// fsync its bytes before Main swaps the live owner pair. A failure after
+// creation leaves that pending file for Main to reconcile.
+// SWEGCA: src/tinylm_slicer/mosaic_paper_resident_assimilation.py@3bddcb7:491-535
+void write_new_file_fsynced(const std::filesystem::path& path,
+                            std::span<const std::byte> bytes);
+
+// After Main's owner swap, move a pending marker to its committed name only
+// when the destination is absent. False means the destination exists and
+// leaves `from` untouched. On POSIX the caller must then fsync the directory;
+// the Windows move uses WRITE_THROUGH.
+// SWEGCA: src/tinylm_slicer/mosaic_paper_resident_assimilation.py@3bddcb7:491-535
+[[nodiscard]] bool rename_file_no_replace(const std::filesystem::path& from,
+                                          const std::filesystem::path& to);
 
 // Cuts unpublished bytes past `published`, appends `bytes` there and makes
 // them durable. A file shorter than `published` fails closed. With no bytes
