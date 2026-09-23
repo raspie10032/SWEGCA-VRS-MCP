@@ -298,7 +298,8 @@ public:
     [[nodiscard]] static AutonomyState encode(const AllocationContext& account,
                                               const AutonomyControl& control);
     // Copies `bytes` onto `account` only if they decode as one control and
-    // re-encode to the same bytes (`autonomy_state_not_canonical` otherwise).
+    // re-encode to the same bytes. Malformed controls fail in the control
+    // decoder; a second encoding fails `autonomy_state_not_canonical`.
     // SWEGCA: src/swegca/mosaic_autonomous_cognition.py@5901a5a:167-186
     [[nodiscard]] static AutonomyState decode(const AllocationContext& account,
                                               std::span<const std::byte> bytes);
