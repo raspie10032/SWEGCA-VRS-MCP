@@ -106,7 +106,8 @@ struct PayloadField {
 };
 
 // The payload fields the machine reads; `digest` is the SHA-256 of the
-// complete canonical payload, derived by the event parser from its bytes.
+// complete canonical payload. The Main ingress must derive it from the
+// event's verified bytes before this view can be used for a state update.
 // The event's experience kind follows its actual source and lineage.
 struct AutonomyPayloadView {
     PayloadField<std::span<const std::string_view>> requested_axes;
