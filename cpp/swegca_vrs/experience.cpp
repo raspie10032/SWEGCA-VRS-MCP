@@ -2629,7 +2629,7 @@ SelectionReceipt<NoAuthority>::SelectionReceipt(QueryText query, const Digest256
 // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:274-290
 Digest256 SelectionReceipt<NoAuthority>::compute_digest() const {
     Sha256 hash;
-    hash_field(hash, "swegca.selection_receipt.v3");
+    hash_field(hash, "swegca.selection_receipt.v4");
     hash_field(hash, query_.value());
     hash.update(context_.bytes());
     hash_u64(hash, universe_.generation);
