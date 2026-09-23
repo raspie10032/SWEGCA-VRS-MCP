@@ -43,7 +43,7 @@ namespace swegca::vrs {
 // target mask (not the producer's description) before arbitration, and its own
 // evaluators decide the conditions the gate cannot compute itself. The gate
 // computes the rest (issuing accumulator and its revision, evidence
-// currentness, generation, target, registry, binding) and never takes them
+// currentness, publication, target, registry, binding) and never takes them
 // from the caller.
 struct MainGateEvaluation {
     Digest256 delta_digest;  // canonical digest of the bound proposal tensors
@@ -64,7 +64,7 @@ enum GateShellFailure : std::uint32_t {
     gate_decision_foreign = 1u << 20,         // :135, not issued by this registered accumulator
     gate_rules_not_main = 1u << 21,           // :135, decided under an unregistered policy
     gate_target_not_verification = 1u << 22,  // :152, target is not the scratch verification role
-    gate_generation_stale = 1u << 23,         // :142,150, proposal not made against the current state
+    gate_publication_stale = 1u << 23,        // :142,150, proposal not made against the current state
     gate_bound_mismatch = 1u << 24,
     gate_preview_mismatch = 1u << 25,
     gate_journal_stale = 1u << 26,
@@ -80,7 +80,7 @@ struct GateOutcome {
 // The operation a cognitive-state-commit capability authorizes: this
 // decision, this binding (claim revision, evidence, actual delta and mask),
 // this preview, this role in this registry, judged under this gate policy,
-// at this generation. The writer recomputes it from what it is about to
+// at this publication. The writer recomputes it from what it is about to
 // commit and its own configuration, and the ledger compares.
 [[nodiscard]] Digest256 verification_commit_operation(const Digest256& decision_digest,
                                                       const Digest256& binding,
@@ -89,7 +89,7 @@ struct GateOutcome {
                                                       std::string_view target,
                                                       const Digest256& registry_digest,
                                                       const Digest256& gate_policy,
-                                                      const StateGeneration& generation);
+                                                      const PublishedStateId& head);
 
 class ExperienceJournal;
 
@@ -127,7 +127,7 @@ public:
     [[nodiscard]] BindOutcome bind(const EvidenceDecision& decision,
                                    const EvidenceAccumulator& accumulator,
                                    SynapseProposal proposal,
-                                   const CognitiveState& state,
+                                   const StateSnapshot& snapshot,
                                    std::uint64_t current_step) const;
 
     // Judges `proposal` against `decision` for the current `state` and issues
@@ -135,7 +135,7 @@ public:
     // a result, not an exception; the failure bits name every one. Evidence
     // is current (spec :142) when the decision is at the accumulator's
     // current revision and every admitted original is unexpired at Main's
-    // `current_step` and current at the state's generation (observed on it,
+    // `current_step` and current at the state's content (observed on it,
     // or re-evidenced on it by Main with the same outcome, with no
     // conflicting result on it). Metadata only; O(log n).
     [[nodiscard]] GateOutcome authorize(const EvidenceDecision& decision,
@@ -143,7 +143,7 @@ public:
                                         const BoundProposal& bound,
                                         const ArbitrationResult& preview,
                                         const MainGateEvaluation& evaluation,
-                                        const CognitiveState& state,
+                                        const StateSnapshot& snapshot,
                                         std::uint64_t current_step) const;
 
 private:
