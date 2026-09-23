@@ -39,13 +39,10 @@ SOURCE_ROOTS = (
 
 
 def self_design_document(source: str) -> bool:
-    # These files describe this reconstruction. They can be reviewed as
-    # design records, but cannot independently prove lineage to the user's
-    # SWEGCA architecture or its original implementation. Explicit approved
-    # user directives use the user@ form instead.
-    return source.startswith("docs/SWEGCA_CPP_") or source == (
-        "docs/SWEGCA_VRS_MCP_ORDER_FOR_REVIEW.md"
-    )
+    # This repository's docs describe the reconstruction. A new design note
+    # cannot prove its own lineage. Approved user steps use the user@ form;
+    # original author sources live in separately pinned repositories.
+    return source.startswith("docs/")
 
 
 def git_bytes(*args: str, root: Path | None = None) -> bytes:
