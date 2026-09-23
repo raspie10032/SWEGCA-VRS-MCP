@@ -38,6 +38,8 @@ crash cases before code uses it.
 - `MainInitialState::TensorInput` now accepts either a full borrowed span or
   a borrowed `TensorByteReader` consumed into validated 8 MiB chunks. The
   stream path avoids holding caller input and a second whole tensor at once.
+  It checks EOF after the expected byte count, matching the span path's exact
+  length rule. The borrowed reader must honestly report bytes it writes.
   Main's cold journal recovery has not been connected to this reader yet.
 - The original `mosaic_world_memory_transaction.py` prepares a transaction
   for semantic-memory promotion linked to an existing World-write receipt.

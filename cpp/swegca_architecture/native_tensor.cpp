@@ -1,6 +1,7 @@
 #include "swegca_architecture/native_tensor.hpp"
 
 #include <algorithm>
+#include <array>
 #include <limits>
 #include <stdexcept>
 #include <utility>
@@ -126,7 +127,9 @@ CognitiveTensor::CognitiveTensor(const AllocationContext& account,
     }
 }
 
-// SWEGCA: docs/SWEGCA_CPP_MAIN_STATE_STORAGE_REVIEW.md@7c4d419:38-41
+// The user's CognitiveState source defines the tensor shape and value
+// contract. Borrowed, bounded byte reading is a C++ recovery extension.
+// SWEGCA: src/tinylm_slicer/mosaic_cognitive_kernel.py@5901a5a:220-254
 CognitiveTensor::CognitiveTensor(const AllocationContext& account,
                                  ScalarType scalar_type, TensorShape3 shape,
                                  const TensorByteReader& source)
@@ -148,6 +151,9 @@ CognitiveTensor::CognitiveTensor(const AllocationContext& account,
         chunks_.push_back(std::allocate_shared<Chunk>(
             account.allocator<Chunk>(), std::move(part), scalar_type));
     }
+    std::array<std::byte, 1> trailing{};
+    if (source.read(byte_count_, trailing) != 0)
+        throw std::invalid_argument("cognitive_tensor_byte_count_mismatch");
 }
 
 // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:243-251

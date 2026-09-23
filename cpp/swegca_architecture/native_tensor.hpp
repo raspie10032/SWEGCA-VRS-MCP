@@ -32,8 +32,11 @@ struct TensorShape3 final {
 };
 
 // Borrowed source for bounded initial-state recovery. A read may return less
-// than requested; zero signals end or failure. CognitiveTensor requires every
-// canonical byte and validates each complete chunk before retaining it.
+// than requested; zero signals end or failure. The reader must allow an EOF
+// probe at the exact expected byte count. CognitiveTensor requires every
+// canonical byte, then requires EOF, and validates each complete chunk.
+// Like any byte-reader interface, it trusts a reported read count to mean
+// that many destination bytes were actually written.
 class TensorByteReader {
 public:
     virtual ~TensorByteReader() = default;

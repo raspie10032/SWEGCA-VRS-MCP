@@ -13,7 +13,9 @@ namespace {
 
 std::atomic<bool> main_lifetime_active{false};
 
-// SWEGCA: docs/SWEGCA_CPP_MAIN_STATE_STORAGE_REVIEW.md@7c4d419:38-41
+// The user's CognitiveState source defines the tensor invariants. Selecting
+// a bounded borrowed reader is a C++ startup/recovery extension.
+// SWEGCA: src/tinylm_slicer/mosaic_cognitive_kernel.py@5901a5a:220-254
 CognitiveTensor initial_tensor(const AllocationContext& account,
                                const MainInitialState::TensorInput& input) {
     if (input.reader != nullptr) {
