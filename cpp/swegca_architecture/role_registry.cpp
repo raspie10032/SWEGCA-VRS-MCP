@@ -67,7 +67,9 @@ Digest256 registry_digest(std::span<const RoleDefinition> definitions) {
     return Digest256(hash.finish());
 }
 
-// SWEGCA: src/swegca/mosaic_cognitive_slot_topology.py@5901a5a:12-73
+// Weak source analogy: the author uses a boolean target-slot mask. Packed
+// 64-bit words and their required count are additional C++ representation.
+// SWEGCA: src/swegca/mosaic_synapse_arbiter.py@5901a5a:54-75
 std::size_t required_word_count(std::size_t roles) {
     if (roles == 0)
         throw std::invalid_argument("role_mask_registry_must_not_be_empty");
