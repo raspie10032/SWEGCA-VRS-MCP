@@ -232,9 +232,11 @@ StateGeneration CognitiveState::validated_generation(
             scratch_.shape().slots}))
             throw std::invalid_argument("initial_role_registry_shape_mismatch");
     } else {
-        if (semantic_.scalar_type() != prior->semantic_.scalar_type() ||
-            semantic_.shape().width != prior->semantic_.shape().width)
-            throw std::invalid_argument("successor_tensor_format_changed");
+        // A guarded write may promote all three partitions; an exact rollback
+        // may restore their earlier dtype. The writer checks the operation's
+        // dtype rule, while validate() checks their common successor dtype.
+        if (semantic_.shape().width != prior->semantic_.shape().width)
+            throw std::invalid_argument("successor_tensor_width_changed");
         if (semantic_.shape().slots < prior->semantic_.shape().slots ||
             executive_.shape().slots < prior->executive_.shape().slots ||
             scratch_.shape().slots < prior->scratch_.shape().slots)

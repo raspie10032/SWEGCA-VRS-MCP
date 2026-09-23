@@ -499,6 +499,9 @@ public:
     // Replays one exact experience (`journal_address_unknown` when absent).
     [[nodiscard]] ExperienceRecord replay(const ExperienceAddress& address) const;
 
+    // The state generation named by the current published journal HEAD.
+    [[nodiscard]] StateGeneration state_generation() const;
+
     // Visits, in address order over one published snapshot, every experience
     // `view` names for `key` until `visit` returns false: for `cue` a single
     // cue token; for `source`, `name_space`, `resource` and `transaction` the
