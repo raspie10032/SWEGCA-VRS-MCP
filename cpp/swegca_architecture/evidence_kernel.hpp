@@ -182,11 +182,12 @@ struct Interval {
 }
 
 // Invalid rules or tally abstain with `invalid_input`. Otherwise: abstain on
-// too few samples, diversity or a measured regime change; accept only when
+// too few samples, diversity or a regime change; accept only when
 // the weakest axis lower bound clears the threshold; reject only when the
-// pooled upper bound stays at or below it; abstain otherwise. A regime change
-// is judged only once `minimum_recent_samples` outcomes exist, so an
-// unmeasured window never counts as a change, even at threshold 0.
+// pooled upper bound stays at or below it; abstain otherwise. As the author
+// does (:314-318, :335), a window with fewer than `minimum_recent_samples`
+// outcomes scores 0 and is still compared, so threshold 0 always abstains
+// (Codex 2026-09-23 17:28).
 // SWEGCA: src/swegca/mosaic_evidence_accumulator.py@5901a5a:285-357
 [[nodiscard]] inline EvidenceJudgment judge_evidence(const EvidenceRules& r,
                                                      const EvidenceTally& t) noexcept {
@@ -237,7 +238,7 @@ struct Interval {
         out.status = S::abstain, out.reason = R::axis_source_diversity;
     } else if (t.context_diversity < r.minimum_context_diversity_) {
         out.status = S::abstain, out.reason = R::context_diversity;
-    } else if (measured && out.regime_change_score >= r.regime_change_threshold_) {
+    } else if (out.regime_change_score >= r.regime_change_threshold_) {
         out.status = S::abstain, out.reason = R::regime_change_suspected;
     } else if (out.causal_lower_bound > r.threshold_) {
         out.status = S::accept, out.reason = R::causal_lower_bound;
