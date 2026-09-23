@@ -741,6 +741,11 @@ architecture and its test-condition list have passed static review
   authenticity of the judgment, the provenance and counterfactual facts
   behind the two flags, promotion authority bound to an exact receipt, and
   applying the decision to the memory stores (:165-190, :249-344).
+- The same core header now holds the linked transaction's separate
+  causal/source/context minima from
+  `mosaic_world_memory_transaction.py@3bddcb7:27-37,226-233` as a pure,
+  non-authorizing predicate. Main still authenticates the decision and
+  checks the current write receipt, candidate and transaction.
 - Stage 7 reference slice (codex, 2026-09-24; not Stage 7 complete):
   `memory_candidate_reference.hpp` distinguishes original-experience
   addresses from write-receipt links and checks the author's required-ref

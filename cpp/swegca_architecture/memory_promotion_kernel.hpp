@@ -60,6 +60,45 @@ struct MemoryPromotionDecision {
     bool semantic_read_allowed = false;
 };
 
+// The linked World-memory transaction has its own minima, separate from the
+// evidence policy that produced the decision. They are caller configuration;
+// the core owns only the comparison, not the decision's authority.
+// Lineage: direct — WorldMemoryTransactionConfig defaults and validation.
+// SWEGCA: src/tinylm_slicer/mosaic_world_memory_transaction.py@3bddcb7:27-37
+struct SemanticPromotionThresholds {
+    double minimum_causal_lower_bound = 0.55;
+    std::uint32_t minimum_source_diversity = 2;
+    std::uint32_t minimum_context_diversity = 4;
+};
+
+// A typed unsigned diversity minimum cannot be negative; zero is invalid.
+// Both comparisons reject NaN and infinities without needing math libraries.
+// Lineage: direct — the source's post-init checks on this separate config.
+// SWEGCA: src/tinylm_slicer/mosaic_world_memory_transaction.py@3bddcb7:27-37
+[[nodiscard]] constexpr bool semantic_promotion_thresholds_valid(
+    const SemanticPromotionThresholds& thresholds) noexcept {
+    return thresholds.minimum_causal_lower_bound >= 0.0 &&
+           thresholds.minimum_causal_lower_bound <= 1.0 &&
+           thresholds.minimum_source_diversity > 0 &&
+           thresholds.minimum_context_diversity > 0;
+}
+
+// This reproduces only the linked-promotion evidence threshold checks. Main
+// must separately authenticate the EvidenceDecision, verify the current state
+// against the write receipt, check candidate references, and own the native
+// transaction and capability. It does not add a second judgment-validity rule.
+// Lineage: direct — the author's accepted-status and three minima checks.
+// SWEGCA: src/tinylm_slicer/mosaic_world_memory_transaction.py@3bddcb7:226-233
+[[nodiscard]] constexpr bool semantic_promotion_evidence_eligible(
+    const EvidenceJudgment& judgment,
+    const SemanticPromotionThresholds& thresholds) noexcept {
+    return semantic_promotion_thresholds_valid(thresholds) &&
+           judgment.status == EvidenceStatus::accept &&
+           judgment.causal_lower_bound >= thresholds.minimum_causal_lower_bound &&
+           judgment.source_diversity >= thresholds.minimum_source_diversity &&
+           judgment.context_diversity >= thresholds.minimum_context_diversity;
+}
+
 // Lineage: native mechanism — the author's tier and accumulator values are
 // closed enumerations that never hold another value; C++ enums can, so the
 // kernel admits only a tier the author defines and a status/reason pair the
