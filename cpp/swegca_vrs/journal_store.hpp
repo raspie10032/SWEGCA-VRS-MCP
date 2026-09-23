@@ -776,6 +776,10 @@ public:
     // of its lookups, Recall and Replay.
     // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:592-595
     void for_each_index_match(char kind, std::string_view value, IndexVisitor visit) const;
+    // The same fields JournalStore::universe() reports, for this lease's
+    // generation, so a receipt's universe matches its postings and Replay.
+    // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:55-73
+    [[nodiscard]] PublishedUniverse universe() const;
     // The root and head used for Main's marker check come from this same
     // pinned generation as every record resolved and read through this lease.
     // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:587-590

@@ -46,6 +46,16 @@ StateHeadReference state_head_of(const ManifestFields& fields) {
     return StateHeadReference{fields.state_content_digest, fields.state_publication};
 }
 
+// The counters one snapshot's manifest and extents hold, so the store and a
+// pinned lease report the same universe for the same generation.
+// Lineage: weak analogy — the author validates an enumerated artifact list; here HEAD's counters are read.
+// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:55-73
+PublishedUniverse universe_of(const PublishedSnapshot& current) {
+    const auto& fields = current.head.fields();
+    return PublishedUniverse{fields.generation, current.head.digest(),
+                             fields.tail_sequence, current.extents.record_bytes()};
+}
+
 // Checked accumulation for byte counts.
 // Lineage: native mechanism — checked uint64 addition for byte counts (Python integers do not overflow).
 // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:50
@@ -1816,6 +1826,14 @@ void JournalReadSnapshot::for_each_index_match(char kind, std::string_view value
     store_->for_each_index_match_in(*pinned_, kind, value, visit);
 }
 
+// Lineage: native mechanism — a selection receipt's universe comes from the same pinned view as its postings and Replay.
+// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:55-73
+PublishedUniverse JournalReadSnapshot::universe() const {
+    if (!pinned_) fail("journal_read_snapshot_invalid");
+    store_->require_usable();
+    return universe_of(*pinned_);
+}
+
 // Lineage: native mechanism — Main's marker check and cold reads share one generation.
 // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:587-590
 PublishedCoordinates JournalReadSnapshot::coordinates() const {
@@ -2259,10 +2277,7 @@ void JournalStore::publish_locked(StagedGeneration&& staged) {
 // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:55-73
 PublishedUniverse JournalStore::universe() const {
     require_usable();
-    const auto current = snapshot();
-    const auto& fields = current->head.fields();
-    return PublishedUniverse{fields.generation, current->head.digest(),
-                             fields.tail_sequence, current->extents.record_bytes()};
+    return universe_of(*snapshot());
 }
 
 // Lineage: native mechanism — reports a derived view that must be rebuilt from the records.
