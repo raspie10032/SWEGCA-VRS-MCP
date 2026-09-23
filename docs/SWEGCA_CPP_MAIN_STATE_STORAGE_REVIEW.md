@@ -156,6 +156,12 @@ crash cases before code uses it.
 - `StateSnapshot` holds a `shared_ptr<const CognitiveState>` and that exact
   `PublishedStateId`; only Main constructs snapshots. It exposes `state()`
   and `head()`. A producer cannot construct or replace a head identifier.
+- The journal now has a private `for_each_index_match_in` over a caller-pinned
+  `PublishedSnapshot`; `resolve_in` and `replay_in` already accept that same
+  snapshot. Main can therefore keep one journal generation through all cue
+  lookups and exact reads. Main's combined memory/VRS strength read lease is
+  still pending and must bind that journal snapshot to the strength root
+  named by the same HEAD.
 - Proposal `based_on`, Bind, arbitration, gated capabilities, and CAS compare
   the publication identifier. Re-evidence, admission, and accumulator
   `judged_against` compare only the content digest. Replay can inspect

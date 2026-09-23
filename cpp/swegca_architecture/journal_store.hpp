@@ -121,9 +121,12 @@ public:
     // SWEGCA: docs/SWEGCA_CPP_MAIN_STATE_STORAGE_REVIEW.md@9da0813:187-206
     template <class R, class Q>
         requires(std::is_lvalue_reference_v<R&&> && std::is_lvalue_reference_v<Q&&> &&
+                 std::is_object_v<std::remove_reference_t<R>> &&
+                 std::is_object_v<std::remove_reference_t<Q>> &&
                  std::is_invocable_r_v<PublishedRecord, R&, std::string_view> &&
                  std::is_invocable_r_v<std::optional<RecordPosition>, Q&,
                                        std::string_view>)
+    // SWEGCA: docs/SWEGCA_CPP_MAIN_STATE_STORAGE_REVIEW.md@9da0813:187-206
     RebuildReader(R&& replay, Q&& resolve) noexcept
         : target_(static_cast<const void*>(std::addressof(replay))),
           call_(&invoke<R>),
@@ -462,7 +465,8 @@ public:
     // verifying the whole record chain. No lock is held while `visit` runs.
     // SWEGCA: user@2026-09-22:72-79
     template <class F>
-        requires std::is_invocable_v<F&, const RecordView&, const RecordPosition&>
+        requires(std::is_object_v<F> &&
+                 std::is_invocable_v<F&, const RecordView&, const RecordPosition&>)
     void for_each_record(F& visit) const {
         const auto invoke = [](const void* target, const RecordView& record,
                                const RecordPosition& position) {
@@ -545,6 +549,8 @@ private:
     void for_each_record_impl(
         const void* target,
         void (*visit)(const void*, const RecordView&, const RecordPosition&)) const;
+    void for_each_index_match_in(const PublishedSnapshot& current, char kind,
+                                 std::string_view value, IndexVisitor visit) const;
     void require_usable() const;
     [[nodiscard]] std::shared_ptr<const PublishedSnapshot> snapshot() const;
     [[nodiscard]] std::uint64_t storage_of(const ExtentIndex& extents, const ManifestFields& head,

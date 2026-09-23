@@ -1897,6 +1897,15 @@ void JournalStore::for_each_record_impl(
 // them.
 // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:475-507
 void JournalStore::for_each_index_match(char kind, std::string_view value, IndexVisitor visit) const {
+    const auto current = snapshot();
+    for_each_index_match_in(*current, kind, value, visit);
+}
+
+// Main may pin one PublishedSnapshot and pass it through every cue lookup,
+// exact resolve and replay in one four-stage activation.
+// SWEGCA: src/tinylm_slicer/mosaic_memory_activation.py@3bddcb7:463-508
+void JournalStore::for_each_index_match_in(const PublishedSnapshot& current, char kind,
+                                           std::string_view value, IndexVisitor visit) const {
     require_usable();
     if (value.size() >= detail::identity_text_max_bytes - 1) fail("journal_index_invalid");
     LedgerBytes bound(memory_.allocator<std::byte>());
@@ -1908,9 +1917,8 @@ void JournalStore::for_each_index_match(char kind, std::string_view value, Index
     if (!is_index_entry(entry)) fail("journal_index_invalid");
     bound.push_back(static_cast<std::byte>(index_separator));
     const std::string_view from(reinterpret_cast<const char*>(bound.data()), bound.size());
-    const auto current = snapshot();
-    if (current->view_unavailable) fail("journal_view_unavailable");
-    const auto& tree = current->head.fields().view_pages.index;
+    if (current.view_unavailable) fail("journal_view_unavailable");
+    const auto& tree = current.head.fields().view_pages.index;
     if (tree.entry_count == 0) return;
     for (LeafCursor cursor(PageSource{directory_, memory_, cache_.get()},
                            BuiltTree{tree.entry_count, tree.height, tree.root}, from);
