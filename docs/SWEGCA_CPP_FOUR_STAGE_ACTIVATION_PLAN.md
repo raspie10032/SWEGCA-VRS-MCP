@@ -1,4 +1,4 @@
-# SWEGCA C++ four-stage memory activation — design v1.6 (for cross-review, no code yet)
+# SWEGCA C++ four-stage memory activation — design v1.7 (for cross-review, no code yet)
 
 Status: draft for Claude–Codex cross-review. Nothing here is implemented.
 It replaces the single-stage `ExperienceSelector::select` with Déjà vu → Recall → Replay → Re-evidence.
@@ -122,6 +122,12 @@ Versions up to v1.5 left these approved rules out. They are binding, and the sta
 - **Authority:** replay is reconstruction, not historical truth (:709-713). It grants no authority (:722-724).
 
 ## 5. Re-evidence
+- **The first Replay and the opposing Replay are two sets, and both rules are kept (Codex 20:15).**
+  - First set: the originals the user's 2026-09-23 strength rule picks, the highest strength with up to 5 on a tie (§4). The cap of 5 applies to this set only.
+  - Opposing set: when Re-evidence finds relevant opposing evidence or a conflict, the relevant opposing originals are replayed as well (approved flow :27-29, :101-102). They are not counted against the cap of 5, and they are not chosen by strength. They are chosen by being relevant and opposing.
+  - Neither set cuts the other, and no first-set original is dropped to make room.
+  - Every opened original, from either set, gets its own one-to-one receipt row (:50-52). The row says which set it came from.
+  - **Open.** How "relevant opposing" is identified waits for the typed step and proposition schema (the input contract below is a C++ candidate). Whether the opposing set needs a size bound is not decided, and no bound is invented. If one is needed, the user is asked.
 - **Trigger:** the replayed memory's phase differs from the current input's phase, or the current input conflicts with it (user). Otherwise no judge is called.
   - **Input contract — C++ candidate, not a user rule (Codex 19:55 (3), 20:03). No external LLM and no string comparison stand in for it. The user's existing judgment is the EvidenceJudge over each replayed episode (:867, :879-881). The proposition identity and polarity below wait for the typed schema and are not fixed.** Main hands Re-evidence the current phase (a typed step phase) and zero or more current propositions, each with a polarity and its current evidence refs. The phase trigger compares typed phases for equality. The conflict trigger fires when a current proposition has the opposite polarity to the same proposition in a replayed step. "Same proposition" is an exact match of the canonical proposition identity that both sides carry. That identity comes with the typed step schema (multimodal plan). Until both exist, the conflict trigger is not wired, and nothing guesses it.
   - The memory's verdict is then the user's `current_experience_verdict`: **retained** if the current strength is ≥ 1.0, **available** if not (:781-807).
