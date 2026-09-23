@@ -14,14 +14,16 @@ namespace {
 }
 
 // The slot's byte count for its type and width, or a refusal when the type
-// is not one of the four or the count overflows.
+// is not one of the four, the native tensor width is zero, or the count overflows.
 // Lineage: direct — the author's receipt dtypes and its [1, width] slot.
 // SWEGCA: src/tinylm_slicer/mosaic_bounded_world_write.py@3bddcb7:246-248
+// SWEGCA: user@2026-09-22:60-61
 std::uint64_t slot_byte_count(ScalarType type, std::uint64_t width) {
     const auto value = static_cast<std::uint8_t>(type);
     if (value < static_cast<std::uint8_t>(ScalarType::bfloat16) ||
         value > static_cast<std::uint8_t>(ScalarType::float64))
         invalid("slot_type");
+    if (width == 0) invalid("slot_width");
     const auto element = static_cast<std::uint64_t>(scalar_width(type));
     if (width > std::numeric_limits<std::uint64_t>::max() / element) invalid("slot_width");
     return width * element;
@@ -365,6 +367,9 @@ void BoundedWriteReceiptParser::on_fixed() {
         case Field::slot_length:
             // The shape was checked above; the length must be exactly its bytes.
             if (fixed_u64() != expected_slot_bytes_) invalid("slot_length");
+            if (expected_slot_bytes_ > std::numeric_limits<std::size_t>::max() ||
+                expected_slot_bytes_ > slot_.max_size())
+                invalid("slot_length");
             slot_.reserve(static_cast<std::size_t>(expected_slot_bytes_));
             slot_hash_.emplace(expected_.type, expected_.width);
             slot_left_ = expected_slot_bytes_;
