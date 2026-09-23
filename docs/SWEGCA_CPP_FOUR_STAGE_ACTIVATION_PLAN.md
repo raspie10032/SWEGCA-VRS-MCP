@@ -1,4 +1,4 @@
-# SWEGCA C++ four-stage memory activation — design v1.4 (for cross-review, no code yet)
+# SWEGCA C++ four-stage memory activation — design v1.5 (for cross-review, no code yet)
 
 Status: draft for Claude–Codex cross-review. Nothing here is implemented.
 It replaces the single-stage `ExperienceSelector::select` with Déjà vu → Recall → Replay → Re-evidence.
@@ -25,6 +25,7 @@ It replaces the single-stage `ExperienceSelector::select` with Déjà vu → Rec
      - :911-968 MemoryActivationReceipt and activate_memory
    - mosaic_semantic_family_directory.py:1-67 (family expansion in Recall)
 3. SWEGCA-Architecture@5901a5a mosaic_unrestricted_experience.py:179-290, :440-532. This is the runtime selection that the current C++ `select` follows: every retrieved candidate is judged, and a receipt is kept.
+4. The user-approved flow docs/SWEGCA_VRS_MCP_ORDER_FOR_REVIEW.md (「순서맞음 ㄱㄱ」 2026-09-22): session layer :62-78 (see §4).
 
 ## 1. One snapshot for all four stages
 All four stages run over one published journal universe U, and the VRS strength root is named by the same Main HEAD (b2c2f33). A stage handed a result from another snapshot fails, as :663-664 and :733-734 do. The query text is the same in every stage (:936-943). This is the user's one memory+VRS pair swapped atomically (:463-508): our Main HEAD names the memory watermark and the VRS strength root in one CAS.
@@ -89,7 +90,12 @@ All four stages run over one published journal universe U, and the VRS strength 
     - When a memory record and its live strength become visible together in Main HEAD, and whether a read can fall between them.
     - **C++ candidate (Codex 20:03; not a user rule):** the memory record and its live strength are published in the same generation. So no public generation holds a memory without a strength. A failed publication publishes neither and is closed explicitly. This continues the user's atomic memory+VRS pair (mosaic_memory_activation.py:463-507: readers never see a half-updated pair). The user's live path (mosaic_live_action_vrs_transaction.py:129-179) published memory first and queued VRS later. That lag is what the user's new directive removes.
     - Three different things, kept apart: the session **logical block** (new, user directive), the physical byte block of mosaic_vrs_block_store.py (a copy-on-write storage chunk, 4 MiB cap at mosaic_lossless_blocks.py:23), and SharedExperienceBridge (mosaic_vrs_connectivity_regions.py:122, one memory in several regions). The user's code has no counterpart of the session block, its connection points or idle merging. They are new implementation from the user's words.
-    - "Session first, main fallback" is neither the user's words nor the user's code (CompositeMemoryActivationIndex :233-345 unions its sources and refuses overlapping ids). It came up as a proposal in cross-review. Memory records live in one journal. Only strength reads could have two sources for one memory, and that rule is asked of the user if it is needed.
+    - **The user's approved flow (docs/SWEGCA_VRS_MCP_ORDER_FOR_REVIEW.md, approved 「순서맞음 ㄱㄱ」 2026-09-22) already has the session layer.** Correction of v1.4, which said session-first reads had no source.
+      - :62 publish a session VRS generation and derived cue, region and portal addresses.
+      - :64 session-local admission and **session-first reads** until SessionEnd. Memory records also live in the session-local native journal during a session, so both memory and strength are read session first.
+      - :68 at SessionEnd, atomically link the complete native session journals to main ownership. :78 the original session journals stay available.
+      - :69 then, in the background, replay the VRS observations through main append and graph update (an immediate merge).
+    - **What the user's 2026-09-23 words change:** only :69. At SessionEnd the session VRS becomes one block plus its connection points; replay into main (merging) happens only for some blocks in periodic idle time. And :62's session VRS generation runs without lag (20:0x). Whether to amend the approved document itself is asked of the user; this plan records the supersession.
     - Keep the session-end block, and keep the existing lookup path: session first, main fallback.
     - Compare in full with the user's live path and the user's actual block and connection-point code first. The live-path files are mosaic_live_vrs_pipeline.py (:1), mosaic_live_action_vrs_transaction.py (:1), mosaic_live_durable_vrs.py (:1) and mosaic_vrs_event_hot_publication.py (:1-7). A survey is running.
     - Then design with Codex: block storage, the connection-point record, the size cap, idle selection and the idle signal, and crash behaviour of a live session.
