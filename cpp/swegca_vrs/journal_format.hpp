@@ -328,7 +328,8 @@ private:
 // alive through encode; no second full extent vector is required.
 class ExtentPull final {
 public:
-    // SWEGCA: user@2026-09-22:72-79
+    // Lineage: native mechanism — type-erased borrowed extent source, so a manifest encodes without a second extent vector.
+    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:50
     template <class F>
         requires(std::is_object_v<F> &&
                  std::is_invocable_r_v<SegmentExtent, F&, std::size_t>)
@@ -338,16 +339,19 @@ public:
     template <class F>
     ExtentPull(const F&&, std::size_t) = delete;
 
-    // SWEGCA: user@2026-09-22:72-79
+    // Lineage: native mechanism — calls the borrowed extent source for one index.
+    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:50
     [[nodiscard]] SegmentExtent at(std::size_t index) const {
         return call_(target_, index);
     }
-    // SWEGCA: user@2026-09-22:72-79
+    // Lineage: native mechanism — the number of extents the manifest will list.
+    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:50
     [[nodiscard]] std::size_t size() const noexcept { return count_; }
 
 private:
     using Call = SegmentExtent (*)(const void*, std::size_t);
-    // SWEGCA: user@2026-09-22:72-79
+    // Lineage: native mechanism — call trampoline of the type-erased extent source; allocates nothing.
+    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:50
     template <class F>
     static SegmentExtent invoke(const void* target, std::size_t index) {
         auto& get = *static_cast<F*>(const_cast<void*>(target));
@@ -394,7 +398,8 @@ struct ViewPages {
     std::uint64_t page_log_end = 0;      // published length of the current page log
     std::uint64_t page_log_bytes = 0;    // bytes of logs first..current, headers included
 
-    // SWEGCA: user@2026-09-22:72-79
+    // Lineage: native mechanism — live bytes of both view trees, which decide when the views are rebuilt.
+    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:589-590
     [[nodiscard]] std::uint64_t live_page_bytes() const noexcept {
         return addresses.live_page_bytes + index.live_page_bytes;
     }
@@ -416,7 +421,8 @@ struct AddressChildItem {
 
 // A decoded page. Its texts view the bytes it was decoded from.
 struct AddressPageView {
-    // SWEGCA: user@2026-09-22:72-79
+    // Lineage: native mechanism — binds a decoded page's item vectors to the host's allocator.
+    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:50
     explicit AddressPageView(const AllocationContext& memory)
         : leaves(memory.allocator<AddressLeafItem>()),
           children(memory.allocator<AddressChildItem>()) {}
@@ -426,11 +432,13 @@ struct AddressPageView {
     LedgerVector<AddressChildItem> children;
 };
 
-// SWEGCA: user@2026-09-22:72-79
+// Lineage: native mechanism — exact size of one leaf item: length-prefixed key, fixed-width position and digest.
+// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:567-569
 [[nodiscard]] constexpr std::size_t encoded_leaf_item_size(std::string_view address) noexcept {
     return 4 + address.size() + 3 * 8 + 32;
 }
-// SWEGCA: user@2026-09-22:72-79
+// Lineage: native mechanism — exact size of one branch item: length-prefixed key and fixed-width page reference.
+// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:567-569
 [[nodiscard]] constexpr std::size_t encoded_child_item_size(std::string_view first) noexcept {
     return 4 + first.size() + encoded_page_ref_bytes;
 }
@@ -514,7 +522,9 @@ public:
                                          std::span<const SegmentExtent> extents,
                                          std::span<const ViewGeneration> views,
                                          const AllocationContext& memory);
-    // SWEGCA: user@2026-09-22:72-79
+    // Lineage: weak analogy — the author saves a JSON manifest named by its SHA-256; here binary fields ending in their digest.
+    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:587-589
+    // SWEGCA: src/tinylm_slicer/mosaic_vrs_block_store.py@3bddcb7:179-182
     [[nodiscard]] static Manifest encode(const ManifestFields& fields,
                                          std::string_view journal_identity,
                                          ExtentPull extents,
@@ -527,22 +537,28 @@ public:
     Manifest& operator=(const Manifest&) = delete;
     ~Manifest() = default;
 
-    // SWEGCA: user@2026-09-22:72-79
+    // Lineage: native mechanism — the decoded fixed fields of one published generation.
+    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:587-589
     [[nodiscard]] const ManifestFields& fields() const noexcept { return fields_; }
-    // SWEGCA: user@2026-09-22:72-79
+    // Lineage: native mechanism — the exact manifest digest that HEAD names.
+    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:576-578
     [[nodiscard]] const Digest& digest() const noexcept { return digest_; }
-    // SWEGCA: user@2026-09-22:72-79
+    // Lineage: native mechanism — the manifest's exact encoded bytes.
+    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:50
     [[nodiscard]] std::span<const std::byte> bytes() const noexcept { return bytes_; }
     [[nodiscard]] std::string_view journal_identity() const noexcept;
-    // SWEGCA: user@2026-09-22:72-79
+    // Lineage: native mechanism — how many segment extents this manifest lists.
+    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:574-575
     [[nodiscard]] std::size_t extent_count() const noexcept { return extent_count_; }
     [[nodiscard]] SegmentExtent extent(std::size_t index) const;
-    // SWEGCA: user@2026-09-22:72-79
+    // Lineage: native mechanism — how many view generations this manifest names.
+    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:587-589
     [[nodiscard]] std::size_t view_count() const noexcept { return view_offsets_.size(); }
     [[nodiscard]] ViewGeneration view(std::size_t index) const;
 
 private:
-    // SWEGCA: user@2026-09-22:72-79
+    // Lineage: native mechanism — adopts verified bytes and the view offset table; only decode calls it.
+    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:50
     Manifest(LedgerBytes bytes, LedgerVector<std::uint32_t> view_offsets) noexcept
         : bytes_(std::move(bytes)), view_offsets_(std::move(view_offsets)) {}
 

@@ -28,10 +28,13 @@ using RecoveryExtentTable =
 static_assert(max_extents <= (std::uint64_t{1} << 20));
 class ExtentIndex final {
 public:
-    // SWEGCA: user@2026-09-22:72-79
+    // Lineage: native mechanism — an empty extent index on the host's allocator.
+    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:50
     explicit ExtentIndex(const AllocationContext& memory) : memory_(memory) {}
 
-    // SWEGCA: user@2026-09-22:72-79
+    // Lineage: weak analogy — the author checks row sequences across files; here recovered extents must be contiguous with rising file ids.
+    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:574-575
+    // SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:183-194
     [[nodiscard]] static ExtentIndex from_recovery(
         const AllocationContext& memory, const RecoveryExtentTable& table) {
         ExtentIndex result(memory);
@@ -49,7 +52,8 @@ public:
         return result;
     }
 
-    // SWEGCA: user@2026-09-22:72-79
+    // Lineage: native mechanism — finds an extent by descending one trie node per level, never scanning.
+    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:592-594
     [[nodiscard]] const SegmentExtent* get_if(std::uint64_t ordinal) const noexcept {
         if (ordinal == 0 || ordinal > count_) return nullptr;
         auto node = root_.get();
@@ -63,23 +67,29 @@ public:
         return value ? &*value : nullptr;
     }
 
-    // SWEGCA: user@2026-09-22:72-79
+    // Lineage: native mechanism — an extent that must exist; a missing one fails.
+    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:50
     [[nodiscard]] const SegmentExtent& at(std::uint64_t ordinal) const {
         const auto* value = get_if(ordinal);
         if (value == nullptr) throw std::runtime_error("journal_extent_missing");
         return *value;
     }
 
-    // SWEGCA: user@2026-09-22:72-79
+    // Lineage: native mechanism — the last extent, where appends continue.
+    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:50
     [[nodiscard]] const SegmentExtent* tail() const noexcept { return get_if(count_); }
-    // SWEGCA: user@2026-09-22:72-79
+    // Lineage: native mechanism — extent count.
+    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:50
     [[nodiscard]] std::uint64_t size() const noexcept { return count_; }
-    // SWEGCA: user@2026-09-22:72-79
+    // Lineage: native mechanism — whether no extent is held.
+    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:50
     [[nodiscard]] bool empty() const noexcept { return count_ == 0; }
-    // SWEGCA: user@2026-09-22:72-79
+    // Lineage: native mechanism — record bytes of all extents, summed.
+    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:50
     [[nodiscard]] std::uint64_t record_bytes() const noexcept { return record_bytes_; }
 
-    // SWEGCA: user@2026-09-22:72-79
+    // Lineage: native mechanism — visits extents in ordinal order.
+    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:50
     template <class F>
     void for_each(F&& visit) const {
         for (std::uint64_t ordinal = 1; ordinal <= count_; ++ordinal)
@@ -88,7 +98,9 @@ public:
 
     // Same tail-only growth, checkpoint completeness, and HEAD tail checks
     // as recovery's apply_manifest, with path copying for changed ordinals.
-    // SWEGCA: user@2026-09-22:72-79
+    // Lineage: weak analogy — the author checks row sequences across files; here a manifest's extents extend a shared index by path copying.
+    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:574-575
+    // SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:183-194
     [[nodiscard]] ExtentIndex with_manifest(const Manifest& manifest) const {
         ExtentIndex next = *this;
         for (std::size_t index = 0; index < manifest.extent_count(); ++index) {
@@ -142,14 +154,16 @@ private:
         std::array<std::optional<SegmentExtent>, 32> values{};
     };
 
-    // SWEGCA: user@2026-09-22:72-79
+    // Lineage: native mechanism — checked uint64 addition for byte counts.
+    // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:50
     [[nodiscard]] static std::uint64_t add(std::uint64_t left, std::uint64_t right) {
         if (right > std::numeric_limits<std::uint64_t>::max() - left)
             throw std::runtime_error("journal_extent_size_overflow");
         return left + right;
     }
 
-    // SWEGCA: user@2026-09-22:72-79
+    // Lineage: weak analogy — the author patches bytes sharing untouched blocks; here a trie insert copies one path and shares the rest.
+    // SWEGCA: src/tinylm_slicer/mosaic_vrs_block_store.py@3bddcb7:95-112
     [[nodiscard]] static std::shared_ptr<const Node> put(
         const std::shared_ptr<const Node>& old, unsigned level, std::uint64_t key,
         const SegmentExtent& extent, const AllocationContext& memory) {

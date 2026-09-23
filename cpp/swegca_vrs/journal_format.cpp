@@ -86,14 +86,16 @@ std::string_view optional_text(const std::optional<std::string_view>& value) noe
     return value.value_or(std::string_view());
 }
 
-// SWEGCA: user@2026-09-22:72-79
+// Lineage: native mechanism — writes a manifest location as fixed-width little-endian fields.
+// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:567-568
 void encode_location(ByteWriter& writer, const ManifestLocation& location) {
     writer.u64(location.log_ordinal);
     writer.u64(location.offset);
     writer.u64(location.length);
 }
 
-// SWEGCA: user@2026-09-22:72-79
+// Lineage: native mechanism — reads a manifest location from fixed-width little-endian fields.
+// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:567-568
 ManifestLocation decode_location(ByteReader& reader) {
     ManifestLocation location;
     location.log_ordinal = reader.u64();
@@ -102,7 +104,8 @@ ManifestLocation decode_location(ByteReader& reader) {
     return location;
 }
 
-// SWEGCA: user@2026-09-22:72-79
+// Lineage: weak analogy — the author packs a capsule offset, length and CRC32 into a slot; here log, offset, length and SHA-256.
+// SWEGCA: src/swegca_vrs2/exact_replay.py@c06092a:592-593
 void encode_page_ref(ByteWriter& writer, const PageRef& page) {
     writer.u64(page.log_ordinal);
     writer.u64(page.offset);
@@ -110,7 +113,8 @@ void encode_page_ref(ByteWriter& writer, const PageRef& page) {
     writer.digest(page.digest);
 }
 
-// SWEGCA: user@2026-09-22:72-79
+// Lineage: weak analogy — the author unpacks a slot's capsule offset, length and CRC32; here a page's location and digest.
+// SWEGCA: src/swegca_vrs2/exact_replay.py@c06092a:708
 PageRef read_page_ref(ByteReader& reader) {
     PageRef page;
     page.log_ordinal = reader.u64();
@@ -122,7 +126,8 @@ PageRef read_page_ref(ByteReader& reader) {
 
 // A reference to a page that could exist: in a page log, past its header,
 // and no longer than a page.
-// SWEGCA: user@2026-09-22:72-79
+// Lineage: native mechanism — a page reference that could exist: in a page log, past its header, no longer than a page.
+// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:587-588
 bool page_ref_valid(const PageRef& page) noexcept {
     return page.log_ordinal != 0 && page.offset >= page_log_header_bytes &&
            page.length > address_page_header_bytes && page.length <= address_page_max_bytes &&
@@ -130,7 +135,8 @@ bool page_ref_valid(const PageRef& page) noexcept {
 }
 
 // Nonempty, strictly increasing identity texts; `key` gives each item's text.
-// SWEGCA: user@2026-09-22:72-79
+// Lineage: weak analogy — the author refuses an empty or repeated address; here keys must be identity texts, strictly increasing.
+// SWEGCA: src/tinylm_slicer/mosaic_lossless_blocks.py@3bddcb7:219-222
 template <class Item, class Key>
 void require_increasing(std::span<const Item> items, Key key, const char* code) {
     if (items.empty()) fail(code);
@@ -141,7 +147,8 @@ void require_increasing(std::span<const Item> items, Key key, const char* code) 
     }
 }
 
-// SWEGCA: user@2026-09-22:72-79
+// Lineage: native mechanism — writes a page's fixed magic, format version, kind and item count.
+// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:567-568
 void write_page_header(ByteWriter& writer, std::uint8_t kind, std::size_t count) {
     writer.raw(address_page_magic);
     writer.u16(format_version);
@@ -150,7 +157,8 @@ void write_page_header(ByteWriter& writer, std::uint8_t kind, std::size_t count)
     writer.u32(static_cast<std::uint32_t>(count));
 }
 
-// SWEGCA: user@2026-09-22:72-79
+// Lineage: native mechanism — writes one view root the manifest names: count, height, root page and live bytes.
+// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:587-589
 void encode_view_tree(ByteWriter& writer, const ViewTree& tree) {
     writer.u64(tree.entry_count);
     writer.u32(tree.height);
@@ -158,7 +166,8 @@ void encode_view_tree(ByteWriter& writer, const ViewTree& tree) {
     writer.u64(tree.live_page_bytes);
 }
 
-// SWEGCA: user@2026-09-22:72-79
+// Lineage: native mechanism — reads one view root the manifest names.
+// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:587-589
 ViewTree read_view_tree(ByteReader& reader) {
     ViewTree tree;
     tree.entry_count = reader.u64();
@@ -168,7 +177,8 @@ ViewTree read_view_tree(ByteReader& reader) {
     return tree;
 }
 
-// SWEGCA: user@2026-09-22:72-79
+// Lineage: native mechanism — writes both view roots and their page-log range into the manifest.
+// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:587-589
 void encode_view_pages(ByteWriter& writer, const ViewPages& pages) {
     encode_view_tree(writer, pages.addresses);
     encode_view_tree(writer, pages.index);
@@ -180,7 +190,8 @@ void encode_view_pages(ByteWriter& writer, const ViewPages& pages) {
 
 // An empty tree has no root; any other tree's root sits in the page logs the
 // view pages name, and its live pages include at least the root.
-// SWEGCA: user@2026-09-22:72-79
+// Lineage: native mechanism — a nonempty root must lie in the published page logs, so no detached page is reachable.
+// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:578-579
 bool view_tree_valid(const ViewTree& tree, const ViewPages& pages) noexcept {
     if (tree.entry_count == 0)
         return tree.height == 0 && tree.root == PageRef{} && tree.live_page_bytes == 0;
@@ -194,7 +205,8 @@ bool view_tree_valid(const ViewTree& tree, const ViewPages& pages) noexcept {
 
 // The address tree holds one entry per record, both roots sit in the page
 // logs named, and there are logs exactly when a tree is nonempty.
-// SWEGCA: user@2026-09-22:72-79
+// Lineage: native mechanism — decodes the view roots and page-log range the manifest names, failing closed on any mismatch.
+// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:587-589
 ViewPages decode_view_pages(ByteReader& reader, std::uint64_t tail_sequence) {
     ViewPages pages;
     pages.addresses = read_view_tree(reader);
@@ -484,7 +496,9 @@ RecordView decode_record(ByteReader& reader) {
     return out;
 }
 
-// SWEGCA: user@2026-09-22:72-79
+// Lineage: weak analogy — the author starts each journal file with an 8-byte magic; here magic, version, ordinal, file id, first sequence.
+// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:567-568
+// SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:255
 void append_segment_header(LedgerBytes& out, std::uint64_t ordinal,
                            std::uint64_t file_id, std::uint64_t first_sequence) {
     ByteWriter writer(out);
@@ -495,7 +509,8 @@ void append_segment_header(LedgerBytes& out, std::uint64_t ordinal,
     writer.u64(first_sequence);
 }
 
-// SWEGCA: user@2026-09-22:72-79
+// Lineage: weak analogy — the author rotates its head file into a segment; here the next manifest goes behind the last or first in the next log.
+// SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:249-257
 bool follows(const ManifestLocation& previous, const ManifestLocation& next) noexcept {
     if (previous.log_ordinal == 0 || next.length == 0) return false;
     if (next.log_ordinal == previous.log_ordinal)
@@ -506,7 +521,9 @@ bool follows(const ManifestLocation& previous, const ManifestLocation& next) noe
            next.offset == manifest_log_header_bytes;
 }
 
-// SWEGCA: user@2026-09-22:72-79
+// Lineage: weak analogy — the author checks sequence and hash chain per JSON line; here binary records of one published extent, failing closed.
+// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:579-581
+// SWEGCA: src/tinylm_slicer/mosaic_evidence_ledger.py@3bddcb7:40-56
 void decode_segment_range(std::span<const std::byte> bytes, std::uint64_t base_offset,
                           const SegmentExtent& extent, std::uint64_t first_sequence,
                           std::uint64_t record_count, const Digest& entering,
@@ -539,7 +556,9 @@ void decode_segment_range(std::span<const std::byte> bytes, std::uint64_t base_o
     if (chain != expected_last) fail("journal_segment_tail_invalid");
 }
 
-// SWEGCA: user@2026-09-22:72-79
+// Lineage: weak analogy — the author writes a key with its capsule offset, length and CRC into a slot; here sorted keys and positions into a leaf page.
+// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:587-588
+// SWEGCA: src/swegca_vrs2/exact_replay.py@c06092a:592-594
 void append_leaf_page(LedgerBytes& out, std::span<const AddressLeafItem> items) {
     require_increasing(items, [](const AddressLeafItem& item) { return item.address; },
                        "journal_address_page_invalid");
@@ -559,7 +578,8 @@ void append_leaf_page(LedgerBytes& out, std::span<const AddressLeafItem> items) 
     if (out.size() - start != total) fail("journal_address_page_size_mismatch");
 }
 
-// SWEGCA: user@2026-09-22:72-79
+// Lineage: native mechanism — writes one branch page of the exact-address and index B+ trees.
+// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:587-588
 void append_branch_page(LedgerBytes& out, std::span<const AddressChildItem> items) {
     require_increasing(items, [](const AddressChildItem& item) { return item.first_address; },
                        "journal_address_page_invalid");
@@ -579,7 +599,9 @@ void append_branch_page(LedgerBytes& out, std::span<const AddressChildItem> item
     if (out.size() - start != total) fail("journal_address_page_size_mismatch");
 }
 
-// SWEGCA: user@2026-09-22:72-79
+// Lineage: weak analogy — the author checks an address level file's magic header; here a page's magic, version, kind, positions and key order.
+// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:587-588
+// SWEGCA: src/swegca_vrs2/exact_replay.py@c06092a:334-342
 AddressPageView decode_address_page(std::span<const std::byte> bytes,
                                     const AllocationContext& memory) {
     if (bytes.size() <= address_page_header_bytes || bytes.size() > address_page_max_bytes)
@@ -633,7 +655,8 @@ AddressPageView decode_address_page(std::span<const std::byte> bytes,
     return out;
 }
 
-// SWEGCA: user@2026-09-22:72-79
+// Lineage: weak analogy — the author has no page log; only its file-magic header is reused, with version and log ordinal.
+// SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:255
 void append_page_log_header(LedgerBytes& out, std::uint64_t log_ordinal) {
     ByteWriter writer(out);
     writer.raw(page_log_magic);
@@ -641,7 +664,8 @@ void append_page_log_header(LedgerBytes& out, std::uint64_t log_ordinal) {
     writer.u64(log_ordinal);
 }
 
-// SWEGCA: user@2026-09-22:72-79
+// Lineage: weak analogy — the author has no page log; only its file-magic check is reused, with version and log ordinal.
+// SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:140-141
 void check_page_log_header(std::span<const std::byte> bytes, std::uint64_t log_ordinal) {
     ByteReader reader(bytes);
     require_magic(reader, page_log_magic, "journal_page_log_magic_invalid");
@@ -649,7 +673,8 @@ void check_page_log_header(std::span<const std::byte> bytes, std::uint64_t log_o
     if (reader.u64() != log_ordinal) fail("journal_page_log_ordinal_invalid");
 }
 
-// SWEGCA: user@2026-09-22:72-79
+// Lineage: weak analogy — the author bounds a manifest read at 16 MiB; here the exact size is computed and bounded before encoding.
+// SWEGCA: src/tinylm_slicer/mosaic_vrs_block_store.py@3bddcb7:196-198
 std::size_t encoded_manifest_size(std::string_view journal_identity, std::size_t extent_count,
                                   std::span<const ViewGeneration> views) {
     if (!detail::is_identity_text(journal_identity)) fail("journal_manifest_invalid:identity");
@@ -668,7 +693,8 @@ std::size_t encoded_manifest_size(std::string_view journal_identity, std::size_t
     return total;
 }
 
-// SWEGCA: user@2026-09-22:72-79
+// Lineage: native mechanism — adapts an extent span to the pull encoder.
+// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:50
 Manifest Manifest::encode(const ManifestFields& fields, std::string_view journal_identity,
                           std::span<const SegmentExtent> extents,
                           std::span<const ViewGeneration> views,
@@ -677,7 +703,9 @@ Manifest Manifest::encode(const ManifestFields& fields, std::string_view journal
     return encode(fields, journal_identity, ExtentPull(at, extents.size()), views, memory);
 }
 
-// SWEGCA: user@2026-09-22:72-79
+// Lineage: weak analogy — the author saves a JSON manifest named by its SHA-256; here binary fields ending in their digest, decoded before kept.
+// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:587-589
+// SWEGCA: src/tinylm_slicer/mosaic_vrs_block_store.py@3bddcb7:179-182
 Manifest Manifest::encode(const ManifestFields& fields, std::string_view journal_identity,
                           ExtentPull extents, std::span<const ViewGeneration> views,
                           const AllocationContext& memory) {
@@ -722,7 +750,9 @@ Manifest Manifest::encode(const ManifestFields& fields, std::string_view journal
     return decode(std::move(bytes), memory);
 }
 
-// SWEGCA: user@2026-09-22:72-79
+// Lineage: weak analogy — the author loads a manifest under a size bound, checking digest and geometry; here binary fields, extent chain, recovery rules.
+// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:579-580
+// SWEGCA: src/tinylm_slicer/mosaic_vrs_block_store.py@3bddcb7:195-206
 Manifest Manifest::decode(LedgerBytes bytes, const AllocationContext& memory) {
     if (bytes.size() > max_manifest_bytes) fail("journal_manifest_invalid:size");
     const std::span<const std::byte> all(bytes);
@@ -846,13 +876,15 @@ Manifest Manifest::decode(LedgerBytes bytes, const AllocationContext& memory) {
     return manifest;
 }
 
-// SWEGCA: user@2026-09-22:72-79
+// Lineage: weak analogy — the author reads its store identity from a JSON manifest; here a view into the manifest's bytes.
+// SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:115
 std::string_view Manifest::journal_identity() const noexcept {
     return std::string_view(reinterpret_cast<const char*>(bytes_.data()) + identity_offset_,
                             identity_size_);
 }
 
-// SWEGCA: user@2026-09-22:72-79
+// Lineage: native mechanism — reads one listed segment extent from the manifest bytes.
+// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:574-575
 SegmentExtent Manifest::extent(std::size_t index) const {
     if (index >= extent_count_) fail("journal_manifest_extent_index_invalid");
     ByteReader reader(std::span<const std::byte>(bytes_).subspan(
@@ -867,7 +899,8 @@ SegmentExtent Manifest::extent(std::size_t index) const {
     return extent;
 }
 
-// SWEGCA: user@2026-09-22:72-79
+// Lineage: native mechanism — reads one named view generation from the manifest bytes.
+// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:587-589
 ViewGeneration Manifest::view(std::size_t index) const {
     if (index >= view_offsets_.size()) fail("journal_manifest_view_index_invalid");
     ByteReader reader(std::span<const std::byte>(bytes_).subspan(view_offsets_[index]));
@@ -878,7 +911,8 @@ ViewGeneration Manifest::view(std::size_t index) const {
     return view;
 }
 
-// SWEGCA: user@2026-09-22:72-79
+// Lineage: weak analogy — the author has no manifest log; only its file-magic header is reused, with version and log ordinal.
+// SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:255
 void append_manifest_log_header(LedgerBytes& out, std::uint64_t log_ordinal) {
     ByteWriter writer(out);
     writer.raw(manifest_log_magic);
@@ -886,7 +920,8 @@ void append_manifest_log_header(LedgerBytes& out, std::uint64_t log_ordinal) {
     writer.u64(log_ordinal);
 }
 
-// SWEGCA: user@2026-09-22:72-79
+// Lineage: weak analogy — the author has no manifest log; only its file-magic check is reused, with version and log ordinal.
+// SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:140-141
 void check_manifest_log_header(std::span<const std::byte> bytes, std::uint64_t log_ordinal) {
     ByteReader reader(bytes);
     require_magic(reader, manifest_log_magic, "journal_manifest_log_magic_invalid");
@@ -894,7 +929,9 @@ void check_manifest_log_header(std::span<const std::byte> bytes, std::uint64_t l
     if (reader.u64() != log_ordinal) fail("journal_manifest_log_ordinal_invalid");
 }
 
-// SWEGCA: user@2026-09-22:72-79
+// Lineage: weak analogy — the author frames a checkpoint as magic, body and trailing SHA-256; here a fixed-size HEAD naming the manifest.
+// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:576-578
+// SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:288-289
 void append_head(LedgerBytes& out, const HeadPointer& head) {
     const auto start = out.size();
     ByteWriter writer(out);
@@ -905,7 +942,9 @@ void append_head(LedgerBytes& out, const HeadPointer& head) {
     writer.digest(Sha256::of(std::span<const std::byte>(out).subspan(start)));
 }
 
-// SWEGCA: user@2026-09-22:72-79
+// Lineage: weak analogy — the author checks a checkpoint's magic and trailing SHA-256; here HEAD's length, magic, version, digest and location.
+// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:577-578
+// SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:264-273
 HeadPointer decode_head(std::span<const std::byte> bytes) {
     if (bytes.size() != head_bytes) fail("journal_head_length_invalid");
     ByteReader reader(bytes);
