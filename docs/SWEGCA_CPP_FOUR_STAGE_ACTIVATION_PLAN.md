@@ -1,4 +1,4 @@
-# SWEGCA C++ four-stage memory activation — design v1.1 (for cross-review, no code yet)
+# SWEGCA C++ four-stage memory activation — design v1.2 (for cross-review, no code yet)
 
 Status: draft for Claude–Codex cross-review. Nothing here is implemented.
 It replaces the single-stage `ExperienceSelector::select` with Déjà vu → Recall → Replay → Re-evidence.
@@ -30,6 +30,7 @@ It replaces the single-stage `ExperienceSelector::select` with Déjà vu → Rec
 All four stages run over one published journal universe U, and the VRS strength root is named by the same Main HEAD (b2c2f33). A stage handed a result from another snapshot fails, as :663-664 and :733-734 do. The query text is the same in every stage (:936-943). This is the user's one memory+VRS pair swapped atomically (:463-508): our Main HEAD names the memory watermark and the VRS strength root in one CAS.
 - **Not true of today's API (Codex 19:51).** `for_each_index_match`, `resolve` and `replay_at_head` each take a fresh `snapshot()` (journal_store.cpp:1815-1826 and others). Several cue lookups and up to 5 replays could see different HEADs.
 - **Needed first:** a Main-owned pinned read lease. It is taken once per activation, and every cue lookup, resolve, replay and strength read (the main root and the session VRS, §4) takes that lease. Codex designs and implements the journal side. The four-stage code is built on the lease, never on `snapshot()` per call.
+  - Codex 683fe27: `for_each_index_match_in`, `resolve_in` and `replay_in` take one pinned `PublishedSnapshot` through a private Main path. The upper lease that pins the memory and the strength root together (main root, closed session blocks, live session VRS) is not built yet, and it is a precondition here.
 
 ## 2. Déjà vu (anonymous)
 - **Input:** the query text, plus the current cues as phrases, normalized by the user's `_cue` (:34-35, as in a106ddc).
@@ -42,6 +43,7 @@ All four stages run over one published journal universe U, and the VRS strength 
   - candidate_count: distinct memory addresses
   - It exposes no address and grants no authority (:521-528).
 - **Cost:** one index lookup per cue. The distinct count is bounded by `max_retrieved`. Going over it fails closed, as now.
+  - **No second lookup (Codex 19:55 (1)).** Déjà vu keeps its per-cue postings under the pinned U as an internal candidate cursor, and Recall continues from it. The public DejaVuSignal stays anonymous. Only navigation cues and family expansion add lookups in Recall.
 - **Familiarity without text** (a DINOv2-like signal) is a later input to this stage. It stays deferred as multimodal Q3.
 
 ### 2.1 Cue normalization: Unicode casefold (user decision)
@@ -64,6 +66,7 @@ All four stages run over one published journal universe U, and the VRS strength 
   - address
   - exact RecordPosition. Its sequence is the recency key.
   - matched_cues: the distinct current and navigation cues that retrieved it, direct or through a binding.
+  - **Family members get no copied cues (Codex 19:55 (2)).** matched_cues counts only the cues that retrieved that memory itself, directly or through its own binding. A member brought in by family expansion keeps its own direct count, 0 if none, and records separately that it came in through the family, with the parent address. The tie rule uses the direct count only, so a parent's cues never raise a member's rank.
   - The user's RecallCandidate also carries revision, verification_state and historical outcomes (:620-627). Those need the record read, so they are filled at Replay, not on the hot path. This difference is deliberate and recorded here.
 - **Ordering.** The user's recall sorts by cue_overlap = |matched| / |episode.cues ∪ current| (Jaccard, :689, :695). That needs every cue bound to each candidate, which means reading its bindings.
   - The user fixed the tie measure as the matched count (「맞은 cue 개수」), so Recall orders by matched count here.
@@ -79,6 +82,7 @@ All four stages run over one published journal universe U, and the VRS strength 
   - The user's existing live path to read before designing it: mosaic_live_vrs_pipeline.py (Main-owned nonblocking incremental VRS generations, :1), mosaic_live_action_vrs_transaction.py (:1), mosaic_live_durable_vrs.py (:1), mosaic_vrs_event_hot_publication.py (:1-7).
   - **Session end, user (20:1x):** 「세션 종료되면 라이브로 만들어진 VRS를 병합이 아니라 하나의 블록으로 치면 되잖아」. At session end the live session VRS is not merged into the main root. It is kept as one VRS block. This matches the user's VRS definition (2026-09-23): VRS = blocks with connection points between them, strengthened and weakened, with a cap on block size.
   - User, continuing (20:1x): 「연결부만 만들면 저장소나 메모리에 무리도 안갈거고」. Closing a session block writes only the block and its connection points to the existing blocks. The main root is not rewritten and nothing is copied whole, so storage and memory stay bounded by the session's own size plus its connections.
+  - **Idle consolidation, user (20:2x):** 「주기적으로 유휴시간이 생길때 일부 블럭을 병합해서 vrs 한번씩 돌려주면 되지 않겠나」. When idle time comes around periodically, Main picks some blocks, merges them and runs VRS over the result once. Merging never happens at session end or on the input-to-Replay path. The merged block replaces its inputs in one HEAD CAS, and a lease taken before the CAS keeps reading the old blocks. How many blocks to pick, which ones, and the idle signal are designed with Codex. The user's existing counterparts to read: VRS consolidation and the stable/pending split (candidates, not yet read).
   - Still to design with Codex before code: the block's storage and its connection-point record, how the StrengthView reads (main root + closed session blocks + the live session VRS), what happens when a session's block passes the size cap, and crash behaviour of a live session.
 - **Selection:**
   1. Take the highest strength among the recalled candidates. Equality is exact f32 equality.
@@ -93,6 +97,7 @@ All four stages run over one published journal universe U, and the VRS strength 
 
 ## 5. Re-evidence
 - **Trigger:** the replayed memory's phase differs from the current input's phase, or the current input conflicts with it (user). Otherwise no judge is called.
+  - **Input contract (Codex 19:55 (3)); no external LLM and no string comparison stand in for it.** Main hands Re-evidence the current phase (a typed step phase) and zero or more current propositions, each with a polarity and its current evidence refs. The phase trigger compares typed phases for equality. The conflict trigger fires when a current proposition has the opposite polarity to the same proposition in a replayed step. "Same proposition" is an exact match of the canonical proposition identity that both sides carry. That identity comes with the typed step schema (multimodal plan). Until both exist, the conflict trigger is not wired, and nothing guesses it.
   - The memory's verdict is then the user's `current_experience_verdict`: **retained** if the current strength is ≥ 1.0, **available** if not (:781-807).
   - The verdict's evidence refs are the memory snapshot, the VRS snapshot and the memory's source addresses.
 - **When triggered:** the judge gives one verdict per replayed memory. The verdict is one of support / refute / insufficient / conflict / available / retained (:22).
@@ -127,6 +132,7 @@ It carries no authority (:927-946). This extends today's SelectionReceipt<NoAuth
 
 ## 8. Other user logic kept
 - `select_runtime_cues` (:557-592) picks one hot key: current-evidence cues first, otherwise the minimum non-empty fanout. Callers use it (dialogue_evidence :106-109, experience_organization :788). It becomes a Main helper over the same cue view, not a stage.
+  - **Position (Codex 19:55 (4)).** It never runs before the user-input hook or before Déjà vu. It runs only inside Recall, as Main's choice among navigation cues after the anonymous signal exists.
 - CompositeMemoryActivationIndex and the hot-index layout wrappers (:233-351) correspond to the journal's published universe. They are not ported as types.
 
 ## 9. Open questions
