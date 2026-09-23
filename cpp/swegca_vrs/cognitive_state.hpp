@@ -385,6 +385,13 @@ public:
 
     // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:103-107
     [[nodiscard]] const CognitiveState& state() const;
+    // A result may return the immutable state already held by this Main
+    // snapshot. Copying its handle grants no publication or write authority.
+    // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:103-107
+    [[nodiscard]] std::shared_ptr<const CognitiveState> share_state() const {
+        (void)state();
+        return state_;
+    }
     // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:196-205
     [[nodiscard]] const PublishedStateId& head() const {
         (void)state();
