@@ -1,4 +1,4 @@
-# SWEGCA C++ four-stage memory activation — design v1.3 (for cross-review, no code yet)
+# SWEGCA C++ four-stage memory activation — design v1.4 (for cross-review, no code yet)
 
 Status: draft for Claude–Codex cross-review. Nothing here is implemented.
 It replaces the single-stage `ExperienceSelector::select` with Déjà vu → Recall → Replay → Re-evidence.
@@ -87,6 +87,9 @@ All four stages run over one published journal universe U, and the VRS strength 
     - "Main root = block list + connection points" is a guess about storage, not a decided structure.
   - **To settle before any structure (Codex 19:57).**
     - When a memory record and its live strength become visible together in Main HEAD, and whether a read can fall between them.
+    - **C++ candidate (Codex 20:03; not a user rule):** the memory record and its live strength are published in the same generation. So no public generation holds a memory without a strength. A failed publication publishes neither and is closed explicitly. This continues the user's atomic memory+VRS pair (mosaic_memory_activation.py:463-507: readers never see a half-updated pair). The user's live path (mosaic_live_action_vrs_transaction.py:129-179) published memory first and queued VRS later. That lag is what the user's new directive removes.
+    - Three different things, kept apart: the session **logical block** (new, user directive), the physical byte block of mosaic_vrs_block_store.py (a copy-on-write storage chunk, 4 MiB cap at mosaic_lossless_blocks.py:23), and SharedExperienceBridge (mosaic_vrs_connectivity_regions.py:122, one memory in several regions). The user's code has no counterpart of the session block, its connection points or idle merging. They are new implementation from the user's words.
+    - "Session first, main fallback" is neither the user's words nor the user's code (CompositeMemoryActivationIndex :233-345 unions its sources and refuses overlapping ids). It came up as a proposal in cross-review. Memory records live in one journal. Only strength reads could have two sources for one memory, and that rule is asked of the user if it is needed.
     - Keep the session-end block, and keep the existing lookup path: session first, main fallback.
     - Compare in full with the user's live path and the user's actual block and connection-point code first. The live-path files are mosaic_live_vrs_pipeline.py (:1), mosaic_live_action_vrs_transaction.py (:1), mosaic_live_durable_vrs.py (:1) and mosaic_vrs_event_hot_publication.py (:1-7). A survey is running.
     - Then design with Codex: block storage, the connection-point record, the size cap, idle selection and the idle signal, and crash behaviour of a live session.
@@ -103,7 +106,7 @@ All four stages run over one published journal universe U, and the VRS strength 
 
 ## 5. Re-evidence
 - **Trigger:** the replayed memory's phase differs from the current input's phase, or the current input conflicts with it (user). Otherwise no judge is called.
-  - **Input contract (Codex 19:55 (3)); no external LLM and no string comparison stand in for it.** Main hands Re-evidence the current phase (a typed step phase) and zero or more current propositions, each with a polarity and its current evidence refs. The phase trigger compares typed phases for equality. The conflict trigger fires when a current proposition has the opposite polarity to the same proposition in a replayed step. "Same proposition" is an exact match of the canonical proposition identity that both sides carry. That identity comes with the typed step schema (multimodal plan). Until both exist, the conflict trigger is not wired, and nothing guesses it.
+  - **Input contract — C++ candidate, not a user rule (Codex 19:55 (3), 20:03). No external LLM and no string comparison stand in for it. The user's existing judgment is the EvidenceJudge over each replayed episode (:867, :879-881). The proposition identity and polarity below wait for the typed schema and are not fixed.** Main hands Re-evidence the current phase (a typed step phase) and zero or more current propositions, each with a polarity and its current evidence refs. The phase trigger compares typed phases for equality. The conflict trigger fires when a current proposition has the opposite polarity to the same proposition in a replayed step. "Same proposition" is an exact match of the canonical proposition identity that both sides carry. That identity comes with the typed step schema (multimodal plan). Until both exist, the conflict trigger is not wired, and nothing guesses it.
   - The memory's verdict is then the user's `current_experience_verdict`: **retained** if the current strength is ≥ 1.0, **available** if not (:781-807).
   - The verdict's evidence refs are the memory snapshot, the VRS snapshot and the memory's source addresses.
 - **When triggered:** the judge gives one verdict per replayed memory. The verdict is one of support / refute / insufficient / conflict / available / retained (:22).
@@ -139,7 +142,7 @@ It carries no authority (:927-946). This extends today's SelectionReceipt<NoAuth
 ## 8. Other user logic kept
 - `select_runtime_cues` (:557-592) picks one hot key: current-evidence cues first, otherwise the minimum non-empty fanout. Callers use it (dialogue_evidence :106-109, experience_organization :788). It becomes a Main helper over the same cue view, not a stage.
   - **Position (Codex 19:55 (4)).** It never runs before the user-input hook or before Déjà vu. It runs only inside Recall, as Main's choice among navigation cues after the anonymous signal exists.
-- CompositeMemoryActivationIndex and the hot-index layout wrappers (:233-351) correspond to the journal's published universe. They are not ported as types.
+- CompositeMemoryActivationIndex and the hot-index layout wrappers (:233-351) union their sources and refuse overlapping ids. They correspond to the journal's one published universe and are not ported as types. They give no read precedence between sources.
 
 ## 9. Open questions
 - A: closed. 「구절 cue + 질의 토큰」.
