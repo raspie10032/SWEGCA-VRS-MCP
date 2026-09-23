@@ -303,8 +303,10 @@ LedgerBytes AutonomyControl::encode(const AllocationContext& memory) const {
     write_optional(writer, hypothesis_confidence);
     if (requested_axes.size() > std::numeric_limits<std::uint32_t>::max()) fail("autonomy_control_invalid");
     writer.u32(static_cast<std::uint32_t>(requested_axes.size()));
-    for (const auto& axis : requested_axes)
+    for (const auto& axis : requested_axes) {
+        if (axis.empty()) fail("autonomy_control_invalid");
         writer.bytes(std::as_bytes(std::span<const char>(axis.data(), axis.size())), payload_limit);
+    }
     writer.u8(static_cast<std::uint8_t>(verification_status));
     write_optional(writer, verification_lower_bound);
     write_optional(writer, memory_ref);
@@ -444,7 +446,11 @@ AutonomyStep advance_autonomy(const AutonomyControl& control, const AutonomyEven
             out.next_phase = AutonomyPhase::verify;
             update.evidence_action_failures = 0;
         } else {
-            const auto failures = control.evidence_action_failures + 1;
+            // The source counter is unbounded. A native u64 at its limit must
+            // never wrap to zero and make a failed action eligible to retry.
+            const auto failures = control.evidence_action_failures == std::numeric_limits<std::uint64_t>::max()
+                                      ? control.evidence_action_failures
+                                      : control.evidence_action_failures + 1;
             const bool retry = failures < config.maximum_evidence_action_failures();
             out.next_phase = retry ? AutonomyPhase::collect_evidence : AutonomyPhase::abstain;
             out.reason = retry ? AutonomyReason::recover_evidence_action
@@ -500,7 +506,11 @@ AutonomyStep advance_autonomy(const AutonomyControl& control, const AutonomyEven
             out.next_phase = AutonomyPhase::observe;
             update.action_failures = 0;
         } else {
-            const auto failures = control.action_failures + 1;
+            // Keep the no-throw kernel fail closed at the native bound; the
+            // shell below refuses a transition whose exact count cannot fit.
+            const auto failures = control.action_failures == std::numeric_limits<std::uint64_t>::max()
+                                      ? control.action_failures
+                                      : control.action_failures + 1;
             const bool retry = failures < config.maximum_action_failures();
             out.next_phase = retry ? AutonomyPhase::act : AutonomyPhase::abstain;
             out.reason = retry ? AutonomyReason::recover_action : AutonomyReason::failure_budget_exhausted;
@@ -570,6 +580,18 @@ AutonomyTransition advance_autonomous_cognition(const AllocationContext& memory,
     const auto phase_value = static_cast<std::uint8_t>(control.phase);
     if (phase_value < 1 || phase_value > 10) fail("autonomy_control_invalid");
     const auto step = advance_autonomy(control, event, config, decision ? &decision->judgment() : nullptr);
+    if (step.accepted) {
+        if (control.step == std::numeric_limits<std::uint64_t>::max())
+            fail("autonomy_control_invalid:step_overflow");
+        const bool failed_result = event.payload.success.state == PayloadField<bool>::State::present &&
+                                   !event.payload.success.value;
+        if (failed_result &&
+            ((control.phase == AutonomyPhase::observe_evidence_result &&
+              control.evidence_action_failures == std::numeric_limits<std::uint64_t>::max()) ||
+             (control.phase == AutonomyPhase::observe_result &&
+              control.action_failures == std::numeric_limits<std::uint64_t>::max())))
+            fail("autonomy_control_invalid:failure_overflow");
+    }
     AutonomyTransition out(step.accepted ? successor_of(memory, control, step, event)
                                          : AutonomyControl::decode(memory, control.encode(memory)));
     out.accepted_ = step.accepted;
