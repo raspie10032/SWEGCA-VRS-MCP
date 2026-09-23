@@ -221,6 +221,11 @@ crash cases before code uses it.
   stores an exact `JournalRoot` (`ManifestLocation` plus digest) selected by
   Main. A marker filename or timestamp cannot replace verification of its
   payload, predecessor and named root.
+  The author's pending marker is opened exclusively (`"xb"`), then renamed
+  after Main's in-memory swap. The existing native `io::publish_file` replaces
+  a destination name, so it cannot be used for this append-only marker as-is;
+  the Main marker writer needs exclusive creation and a non-replacing commit
+  step while preserving that ordering.
 - Proposal `based_on`, Bind, arbitration, gated capabilities, and CAS compare
   the publication identifier. Re-evidence, admission, and accumulator
   `judged_against` compare only the content digest. Replay can inspect
