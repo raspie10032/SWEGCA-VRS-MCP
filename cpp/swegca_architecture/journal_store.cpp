@@ -1284,6 +1284,22 @@ void JournalStore::load_published_head() {
     loaded->storage = storage_of(loaded->extents, fields, pointer.location);
     if (!storage_->allows(loaded->storage)) fail("journal_storage_budget_exceeded");
 
+    // Before removing any unpublished-looking name, require every extent
+    // named by this lower journal's HEAD to still have its expected file. A
+    // moved published segment must fail without deleting its only bytes.
+    loaded->extents.for_each([&](std::uint64_t, const SegmentExtent& extent) {
+        if (!fs::is_regular_file(segment_path(directory_, extent.file_id)))
+            fail("journal_published_segment_missing");
+    });
+    // Verify the head's written extents before cleanup for the same reason.
+    // This is the lower journal's own-HEAD preflight, not Main root recovery.
+    if (fields.checkpoint) {
+        if (const auto* tail = loaded->extents.tail()) verify_extent(*loaded, *tail);
+    } else {
+        for (std::size_t index = 0; index < head.extent_count(); ++index)
+            verify_extent(*loaded, loaded->extents.at(head.extent(index).ordinal));
+    }
+
     // Second pass, now that the published tails are known: files past them
     // are unpublished leftovers and go, and so do page logs older than the
     // oldest one the view reaches; a segment below the tail that no extent
@@ -1348,17 +1364,6 @@ void JournalStore::load_published_head() {
 
     std::shared_ptr<const PublishedSnapshot> published = std::move(loaded);
     snapshot_.store(published);
-
-    // The extents the newest generation wrote are the ones to check; a
-    // checkpoint head checks its tail extent.
-    const auto& newest = published->head;
-    if (newest.fields().checkpoint) {
-        if (const auto* tail = published->extents.tail())
-            verify_extent(*published, *tail);
-    } else {
-        for (std::size_t index = 0; index < newest.extent_count(); ++index)
-            verify_extent(*published, published->extents.at(newest.extent(index).ordinal));
-    }
 }
 
 // SWEGCA: user@2026-09-22:72-79
