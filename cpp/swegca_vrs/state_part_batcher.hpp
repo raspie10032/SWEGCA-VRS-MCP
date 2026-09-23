@@ -20,6 +20,21 @@
 // This object has no JournalStore friendship, state authority or marker.
 namespace swegca::vrs {
 
+namespace journal {
+class JournalStore;
+}
+
+// Main's exact-address probe for an immutable state part. An absent address
+// returns false. A present address must replay as the same kind-5 bytes with
+// zero authority and no claim, outcome, predecessor, transaction or index;
+// any mismatch throws. Main calls this against the current published journal
+// after each part generation, under its single-writer boundary.
+// Lineage: native mechanism — Main checks a prior immutable part before reusing it.
+// SWEGCA: docs/SWEGCA_CPP_VRS_LAYER_PLAN.md@472d23225c973fa0a33581afd6bd9026df6fc98a:522-526
+[[nodiscard]] bool probe_published_state_part(
+    const journal::JournalStore& store, const AllocationContext& memory,
+    const DigestBytes& digest, std::span<const std::byte> payload);
+
 class PublishedStatePartProbe final {
 public:
     // Lineage: native mechanism — borrowed Main exact-part verification callback.

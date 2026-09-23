@@ -1,6 +1,7 @@
 #include "swegca_vrs/state_part_batcher.hpp"
 
 #include "swegca_vrs/core_sha256.hpp"
+#include "swegca_vrs/journal_store.hpp"
 
 #include <algorithm>
 #include <stdexcept>
@@ -24,6 +25,32 @@ void hex_digest(const DigestBytes& digest, char* out) noexcept {
 }
 
 }  // namespace
+
+// Lineage: native mechanism — Main reuses only the exact immutable state part
+// published at its digest-derived address, without treating it as authority.
+// SWEGCA: docs/SWEGCA_CPP_VRS_LAYER_PLAN.md@472d23225c973fa0a33581afd6bd9026df6fc98a:522-526
+bool probe_published_state_part(const journal::JournalStore& store,
+                                const AllocationContext& memory,
+                                const DigestBytes& digest,
+                                std::span<const std::byte> payload) {
+    if (payload.empty() || payload.size() > part_tree::part_bytes)
+        throw std::invalid_argument("state_part_probe_invalid");
+    const auto address_bytes = state_part_address(digest);
+    const ExperienceAddress address(
+        memory, std::string_view(address_bytes.data(), address_bytes.size()));
+    const auto position = store.resolve(address);
+    if (!position) return false;
+    const auto record = store.replay(address);
+    const auto& view = record.view();
+    if (record.position() != *position || view.kind != journal::state_part_record_kind ||
+        view.address != address.value() || view.authority || !view.claim.empty() ||
+        !view.outcome.empty() || !view.previous_revision_address.empty() ||
+        !view.transaction_id.empty() || view.index_count != 0 ||
+        view.payload_digest != digest || view.payload.size() != payload.size() ||
+        !std::equal(view.payload.begin(), view.payload.end(), payload.begin()))
+        throw std::runtime_error("state_part_published_mismatch");
+    return true;
+}
 
 // Lineage: native mechanism — record metadata is fixed for the planned Main transition.
 // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:567-572
