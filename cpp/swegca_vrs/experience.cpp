@@ -33,14 +33,16 @@ constexpr std::size_t max_resources = 1024;
 constexpr std::size_t digest_hex_bytes = 2 * digest256_width;
 constexpr std::size_t address_bytes = experience_address_bytes;
 // A part holds `experience_part_bytes` of a blob or that many bytes of the
-// digest list one level below; the top list fits an inline blob.
-constexpr std::uint64_t digests_per_part = part_tree::digests_per_part;
-constexpr std::uint64_t max_top_digests = part_tree::max_top_digests;
+// digest list one level below; the top list fits an inline blob
+// (blob_field.hpp holds the byte form and the part-length rule).
 static_assert(experience_part_bytes % digest256_width == 0 && experience_part_bytes <= journal::max_payload_bytes);
 // Inline: mode, length, bytes. Parted: mode, size, digest, depth, top count,
 // top digests.
-constexpr std::size_t inline_blob_encoded_bytes = 1 + 4 + experience_inline_blob_bytes;
-constexpr std::size_t parted_blob_encoded_bytes = 1 + 8 + 32 + 1 + 4 + max_top_digests * digest256_width;
+constexpr std::size_t inline_blob_encoded_bytes = blob_field_inline_encoded_bytes;
+constexpr std::size_t parted_blob_encoded_bytes = blob_field_parted_encoded_bytes;
+static_assert(experience_inline_blob_bytes == part_tree::inline_top_bytes &&
+              experience_part_bytes == part_tree::part_bytes,
+              "experience blobs use the shared blob field's sizes");
 constexpr std::size_t max_blob_encoded_bytes = std::max(inline_blob_encoded_bytes, parted_blob_encoded_bytes);
 // Every experience's envelope fits one record whatever its bytes: five
 // blobs (raw, structured, root sources, root contexts, and the typed section
@@ -835,16 +837,10 @@ std::uint64_t encoded_blob_bytes(const BlobPlan& blob) noexcept {
 // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:567-568
 void write_blob(ByteWriter& writer, const BlobPlan& blob) {
     if (blob.depth == 0) {
-        writer.u8(0);
-        writer.bytes(blob.inline_bytes, experience_inline_blob_bytes);
+        write_inline_blob_field(writer, blob.inline_bytes);
         return;
     }
-    writer.u8(1);
-    writer.u64(blob.size);
-    writer.digest(blob.digest);
-    writer.u8(blob.depth);
-    writer.u32(static_cast<std::uint32_t>(blob.top.size() / digest256_width));
-    writer.raw(blob.top);
+    write_parted_blob_field(writer, blob.size, blob.digest, blob.depth, blob.top);
 }
 
 // Reads one blob in its one form: inline up to the inline size, otherwise
@@ -852,25 +848,7 @@ void write_blob(ByteWriter& writer, const BlobPlan& blob) {
 // Lineage: native mechanism — reads one blob field only in its one canonical form, so any other encoding fails closed.
 // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:567-568
 ExperienceBlob read_blob(ByteReader& reader) {
-    ExperienceBlob out;
-    const auto mode = reader.u8();
-    if (mode == 0) {
-        out.inline_bytes = reader.bytes_view(experience_inline_blob_bytes);
-        out.size = out.inline_bytes.size();
-        out.digest = Sha256::of(out.inline_bytes);
-        return out;
-    }
-    if (mode != 1) fail("experience_envelope_invalid");
-    out.size = reader.u64();
-    out.digest = reader.digest();
-    out.depth = reader.u8();
-    const auto count = reader.u32();
-    if (out.size <= experience_inline_blob_bytes) fail("experience_envelope_invalid");
-    const auto levels = part_levels(out.size);
-    if (out.depth != levels.depth || count != levels.counts[levels.depth - 1])
-        fail("experience_envelope_invalid");
-    out.top_digests = reader.raw(static_cast<std::size_t>(count) * digest256_width);
-    return out;
+    return read_blob_field(reader, "experience_envelope_invalid");
 }
 
 // A part of a parted blob, replayed and checked: a part record with no
@@ -896,9 +874,7 @@ journal::PublishedRecord replay_part(const journal::JournalStore& journal, const
 // SWEGCA: docs/SWEGCA_CPP_VRS_LAYER_PLAN.md@472d23225c973fa0a33581afd6bd9026df6fc98a:522-523
 std::uint64_t part_length(const PartLevels& levels, std::uint64_t size, std::uint8_t level,
                           std::uint64_t place) noexcept {
-    if (level == 0) return std::min<std::uint64_t>(experience_part_bytes, size - place * experience_part_bytes);
-    return std::min<std::uint64_t>(digests_per_part, levels.counts[level - 1] - place * digests_per_part) *
-           digest256_width;
+    return blob_part_length(levels, size, level, place);
 }
 
 // Reads a blob forward: an inline one from the record, a parted one part by

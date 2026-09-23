@@ -4,6 +4,7 @@
 #include "swegca_vrs/allocation.hpp"
 
 #include "swegca_architecture/digest_bytes.hpp"
+#include "swegca_vrs/blob_field.hpp"
 #include "swegca_vrs/journal_format.hpp"
 #include "swegca_vrs/journal_store.hpp"
 #include "swegca_vrs/allocation.hpp"
@@ -347,17 +348,10 @@ using DigestVisitor = ExperienceVisitor<const DigestBytes&>;
 // when it is longer than an inline blob, level after level, until the top
 // list fits: `depth` is the number of part levels (at most 3 for any u64
 // size) and `top_digests` the top list, 32 bytes per part, in order. Every
-// level's count follows from `size`, so a blob has one form.
-struct ExperienceBlob {
-    std::uint64_t size = 0;
-    DigestBytes digest{};  // SHA-256 of all `size` bytes
-    std::uint8_t depth = 0;
-    std::span<const std::byte> inline_bytes;
-    std::span<const std::byte> top_digests;
-
-    // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:23-60
-    [[nodiscard]] bool parted() const noexcept { return depth != 0; }
-};
+// level's count follows from `size`, so a blob has one form. The byte form
+// is the shared blob field (blob_field.hpp), which Main's state-section
+// descriptors use too.
+using ExperienceBlob = BlobField;
 
 // A decoded user episode, a step and an observed resource. Every text and
 // byte span views the record's bytes; lists view the record's own lists.
