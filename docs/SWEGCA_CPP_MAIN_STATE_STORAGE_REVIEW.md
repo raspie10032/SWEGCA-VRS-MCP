@@ -70,6 +70,9 @@ crash cases before code uses it.
    The final stage must be built on the latest journal HEAD while comparing
    the state generation with the one read before preparation, since unrelated
    experience appends may advance the journal generation.
+   If publication throws, Main cannot infer the durable state from its old
+   pointer because HEAD replacement may already have happened. It stops
+   guarded work and reopens from the published HEAD before another write.
 6. Initialization, cold recovery, and guarded writes must fit the VRS host's
    configured memory profile, preserve the canonical state byte stream, and
    compute the same `swegca.cognitive_state.v1` digest. The host VRS layer
