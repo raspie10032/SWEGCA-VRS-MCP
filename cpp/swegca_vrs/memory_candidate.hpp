@@ -40,6 +40,10 @@ public:
     // imposed. All owned bytes use the supplied host account.
     // SWEGCA: src/tinylm_slicer/mosaic_memory_promotion.py@3bddcb7:37-71
     MemoryCandidate(const AllocationContext& memory, const MemoryCandidateInput& input);
+    MemoryCandidate(const MemoryCandidate&) = delete;
+    MemoryCandidate& operator=(const MemoryCandidate&) = delete;
+    MemoryCandidate(MemoryCandidate&&) = default;
+    MemoryCandidate& operator=(MemoryCandidate&&) = delete;
 
     // SWEGCA: src/tinylm_slicer/mosaic_memory_promotion.py@3bddcb7:37-71
     [[nodiscard]] std::string_view hypothesis_id() const noexcept { return hypothesis_id_; }

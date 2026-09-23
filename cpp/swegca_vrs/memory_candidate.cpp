@@ -58,8 +58,9 @@ MemoryCandidate::MemoryCandidate(const AllocationContext& memory,
         else
             evidence_refs_.emplace_back(std::get<WriteReceiptLink>(reference));
     }
-    // This temporary index borrows the input only for this constructor; the
-    // ordered, deduplicated aliases remain wholly owned on `memory`.
+    // This temporary index borrows the input only for this constructor. Its
+    // hash iteration order is never used: input order determines the owned,
+    // deduplicated aliases on `memory`.
     std::unordered_set<std::string_view, std::hash<std::string_view>,
                        std::equal_to<std::string_view>, AllocationAdapter<std::string_view>>
         seen(0, std::hash<std::string_view>{}, std::equal_to<std::string_view>{},

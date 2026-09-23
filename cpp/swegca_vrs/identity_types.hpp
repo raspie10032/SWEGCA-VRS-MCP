@@ -38,7 +38,7 @@ struct GeneralizedUtf8State {
 
 // The author's Python str.strip nonempty predicate for a generalized UTF-8
 // text. Invalid or incomplete native byte sequences return false.
-// SWEGCA: src/tinylm_slicer/mosaic_memory_promotion.py@3bddcb7:56-67
+// SWEGCA: src/tinylm_slicer/mosaic_memory_promotion.py@3bddcb7:50-71
 [[nodiscard]] bool has_python_strip_content(std::string_view value) noexcept;
 
 [[nodiscard]] bool is_strict_utf8(std::string_view value) noexcept;

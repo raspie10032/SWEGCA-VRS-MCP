@@ -104,7 +104,7 @@ bool is_generalized_utf8(std::string_view value) noexcept {
 // A Python candidate field is nonempty when str.strip keeps at least one
 // code point. This shares the event parser's generalized UTF-8 transport
 // rule, including lone surrogates; it does not impose identity byte limits.
-// SWEGCA: src/tinylm_slicer/mosaic_memory_promotion.py@3bddcb7:56-67
+// SWEGCA: src/tinylm_slicer/mosaic_memory_promotion.py@3bddcb7:50-71
 bool has_python_strip_content(std::string_view value) noexcept {
     GeneralizedUtf8State state;
     bool has_content = false;
