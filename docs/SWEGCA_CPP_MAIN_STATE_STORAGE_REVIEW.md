@@ -197,9 +197,8 @@ crash cases before code uses it.
 
 - The target `CognitiveState` holds only canonical content and its
   `content_digest()`, with no publication ordinal, wall clock, or journal
-  position. The current C++ class still holds a provisional
-  `StateGeneration(ordinal, digest)`. Main creates the initial content; a
-  guarded writer creates successor content.
+  position. The current C++ class follows that boundary. Main creates the
+  initial content; a guarded writer creates successor content.
 - `PublishedStateId` is `(content_digest, publication RecordPosition)`, where
   the position has segment, byte offset, sequence, and record digest. Only a
   successful Main-owned state-head publication may construct it. The latest
@@ -207,9 +206,10 @@ crash cases before code uses it.
   rollback that reuses an older content root.
 - `StateSnapshot` must hold a `shared_ptr<const CognitiveState>` and that
   exact `PublishedStateId`; only Main constructs snapshots. The current C++
-  `StateSnapshot` holds the state and Main lifetime but has no `head()` or
-  publication field yet. The target interface exposes `state()` and `head()`;
-  a producer cannot construct or replace a head identifier.
+  `StateSnapshot` holds the state, publication head and Main lifetime and
+  exposes `state()` and `head()`. A producer cannot construct or replace a
+  head identifier. Main still cannot publish a live pair before the durable
+  strength root is selected and verified.
 - The journal now has a private `for_each_index_match_in` over a caller-pinned
   `PublishedSnapshot`; `resolve_in` and `replay_in` already accept that same
   snapshot. Main can therefore keep one journal generation through all cue
@@ -446,6 +446,13 @@ non-tensor inline representation remain undecided.
   `state_publication` position. Main's reserved-kind staging and a read-only
   genesis recovery candidate exist. Evidence admission keeps the original,
   state head and every experience part on one pinned journal generation.
+  The strength-root locator is unresolved. A digest-derived address can use
+  `JournalReadSnapshot::resolve`, but that depends on the derived address view,
+  which can be unavailable after page-log damage while original records remain
+  readable (journal condition B10). An exact record position in Main's marker
+  or the selected manifest can use `read_at` without that view. The chosen
+  form must bind the complete root payload and its bounded parts to Main's
+  selected generation; a locator-only record is not a recovered VRS value.
   The final Main publication path remains incomplete: marker-chain selection,
   durable strength-root verification, owner binding, pair swap, and writable
   reconciliation after an older selected root still need implementation.
