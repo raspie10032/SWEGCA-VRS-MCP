@@ -71,7 +71,7 @@ crash cases before code uses it.
 - The user's earlier bounded writer keeps prior write metadata in `self_state`.
   C++ candidate `SelfState` now holds an opaque caller payload alongside an
   optional typed `BoundedWriteHead` (policy version, receipt digest, revision,
-  target role, evidence references). The content digest uses domain v2 and binds that
+  target role, evidence references). The content digest uses domain v3 and binds that
   head's presence and canonical fields. The writer and recovery codec still
   need to update and restore it; the opaque payload's reserved-key boundary
   must be checked before calling this complete. Caller self payload bytes
@@ -218,7 +218,7 @@ crash cases before code uses it.
   time nor a new ordinal determines succession or authority. The user's earlier
   bounded writer's self-state write revision remains content, since rollback
   must restore it. A typed `BoundedWriteHead` in `SelfState` is included in
-  content-digest domain v2; its writer and recovery path are still pending.
+  content-digest domain v3; its writer and recovery path are still pending.
 - The current lower-journal candidate uses two local HEAD publications
   because its encoder needs a record position before it can encode a
   manifest naming that position. First, Main publishes root and candidate
@@ -330,8 +330,10 @@ four-stage VRS path is already implemented.
   most once per generation and resolve already published state parts before
   staging. Otherwise duplicate-address checks would reject a valid tensor.
 - `CognitiveState::for_each_content_chunk` and `content_digest()` now use one
-  canonical byte emitter, so a future bounded state-part writer can consume
-  exactly the digest preimage. The experience `plan_blob` pulls from a span
+  canonical byte emitter. Its optional section callback now marks prefix,
+  each tensor, entities, relations, evidence and final fields without adding
+  bytes to the digest preimage. A future bounded state-part writer can consume
+  exactly that preimage. The experience `plan_blob` pulls from a span
   or random-access reader and rereads it when staging; the state emitter
   pushes chunks into a sink. Share only the input-independent upper digest
   tree and level-count logic. The tensor's existing fixed chunks provide
@@ -355,8 +357,8 @@ four-stage VRS path is already implemented.
   preimage. A tensor root contains only partition, header and content digest
   lists: generation, owner, time and predecessor addresses stay outside it,
   so an unchanged tensor retains its exact root address. The canonical emitter
-  must report section boundaries to the writer while retaining one
-  byte-encoding implementation.
+  now reports section boundaries while retaining one byte-encoding
+  implementation; the writer is not yet connected.
 - Prefix and suffix may themselves exceed one record and need bounded parts.
   Splitting suffix into stable sections could avoid rewriting an unbounded
   graph when the write head changes. One section-boundary callback in the
