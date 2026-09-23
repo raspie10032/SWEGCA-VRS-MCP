@@ -52,6 +52,55 @@ bool contains_identity_content(std::string_view value) noexcept {
 
 namespace detail {
 
+// Generalized UTF-8 is the native byte form of a Python str, including lone
+// surrogate code points. It rejects overlong encodings, invalid continuations
+// and code points above U+10FFFF. The parser and durable control use one rule.
+// SWEGCA: src/swegca/mosaic_autonomous_cognition.py@5901a5a:114-120
+bool push_generalized_utf8(GeneralizedUtf8State& state, std::byte value,
+                           bool& complete) noexcept {
+    complete = false;
+    const auto byte = std::to_integer<std::uint32_t>(value);
+    if (state.pending == 0) {
+        if (byte < 0x80) {
+            state.code_point = byte;
+            complete = true;
+            return true;
+        }
+        if (byte >= 0xc2 && byte <= 0xdf) {
+            state.code_point = byte & 0x1f;
+            state.minimum = 0x80;
+            state.pending = 1;
+        } else if (byte >= 0xe0 && byte <= 0xef) {
+            state.code_point = byte & 0x0f;
+            state.minimum = 0x800;
+            state.pending = 2;
+        } else if (byte >= 0xf0 && byte <= 0xf4) {
+            state.code_point = byte & 0x07;
+            state.minimum = 0x10000;
+            state.pending = 3;
+        } else {
+            return false;
+        }
+        return true;
+    }
+    if ((byte & 0xc0) != 0x80) return false;
+    state.code_point = (state.code_point << 6) | (byte & 0x3f);
+    if (--state.pending != 0) return true;
+    if (state.code_point < state.minimum || state.code_point > 0x10ffff) return false;
+    complete = true;
+    return true;
+}
+
+// SWEGCA: src/swegca/mosaic_autonomous_cognition.py@5901a5a:114-120
+bool is_generalized_utf8(std::string_view value) noexcept {
+    GeneralizedUtf8State state;
+    for (unsigned char byte : value) {
+        bool complete = false;
+        if (!push_generalized_utf8(state, static_cast<std::byte>(byte), complete)) return false;
+    }
+    return state.pending == 0;
+}
+
 // Strict UTF-8 rejects overlong encodings, surrogate code points, truncated
 // sequences, invalid continuations, and values above U+10FFFF. This byte
 // validation is additional native infrastructure, not a Python _require_text

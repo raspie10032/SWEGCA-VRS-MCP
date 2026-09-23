@@ -156,12 +156,7 @@ private:
         Target member_target = Target::none;  // root object only
     };
 
-    // Generalized UTF-8, one byte at a time.
-    struct Utf8 {
-        std::uint32_t code_point = 0;
-        std::uint32_t minimum = 0;
-        std::uint8_t pending = 0;
-    };
+    using Utf8 = detail::GeneralizedUtf8State;
 
     void consume(std::byte value);
     void on_fixed();

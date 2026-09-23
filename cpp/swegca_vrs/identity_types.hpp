@@ -18,6 +18,24 @@ namespace detail {
 
 inline constexpr std::size_t identity_text_max_bytes = 4096;
 
+// Native byte representation of Python text that may contain lone surrogate
+// code points. `push_generalized_utf8` reports one completed code point while
+// retaining a partial sequence across input chunks.
+// Lineage: native mechanism — event/control text transport.
+// SWEGCA: src/swegca/mosaic_autonomous_cognition.py@5901a5a:114-120
+struct GeneralizedUtf8State {
+    std::uint32_t code_point = 0;
+    std::uint32_t minimum = 0;
+    std::uint8_t pending = 0;
+};
+
+// SWEGCA: src/swegca/mosaic_autonomous_cognition.py@5901a5a:114-120
+[[nodiscard]] bool push_generalized_utf8(GeneralizedUtf8State& state, std::byte value,
+                                         bool& complete) noexcept;
+
+// SWEGCA: src/swegca/mosaic_autonomous_cognition.py@5901a5a:114-120
+[[nodiscard]] bool is_generalized_utf8(std::string_view value) noexcept;
+
 [[nodiscard]] bool is_strict_utf8(std::string_view value) noexcept;
 
 void require_identity_text(std::string_view value, std::string_view field);

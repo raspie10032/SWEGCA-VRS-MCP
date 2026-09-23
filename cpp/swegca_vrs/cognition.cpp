@@ -161,6 +161,8 @@ std::optional<double> read_optional_double(ByteReader& reader) {
 void write_optional(ByteWriter& writer, const std::optional<PayloadText>& text) {
     writer.u8(text ? 1 : 0);
     if (text) {
+        if (!detail::is_generalized_utf8(std::string_view(text->data(), text->size())))
+            fail("autonomy_control_invalid");
         writer.u64(text->size());
         writer.raw(std::as_bytes(std::span<const char>(text->data(), text->size())));
     }
@@ -178,7 +180,11 @@ std::span<const std::byte> read_payload_bytes(ByteReader& reader) {
 
 // SWEGCA: src/swegca/mosaic_autonomous_cognition.py@5901a5a:167-186
 PayloadText payload_text(const AllocationContext& memory, std::span<const std::byte> bytes) {
-    return PayloadText(reinterpret_cast<const char*>(bytes.data()), bytes.size(), memory.allocator<char>());
+    if (bytes.empty()) return PayloadText(memory.allocator<char>());
+    const std::string_view value(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+    if (!detail::is_generalized_utf8(value))
+        fail("autonomy_control_invalid");
+    return PayloadText(value.data(), value.size(), memory.allocator<char>());
 }
 
 // SWEGCA: src/swegca/mosaic_autonomous_cognition.py@5901a5a:167-186
@@ -315,7 +321,8 @@ LedgerBytes AutonomyControl::encode(const AllocationContext& memory) const {
     write_optional(writer, hypothesis_confidence);
     writer.u64(requested_axes.size());
     for (const auto& axis : requested_axes) {
-        if (axis.empty()) fail("autonomy_control_invalid");
+        if (axis.empty() || !detail::is_generalized_utf8(std::string_view(axis.data(), axis.size())))
+            fail("autonomy_control_invalid");
         writer.u64(axis.size());
         writer.raw(std::as_bytes(std::span<const char>(axis.data(), axis.size())));
     }
