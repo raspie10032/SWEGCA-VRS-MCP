@@ -27,7 +27,7 @@ struct MainMemoryProjectionAppendCount {
 // Apply one already durable observation frame to unpublished or row-limited
 // derived directories. Each original, raw posting, and request certificate
 // stays bound to its exact journal row. Main publishes no reader here.
-// SWEGCA: src/swegca_vrs2/store.py@c06092a:1416-1452
+// SWEGCA: src/swegca_vrs2/store.py@7536139:378-399
 // SWEGCA: src/swegca_vrs2/exact_replay.py@c06092a:496-609
 [[nodiscard]] MainMemoryProjectionAppendCount
 append_main_memory_projections(

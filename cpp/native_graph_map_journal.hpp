@@ -8,7 +8,8 @@
 
 namespace swegca::vrs {
 
-// One derived map row follows one already committed original Graph batch.
+// One derived map row follows one already committed sequence of original
+// Graph row transitions.
 // The original journal and its pair remain authoritative; this cursor holds
 // only physical page addresses and the last source row it covers.
 // SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:136-194

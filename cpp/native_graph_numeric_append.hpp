@@ -32,12 +32,12 @@ struct NativeGraphNumericPageResult {
     std::vector<std::pair<std::uint32_t, std::uint64_t>> edge_page_updates;
 };
 
-// A committed author's Graph.append_many batch supplies the only values that
-// may enter new numerical pages. This function copies only pages containing
-// appended or edited addresses, checks any replaced old page against the
-// pinned parent input, and syncs both page files before returning unpublished
-// map updates. Main must persist and certify those updates with the pair.
-// SWEGCA: src/swegca_vrs2/store.py@c06092a:427-512
+// The committed rows have already completed the author's Graph.append one by
+// one. Only their settled row transitions may enter new numerical pages. This
+// copies pages containing appended or settled addresses, checks replaced old
+// pages against the pinned parent, and syncs both files before returning the
+// unpublished final map.
+// SWEGCA: src/swegca_vrs2/store.py@7536139:384-399
 // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_event_delta.py@7536139:117-180
 [[nodiscard]] NativeGraphNumericPageResult append_committed_graph_numeric_pages(
     const NativeJournal& journal, const JournalAppendResult& committed,

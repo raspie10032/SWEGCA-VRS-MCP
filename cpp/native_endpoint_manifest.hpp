@@ -14,7 +14,9 @@
 namespace swegca::vrs {
 
 // Durable cursor for the active endpoint segment partition. Each manifest row
-// is derived from one already committed original observation frame; it does
+// is derived from one already committed original observation frame; each
+// source row already retains its own pair, while this cursor names the final
+// pair after the frame. It does
 // not replace that frame or confer authority on its own.
 // SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:136-194
 struct NativeEndpointManifestCursor {

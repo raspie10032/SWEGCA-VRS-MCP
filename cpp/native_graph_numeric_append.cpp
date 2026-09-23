@@ -18,19 +18,6 @@ std::uint64_t required_pages(std::uint64_t records) {
         (records - 1) / NativeGraphPageMap::records_per_page + 1;
 }
 
-// SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_event_delta.py@7536139:59-66
-template <typename T>
-void add_edit_pages(std::vector<std::uint32_t>& pages,
-                    const std::vector<std::pair<std::uint32_t, T>>& edits,
-                    std::uint64_t old_count) {
-    for (const auto& [address, value] : edits) {
-        (void)value;
-        if (address >= old_count)
-            throw std::runtime_error("graph_numeric_edit_address_invalid");
-        pages.push_back(address / NativeGraphPageMap::records_per_page);
-    }
-}
-
 // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_event_delta.py@7536139:141-163
 void add_appended_pages(std::vector<std::uint32_t>& pages,
                         std::uint64_t old_count,
@@ -107,7 +94,7 @@ void require_old_edge_page(const NativeGraphEdgePage& page,
 
 }  // namespace
 
-// SWEGCA: src/swegca_vrs2/store.py@c06092a:427-512
+// SWEGCA: src/swegca_vrs2/store.py@7536139:384-399
 // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_event_delta.py@7536139:117-180
 NativeGraphNumericPageResult append_committed_graph_numeric_pages(
     const NativeJournal& journal, const JournalAppendResult& committed,
@@ -116,7 +103,7 @@ NativeGraphNumericPageResult append_committed_graph_numeric_pages(
     const NativeGraphNumericPageState& parent_pages,
     std::string_view published_parent_pair,
     NativeGraphPageFile& node_file, NativeGraphPageFile& edge_file) {
-    if (!parent || !batch.graph ||
+    if (!parent ||
         parent_pages.journal_generation != journal.generation() ||
         node_file.journal_generation() != journal.generation() ||
         edge_file.journal_generation() != journal.generation())
@@ -124,36 +111,61 @@ NativeGraphNumericPageResult append_committed_graph_numeric_pages(
     require_committed_main_observation_frame(
         journal, committed, batch, published_parent_pair);
     const auto& old = parent->require_validated_immutable();
-    const auto& graph = *batch.graph;
     if (parent_pages.graph_snapshot_id != old.snapshot_id() ||
         parent_pages.node_count != old.node_count() ||
         parent_pages.edge_count != old.edge_count() ||
         parent_pages.node_pages.page_count() != required_pages(old.node_count()) ||
-        parent_pages.edge_pages.page_count() != required_pages(old.edge_count()) ||
-        graph.parent_snapshot_id != old.snapshot_id() ||
-        graph.snapshot_id != batch.graph_snapshot_id)
+        parent_pages.edge_pages.page_count() != required_pages(old.edge_count()))
         throw std::runtime_error("graph_numeric_batch_source_changed");
-    auto successor = prepare_graph_batch_event_delta(graph, parent);
-    const auto& current = successor->require_validated_immutable();
-    if (current.node_count() != old.node_count() + graph.new_nodes.size() ||
-        current.edge_count() != old.edge_count() +
-                                  graph.changes.appended_edges.size())
-        throw std::runtime_error("graph_numeric_batch_count_changed");
 
     std::vector<std::uint32_t> node_ids;
-    add_appended_pages(node_ids, old.node_count(), current.node_count());
-    add_edit_pages(node_ids, graph.changes.direct_edits, old.node_count());
-    add_edit_pages(node_ids, graph.changes.score_edits, old.node_count());
-    add_edit_pages(node_ids, graph.changes.unresolved_edits, old.node_count());
-    finish_pages(node_ids);
     std::vector<std::uint32_t> edge_ids;
-    add_appended_pages(edge_ids, old.edge_count(), current.edge_count());
-    add_edit_pages(edge_ids, graph.changes.base_edits, old.edge_count());
-    add_edit_pages(edge_ids, graph.changes.strength_edits, old.edge_count());
+    std::uint64_t node_count = old.node_count();
+    std::uint64_t edge_count = old.edge_count();
+    std::string graph_snapshot = old.snapshot_id();
+    auto successor = parent;
+    for (const auto& transition : batch.graph_transitions) {
+        const auto& graph = transition.append;
+        if (!transition.numerical.settled ||
+            transition.journal_row_index >= batch.journal_rows.size() ||
+            graph.parent_snapshot_id != graph_snapshot ||
+            transition.numerical.event_snapshot_id != graph.snapshot_id ||
+            transition.pair_snapshot_id != batch.journal_rows[
+                transition.journal_row_index].pair_id)
+            throw std::runtime_error("graph_numeric_batch_source_changed");
+        const auto& current =
+            transition.numerical.settled->require_validated_immutable();
+        if (current.node_count() != node_count + graph.new_nodes.size() ||
+            current.edge_count() != edge_count + graph.appended_edges.size())
+            throw std::runtime_error("graph_numeric_batch_count_changed");
+        add_appended_pages(node_ids, node_count, current.node_count());
+        add_appended_pages(edge_ids, edge_count, current.edge_count());
+        for (const auto& [address, value] : transition.numerical.signal.scores()) {
+            (void)value;
+            if (address >= current.node_count())
+                throw std::runtime_error("graph_numeric_edit_address_invalid");
+            node_ids.push_back(address / NativeGraphPageMap::records_per_page);
+        }
+        for (const auto& [address, value] : transition.numerical.signal.strengths()) {
+            (void)value;
+            if (address >= current.edge_count())
+                throw std::runtime_error("graph_numeric_edit_address_invalid");
+            edge_ids.push_back(address / NativeGraphPageMap::records_per_page);
+        }
+        node_count = current.node_count();
+        edge_count = current.edge_count();
+        graph_snapshot = current.snapshot_id();
+        successor = transition.numerical.settled;
+    }
+    const auto& current = successor->require_validated_immutable();
+    if (graph_snapshot != batch.graph_snapshot_id ||
+        current.node_count() != node_count || current.edge_count() != edge_count)
+        throw std::runtime_error("graph_numeric_batch_source_changed");
+    finish_pages(node_ids);
     finish_pages(edge_ids);
 
     NativeGraphNumericPageResult result;
-    result.numerical_successor = std::move(successor);
+    result.numerical_successor = successor;
     result.node_page_updates.reserve(node_ids.size());
     result.edge_page_updates.reserve(edge_ids.size());
     for (const auto page_id : node_ids) {
@@ -210,7 +222,7 @@ NativeGraphNumericPageResult append_committed_graph_numeric_pages(
     node_file.sync();
     edge_file.sync();
     result.successor = NativeGraphNumericPageState{
-        parent_pages.journal_generation, graph.snapshot_id,
+        parent_pages.journal_generation, graph_snapshot,
         current.node_count(), current.edge_count(),
         parent_pages.node_pages.with_updates(result.node_page_updates),
         parent_pages.edge_pages.with_updates(result.edge_page_updates)};

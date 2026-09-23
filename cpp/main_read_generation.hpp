@@ -1,6 +1,5 @@
 #pragma once
 
-#include "graph_auxiliary_generation.hpp"
 #include "native_cue_directory.hpp"
 #include "native_operation_directory.hpp"
 #include "session_first_read.hpp"
@@ -24,7 +23,6 @@ public:
         std::shared_ptr<const GraphNodeDirectory> nodes,
         std::shared_ptr<const GraphRegionDirectory> regions,
         std::shared_ptr<const CoactivationAssociations> associations,
-        std::shared_ptr<const GraphAuxiliaryState> auxiliary,
         PortalPolicy policy, std::vector<PortalRevocation> revocations,
         std::shared_ptr<const NativeJournalReadView> journal,
         std::shared_ptr<const ExactJournalDirectory> original_addresses,
@@ -49,7 +47,6 @@ private:
     std::shared_ptr<const GraphNodeDirectory> nodes_;
     std::shared_ptr<const GraphRegionDirectory> regions_;
     std::shared_ptr<const CoactivationAssociations> associations_;
-    std::shared_ptr<const GraphAuxiliaryState> auxiliary_;
     PortalPolicy policy_;
     std::vector<PortalRevocation> revocations_;
     std::shared_ptr<const NativeJournalReadView> journal_;

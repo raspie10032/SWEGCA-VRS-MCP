@@ -16,7 +16,7 @@
 namespace swegca::vrs {
 namespace {
 
-// SWEGCA: src/swegca_vrs2/store.py@c06092a:1397-1452
+// SWEGCA: src/swegca_vrs2/store.py@7536139:378-399
 void validate_candidate(const MainObservationBatchPlan& plan,
                         std::string_view published_pair_id) {
     if (plan.parent_pair_id != published_pair_id ||
@@ -26,14 +26,30 @@ void validate_candidate(const MainObservationBatchPlan& plan,
     if (plan.journal_rows.empty() && plan.pair_snapshot_id != published_pair_id)
         throw std::runtime_error("main_batch_journal_row_invalid");
     std::set<std::string> request_ids;
-    for (const auto& row : plan.journal_rows) {
+    for (std::size_t at = 0; at < plan.journal_rows.size(); ++at) {
+        const auto& row = plan.journal_rows[at];
         const auto entry = parse_native_journal_entry(
             row.request_id, row.body, row.fingerprint);
-        if (row.pair_id != plan.pair_snapshot_id ||
-            entry.kind != NativeJournalEntryKind::observation ||
+        if (entry.kind != NativeJournalEntryKind::observation ||
             entry.value.canonical() != row.body ||
             !request_ids.insert(row.request_id).second)
             throw std::runtime_error("main_batch_journal_row_invalid");
+    }
+    if (!plan.journal_rows.empty() &&
+        plan.journal_rows.back().pair_id != plan.pair_snapshot_id)
+        throw std::runtime_error("main_batch_journal_row_invalid");
+    std::size_t added_at = 0;
+    for (const auto& transition : plan.graph_transitions) {
+        if (transition.journal_row_index >= plan.journal_rows.size() ||
+            transition.journal_row_index < added_at ||
+            !transition.numerical.settled ||
+            plan.journal_rows[transition.journal_row_index].pair_id !=
+                transition.pair_snapshot_id ||
+            transition.pair_snapshot_id != full_current_pair_snapshot_id(
+                transition.memory_snapshot_id,
+                transition.numerical.settled->require_validated_immutable().snapshot_id()))
+            throw std::runtime_error("main_batch_journal_row_invalid");
+        added_at = transition.journal_row_index + 1;
     }
 }
 
@@ -88,7 +104,7 @@ JournalAppendResult recover_exact_tail(
 
 }  // namespace
 
-// SWEGCA: src/swegca_vrs2/store.py@c06092a:1389-1452
+// SWEGCA: src/swegca_vrs2/store.py@7536139:378-399
 MainJournalAppendResult append_main_observation_journal_rows(
     NativeJournal& journal, const MainObservationBatchPlan& plan,
     std::string_view published_pair_id,
@@ -115,7 +131,7 @@ MainJournalAppendResult append_main_observation_journal_rows(
         recover_exact_tail(journal, old_sequence, plan), true};
 }
 
-// SWEGCA: src/swegca_vrs2/store.py@c06092a:1389-1452
+// SWEGCA: src/swegca_vrs2/store.py@7536139:378-399
 void require_committed_main_observation_frame(
     const NativeJournal& journal, const JournalAppendResult& committed,
     const MainObservationBatchPlan& plan,
@@ -140,7 +156,6 @@ void require_committed_main_observation_frame(
             actual.body != plan.journal_rows[at].body ||
             actual.fingerprint != plan.journal_rows[at].fingerprint ||
             actual.pair_id != plan.journal_rows[at].pair_id ||
-            actual.pair_id != plan.pair_snapshot_id ||
             parse_native_journal_entry(actual.request_id, actual.body,
                                        actual.fingerprint).kind !=
                 NativeJournalEntryKind::observation)

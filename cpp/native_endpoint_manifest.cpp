@@ -193,19 +193,27 @@ NativeEndpointManifestCursor append_endpoint_manifest_row(
     const NativeEndpointManifestCursor& current,
     const NativeGraphNumericPageResult& numeric,
     std::string_view published_parent_pair) {
+    std::uint64_t appended_edges = 0;
+    for (const auto& transition : batch.graph_transitions) {
+        if (transition.append.appended_edges.size() >
+                std::numeric_limits<std::uint32_t>::max() - appended_edges)
+            throw std::runtime_error("endpoint_manifest_source_changed");
+        appended_edges += transition.append.appended_edges.size();
+    }
+    const auto& parent_graph = batch.graph_transitions.empty() ?
+        batch.graph_snapshot_id :
+        batch.graph_transitions.front().append.parent_snapshot_id;
     if (&manifest_journal == &source_journal ||
         manifest_journal.directory() == source_journal.directory() ||
         !manifest_journal.shares_write_owner(source_journal) ||
         manifest_journal.row_count() != current.manifest_rows ||
         current.journal_generation != source_journal.generation() ||
-        current.endpoint_directory.empty() || !batch.graph ||
-        current.graph_snapshot_id != batch.graph->parent_snapshot_id ||
+        current.endpoint_directory.empty() ||
+        current.graph_snapshot_id != parent_graph ||
         current.pair_snapshot_id != batch.parent_pair_id ||
-        batch.graph->changes.appended_edges.size() >
-            std::numeric_limits<std::uint32_t>::max() ||
         current.edge_count > std::numeric_limits<std::uint32_t>::max() -
-                                 batch.graph->changes.appended_edges.size() ||
-        current.edge_count + batch.graph->changes.appended_edges.size() !=
+                                 appended_edges ||
+        current.edge_count + appended_edges !=
             numeric.successor.edge_count ||
         numeric.successor.journal_generation != source_journal.generation() ||
         numeric.successor.graph_snapshot_id != batch.graph_snapshot_id ||

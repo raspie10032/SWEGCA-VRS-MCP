@@ -24,7 +24,7 @@ struct ValidatedObservation {
     HotIndexProjectionRow projection;
 };
 
-// SWEGCA: src/swegca_vrs2/store.py@c06092a:1416-1452
+// SWEGCA: src/swegca_vrs2/store.py@7536139:378-399
 std::vector<ValidatedObservation> validate_committed_batch(
     const NativeJournal& journal, const JournalAppendResult& committed,
     const MainObservationBatchPlan& plan, std::string_view published_parent_pair) {
@@ -53,8 +53,7 @@ std::vector<ValidatedObservation> validate_committed_batch(
             actual.request_id != expected.request_id ||
             actual.body != expected.body ||
             actual.fingerprint != expected.fingerprint ||
-            actual.pair_id != expected.pair_id ||
-            actual.pair_id != plan.pair_snapshot_id)
+            actual.pair_id != expected.pair_id)
             throw std::runtime_error("main_projection_batch_changed");
         const auto entry = parse_native_journal_entry(
             actual.request_id, actual.body, actual.fingerprint);
@@ -64,7 +63,7 @@ std::vector<ValidatedObservation> validate_committed_batch(
         auto identifier = episode.episode_id;
         validated.push_back(ValidatedObservation{
             identifier,
-            HotIndexProjectionRow{sequence, plan.pair_snapshot_id,
+            HotIndexProjectionRow{sequence, expected.pair_id,
                 hot_index_header_from_episode(episode),
                 postings_cues_from_observation(entry.value)}});
         ++at;
@@ -119,8 +118,9 @@ void append_original_postings(const HotIndexProjectionRow& projection,
 // SWEGCA: src/swegca_vrs2/store.py@7536139:145-175
 HotIndexSeed prepare_main_memory_seed(
     const MainObservationBatchPlan& plan, const HotIndexRead& published_memory) {
-    const auto& parent_graph = plan.graph ?
-        plan.graph->parent_snapshot_id : plan.graph_snapshot_id;
+    const auto& parent_graph = plan.graph_transitions.empty() ?
+        plan.graph_snapshot_id :
+        plan.graph_transitions.front().append.parent_snapshot_id;
     if (published_memory.snapshot_id().empty() ||
         full_current_pair_snapshot_id(published_memory.snapshot_id(),
                                       parent_graph) != plan.parent_pair_id)
@@ -152,7 +152,7 @@ HotIndexSeed prepare_main_memory_seed(
     return seed;
 }
 
-// SWEGCA: src/swegca_vrs2/store.py@c06092a:1416-1452
+// SWEGCA: src/swegca_vrs2/store.py@7536139:378-399
 // SWEGCA: src/swegca_vrs2/exact_replay.py@c06092a:496-609
 MainMemoryProjectionAppendCount append_main_memory_projections(
     const NativeJournal& journal, const JournalAppendResult& committed,
@@ -188,7 +188,7 @@ MainMemoryProjectionAppendCount append_main_memory_projections(
                 throw std::runtime_error("main_projection_plan_changed");
             const auto expected = project_hot_index_addition(
                 plan.memory_additions[added_at], sequence,
-                plan.pair_snapshot_id);
+                row.pair_id);
             if (encode_hot_index_projection(expected) !=
                 encode_hot_index_projection(validated[at].projection))
                 throw std::runtime_error("main_projection_plan_changed");
@@ -217,7 +217,7 @@ MainMemoryProjectionAppendCount append_main_memory_projections(
             ++count.new_originals;
         }
         operations.put(row.request_id,
-            MainOperation{row.fingerprint, identifier, plan.pair_snapshot_id},
+            MainOperation{row.fingerprint, identifier, row.pair_id},
             sequence);
         ++count.journaled_observations;
     }

@@ -563,7 +563,7 @@ std::filesystem::path NativeGraphNodeDirectory::insert_name(
     }
 }
 
-// SWEGCA: src/swegca_vrs2/store.py@c06092a:427-512
+// SWEGCA: src/swegca_vrs2/store.py@7536139:384-399
 void NativeGraphNodeDirectory::append_committed(
     const NativeJournal& journal, const JournalAppendResult& committed,
     const MainObservationBatchPlan& batch,
@@ -571,26 +571,44 @@ void NativeGraphNodeDirectory::append_committed(
     std::string_view published_parent_pair) {
     const auto& source = parent.require_validated_immutable();
     require_source(source);
-    if (!batch.graph || journal.generation() != journal_generation_)
+    if (journal.generation() != journal_generation_)
         throw std::runtime_error("graph_node_batch_source_changed");
     require_committed_main_observation_frame(
         journal, committed, batch, published_parent_pair);
-    const auto& plan = *batch.graph;
-    if (plan.snapshot_id != batch.graph_snapshot_id ||
-        plan.parent_snapshot_id != source.snapshot_id() ||
-        plan.new_nodes.empty() ||
-        plan.changes.appended_direct.size() != plan.new_nodes.size() ||
-        plan.changes.appended_score.size() != plan.new_nodes.size() ||
-        plan.changes.appended_unresolved.size() != plan.new_nodes.size() ||
-        plan.changes.appended_edges.size() !=
-            plan.changes.appended_strength.size())
+    std::string graph = source.snapshot_id();
+    std::uint64_t count = source.node_count();
+    std::vector<std::pair<std::string, std::uint32_t>> appended;
+    for (const auto& transition : batch.graph_transitions) {
+        const auto& plan = transition.append;
+        if (!transition.numerical.settled ||
+            plan.parent_snapshot_id != graph || plan.new_nodes.empty() ||
+            plan.appended_direct.size() != plan.new_nodes.size() ||
+            plan.appended_score.size() != plan.new_nodes.size() ||
+            plan.appended_unresolved.size() != plan.new_nodes.size() ||
+            plan.appended_edges.size() != plan.appended_strength.size())
+            throw std::runtime_error("graph_node_batch_source_changed");
+        for (const auto& node : plan.new_nodes) {
+            if (node.second != count++)
+                throw std::runtime_error("graph_node_batch_source_changed");
+            appended.push_back(node);
+        }
+        const auto& settled =
+            transition.numerical.settled->require_validated_immutable();
+        if (settled.node_count() != count ||
+            transition.journal_row_index >= batch.journal_rows.size() ||
+            transition.pair_snapshot_id != batch.journal_rows[
+                transition.journal_row_index].pair_id)
+            throw std::runtime_error("graph_node_batch_source_changed");
+        graph = settled.snapshot_id();
+    }
+    if (graph != batch.graph_snapshot_id || count < source.node_count())
         throw std::runtime_error("graph_node_batch_source_changed");
-    append(plan.new_nodes);
+    append(appended);
     // The writer follows each unpublished source generation during recovery;
     // existing readers retain their earlier immutable binding and row limit.
     // SWEGCA: src/swegca_vrs2/store.py@c06092a:1429-1452
-    graph_snapshot_id_ = plan.snapshot_id;
-    node_count_ = source.node_count() + plan.new_nodes.size();
+    graph_snapshot_id_ = graph;
+    node_count_ = count;
 }
 
 // SWEGCA: src/swegca_vrs2/store.py@c06092a:427-472

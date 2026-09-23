@@ -1,7 +1,6 @@
 #pragma once
 
 #include "exact_journal_replay.hpp"
-#include "graph_auxiliary_generation.hpp"
 #include "native_cue_directory.hpp"
 #include "portal_navigation.hpp"
 
@@ -20,7 +19,6 @@ struct PinnedReadLayer {
     const GraphNodeDirectory& nodes;
     const GraphRegionDirectory& regions;
     const CoactivationAssociations& associations;
-    const GraphAuxiliaryState& auxiliary;
     const PortalPolicy& policy;
     const std::vector<PortalRevocation>& revocations;
     const NativeJournalReadView& journal;

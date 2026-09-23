@@ -43,10 +43,10 @@ public:
                              std::int64_t published_rows,
                              OwnerLock* owner_lock = nullptr);
 
-    // Main may apply node names only for a committed source Graph batch.
-    // Repeating the same batch after a partial write is accepted only when
+    // Main may apply node names only for committed source Graph row
+    // transitions. Repeating the same frame after a partial write is accepted only when
     // every existing address and exact name agree.
-    // SWEGCA: src/swegca_vrs2/store.py@c06092a:427-472
+    // SWEGCA: src/swegca_vrs2/store.py@7536139:384-399
     void append_committed(const NativeJournal& journal,
                           const JournalAppendResult& committed,
                           const MainObservationBatchPlan& batch,

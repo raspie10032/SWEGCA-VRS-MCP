@@ -5,7 +5,11 @@
 #include "memory_vrs_pair.hpp"
 #include "observation.hpp"
 
+#include <cstdint>
 #include <map>
+#include <memory>
+#include <optional>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -15,15 +19,7 @@
 namespace swegca::vrs {
 namespace {
 
-struct FreshObservation {
-    std::size_t result_position;
-    std::string request_id;
-    std::string fingerprint;
-    std::string episode_id;
-    bool added;
-};
-
-// SWEGCA: src/swegca_vrs2/store.py@c06092a:1416-1426
+// SWEGCA: src/swegca_vrs2/store.py@7536139:384-387
 std::string fold_graph_snapshot(std::string_view prior,
                                 std::string_view fingerprint) {
     Json::Array parts;
@@ -32,20 +28,184 @@ std::string fold_graph_snapshot(std::string_view prior,
     return sha256_hex(Json(std::move(parts)).canonical());
 }
 
+// Detached node addresses make earlier rows in this physical transaction
+// visible to the next source Graph.append without publishing them.
+// SWEGCA: src/swegca_vrs2/store.py@7536139:384-399
+class PendingGraphNodes final : public GraphNodeDirectory {
+public:
+    PendingGraphNodes(const GraphNodeDirectory& published,
+                      const EventVrsInputView& source)
+        : published_(published), source_(&source), published_count_(
+              published.node_count()) {
+        published_.require_source(source);
+    }
+
+    // SWEGCA: src/swegca_vrs2/store.py@7536139:178-202
+    void require_source(const EventVrsInputView& source) const override {
+        if (&source != source_ || source.snapshot_id() != source_->snapshot_id())
+            throw std::runtime_error("pending graph node generation changed");
+    }
+
+    // SWEGCA: src/swegca_vrs2/store.py@7536139:196-202
+    [[nodiscard]] std::uint64_t node_count() const override {
+        return published_count_ + names_.size();
+    }
+
+    // SWEGCA: src/swegca_vrs2/store.py@7536139:196-202
+    [[nodiscard]] bool contains(std::string_view name) const override {
+        return addresses_.contains(std::string(name)) || published_.contains(name);
+    }
+
+    // SWEGCA: src/swegca_vrs2/store.py@7536139:201-202
+    [[nodiscard]] std::uint32_t address(std::string_view name) const override {
+        const auto found = addresses_.find(std::string(name));
+        return found == addresses_.end() ? published_.address(name) : found->second;
+    }
+
+    // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_connectivity_regions.py@7536139:250-272
+    [[nodiscard]] std::string name(std::uint32_t address) const override {
+        if (address < published_count_) return published_.name(address);
+        const auto local = static_cast<std::uint64_t>(address) - published_count_;
+        if (local >= names_.size())
+            throw std::out_of_range("pending graph node address missing");
+        return names_[static_cast<std::size_t>(local)];
+    }
+
+    // SWEGCA: src/swegca_vrs2/store.py@7536139:193-262
+    void advance(const GraphAppendPlan& plan,
+                 const EventVrsInputView& parent,
+                 const EventVrsInputView& successor) {
+        require_source(parent);
+        if (plan.parent_snapshot_id != parent.snapshot_id() ||
+            successor.node_count() != node_count() + plan.new_nodes.size())
+            throw std::runtime_error("pending graph node transition changed");
+        for (const auto& [name, address] : plan.new_nodes) {
+            if (address != node_count() || contains(name))
+                throw std::runtime_error("pending graph node transition changed");
+            addresses_.emplace(name, address);
+            names_.push_back(name);
+        }
+        source_ = &successor;
+    }
+
+private:
+    const GraphNodeDirectory& published_;
+    const EventVrsInputView* source_;
+    std::uint64_t published_count_;
+    std::vector<std::string> names_;
+    std::map<std::string, std::uint32_t> addresses_;
+};
+
+struct PendingRegionBinding {
+    std::uint32_t component;
+    std::uint32_t local;
+};
+
+// Detached region replacements follow the same per-row graph source chain.
+// SWEGCA: src/swegca_vrs2/store.py@7536139:282-302
+class PendingGraphRegions final : public GraphRegionDirectory {
+public:
+    PendingGraphRegions(const GraphRegionDirectory& published,
+                        const EventVrsInputView& source)
+        : published_(published), source_(&source) {
+        published_.require_source(source);
+    }
+
+    // SWEGCA: src/swegca_vrs2/store.py@7536139:282-291
+    void require_source(const EventVrsInputView& source) const override {
+        if (&source != source_ || source.snapshot_id() != source_->snapshot_id())
+            throw std::runtime_error("pending graph region generation changed");
+    }
+
+    // SWEGCA: src/swegca_vrs2/store.py@7536139:282-291
+    [[nodiscard]] std::optional<std::uint32_t> component_for(
+        std::uint32_t node) const override {
+        const auto found = bindings_.find(node);
+        if (found != bindings_.end()) return found->second.component;
+        const auto component = published_.component_for(node);
+        if (component && removed_.contains(*component)) return std::nullopt;
+        return component;
+    }
+
+    // SWEGCA: src/swegca_vrs2/store.py@7536139:299-302
+    [[nodiscard]] std::shared_ptr<const RegionTopologyView> topology_for(
+        std::uint32_t component) const override {
+        const auto found = topologies_.find(component);
+        if (found != topologies_.end()) return found->second;
+        if (removed_.contains(component)) return nullptr;
+        return published_.topology_for(component);
+    }
+
+    // SWEGCA: src/swegca_vrs2/store.py@7536139:299-302
+    [[nodiscard]] std::uint32_t local_address(
+        std::uint32_t component, std::uint32_t node) const override {
+        const auto found = bindings_.find(node);
+        if (found != bindings_.end()) {
+            if (found->second.component != component)
+                throw std::runtime_error("pending graph region component changed");
+            return found->second.local;
+        }
+        if (removed_.contains(component))
+            throw std::runtime_error("pending graph region component changed");
+        return published_.local_address(component, node);
+    }
+
+    // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_connectivity_regions.py@7536139:235-248
+    void require_memory_source(const PublishedHotIndex& memory) const override {
+        published_.require_memory_source(memory);
+    }
+
+    // SWEGCA: src/swegca_vrs2/store.py@7536139:282-302
+    void advance(const GraphRegionPlan& plan,
+                 const EventVrsInputView& parent,
+                 const EventVrsInputView& successor) {
+        require_source(parent);
+        if (!plan.source || !plan.topology || !plan.topology->converged() ||
+            plan.topology->vrs_snapshot_id() != successor.snapshot_id() ||
+            plan.source->component_id >= successor.node_count() ||
+            plan.topology->term_count() != plan.source->nodes.size())
+            throw std::runtime_error("pending graph region transition changed");
+        for (const auto component : plan.old_components) {
+            removed_.insert(component);
+            topologies_.erase(component);
+        }
+        const auto component = plan.source->component_id;
+        removed_.erase(component);
+        topologies_.insert_or_assign(component, plan.topology);
+        for (std::uint64_t local = 0; local < plan.topology->term_count(); ++local) {
+            const auto address = plan.topology->term(
+                static_cast<std::uint32_t>(local));
+            if (address != plan.source->nodes[static_cast<std::size_t>(local)])
+                throw std::runtime_error("pending graph region transition changed");
+            bindings_.insert_or_assign(address, PendingRegionBinding{
+                component, static_cast<std::uint32_t>(local)});
+        }
+        source_ = &successor;
+    }
+
+private:
+    const GraphRegionDirectory& published_;
+    const EventVrsInputView* source_;
+    std::map<std::uint32_t, PendingRegionBinding> bindings_;
+    std::map<std::uint32_t, std::shared_ptr<const RegionTopologyView>> topologies_;
+    std::set<std::uint32_t> removed_;
+};
+
 }  // namespace
 
-// SWEGCA: src/swegca_vrs2/store.py@c06092a:1389-1460
+// SWEGCA: src/swegca_vrs2/store.py@7536139:371-404
 MainObservationBatchPlan plan_main_observation_batch(
     std::span<const Json> batch, const HotIndexRead& published_memory,
     const MainOperationRead& published_operations,
-    const GraphNodeDirectory& nodes,
-    const ValidatedEventVrsInputs& current_graph,
-    std::string_view expected_parent_pair,
-    std::string_view stable_version_id, std::uint64_t stable_edge_count,
-    bool graph_substring_cues) {
+    const GraphNodeDirectory& nodes, const GraphRegionDirectory& regions,
+    std::shared_ptr<const ValidatedEventVrsInputs> current_graph,
+    std::string_view expected_parent_pair) {
     if (batch.empty())
-        throw std::runtime_error("append_many_needs_at_least_one_episode");
-    const auto parent_graph = current_graph.require_validated_immutable().snapshot_id();
+        throw std::runtime_error("observation batch must not be empty");
+    if (!current_graph)
+        throw std::runtime_error("main graph source missing");
+    const auto& initial_graph = current_graph->require_validated_immutable();
+    const auto parent_graph = initial_graph.snapshot_id();
     if (full_current_pair_snapshot_id(published_memory.snapshot_id(),
                                       parent_graph) != expected_parent_pair)
         throw std::runtime_error("main_batch_parent_pair_changed");
@@ -60,10 +220,8 @@ MainObservationBatchPlan plan_main_observation_batch(
     }
     HotIndexPending memory(published_memory);
     MainOperationPending operations(published_operations);
-    std::map<std::string, std::string> seen;
-    std::vector<MemoryEpisode> added_episodes;
-    std::vector<FreshObservation> fresh;
-    std::string graph_input_snapshot = parent_graph;
+    PendingGraphNodes pending_nodes(nodes, initial_graph);
+    PendingGraphRegions pending_regions(regions, initial_graph);
     MainObservationBatchPlan plan;
     plan.parent_pair_id = std::string(expected_parent_pair);
     plan.results.reserve(rows.size());
@@ -81,55 +239,51 @@ MainObservationBatchPlan plan_main_observation_batch(
                 true, false});
             continue;
         }
-        if (const auto prior = seen.find(request_id); prior != seen.end()) {
-            if (prior->second != fingerprint)
-                throw std::runtime_error(
-                    "request_id_reused_with_different_content");
-            plan.results.push_back(MainBatchRowResult{
-                rows[at], std::nullopt, std::nullopt, true, false});
-            continue;
-        }
-        seen.emplace(request_id, fingerprint);
         const auto [identifier, added] = memory.append(rows[at]);
+        const auto journal_position = plan.journal_rows.size();
         if (added) {
-            added_episodes.push_back(episode_from_observation(rows[at]));
-            if (added_episodes.back().episode_id != identifier)
+            auto episode = episode_from_observation(rows[at]);
+            if (episode.episode_id != identifier)
                 throw std::runtime_error("main_batch_episode_changed");
-            graph_input_snapshot = fold_graph_snapshot(
-                graph_input_snapshot, fingerprint);
+            const auto& parent = current_graph->require_validated_immutable();
+            auto append = plan_graph_append(
+                episode, fold_graph_snapshot(parent.snapshot_id(), fingerprint),
+                memory, pending_nodes, *current_graph);
+            auto numerical = settle_graph_event(append, current_graph);
+            auto region = prepare_graph_regions(
+                episode, append, numerical, *current_graph, pending_regions);
+            const auto& successor =
+                numerical.settled->require_validated_immutable();
+            pending_nodes.advance(append, parent, successor);
+            pending_regions.advance(region, parent, successor);
+            current_graph = numerical.settled;
+            const auto pair = full_current_pair_snapshot_id(
+                memory.snapshot_id(), successor.snapshot_id());
+            plan.graph_transitions.push_back(MainGraphRowTransition{
+                journal_position, memory.snapshot_id(), pair,
+                std::move(append), std::move(numerical), std::move(region)});
         }
-        const auto result_position = plan.results.size();
+        const auto graph_snapshot =
+            current_graph->require_validated_immutable().snapshot_id();
+        const auto pair = full_current_pair_snapshot_id(
+            memory.snapshot_id(), graph_snapshot);
+        operations.stage(request_id, MainOperation{fingerprint, identifier, pair});
+        plan.journal_rows.push_back(PendingJournalRow{
+            request_id, rows[at].canonical(), fingerprint, pair});
         plan.results.push_back(MainBatchRowResult{
-            rows[at], std::nullopt, std::nullopt, false, added});
-        fresh.push_back(FreshObservation{
-            result_position, request_id, fingerprint, identifier, added});
+            rows[at], identifier, pair, false, added});
     }
     plan.memory_snapshot_id = memory.snapshot_id();
-    plan.graph_snapshot_id = parent_graph;
+    plan.graph_snapshot_id =
+        current_graph->require_validated_immutable().snapshot_id();
     plan.memory_additions = memory.plans();
-    if (plan.memory_additions.size() != added_episodes.size())
+    if (plan.memory_additions.size() != plan.graph_transitions.size())
         throw std::runtime_error("main_batch_memory_plan_changed");
-    if (!added_episodes.empty()) {
-        plan.graph.emplace(plan_graph_batch_append(
-            added_episodes, graph_input_snapshot, memory, nodes,
-            current_graph, stable_version_id, stable_edge_count,
-            graph_substring_cues));
-        plan.graph_snapshot_id = plan.graph->snapshot_id;
-    }
     plan.pair_snapshot_id = full_current_pair_snapshot_id(
         plan.memory_snapshot_id, plan.graph_snapshot_id);
-    plan.journal_rows.reserve(fresh.size());
-    for (const auto& item : fresh) {
-        operations.stage(item.request_id, MainOperation{
-            item.fingerprint, item.episode_id, plan.pair_snapshot_id});
-        const auto& row = plan.results[item.result_position].observation;
-        plan.journal_rows.push_back(PendingJournalRow{
-            item.request_id, row.canonical(), item.fingerprint,
-            plan.pair_snapshot_id});
-        auto& result = plan.results[item.result_position];
-        result.episode_id = item.episode_id;
-        result.historical_pair_id = plan.pair_snapshot_id;
-    }
+    if (!plan.journal_rows.empty() &&
+        plan.journal_rows.back().pair_id != plan.pair_snapshot_id)
+        throw std::runtime_error("main_batch_pair_chain_changed");
     return plan;
 }
 

@@ -204,6 +204,20 @@ NativeGraphMapCursor append_graph_numeric_map_row(
     std::string_view published_parent_pair,
     const NativeGraphPageFile& node_file,
     const NativeGraphPageFile& edge_file) {
+    std::uint64_t appended_nodes = 0;
+    std::uint64_t appended_edges = 0;
+    for (const auto& transition : batch.graph_transitions) {
+        if (transition.append.new_nodes.size() >
+                std::numeric_limits<std::uint64_t>::max() - appended_nodes ||
+            transition.append.appended_edges.size() >
+                std::numeric_limits<std::uint64_t>::max() - appended_edges)
+            throw std::runtime_error("graph_numeric_map_source_changed");
+        appended_nodes += transition.append.new_nodes.size();
+        appended_edges += transition.append.appended_edges.size();
+    }
+    const auto& parent_graph = batch.graph_transitions.empty() ?
+        batch.graph_snapshot_id :
+        batch.graph_transitions.front().append.parent_snapshot_id;
     if (&map_journal == &source_journal ||
         map_journal.directory() == source_journal.directory() ||
         !map_journal.shares_write_owner(source_journal) ||
@@ -211,15 +225,13 @@ NativeGraphMapCursor append_graph_numeric_map_row(
         current.pages.journal_generation != source_journal.generation() ||
         node_file.journal_generation() != source_journal.generation() ||
         edge_file.journal_generation() != source_journal.generation() ||
-        !batch.graph ||
-        current.pages.graph_snapshot_id != batch.graph->parent_snapshot_id ||
+        current.pages.graph_snapshot_id != parent_graph ||
         numeric.successor.graph_snapshot_id != batch.graph_snapshot_id ||
         numeric.successor.journal_generation != source_journal.generation() ||
         numeric.successor.node_count !=
-            current.pages.node_count + batch.graph->new_nodes.size() ||
+            current.pages.node_count + appended_nodes ||
         numeric.successor.edge_count !=
-            current.pages.edge_count +
-                batch.graph->changes.appended_edges.size() ||
+            current.pages.edge_count + appended_edges ||
         !numeric.numerical_successor ||
         numeric.numerical_successor->require_validated_immutable().snapshot_id() !=
             numeric.successor.graph_snapshot_id ||

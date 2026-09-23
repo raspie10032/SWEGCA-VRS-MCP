@@ -49,7 +49,6 @@ std::size_t worker_for(std::string_view request_id) {
 
 }  // namespace
 
-// SWEGCA: src/swegca_vrs2/store.py@c06092a:895-933
 // SWEGCA: src/swegca_vrs2/store.py@7536139:378-399
 // SWEGCA: user@2026-09-22:89-92
 NativeOperationRebuildCount rebuild_native_operation_directory(
@@ -107,14 +106,13 @@ NativeOperationRebuildCount rebuild_native_operation_directory(
                 throw std::runtime_error("native_operation_rebuild_cancelled");
             auto entry = parse_native_journal_entry(
                 stored.request_id, stored.body, stored.fingerprint);
-            std::string identifier;
-            if (entry.kind == NativeJournalEntryKind::observation) {
-                identifier = episode_id_from_observation(entry.value);
-                ++count.observations;
-            } else {
-                ++count.graph_events;
-            }
             ++count.journal_rows;
+            if (entry.kind != NativeJournalEntryKind::observation) {
+                ++count.provenance_rows;
+                return;
+            }
+            auto identifier = episode_id_from_observation(entry.value);
+            ++count.observations;
             auto& worker = workers[worker_for(stored.request_id)];
             std::unique_lock lock(worker.mutex);
             worker.ready.wait(lock, [&] {
@@ -145,7 +143,7 @@ NativeOperationRebuildCount rebuild_native_operation_directory(
     if (worker_error) std::rethrow_exception(worker_error);
     if (producer_error) std::rethrow_exception(producer_error);
     if (count.journal_rows != journal.row_count() ||
-        count.observations + count.graph_events != count.journal_rows)
+        count.observations + count.provenance_rows != count.journal_rows)
         throw std::runtime_error("native_operation_rebuild_count_changed");
     return count;
 }

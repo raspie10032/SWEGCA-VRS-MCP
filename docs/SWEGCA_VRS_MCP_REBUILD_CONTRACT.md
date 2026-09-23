@@ -239,56 +239,27 @@ HotIndex uses those same directory objects. An explicit semantic-family
 reader can be supplied; ordinary standalone observations have the author's
 empty family tuple. A native writer for explicitly recorded family
 directories is still missing.
-Both derived rebuild passes now use the author's typed `journal_entry` rule.
-Alias, usage, and consolidation rows must pass their exact fingerprint and
-request-ID prefix checks and remain counted in the source journal. They do
-not create a new observation ID, cue posting, proposition, or successor link.
-Their own Graph/VRS effects and pair certificates still require the Main
-generation replay path; skipping them in an address index is not dropping
-their experience or proof of complete Main restoration.
-The detached alias and usage Graph transitions now reproduce the author's
-flat alias-root map, usage overwrite, snapshot digest chain, and receipt
-fields. An unchanged numerical source may be rebound with an empty event
-delta only after its parent snapshot is checked. These transitions are not
-yet a Main commit/replay coordinator. Consolidation must run the author's
-VRS refinement and verify its version certificate; no alias/usage shortcut
-stands in for it. The current maps are source-level state and still need a
-bounded resident or native representation for the 4 GB product gate.
-Main's pinned read generation now retains the auxiliary Graph state and
-requires its snapshot ID to equal both the validated numerical source and
-the pair's VRS snapshot. The initial auxiliary state uses Graph.empty's
-identity digest and empty alias, usage, and receipt maps.
-The alias ingress plan now strips Python whitespace, sorts unique aliases,
-requires every proposition to be known from the main index or current alias
-registry, skips unchanged bindings, and prepares the author's journal body,
-fingerprint, request ID, successor Graph metadata, and pair certificate.
-The plan remains unpublished until the missing Main journal coordinator
-commits its row. It does not turn alias declarations into evidence.
-The usage ingress plan now visits the source directory only for changed
-counts, confirms that at least one original for each source has no successor,
-and prepares the author's usage journal body, fingerprint, request ID,
-successor Graph metadata, and pair certificate. Source postings are streamed
-until a live original is found; the full list does not enter RAM. Usage remains
-provenance, not new evidence. This plan also awaits the Main coordinator.
-The current source `Graph.append_many` is the required ingress generation:
-new record and literal cue nodes in one observation batch see earlier nodes
-in that batch, resolved records receive their v0.2 direct value, and new
-edges retain base strength until later consolidation. Superseded records are
-marked unresolved, and the batch receives one graph snapshot ID and source
-receipt. `graph_batch_append.cpp` now prepares this detached batch delta.
-`main_observation_batch.cpp` now normalizes an entire observation batch,
-checks published and repeated request IDs, stages the author's HotIndex
-successor in input order, folds only newly added original fingerprints into
-that Graph batch, and calculates one pair certificate for every new journal
-row. Existing requests retain their historical pair. These are detached
-candidates: no journal append, physical index publication, or Main owner
-replacement occurs in this planner.
-The older single-record `graph_append.cpp` event-signal settlement is not the
-product ingress path; its remaining users must be rebuilt or removed before
-publication. Main batch journal commit and source-bound Graph node application
-are present as separate primitives. The complete Main commit/recovery owner,
-physical Graph numerical and dependency stores, and batch replay publication
-remain unfinished. This source path has not been built or parity-tested.
+The typed `journal_entry` parser recognizes alias, usage, and consolidation
+rows from 2.2 only to validate their exact fingerprint and request-ID prefix
+as historical provenance. Those non-author rows do not enter the rebuilt
+operation namespace and execute no Graph, VRS, alias, usage, or refinement
+transition. Only author observation rows create original IDs, postings,
+operations, or active pair generations.
+`main_observation_batch.cpp` uses physical batching only for durable writes.
+Every fresh observation first completes the author's row transition in input
+order: `HotIndex.append`, `plan_graph_append`, `settle_graph_event` with the
+512-round refusal, `prepare_graph_regions` with the convergence refusal, and
+then that row's pair certificate. A duplicate original body is still written
+as an observation and operation with the unchanged current pair. Detached
+node and region overlays expose each completed row to the next row without
+publishing either one. The removed `Graph.append_many` port, alias/usage
+transition state, and refinement path were 2.2 non-author logic.
+The physical journal may commit these already completed rows in one frame,
+but each original row stores its own pair. Numerical pages, endpoint segments,
+node names and map journals consume the ordered author transitions and name
+the final pair after the frame. The complete Main commit/recovery owner and
+region publication coordinator remain unfinished. This source path has not
+been built or parity-tested.
 `EventDeltaView` now asks the source-bound dependency interface to advance its
 verified immutable endpoint/sign prefix. It no longer requires the in-memory
 `SegmentedEndpointDependencyIndex` concrete type. The source segment order
@@ -305,11 +276,11 @@ partially written final derived page is truncated only by its locked writer;
 the original observation journal is untouched. The endpoint dependency
 directory, the publication certificate,
 and bounded read cache are still missing; no product numerical generation
-uses these files yet. The committed batch applier now verifies the exact
+uses these files yet. The committed row-sequence applier verifies the exact
 native observation frame through the same check as the Graph node directory,
-prepares the author's EventDelta successor, validates any old numerical page
-it replaces against that pinned parent, and writes only touched node/edge
-pages before returning unpublished map updates. Crash retries may leave
+consumes only the already settled author Graph transitions, validates any old
+numerical page it replaces against that pinned parent, and writes only touched
+node/edge pages before returning unpublished map updates. Crash retries may leave
 unreferenced complete pages until derived-file reclamation is implemented.
 The page map updates now enter a separate native derived journal under the
 same Main owner lock. Each row binds the Graph parent/successor, memory and
@@ -345,7 +316,7 @@ allocation is fixed at cache construction from the caller's byte budget, so
 Main size cannot expand it. The enclosing Main memory owner must account for
 allocator overhead and all other directories within the global 4 GB limit;
 no RSS acceptance is claimed.
-After a committed batch is written, the prepared sparse successor can be
+After a committed physical frame is written, the final settled row successor can be
 reopened through those immutable pages and its native endpoint segments. This
 keeps the resident Main generation from retaining an ever-growing chain of
 old sparse deltas. The reopen remains unpublished until the missing Main
@@ -507,9 +478,8 @@ Rebuild a separate active C++ generation for each owner. The archived five-field
 rows retain the old pair IDs as historical certificates. The active journal
 retains each original observation body, request ID, sequence, fingerprint,
 source address, and revision, but carries pair IDs re-derived by the complete
-SWEGCA generation rules; no active journal mixes certificate domains. Existing
-2.2 consolidation rows may have their derived certificate fields and
-fingerprints regenerated by the same full-rebuild rule. A real SessionEnd and
+SWEGCA generation rules; no active journal mixes certificate domains. Existing 2.2 consolidation rows retain validated historical provenance and
+do not execute a transition in the new generation. A real SessionEnd and
 validated ownership/link record, not export completion, govern any later
 session-to-main attachment and integration.
 
@@ -525,8 +495,9 @@ because those repositories contain duplicate module basenames.
 The runtime has no SQLite, Hermes, prebuilt wheel, or external replacement
 memory logic. The implementation target is C++ source. Resource gates are
 4 GB resident memory, 5 Gbit/s assumed SSD bandwidth, and exactly
-500,000,000,000 bytes maximum allocated storage. Consolidation must use the
-available 16-thread CPU without serializing all independent shard work.
+500,000,000,000 bytes maximum allocated storage. Independent Main shard and
+generation preparation must use the available 16-thread CPU without a global
+single-worker merge bottleneck.
 The user's billion-parameter unit has not been defined in the current VRS
 code, so no record/edge/byte count may be reported as that target.
 
@@ -538,7 +509,7 @@ code, so no record/edge/byte count may be reported as that target.
 | `layered`, `server`, `native_memory`, `native_context`, `native_transport`, `loopback` | MCP transport and author evidence pages over one owner | Full source tool catalog, handle and cursor contracts, session-first routing, exact IDs, bounded output pages, no transport authority |
 | `store`, `native_journal`, `native_lock`, `resident`, `linked_shards` | One main owner and native generations | Original lineage, atomic publish, complete shards, journal recovery |
 | `compact_index`, `cue_shards`, `exact_replay`, `read_projection`, `projected_recall` | Derived address and read projections | No source-of-truth duplication; full Recall addresses; selected original Replay |
-| `flat_vrs`, `fast_regions`, `vrs_refine`, `vrs_evidence`, `engine/mosaic_vrs_*` | Main-owned numerical SWEGCA VRS | Author event settlement and refinement, accumulator, overlapping memberships, coactivation witnesses, shared-original portal lifecycle, generation binding; physical splitting and bounded parallel preparation |
+| `flat_vrs`, `fast_regions`, `vrs_refine`, `vrs_evidence`, `engine/mosaic_vrs_*` | Main-owned numerical SWEGCA VRS | Author event settlement, accumulator, overlapping memberships, coactivation witnesses, shared-original portal lifecycle, generation binding; 2.2-only refinement remains provenance and does not execute |
 | `engine/mosaic_memory_activation`, `engine/mosaic_proposition_directory`, `engine/mosaic_semantic_family_directory` | One four-stage activation | Déjà vu first, Recall closure, Replay selection, Re-evidence provenance and conflict |
 
 Every product entry point and every source file must be either replaced by a
