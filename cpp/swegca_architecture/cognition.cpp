@@ -94,7 +94,7 @@ AutonomyStep reject(AutonomyPhase phase, AutonomyReason reason) noexcept {
 
 // Sorted, unique actions from the producer's list; each an identity text.
 // SWEGCA: src/swegca/mosaic_autonomous_cognition.py@5901a5a:52-86
-LedgerVector<ToolAction> action_set(const MemoryLedger::Account& memory,
+LedgerVector<ToolAction> action_set(const AllocationContext& memory,
                                     std::span<const std::string_view> actions) {
     LedgerVector<ToolAction> out(memory.allocator<ToolAction>());
     out.reserve(actions.size());
@@ -139,7 +139,7 @@ void write_optional(ByteWriter& writer, const std::optional<double>& value) {
 
 // SWEGCA: src/swegca/mosaic_autonomous_cognition.py@5901a5a:167-186
 template <class Text>
-std::optional<Text> read_optional(ByteReader& reader, const MemoryLedger::Account& memory) {
+std::optional<Text> read_optional(ByteReader& reader, const AllocationContext& memory) {
     const auto flag = reader.u8();
     if (flag > 1) fail("autonomy_control_invalid");
     if (flag == 0) return std::nullopt;
@@ -165,12 +165,12 @@ void write_optional(ByteWriter& writer, const std::optional<PayloadText>& text) 
 }
 
 // SWEGCA: src/swegca/mosaic_autonomous_cognition.py@5901a5a:167-186
-PayloadText payload_text(const MemoryLedger::Account& memory, std::span<const std::byte> bytes) {
+PayloadText payload_text(const AllocationContext& memory, std::span<const std::byte> bytes) {
     return PayloadText(reinterpret_cast<const char*>(bytes.data()), bytes.size(), memory.allocator<char>());
 }
 
 // SWEGCA: src/swegca/mosaic_autonomous_cognition.py@5901a5a:167-186
-std::optional<PayloadText> read_optional_payload(ByteReader& reader, const MemoryLedger::Account& memory) {
+std::optional<PayloadText> read_optional_payload(ByteReader& reader, const AllocationContext& memory) {
     const auto flag = reader.u8();
     if (flag > 1) fail("autonomy_control_invalid");
     if (flag == 0) return std::nullopt;
@@ -230,7 +230,7 @@ void validate_autonomy_event(const AutonomyEventView& event) {
 }
 
 // SWEGCA: src/swegca/mosaic_autonomous_cognition.py@5901a5a:52-86
-AutonomyConfig::AutonomyConfig(const MemoryLedger::Account& memory, const Input& input)
+AutonomyConfig::AutonomyConfig(const AllocationContext& memory, const Input& input)
     : allowed_(memory.allocator<ToolAction>()),
       reversible_(memory.allocator<ToolAction>()),
       evidence_allowed_(memory.allocator<ToolAction>()),
@@ -279,13 +279,13 @@ bool AutonomyConfig::evidence_reversible(std::string_view action) const noexcept
 }
 
 // SWEGCA: src/swegca/mosaic_autonomous_cognition.py@5901a5a:151-152
-AutonomyControl AutonomyControl::initial(const MemoryLedger::Account& memory) { return AutonomyControl(memory); }
+AutonomyControl AutonomyControl::initial(const AllocationContext& memory) { return AutonomyControl(memory); }
 
 // version, phase, step, last event, active and verified hypotheses,
 // hypothesis confidence, axes, verification status and lower bound, memory
 // ref and content hash, pending actions, both failure counts.
 // SWEGCA: src/swegca/mosaic_autonomous_cognition.py@5901a5a:167-186
-LedgerBytes AutonomyControl::encode(const MemoryLedger::Account& memory) const {
+LedgerBytes AutonomyControl::encode(const AllocationContext& memory) const {
     LedgerBytes out(memory.allocator<std::byte>());
     ByteWriter writer(out);
     const auto phase_value = static_cast<std::uint8_t>(phase);
@@ -317,7 +317,7 @@ LedgerBytes AutonomyControl::encode(const MemoryLedger::Account& memory) const {
 }
 
 // SWEGCA: src/swegca/mosaic_autonomous_cognition.py@5901a5a:167-186
-AutonomyControl AutonomyControl::decode(const MemoryLedger::Account& memory, std::span<const std::byte> bytes) {
+AutonomyControl AutonomyControl::decode(const AllocationContext& memory, std::span<const std::byte> bytes) {
     ByteReader reader(bytes);
     if (reader.u16() != control_version) fail("autonomy_control_invalid");
     AutonomyControl out(memory);
@@ -352,7 +352,7 @@ AutonomyControl AutonomyControl::decode(const MemoryLedger::Account& memory, std
 }
 
 // SWEGCA: src/swegca/mosaic_autonomous_cognition.py@5901a5a:167-186
-Digest256 AutonomyControl::digest(const MemoryLedger::Account& memory) const {
+Digest256 AutonomyControl::digest(const AllocationContext& memory) const {
     const auto bytes = encode(memory);
     Sha256 hash;
     hash_field(hash, "swegca.autonomy_control.v1");
@@ -516,7 +516,7 @@ namespace {
 
 // The author's _updated_state: the update, then phase, step and last event.
 // SWEGCA: src/swegca/mosaic_autonomous_cognition.py@5901a5a:167-186
-AutonomyControl successor_of(const MemoryLedger::Account& memory, const AutonomyControl& control,
+AutonomyControl successor_of(const AllocationContext& memory, const AutonomyControl& control,
                              const AutonomyStep& step, const AutonomyEventView& event) {
     auto next = AutonomyControl::decode(memory, control.encode(memory));  // every field on `memory`
     const auto& update = step.update;
@@ -563,7 +563,7 @@ AutonomyControl successor_of(const MemoryLedger::Account& memory, const Autonomy
 }  // namespace
 
 // SWEGCA: src/swegca/mosaic_autonomous_cognition.py@5901a5a:189-410
-AutonomyTransition advance_autonomous_cognition(const MemoryLedger::Account& memory, const AutonomyControl& control,
+AutonomyTransition advance_autonomous_cognition(const AllocationContext& memory, const AutonomyControl& control,
                                                 const AutonomyEventView& event, const AutonomyConfig& config,
                                                 const EvidenceDecision* decision) {
     validate_autonomy_event(event);

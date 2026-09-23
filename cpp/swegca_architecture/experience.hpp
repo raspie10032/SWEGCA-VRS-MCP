@@ -3,7 +3,7 @@
 #include "swegca_architecture/digest_bytes.hpp"
 #include "swegca_architecture/journal_format.hpp"
 #include "swegca_architecture/journal_store.hpp"
-#include "swegca_architecture/memory_ledger.hpp"
+#include "swegca_architecture/allocation.hpp"
 #include "swegca_architecture/strong_types.hpp"
 
 #include <array>
@@ -177,7 +177,7 @@ struct Observation {
 class CueTokens final {
 public:
     // `source` must be strict UTF-8 (every identity text is).
-    CueTokens(const MemoryLedger::Account& memory, std::string_view source);
+    CueTokens(const AllocationContext& memory, std::string_view source);
     CueTokens(CueTokens&&) noexcept = default;
     CueTokens& operator=(CueTokens&&) = delete;
     CueTokens(const CueTokens&) = delete;
@@ -263,7 +263,7 @@ public:
     // index entries that are exactly the automatic ones plus authored cues.
     // Its lists are kept on `memory`; parts are replayed from `journal`.
     [[nodiscard]] static ExperienceRecord decode(journal::PublishedRecord record,
-                                                 const MemoryLedger::Account& memory,
+                                                 const AllocationContext& memory,
                                                  const journal::JournalStore& journal);
 
     // The source keeps nothing that views the bytes it gave away (like
@@ -350,7 +350,7 @@ public:
     void verify_parts() const;
 
 private:
-    ExperienceRecord(journal::PublishedRecord record, const MemoryLedger::Account& memory,
+    ExperienceRecord(journal::PublishedRecord record, const AllocationContext& memory,
                      const journal::JournalStore& journal, journal::LedgerVector<std::string_view> derived,
                      journal::LedgerVector<std::string_view> resources,
                      journal::LedgerVector<std::string_view> index);
@@ -359,7 +359,7 @@ private:
 
     journal::PublishedRecord record_;
     const journal::JournalStore* journal_;
-    MemoryLedger::Account memory_;
+    AllocationContext memory_;
     std::uint64_t observed_at_ = 0;
     std::optional<Digest256> context_;
     double uncertainty_ = 0;
@@ -419,6 +419,9 @@ private:
         journal::LedgerVector<std::string_view> index;  // views `index_bytes`
         journal::LedgerBytes index_bytes;
         bool skip = false;  // equal to an earlier head of this append
+        // The record digest this append last staged for it, until its
+        // generation is confirmed (as for parts).
+        std::optional<DigestBytes> staged;
     };
     struct Part {
         DigestBytes digest{};
@@ -427,22 +430,25 @@ private:
         const BlobReader* reader = nullptr;  // read at `offset` when staged
         std::uint64_t offset = 0;
         std::uint64_t length = 0;
-        // Its address resolves to this very part: staged by this append,
-        // or found in the journal and checked record for record.
+        // Its address resolves to this very part: the record this append
+        // staged is the one published (same record digest), or the one
+        // published was checked record for record.
         bool known = false;
+        // The record digest this append last staged for it, until confirmed.
+        std::optional<DigestBytes> staged;
 
         // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:31-35
         auto operator<=>(const Part& other) const noexcept { return digest <=> other.digest; }
         bool operator==(const Part& other) const noexcept { return digest == other.digest; }
     };
     // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3f:282-283
-    ExperienceAppend(const ExperienceJournal& journal, const MemoryLedger::Account& memory,
+    ExperienceAppend(const ExperienceJournal& journal, const AllocationContext& memory,
                      std::span<const Observation> observations, std::string_view operation_id,
                      std::optional<std::string_view> transaction_id);
     [[nodiscard]] journal::RecordDraft head_draft(const Head& head) const;
 
     const ExperienceJournal* journal_;
-    MemoryLedger::Account memory_;
+    AllocationContext memory_;
     std::span<const Observation> observations_;
     std::string_view operation_id_;
     std::optional<std::string_view> transaction_id_;
@@ -506,11 +512,11 @@ private:
     friend class ExperienceSelector;
     friend class ExperienceAppend;
     // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3f:116-126
-    ExperienceJournal(const journal::JournalStore& journal, const MemoryLedger::Account& memory) noexcept
+    ExperienceJournal(const journal::JournalStore& journal, const AllocationContext& memory) noexcept
         : journal_(journal), memory_(memory) {}
 
     const journal::JournalStore& journal_;
-    MemoryLedger::Account memory_;
+    AllocationContext memory_;
 };
 
 // q of Select(q, U): the query text, tokenized by the cue rule, and the
@@ -552,7 +558,7 @@ using Rationale = TextIdentity<RationaleTag>;
 using EvidenceText = TextIdentity<EvidenceTextTag>;
 using QueryText = TextIdentity<QueryTextTag>;
 
-// J: one kept judgment, on Main's ledger.
+// J: one kept judgment, in Main's allocation context.
 struct CandidateJudgment {
     ExperienceAddress address;
     journal::RecordPosition position;
@@ -567,7 +573,7 @@ struct CandidateJudgment {
 };
 
 // Where the judge puts its verdict on one candidate. `record` copies every
-// text onto Main's ledger before it returns, so nothing the judge hands over
+// text into Main's allocation context before it returns, so nothing the judge hands over
 // has to outlive that call. A judge records exactly one verdict per
 // candidate: none fails with `experience_judgment_missing`, a second with
 // `experience_judgment_repeated`, another address with
@@ -585,10 +591,10 @@ public:
 private:
     friend class ExperienceSelector;
     // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:179-205
-    VerdictSink(const MemoryLedger::Account& memory, const SelectionCandidate& candidate) noexcept
+    VerdictSink(const AllocationContext& memory, const SelectionCandidate& candidate) noexcept
         : memory_(memory), candidate_(candidate) {}
 
-    const MemoryLedger::Account& memory_;
+    const AllocationContext& memory_;
     const SelectionCandidate& candidate_;
     std::optional<CandidateJudgment> judgment_;
 };

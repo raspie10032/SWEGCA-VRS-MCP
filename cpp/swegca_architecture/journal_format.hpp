@@ -3,7 +3,7 @@
 #include "swegca_architecture/authority.hpp"
 #include "swegca_architecture/digest_bytes.hpp"
 #include "swegca_architecture/journal_position.hpp"
-#include "swegca_architecture/memory_ledger.hpp"
+#include "swegca_architecture/allocation.hpp"
 #include "swegca_architecture/sha256.hpp"
 #include "swegca_architecture/strong_types.hpp"
 
@@ -37,9 +37,9 @@ namespace swegca::architecture::journal {
 using Digest = DigestBytes;  // one digest byte type across the rebuild (codex J12)
 inline constexpr Digest zero_digest{};
 
-using LedgerBytes = std::vector<std::byte, MemoryLedger::Allocator<std::byte>>;
+using LedgerBytes = std::vector<std::byte, AllocationAdapter<std::byte>>;
 template <class T>
-using LedgerVector = std::vector<T, MemoryLedger::Allocator<T>>;
+using LedgerVector = std::vector<T, AllocationAdapter<T>>;
 
 inline constexpr std::size_t max_payload_bytes = 16u * 1024u * 1024u;
 inline constexpr std::size_t max_segment_bytes = 64u * 1024u * 1024u;
@@ -68,9 +68,9 @@ inline constexpr std::size_t minimum_record_bytes =
 // and the keys of one kind and value are contiguous. Lowercase kinds belong
 // to experience records (the two kinds below, experience.hpp); a record of
 // any other kind may carry only uppercase kinds. The journal enforces the
-// kind rule; that only the experience module writes kinds 1 and 2 is Main's
-// rule (it stages them only through ExperienceJournal), and decoding an
-// experience rejects any record it did not write.
+// kind rule, and that only the experience module stages kinds 1, 2 and 3
+// (JournalStore::stage refuses them; ExperienceAppend stages them), and
+// decoding an experience rejects any record it did not write.
 inline constexpr std::size_t max_record_index_entries = 16384;
 inline constexpr char index_separator = '\x1f';
 inline constexpr std::uint16_t original_experience_record_kind = 1;
@@ -155,7 +155,7 @@ struct RecordView {
     Digest record_digest{};
 };
 
-// Little-endian encoder appending to a ledger buffer that should already
+// Little-endian encoder appending to a buffer that should already
 // have capacity for what is written (so encoding never reallocates).
 class ByteWriter final {
 public:
@@ -324,7 +324,7 @@ struct AddressChildItem {
 // A decoded page. Its texts view the bytes it was decoded from.
 struct AddressPageView {
     // SWEGCA: user@2026-09-22:72-79
-    explicit AddressPageView(const MemoryLedger::Account& memory)
+    explicit AddressPageView(const AllocationContext& memory)
         : leaves(memory.allocator<AddressLeafItem>()),
           children(memory.allocator<AddressChildItem>()) {}
 
@@ -351,7 +351,7 @@ void append_branch_page(LedgerBytes& out, std::span<const AddressChildItem> item
 
 // Decodes and verifies magic, version, kind, order, positions and limits.
 [[nodiscard]] AddressPageView decode_address_page(std::span<const std::byte> bytes,
-                                                  const MemoryLedger::Account& memory);
+                                                  const AllocationContext& memory);
 
 void append_page_log_header(LedgerBytes& out, std::uint64_t log_ordinal);
 void check_page_log_header(std::span<const std::byte> bytes, std::uint64_t log_ordinal);
@@ -408,19 +408,19 @@ struct ManifestFields {
 
 // One published manifest, held as its exact encoded bytes; every accessor
 // reads from them, so nothing but the bytes and the view offset table is
-// allocated, both through the ledger.
+// allocated, both through the host's allocator.
 class Manifest final {
 public:
     // Verifies magic, version, limits, extent contiguity, tail, view pages,
     // checkpoint and recovery rules, and the digest.
-    [[nodiscard]] static Manifest decode(LedgerBytes bytes, const MemoryLedger::Account& memory);
+    [[nodiscard]] static Manifest decode(LedgerBytes bytes, const AllocationContext& memory);
 
     // Encodes and decodes (so what could not be loaded is never kept).
     [[nodiscard]] static Manifest encode(const ManifestFields& fields,
                                          std::string_view journal_identity,
                                          std::span<const SegmentExtent> extents,
                                          std::span<const ViewGeneration> views,
-                                         const MemoryLedger::Account& memory);
+                                         const AllocationContext& memory);
 
     Manifest(Manifest&&) noexcept = default;
     Manifest& operator=(Manifest&&) noexcept = default;

@@ -3,7 +3,7 @@
 #include "swegca_architecture/digest_bytes.hpp"
 #include "swegca_architecture/journal_format.hpp"
 #include "swegca_architecture/judgment_kernel.hpp"
-#include "swegca_architecture/memory_ledger.hpp"
+#include "swegca_architecture/allocation.hpp"
 #include "swegca_architecture/strong_types.hpp"
 
 #include <cstddef>
@@ -158,7 +158,7 @@ public:
     // Checks in the author's __post_init__ order; throws
     // `autonomy_config_invalid:<rule>`, or the identity-rule code of an
     // action that is not an identity text.
-    AutonomyConfig(const MemoryLedger::Account& memory, const Input& input);
+    AutonomyConfig(const AllocationContext& memory, const Input& input);
 
     // SWEGCA: src/swegca/mosaic_autonomous_cognition.py@5901a5a:41-86
     [[nodiscard]] bool allowed(std::string_view action) const noexcept;
@@ -206,7 +206,7 @@ using HypothesisId = TextIdentity<HypothesisIdTag>;
 using AutonomyEventId = TextIdentity<AutonomyEventIdTag>;
 // A payload string kept as the producer sent it (the author accepts any
 // nonempty string), on Main's account.
-using PayloadText = std::basic_string<char, std::char_traits<char>, MemoryLedger::Allocator<char>>;
+using PayloadText = std::basic_string<char, std::char_traits<char>, AllocationAdapter<char>>;
 
 // The part of Main's goal and self state the machine owns (the author's
 // `autonomy_*`, hypothesis, verification, memory and pending-action keys),
@@ -216,13 +216,13 @@ class AutonomyControl final {
 public:
     // Phase observe, step 0, everything else absent or zero.
     // SWEGCA: src/swegca/mosaic_autonomous_cognition.py@5901a5a:151-152
-    [[nodiscard]] static AutonomyControl initial(const MemoryLedger::Account& memory);
+    [[nodiscard]] static AutonomyControl initial(const AllocationContext& memory);
     // Decodes canonical bytes (`autonomy_control_invalid` otherwise).
-    [[nodiscard]] static AutonomyControl decode(const MemoryLedger::Account& memory,
+    [[nodiscard]] static AutonomyControl decode(const AllocationContext& memory,
                                                 std::span<const std::byte> bytes);
-    [[nodiscard]] journal::LedgerBytes encode(const MemoryLedger::Account& memory) const;
+    [[nodiscard]] journal::LedgerBytes encode(const AllocationContext& memory) const;
     // SHA-256 of the canonical bytes (scratch charged to `memory`).
-    [[nodiscard]] Digest256 digest(const MemoryLedger::Account& memory) const;
+    [[nodiscard]] Digest256 digest(const AllocationContext& memory) const;
 
     AutonomyPhase phase = AutonomyPhase::observe;
     std::uint64_t step = 0;
@@ -242,7 +242,7 @@ public:
 
 private:
     // SWEGCA: src/swegca/mosaic_autonomous_cognition.py@5901a5a:151-152
-    explicit AutonomyControl(const MemoryLedger::Account& memory)
+    explicit AutonomyControl(const AllocationContext& memory)
         : requested_axes(memory.allocator<PayloadText>()) {}
 };
 
@@ -328,7 +328,7 @@ public:
     [[nodiscard]] const Digest256& digest() const noexcept { return digest_; }
 
 private:
-    friend AutonomyTransition advance_autonomous_cognition(const MemoryLedger::Account&, const AutonomyControl&,
+    friend AutonomyTransition advance_autonomous_cognition(const AllocationContext&, const AutonomyControl&,
                                                            const AutonomyEventView&, const AutonomyConfig&,
                                                            const EvidenceDecision*);
     // SWEGCA: src/swegca/mosaic_autonomous_cognition.py@5901a5a:123-134
@@ -348,7 +348,7 @@ private:
 // on the decision's judgment, copies the successor onto `memory` and
 // digests the receipt. A rejected step keeps the prior control state.
 // SWEGCA: src/swegca/mosaic_autonomous_cognition.py@5901a5a:189-410
-[[nodiscard]] AutonomyTransition advance_autonomous_cognition(const MemoryLedger::Account& memory,
+[[nodiscard]] AutonomyTransition advance_autonomous_cognition(const AllocationContext& memory,
                                                               const AutonomyControl& control,
                                                               const AutonomyEventView& event,
                                                               const AutonomyConfig& config,

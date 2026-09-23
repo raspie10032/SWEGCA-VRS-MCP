@@ -31,12 +31,13 @@ a smaller convenient one; A0 checks that the core has no such constant.
 ## A. Compile-rejection cases (must not compile)
 
 A0 (source check, not a compile case): no file under `cpp/swegca_architecture/`
-names a product budget (4 GB, 500 GB, 16 workers, `ResourceLimits`); the
-ledger, the journal and the page cache take theirs from the host.
+names a product budget (4 GB, 500 GB, 16 workers, `ResourceLimits`) or
+counts a resource; the journal and the page cache take their allocation
+context and storage budget from the host.
 
 | # | Case | Rule |
 |---|---|---|
-| A1 | Construct `JournalStore`, `ExperienceJournal`, `ExperienceSelector`, `EvidenceAdmission`, `ReEvidence`, `VerdictSink` or `MemoryLedger` outside their friends | I01, board §4 |
+| A1 | Construct `JournalStore`, `ExperienceJournal`, `ExperienceSelector`, `EvidenceAdmission`, `ReEvidence` or `VerdictSink` outside their friends; call `JournalStore::stage_records` from anything but `ExperienceAppend` | I01, board §4 |
 | A2 | Copy or move-assign `PublishedRecord`, `ExperienceRecord`, `SelectionReceipt`, `StagedGeneration`, `CueTokens` | I01, lifetime |
 | A3 | `SelectionReceipt<A>` for any `A` other than `NoAuthority`; convert a receipt, `ExperienceRecord`, `SelectedExperience` or replay handle to any authority-domain type | I10, experience-authority separation, failure 2 |
 | A4 | Build `IndexVisitor` or `SelectionJudge` from a plain function (not an object), or from a callable with the wrong signature | function-reference contract |
@@ -74,16 +75,17 @@ Views:
 | B18 | Record of kind other than 1 or 2 with a lowercase index entry | encode fails `journal_record_invalid:index`; a crafted segment with one fails decode |
 | B19 | Index entry with the separator, a value empty, a key over 4096 bytes, entries not strictly increasing | `journal_record_invalid:index` |
 | B20 | `for_each_index_match` with an entry that is not an index entry | `journal_index_invalid` |
+| B27 | `JournalStore::stage` with a draft of kind 1, 2 or 3 (original, derived experience, part), e.g. a derived record declaring root sources its lineage does not have (codex 16:53) | `journal_experience_kind_reserved`, nothing staged; the same observation through `ExperienceJournal` stages with root sets derived from its published lineage |
 
 Budgets (board §11 limits):
 
 | # | Setup | Expected |
 |---|---|---|
-| B21 | Storage use would pass `storage_bytes` (the host's budget; 500 GB in the baseline profile) | stage and publish fail `journal_storage_budget_exhausted` with nothing written; a directory whose published use already exceeds `storage_bytes` fails `open` with `journal_storage_budget_exceeded` |
+| B21 | Storage use would not be allowed by the host's `StorageBudget` (500 GB in the baseline profile; the host judges, the journal fixes no limit) | stage and publish fail `journal_storage_budget_exhausted` with nothing written; compaction and rebuild ask before every log write and fail the same way; a directory whose published use the budget does not allow fails `open` with `journal_storage_budget_exceeded`; `storage_charged` reports the use the host counts |
 | B22 | Recovery chain over `max_recovery_bytes` | `journal_recovery_over_budget` |
-| B23 | Main ledger usage during stage, publish, lookup, compaction, rebuild at full scale | never above the ledger limit; every buffer charged; after each call Main's `used()` equals its prior value (the page-cache carve is a constant part of it, charged at open) |
-| B24 | Page cache with a carve of C bytes under a lookup storm | carve usage never above C; cached pages stay until evicted and are charged to the carve only; when a read needs carve budget, a page no reader holds is evicted and its bytes return to the carve; with every cached page held by a reader, the read is served on Main's account and not kept |
-| B25 | Main ledger smaller than the requested carve | `open` fails `memory_budget_exhausted`; with 0, no cache and every lookup still correct |
+| B23 | Memory through the host's counting AllocationContext during stage, publish, lookup, compaction, rebuild at full scale (baseline and scaled profiles) | every buffer the journal allocates goes through it at its exact requested size; the host's count after each call equals its prior value, apart from the page cache's own context |
+| B24 | Page cache on its own context bounded by the host at C bytes, under a lookup storm | its use never above C; when the host refuses (`AllocationRefused`), a page no reader holds is evicted and the read retried; with every cached page held by a reader, the read is served through Main's context and not kept; a physical `std::bad_alloc` while reading propagates |
+| B25 | No page cache context given; a cache context given with 0 shards | every lookup still correct with no cache; `open` fails `journal_page_cache_invalid` |
 | B26 | User input to first Recall, end to end (query tokenization, every index lookup including page-cache misses that read page logs, candidate judgment hand-off, replay of selected records), largest tested journal, the host's workers (16 in the baseline profile) | within 1 ms; measured only at step 10. A single lookup's time is not this measure |
 
 ## C. Experience (step 3; board §3B, §4, §5)
@@ -109,6 +111,8 @@ Append and replay (invariant 3, failure 1):
 | C11c | Crash (B2) after any part generation, then the same append again | Only unreferenced parts remain after the crash; the retry appends no part twice (equal parts are one record) and ends with the same addresses |
 | C11d | `next` called after a generation it returned was not published (publication failed or skipped), for a part generation and for a record generation | The same generation is staged again; the append ends `done` with every address in the journal |
 | C11i | A part address already in the journal holding another record (other kind, authority, index entry, payload or length) | `experience_part_invalid` before any experience record is staged |
+| C11j | Another writer publishes a record under a part address this append staged, then this append's generation is not published (codex 16:41) | The next `next` replays that record and fails `experience_part_invalid` unless it is exactly the part; a part is taken without reading only when the record published at its address is the one this append staged (same record digest) |
+| C11k | As C11j for an experience record: another writer publishes a record at its address with other index entries (cues), then this append's head generation is not published | The next `next` replays it and fails `experience_index_conflict`; with the same index entries it is taken as appended; a head is confirmed without reading only when the published record is the one staged |
 | C11e | A part replaced, truncated, extended, reordered, with another kind, an index entry or authority; a top digest altered | reading fails `experience_part_invalid`, or decode fails `experience_address_mismatch` (the head's digest binds every top digest) |
 | C11f | Two observations whose bytes share parts; one already in the journal | Each shared part is appended once; the parts of the existing one are not appended |
 | C11g | A derived experience, its lineage original, derived and parted in root sources | Root sources are the sorted union of its lineage's; an original's is its source; a record whose root sources are not increasing fails `experience_root_sources_invalid` (parted) or decode (inline) |
@@ -140,6 +144,13 @@ Selection `Select(q, U) -> (C, J, rho)` (invariants 3, 11; failure 2):
 
 ## D. Evidence wiring (step 4; invariants 4, 5; failures 3, 4)
 
+The verifier abstains whenever samples, diversity or the regime condition
+fall short, and grouping (D11, D12, D16) only lowers diversity; so, as the
+user put it (2026-09-23 16:4x), verification alone tends to abstain. An
+abstention here is the verifier working, not a failure to fix in the core.
+Reliability of an experience comes from VRS connection strength (layer
+plan §6), never from a verdict, and no test here reads a verdict as one.
+
 | # | Setup | Expected |
 |---|---|---|
 | D1 | Admission of an observation citing a published experience | replayed and decoded from one snapshot with the HEAD generation; `applied` |
@@ -159,6 +170,7 @@ Selection `Select(q, U) -> (C, J, rho)` (invariants 3, 11; failure 2):
 | D13 | A derived experience cited as evidence | its family may be that of any root source it rests on, never of a source outside them; its context must be a root context of its lineage, never its own new one |
 | D14 | Evidence or Re-evidence citing a parted experience with a part missing, damaged, or a false whole digest (raw, structured, root sources, root contexts) | fails before the accumulator changes (`experience_part_invalid`, `journal_address_unknown`, `experience_blob_digest_mismatch`) |
 | D15 | A decision rejected, then new evidence or Re-evidence at a new generation (user 2026-09-23: a reject is not permanent) | the next decision is judged afresh and may accept; nothing records the earlier reject as binding |
+| D16 | Two derived experiences resting on the same roots {A, B} and contexts {C1, C2}, admitted under A/C1 and B/C2; experiences linked only through a third admitted one; the same set in every admission order (codex 16:41; COMPONENT_LEDGER.md@5901a5a:44-50) | Source and context diversity each count the linked families and contexts once; with originals alone the groups are the author's (family, context); every order gives the same groups, axis sums and diversity (the recent window follows admission order, as the author's does); a derived experience whose roots span several groups joins them, which only lowers diversity (conservative); each ungrouped root of an applied experience is fixed as its own family, so a later `assign` of it to another fails `source_family_reassigned` |
 
 ## E. Failure-model and invariant coverage map (steps 2-4 share)
 

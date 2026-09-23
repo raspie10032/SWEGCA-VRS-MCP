@@ -4,9 +4,10 @@
 #include "swegca_architecture/digest_bytes.hpp"
 #include "swegca_architecture/judgment_kernel.hpp"
 #include "swegca_architecture/judgment_rules.hpp"
-#include "swegca_architecture/memory_ledger.hpp"
+#include "swegca_architecture/allocation.hpp"
 #include "swegca_architecture/strong_types.hpp"
 
+#include <algorithm>
 #include <cstdint>
 #include <functional>
 #include <map>
@@ -31,8 +32,8 @@
 // design board requires (claim revision, accumulator revision, admitted and
 // rejected address sets, evaluated delta and mask digests, rule configuration
 // digest, binding digest and decision digest).
-// Every container is charged to Main's ledger (the Account Main creates the
-// accumulator with); nothing here reads the journal.
+// Every container allocates through Main's allocation context (the one
+// Main creates the accumulator with); nothing here reads the journal.
 // Rules: ARCHITECTURE_SPEC.md@5901a5a §4.4 (accumulation; decisions are
 // process-local), §4.5 (Bind), I03 provenance; design board @7c0b62f:195-198;
 // Re-evidence is an explicit input stage (board @cefdc3f:459-462) run by Main
@@ -71,7 +72,8 @@ enum class EvidenceOutcome : std::uint8_t { support = 1, refute = 2, insufficien
 // contexts and `observed_at` its step. `producer` is the judge, which no experience
 // names; it cannot raise diversity above what the experiences bear out,
 // since source and context diversity are each the smaller of the verified
-// count and the producer count.
+// count and the producer count. Evidence is grouped by what it shares,
+// not by the one family and context it names (see EvidenceAccumulator).
 struct EvidenceObservation {
     std::string_view claim;  // claim id of the revision judged
     std::uint64_t claim_revision = 0;
@@ -92,8 +94,11 @@ struct EvidenceObservation {
 // has not grouped is its own family. A source's family is fixed once Main
 // sets it or once evidence is applied under it, so no source is ever
 // counted under two families; an observation that is rejected or fails
-// fixes nothing. Sources are kept by the SHA-256 of their
-// text, as experiences record their root sources.
+// fixes nothing. Evidence is applied under every root source of its
+// experience (they are linked, see EvidenceAccumulator), so applying it
+// fixes every ungrouped root as its own family. Sources and families are
+// kept by the SHA-256 of their text, as experiences record their root
+// sources; an ungrouped source's family digest is its own.
 class SourceFamilies final {
 public:
     SourceFamilies(const SourceFamilies&) = delete;
@@ -110,22 +115,25 @@ private:
     friend class MainOwner;
     friend class EvidenceAdmission;
     // SWEGCA: paper/swegca/journal_submission_2026-08-25/COMPONENT_LEDGER.md@5901a5a:44-50
-    explicit SourceFamilies(const MemoryLedger::Account& memory)
-        : memory_(memory), families_(memory.allocator<std::pair<const DigestBytes, Text>>()) {}
+    explicit SourceFamilies(const AllocationContext& memory)
+        : memory_(memory), families_(memory.allocator<std::pair<const DigestBytes, DigestBytes>>()) {}
 
-    using Text = std::basic_string<char, std::char_traits<char>, MemoryLedger::Allocator<char>>;
-    using Map = std::map<DigestBytes, Text, std::less<>,
-                         MemoryLedger::Allocator<std::pair<const DigestBytes, Text>>>;
+    // source digest -> family digest
+    using Map = std::map<DigestBytes, DigestBytes, std::less<>,
+                         AllocationAdapter<std::pair<const DigestBytes, DigestBytes>>>;
+    using Digests = std::vector<DigestBytes, AllocationAdapter<DigestBytes>>;
+    using Fixes = std::vector<Map::node_type, AllocationAdapter<Map::node_type>>;
 
-    // Whether one of the experience's root sources is in `family`, changing
-    // nothing. When the root that matched is ungrouped (its own name), the
-    // entry fixing it is prepared in `fix`, for `commit` once applied.
-    [[nodiscard]] bool matches(const ExperienceRecord& experience, std::string_view family,
-                               Map::node_type& fix) const;
-    // Records a prepared entry; allocates nothing.
-    void commit(Map::node_type fix) noexcept;
+    // The family digest of every root source of the experience, sorted and
+    // unique, into `families`, and whether `family` is one of them, changing
+    // nothing. The entries fixing its ungrouped roots are prepared in
+    // `fixes`, for `commit` once applied.
+    [[nodiscard]] bool root_families(const ExperienceRecord& experience, std::string_view family,
+                                     Digests& families, Fixes& fixes) const;
+    // Records prepared entries; allocates nothing.
+    void commit(Fixes& fixes) noexcept;
 
-    MemoryLedger::Account memory_;
+    AllocationContext memory_;
     Map families_;
 };
 
@@ -138,7 +146,7 @@ enum class AdmissionResult : std::uint8_t {
 };
 
 template <class T>
-using EvidenceVector = std::vector<T, MemoryLedger::Allocator<T>>;
+using EvidenceVector = std::vector<T, AllocationAdapter<T>>;
 
 // What an admitted original still binds after admission: the published
 // record's content digest (from Replay), the observation generation, its
@@ -211,7 +219,7 @@ private:
 // address set, delta, mask). The set is sorted and deduplicated before
 // hashing, so the same set gives the same digest regardless of citation
 // order; the sort scratch is charged to `memory`.
-[[nodiscard]] Digest256 evidence_binding_digest(const MemoryLedger::Account& memory,
+[[nodiscard]] Digest256 evidence_binding_digest(const AllocationContext& memory,
                                                 std::string_view claim,
                                                 std::uint64_t claim_revision,
                                                 std::span<const std::string_view> addresses,
@@ -260,7 +268,7 @@ public:
 
 private:
     friend class EvidenceAccumulator;
-    EvidenceDecision(const MemoryLedger::Account& memory, ClaimRevision claim,
+    EvidenceDecision(const AllocationContext& memory, ClaimRevision claim,
                      kernel::EvidenceJudgment judgment, EvidenceVector<ExperienceAddress> admitted,
                      EvidenceVector<RejectedEvidence> rejected, Digest256 delta_digest,
                      Digest256 mask_digest, Digest256 rules_digest, Digest256 evidence_digest,
@@ -285,13 +293,26 @@ private:
 // Main did not register. It can be neither copied nor moved, so the object
 // Main registered is the only one that holds its identity.
 //
+// Groups (COMPONENT_LEDGER.md@5901a5a:44-50: results sharing a source
+// family, context or derived evidence must be grouped). Each admitted
+// experience links the families of all its root sources, and all its root
+// contexts; families linked directly or through other admitted evidence
+// are one source group, contexts likewise one context group, and a group
+// of evidence is a (source group, context group) pair. An original has one
+// root source and one context, so with originals alone the groups are the
+// author's (source family, context hash). Groups only merge (nothing
+// admitted is removed), so they are the same in any admission order, and
+// diversity counts groups: evidence that shares a root with other evidence
+// never counts as an independent sample of it.
+//
 // Axis sums: each (source, context) group contributes the author's ratios
 // supports / total and refutes / total as IEEE doubles, unchanged. A nonzero
 // ratio is at least 1 / total > 2^-32 (total < 2^32), so it is an exact
 // integer multiple of 2^-84; the axis keeps the exact 128-bit sum of those
 // multiples and rounds to double once. That is the exactly rounded value of
 // the author's sum of the same ratios, independent of admission order, and
-// one admission updates it in O(log n).
+// one admission updates it in O(log n), or, when it joins groups, in one
+// pass over the groups (as the author's admission always takes).
 class EvidenceAccumulator final {
 public:
     EvidenceAccumulator(const EvidenceAccumulator&) = delete;
@@ -338,30 +359,61 @@ private:
     friend class EvidenceDecision;
     friend class ReEvidence;
     friend class EvidenceAdmission;
-    EvidenceAccumulator(const MemoryLedger::Account& memory, ClaimRevision claim,
+    EvidenceAccumulator(const AllocationContext& memory, ClaimRevision claim,
                         const EvidencePolicy& policy);
 
     // Called by EvidenceAdmission only. `replayed` is the experience Main
     // replayed at `observation.address` (its record digest is what the
-    // original binds) and `current` the state generation HEAD names. Throws on an observation
+    // original binds), `root_families` and `root_contexts` its root
+    // families and contexts (sorted, unique; they must hold the
+    // observation's, `evidence_correlation_invalid`) and `current` the
+    // state generation HEAD names. Throws on an observation
     // for another claim revision, an unknown axis, invalid fields or a record
     // for another address. A duplicate (address already admitted), stale
     // (judged on another generation than `current`), expired or insufficient
     // observation leaves the tally unchanged and is recorded as rejected. Any
     // throw leaves the accumulator exactly as it was.
     AdmissionResult admit(const EvidenceObservation& observation, const ExperienceRecord& replayed,
+                          std::span<const DigestBytes> root_families,
+                          std::span<const DigestBytes> root_contexts,
                           const StateGeneration& current, std::uint64_t current_step);
 
-    using Text = std::basic_string<char, std::char_traits<char>, MemoryLedger::Allocator<char>>;
+    using Text = std::basic_string<char, std::char_traits<char>, AllocationAdapter<char>>;
     template <class K, class V>
-    using Map = std::map<K, V, std::less<>, MemoryLedger::Allocator<std::pair<const K, V>>>;
+    using Map = std::map<K, V, std::less<>, AllocationAdapter<std::pair<const K, V>>>;
     template <class K>
-    using Set = std::set<K, std::less<>, MemoryLedger::Allocator<K>>;
+    using Set = std::set<K, std::less<>, AllocationAdapter<K>>;
 
     struct GroupKey {
-        std::uint32_t source = 0;
-        Digest256 context;
+        std::uint32_t source = 0;   // source group (its root id)
+        std::uint32_t context = 0;  // context group (its root id)
         auto operator<=>(const GroupKey&) const = default;
+    };
+    // Union-find over identities (family or context digests): ids in first
+    // admission order, union by size, so a find walks O(log n) parents.
+    struct Groups {
+        Map<DigestBytes, std::uint32_t> ids;
+        EvidenceVector<std::uint32_t> parent;
+        EvidenceVector<std::uint32_t> size;
+
+        // SWEGCA: paper/swegca/journal_submission_2026-08-25/COMPONENT_LEDGER.md@5901a5a:44-50
+        [[nodiscard]] std::uint32_t find(std::uint32_t id) const noexcept {
+            while (parent[id] != id) id = parent[id];
+            return id;
+        }
+    };
+    // What linking a set of identities into Groups does, prepared without
+    // changing it: the root they all end in, the other existing roots it
+    // absorbs (sorted) and the nodes of identities not seen before.
+    struct Link {
+        std::uint32_t root = 0;
+        EvidenceVector<std::uint32_t> merged;
+        EvidenceVector<Map<DigestBytes, std::uint32_t>::node_type> fresh;
+
+        // SWEGCA: paper/swegca/journal_submission_2026-08-25/COMPONENT_LEDGER.md@5901a5a:44-50
+        [[nodiscard]] std::uint32_t remap(std::uint32_t id) const noexcept {
+            return std::binary_search(merged.begin(), merged.end(), id) ? root : id;
+        }
     };
     struct Group {
         std::uint64_t supports = 0;
@@ -406,12 +458,14 @@ private:
 
     [[nodiscard]] std::uint32_t identity_id(const Map<Text, std::uint32_t>& table,
                                             std::string_view text) const;
+    [[nodiscard]] static Link prepare_link(Groups& groups, std::span<const DigestBytes> identities);
+    static void commit_link(Groups& groups, Link& link) noexcept;
     AdmissionResult reject(std::string_view address, AdmissionResult reason);
     // Called by ReEvidence only, with a result it built from Replay.
     AdmissionResult record(ReEvidenceResult result);
 
     // First member: every container below takes its allocator from it.
-    MemoryLedger::Account memory_;
+    AllocationContext memory_;
     // Identity of this object; decisions hold it weakly (spec :135).
     std::shared_ptr<const int> origin_;
     ClaimRevision claim_;
@@ -419,14 +473,19 @@ private:
     Digest256 rules_digest_;
     std::uint32_t recent_window_;
     EvidenceVector<Axis> axes_{memory_.allocator<char>()};
-    Map<Text, std::uint32_t> source_ids_{memory_.allocator<char>()};
+    Groups family_groups_{Map<DigestBytes, std::uint32_t>(memory_.allocator<char>()),
+                          EvidenceVector<std::uint32_t>(memory_.allocator<char>()),
+                          EvidenceVector<std::uint32_t>(memory_.allocator<char>())};
+    Groups context_groups_{Map<DigestBytes, std::uint32_t>(memory_.allocator<char>()),
+                           EvidenceVector<std::uint32_t>(memory_.allocator<char>()),
+                           EvidenceVector<std::uint32_t>(memory_.allocator<char>())};
     Map<Text, std::uint32_t> producer_ids_{memory_.allocator<char>()};
     // address -> index in admitted_evidence_
     Map<Text, std::size_t> originals_{memory_.allocator<char>()};
     EvidenceVector<AdmittedEvidence> admitted_evidence_{memory_.allocator<char>()};
     Set<std::pair<Text, AdmissionResult>> rejected_{memory_.allocator<char>()};
-    Set<std::uint32_t> sources_{memory_.allocator<char>()};
-    Set<Digest256> contexts_{memory_.allocator<char>()};
+    Set<std::uint32_t> sources_{memory_.allocator<char>()};   // source group roots
+    Set<std::uint32_t> contexts_{memory_.allocator<char>()};  // context group roots
     Set<std::uint32_t> producers_{memory_.allocator<char>()};
     // ring of the last `recent_window_` outcomes
     EvidenceVector<std::uint8_t> recent_{memory_.allocator<char>()};
@@ -553,11 +612,11 @@ public:
 private:
     friend class MainOwner;
     // SWEGCA: docs/SWEGCA_VRS_MCP_ORDER_FOR_REVIEW.md@30b73e7:24-29
-    ReEvidence(const journal::JournalStore& journal, const MemoryLedger::Account& memory) noexcept
+    ReEvidence(const journal::JournalStore& journal, const AllocationContext& memory) noexcept
         : journal_(journal), memory_(memory) {}
 
     const journal::JournalStore& journal_;  // Main's journal; originals are replayed here
-    MemoryLedger::Account memory_;          // Main's ledger; results are kept on it
+    AllocationContext memory_;          // Main's allocation context; results are kept in it
 };
 
 }  // namespace swegca::architecture

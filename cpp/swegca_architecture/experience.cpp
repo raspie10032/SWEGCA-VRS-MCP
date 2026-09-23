@@ -260,7 +260,7 @@ void scan_cue_tokens(std::string_view text, Emit emit) {
 // True when `text` is exactly one token of the cue rule (so it is already
 // lowered): what an authored cue and a cue-view key must be.
 // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:411-431
-bool is_single_token(const MemoryLedger::Account& memory, std::string_view text) {
+bool is_single_token(const AllocationContext& memory, std::string_view text) {
     if (!detail::is_identity_text(text)) return false;
     const CueTokens tokens(memory, text);
     return tokens.tokens().size() == 1 && tokens.tokens().front() == text;
@@ -284,7 +284,7 @@ void with_cue_entry(std::string_view token, Visit&& visit) {
 class IndexEntries final {
 public:
     // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3f:122-123
-    explicit IndexEntries(const MemoryLedger::Account& memory)
+    explicit IndexEntries(const AllocationContext& memory)
         : bytes_(memory.allocator<std::byte>()),
           spans_(memory.allocator<std::pair<std::size_t, std::size_t>>()),
           entries_(memory.allocator<std::string_view>()) {}
@@ -358,7 +358,7 @@ struct IndexFields {
 // cue tokens of its source and revision, and its source, content, lineage,
 // revised address, namespace, resources and transaction.
 // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3f:122-123
-void add_automatic(IndexEntries& index, const MemoryLedger::Account& memory, const IndexFields& fields) {
+void add_automatic(IndexEntries& index, const AllocationContext& memory, const IndexFields& fields) {
     for (const auto text : {fields.source, fields.source_revision}) {
         const CueTokens tokens(memory, text);
         for (const auto token : tokens.tokens()) index.add_cue(token);
@@ -400,7 +400,7 @@ bool same_observed_index(std::span<const std::string_view> left, std::span<const
 // entry ('h') is checked by form only: which token it hashes is not
 // recoverable from the record.
 // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:411-431
-bool is_authored_cue_entry(const MemoryLedger::Account& memory, std::string_view entry) {
+bool is_authored_cue_entry(const AllocationContext& memory, std::string_view entry) {
     const auto value = entry.substr(1);
     if (entry.front() == 'c') return value.size() <= max_inline_cue_bytes && is_single_token(memory, value);
     return entry.front() == 'h' && is_hex_digest(value);
@@ -467,7 +467,7 @@ struct BlobPlan {
 // copied; read bytes are read one part at a time into one buffer, and a read
 // blob small enough to be inline is read into `owned`.
 // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:23-60
-BlobPlan plan_blob(const MemoryLedger::Account& memory, const BlobInput& input,
+BlobPlan plan_blob(const AllocationContext& memory, const BlobInput& input,
                    LedgerVector<PartSlice>& parts, LedgerVector<LedgerBytes>& owned) {
     BlobPlan out;
     out.size = input.size;
@@ -536,7 +536,7 @@ BlobPlan plan_blob(const MemoryLedger::Account& memory, const BlobInput& input,
 
 // A digest set as the bytes of an inline or parted blob: sorted, unique.
 // SWEGCA: paper/swegca/journal_submission_2026-08-25/COMPONENT_LEDGER.md@5901a5a:44-50
-LedgerBytes digest_set_bytes(const MemoryLedger::Account& memory, LedgerVector<DigestBytes>& digests) {
+LedgerBytes digest_set_bytes(const AllocationContext& memory, LedgerVector<DigestBytes>& digests) {
     std::sort(digests.begin(), digests.end());
     digests.erase(std::unique(digests.begin(), digests.end()), digests.end());
     LedgerBytes bytes(memory.allocator<std::byte>());
@@ -595,7 +595,7 @@ ExperienceBlob read_blob(ByteReader& reader) {
 // resources, and its raw, structured and (derived only) root-source and
 // root-context blobs.
 // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:23-60
-LedgerBytes encode_envelope(const MemoryLedger::Account& memory, const Observation& observation,
+LedgerBytes encode_envelope(const AllocationContext& memory, const Observation& observation,
                             std::span<const std::string_view> derived_from,
                             std::span<const std::string_view> resources, const BlobPlan& raw,
                             const BlobPlan& structured, const BlobPlan* roots, const BlobPlan* contexts) {
@@ -639,7 +639,7 @@ LedgerBytes encode_envelope(const MemoryLedger::Account& memory, const Observati
 // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:23-60
 template <class Valid>
 LedgerVector<std::string_view> read_sorted_texts(ByteReader& reader, std::uint32_t count,
-                                                 const MemoryLedger::Account& memory, Valid valid) {
+                                                 const AllocationContext& memory, Valid valid) {
     LedgerVector<std::string_view> out(memory.allocator<std::string_view>());
     out.reserve(count);
     for (std::uint32_t at = 0; at < count; ++at) {
@@ -677,7 +677,7 @@ private:
 }  // namespace
 
 // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:413-418
-CueTokens::CueTokens(const MemoryLedger::Account& memory, std::string_view source)
+CueTokens::CueTokens(const AllocationContext& memory, std::string_view source)
     : text_(memory.allocator<std::byte>()), tokens_(memory.allocator<std::string_view>()) {
     if (!detail::is_strict_utf8(source)) fail("cue_text_not_utf8");
     text_.reserve(source.size());
@@ -693,7 +693,7 @@ CueTokens::CueTokens(const MemoryLedger::Account& memory, std::string_view sourc
 }
 
 // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:23-60
-ExperienceRecord::ExperienceRecord(journal::PublishedRecord record, const MemoryLedger::Account& memory,
+ExperienceRecord::ExperienceRecord(journal::PublishedRecord record, const AllocationContext& memory,
                                    const journal::JournalStore& journal, LedgerVector<std::string_view> derived,
                                    LedgerVector<std::string_view> resources, LedgerVector<std::string_view> index)
     : record_(std::move(record)), journal_(&journal), memory_(memory),
@@ -715,7 +715,7 @@ ExperienceRecord::ExperienceRecord(ExperienceRecord&& other) noexcept
 // A parted blob's parts are checked when they are read.
 // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:23-60
 ExperienceRecord ExperienceRecord::decode(journal::PublishedRecord published,
-                                          const MemoryLedger::Account& memory,
+                                          const AllocationContext& memory,
                                           const journal::JournalStore& journal) {
     const auto& view = published.view();
     if (view.kind != original_experience_kind && view.kind != derived_experience_kind)
@@ -941,7 +941,7 @@ void ExperienceRecord::verify_parts() const {
 // second record, and must carry the same index entries apart from the
 // transaction; its parts are not appended.
 // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3f:282-283
-ExperienceAppend::ExperienceAppend(const ExperienceJournal& journal, const MemoryLedger::Account& memory,
+ExperienceAppend::ExperienceAppend(const ExperienceJournal& journal, const AllocationContext& memory,
                                    std::span<const Observation> observations, std::string_view operation_id,
                                    std::optional<std::string_view> transaction_id)
     : journal_(&journal), memory_(memory), observations_(observations), operation_id_(operation_id),
@@ -1149,14 +1149,21 @@ std::optional<journal::StagedGeneration> ExperienceAppend::next(const StateGener
                                                                 std::span<const journal::ViewGeneration> views) {
     if (done_) return std::nullopt;
     const auto& store = journal_->journal_;
-    // Whether the part's address resolves; one this append did not stage is
-    // replayed once and must be exactly the part (kind, no authority, claim
-    // or index entry, the digest and length) or fails
-    // `experience_part_invalid`.
+    // Whether the part's address resolves. It is this part without reading it
+    // only when the published record is the very record this append staged
+    // (its record digest); anything else there (another writer's record,
+    // published while ours was not) is replayed once and must be exactly the
+    // part (kind, no authority, claim or index entry, the digest and length)
+    // or fails `experience_part_invalid`.
     const auto published_part = [&](Part& part) {
         const ExperienceAddress address(memory_, view_of(part.address));
-        if (!store.resolve(address)) return false;
+        const auto position = store.resolve(address);
+        if (!position) return false;
         if (part.known) return true;
+        if (part.staged && position->record_digest == *part.staged) {
+            part.known = true;
+            return true;
+        }
         const auto record = store.replay(address);
         const auto& view = record.view();
         const auto length = part.reader ? part.length : part.bytes.size();
@@ -1173,11 +1180,26 @@ std::optional<journal::StagedGeneration> ExperienceAppend::next(const StateGener
                 break;
             }
     } else if (pending_ == 2) {
-        for (auto at = pending_from_; at < next_head_; ++at)
-            if (!heads_[at].skip && !store.resolve(addresses_[heads_[at].observation])) {
+        // A head staged here is confirmed without reading only when the
+        // record published at its address is the one staged; another
+        // writer's record there must carry the same index entries
+        // (`experience_index_conflict`), as a head appended meanwhile must.
+        for (auto at = pending_from_; at < next_head_; ++at) {
+            auto& head = heads_[at];
+            if (!head.staged) continue;  // skipped, or already in the journal when staged
+            const auto& address = addresses_[head.observation];
+            const auto position = store.resolve(address);
+            if (!position) {
                 next_head_ = pending_from_;
                 break;
             }
+            if (position->record_digest != *head.staged) {
+                const auto existing = ExperienceRecord::decode(store.replay(address), memory_, store);
+                if (!same_observed_index(existing.index_entries(), head.index))
+                    fail("experience_index_conflict");
+            }
+            head.staged.reset();
+        }
     }
     pending_ = 0;
 
@@ -1211,10 +1233,16 @@ std::optional<journal::StagedGeneration> ExperienceAppend::next(const StateGener
         drafts.push_back(draft);
     }
     if (!drafts.empty()) {
-        auto staged = store.stage(drafts, state, views);
-        // Staged here under their own addresses: the journal refuses an
-        // address it holds, so once they resolve they are these parts.
-        for (auto at = next_part_; at < part_at; ++at) parts_[at].known = true;
+        auto staged = store.stage_records(drafts, state, views);
+        // Staged, not published: another writer may publish a record under
+        // one of these addresses first and this generation then fail, so a
+        // part is known only once the record published there is the one
+        // staged here (published_part). Drafts and positions share order; a
+        // part already published was skipped above, so they match one to one.
+        const auto positions = staged.positions();
+        std::size_t drafted = 0;
+        for (auto at = next_part_; at < part_at; ++at)
+            if (!parts_[at].known) parts_[at].staged = positions[drafted++].record_digest;
         pending_ = 1;
         pending_from_ = next_part_;
         next_part_ = part_at;
@@ -1226,6 +1254,7 @@ std::optional<journal::StagedGeneration> ExperienceAppend::next(const StateGener
             if (!published_part(part)) fail("experience_parts_unpublished");
         parts_checked_ = true;
     }
+    LedgerVector<std::size_t> drafted(memory_.allocator<std::size_t>());  // heads with a draft
     auto head_at = next_head_;
     for (; head_at < heads_.size(); ++head_at) {
         const auto& head = heads_[head_at];
@@ -1242,13 +1271,17 @@ std::optional<journal::StagedGeneration> ExperienceAppend::next(const StateGener
             break;
         }
         drafts.push_back(draft);
+        drafted.push_back(head_at);
     }
     if (drafts.empty()) {
         next_head_ = head_at;
         done_ = true;
         return std::nullopt;
     }
-    auto staged = store.stage(drafts, state, views);
+    auto staged = store.stage_records(drafts, state, views);
+    const auto positions = staged.positions();  // in draft order
+    for (std::size_t at = 0; at < drafted.size(); ++at)
+        heads_[drafted[at]].staged = positions[at].record_digest;
     pending_ = 2;
     pending_from_ = next_head_;
     next_head_ = head_at;

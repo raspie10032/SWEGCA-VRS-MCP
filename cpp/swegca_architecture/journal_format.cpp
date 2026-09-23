@@ -561,7 +561,7 @@ void append_branch_page(LedgerBytes& out, std::span<const AddressChildItem> item
 
 // SWEGCA: user@2026-09-22:72-79
 AddressPageView decode_address_page(std::span<const std::byte> bytes,
-                                    const MemoryLedger::Account& memory) {
+                                    const AllocationContext& memory) {
     if (bytes.size() <= address_page_header_bytes || bytes.size() > address_page_max_bytes)
         fail("journal_address_page_invalid");
     ByteReader reader(bytes);
@@ -652,7 +652,7 @@ std::size_t encoded_manifest_size(std::string_view journal_identity, std::size_t
 Manifest Manifest::encode(const ManifestFields& fields, std::string_view journal_identity,
                           std::span<const SegmentExtent> extents,
                           std::span<const ViewGeneration> views,
-                          const MemoryLedger::Account& memory) {
+                          const AllocationContext& memory) {
     const auto total = encoded_manifest_size(journal_identity, extents.size(), views);
     LedgerBytes bytes(memory.allocator<std::byte>());
     bytes.reserve(total);
@@ -693,7 +693,7 @@ Manifest Manifest::encode(const ManifestFields& fields, std::string_view journal
 }
 
 // SWEGCA: user@2026-09-22:72-79
-Manifest Manifest::decode(LedgerBytes bytes, const MemoryLedger::Account& memory) {
+Manifest Manifest::decode(LedgerBytes bytes, const AllocationContext& memory) {
     if (bytes.size() > max_manifest_bytes) fail("journal_manifest_invalid:size");
     const std::span<const std::byte> all(bytes);
     ByteReader reader(all);
