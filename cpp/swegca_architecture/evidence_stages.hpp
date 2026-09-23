@@ -112,7 +112,7 @@ public:
 
 private:
     friend class MainOwner;
-    // SWEGCA: docs/SWEGCA_VRS_MCP_ORDER_FOR_REVIEW.md@30b73e7:24-29
+    // SWEGCA: user@2026-09-22:24-29
     EvidenceAdmission(const journal::JournalStore& journal, SourceFamilies& families) noexcept
         : journal_(journal), families_(families) {}
 
@@ -186,7 +186,7 @@ public:
 
 private:
     friend class MainOwner;
-    // SWEGCA: docs/SWEGCA_VRS_MCP_ORDER_FOR_REVIEW.md@30b73e7:24-29
+    // SWEGCA: user@2026-09-22:24-29
     ReEvidence(const journal::JournalStore& journal, const AllocationContext& memory) noexcept
         : journal_(journal), memory_(memory) {}
 

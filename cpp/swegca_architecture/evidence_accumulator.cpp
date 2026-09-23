@@ -182,7 +182,7 @@ Digest256 evidence_binding_digest(const AllocationContext& memory, std::string_v
     return Digest256(hash.finish());
 }
 
-// SWEGCA: docs/SWEGCA_VRS_MCP_ORDER_FOR_REVIEW.md@30b73e7:24-29
+// SWEGCA: user@2026-09-22:24-29
 ReEvidenceResult::ReEvidenceResult(ClaimRevision claim, ExperienceAddress address,
                                    DigestBytes record_digest, StateGeneration generation,
                                    ProducerId by, EvidenceOutcome outcome)
@@ -497,7 +497,7 @@ AdmissionResult EvidenceAccumulator::reject(std::string_view address, AdmissionR
 // are untouched (the original is counted once); the revision advances so an
 // earlier decision is stale, and the coverage of the result's generation
 // changes at most once per original for consistency and once for conflict.
-// SWEGCA: docs/SWEGCA_VRS_MCP_ORDER_FOR_REVIEW.md@30b73e7:24-29
+// SWEGCA: user@2026-09-22:24-29
 AdmissionResult EvidenceAccumulator::record(ReEvidenceResult result) {
     if (result.claim() != claim_) throw std::invalid_argument("re_evidence_claim_mismatch");
     if (!evidence_outcome_valid(result.outcome())) throw std::invalid_argument("re_evidence_outcome_invalid");

@@ -16,7 +16,7 @@ namespace swegca::architecture {
 // and verifies the record, or throws), then Main judges the replayed record
 // against the claim revision and the state it passes, then the result is
 // bound to what was replayed and to that state's generation, and recorded.
-// SWEGCA: docs/SWEGCA_VRS_MCP_ORDER_FOR_REVIEW.md@30b73e7:24-29
+// SWEGCA: user@2026-09-22:24-29
 ReEvidenceRecorded ReEvidence::apply(EvidenceAccumulator& accumulator,
                                      const ExperienceAddress& address,
                                      const CognitiveState& state, std::string_view by,
@@ -40,7 +40,7 @@ ReEvidenceRecorded ReEvidence::apply(EvidenceAccumulator& accumulator,
 
 // Replay and the generation HEAD names come from one snapshot of Main's
 // journal, never from the caller; admission is judged against that pair.
-// SWEGCA: docs/SWEGCA_VRS_MCP_ORDER_FOR_REVIEW.md@30b73e7:24-29
+// SWEGCA: user@2026-09-22:24-29
 AdmissionResult EvidenceAdmission::admit(EvidenceAccumulator& accumulator,
                                          const EvidenceObservation& observation,
                                          std::uint64_t current_step) {
