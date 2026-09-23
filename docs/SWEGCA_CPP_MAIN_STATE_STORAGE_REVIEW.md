@@ -178,8 +178,12 @@ crash cases before code uses it.
    `mosaic_vrs_block_store.py` is a storage unit, not by itself this logical
    session block.
    New C++ strength persistence and computation use f32, matching the user's
-   later canonicalization path. The old f16 artifact is source history, not a
-   compatibility format or a per-edge rounding rule.
+   later canonicalization path. The source typed-block store and numeric-event
+   path both persist f16 strengths
+   (`rozephine_vrs_array_storage.py@3bddcb7:16-24,49-53`,
+   `mosaic_vrs_event_durable.py@3bddcb7:181-188`); f32 is an explicit native
+   widening, not a claim of byte-equivalent source storage or a compatibility
+   format.
 10. Any detached VRS proposal, including idle block merging, carries the
     source generation and parent VRS identity it read. Main alone checks
     the proposal's declared source set and its exact coverage, including
