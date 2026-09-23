@@ -5,7 +5,7 @@
 #include "swegca_architecture/evidence_accumulator.hpp"
 #include "swegca_architecture/judgment_kernel.hpp"
 #include "swegca_architecture/judgment_rules.hpp"
-#include "swegca_architecture/memory_ledger.hpp"
+#include "swegca_architecture/allocation.hpp"
 #include "swegca_architecture/strong_types.hpp"
 
 #include <cstdint>
@@ -114,11 +114,11 @@ public:
 private:
     friend class MainOwner;
 
-    EvidenceGate(MainAuthorityLedger& ledger, const MemoryLedger::Account& memory,
+    EvidenceGate(MainAuthorityLedger& ledger, const AllocationContext& memory,
                  const GatePolicy& gate_policy, const EvidencePolicy& evidence_policy);
 
     MainAuthorityLedger& ledger_;
-    MemoryLedger::Account memory_;  // Main's ledger; binding scratch is charged here
+    AllocationContext memory_;  // Main's allocation context for binding scratch
     kernel::GateRules rules_;
     Digest256 evidence_policy_digest_;
 };

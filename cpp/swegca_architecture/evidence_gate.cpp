@@ -56,7 +56,7 @@ Digest256 verification_commit_operation(const Digest256& decision_digest,
 // The gate thresholds, Main's ledger and the one evidence policy whose
 // decisions it accepts are fixed when Main creates it.
 // SWEGCA: src/swegca/mosaic_bounded_world_write.py@5901a5a:95-150
-EvidenceGate::EvidenceGate(MainAuthorityLedger& ledger, const MemoryLedger::Account& memory,
+EvidenceGate::EvidenceGate(MainAuthorityLedger& ledger, const AllocationContext& memory,
                            const GatePolicy& gate_policy, const EvidencePolicy& evidence_policy)
     : ledger_(ledger), memory_(memory), rules_(make_gate_rules(gate_policy)),
       evidence_policy_digest_(evidence_policy_digest(evidence_policy)) {}

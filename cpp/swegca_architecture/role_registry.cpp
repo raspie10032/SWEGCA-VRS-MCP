@@ -85,11 +85,11 @@ std::string_view role_text(const RoleDefinitionInput& definition) noexcept {
 // Both startup and typed successor inputs become identities on Main's account.
 // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:83-93
 template <class Input>
-std::vector<RoleDefinition, MemoryLedger::Allocator<RoleDefinition>> owned_definitions(
-    const MemoryLedger::Account& account, std::span<const Input> definitions) {
+std::vector<RoleDefinition, AllocationAdapter<RoleDefinition>> owned_definitions(
+    const AllocationContext& account, std::span<const Input> definitions) {
     if (definitions.empty())
         throw std::invalid_argument("role_registry_must_not_be_empty");
-    std::vector<RoleDefinition, MemoryLedger::Allocator<RoleDefinition>> owned(
+    std::vector<RoleDefinition, AllocationAdapter<RoleDefinition>> owned(
         account.allocator<RoleDefinition>());
     owned.reserve(definitions.size());
     for (const auto& definition : definitions)
@@ -101,24 +101,24 @@ std::vector<RoleDefinition, MemoryLedger::Allocator<RoleDefinition>> owned_defin
 }  // namespace
 
 // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:83-93
-RoleRegistry::RoleRegistry(const MemoryLedger::Account& account,
+RoleRegistry::RoleRegistry(const AllocationContext& account,
                             std::span<const RoleDefinition> definitions)
     : RoleRegistry(account, owned_definitions(account, definitions)) {}
 
 // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:83-93
-RoleRegistry::RoleRegistry(const MemoryLedger::Account& account,
+RoleRegistry::RoleRegistry(const AllocationContext& account,
                            std::span<const RoleDefinitionInput> definitions)
     : RoleRegistry(account, owned_definitions(account, definitions)) {}
 
 // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:83-93
-RoleRegistry::RoleRegistry(const MemoryLedger::Account& account, Definitions definitions)
+RoleRegistry::RoleRegistry(const AllocationContext& account, Definitions definitions)
     : memory_(account), definitions_(std::move(definitions)),
       by_id_(std::less<>{}, account.allocator<IdEntry>()),
       digest_(registry_digest(definitions_)) {
     if (definitions_.empty())
         throw std::invalid_argument("role_registry_must_not_be_empty");
     using Location = std::pair<TensorPartition, std::uint64_t>;
-    std::set<Location, std::less<Location>, MemoryLedger::Allocator<Location>> locations(
+    std::set<Location, std::less<Location>, AllocationAdapter<Location>> locations(
         std::less<Location>{}, account.allocator<Location>());
     for (std::size_t index = 0; index < definitions_.size(); ++index) {
         const auto& definition = definitions_[index];
@@ -142,7 +142,7 @@ RoleRegistry::RoleRegistry(const MemoryLedger::Account& account, Definitions def
 // concatenated partitions. Further roles are explicit registry extensions;
 // they do not create another state object.
 // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@7c0b62f:83-93
-RoleRegistry RoleRegistry::initial_profile(const MemoryLedger::Account& account,
+RoleRegistry RoleRegistry::initial_profile(const AllocationContext& account,
                                             RolePartitionSizes sizes) {
     require_initial_sizes(sizes);
     const auto scratch_begin = sizes.semantic + sizes.executive;
