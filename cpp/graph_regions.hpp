@@ -26,7 +26,7 @@ public:
     [[nodiscard]] virtual std::optional<std::uint32_t> component_for(
         std::uint32_t node) const = 0;
     // SWEGCA: src/swegca_vrs2/store.py@7536139:299-302
-    [[nodiscard]] virtual std::shared_ptr<const ConnectivityRegions> topology_for(
+    [[nodiscard]] virtual std::shared_ptr<const RegionTopologyView> topology_for(
         std::uint32_t component) const = 0;
     // SWEGCA: src/swegca_vrs2/store.py@7536139:299-302
     [[nodiscard]] virtual std::uint32_t local_address(

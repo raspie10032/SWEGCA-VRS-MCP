@@ -31,7 +31,7 @@ RegionPreactivation preactivate_graph_regions(
         const auto address = nodes.address(name);
         if (directory.component_for(address) != component) continue;
         const auto local = directory.local_address(component, address);
-        if (local >= topology->terms().size() || topology->terms()[local] != address)
+        if (local >= topology->term_count() || topology->term(local) != address)
             throw std::runtime_error("region cue address changed");
         local_terms.insert(local);
     }

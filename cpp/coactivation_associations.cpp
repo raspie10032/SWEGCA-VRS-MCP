@@ -92,9 +92,8 @@ CoactivationAssociationsReceipt CoactivationAssociations::query(
     if (!topology || topology->vrs_snapshot_id() != inputs.snapshot_id() ||
         !topology->converged())
         throw std::runtime_error("converged topology required");
-    const auto& offsets = topology->region_offsets();
-    if (origin_region + std::uint64_t{1} >= offsets.size() ||
-        offsets[origin_region] == offsets[origin_region + 1])
+    if (origin_region >= topology->region_count() ||
+        topology->region_size(origin_region) == 0)
         throw std::runtime_error("existing integer origin region required");
     const auto postings = postings_.find({topology->topology_id(), origin_region});
     using AssociationKey = std::tuple<std::uint32_t, std::string, std::string>;

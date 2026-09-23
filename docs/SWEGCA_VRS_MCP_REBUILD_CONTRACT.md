@@ -364,6 +364,13 @@ last row, derived row count, and total edge count before constructing that
 view. This closes cross-journal generation mixing at the read boundary. The
 larger Main publication transaction still must couple this view with memory,
 nodes, regions, portals, coactivation and operation directories.
+Region consumers now depend on an immutable `RegionTopologyView` rather than
+the RAM-vector `ConnectivityRegions` implementation. The contract exposes
+every term address, core label, overlapping membership coefficient, region
+size and stable region-node position required by preactivation, shared-original
+bridges, coactivation and one-page navigation. The author's in-memory builder
+remains the calculation reference. A native region file and bounded physical
+view still have to implement this complete contract before Main publication.
 This adapter currently reads physical address files on lookup. It is a
 source-bound correctness path, not accepted evidence for the author's
 `lookup_requires_io=False` hot property or the user-input-to-Recall <1 ms

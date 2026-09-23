@@ -11,9 +11,40 @@
 
 namespace swegca::vrs {
 
+// Immutable region read contract shared by the author's in-memory reference
+// and the bounded physical representation. Region storage may page values,
+// but cannot omit terms, memberships, core labels or stable region order.
+class RegionTopologyView {
+public:
+    // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_connectivity_regions.py@7536139:138-157
+    virtual ~RegionTopologyView() = default;
+    // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_connectivity_regions.py@7536139:138-157
+    [[nodiscard]] virtual const std::string& vrs_snapshot_id() const = 0;
+    // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_connectivity_regions.py@7536139:138-157
+    [[nodiscard]] virtual const std::string& topology_id() const = 0;
+    // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_connectivity_regions.py@7536139:138-157
+    [[nodiscard]] virtual bool converged() const = 0;
+    // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_connectivity_regions.py@7536139:138-157
+    [[nodiscard]] virtual std::uint64_t term_count() const = 0;
+    // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_connectivity_regions.py@7536139:138-157
+    [[nodiscard]] virtual std::uint32_t term(std::uint32_t local) const = 0;
+    // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_connectivity_regions.py@7536139:138-157
+    [[nodiscard]] virtual std::uint32_t core_label(std::uint32_t local) const = 0;
+    // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_region_arrays.py@7536139:29-36
+    [[nodiscard]] virtual std::uint64_t region_count() const = 0;
+    // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_region_arrays.py@7536139:29-36
+    [[nodiscard]] virtual std::uint64_t region_size(std::uint32_t region) const = 0;
+    // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_region_arrays.py@7536139:29-36
+    [[nodiscard]] virtual std::uint32_t region_node(
+        std::uint32_t region, std::uint64_t offset) const = 0;
+    // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_connectivity_regions.py@7536139:205-211
+    [[nodiscard]] virtual std::vector<std::pair<std::uint32_t, double>>
+    memberships_for_term(std::uint32_t local_node) const = 0;
+};
+
 // One immutable, generation-bound topology for an affected graph component.
 // It keeps the complete original edge arrays and overlapping memberships.
-class ConnectivityRegions {
+class ConnectivityRegions final : public RegionTopologyView {
 public:
     // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_connectivity_regions.py@7536139:159-199
     [[nodiscard]] static ConnectivityRegions build(
@@ -27,16 +58,29 @@ public:
                         const std::string& vrs_snapshot_id) const;
     // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_connectivity_regions.py@7536139:205-211
     [[nodiscard]] std::vector<std::pair<std::uint32_t, double>> memberships_for_term(
-        std::uint32_t local_node) const;
+        std::uint32_t local_node) const override;
     // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_connectivity_regions.py@7536139:275-281
     [[nodiscard]] Json receipt() const;
 
     // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_connectivity_regions.py@7536139:138-157
-    [[nodiscard]] const std::string& vrs_snapshot_id() const { return vrs_snapshot_id_; }
+    [[nodiscard]] const std::string& vrs_snapshot_id() const override { return vrs_snapshot_id_; }
     // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_connectivity_regions.py@7536139:138-157
-    [[nodiscard]] const std::string& topology_id() const { return topology_id_; }
+    [[nodiscard]] const std::string& topology_id() const override { return topology_id_; }
     // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_connectivity_regions.py@7536139:138-157
-    [[nodiscard]] bool converged() const { return converged_; }
+    [[nodiscard]] bool converged() const override { return converged_; }
+    // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_connectivity_regions.py@7536139:138-157
+    [[nodiscard]] std::uint64_t term_count() const override { return terms_.size(); }
+    // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_connectivity_regions.py@7536139:138-157
+    [[nodiscard]] std::uint32_t term(std::uint32_t local) const override;
+    // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_connectivity_regions.py@7536139:138-157
+    [[nodiscard]] std::uint32_t core_label(std::uint32_t local) const override;
+    // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_region_arrays.py@7536139:29-36
+    [[nodiscard]] std::uint64_t region_count() const override;
+    // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_region_arrays.py@7536139:29-36
+    [[nodiscard]] std::uint64_t region_size(std::uint32_t region) const override;
+    // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_region_arrays.py@7536139:29-36
+    [[nodiscard]] std::uint32_t region_node(
+        std::uint32_t region, std::uint64_t offset) const override;
     // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_connectivity_regions.py@7536139:138-157
     [[nodiscard]] const std::vector<std::uint32_t>& terms() const { return terms_; }
     // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_connectivity_regions.py@7536139:138-157

@@ -307,6 +307,41 @@ void ConnectivityRegions::require_source(const AffectedGraphComponent& source,
         throw std::runtime_error("region topology belongs to a different VRS generation");
 }
 
+// SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_connectivity_regions.py@7536139:138-157
+std::uint32_t ConnectivityRegions::term(std::uint32_t local) const {
+    if (local >= terms_.size())
+        throw std::out_of_range("region node outside directory");
+    return terms_[local];
+}
+
+// SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_connectivity_regions.py@7536139:138-157
+std::uint32_t ConnectivityRegions::core_label(std::uint32_t local) const {
+    if (local >= core_labels_.size())
+        throw std::out_of_range("region node outside directory");
+    return core_labels_[local];
+}
+
+// SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_region_arrays.py@7536139:29-36
+std::uint64_t ConnectivityRegions::region_count() const {
+    return region_offsets_.empty() ? 0 : region_offsets_.size() - 1;
+}
+
+// SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_region_arrays.py@7536139:29-36
+std::uint64_t ConnectivityRegions::region_size(std::uint32_t region) const {
+    if (std::uint64_t(region) + 1 >= region_offsets_.size())
+        throw std::out_of_range("region outside directory");
+    return region_offsets_[region + 1] - region_offsets_[region];
+}
+
+// SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_region_arrays.py@7536139:29-36
+std::uint32_t ConnectivityRegions::region_node(
+    std::uint32_t region, std::uint64_t offset) const {
+    if (std::uint64_t(region) + 1 >= region_offsets_.size() ||
+        offset >= region_offsets_[region + 1] - region_offsets_[region])
+        throw std::out_of_range("region node outside directory");
+    return region_nodes_[region_offsets_[region] + offset];
+}
+
 // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_connectivity_regions.py@7536139:205-211
 std::vector<std::pair<std::uint32_t, double>> ConnectivityRegions::memberships_for_term(
     std::uint32_t local_node) const {

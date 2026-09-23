@@ -22,7 +22,7 @@ bool same_bridge(const SharedExperienceBridge& left,
 }
 
 struct NavigationSeeds {
-    std::shared_ptr<const ConnectivityRegions> topology;
+    std::shared_ptr<const RegionTopologyView> topology;
     std::vector<std::uint32_t> nodes;
 };
 
@@ -61,9 +61,9 @@ NavigationSeeds seeds(const FullCurrentMemoryVrsSnapshot& pair,
         const auto address = nodes.address(name);
         if (regions.component_for(address) != component) continue;
         const auto local = regions.local_address(*component, address);
-        if (local >= topology->terms().size() || topology->terms()[local] != address)
+        if (local >= topology->term_count() || topology->term(local) != address)
             throw std::runtime_error("region cue address changed");
-        if (topology->core_labels()[local] == destination) found.insert(local);
+        if (topology->core_label(local) == destination) found.insert(local);
     }
     return NavigationSeeds{topology, {found.begin(), found.end()}};
 }
@@ -92,12 +92,10 @@ RegionNavigationPage next_graph_region_cues(
     const auto seeded = seeds(pair, inputs, nodes, regions, cursor.bridge,
                               cursor.origin_region, cursor.destination_region);
     const auto& topology = *seeded.topology;
-    const auto& offsets = topology.region_offsets();
     const auto destination = cursor.destination_region;
-    if (destination + std::uint64_t{1} >= offsets.size())
+    if (destination >= topology.region_count())
         throw std::runtime_error("navigation destination changed");
-    const auto begin = offsets[destination];
-    const auto term_count = offsets[destination + 1] - begin;
+    const auto term_count = topology.region_size(destination);
     if (cursor.seed_nodes != seeded.nodes ||
         cursor.seed_offset > seeded.nodes.size() ||
         cursor.region_offset > term_count || cursor.emitted_terms > term_count ||
@@ -106,7 +104,8 @@ RegionNavigationPage next_graph_region_cues(
     const auto skipped = cursor.region_offset == 0 ? std::uint64_t{0} :
         static_cast<std::uint64_t>(std::upper_bound(
             seeded.nodes.begin(), seeded.nodes.end(),
-            topology.region_nodes()[begin + cursor.region_offset - 1]) - seeded.nodes.begin());
+            topology.region_node(destination,
+                                 cursor.region_offset - 1)) - seeded.nodes.begin());
     if (skipped > cursor.seed_offset + cursor.region_offset ||
         cursor.emitted_terms != cursor.seed_offset + cursor.region_offset - skipped)
         throw std::runtime_error("navigation cursor progress count changed");
@@ -120,7 +119,7 @@ RegionNavigationPage next_graph_region_cues(
         if (seed_offset < seeded.nodes.size()) {
             local = seeded.nodes[seed_offset++];
         } else if (offset < term_count) {
-            local = topology.region_nodes()[begin + offset++];
+            local = topology.region_node(destination, offset++);
             if (std::binary_search(seeded.nodes.begin(), seeded.nodes.end(), local)) {
                 ++visited;
                 continue;
@@ -134,7 +133,7 @@ RegionNavigationPage next_graph_region_cues(
     }
     std::vector<std::string> cues;
     for (const auto local : page_nodes) {
-        const auto address = topology.terms()[local];
+        const auto address = topology.term(local);
         const auto name = nodes.name(address);
         if (!nodes.contains(name) || nodes.address(name) != address)
             throw std::runtime_error("region node directory changed");

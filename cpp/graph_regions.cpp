@@ -75,7 +75,7 @@ Json state_receipt_plain(const VRSStateUpdateReceipt& source) {
 // SWEGCA: src/swegca_vrs2/engine/mosaic_vrs_connectivity_regions.py@c06092a:213-229
 std::vector<std::pair<std::uint32_t, double>> cue_memberships(
     const HotIndexEpisodeHeader& episode, std::uint32_t component,
-    const ConnectivityRegions& topology, const GraphNodeDirectory& nodes,
+    const RegionTopologyView& topology, const GraphNodeDirectory& nodes,
     const GraphRegionDirectory& regions) {
     std::set<std::uint32_t> local_cues;
     for (const auto& cue : episode.cues) {
@@ -84,7 +84,7 @@ std::vector<std::pair<std::uint32_t, double>> cue_memberships(
         const auto address = nodes.address(name);
         if (regions.component_for(address) != component) continue;
         const auto local = regions.local_address(component, address);
-        if (local >= topology.terms().size() || topology.terms()[local] != address)
+        if (local >= topology.term_count() || topology.term(local) != address)
             throw std::runtime_error("region cue address changed");
         local_cues.insert(local);
     }
@@ -164,7 +164,7 @@ graph_memberships(std::string_view identifier, const EventVrsInputView& inputs,
     if (!topology || topology->vrs_snapshot_id() != inputs.snapshot_id())
         throw std::runtime_error("region topology belongs to a different VRS generation");
     const auto local = regions.local_address(*component, address);
-    if (local >= topology->terms().size() || topology->terms()[local] != address)
+    if (local >= topology->term_count() || topology->term(local) != address)
         throw std::runtime_error("region node address changed");
     std::vector<std::tuple<std::string, std::uint32_t, double>> result;
     for (const auto& [group, weight] : topology->memberships_for_term(local))
@@ -192,7 +192,8 @@ std::vector<std::pair<std::uint32_t, double>> graph_episode_memberships(
     if (!topology || topology->vrs_snapshot_id() != inputs.snapshot_id())
         throw std::runtime_error("region topology belongs to a different VRS generation");
     const auto center_local = regions.local_address(*component, center);
-    if (center_local >= topology->terms().size() || topology->terms()[center_local] != center)
+    if (center_local >= topology->term_count() ||
+        topology->term(center_local) != center)
         throw std::runtime_error("region original address changed");
     return cue_memberships(header, *component, *topology, nodes, regions);
 }
@@ -217,7 +218,8 @@ std::optional<SharedExperienceBridge> graph_bridge_for_episode(
     if (!topology || topology->vrs_snapshot_id() != inputs.snapshot_id())
         throw std::runtime_error("region topology belongs to a different VRS generation");
     const auto center_local = regions.local_address(*component, center);
-    if (center_local >= topology->terms().size() || topology->terms()[center_local] != center)
+    if (center_local >= topology->term_count() ||
+        topology->term(center_local) != center)
         throw std::runtime_error("region original address changed");
     auto memberships = cue_memberships(header, *component, *topology, nodes, regions);
     if (memberships.size() < 2) return std::nullopt;
@@ -240,10 +242,9 @@ std::vector<std::string> graph_region_candidates(
     const auto topology = regions.topology_for(component);
     if (!topology || topology->vrs_snapshot_id() != inputs.snapshot_id())
         throw std::runtime_error("region topology belongs to a different VRS generation");
-    const auto& offsets = topology->region_offsets();
     if (region_ids.empty()) throw std::runtime_error("existing region IDs required");
     for (const auto region : region_ids)
-        if (region + std::uint64_t{1} >= offsets.size())
+        if (region >= topology->region_count())
             throw std::runtime_error("existing region IDs required");
     std::set<std::uint32_t> seen;
     std::set<std::string> result;
@@ -251,9 +252,9 @@ std::vector<std::string> graph_region_candidates(
     for (const auto region : region_ids) {
         if (!seen.insert(region).second) continue;
         std::set<std::string> current;
-        for (auto at = offsets[region]; at < offsets[region + 1]; ++at) {
-            const auto local = topology->region_nodes()[at];
-            const auto address = topology->terms()[local];
+        for (std::uint64_t at = 0; at < topology->region_size(region); ++at) {
+            const auto local = topology->region_node(region, at);
+            const auto address = topology->term(local);
             const auto name = nodes.name(address);
             if (!nodes.contains(name) || nodes.address(name) != address)
                 throw std::runtime_error("region node directory changed");
