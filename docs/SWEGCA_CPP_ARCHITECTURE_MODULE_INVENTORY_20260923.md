@@ -740,6 +740,12 @@ architecture and its test-condition list have passed static review
   authenticity of the judgment, the provenance and counterfactual facts
   behind the two flags, promotion authority bound to an exact receipt, and
   applying the decision to the memory stores (:165-190, :249-344).
+- Stage 7 reference slice (codex, 2026-09-24; not Stage 7 complete):
+  `memory_candidate_reference.hpp` distinguishes original-experience
+  addresses from write-receipt links and checks the author's required-ref
+  set inclusion without changing order or repeats. Candidate field validation,
+  Main's current receipt/state/journal checks, promotion authority, and a
+  persistent reference codec remain open.
 - `MainStateWriter` publication: it returns an immutable successor and its
   receipt; Main's current-state replacement (synchronized with snapshot
   reads) waits for the Main experience/evidence integration. Main must build
