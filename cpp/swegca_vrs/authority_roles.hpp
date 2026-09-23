@@ -65,13 +65,15 @@ public:
     ~MainStateWriter();
 
     // The dedicated no-commit preview of one bound proposal under the writer's
-    // bounded policy; the evidence gate judges this preview.
-    [[nodiscard]] ArbitrationOutcome preview(const CognitiveState& state,
+    // bounded policy, at Main's published snapshot; the evidence gate judges
+    // this preview.
+    [[nodiscard]] ArbitrationOutcome preview(const StateSnapshot& snapshot,
                                              std::uint64_t current_step,
                                              const BoundProposal& bound) const;
-    // Authorizes and, when `commit`, commits one verification-slot delta. A
-    // commit consumes the gate's capability; a dry run checks it only.
-    [[nodiscard]] BoundedWriteResult write(std::shared_ptr<const CognitiveState> state,
+    // Authorizes and, when `commit`, commits one verification-slot delta
+    // against the state and publication of one Main snapshot. A commit
+    // consumes the gate's capability; a dry run checks it only.
+    [[nodiscard]] BoundedWriteResult write(const StateSnapshot& snapshot,
                                            const BoundProposal& bound, GateOutcome& gate,
                                            std::uint64_t current_step, bool commit);
     // Bit-exact rollback of the state a receipt produced.

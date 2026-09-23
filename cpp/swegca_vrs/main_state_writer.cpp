@@ -324,30 +324,36 @@ MainStateWriter::~MainStateWriter() = default;
 // writer's bounded policy, no commit.
 // Lineage: direct — the writer's own SingleWorldArbiter(..., commit=False).
 // SWEGCA: src/tinylm_slicer/mosaic_bounded_world_write.py@3bddcb7:400-406
-ArbitrationOutcome MainStateWriter::preview(const CognitiveState& state,
+ArbitrationOutcome MainStateWriter::preview(const StateSnapshot& snapshot,
                                             std::uint64_t current_step,
                                             const BoundProposal& bound) const {
-    return state_->arbiter->arbitrate(state, current_step,
+    return state_->arbiter->arbitrate(snapshot, current_step,
                                       std::span<const BoundProposal>(&bound, 1));
 }
 
 // One guarded verification write, in the order of the user's 2026-08-25
 // writer: shape and target checks raise; a failed gate or an unaccepted
 // preview returns a refusal; authority for exactly this proposal and preview
-// is checked before a dry run; only a commit consumes it.
+// is checked before a dry run; only a commit consumes it. The state and its
+// publication come from one Main snapshot, so they cannot be torn apart: an
+// exact rollback restores equal content under a new publication, and content
+// alone cannot tell the two heads apart.
 // SWEGCA: src/tinylm_slicer/mosaic_bounded_world_write.py@3bddcb7:379-475
-BoundedWriteResult MainStateWriter::write(std::shared_ptr<const CognitiveState> state,
+BoundedWriteResult MainStateWriter::write(const StateSnapshot& snapshot,
                                           const BoundProposal& bound, GateOutcome& gate,
                                           std::uint64_t current_step, bool commit) {
+    const auto state = snapshot.share_state();
     if (!state) throw std::invalid_argument("bounded_write_state_missing");
     const auto& current = *state;
+    const auto& published = snapshot.head();
     const auto& memory = state_->memory;
     // :388-389 one batch-one state.
     if (current.semantic().shape().batches != 1)
         throw std::invalid_argument("bounded_write_requires_batch_one_state");
-    // :390 proposal.validate(state): made against this state and its roles.
+    // :390 proposal.validate(state): made against this published state and
+    // its roles.
     const auto& proposal = bound.proposal();
-    if (proposal.based_on() != current.generation() ||
+    if (proposal.based_on() != published ||
         !proposal.targets().matches(current.roles()))
         throw std::invalid_argument("bounded_write_proposal_not_for_state");
     // :391-398 the proposal targets the verification role alone.
@@ -357,7 +363,7 @@ BoundedWriteResult MainStateWriter::write(std::shared_ptr<const CognitiveState> 
         throw std::invalid_argument("bounded_write_target_not_verification");
 
     // :399-412 the gate's reason, then the dedicated preview.
-    auto outcome = preview(current, current_step, bound);
+    auto outcome = preview(snapshot, current_step, bound);
     BoundedWriteResult result;
     result.state = state;
     result.preview_receipt = outcome.receipt;
@@ -375,7 +381,8 @@ BoundedWriteResult MainStateWriter::write(std::shared_ptr<const CognitiveState> 
     const auto& candidate = *outcome.candidate;
 
     // :413-419 authentic authority for exactly this proposal, preview and
-    // state, issued by this Main's ledger, still live; checked, not spent.
+    // published state, issued by this Main's ledger, still live; checked, not
+    // spent.
     // The operation also names the gate policy, recomputed from this
     // writer's configuration: a gate built with other thresholds (the
     // author's _authorization_reason(gates, config) uses the one config)
@@ -384,13 +391,14 @@ BoundedWriteResult MainStateWriter::write(std::shared_ptr<const CognitiveState> 
     const auto operation = verification_commit_operation(
         bound.decision_digest(), bound.binding_digest(), bound.binding_receipt(),
         candidate.receipt(), verification.role->id.value(), current.roles().digest(),
-        state_->gate_policy, current.generation());
+        state_->gate_policy, published);
     state_->ledger->verify(ConsumeKey<AuthorityDomain::cognitive_state_commit>{},
-                           *gate.authority, current.generation(), operation);
+                           *gate.authority, published, operation);
     if (gate.authority->descriptor().owner != current.owner())
         throw std::invalid_argument("bounded_write_authority_owner_mismatch");
-    // Main's journal HEAD must still be the state the gate judged.
-    if (state_->journal->state_generation() != current.generation()) {
+    // Main's journal HEAD must still name the published state the gate
+    // judged: its content and its publication both.
+    if (!published.matches(state_->journal->state_head())) {
         result.failures = bounded_write_journal_stale;
         keep_preview(result, outcome);
         return result;
@@ -456,7 +464,7 @@ BoundedWriteResult MainStateWriter::write(std::shared_ptr<const CognitiveState> 
         slot_digest(state_type, width, before), slot_digest(after.type, width, after.bytes),
         slot_digest(state_type, width, stored),
         delta_hash, evidence, prior, claim, proposal_digest,
-        current.generation(), successor->generation(), bound.decision_digest(),
+        published, bound.decision_digest(),
         bound.binding_digest(), bound.binding_receipt(), candidate.receipt(),
         AuthorityDomain::cognitive_state_commit};
 
@@ -472,7 +480,7 @@ BoundedWriteResult MainStateWriter::write(std::shared_ptr<const CognitiveState> 
     // failure before this line leaves the capability unspent. Nothing after
     // it can throw: the reset and the return move are noexcept.
     state_->ledger->consume(ConsumeKey<AuthorityDomain::cognitive_state_commit>{},
-                            std::move(*gate.authority), current.generation(), operation);
+                            std::move(*gate.authority), published, operation);
     gate.authority.reset();
     return result;
 }

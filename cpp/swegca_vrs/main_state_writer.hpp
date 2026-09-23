@@ -7,6 +7,7 @@
 #include "swegca_vrs/identity_types.hpp"
 #include "swegca_vrs/native_tensor.hpp"
 #include "swegca_vrs/proposal_arbiter.hpp"
+#include "swegca_vrs/published_state_id.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -64,7 +65,7 @@ enum class BoundedWriteStatus : std::uint8_t {
 
 // Every field of the author's receipt, the two it added on 2026-08-25, and
 // the C++ audit fields the architecture inventory asks of a state-write
-// receipt (decision, binding, previews, generations, authority domain).
+// receipt (decision, binding, previews, publication, authority domain).
 // A receipt is data, as the author's is: rollback and retraction trust it
 // only as far as the state's hashes agree with it.
 // Lineage: direct — BoundedWorldWriteReceipt (08-25).
@@ -99,9 +100,12 @@ struct BoundedWriteReceipt final {
     // 08-25: hypothesis_id and proposal_binding_digest.
     ClaimRevision claim;
     Digest256 proposal_digest;
-    // C++ audit fields.
-    StateGeneration before_generation;
-    StateGeneration after_generation;
+    // C++ audit fields. The receipt names the publication it was written
+    // against. It names no after-publication: the receipt travels inside the
+    // state-head publication record that publishes the successor, and a
+    // record's position and digest cannot be part of its own payload. That
+    // record names the successor's content and its predecessor.
+    PublishedStateId before_publication;
     Digest256 decision_digest;
     Digest256 binding_digest;
     Digest256 binding_receipt;
