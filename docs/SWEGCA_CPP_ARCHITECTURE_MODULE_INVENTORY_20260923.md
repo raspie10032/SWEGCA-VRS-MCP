@@ -164,7 +164,10 @@ system is divided by ownership and authority.
 - Maintains episodic, quarantined, semantic, retracted, and superseded records
   as journaled states over original experience addresses.
 - Semantic promotion requires the authoritative decision, exact state-write
-  receipt, matching claim and evidence set, and current native journal heads.
+  receipt, its evidence references and receipt-id link, and current native
+  journal heads. The linked-promotion source and SWEGCA spec §4.8 do not
+  compare the candidate's `hypothesis_id` with the receipt's claim; that
+  additional check is not silently added here.
 - The user's linked-promotion source
   (`mosaic_world_memory_transaction.py@3bddcb7:234-239`) requires candidate
   references to contain every write-receipt evidence reference and
@@ -548,16 +551,18 @@ ownership graph. `Remove` means do not reproduce the incompatible behavior.
 
 ### L4
 
-#### `mosaic_memory_promotion.py` (1-261)
+#### `mosaic_memory_promotion.py` (1-344, user's 2026-08-25 version)
 
-- Symbols: tier/candidate/decision 28-107; promotion decision 110-163; document
-  projection 166-197; tier application 200-234; verified update 237-261.
+- Symbols: tier/candidate/decision 29-80; VRS experience promotion 83-162;
+  memory promotion decision 165-246; document projection 249-280; tier
+  application 283-317; verified update 320-344.
 - Keep: provenance quarantine, reject/retract, accepted and counterfactually
   verified semantic promotion, regime-change quarantine, episodic fallback,
   and version-preserving promotion.
-- Reshape: promotion is bound to exact claim, decision, write receipt, and
-  native experience addresses. It appends tier transitions and never copies a
-  fact into an unrelated database row.
+- Reshape: promotion checks the authoritative decision, exact write receipt,
+  its evidence references and receipt-id link. Candidate hypothesis equality
+  is not checked by the source. It appends tier transitions over native
+  experience addresses and never copies a fact into an unrelated database row.
 - Remove: direct mutation of separate episodic/semantic databases.
 
 ### L5
