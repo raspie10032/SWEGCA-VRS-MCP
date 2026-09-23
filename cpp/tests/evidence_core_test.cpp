@@ -7,6 +7,10 @@
 #include <iostream>
 #include <span>
 
+#ifdef __FAST_MATH__
+#error "SWEGCA evidence tests require fast math to be disabled"
+#endif
+
 namespace sa = swegca::architecture;
 namespace sk = swegca::architecture::kernel;
 
@@ -25,7 +29,7 @@ sk::EvidenceTally supporting() {
     tally.axis_source_diversity.fill(1);
     tally.source_diversity = 2;
     tally.context_diversity = 4;
-    tally.revision = 1;
+    tally.revision = 400;
     return tally;
 }
 
