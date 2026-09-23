@@ -681,10 +681,13 @@ Before that route can exist, Main must run the pure autonomy transition from
 one published state snapshot, Main's own configuration, and an event read from
 an addressed experience. A caller-supplied `AutonomyTransition` or
 `AutonomyEventView` cannot establish that the event fields came from the
-experience: the author event is an in-memory value with no address, and the
-current F2 C++ parser reads a complete event byte stream but has no caller
-that binds the stream to an addressed experience record. The event record
-must hold the **complete event**, including identity, kind, hypothesis, evidence
+experience: the author event is an in-memory value with no address. The F2
+C++ parser now has an adapter that reads the chosen raw or structured blob
+from an addressed experience decoded on a pinned journal snapshot, completes
+the whole chosen blob's digest check, and returns the parsed event with its
+record address, position, kind and digests. Main has no caller for that
+adapter yet. The event record must hold the **complete event**, including
+identity, kind, hypothesis, evidence
 references, source_family, context, confidence and payload. Main must parse those
 fields from the record it replayed on a pinned journal read lease and verify
 the record's own integrity before running the kernel. The native event byte
