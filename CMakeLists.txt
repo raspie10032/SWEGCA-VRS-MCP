@@ -94,6 +94,38 @@ foreach(architecture_file IN LISTS architecture_files)
     endif()
 endforeach()
 
+# Compile the verifier from a private copy that contains no VRS files. The
+# static include check above is fast, while this compiler pass also catches
+# relative paths, macro operands and other preprocessing forms. Compile each
+# header on its own so a currently unused verifier header cannot hide a VRS
+# dependency. configure_file makes incremental builds refresh the copy when
+# an input changes; this target is deliberately absent from product links.
+set(isolated_core_root "${CMAKE_CURRENT_BINARY_DIR}/swegca_core_isolation")
+set(isolated_core_include "${isolated_core_root}/cpp")
+file(MAKE_DIRECTORY "${isolated_core_include}/swegca_architecture")
+set(isolated_core_sources)
+foreach(architecture_file IN LISTS architecture_files)
+    get_filename_component(core_name "${architecture_file}" NAME)
+    set(isolated_file "${isolated_core_include}/swegca_architecture/${core_name}")
+    configure_file("${architecture_file}" "${isolated_file}" COPYONLY)
+    if(core_name MATCHES "\\.cpp$")
+        list(APPEND isolated_core_sources "${isolated_file}")
+    elseif(core_name MATCHES "\\.hpp$")
+        set(header_probe "${isolated_core_root}/${core_name}.cpp")
+        file(WRITE "${header_probe}" "#include \"swegca_architecture/${core_name}\"\n")
+        list(APPEND isolated_core_sources "${header_probe}")
+    endif()
+endforeach()
+add_library(swegca_core_isolation OBJECT ${isolated_core_sources})
+target_include_directories(swegca_core_isolation PRIVATE "${isolated_core_include}")
+target_compile_features(swegca_core_isolation PRIVATE cxx_std_20)
+set_target_properties(swegca_core_isolation PROPERTIES CXX_EXTENSIONS OFF)
+if(MSVC)
+    target_compile_options(swegca_core_isolation PRIVATE /fp:strict)
+elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(swegca_core_isolation PRIVATE -ffp-contract=off -fno-fast-math)
+endif()
+
 include(CTest)
 if(BUILD_TESTING)
     add_executable(swegca_evidence_core_test cpp/tests/evidence_core_test.cpp)
