@@ -1,4 +1,4 @@
-# SWEGCA C++ multimodal memory — design v3.1 (for cross-review, no code yet)
+# SWEGCA C++ multimodal memory — design v3.2 (for cross-review, no code yet)
 
 Status: draft for Claude–Codex cross-review. Nothing here is implemented.
 
@@ -16,10 +16,11 @@ Status: draft for Claude–Codex cross-review. Nothing here is implemented.
 3. Cross-review corrections that are already folded in:
    - Codex 19:10: modality belongs to parts, not to the whole memory; char_range counts code points; no hot-path model inference.
    - Codex 19:18: keep raw bytes only when they were received; keep storage_path as provenance; keep the original item_index; use a canonical step schema, not an opaque blob; selectors are metadata that depends on its memory.
+   - Codex 19:34: Q4 closed as below.
 
 ## 1. What one memory is
 One memory is one user episode, appended once under one digest-bound address:
-- **episode identity:** episode_id (the producer's id, kept as a field), revision, verification_state, source_addresses (unique, at least one).
+- **episode identity:** the memory address (Main-sealed, from the C++ canonical content), plus episode_id (the producer's id, kept as a provenance field), revision, verification_state, source_addresses (unique, at least one).
 - **steps:** one or more. Each step has:
   - phase
   - observation (canonical structured payload)
@@ -89,7 +90,7 @@ Edges carry no modality column (vrs_connectivity_regions :170-176). Strength sta
 - **Q1 (settled for now, Codex 19:25).** No promise that C++ canonical step bytes equal the user's sorted-key JSON bytes. C++ canonical addresses and the user's past `memory-step-artifact:` addresses are named differently and never mixed. Compare against the user's JSON input and encoding rules separately before any such promise.
 - **Q2 (direction agreed).** Selectors are stored as durable metadata that depends on the memory (the user's immutable build → prepare). Kind, index entries and schema are fixed after a separate design review.
 - **Q3 (deferred).** Where familiarity vectors are kept is decided only after the input contract of the <1 ms path is set.
-- **Q4 (to investigate).** Keep both episode_id and our content address. Which one lineage and supersession use is decided after reading which identifier the user's supersession and lineage functions actually use.
+- **Q4 (closed, Codex 19:34).** In the user's existing implementation the episode_id is itself a content address: `experience:` + SHA-256 of the Main-sealed item's canonical payload (mosaic_experience_organization.py@3bddcb7:186-195, "Derive persistent identity from main-sealed lineage, never from a model"). Repeats are grouped by alias rows that keep every original and its position (mosaic_experience_canonicalization.py@3bddcb7:1-5, :327-335). Supersession points at a record id (conversation_memory.py@3bddcb7:37-44, mosaic_memory_promotion.py@3bddcb7:328). So: our memory address, sealed by Main from the new C++ canonical content, takes the episode_id's place. The producer's episode_id stays as a provenance field. Lineage and supersedes name exact record addresses. A repeat alias never deletes the original and never adds an evidence vote. No byte equality with the user's Python JSON addresses is claimed.
 
 ## 9. Compatibility
 The C++ store starts new memory. It is not a reader of the old store (user 2026-09-23: 「c++ 버전은 기존 호환이 아니라 어차피 경험 새로 만들건데」). The user's existing records are a specification source, not data this store must decode.
