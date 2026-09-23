@@ -386,7 +386,8 @@ public:
     // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:103-107
     [[nodiscard]] const CognitiveState& state() const;
     // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:196-205
-    [[nodiscard]] const PublishedStateId& head() const noexcept {
+    [[nodiscard]] const PublishedStateId& head() const {
+        (void)state();
         return head_;
     }
     // SWEGCA: src/swegca/mosaic_bounded_world_write.py@5901a5a:262-283

@@ -28,6 +28,7 @@ class JournalStore;
 }  // namespace journal
 
 class CognitiveState;
+class StateSnapshot;
 class ExperienceRecord;
 
 // Main's grouping of sources into families (COMPONENT_LEDGER.md@5901a5a:
@@ -79,7 +80,7 @@ private:
 };
 
 // What Re-evidence recorded: the result, and whether it was applied or was
-// an exact repeat of a result already kept (original, generation,
+// an exact repeat of a result already kept (original, publication,
 // re-evidencer, outcome).
 struct ReEvidenceRecorded {
     ReEvidenceResult result;
@@ -88,8 +89,8 @@ struct ReEvidenceRecorded {
 
 // Main's evidence admission (spec :118, order @30b73e7:24-29): replays the
 // observation's address from Main's journal and admits it against the state
-// content the journal's HEAD names, both from one snapshot, so neither the
-// record nor the current content is the caller's to choose. A later HEAD
+// content Main's selected snapshot names, after the journal's same-snapshot
+// head matches it. A later HEAD
 // with different content requires Re-evidence before that original is current;
 // a bit-exact rollback to the same content can reuse its judgment. This is
 // the only caller of the accumulator's admission step.
@@ -110,6 +111,7 @@ public:
     // describes, at `current_step`. A family is fixed as its source's own
     // (SourceFamilies) only when the observation is applied.
     AdmissionResult admit(EvidenceAccumulator& accumulator, const EvidenceObservation& observation,
+                          const StateSnapshot& state,
                           std::uint64_t current_step);
 
 private:
@@ -164,7 +166,7 @@ private:
 
 // Main's Re-evidence component (order @30b73e7:24-29): replays an admitted
 // original from Main's journal and records its re-judgment against the
-// current Cognitive State generation. It is the only constructor of
+// current Main-published Cognitive State. It is the only constructor of
 // ReEvidenceResult and the only caller of the accumulator's recording step.
 class ReEvidence final {
 public:
@@ -174,16 +176,16 @@ public:
     ReEvidence& operator=(ReEvidence&&) = delete;
     ~ReEvidence() = default;
 
-    // Requires `state` to be the generation Main's journal HEAD names
+    // Requires `state` to be the publication Main's journal HEAD names
     // (`re_evidence_state_not_current` otherwise), replays `address` (throws
     // if the journal cannot confirm it), asks `judge` for the outcome of the
     // replayed record against the accumulator's claim revision and `state`,
     // requires the record to be an admitted original of `accumulator` with
     // the same content digest, and records that outcome by `by` (a producer
-    // id, borrowed) against that generation. Any throw leaves the
+    // id, borrowed) against that publication. Any throw leaves the
     // accumulator exactly as it was.
     [[nodiscard]] ReEvidenceRecorded apply(EvidenceAccumulator& accumulator,
-                                 const ExperienceAddress& address, const CognitiveState& state,
+                                 const ExperienceAddress& address, const StateSnapshot& state,
                                  std::string_view by, ReEvidenceJudge judge) const;
 
 private:

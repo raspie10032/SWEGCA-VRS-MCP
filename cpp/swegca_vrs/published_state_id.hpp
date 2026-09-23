@@ -35,6 +35,15 @@ public:
         return publication_;
     }
 
+    // A lower-journal manifest is data until Main's selected marker and
+    // state record are verified. This compares that data with an already
+    // Main-published identity; it never constructs or grants one.
+    // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:196-205
+    [[nodiscard]] bool matches(const journal::StateHeadReference& head) const noexcept {
+        return head.publication && head.content_digest == content_digest_.bytes() &&
+               *head.publication == publication_;
+    }
+
     // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:196-205
     [[nodiscard]] bool operator==(const PublishedStateId& other) const noexcept {
         return content_digest_ == other.content_digest_ &&

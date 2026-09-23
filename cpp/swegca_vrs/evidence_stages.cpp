@@ -15,42 +15,46 @@ namespace swegca::vrs {
 // Replay first (the journal resolves the address through its published view
 // and verifies the record, or throws), then Main judges the replayed record
 // against the claim revision and the state it passes, then the result is
-// bound to what was replayed and to that state's generation, and recorded.
+// bound to what was replayed and to that state's publication, and recorded.
 // SWEGCA: user@2026-09-22:24-29
 ReEvidenceRecorded ReEvidence::apply(EvidenceAccumulator& accumulator,
                                      const ExperienceAddress& address,
-                                     const CognitiveState& state, std::string_view by,
+                                     const StateSnapshot& state, std::string_view by,
                                      ReEvidenceJudge judge) const {
-    // One snapshot gives both the generation HEAD names and the original.
+    // One journal snapshot gives both the head and the original. Main's
+    // snapshot must name that exact head before its content is judged.
     auto at_head = journal_.replay_at_head(address);
-    if (state.generation() != at_head.state)
+    if (!state.head().matches(at_head.head))
         throw std::invalid_argument("re_evidence_state_not_current");
     const auto experience = ExperienceRecord::decode(std::move(at_head.record), memory_, journal_);
     experience.verify_parts();  // codex 16:32: fail closed before it counts
     const auto& view = experience.record();
     if (view.address != address.value())
         throw std::invalid_argument("re_evidence_replay_address_mismatch");
-    const auto outcome = judge(experience, accumulator.claim(), state);
+    const auto outcome = judge(experience, accumulator.claim(), state.state());
     if (!evidence_outcome_valid(outcome)) throw std::invalid_argument("re_evidence_outcome_invalid");
-    ReEvidenceResult result(accumulator.claim(), address, view.record_digest, state.generation(),
+    ReEvidenceResult result(accumulator.claim(), address, view.record_digest, state.head(),
                             ProducerId(memory_, by), outcome);
     const auto admission = accumulator.record(result);
     return ReEvidenceRecorded{std::move(result), admission};
 }
 
-// Replay and the generation HEAD names come from one snapshot of Main's
-// journal, never from the caller; admission is judged against that pair.
+// Replay and the state head come from one journal snapshot. Main's selected
+// StateSnapshot must match that head before admission is judged.
 // The source admits a replayed experience as evidence only through its
 // claim-relevant, address-bound policy. This Main wrapper also binds the
-// journal's current state generation; it is additional C++ infrastructure.
+// journal's current state publication; it is additional C++ infrastructure.
 // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:111-117
 AdmissionResult EvidenceAdmission::admit(EvidenceAccumulator& accumulator,
                                          const EvidenceObservation& observation,
+                                         const StateSnapshot& state,
                                          std::uint64_t current_step) {
     detail::require_identity_text(observation.address, ExperienceAddressTag::name);
     detail::require_identity_text(observation.source_family, SourceFamilyTag::name);
     auto at_head =
         journal_.replay_at_head(ExperienceAddress(accumulator.memory_, observation.address));
+    if (!state.head().matches(at_head.head))
+        throw std::invalid_argument("evidence_state_not_current");
     const auto experience =
         ExperienceRecord::decode(std::move(at_head.record), accumulator.memory_, journal_);
     experience.verify_parts();  // codex 16:32: fail closed before it counts
@@ -74,7 +78,7 @@ AdmissionResult EvidenceAdmission::admit(EvidenceAccumulator& accumulator,
         throw std::invalid_argument("evidence_provenance_mismatch:source_family");
     const ReplayedOriginal replayed{experience.record().address, experience.record().record_digest,
                                     families, contexts};
-    const auto result = accumulator.admit(observation, replayed, at_head.state, current_step);
+    const auto result = accumulator.admit(observation, replayed, state.content_digest(), current_step);
     if (result == AdmissionResult::applied) families_.commit(fixes);
     return result;
 }
