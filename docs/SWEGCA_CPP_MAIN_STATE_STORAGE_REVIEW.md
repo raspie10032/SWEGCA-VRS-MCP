@@ -215,6 +215,12 @@ crash cases before code uses it.
   lookups and exact reads. Main's combined memory/VRS strength read lease is
   still pending and must bind that journal snapshot to the strength root
   named by the same Main committed receipt.
+- The Main commit marker files must live outside the lower journal directory:
+  `JournalStore::open_at_root` rejects unknown directory entries, and the
+  lower journal's own HEAD is not Main's recovery authority. The marker
+  stores an exact `JournalRoot` (`ManifestLocation` plus digest) selected by
+  Main. A marker filename or timestamp cannot replace verification of its
+  payload, predecessor and named root.
 - Proposal `based_on`, Bind, arbitration, gated capabilities, and CAS compare
   the publication identifier. Re-evidence, admission, and accumulator
   `judged_against` compare only the content digest. Replay can inspect
