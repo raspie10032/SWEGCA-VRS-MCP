@@ -186,7 +186,8 @@ Manifest read_manifest(const fs::path& directory, const ManifestLocation& locati
 // Generation 0 is built in a sibling directory and renamed into place without
 // replacement, so a directory that exists either has a published HEAD or is
 // not a journal (and then fails closed on open).
-// Lineage: direct — a missing store is created as an empty first generation whose HEAD is written atomically.
+// Lineage: weak analogy — the author makes a missing store in place with its own id; here a sibling renamed whole.
+// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:575-577
 // SWEGCA: src/swegca_vrs2/native_journal.py@c06092a:96-106
 void create_initial(const fs::path& directory, std::string_view identity,
                     const AllocationContext& memory) {
@@ -665,7 +666,7 @@ std::string_view append_view_key(LedgerBytes& keys, std::string_view index_entry
 
 // The tree a builder finished, with the bytes of its pages.
 // Lineage: native mechanism — descriptor of a finished tree, checked against its page bytes.
-// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:50
+// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:588-589
 ViewTree tree_of(std::uint64_t count, std::uint32_t height, const PageRef& root,
                  std::uint64_t page_bytes) {
     if (count == 0) {
@@ -1180,7 +1181,7 @@ PublishedRecord::PublishedRecord(PublishedRecord&& other) noexcept
       position_(std::exchange(other.position_, RecordPosition{})) {}
 
 // Lineage: native mechanism — buffers of a staged generation on the host's allocator.
-// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:50
+// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:587
 StagedGeneration::StagedGeneration(const AllocationContext& memory)
     : head_bytes_(memory.allocator<std::byte>()), log_header_(memory.allocator<std::byte>()),
       pieces_(memory.allocator<SegmentPiece>()), page_pieces_(memory.allocator<PagePiece>()),
@@ -1188,7 +1189,7 @@ StagedGeneration::StagedGeneration(const AllocationContext& memory)
 
 // A moved-from staged generation is invalid and can never be published.
 // Lineage: native mechanism — move leaves the source invalid, so it can never be published.
-// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:50
+// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:587
 StagedGeneration::StagedGeneration(StagedGeneration&& other) noexcept
     : valid_(std::exchange(other.valid_, false)), parent_generation_(other.parent_generation_),
       parent_manifest_digest_(other.parent_manifest_digest_),
@@ -1541,7 +1542,7 @@ void JournalStore::verify_extent(const PublishedSnapshot& current,
 // lines name no kind reservation; the nearest is that only Main-owned
 // staging and publication make a source episode persistent (weak: stated
 // for the dialogue teacher, a principle and not this mechanism).
-// Lineage: native mechanism — C++ authority boundary: the generic stage refuses the memory/cue kinds.
+// Lineage: native mechanism — the generic stage refuses the plan's three experience kinds; cue bindings are this code's addition.
 // SWEGCA: docs/SWEGCA_CPP_VRS_LAYER_PLAN.md@472d23225c973fa0a33581afd6bd9026df6fc98a:159-165
 StagedGeneration JournalStore::stage(std::span<const RecordDraft> drafts,
                                      const StateGeneration& state,
@@ -1990,7 +1991,7 @@ std::optional<RecordPosition> JournalStore::resolve_in(const PublishedSnapshot& 
 
 // One snapshot for the whole replay: the view that resolves the address and
 // the extents the record is read from belong to the same generation.
-// Lineage: direct — replays one selected exact original by its address.
+// Lineage: weak analogy — the flow replays a selected original; here only the exact read of one address, chosen by the caller.
 // SWEGCA: user@2026-09-22:25
 PublishedRecord JournalStore::replay(const ExperienceAddress& address) const {
     require_usable();
@@ -2011,7 +2012,7 @@ ReplayAtHead JournalStore::replay_at_head(const ExperienceAddress& address) cons
 }
 
 // Rule (Replay): an unknown address, or a view naming another address, fails.
-// Lineage: direct — locates the address, reads the stored bytes there and requires the same address.
+// Lineage: direct — locates the address, reads the stored bytes there and requires the same address (unknown fails, not None).
 // SWEGCA: src/swegca_vrs2/exact_replay.py@c06092a:763-770
 PublishedRecord JournalStore::replay_in(const PublishedSnapshot& current,
                                         const ExperienceAddress& address) const {
@@ -2024,7 +2025,7 @@ PublishedRecord JournalStore::replay_in(const PublishedSnapshot& current,
 
 // Reads the record at a position the view resolved; the record's digest must
 // be the one the view names.
-// Lineage: direct — reads the stored record at the located position and checks it against the index.
+// Lineage: weak analogy — the author checks a capsule's length and CRC; here the bytes at an extent, checked on decode.
 // SWEGCA: src/swegca_vrs2/exact_replay.py@c06092a:662-671
 PublishedRecord JournalStore::read_in(const PublishedSnapshot& current,
                                       const RecordPosition& position) const {
@@ -2052,7 +2053,7 @@ PublishedRecord JournalStore::read_in(const PublishedSnapshot& current,
     return PublishedRecord(std::move(bytes), position);
 }
 
-// Lineage: direct — reads every record in sequence from genesis, requiring the previous-digest chain.
+// Lineage: weak analogy — the author reads an evidence ledger in order; here journal records with a re-created digest chain.
 // SWEGCA: src/tinylm_slicer/mosaic_evidence_ledger.py@3bddcb7:35-57
 void JournalStore::for_each_record_impl(
     const void* target,
@@ -2216,7 +2217,7 @@ bool JournalStore::remove_page_logs(const RetiredLogs& logs) const noexcept {
 }
 
 // Lineage: native mechanism — a threshold keeping view disk use within twice the live pages plus one log.
-// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:50
+// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:589-590
 bool JournalStore::compaction_due() const {
     require_usable();
     const auto current = snapshot();

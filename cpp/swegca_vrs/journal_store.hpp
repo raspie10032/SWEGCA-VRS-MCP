@@ -447,7 +447,7 @@ public:
 
     // The experience appender may stage its reserved record kinds but cannot
     // publish or rewrite HEAD. Only MainOwner can perform those mutations.
-    // Lineage: native mechanism — C++ authority boundary: memory/cue kinds are staged only through ExperienceAppend.
+    // Lineage: native mechanism — the plan's three experience kinds, plus cue bindings (this code's addition), only through ExperienceAppend.
     // SWEGCA: docs/SWEGCA_CPP_VRS_LAYER_PLAN.md@472d23225c973fa0a33581afd6bd9026df6fc98a:159-165
     [[nodiscard]] StagedGeneration stage_experience_records(
         const ExperienceStageKey&, std::span<const RecordDraft> drafts,
