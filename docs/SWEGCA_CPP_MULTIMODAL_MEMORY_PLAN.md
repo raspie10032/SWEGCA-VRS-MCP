@@ -1,4 +1,4 @@
-# SWEGCA C++ multimodal memory — design v3.2 (for cross-review, no code yet)
+# SWEGCA C++ multimodal memory — design v3.3 (for cross-review, no code yet)
 
 Status: draft for Claude–Codex cross-review. Nothing here is implemented.
 
@@ -94,3 +94,25 @@ Edges carry no modality column (vrs_connectivity_regions :170-176). Strength sta
 
 ## 9. Compatibility
 The C++ store starts new memory. It is not a reader of the old store (user 2026-09-23: 「c++ 버전은 기존 호환이 아니라 어차피 경험 새로 만들건데」). The user's existing records are a specification source, not data this store must decode.
+
+## 10. Envelope v4 layout (v3.3; Claude msg 245, Codex 20:50)
+Agreed before code. The C++ envelope v3 (experience.cpp) gets one optional **typed section**. Nothing else in v3 changes.
+- **Why one section.** The v3 worst case is 14,769,475 bytes with one more blob at its largest encoding (parted 2,097,198 bytes; addresses 75 bytes): fixed 89 + namespace 4,100 + lineage 1,024·79 + resources 1,024·4,100 + 5·2,097,198. That is 2,007,741 bytes under `max_payload_bytes` (16,777,216). Two more blobs do not fit.
+- **Storage.** The section is one blob through the existing `BlobInput`/`BlobPlan` path: inline up to 2 MiB, parts beyond. It is streamed part by part. It is not a `CanonicalPayload`. That type is the state's owned opaque metadata (cognitive_state.hpp:41-49) and would lose the part streaming.
+- **Optional episode.** The C++ memories so far follow the original ExperienceArtifact line and have no steps (transcript rows, file observations). Requiring steps would make up phase, judgment and outcome for them. So a memory may carry an episode or not. Both lines are the user's.
+- **When the episode is present, the user's rules apply unchanged** (mosaic_memory_activation.py@3bddcb7:63-106):
+  - `episode_id`, `revision` and `verification_state` are non-blank texts. The episode's own `revision` is kept **separately** from `Observation.source_revision` (Codex 20:50: the first is the episode's revision, the second the producer's).
+  - `source_addresses`: at least one, unique, in the given order.
+  - `steps`: at least one. Each step has:
+    - `phase` and `judgment`: non-blank.
+    - `outcome`: one of the six OUTCOMES (:19-21).
+    - `relations`: texts, order and repeats kept, no check (as the source).
+    - `evidence_refs`: at least one, each non-blank, order and repeats kept.
+    - `observation`: bytes kept as given.
+  - "Non-blank" uses the Python `str.strip` set of 29 code points (Codex 9be048a). Texts are stored as given, not stripped, as the source does (`_text`'s result is not assigned).
+- **Resources:** zero or more, in the producer's order, with the fields of §2.
+  - The `r` index is the sorted union of `Observation.resources` and the section's resource ids. Each list is stored as given, so where an id came from stays visible. The producer never has to keep the two in sync.
+  - Resource bytes, when received, are a blob descriptor inside the section. The bytes themselves are existing content-addressed part records.
+- **Decode and checks.** An inline section is checked fully at decode. A parted one is checked by `verify_parts` and while its visitor walks it; evidence admission and Re-evidence already run `verify_parts` first.
+- **No new record kind, no new index letter.** Step and selector addresses are views.
+- **Open:** the observation's JSON-compatibility check. The source round-trips it through JSON (:81-84). C++ has no native JSON validator yet. Until one exists, the bytes are kept unchecked and this gap is recorded.
