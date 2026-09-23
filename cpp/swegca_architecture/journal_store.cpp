@@ -2228,16 +2228,22 @@ void JournalStore::rebuild_view(RebuildValidator validate) {
         release_collector(addresses);
         release_collector(index);
         const PageSource rebuilt_pages{directory_, memory_, nullptr};
-        const auto replay_rebuilt = [&](std::string_view address) -> PublishedRecord {
+        const auto resolve_rebuilt = [&](std::string_view address)
+            -> std::optional<RecordPosition> {
             LeafCursor cursor(rebuilt_pages, built_addresses, address);
             if (!cursor.valid() || cursor.item().address != address)
-                fail("journal_address_unknown");
-            auto record = read_in(*current, cursor.item().position);
+                return std::nullopt;
+            return cursor.item().position;
+        };
+        const auto replay_rebuilt = [&](std::string_view address) -> PublishedRecord {
+            const auto position = resolve_rebuilt(address);
+            if (!position) fail("journal_address_unknown");
+            auto record = read_in(*current, *position);
             if (record.view().address != address)
                 fail("journal_address_view_mismatch");
             return record;
         };
-        const RebuildReader reader(replay_rebuilt);
+        const RebuildReader reader(replay_rebuilt, resolve_rebuilt);
         Digest validation_entering = zero_digest;
         current->extents.for_each([&](std::uint64_t ordinal, const SegmentExtent& extent) {
             LedgerBytes bytes(static_cast<std::size_t>(extent.byte_length),

@@ -203,7 +203,9 @@ four-stage VRS path is already implemented.
   is the position in the verified chain. The target record must also have
   the expected address and kind, and precede the binding in record order.
 - `RebuildValidator` and its borrowed `RebuildReader` now provide the second
-  pass with exact replay from the unpublished tree. Main-owned decoders for
+  pass with exact resolve and replay from the unpublished tree. A binding
+  decoder can compare its stored target `RecordPosition` with the formal
+  address view before reading the target. Main-owned decoders for
   each record kind still need to be connected; without one, no caller may
   rebuild a view. A callback failure leaves the previous HEAD authoritative
   and removes unpublished rebuild logs. The callback must use the borrowed

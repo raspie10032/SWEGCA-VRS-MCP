@@ -119,33 +119,51 @@ public:
     RebuildReader(RebuildReader&&) = delete;
     RebuildReader& operator=(RebuildReader&&) = delete;
     // SWEGCA: docs/SWEGCA_CPP_MAIN_STATE_STORAGE_REVIEW.md@9da0813:187-206
-    template <class F>
-        requires(!std::is_same_v<std::remove_cvref_t<F>, RebuildReader> &&
-                 std::is_object_v<F> &&
-                 std::is_invocable_r_v<PublishedRecord, F&,
+    template <class R, class Q>
+        requires(std::is_lvalue_reference_v<R&&> && std::is_lvalue_reference_v<Q&&> &&
+                 std::is_invocable_r_v<PublishedRecord, R&, std::string_view> &&
+                 std::is_invocable_r_v<std::optional<RecordPosition>, Q&,
                                        std::string_view>)
-    explicit RebuildReader(F& replay) noexcept
+    RebuildReader(R&& replay, Q&& resolve) noexcept
         : target_(static_cast<const void*>(std::addressof(replay))),
-          call_(&invoke<F>) {}
-    template <class F>
-    RebuildReader(const F&&) = delete;
+          call_(&invoke<R>),
+          resolve_target_(static_cast<const void*>(std::addressof(resolve))),
+          resolve_call_(&invoke_resolve<Q>) {}
 
     // SWEGCA: docs/SWEGCA_CPP_MAIN_STATE_STORAGE_REVIEW.md@9da0813:187-206
     [[nodiscard]] PublishedRecord replay(std::string_view address) const {
         return call_(target_, address);
     }
 
+    // Resolves against the unpublished rebuilt address tree, not caller
+    // supplied positions. The returned position must be compared exactly.
+    // SWEGCA: docs/SWEGCA_CPP_MAIN_STATE_STORAGE_REVIEW.md@9da0813:187-206
+    [[nodiscard]] std::optional<RecordPosition> resolve(std::string_view address) const {
+        return resolve_call_(resolve_target_, address);
+    }
+
 private:
     using Call = PublishedRecord (*)(const void*, std::string_view);
+    using ResolveCall = std::optional<RecordPosition> (*)(const void*, std::string_view);
     // SWEGCA: docs/SWEGCA_CPP_MAIN_STATE_STORAGE_REVIEW.md@9da0813:187-206
     template <class F>
     static PublishedRecord invoke(const void* target, std::string_view address) {
-        auto& replay = *static_cast<F*>(const_cast<void*>(target));
+        auto& replay = *static_cast<std::remove_reference_t<F>*>(const_cast<void*>(target));
         return replay(address);
+    }
+
+    // SWEGCA: docs/SWEGCA_CPP_MAIN_STATE_STORAGE_REVIEW.md@9da0813:187-206
+    template <class Q>
+    static std::optional<RecordPosition> invoke_resolve(const void* target,
+                                                         std::string_view address) {
+        auto& resolve = *static_cast<std::remove_reference_t<Q>*>(const_cast<void*>(target));
+        return resolve(address);
     }
 
     const void* target_;
     Call call_;
+    const void* resolve_target_;
+    ResolveCall resolve_call_;
 };
 
 // Borrowed Main-owned decoder for the second rebuild pass. It checks each
