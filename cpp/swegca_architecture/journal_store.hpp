@@ -118,7 +118,7 @@ public:
     RebuildReader& operator=(const RebuildReader&) = delete;
     RebuildReader(RebuildReader&&) = delete;
     RebuildReader& operator=(RebuildReader&&) = delete;
-    // SWEGCA: docs/SWEGCA_CPP_MAIN_STATE_STORAGE_REVIEW.md@9da0813:187-206
+    // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:196-205
     template <class R, class Q>
         requires(std::is_lvalue_reference_v<R&&> && std::is_lvalue_reference_v<Q&&> &&
                  std::is_object_v<std::remove_reference_t<R>> &&
@@ -126,21 +126,21 @@ public:
                  std::is_invocable_r_v<PublishedRecord, R&, std::string_view> &&
                  std::is_invocable_r_v<std::optional<RecordPosition>, Q&,
                                        std::string_view>)
-    // SWEGCA: docs/SWEGCA_CPP_MAIN_STATE_STORAGE_REVIEW.md@9da0813:187-206
+    // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:196-205
     RebuildReader(R&& replay, Q&& resolve) noexcept
         : target_(static_cast<const void*>(std::addressof(replay))),
           call_(&invoke<R>),
           resolve_target_(static_cast<const void*>(std::addressof(resolve))),
           resolve_call_(&invoke_resolve<Q>) {}
 
-    // SWEGCA: docs/SWEGCA_CPP_MAIN_STATE_STORAGE_REVIEW.md@9da0813:187-206
+    // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:196-205
     [[nodiscard]] PublishedRecord replay(std::string_view address) const {
         return call_(target_, address);
     }
 
     // Resolves against the unpublished rebuilt address tree, not caller
     // supplied positions. The returned position must be compared exactly.
-    // SWEGCA: docs/SWEGCA_CPP_MAIN_STATE_STORAGE_REVIEW.md@9da0813:187-206
+    // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:196-205
     [[nodiscard]] std::optional<RecordPosition> resolve(std::string_view address) const {
         return resolve_call_(resolve_target_, address);
     }
@@ -148,14 +148,14 @@ public:
 private:
     using Call = PublishedRecord (*)(const void*, std::string_view);
     using ResolveCall = std::optional<RecordPosition> (*)(const void*, std::string_view);
-    // SWEGCA: docs/SWEGCA_CPP_MAIN_STATE_STORAGE_REVIEW.md@9da0813:187-206
+    // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:196-205
     template <class F>
     static PublishedRecord invoke(const void* target, std::string_view address) {
         auto& replay = *static_cast<std::remove_reference_t<F>*>(const_cast<void*>(target));
         return replay(address);
     }
 
-    // SWEGCA: docs/SWEGCA_CPP_MAIN_STATE_STORAGE_REVIEW.md@9da0813:187-206
+    // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:196-205
     template <class Q>
     static std::optional<RecordPosition> invoke_resolve(const void* target,
                                                          std::string_view address) {
@@ -173,13 +173,14 @@ private:
 // record kind and may replay prior records through the rebuilt address tree.
 // It must not reenter JournalStore publication while rebuild_view holds the
 // publication lock.
+// This native recovery adapter has no direct Python type counterpart.
 class RebuildValidator final {
 public:
     RebuildValidator(const RebuildValidator&) = delete;
     RebuildValidator& operator=(const RebuildValidator&) = delete;
     RebuildValidator(RebuildValidator&&) = delete;
     RebuildValidator& operator=(RebuildValidator&&) = delete;
-    // SWEGCA: docs/SWEGCA_CPP_MAIN_STATE_STORAGE_REVIEW.md@9da0813:187-206
+    // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:196-205
     template <class F>
         requires(!std::is_same_v<std::remove_cvref_t<F>, RebuildValidator> &&
                  std::is_object_v<F> &&
@@ -191,7 +192,7 @@ public:
     template <class F>
     RebuildValidator(const F&&) = delete;
 
-    // SWEGCA: docs/SWEGCA_CPP_MAIN_STATE_STORAGE_REVIEW.md@9da0813:187-206
+    // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:196-205
     void operator()(const RecordView& record, const RecordPosition& position,
                     const RebuildReader& reader) const {
         call_(target_, record, position, reader);
@@ -200,7 +201,7 @@ public:
 private:
     using Call = void (*)(const void*, const RecordView&, const RecordPosition&,
                           const RebuildReader&);
-    // SWEGCA: docs/SWEGCA_CPP_MAIN_STATE_STORAGE_REVIEW.md@9da0813:187-206
+    // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:196-205
     template <class F>
     static void invoke(const void* target, const RecordView& record,
                        const RecordPosition& position, const RebuildReader& reader) {
@@ -416,7 +417,7 @@ public:
 
     // The experience appender may stage its reserved record kinds but cannot
     // publish or rewrite HEAD. Only MainOwner can perform those mutations.
-    // SWEGCA: docs/SWEGCA_CPP_MAIN_STATE_STORAGE_REVIEW.md@7c4d419:108-110
+    // SWEGCA: paper/swegca/ARCHITECTURE_SPEC.md@5901a5a:196-205
     [[nodiscard]] StagedGeneration stage_experience_records(
         const ExperienceStageKey&, std::span<const RecordDraft> drafts,
         const StateGeneration& state, std::span<const ViewGeneration> views) const {

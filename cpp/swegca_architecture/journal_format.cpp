@@ -233,7 +233,10 @@ bool is_index_entry(std::string_view index_entry) noexcept {
            index_entry.find(index_separator) == std::string_view::npos;
 }
 
-// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3f:122-123
+// C++ derived index rule: state/control records are excluded from experience
+// lookup. The source's semantic-key index supplies the retrieval boundary,
+// not this native record-kind encoding.
+// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:398-437
 bool index_entry_allowed(std::uint16_t record_kind, std::string_view index_entry) noexcept {
     if (record_kind == state_part_record_kind ||
         record_kind == state_root_record_kind ||

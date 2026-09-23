@@ -276,7 +276,9 @@ void append_segment_header(LedgerBytes& out, std::uint64_t ordinal, std::uint64_
 // record views `bytes`.
 // A decode callback borrows its callable for this invocation. Unlike a
 // std::function target, it never allocates outside the host's ledger.
-// SWEGCA: docs/SWEGCA_CPP_MAIN_STATE_STORAGE_REVIEW.md@9da0813:187-206
+// This is C++ infrastructure for the approved native session journal; the
+// source does not define a matching callback type.
+// SWEGCA: user@2026-09-22:59-68
 class RecordVisitor final {
 public:
     RecordVisitor(const RecordVisitor&) = delete;
@@ -284,7 +286,7 @@ public:
     RecordVisitor(RecordVisitor&&) = delete;
     RecordVisitor& operator=(RecordVisitor&&) = delete;
 
-    // SWEGCA: docs/SWEGCA_CPP_MAIN_STATE_STORAGE_REVIEW.md@9da0813:187-206
+    // SWEGCA: user@2026-09-22:59-68
     template <class F>
         requires(!std::is_same_v<std::remove_cvref_t<F>, RecordVisitor> &&
                  std::is_object_v<F> &&
@@ -295,14 +297,14 @@ public:
     template <class F>
     RecordVisitor(const F&&) = delete;
 
-    // SWEGCA: docs/SWEGCA_CPP_MAIN_STATE_STORAGE_REVIEW.md@9da0813:187-206
+    // SWEGCA: user@2026-09-22:59-68
     void operator()(const RecordView& record, std::uint64_t offset) const {
         call_(target_, record, offset);
     }
 
 private:
     using Call = void (*)(const void*, const RecordView&, std::uint64_t);
-    // SWEGCA: docs/SWEGCA_CPP_MAIN_STATE_STORAGE_REVIEW.md@9da0813:187-206
+    // SWEGCA: user@2026-09-22:59-68
     template <class F>
     static void invoke(const void* target, const RecordView& record,
                        std::uint64_t offset) {
