@@ -120,3 +120,28 @@ the background right after SessionEnd. Session-local admission and
 session-first reads (line 64), the atomic link to main ownership (line 68)
 and the kept original session journals are unchanged. Line numbers above
 this section are kept as they were, because lineage tags cite them.
+
+## Later read-route corrections (2026-09-23)
+
+The user's later four-stage decisions in
+`docs/SWEGCA_CPP_VRS_LAYER_PLAN.md` §6.2 supersede the read diagram's
+`S → H → I → J` wording and approved read-route point 3 above. Keep the
+earlier lines in place because code lineage tags cite their positions.
+
+- Recall returns the complete set of original-experience addresses. It does
+  not select an original by the author's old Recall order; transport paging
+  does not discard addresses.
+- Replay opens the **current** original with the highest f32 VRS strength.
+  When that highest strength ties, it opens up to five originals. If six or
+  more tie, choose the five by matched cue count descending, then journal
+  recency descending. Keep the current top addresses with the caller index
+  and region pages so this choice does not scan every Recall candidate on
+  the input → Recall path. Replay reads only the chosen exact originals.
+- Re-evidence runs when the current and replayed states differ among accept,
+  reject, and abstain. If it finds relevant opposing evidence or conflict,
+  Replay opens only the relevant opposing originals and Re-evidence judges
+  both sides while preserving unresolved conflict. This opposing set is
+  separate from the initial five-original tie limit.
+- The less-than-1-ms target ends at Recall completion. Replay and conditional
+  Re-evidence are measured separately. Session-first lookup, Main fallback,
+  and the SessionEnd integration above retain their stated order.
