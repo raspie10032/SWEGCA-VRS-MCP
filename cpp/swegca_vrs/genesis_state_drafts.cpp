@@ -78,7 +78,10 @@ bool GenesisStateDrafts::root_published_in(const journal::JournalStore& store,
     const auto record = store.replay(address);
     const auto& view = record.view();
     if (record.position() != *position || view.kind != journal::state_root_record_kind ||
-        view.address != address.value() || view.source != source_ || view.authority ||
+        view.address != address.value() || view.source != source_ ||
+        view.source_revision !=
+            std::string_view(source_revision_.data(), source_revision_.size()) ||
+        view.authority ||
         !view.previous_revision_address.empty() || !view.claim.empty() ||
         !view.outcome.empty() || !view.transaction_id.empty() || view.index_count != 0 ||
         !view.index.empty() ||
