@@ -20,6 +20,15 @@ crash cases before code uses it.
 - `MainOwner` currently constructs generation 0 with a computed state digest.
   A new `JournalStore` starts with a zero state digest in its genesis HEAD.
   There is no C++ state or transaction record codec or state recovery.
+- `JournalStore::stage` now rejects reserved state kinds 5–7, while
+  `stage_state_records` requires a key only Main can form. This closes the
+  generic staging route; Main does not yet call the state route or encode
+  those records.
+- `JournalStore::open_at_root` can open and verify the exact manifest that a
+  Main-supplied root names without adopting the lower journal's HEAD. It
+  retains and charges bytes outside that generation and is read-only. Main's
+  durable root publisher and safe write resumption after such a selection
+  are not implemented.
 - User correction (2026-09-23 18:3x): state content has no separate
   generation number. Recording time stays outside the state as a human
   timeline hint. The current `StateGeneration::ordinal` and manifest
@@ -27,7 +36,9 @@ crash cases before code uses it.
 - The journal limits one record payload to 16 MiB and one generation to
   64 MiB. An initial state may exceed both limits. The experience module
   already streams large blobs through content-addressed 8 MiB parts and a
-  bounded-depth digest tree.
+  bounded-depth digest tree. Its level count and upper digest-list tree are
+  now shared in `part_tree.hpp`; the state level-0 part writer and reader do
+  not yet exist.
 - `JournalStore::stage_from` now shares unchanged immutable extent-index
   paths and copies only changed paths when staging a generation. Its storage
   charge uses checked deltas for changed extents, manifest bytes, and view
