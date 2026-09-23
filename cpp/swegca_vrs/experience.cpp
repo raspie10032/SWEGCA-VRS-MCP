@@ -85,14 +85,17 @@ static_assert(2 * detail::identity_text_max_bytes + max_derived_from + max_resou
 [[noreturn]] void fail(const char* code) { throw std::invalid_argument(code); }
 
 // A fraction in [0, 1]; -0 is kept as +0 so equal values have equal bytes.
-// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:193-200
+// Lineage: direct — the author refuses a relevance or contradiction outside [0, 1]; keeping -0 as +0 is added so equal values have equal bytes.
+// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:200-201
 double unit_fraction(double value, const char* code) {
     if (!(std::isfinite(value) && value >= 0 && value <= 1)) fail(code);
     return value + 0.0;
 }
 
 // Length-prefixed field so no two field sequences hash the same bytes.
-// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:376-388
+// Lineage: weak analogy — the author separates hashed fields with a NUL byte; here each field has an 8-byte little-endian length prefix, so a field may hold any byte.
+// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:379-382
+// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:567-569
 void hash_field(Sha256& hash, std::string_view text) {
     const auto length = static_cast<std::uint64_t>(text.size());
     std::array<std::byte, 8> prefix{};
@@ -102,7 +105,8 @@ void hash_field(Sha256& hash, std::string_view text) {
     hash.update(text);
 }
 
-// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:376-388
+// Lineage: weak analogy — the author hashes a count as decimal ASCII followed by NUL; here as 8 little-endian bytes.
+// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:386-389
 void hash_u64(Sha256& hash, std::uint64_t value) {
     std::array<std::byte, 8> bytes{};
     for (std::size_t at = 0; at < bytes.size(); ++at)
@@ -110,7 +114,8 @@ void hash_u64(Sha256& hash, std::uint64_t value) {
     hash.update(bytes);
 }
 
-// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:376-388
+// Lineage: native mechanism — a presence flag before the text, so an absent previous revision or outcome and an empty one hash differently in the address identity.
+// SWEGCA: docs/SWEGCA_CPP_VRS_LAYER_PLAN.md@472d23225c973fa0a33581afd6bd9026df6fc98a:124-127
 void hash_optional(Sha256& hash, const std::optional<std::string_view>& text) {
     hash_u64(hash, text ? 1 : 0);
     hash_field(hash, text.value_or(std::string_view()));
@@ -124,7 +129,9 @@ DigestBytes text_digest(std::string_view text) {
 }
 
 // Lowercase hex of a digest, without allocating.
-// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:31-35
+// Lineage: direct — the author's digests are hashlib's lowercase hexdigest, the same 64 characters; here without allocating.
+// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:24
+// SWEGCA: src/swegca/mosaic_evidence_revision.py@5901a5a:20
 std::array<char, digest_hex_bytes> hex_of(const DigestBytes& digest) noexcept {
     static constexpr char digits[] = "0123456789abcdef";
     std::array<char, digest_hex_bytes> out{};
@@ -136,21 +143,26 @@ std::array<char, digest_hex_bytes> hex_of(const DigestBytes& digest) noexcept {
     return out;
 }
 
-// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:31-35
+// Lineage: direct — the author accepts a digest only as exactly 64 lowercase hex characters.
+// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:231
+// SWEGCA: src/swegca/mosaic_evidence_revision.py@5901a5a:24
 bool is_hex_digest(std::string_view text) noexcept {
     return text.size() == digest_hex_bytes &&
            std::all_of(text.begin(), text.end(),
                        [](char value) { return (value >= '0' && value <= '9') || (value >= 'a' && value <= 'f'); });
 }
 
-// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:31-35
+// Lineage: weak analogy — the author's address is experience-artifact:<root>:<path>; here a fixed prefix and a 64-character content digest.
+// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:51
+// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:203-204
 bool is_experience_address(std::string_view text) noexcept {
     return text.size() == address_bytes && text.starts_with(experience_address_prefix) &&
            is_hex_digest(text.substr(experience_address_prefix.size()));
 }
 
 // The address of the part whose bytes have `digest`.
-// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:31-35
+// Lineage: native mechanism — a part of a parted blob is a journal record reached by the address of its digest, so a replay can check each part.
+// SWEGCA: docs/SWEGCA_CPP_VRS_LAYER_PLAN.md@472d23225c973fa0a33581afd6bd9026df6fc98a:522-523
 std::array<char, experience_part_address_bytes> part_address_of(const DigestBytes& digest) noexcept {
     const auto hex = hex_of(digest);
     std::array<char, experience_part_address_bytes> out{};
@@ -160,7 +172,8 @@ std::array<char, experience_part_address_bytes> part_address_of(const DigestByte
 }
 
 // The 32 bytes at `at` of a digest list.
-// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:31-35
+// Lineage: native mechanism — one 32-byte digest of a part's digest list, read in place, so each part is checked against the digest its parent names.
+// SWEGCA: docs/SWEGCA_CPP_VRS_LAYER_PLAN.md@472d23225c973fa0a33581afd6bd9026df6fc98a:522-523
 DigestBytes digest_at(std::span<const std::byte> list, std::uint64_t at) noexcept {
     DigestBytes out{};
     std::memcpy(out.data(), list.data() + at * digest256_width, digest256_width);
@@ -171,7 +184,8 @@ using part_tree::PartLevels;
 using part_tree::part_levels;
 
 // One code point of strict UTF-8 text at `at`, which moves past it.
-// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:413-418
+// Lineage: native mechanism — one strict UTF-8 code point, so the C++ cue view applies the author's Unicode letter class without a regex engine.
+// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:501-502
 char32_t decode_at(std::string_view text, std::size_t& at) noexcept {
     const auto lead = static_cast<unsigned char>(text[at]);
     const std::size_t width = lead < 0x80 ? 1 : lead < 0xe0 ? 2 : lead < 0xf0 ? 3 : 4;
@@ -403,7 +417,9 @@ bool is_normalized_cue(const AllocationContext& memory, std::string_view text) {
 
 // Non-ASCII letters of the cue rule: every code point from U+00C0 except
 // the listed marks, punctuation, symbol, byte-order-mark and private blocks.
-// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:413-418
+// Lineage: direct — the non-ASCII letters of the author's [^\W\d_] cue class, as a range table.
+// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:414
+// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:495
 bool is_cue_letter(char32_t value) noexcept {
     static constexpr std::array<std::pair<char32_t, char32_t>, 17> separators{{
         {0x00d7, 0x00d7},    {0x00f7, 0x00f7},    {0x0300, 0x036f},    {0x2000, 0x2bff},
@@ -419,7 +435,9 @@ bool is_cue_letter(char32_t value) noexcept {
 }
 
 // Calls `emit(begin, end)` for each token of lowered `text` in order.
-// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:413-418
+// Lineage: direct — the author's cue tokens n\d+|r\d+|[a-z]+|\d+|[^\W\d_]+ of lowered text, left to right (digits are ASCII only here).
+// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:414
+// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:495
 template <class Emit>
 void scan_cue_tokens(std::string_view text, Emit emit) {
     const auto size = text.size();
@@ -468,7 +486,8 @@ void scan_cue_tokens(std::string_view text, Emit emit) {
 // The cue-view entry of one token in a record whose address is
 // `address_size` bytes: the token itself, or its digest when its key would
 // not be an identity text.
-// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:293-339
+// Lineage: weak analogy — the author posts every key as itself; a token too long for an identity-text key is posted by its digest here.
+// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:426-427
 template <class Visit>
 void with_cue_entry(std::string_view token, std::size_t address_size, Visit&& visit) {
     if (token.size() + 2 + address_size <= detail::identity_text_max_bytes) {
@@ -482,7 +501,9 @@ void with_cue_entry(std::string_view token, std::size_t address_size, Visit&& vi
 // Every entry a lookup of one token asks: the token for memories and
 // bindings alike while both keep it inline, both forms between the bounds,
 // the digest past them.
-// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:293-339
+// Lineage: weak analogy — the author looks a key up as itself; here the token, its digest, or both, as it may have been posted.
+// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:321
+// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:499
 template <class Visit>
 void with_cue_lookup(std::string_view token, Visit&& visit) {
     if (token.size() <= max_inline_bound_cue_bytes) {
@@ -526,7 +547,8 @@ public:
         add(kind, std::string_view(hex.data(), hex.size()));
     }
 
-    // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:293-339
+    // Lineage: weak analogy — the author posts each key of an address in a mapping; here one token becomes one cue entry of the record.
+    // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:426-427
     void add_cue(std::string_view token, std::size_t address_size) {
         with_cue_entry(token, address_size, [this](char kind, std::string_view value) { add(kind, value); });
     }
@@ -534,6 +556,7 @@ public:
     // Views every entry, sorted and unique; nothing is added after this.
     // Weak: the user's postings are sorted per key; sorting and dropping
     // repeats of whole entries is C++'s.
+    // Lineage: weak analogy — the author sorts each key's addresses; here whole entries are sorted and repeats dropped.
     // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:428-430
     std::span<const std::string_view> finish() {
         entries_.reserve(spans_.size());
@@ -578,7 +601,9 @@ struct IndexFields {
 // revised address, namespace, resources and transaction.
 // The user's automatic keys: derived from the observation, never supplied;
 // here from its source, revision and fields rather than a file path.
-// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:410-431
+// Lineage: weak analogy — the author's automatic keys come from the root id and file path; here from the source, revision and record fields, and the lineage, successor, namespace, resource and transaction entries are C++ views.
+// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:418-424
+// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:122-123
 void add_automatic(IndexEntries& index, const AllocationContext& memory, const IndexFields& fields) {
     for (const auto text : {fields.source, fields.source_revision}) {
         const CueTokens tokens(memory, text);
@@ -622,7 +647,9 @@ bool same_observed_index(std::span<const std::string_view> left, std::span<const
 // The record identity an address is the digest of: kind, source, revision,
 // revised address, outcome and payload digest. Index entries are derived
 // from these fields, never identity.
-// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:31-35
+// Lineage: native mechanism — the address is the digest of the record's identity, so the same experience recorded twice is one address and no address is self-declared.
+// SWEGCA: docs/SWEGCA_CPP_VRS_LAYER_PLAN.md@472d23225c973fa0a33581afd6bd9026df6fc98a:124-127
+// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:203-204
 std::array<char, address_bytes> address_of(std::uint16_t kind, std::string_view source,
                                            std::string_view source_revision,
                                            const std::optional<std::string_view>& previous,
@@ -643,7 +670,8 @@ std::array<char, address_bytes> address_of(std::uint16_t kind, std::string_view 
     return out;
 }
 
-// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:31-35
+// Lineage: native mechanism — views a fixed-size address as text without allocating.
+// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:50
 template <std::size_t N>
 std::string_view view_of(const std::array<char, N>& address) noexcept {
     return std::string_view(address.data(), address.size());
@@ -652,7 +680,8 @@ std::string_view view_of(const std::array<char, N>& address) noexcept {
 // A cue binding's address: its memory's address, the infix, and the digest
 // of everything it binds (target, author, revision and the distinct cues in
 // increasing order), so equal bindings are one record.
-// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:31-35
+// Lineage: native mechanism — a cue binding's address is its target and the digest of what it binds, so cues stay a caller layer beside the record and equal bindings are one record.
+// SWEGCA: docs/SWEGCA_CPP_VRS_LAYER_PLAN.md@472d23225c973fa0a33581afd6bd9026df6fc98a:447-448
 std::array<char, cue_binding_address_bytes> binding_address_of(std::string_view target, std::string_view source,
                                                                std::string_view source_revision,
                                                                std::span<const std::string_view> cues) {
@@ -672,7 +701,9 @@ std::array<char, cue_binding_address_bytes> binding_address_of(std::string_view 
     return out;
 }
 
-// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:398-436
+// Lineage: weak analogy — the author takes caller keys as a mapping beside the snapshot; here a binding record's payload names its target's position and its cues.
+// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:401
+// SWEGCA: docs/SWEGCA_CPP_VRS_LAYER_PLAN.md@472d23225c973fa0a33581afd6bd9026df6fc98a:447-448
 LedgerBytes encode_binding(const AllocationContext& memory, std::string_view target,
                            const journal::RecordPosition& at, std::span<const std::string_view> cues) {
     LedgerBytes out(memory.allocator<std::byte>());
@@ -720,7 +751,8 @@ struct BlobPlan {
 // copied; read bytes are read one part at a time into one buffer, and a read
 // blob small enough to be inline is read into `owned`. `text`, when given, is
 // fed every byte once as it is hashed.
-// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:23-60
+// Lineage: native mechanism — cuts a blob too large for one record into a tree of parts, hashing it once as it streams, so every part can be checked by digest.
+// SWEGCA: docs/SWEGCA_CPP_VRS_LAYER_PLAN.md@472d23225c973fa0a33581afd6bd9026df6fc98a:522-523
 BlobPlan plan_blob(const AllocationContext& memory, const BlobInput& input,
                    LedgerVector<PartSlice>& parts, LedgerVector<LedgerBytes>& owned, Utf8Count* text = nullptr) {
     BlobPlan out;
@@ -792,12 +824,14 @@ LedgerBytes digest_set_bytes(const AllocationContext& memory, LedgerVector<Diges
     return bytes;
 }
 
-// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:23-60
+// Lineage: native mechanism — the exact encoded size of one blob field, so the canonical payload is sized before it is written.
+// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:567-568
 std::uint64_t encoded_blob_bytes(const BlobPlan& blob) noexcept {
     return blob.depth == 0 ? 1 + 4 + blob.size : 1 + 8 + 32 + 1 + 4 + blob.top.size();
 }
 
-// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:23-60
+// Lineage: native mechanism — writes one blob field in its canonical form, inline or parted.
+// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:567-568
 void write_blob(ByteWriter& writer, const BlobPlan& blob) {
     if (blob.depth == 0) {
         writer.u8(0);
@@ -814,7 +848,8 @@ void write_blob(ByteWriter& writer, const BlobPlan& blob) {
 
 // Reads one blob in its one form: inline up to the inline size, otherwise
 // parted with exactly the depth and top count its size gives.
-// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:23-60
+// Lineage: native mechanism — reads one blob field only in its one canonical form, so any other encoding fails closed.
+// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:567-568
 ExperienceBlob read_blob(ByteReader& reader) {
     ExperienceBlob out;
     const auto mode = reader.u8();
@@ -840,7 +875,9 @@ ExperienceBlob read_blob(ByteReader& reader) {
 // A part of a parted blob, replayed and checked: a part record with no
 // authority, claim or index entry, its payload the digest its parent names
 // and exactly `expected` bytes long.
-// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:137-155
+// Lineage: weak analogy — the author re-stats an artifact and refuses a changed size before and after reading; here a part record is replayed and must carry exactly the digest and length its parent names.
+// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:103-104
+// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:109-110
 journal::PublishedRecord replay_part(const journal::JournalStore& journal, const AllocationContext& memory,
                                      const DigestBytes& digest, std::uint64_t expected) {
     const auto address = part_address_of(digest);
@@ -854,7 +891,8 @@ journal::PublishedRecord replay_part(const journal::JournalStore& journal, const
 
 // The length of part `place` of `level` in a parted blob of `size` bytes: a
 // full part, or what is left for the last one of its level.
-// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:23-60
+// Lineage: native mechanism — the length each part must have from its place in the tree, so a part of any other size fails.
+// SWEGCA: docs/SWEGCA_CPP_VRS_LAYER_PLAN.md@472d23225c973fa0a33581afd6bd9026df6fc98a:522-523
 std::uint64_t part_length(const PartLevels& levels, std::uint64_t size, std::uint8_t level,
                           std::uint64_t place) noexcept {
     if (level == 0) return std::min<std::uint64_t>(experience_part_bytes, size - place * experience_part_bytes);
@@ -868,7 +906,8 @@ std::uint64_t part_length(const PartLevels& levels, std::uint64_t size, std::uin
 // blob's digest. A read past the end fails with `experience_section_invalid`.
 // C++ infrastructure for reading blobs larger than memory holds (approved
 // flow :91-92); no direct Python counterpart.
-// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:137-155
+// Lineage: native mechanism — streams a blob larger than memory part by part, each part checked by digest and the whole blob's digest checked after the last.
+// SWEGCA: docs/SWEGCA_CPP_VRS_LAYER_PLAN.md@472d23225c973fa0a33581afd6bd9026df6fc98a:522-526
 // SWEGCA: user@2026-09-22:91-92
 class BlobCursor final {
 public:
@@ -891,7 +930,8 @@ public:
 
     // Up to `limit` of the bytes that follow, at least one: the rest of the
     // current part at most.
-    // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:137-155
+    // Lineage: weak analogy — the author reads a file in 1 MiB chunks to hash it; here up to one part's bytes per call, each part replayed and checked.
+    // SWEGCA: src/swegca/mosaic_evidence_revision.py@5901a5a:18
     std::span<const std::byte> next(std::uint64_t limit) {
         if (limit == 0 || remaining() == 0) fail("experience_section_invalid");
         if (chunk_.empty()) load();
@@ -921,7 +961,8 @@ public:
     }
 
     // Every byte read; a parted blob's bytes are its digest.
-    // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:137-155
+    // Lineage: weak analogy — the author refuses an artifact whose read length differs from its count; here every byte must be read and a parted blob's digest must match.
+    // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:109-110
     void finish() {
         if (remaining() != 0) fail("experience_section_invalid");
         if (blob_.parted() && whole_.finish() != blob_.digest) fail("experience_blob_digest_mismatch");
@@ -956,7 +997,8 @@ private:
 
     // The next level-0 part: up from the lowest level with a digest left,
     // then down, each list part replacing the one before it at its level.
-    // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:137-155
+    // Lineage: native mechanism — walks the part tree to the next leaf part, replaying and checking each list part on the way.
+    // SWEGCA: docs/SWEGCA_CPP_VRS_LAYER_PLAN.md@472d23225c973fa0a33581afd6bd9026df6fc98a:522-523
     void load() {
         std::uint8_t level = 0;
         while (level < blob_.depth && lists_[level].at * digest256_width == lists_[level].list.size()) ++level;
@@ -1355,7 +1397,9 @@ void build_section(const AllocationContext& memory, const Observation& observati
 // resources each with its listed flag, its raw, structured and (derived
 // only) root-source and root-context blobs, and its typed section blob after
 // a flag.
-// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:23-60
+// Lineage: native mechanism — the canonical payload bytes of an experience, so its fields and blobs are kept and its identity digest is fixed.
+// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:119-121
+// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:567-568
 LedgerBytes encode_envelope(const AllocationContext& memory, const Observation& observation,
                             std::span<const std::string_view> derived_from,
                             std::span<const std::string_view> resources, std::span<const std::uint8_t> listed,
@@ -1405,7 +1449,8 @@ LedgerBytes encode_envelope(const AllocationContext& memory, const Observation& 
 }
 
 // Reads `count` identity texts, strictly increasing, each accepted by `valid`.
-// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:23-60
+// Lineage: weak analogy — the author refuses duplicate root ids and addresses; here identity texts must be strictly increasing, hence unique.
+// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:67-71
 template <class Valid>
 LedgerVector<std::string_view> read_sorted_texts(ByteReader& reader, std::uint32_t count,
                                                  const AllocationContext& memory, Valid valid) {
@@ -1469,7 +1514,9 @@ void SectionSource::operator()(std::uint64_t offset, std::span<std::byte> out) c
 
 }  // namespace detail
 
-// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:413-418
+// Lineage: direct — the author lowercases the text and takes every match of its cue regex; here lowercasing is ASCII only and the text must be strict UTF-8.
+// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:413-415
+// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:495
 CueTokens::CueTokens(const AllocationContext& memory, std::string_view source)
     : text_(memory.allocator<std::byte>()), tokens_(memory.allocator<std::string_view>()) {
     if (!detail::is_strict_utf8(source)) fail("cue_text_not_utf8");
@@ -1485,7 +1532,8 @@ CueTokens::CueTokens(const AllocationContext& memory, std::string_view source)
     });
 }
 
-// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:23-60
+// Lineage: weak analogy — the author's artifact holds its root, path, byte count and time; here a replayed journal record with its decoded lineage, resources and index.
+// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:35-39
 ExperienceRecord::ExperienceRecord(journal::PublishedRecord record, const AllocationContext& memory,
                                    const journal::JournalStore& journal, LedgerVector<std::string_view> derived,
                                    LedgerVector<std::string_view> resources, LedgerVector<std::string_view> index)
@@ -1497,7 +1545,8 @@ ExperienceRecord::ExperienceRecord(journal::PublishedRecord record, const Alloca
 // Moving the record keeps every view valid (its bytes and lists keep their
 // buffers); the source keeps none. C++ infrastructure; no direct Python
 // counterpart.
-// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:23-60
+// Lineage: native mechanism — moving a record keeps every view into its buffers valid.
+// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:50
 ExperienceRecord::ExperienceRecord(ExperienceRecord&& other) noexcept : record_(std::move(other.record_)),
       journal_(other.journal_), memory_(other.memory_), observed_at_(other.observed_at_), context_(other.context_),
       uncertainty_(other.uncertainty_), contradiction_(other.contradiction_), span_(other.span_),
@@ -1515,7 +1564,8 @@ ExperienceRecord::ExperienceRecord(ExperienceRecord&& other) noexcept : record_(
 // carries no authored cue (user 2026-09-23 18:0x; the author's artifact has
 // none, cues are the caller's).
 // A parted blob's parts are checked when they are read.
-// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:23-60
+// Lineage: weak analogy — the author validates an artifact's fields when it is built; here the kind, envelope, address digest and automatic index entries are checked when a record is decoded.
+// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:41-47
 ExperienceRecord ExperienceRecord::decode(journal::PublishedRecord published,
                                           const AllocationContext& memory,
                                           const journal::JournalStore& journal) {
@@ -1738,22 +1788,27 @@ ExperienceRecord ExperienceRecord::decode(journal::PublishedRecord published,
     return out;
 }
 
-// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:23-60
+// Lineage: weak analogy — the author returns an artifact's whole bytes; here only an inline raw blob, a parted one is read by chunks.
+// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:107-111
 std::span<const std::byte> ExperienceRecord::raw() const {
     if (raw_.parted()) fail("experience_blob_parted");
     return raw_.inline_bytes;
 }
 
-// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:23-60
+// Lineage: weak analogy — the author parses JSON lines from the file when read; here the structured form stored with the record, inline only.
+// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:120-131
 std::span<const std::byte> ExperienceRecord::structured() const {
     if (structured_.parted()) fail("experience_blob_parted");
     return structured_.inline_bytes;
 }
 
-// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:137-155
+// Lineage: weak analogy — the author reads an artifact's bytes whole; here the raw blob is visited chunk by chunk, each part checked.
+// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:107-111
+// SWEGCA: src/swegca/mosaic_evidence_revision.py@5901a5a:18
 void ExperienceRecord::for_each_raw_chunk(ChunkVisitor visit) const { for_each_chunk(raw_, visit); }
 
-// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:137-155
+// Lineage: weak analogy — the author parses JSON lines from the whole file; here the structured blob is visited chunk by chunk, each part checked.
+// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:120-131
 void ExperienceRecord::for_each_structured_chunk(ChunkVisitor visit) const { for_each_chunk(structured_, visit); }
 
 // Reads the blob part by part (`BlobCursor`): a part must be a part record
@@ -1761,7 +1816,10 @@ void ExperienceRecord::for_each_structured_chunk(ChunkVisitor visit) const { for
 // names and exactly as long as its place in the tree gives (the last part of
 // each level may be shorter). Each level-0 part's bytes are visited once
 // checked; the whole blob's digest is checked after the last.
-// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:137-155
+// Lineage: weak analogy — the author reads a file whole, refusing a changed length, and hashes files in 1 MiB chunks; here parts are replayed and checked one by one and the whole digest after the last.
+// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:109-110
+// SWEGCA: src/swegca/mosaic_evidence_revision.py@5901a5a:18-19
+// SWEGCA: docs/SWEGCA_CPP_VRS_LAYER_PLAN.md@472d23225c973fa0a33581afd6bd9026df6fc98a:522-526
 void ExperienceRecord::for_each_chunk(const ExperienceBlob& blob, ChunkVisitor visit) const {
     if (!blob.parted()) {
         (void)visit(blob.inline_bytes);
@@ -1812,7 +1870,9 @@ void ExperienceRecord::for_each_root_context(DigestVisitor visit) const {
     for_each_digest(contexts_, visit);
 }
 
-// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:137-155
+// Lineage: weak analogy — the author re-stats an artifact against its recorded size and time before reading; here every part of every blob is replayed and checked by digest.
+// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:102-104
+// SWEGCA: docs/SWEGCA_CPP_VRS_LAYER_PLAN.md@472d23225c973fa0a33581afd6bd9026df6fc98a:144-146
 void ExperienceRecord::verify_parts() const {
     const auto whole = [](std::span<const std::byte>) { return true; };
     const auto every = [](const DigestBytes&) { return true; };
@@ -1852,7 +1912,8 @@ void ExperienceRecord::for_each_section(SectionVisitor visit) const {
 // A section kept in the record gives the resource's bytes directly; a parted
 // one is read up to the resource and on through its bytes (inline ones to
 // their digest check, parted ones as every blob).
-// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:137-155
+// Lineage: native mechanism — streams one resource's bytes out of the section, inline or parted, each part checked by digest.
+// SWEGCA: docs/SWEGCA_CPP_VRS_LAYER_PLAN.md@472d23225c973fa0a33581afd6bd9026df6fc98a:522-523
 void ExperienceRecord::for_each_resource_chunk(std::size_t resource, ChunkVisitor visit) const {
     if (!section_parted()) {
         if (resource >= observed_.size()) throw std::out_of_range("experience_resource_index_out_of_range");
@@ -1899,11 +1960,13 @@ struct CheckedBinding {
 // Checks the kind, the payload byte for byte, the address against the
 // binding's digest under its target, the entries against its cues, and
 // that the target is a memory held before the binding (the author refuses
-// keys for an unknown address, mosaic_unrestricted_experience.py@5901a5a:408-410).
+// keys for an unknown address, mosaic_unrestricted_experience.py@5901a5a:407-409).
 // `resolve` gives the target's position, `kind_of` its record kind: from
 // the published journal when decoding, from the rebuilt view when a
 // rebuild validates the record before it is published.
-// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:398-436
+// Lineage: weak analogy — the author refuses keys supplied for an unknown address and empty keys; here a binding record's target must be a memory published before it at the position it names, and its address and entries must match its cues.
+// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:407-409
+// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:426
 template <class Resolve, class KindOf>
 CheckedBinding checked_binding(const journal::RecordView& view, const journal::RecordPosition& at,
                                const AllocationContext& memory, const Resolve& resolve, const KindOf& kind_of) {
@@ -1955,7 +2018,8 @@ CheckedBinding checked_binding(const journal::RecordView& view, const journal::R
 
 }  // namespace
 
-// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:398-436
+// Lineage: weak analogy — the author checks supplied keys against the snapshot once when the index is built; here each binding record is checked against the published journal when decoded.
+// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:407-409
 CueBindingRecord CueBindingRecord::decode(journal::PublishedRecord published, const AllocationContext& memory,
                                           const journal::JournalStore& journal) {
     auto checked = checked_binding(
@@ -1971,7 +2035,8 @@ CueBindingRecord CueBindingRecord::decode(journal::PublishedRecord published, co
 // The same checks for a binding a view rebuild meets before publishing it:
 // its target is resolved and read in the rebuilt view, so a target that the
 // rebuild has not seen earlier in record order fails.
-// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:398-436
+// Lineage: weak analogy — the author checks supplied keys against the snapshot once when the index is built; here a binding is checked against the rebuilt view before it is published.
+// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:407-409
 void CueBindingRecord::validate_rebuilt(const journal::RecordView& record, const journal::RecordPosition& position,
                                         const journal::RebuildReader& reader, const AllocationContext& memory) {
     (void)checked_binding(
@@ -2289,7 +2354,8 @@ ExperienceAppend::ExperienceAppend(const ExperienceJournal& journal, const Alloc
     }
 }
 
-// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:398-436
+// Lineage: weak analogy — the author feeds caller keys straight into its postings; here a binding becomes a journal record draft with no authority.
+// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:425
 journal::RecordDraft ExperienceAppend::binding_draft(const Binding& binding) const {
     const auto& input = binding_inputs_[binding.input];
     journal::RecordDraft draft;
@@ -2540,14 +2606,17 @@ ExperienceAppend ExperienceJournal::stage(std::span<const Observation> observati
     return ExperienceAppend(*this, memory_, observations, {}, operation_id, transaction_id);
 }
 
-// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:398-436
+// Lineage: weak analogy — the author takes caller keys beside the snapshot as an index-build argument; here bindings are staged with observations as journal records.
+// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:401
 ExperienceAppend ExperienceJournal::stage(std::span<const Observation> observations,
                                           std::span<const CueBinding> bindings, std::string_view operation_id,
                                           std::optional<std::string_view> transaction_id) const {
     return ExperienceAppend(*this, memory_, observations, bindings, operation_id, transaction_id);
 }
 
-// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:137-155
+// Lineage: direct — the author resolves an exact address to its artifact or fails; here the same exact lookup returns the decoded record.
+// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:89-93
+// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:314-318
 ExperienceRecord ExperienceJournal::replay(const ExperienceAddress& address) const {
     return ExperienceRecord::decode(journal_.replay(address), memory_, journal_);
 }
@@ -2590,7 +2659,9 @@ void ExperienceJournal::for_each_in_view(ExperienceView view, std::string_view k
     fail("experience_view_key_invalid");
 }
 
-// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:179-205
+// Lineage: direct — the author refuses a judgment whose address differs from its candidate and a relevance or contradiction outside [0, 1].
+// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:510-511
+// SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:200-201
 void VerdictSink::record(const CandidateVerdict& verdict) {
     if (judgment_) fail("experience_judgment_repeated");
     if (verdict.address != candidate_.address) fail("experience_judgment_address_changed");
@@ -2614,6 +2685,7 @@ StateGeneration ExperienceJournal::state_generation() const {
     return journal_.state_generation();
 }
 
+// Lineage: direct — the author's runtime receipt holds the query, context, candidate judgments, selected artifacts and universe metrics.
 // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:208-243
 SelectionReceipt<NoAuthority>::SelectionReceipt(QueryText query, const Digest256& context,
                                                 const SelectionUniverse& universe,
@@ -2626,7 +2698,9 @@ SelectionReceipt<NoAuthority>::SelectionReceipt(QueryText query, const Digest256
 // Covers the query, context, universe, method, rationale, every judgment,
 // every selected experience in order, the two fixed selection flags, and
 // the authority flags. The native digest format is a C++ receipt mechanism.
+// Lineage: native mechanism — one digest over the whole receipt, so a replayed selection can be compared byte for byte; the author's receipt has no digest, and only its to_dict field order is followed.
 // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:274-290
+// SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:207-210
 Digest256 SelectionReceipt<NoAuthority>::compute_digest() const {
     Sha256 hash;
     hash_field(hash, "swegca.selection_receipt.v4");
@@ -2676,7 +2750,10 @@ Digest256 SelectionReceipt<NoAuthority>::compute_digest() const {
 // U is read first; retrieval keeps only entries of records in U (the index
 // view may already hold later ones). Every retrieved entry is kept until the
 // policy bound, which fails closed instead of cutting.
+// Lineage: weak analogy — the author falls back to the whole universe when no cue matches; the approved four stages replace that full scan: a zero-candidate Recall is an honest miss with no Replay, and only the receipt's zero-authority audit contract survives.
 // SWEGCA: src/swegca/mosaic_unrestricted_experience.py@5901a5a:475-537
+// SWEGCA: docs/SWEGCA_CPP_VRS_LAYER_PLAN.md@472d23225c973fa0a33581afd6bd9026df6fc98a:434-439
+// SWEGCA: user@2026-09-22:46-47
 SelectionReceipt<NoAuthority> ExperienceSelector::select(const SelectionQuery& query,
                                                          SelectionJudge judge) const {
     const auto& memory = experience_.memory_;
