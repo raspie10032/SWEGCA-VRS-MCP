@@ -18,14 +18,13 @@ struct VerificationResult final {
     ConnectionChange connection_change = ConnectionChange::preserve;
 };
 
-// The caller reads the existing cumulative evidence for the original selected
-// by the shuffled traversal. Shuffling does not re-accumulate that evidence;
-// for fixed rules and a fixed tally, order cannot change this item's verdict.
+// The caller supplies evidence formed from values of the shuffled experiences.
+// This function does not construct that evidence or read a preexisting tally.
 // The SWEGCA core alone produces the three-state judgment.
 [[nodiscard]] inline VerificationResult verify_experience(
     const architecture::kernel::EvidenceRules& rules,
-    const architecture::kernel::EvidenceTally& cumulative_evidence) noexcept {
-    const auto judgment = architecture::kernel::judge_evidence(rules, cumulative_evidence);
+    const architecture::kernel::EvidenceTally& shuffled_evidence) noexcept {
+    const auto judgment = architecture::kernel::judge_evidence(rules, shuffled_evidence);
     ConnectionChange change = ConnectionChange::preserve;
     switch (judgment.status) {
     case architecture::kernel::EvidenceStatus::accept:
