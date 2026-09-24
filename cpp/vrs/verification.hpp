@@ -19,7 +19,8 @@ struct VerificationResult final {
 };
 
 // The caller reads the existing cumulative evidence for the original selected
-// by the shuffled traversal. Shuffling does not re-accumulate that evidence.
+// by the shuffled traversal. Shuffling does not re-accumulate that evidence;
+// for fixed rules and a fixed tally, order cannot change this item's verdict.
 // The SWEGCA core alone produces the three-state judgment.
 [[nodiscard]] inline VerificationResult verify_experience(
     const architecture::kernel::EvidenceRules& rules,
