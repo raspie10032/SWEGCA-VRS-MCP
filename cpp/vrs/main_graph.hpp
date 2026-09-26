@@ -1,5 +1,6 @@
 #pragma once
 #include "vrs/session_runtime.hpp"
+#include "vrs/connection_regions.hpp"
 #include <set>
 
 namespace swegca::vrs {
@@ -11,7 +12,7 @@ namespace swegca::vrs {
 class MainGraph final {
 public:
     class PreparedMerge;
-    MainGraph(MemoryBudget& memory, double initial_strength, const architecture::EvidencePolicy& policy, std::uint32_t workers = 1);
+    MainGraph(MemoryBudget& memory, double initial_strength, const architecture::EvidencePolicy& policy, std::uint32_t workers = 1, std::size_t region_capacity = 256);
     MainGraph(const MainGraph&) = delete;
     MainGraph& operator=(const MainGraph&) = delete;
     // False for an already merged source or a source without connections.
@@ -32,6 +33,8 @@ public:
         std::uint64_t offset, std::uint64_t count) const;
     [[nodiscard]] std::uint64_t generation() const noexcept { return generation_; }
     [[nodiscard]] bool has_source(const architecture::DigestBytes& identity) const noexcept { return merged_.contains(identity); }
+    [[nodiscard]] std::size_t region_count() const noexcept { return connections_.region_count(); }
+    [[nodiscard]] std::size_t largest_region() const noexcept { return connections_.largest_region(); }
     [[nodiscard]] std::size_t source_count() const noexcept { return merged_.size(); }
 private:
     friend class PersistentMainGraph;
@@ -56,7 +59,7 @@ private:
     std::uint32_t workers_;
     architecture::kernel::EvidenceRules rules_;
     architecture::DigestBytes policy_digest_;
-    std::pmr::map<architecture::DigestBytes, Entry> connections_;
+    ConnectionRegions<Entry> connections_;
     std::pmr::map<architecture::DigestBytes, ExperienceLocation> merged_;
     // One entry per live connection, ordered by its latest committed generation.
     std::pmr::set<std::pair<std::uint64_t, architecture::DigestBytes>> changed_;
@@ -81,6 +84,7 @@ private:
     std::pmr::map<architecture::DigestBytes, ExperienceLocation> marker_;
     std::pmr::set<std::pair<std::uint64_t, architecture::DigestBytes>> changes_;
     architecture::DigestBytes result_{};
+    std::optional<ConnectionRegions<Entry>::Prepared> regions_;
 };
 
 }  // namespace swegca::vrs

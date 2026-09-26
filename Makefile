@@ -106,6 +106,7 @@ check-stdio: $(BUILD)/swegca-vrs-mcp $(BUILD)/app-server-pump-tests $(BUILD)/swe
 	python3 tests/stdio_tests.py $(BUILD)/swegca-vrs-mcp
 
 check: $(BUILD)/parallel-recovery-tests $(BUILD)/transfer-budget-tests $(BUILD)/parallel-main-tests $(BUILD)/runtime-tests $(BUILD)/main-sources-tests $(BUILD)/core-tests $(BUILD)/vrs-tests $(BUILD)/experience-block-tests $(BUILD)/memory-budget-tests $(BUILD)/connection-tests $(BUILD)/session-tests $(BUILD)/persistent-connection-tests $(BUILD)/catalog-tests $(BUILD)/session-runtime-tests $(BUILD)/main-graph-tests $(BUILD)/persistent-main-tests
+	./$(BUILD)/connection-regions-tests
 	./$(BUILD)/multi-session-runtime-tests
 	./$(BUILD)/app-server-pump-tests
 	./$(BUILD)/socket-frames-tests
@@ -176,3 +177,11 @@ check: $(BUILD)/app-server-pump-tests
 
 $(BUILD)/swegca-app-server-proxy: cpp/transport/proxy_main.cpp $(wildcard cpp/transport/*.hpp) cpp/transport/json.cpp $(CORE_HEADERS) $(CORE_SOURCES) $(VRS_HEADERS) | $(BUILD)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< cpp/transport/json.cpp $(CORE_SOURCES) -o $@
+
+$(BUILD)/connection-regions-tests: tests/connection_regions_tests.cpp cpp/vrs/connection_regions.hpp $(CORE_HEADERS) $(VRS_HEADERS) | $(BUILD)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< -o $@
+
+check: $(BUILD)/connection-regions-tests
+
+$(BUILD)/region-partition-bench: benchmarks/region_partition_bench.cpp cpp/swegca_architecture/region_partition_kernel.hpp | $(BUILD)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< -o $@

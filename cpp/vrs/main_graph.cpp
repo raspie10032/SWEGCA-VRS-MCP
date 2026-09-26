@@ -11,9 +11,9 @@ using namespace architecture::kernel;
 
 MainGraph::Entry::Entry(const DigestBytes& identity, double strength, const EvidenceRules& rules, MemoryBudget& memory)
     : connection(identity, strength, rules, memory), origins(&memory) {}
-MainGraph::MainGraph(MemoryBudget& memory, double initial_strength, const EvidencePolicy& policy, std::uint32_t workers)
+MainGraph::MainGraph(MemoryBudget& memory, double initial_strength, const EvidencePolicy& policy, std::uint32_t workers, std::size_t region_capacity)
     : memory_(memory), initial_strength_(initial_strength), workers_(workers), rules_(make_evidence_rules(policy)),
-      policy_digest_(evidence_policy_digest(policy).bytes()), connections_(&memory), merged_(&memory), changed_(&memory) {
+      policy_digest_(evidence_policy_digest(policy).bytes()), connections_(memory,region_capacity), merged_(&memory), changed_(&memory) {
     if (!workers_) throw std::invalid_argument("Main merge worker count must be positive");
     if (!finite_count(initial_strength)) throw std::invalid_argument("invalid Main initial strength");
 }
@@ -31,7 +31,7 @@ MainGraph::PreparedMerge::PreparedMerge(const MainGraph& owner, std::uint64_t se
 MainGraph::PreparedMerge::PreparedMerge(PreparedMerge&& other) noexcept
     : owner_(std::exchange(other.owner_, nullptr)), generation_(other.generation_), seed_(other.seed_), step_(other.step_),
       pending_(std::move(other.pending_)), marker_(std::move(other.marker_)),
-      changes_(std::move(other.changes_)), result_(other.result_) {}
+      changes_(std::move(other.changes_)), result_(other.result_), regions_(std::move(other.regions_)) {}
 MainGraph::PreparedMerge MainGraph::prepare_merge(const SessionRuntime& source, std::uint64_t seed, std::uint64_t step) const {
     if (!main_session_readable(source.phase(), source.usable()))
         throw std::logic_error("Main merge requires an ended published session");
@@ -58,11 +58,11 @@ MainGraph::PreparedMerge MainGraph::prepare_merge(const SessionRuntime& source, 
         if (!incoming || evidence_policy_digest(incoming->policy()).bytes() != policy_digest_)
             throw std::invalid_argument("source connection policy differs from Main policy");
         const auto previous = connections_.find(connection_id);
-        const auto strength = previous == connections_.end() ? initial_strength_ : previous->second.connection.strength();
+        const auto strength = !previous ? initial_strength_ : previous->connection.strength();
         auto& candidate = pending.try_emplace(connection_id, connection_id, strength, rules_, memory_).first->second;
         candidate.last_changed = generation_ + 1;
         changes.emplace(candidate.last_changed, connection_id);
-        tasks.push_back({&candidate, previous == connections_.end() ? nullptr : &previous->second, incoming});
+        tasks.push_back({&candidate, previous, incoming});
     }
     const auto prepare = [&](const Task& task) {
         auto& candidate = *task.candidate;
@@ -118,6 +118,7 @@ MainGraph::PreparedMerge MainGraph::prepare_merge(const SessionRuntime& source, 
         }
         prepared.result_ = hash.finish();
     }
+    prepared.regions_.emplace(connections_.prepare(pending));
     return prepared;
 }
 bool MainGraph::commit_merge(PreparedMerge&& prepared) {
@@ -136,10 +137,9 @@ bool MainGraph::commit_impl(PreparedMerge& prepared, MergeSink sink, void* conte
     for (const auto& [connection_id, entry] : pending) {
         (void)entry;
         const auto previous = connections_.find(connection_id);
-        if (previous != connections_.end()) changed_.erase({previous->second.last_changed, connection_id});
-        connections_.erase(connection_id);
+        if (previous) changed_.erase({previous->last_changed, connection_id});
     }
-    connections_.merge(pending);
+    connections_.commit(*prepared.regions_,pending);
     merged_.merge(prepared.marker_);
     changed_.merge(prepared.changes_);
     ++generation_;
@@ -147,17 +147,17 @@ bool MainGraph::commit_impl(PreparedMerge& prepared, MergeSink sink, void* conte
 }
 const Connection* MainGraph::find(const DigestBytes& identity) const noexcept {
     const auto found = connections_.find(identity);
-    return found == connections_.end() ? nullptr : &found->second.connection;
+    return !found ? nullptr : &found->connection;
 }
 const ConnectionRefinement* MainGraph::refinement(const DigestBytes& identity) const noexcept {
     const auto found = connections_.find(identity);
-    return found == connections_.end() ? nullptr : &*found->second.report;
+    return !found ? nullptr : &*found->report;
 }
 const MainGraph::Origin& MainGraph::original_source(const DigestBytes& identity, std::size_t index) const {
     const auto found = connections_.find(identity);
-    if (found == connections_.end() || index >= found->second.connection.experiences().size())
+    if (!found || index >= found->connection.experiences().size())
         throw std::out_of_range("Main original selection");
-    const auto& origins = found->second.origins;
+    const auto& origins = found->origins;
     const auto selected = std::upper_bound(origins.begin(), origins.end(), index,
         [](std::size_t position, const Origin& range) { return position < range.end; });
     if (selected == origins.end()) throw std::logic_error("Main original source range missing");
@@ -169,8 +169,8 @@ const MainGraph::Origin& MainGraph::original_source(const DigestBytes& identity,
 StoredExperience MainGraph::replay(const DigestBytes& identity,std::size_t index) const {
     const auto& origin=original_source(identity,index);
     const auto found=connections_.find(identity);
-    auto result = origin.store->read(found->second.connection.experiences()[index].original(), origin.read_limit);
-    if (result.location() != found->second.connection.experiences()[index].original())
+    auto result = origin.store->read(found->connection.experiences()[index].original(), origin.read_limit);
+    if (result.location() != found->connection.experiences()[index].original())
         throw std::runtime_error("Main original provenance mismatch");
     return result;
 }
@@ -178,7 +178,7 @@ StoredExperience MainGraph::replay(const DigestBytes& identity,std::size_t index
 EvidencePayloadSlice MainGraph::read_payload_slice(const DigestBytes& identity,std::size_t index,
     std::uint64_t offset,std::uint64_t count) const {
     const auto& origin=original_source(identity,index);
-    const auto& original=connections_.find(identity)->second.connection.experiences()[index].original();
+    const auto& original=connections_.find(identity)->connection.experiences()[index].original();
     return origin.store->read_payload_slice(rules_,original,origin.read_limit,offset,count);
 }
 

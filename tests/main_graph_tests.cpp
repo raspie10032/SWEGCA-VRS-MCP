@@ -39,12 +39,13 @@ int main(){
  {
   auto a_store=SessionStore::create(root,id(1),"a",65536,source_memory);SessionRuntime a(a_store,source_memory,8192);
   a.define_connection(id(10),0.75,policy);fill(a,"a",10,100,16,EvidenceOutcome::support);
-  MainGraph graph(graph_memory,1.0,policy);
+  MainGraph graph(graph_memory,1.0,policy,1,1);
   throws<std::logic_error>([&]{(void)graph.merge(a,7,100000);});CHECK(graph.generation()==0);
   a.end();throws<std::logic_error>([&]{(void)graph.merge(a,7,100000);});a.publish_originals();
   const auto before_reads=reads,before_writes=writes;
   CHECK(graph.merge(a,7,100000));CHECK(reads==before_reads&&writes==before_writes);
   CHECK(graph.generation()==1&&graph.source_count()==1);
+  CHECK(graph.region_count()==1&&graph.largest_region()==1);
   CHECK(graph.find(id(10))->strength()==1.01);
   CHECK(graph.find(id(10))->strength()!=a.find(id(10))->state().strength());
   CHECK(graph.find(id(10))->experiences().size()==16);
@@ -68,6 +69,7 @@ int main(){
    failing.remaining=std::numeric_limits<std::size_t>::max();if(completed)break;
   }
   CHECK(completed&&failures>0);CHECK(graph.generation()==2&&graph.source_count()==2);
+  CHECK(graph.region_count()==2&&graph.largest_region()==1);
   CHECK(&graph.find(id(10))->experiences()[0]==shared_first);
   CHECK(graph.find(id(10))->experiences().size()==80&&graph.find(id(11))->experiences().size()==16);
   {

@@ -213,7 +213,7 @@ void ExperienceRouter::mount_main(const PersistentMainGraph& graph) {
     for (auto change = state.changed_.upper_bound({indexed_generation_, last_identity});
         change != state.changed_.end(); ++change) {
         const auto& identity = change->second;
-        const auto& connection = state.connections_.find(identity)->second.connection;
+        const auto& connection = state.connections_.find(identity)->connection;
         const auto values = connection.experiences();
         if (values.empty()) continue;
         candidates[identity].push_back({nullptr, nullptr,

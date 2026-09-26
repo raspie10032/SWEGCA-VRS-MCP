@@ -283,5 +283,28 @@ int main(){
   catch(const std::runtime_error& error){core_mismatch=std::string_view(error.what())=="stored Main merge disagrees with SWEGCA replay";}
   CHECK(core_mismatch);
  }
+ CHECK(memory.used()==0);
+ {
+  auto store=SessionStore::create(root,id(600),"regions",65536,memory);
+  SessionRuntime source(store,memory,8192);
+  for(unsigned n=1;n<=257;++n){
+   const auto connection=id(10000+n);source.define_connection(connection,1,policy);
+   EvidenceObservation value;value.hypothesis=connection;value.source=id(9000);value.context=id(n);value.producer=id(9001);
+   (void)source.observe(connection,{n,0,"regions","experiment","text/plain",{}},value,7,0);
+  }
+  source.end();source.publish_originals();Resolver resolver;resolver.sources={{id(600),&source}};
+  ExperienceLocation root_head;
+  {
+   auto graph=PersistentMainGraph::create(root/"regional-graph",id(601),memory,1,policy,65536);
+   CHECK(graph.merge(source,7,0));CHECK(graph.graph().region_count()==2&&graph.graph().largest_region()==256);
+   root_head=graph.head();
+  }
+  auto restored=PersistentMainGraph::open(root/"regional-graph",id(601),memory,1,policy,resolver);
+  CHECK(restored.head()==root_head&&restored.graph().region_count()==2&&restored.graph().largest_region()==256);
+  for(unsigned n=1;n<=257;++n){
+   const auto connection=id(10000+n);CHECK(restored.graph().find(connection)->experiences().size()==1);
+   CHECK(restored.graph().replay(connection,0).location()==source.find(connection)->state().experiences()[0].original());
+  }
+ }
  CHECK(memory.used()==0);fs::remove_all(root);std::printf("persistent Main tests: %u checks passed\n",checks);
 }
