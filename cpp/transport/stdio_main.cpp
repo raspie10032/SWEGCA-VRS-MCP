@@ -61,7 +61,7 @@ public:
                 if(initialized_)throw std::invalid_argument("already initialized");
                 const auto& p=request.at("params");(void)p.at("protocolVersion").string();
                 if(p.at("capabilities").kind!=Json::Kind::object||p.at("clientInfo").kind!=Json::Kind::object)throw std::invalid_argument("invalid initialize parameters");
-                initialized_=true;result(encoded_id,R"({"protocolVersion":"2025-06-18","capabilities":{"tools":{},"experimental":{"swegcaHostInput":{"version":"1"}}},"serverInfo":{"name":"swegca-vrs-cpp","version":"0.1"}})");return;
+                initialized_=true;result(encoded_id,R"({"protocolVersion":"2025-06-18","capabilities":{"tools":{},"experimental":{"swegcaHostInput":{"version":"2"}}},"serverInfo":{"name":"swegca-vrs-cpp","version":"0.1"}})");return;
             }
             if(method=="ping"){result(encoded_id,"{}");return;}
             if(!ready_)throw std::invalid_argument("initialization not completed");
@@ -88,13 +88,41 @@ private:
     void result(std::string_view id,std::string_view body){std::cout<<"{\"jsonrpc\":\"2.0\",\"id\":"<<id<<",\"result\":"<<body<<"}\n"<<std::flush;if(!std::cout)throw std::runtime_error("MCP output disconnected");}
     void error(std::string_view id,int code,std::string_view message){std::cout<<"{\"jsonrpc\":\"2.0\",\"id\":"<<id<<",\"error\":{\"code\":"<<code<<",\"message\":"<<quote_json(message,memory_)<<"}}\n"<<std::flush;}
     void clear(){replayed_.reset();received_.reset();}
+    static std::size_t candidate_limit(const Json& p) {
+        const auto* value=p.find("candidateLimit");
+        const auto limit=value?integer(*value):64;
+        if(!limit||limit>256)throw std::invalid_argument("candidateLimit must be 1..256");
+        return static_cast<std::size_t>(limit);
+    }
+    void candidate_page(std::pmr::string& body,std::uint64_t offset,std::size_t limit) const {
+        const auto matches=received_->recalled.matches();
+        if(offset>matches.size())throw std::invalid_argument("candidate offset exceeds receipt");
+        const auto begin=static_cast<std::size_t>(offset);
+        const auto end=begin+std::min(limit,matches.size()-begin);
+        body+="\"candidateCount\":\"";body+=std::to_string(matches.size());body+="\",\"nextOffset\":";
+        if(end<matches.size()){body+='"';body+=std::to_string(end);body+='"';}else body+="null";
+        body+=",\"candidates\":[";
+        for(auto index=begin;index<end;++index){
+            if(index!=begin)body+=',';
+            body+="{\"index\":\"";body+=std::to_string(index);body+="\",\"original\":";
+            body+=address(matches[index].original,memory_);body+='}';
+        }
+        body+=']';
+    }
     std::pmr::string host(std::string_view method,const Json& p){
+        if(method=="swegca/candidates"){
+            if(!received_||integer(p.at("receipt"))!=receipt_)throw std::invalid_argument("expired receipt");
+            const auto limit=candidate_limit(p);
+            std::pmr::string body("{\"receipt\":\"",&memory_);body+=std::to_string(receipt_);body+="\",";
+            candidate_page(body,integer(p.at("offset")),limit);body+='}';return body;
+        }
         if(method=="swegca/start"){runtime_.start_session(digest(p.at("identity").string()),p.at("name").string());return std::pmr::string("{}",&memory_);}
         if(method=="swegca/resume"){runtime_.resume_session(digest(p.at("identity").string()));return std::pmr::string("{}",&memory_);}
         if(method=="swegca/end"){clear();runtime_.end_session();return std::pmr::string("{}",&memory_);}
         if(method=="swegca/work"){const auto count=runtime_.work(integer(p.at("seed")),integer(p.at("step")));return std::pmr::string("{\"merged\":\"",&memory_)+std::to_string(count).c_str()+"\"}";}
         if(method=="swegca/define"){runtime_.define_connection(digest(p.at("identity").string()));return std::pmr::string("{}",&memory_);}
         if(method=="swegca/receive"||method=="swegca/observe"){
+            const auto page_limit=method=="swegca/receive"?candidate_limit(p):64;
             const auto sequence=integer(p.at("sequence")),observed=integer(p.at("observedAt")),seed=integer(p.at("seed")),step=integer(p.at("step"));
             const auto session=p.at("session").string(),source=p.at("source").string(),media=p.at("media").string();
             std::pmr::vector<std::byte> binary(&memory_);std::span<const std::byte> content;
@@ -124,11 +152,9 @@ private:
             if(receipt_==std::numeric_limits<std::uint64_t>::max())throw std::overflow_error("receipt sequence exhausted");
             clear();++receipt_;received_.emplace(runtime_.receive({sequence,observed,session,source,media,content},seed,step));
             std::pmr::string body("{\"receipt\":\"",&memory_);body+=std::to_string(receipt_);body+="\",\"original\":";body+=address(received_->recorded.original,memory_);
-            body+=",\"temporary\":";body+=received_->recalled.temporary()?"true":"false";body+=",\"candidates\":[";
-            std::size_t index=0;for(const auto& match:received_->recalled.matches()){
-                if(index)body+=',';
-                body+="{\"index\":\"";body+=std::to_string(index++);body+="\",\"original\":";body+=address(match.original,memory_);body+='}';}
-            body+="],\"refinement\":";body+=refinement(received_->recorded.refinement,memory_);body+='}';return body;
+            body+=",\"temporary\":";body+=received_->recalled.temporary()?"true":"false";body+=',';
+            candidate_page(body,0,page_limit);
+            body+=",\"refinement\":";body+=refinement(received_->recorded.refinement,memory_);body+='}';return body;
         }
         throw std::invalid_argument("unknown SWEGCA host method");
     }

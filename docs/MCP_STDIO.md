@@ -24,6 +24,7 @@ UTF-8 JSON-RPC 한 줄 메시지와 [도구 호출](https://modelcontextprotocol
 | `swegca/start` | `identity`, `name` | 임시 세션 시작 |
 | `swegca/resume` | `identity` | 지정된 세션 복구 |
 | `swegca/receive` | 아래 이벤트 필드 | 먼저 Déjà vu/Recall, 이후 원문 전체 임시 반영 |
+| `swegca/candidates` | `receipt`, `offset`, 선택 `candidateLimit` | 고정된 Recall의 후보 주소 페이지 조회 |
 | `swegca/define` | `identity` | 설정된 Main 규칙·초기 강도로 임시 연결 정의 |
 | `swegca/observe` | 이벤트 필드 + `observation` | 기록된 관측을 저장·셔플·코어 검증 |
 | `swegca/end` | `{}` | 명시적 종료·발행. EOF는 종료가 아님 |
@@ -35,7 +36,19 @@ UTF-8 JSON-RPC 한 줄 메시지와 [도구 호출](https://modelcontextprotocol
 호스트 확장은 `experimental.swegcaHostInput`으로 고지한다. 실제 클라이언트가 모델 호출
 전에 모든 이벤트를 전달하는 연결은 아직 설치하지 않았다.
 
-수신 응답은 현재 receipt, 기록된 원경험 주소, 기록 전 후보 목록을 돌려준다.
+호스트 확장 버전은 `2`다. 수신 응답은 현재 receipt, 기록된 원경험 주소, 기록 전 후보의
+첫 페이지를 돌려준다. `candidateCount`는 전체 후보 수의 십진 문자열이고, `nextOffset`은
+다음 페이지 시작 인덱스의 십진 문자열 또는 끝을 나타내는 `null`이다. `candidates`의
+`index`는 전체 Recall 내 절대 인덱스다. 후보 순서·주소·판정은 페이지 크기로 바뀌지 않는다.
+
+`receive`와 `candidates`에 `candidateLimit` 십진 문자열을 선택적으로 지정한다.
+기본 64개, 허용 범위 1..256개다. `candidates`에는 현재 `receipt`와 `offset`을 전달한다.
+offset이 전체 수와 같으면 빈 마지막 페이지, 더 크면 오류다. 잘못된 수신 페이지 크기는
+경험 기록과 기존 receipt 폐기 전에 거부한다. 페이지 조회는 기록·셔플·Replay를 실행하지
+않으며 기존 Replay receipt도 유지한다. 다음 수신이나 종료 후에는 옛 페이지 요청을 거부한다.
+
+전체 후보를 응답 문자열로 한 번에 복제하지 않는다. 내부 Recall은 여전히 후보마다
+고정된 주소를 보관하므로, 이 변경만으로 전체 조회 메모리가 상수가 되지는 않는다.
 `vrs_replay`는 `receipt`, `candidate` 문자열을 받아 선택 원경험 주소·미디어·출처·contentHex를
 반환한다. `vrs_re_evidence`는 같은 receipt와 seed/step으로 실제 읽은 경험을 재검증한다.
 새 수신 또는 종료는 이전 전송 receipt를 만료시킨다. 프로세스 간 영속 receipt는 아니다.

@@ -20,9 +20,9 @@ append removes its newly inserted context; a failed overall Recall destroys the
 private result. No partially built result is published. This is storage layout
 compaction, not evidence selection or a new judgment rule.
 
-The receipt still stores one pinned address per candidate. Cue enumeration and
-MCP response serialization still traverse all candidates. This change does not
-claim constant-space Recall, paginated transport, or giant-graph latency proof.
+The receipt still stores one pinned address per candidate. Cue enumeration still traverses all candidates. MCP now serializes bounded
+pages (see MCP_STDIO.md), while the receipt itself is not constant-space.
+Giant-graph latency remains unproven.
 
 Tests cover iteration and indexed equality, range rejection, move ownership,
 separate sources with the same identity and different strengths, exact selected

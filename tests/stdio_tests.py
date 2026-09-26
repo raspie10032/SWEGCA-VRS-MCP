@@ -134,6 +134,51 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     check(c.call('swegca/end')['result']=={})
     check(c.call('swegca/work',{'seed':'7','step':'0'})['result']['merged']=='1')
     c.close()
+    # Bounded pages preserve all pinned addresses, absolute indexes and order.
+    paged_root=root/'paged';paged_root.mkdir()
+    c=Client('create',paged_root,path);c.initialize()
+    check(c.call('swegca/start',{'identity':identity(4),'name':'paged'})['result']=={})
+    originals=[]
+    for n in range(70):
+        result=c.call('swegca/receive',event('paged',sequence=str(n)))['result']
+        check(result['candidateCount']==str(n))
+        check(len(result['candidates'])==min(n,64))
+        check(result['nextOffset']==('64' if n>64 else None))
+        originals.append(result['original'])
+    receipt=result['receipt']
+    check([entry['original'] for entry in result['candidates']]==originals[:64])
+    # Read pagination must neither record another event nor expire Replay.
+    gathered=[];offset='0'
+    while offset is not None:
+        page=c.call('swegca/candidates',{'receipt':receipt,'offset':offset,'candidateLimit':'7'})['result']
+        check(page['receipt']==receipt and page['candidateCount']=='69')
+        gathered.extend(page['candidates']);offset=page['nextOffset']
+    check([entry['index'] for entry in gathered]==[str(n) for n in range(69)])
+    check([entry['original'] for entry in gathered]==originals[:69])
+    tail=c.call('swegca/candidates',{'receipt':receipt,'offset':'69'})['result']
+    check(tail['candidates']==[] and tail['nextOffset'] is None)
+    for params in ({'offset':'70'},{'offset':'18446744073709551615'},
+                   {'candidateLimit':'0'},{'candidateLimit':'257'},{'candidateLimit':1}):
+        request={'receipt':receipt,'offset':'0'};request.update(params)
+        check('error' in c.call('swegca/candidates',request))
+    # Invalid receive limits are rejected before clearing the old receipt or writing.
+    check('error' in c.call('swegca/receive',event('paged',sequence='70',candidateLimit='0')))
+    replay=c.call('tools/call',{'name':'vrs_replay','arguments':{'receipt':receipt,'candidate':'68'}})['result']['structuredContent']
+    check(replay['original']==originals[68] and bytes.fromhex(replay['contentHex'])==text.encode())
+    result=c.call('swegca/receive',event('paged',sequence='70',candidateLimit='1'))['result']
+    check(result['candidateCount']=='70' and len(result['candidates'])==1 and result['nextOffset']=='1')
+    check('error' in c.call('swegca/candidates',{'receipt':receipt,'offset':'0'}))
+    receipt=result['receipt']
+    check(c.call('swegca/end')['result']=={})
+    check('error' in c.call('swegca/candidates',{'receipt':receipt,'offset':'0'}))
+    check(c.call('swegca/work',{'seed':'7','step':'0'})['result']['merged']=='1')
+    check(c.call('swegca/start',{'identity':identity(5),'name':'paged-main'})['result']=={})
+    main_page=c.call('swegca/receive',event('paged-main',candidateLimit='1'))['result']
+    check(not main_page['temporary'] and main_page['candidateCount']=='71')
+    tail=c.call('swegca/candidates',{'receipt':main_page['receipt'],'offset':'64','candidateLimit':'256'})['result']
+    check(tail['nextOffset'] is None and len(tail['candidates'])==7)
+    check([entry['original'] for entry in tail['candidates'][:6]]==originals[64:70])
+    check(c.call('swegca/end')['result']=={});c.close()
     # A separate config file must not change the root being measured.
     def stored_bytes():
         seen=set();total=0
