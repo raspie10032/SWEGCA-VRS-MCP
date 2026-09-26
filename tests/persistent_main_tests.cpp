@@ -69,12 +69,16 @@ int main(){
    ExperienceRouter incremental(query,index_memory);incremental.mount_main(indexed);
    const auto untouched=incremental.input("text/untouched",{});
    CHECK(untouched.matches().size()==2);
+   const auto prior_direct=incremental.recall(id(9));
    // Skip a generation deliberately; the old observation counts still select
    // exactly the new suffix across both commits.
    CHECK(indexed.merge(b,3,0));CHECK(indexed.merge(c,4,0));
    index_allocator.largest_request=0;index_allocator.request_limit=512;
+   index_allocator.remaining=20;
    incremental.mount_main(indexed);
    CHECK(index_allocator.largest_request<=512);
+   index_allocator.remaining=std::numeric_limits<std::size_t>::max();
+   throws<std::logic_error>([&]{(void)incremental.replay(prior_direct,0,0);});
    index_allocator.request_limit=std::numeric_limits<std::size_t>::max();
    ExperienceRouter rebuilt(query,memory);rebuilt.mount_main(indexed);
    for(const auto media:{"text/plain","text/untouched"}) {
@@ -86,7 +90,10 @@ int main(){
      CHECK(delta.matches()[i].recalled.recalled_head.record==indexed.head());
     }
    }
-   CHECK(incremental.recall(id(9)).at(0).recalled_head.record==indexed.head());
+   const auto current_direct=incremental.recall(id(9));
+   CHECK(current_direct.at(0).recalled_head.record==indexed.head());
+   CHECK(!current_direct.temporary()&&current_direct.size()==1);
+   CHECK(incremental.replay(current_direct,0,0).location()==extra.find(id(9))->state().experiences()[0].original());
   }
   const auto path=root/"main-graph";const auto identity=id(77);ExperienceLocation first_head,last_head;double strength=0;
   {

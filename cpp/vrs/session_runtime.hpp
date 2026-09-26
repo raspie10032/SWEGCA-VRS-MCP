@@ -194,6 +194,7 @@ private:
     struct MainCue { const SessionRuntime* session; CueReference reference; };
     const PersistentMainGraph* merged_main_ = nullptr;
     ExperienceLocation merged_head_;
+    std::uint64_t indexed_generation_ = 0;
     void require_main_current() const;
     [[nodiscard]] RecallMatch merged_match(const architecture::DigestBytes& identity) const;
     std::pmr::map<architecture::DigestBytes, std::pmr::vector<MainCue>> main_cues_;

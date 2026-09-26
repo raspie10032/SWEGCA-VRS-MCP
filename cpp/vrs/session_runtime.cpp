@@ -152,8 +152,11 @@ void ExperienceRouter::mount_main(const PersistentMainGraph& graph) {
     if (merged_main_ && merged_head_ == graph.head()) return;
     decltype(main_) candidates(&memory_);
     decltype(merged_cues_) cues(&memory_);
-    for (const auto& [identity, entry] : state.connections_) {
-        const auto& connection = entry.connection;
+    DigestBytes last_identity; last_identity.fill(std::byte{255});
+    for (auto change = state.changed_.upper_bound({indexed_generation_, last_identity});
+        change != state.changed_.end(); ++change) {
+        const auto& identity = change->second;
+        const auto& connection = state.connections_.find(identity)->second.connection;
         const auto values = connection.experiences();
         if (values.empty()) continue;
         candidates[identity].push_back({nullptr, nullptr,
@@ -175,8 +178,9 @@ void ExperienceRouter::mount_main(const PersistentMainGraph& graph) {
     // Existing-key empty staging sets are discarded. New-key nodes transfer
     // with their entire prepared set, without allocation.
     merged_cues_.merge(cues);
-    main_.swap(candidates);
-    merged_main_ = &graph; merged_head_ = graph.head();
+    for (const auto& [identity, values] : candidates) { (void)values; main_.erase(identity); }
+    main_.merge(candidates);
+    merged_main_ = &graph; merged_head_ = graph.head(); indexed_generation_ = state.generation();
 }
 
 InputRecall ExperienceRouter::input(std::string_view media, std::span<const std::byte> content) const {
@@ -321,7 +325,10 @@ RecallCandidates ExperienceRouter::recall(const DigestBytes& identity) const {
     }
     require_main_current();
     const auto found = main_.find(identity);
-    if (found != main_.end()) result.main_ = found->second;
+    if (found != main_.end()) {
+        if (merged_main_) result.temporary_ = merged_match(identity);
+        else result.main_ = found->second;
+    }
     return result;
 }
 StoredExperience ExperienceRouter::replay(const RecallCandidates& candidates, std::size_t candidate,

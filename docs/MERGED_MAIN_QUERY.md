@@ -62,8 +62,16 @@ failure frees staged state and leaves the old head/index intact; querying stale
 Main still raises until a successful refresh. Node transfer and head publication
 remain serialized and perform no further allocations.
 
-This is incremental cue extraction, not a fully incremental graph snapshot:
-the connection summary map is still rebuilt to update each borrowed head receipt.
+Main also maintains an ordered last-changed-generation directory with one node
+per live connection. Refresh seeks past its last indexed generation and only
+stages summaries and new cues for those connections. Repeated changes replace
+the prior directory entry rather than accumulating an unbounded change log.
+The directory is prepared before durable publication and is reconstructed by
+normal journal recovery; it introduces no second persistent authority.
+
+Direct Main Recall now captures a current head receipt by value, including for
+connections unchanged by the latest merge. An old receipt is still rejected
+after Main changes; updating summaries does not retroactively authorize it.
 Per-candidate tree nodes have more allocation and pointer overhead than packed
 vectors, trading that footprint for growth without whole-list copies. Recall
 still materializes its result vector; lazy candidate delivery, concurrent readers,
@@ -77,3 +85,8 @@ A multi-connection, repeated-cue regression permits no refresh allocation larger
 than 512 bytes in its fixture. The previous contiguous candidate-vector path
 cannot satisfy this bound. This is an allocation-shape check, not a whole-process
 4GB proof or a general upper bound for every other VRS allocation.
+
+The repeated-cue fixture additionally limits refresh to 20 allocations while
+updating 16 originals with other connections unchanged. Normal and sanitizer
+checks also cover stale direct Recall for an unchanged connection, then a fresh
+direct Recall and successful selected Replay under the current Main head.

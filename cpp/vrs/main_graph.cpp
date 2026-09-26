@@ -11,7 +11,7 @@ MainGraph::Entry::Entry(const DigestBytes& identity, double strength, const Evid
     : connection(identity, strength, rules, memory), origins(&memory) {}
 MainGraph::MainGraph(MemoryBudget& memory, double initial_strength, const EvidencePolicy& policy, std::uint32_t workers)
     : memory_(memory), initial_strength_(initial_strength), workers_(workers), rules_(make_evidence_rules(policy)),
-      policy_digest_(evidence_policy_digest(policy).bytes()), connections_(&memory), merged_(&memory) {
+      policy_digest_(evidence_policy_digest(policy).bytes()), connections_(&memory), merged_(&memory), changed_(&memory) {
     if (!workers_) throw std::invalid_argument("Main merge worker count must be positive");
     if (!finite_count(initial_strength)) throw std::invalid_argument("invalid Main initial strength");
 }
@@ -34,6 +34,7 @@ bool MainGraph::merge_impl(const SessionRuntime& source, std::uint64_t seed, std
     std::pmr::map<DigestBytes, Entry> pending(&memory_);
     std::pmr::map<DigestBytes, ExperienceLocation> marker(&memory_);
     marker.emplace(identity, source.catalog_.root());
+    decltype(changed_) changes(&memory_);
     struct Task { Entry* candidate; const Entry* previous; const PersistentConnection* incoming; };
     std::pmr::vector<Task> tasks(&memory_);
     tasks.reserve(source.catalog_.heads().size());
@@ -45,6 +46,8 @@ bool MainGraph::merge_impl(const SessionRuntime& source, std::uint64_t seed, std
         const auto previous = connections_.find(connection_id);
         const auto strength = previous == connections_.end() ? initial_strength_ : previous->second.connection.strength();
         auto& candidate = pending.try_emplace(connection_id, connection_id, strength, rules_, memory_).first->second;
+        candidate.last_changed = generation_ + 1;
+        changes.emplace(candidate.last_changed, connection_id);
         tasks.push_back({&candidate, previous == connections_.end() ? nullptr : &previous->second, incoming});
     }
     const auto prepare = [&](const Task& task) {
@@ -98,10 +101,13 @@ bool MainGraph::merge_impl(const SessionRuntime& source, std::uint64_t seed, std
     // prepared nodes under Main's serialized ownership, then publish generation.
     for (const auto& [connection_id, entry] : pending) {
         (void)entry;
+        const auto previous = connections_.find(connection_id);
+        if (previous != connections_.end()) changed_.erase({previous->second.last_changed, connection_id});
         connections_.erase(connection_id);
     }
     connections_.merge(pending);
     merged_.merge(marker);
+    changed_.merge(changes);
     ++generation_;
     return true;
 }

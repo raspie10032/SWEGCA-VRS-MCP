@@ -1,5 +1,6 @@
 #pragma once
 #include "vrs/session_runtime.hpp"
+#include <set>
 
 namespace swegca::vrs {
 
@@ -33,6 +34,7 @@ private:
     struct Entry {
         Entry(const architecture::DigestBytes& identity, double strength,
             const architecture::kernel::EvidenceRules& rules, MemoryBudget& memory);
+        std::uint64_t last_changed = 0;
         Connection connection;
         std::pmr::vector<Origin> origins;
         std::optional<ConnectionRefinement> report;
@@ -44,6 +46,8 @@ private:
     architecture::DigestBytes policy_digest_;
     std::pmr::map<architecture::DigestBytes, Entry> connections_;
     std::pmr::map<architecture::DigestBytes, ExperienceLocation> merged_;
+    // One entry per live connection, ordered by its latest committed generation.
+    std::pmr::set<std::pair<std::uint64_t, architecture::DigestBytes>> changed_;
     std::uint64_t generation_ = 0;
 };
 
