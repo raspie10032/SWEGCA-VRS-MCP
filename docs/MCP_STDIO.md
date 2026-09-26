@@ -108,3 +108,12 @@ Configuration also requires `ioBytesPerSecond`, default example `"625000000"`
 (5Gbps). One limiter covers block reads and writes together, with a 1MiB burst.
 This controls logical requests rather than the entire physical SSD; see
 TRANSFER_BUDGET.md. The setting is VRS-level and does not alter SWEGCA verdicts.
+
+### Whole-process memory profile
+
+On this Linux PC, use `build/swegca-vrs-mcp limited-create ROOT CONFIG.json` or
+`limited-open` to launch the complete VRS child in a transient systemd user
+service. `memoryBytes` becomes MemoryMax, swap is disabled, and `cpuAffinity`
+selects its CPUs (example `"6 7"`). The child verifies the actual controls before
+opening Runtime. Direct create/open only apply C++ budgets. Details and the
+isolated OOM test are in PROCESS_RESOURCE_PROFILE.md.

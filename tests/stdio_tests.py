@@ -3,6 +3,7 @@
 import json, os, pathlib, select, subprocess, sys, tempfile
 exe=pathlib.Path(sys.argv[1]).resolve()
 checks=0
+mode_prefix="limited-" if "--limited" in sys.argv[2:] else ""
 
 def check(value):
     global checks
@@ -14,7 +15,7 @@ def identity(n):
 
 class Client:
     def __init__(self,mode,root,config):
-        self.p=subprocess.Popen([str(exe),mode,str(root),str(config)],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+        self.p=subprocess.Popen([str(exe),mode_prefix+mode,str(root),str(config)],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
         self.serial=0
     def raw(self,data):
         self.p.stdin.write(data);self.p.stdin.flush()
@@ -43,7 +44,7 @@ class Client:
 with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     root=pathlib.Path(directory)
     config={
-        'ioBytesPerSecond':'625000000','storageBytes':'500000000000','mergeWorkers':'2','memoryBytes':str(64<<20),'frameBytes':'4096','mainIdentity':identity(99),'initialStrength':1.0,
+        'cpuAffinity':'6 7','ioBytesPerSecond':'625000000','storageBytes':'500000000000','mergeWorkers':'2','memoryBytes':str(64<<20),'frameBytes':'4096','mainIdentity':identity(99),'initialStrength':1.0,
         'sessionBlockBytes':'65536','mainBlockBytes':'4096','readLimit':'16384',
         'policy':{'chance_rate':0.2,'accept_margin':0.25,'confidence_level':0.9,'prior_alpha':1.0,'prior_beta':1.0,
             'regime_change_threshold':0.3,'minimum_effective_samples_per_axis':'4','minimum_source_diversity':'2',

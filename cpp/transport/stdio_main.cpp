@@ -1,4 +1,5 @@
 #include "transport/json.hpp"
+#include "transport/resource_profile.hpp"
 #include "vrs/runtime.hpp"
 #include <charconv>
 #include <fstream>
@@ -156,11 +157,16 @@ private:
 int main(int argc,char** argv){
     try{
         if(argc!=4)throw std::invalid_argument("usage: swegca-vrs-mcp create|open ROOT CONFIG.json");
-        const std::string_view mode=argv[1];if(mode!="create"&&mode!="open")throw std::invalid_argument("mode must be create or open");
+        std::string_view mode=argv[1];
+        const bool limited=mode.starts_with("limited-"),bounded=mode.starts_with("bounded-");
+        if(limited||bounded)mode.remove_prefix(8);
+        if(mode!="create"&&mode!="open")throw std::invalid_argument("mode must be create/open or limited-create/limited-open");
         MemoryBudget config_memory(1<<20);std::ifstream file(argv[3]);if(!file)throw std::runtime_error("cannot open configuration");
         std::pmr::string text(&config_memory);char c;while(file.get(c)){if(text.size()==65536)throw std::length_error("configuration too large");text+=c;}
         auto config=parse_json(text,config_memory);const auto ram=integer(config.at("memoryBytes"));const auto frame=integer(config.at("frameBytes"));
         if(!ram||!frame||frame>ram)throw std::invalid_argument("invalid resource limits");
+        if(limited)launch_resource_profile(mode,argv[2],argv[3],ram,config.at("cpuAffinity").string());
+        if(bounded)verify_resource_profile(ram,config.at("cpuAffinity").string());
         MemoryBudget memory(ram);
         EvidencePolicy policy;const auto& p=config.at("policy");
 #define REAL(field) policy.field=real(p.at(#field))

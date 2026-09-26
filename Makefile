@@ -9,7 +9,7 @@ CORE_HEADERS := $(wildcard cpp/swegca_architecture/*.hpp)
 VRS_HEADERS := $(wildcard cpp/vrs/*.hpp)
 VRS_SOURCES := cpp/vrs/runtime.cpp cpp/vrs/main_sources.cpp cpp/vrs/main_graph.cpp cpp/vrs/persistent_main_graph.cpp cpp/vrs/experience_block.cpp cpp/vrs/evidence_experience.cpp cpp/vrs/connection.cpp cpp/vrs/session_store.cpp cpp/vrs/persistent_connection.cpp cpp/vrs/connection_catalog.cpp cpp/vrs/session_runtime.cpp
 
-.PHONY: all check check-stdio check-sha256 bench clean
+.PHONY: all check check-stdio check-sha256 check-resource-profile bench clean
 all: $(BUILD)/core-tests
 
 $(BUILD):
@@ -20,6 +20,9 @@ $(BUILD)/core-tests: tests/core_tests.cpp $(CORE_SOURCES) $(CORE_HEADERS) cpp/vr
 
 $(BUILD)/core-bench: benchmarks/core_bench.cpp $(CORE_SOURCES) $(CORE_HEADERS) $(VRS_HEADERS) | $(BUILD)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< $(CORE_SOURCES) -o $@
+
+$(BUILD)/resource-profile-probe: tests/resource_profile_probe.cpp cpp/transport/resource_profile.hpp | $(BUILD)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< -o $@
 
 $(BUILD)/sha256-vectors: tests/sha256_vectors.cpp cpp/swegca_architecture/sha256.cpp $(CORE_HEADERS) | $(BUILD)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< cpp/swegca_architecture/sha256.cpp -o $@
@@ -72,11 +75,15 @@ $(BUILD)/main-sources-tests: tests/main_sources_tests.cpp $(VRS_SOURCES) $(CORE_
 $(BUILD)/runtime-tests: tests/runtime_tests.cpp $(VRS_SOURCES) $(CORE_SOURCES) $(CORE_HEADERS) $(VRS_HEADERS) | $(BUILD)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< $(VRS_SOURCES) $(CORE_SOURCES) -Wl,--wrap=pread -Wl,--wrap=pwrite -o $@
 
-$(BUILD)/swegca-vrs-mcp: cpp/transport/stdio_main.cpp cpp/transport/json.cpp cpp/transport/json.hpp $(VRS_SOURCES) $(CORE_SOURCES) $(CORE_HEADERS) $(VRS_HEADERS) | $(BUILD)
+$(BUILD)/swegca-vrs-mcp: cpp/transport/stdio_main.cpp cpp/transport/json.cpp cpp/transport/json.hpp cpp/transport/resource_profile.hpp $(VRS_SOURCES) $(CORE_SOURCES) $(CORE_HEADERS) $(VRS_HEADERS) | $(BUILD)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< cpp/transport/json.cpp $(VRS_SOURCES) $(CORE_SOURCES) -o $@
 
 $(BUILD)/parallel-main-tests: tests/parallel_main_tests.cpp $(VRS_SOURCES) $(CORE_SOURCES) $(CORE_HEADERS) $(VRS_HEADERS) | $(BUILD)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< $(VRS_SOURCES) $(CORE_SOURCES) -ldl -o $@
+
+check-resource-profile: $(BUILD)/resource-profile-probe $(BUILD)/swegca-vrs-mcp
+	python3 tests/check_resource_profile.py $(BUILD)/resource-profile-probe
+	python3 tests/stdio_tests.py $(BUILD)/swegca-vrs-mcp --limited
 
 check-stdio: $(BUILD)/swegca-vrs-mcp
 	python3 tests/stdio_tests.py $(BUILD)/swegca-vrs-mcp
@@ -103,4 +110,4 @@ bench: $(BUILD)/core-bench
 	./$(BUILD)/core-bench
 
 clean:
-	rm -f $(BUILD)/sha256-vectors $(BUILD)/sha256-vectors-scalar $(BUILD)/input-recall-bench $(BUILD)/transfer-budget-tests $(BUILD)/parallel-main-tests $(BUILD)/swegca-vrs-mcp $(BUILD)/runtime-tests $(BUILD)/main-sources-tests $(BUILD)/core-tests $(BUILD)/core-bench $(BUILD)/vrs-tests $(BUILD)/experience-block-tests $(BUILD)/memory-budget-tests $(BUILD)/connection-tests $(BUILD)/session-tests $(BUILD)/persistent-connection-tests $(BUILD)/catalog-tests $(BUILD)/session-runtime-tests $(BUILD)/main-graph-tests $(BUILD)/persistent-main-tests
+	rm -f $(BUILD)/resource-profile-probe $(BUILD)/sha256-vectors $(BUILD)/sha256-vectors-scalar $(BUILD)/input-recall-bench $(BUILD)/transfer-budget-tests $(BUILD)/parallel-main-tests $(BUILD)/swegca-vrs-mcp $(BUILD)/runtime-tests $(BUILD)/main-sources-tests $(BUILD)/core-tests $(BUILD)/core-bench $(BUILD)/vrs-tests $(BUILD)/experience-block-tests $(BUILD)/memory-budget-tests $(BUILD)/connection-tests $(BUILD)/session-tests $(BUILD)/persistent-connection-tests $(BUILD)/catalog-tests $(BUILD)/session-runtime-tests $(BUILD)/main-graph-tests $(BUILD)/persistent-main-tests
