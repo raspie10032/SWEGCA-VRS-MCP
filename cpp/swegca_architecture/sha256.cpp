@@ -5,6 +5,11 @@
 #include <cstring>
 #include <limits>
 #include <stdexcept>
+#if defined(__x86_64__) && (defined(__GNUC__) || defined(__clang__)) && !defined(SWEGCA_SHA256_SCALAR_ONLY)
+#define SWEGCA_SHA256_X86 1
+#include <immintrin.h>
+#include <cpuid.h>
+#endif
 
 namespace swegca::architecture {
 namespace {
@@ -32,6 +37,48 @@ constexpr std::uint32_t load_be32(const std::byte* bytes) noexcept {
            std::to_integer<std::uint32_t>(bytes[3]);
 }
 
+#ifdef SWEGCA_SHA256_X86
+bool native_sha_available() noexcept {
+    unsigned a=0,b=0,c=0,d=0;
+    if(!__get_cpuid_count(1,0,&a,&b,&c,&d)||!(c&(1U<<9)))return false;
+    return __get_cpuid_count(7,0,&a,&b,&c,&d) && (b & (1U<<29));
+}
+// SHA256RNDS2 applies exactly the same modulo-2^32 rounds. Lane order is
+// [F,E,B,A] and [H,G,D,C] from low to high; the message operand carries
+// consecutive W+K words. No digest framing or arithmetic policy is changed.
+__attribute__((target("sha,ssse3")))
+void native_compress(std::uint32_t* state,const std::byte* block) noexcept {
+    auto abef=_mm_set_epi32(state[0],state[1],state[4],state[5]);
+    auto cdgh=_mm_set_epi32(state[2],state[3],state[6],state[7]);
+    const auto prior_abef=abef,prior_cdgh=cdgh;
+    __m128i words[4];
+    const auto swap=_mm_set_epi8(12,13,14,15,8,9,10,11,4,5,6,7,0,1,2,3);
+    for(unsigned group=0;group<16;++group){
+        const auto slot=group%4;
+        if(group<4)words[slot]=_mm_shuffle_epi8(_mm_loadu_si128(reinterpret_cast<const __m128i*>(block+group*16)),swap);
+        else {
+            // W[t..t+3] from the four preceding groups, preserving the exact
+            // SHA-256 schedule recurrence rather than precomputing 64 scalars.
+            const auto previous=words[(slot+3)%4];
+            auto next=_mm_sha256msg1_epu32(words[slot],words[(slot+1)%4]);
+            next=_mm_add_epi32(next,_mm_alignr_epi8(previous,words[(slot+2)%4],4));
+            words[slot]=_mm_sha256msg2_epu32(next,previous);
+        }
+        auto message=_mm_add_epi32(words[slot],
+            _mm_loadu_si128(reinterpret_cast<const __m128i*>(round_constants.data()+group*4)));
+        cdgh=_mm_sha256rnds2_epu32(cdgh,abef,message);
+        message=_mm_shuffle_epi32(message,0x0e);
+        abef=_mm_sha256rnds2_epu32(abef,cdgh,message);
+    }
+    abef=_mm_add_epi32(abef,prior_abef);cdgh=_mm_add_epi32(cdgh,prior_cdgh);
+    std::array<std::uint32_t,4> left,right;
+    _mm_storeu_si128(reinterpret_cast<__m128i*>(left.data()),abef);
+    _mm_storeu_si128(reinterpret_cast<__m128i*>(right.data()),cdgh);
+    state[0]=left[3];state[1]=left[2];state[4]=left[1];state[5]=left[0];
+    state[2]=right[3];state[3]=right[2];state[6]=right[1];state[7]=right[0];
+}
+#endif
+
 }  // namespace
 
 // FIPS 180-4 §5.3.3 initial hash value.
@@ -42,6 +89,10 @@ Sha256::Sha256() noexcept
 // FIPS 180-4 §6.2.2 compression of one 512-bit block.
 // SWEGCA: src/swegca/mosaic_memory_promotion.py@5901a5a:180
 void Sha256::compress(const std::byte* block) noexcept {
+#ifdef SWEGCA_SHA256_X86
+    static const bool accelerated=native_sha_available();
+    if(accelerated){native_compress(state_.data(),block);return;}
+#endif
     std::array<std::uint32_t, 64> schedule{};
     for (std::size_t at = 0; at < 16; ++at)
         schedule[at] = load_be32(block + at * 4);

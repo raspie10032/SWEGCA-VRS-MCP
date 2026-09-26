@@ -57,3 +57,42 @@ portal_activation Python files are untracked in the current research checkout
 not adopted as the new C++ graph design. The source design path has been asked
 for while independent latency work proceeds. Discarded C++ candidates were not
 opened or reused.
+
+## SHA-instruction optimization
+
+The same CPU and benchmark, after adding runtime-dispatched SHA256RNDS2 and
+SHA256MSG1/MSG2 compression, produced the following 1MiB samples. All input bytes,
+SHA framing, stored addresses and the measurement boundary remain unchanged.
+
+| Route | Prior median ns | New median ns | New p95 ns | New maximum ns | >=1ms |
+|---|---:|---:|---:|---:|---:|
+| Temporary | 2688247 | 454404 | 524906 | 562476 | 0/30 |
+| Main | 2746287 | 452084 | 590526 | 606386 | 0/30 |
+| Missing | 2759328 | 453364 | 500385 | 503405 | 0/30 |
+
+The tested 0, 128, 4096 and 65536-byte cases also had zero >=1ms samples.
+This fixes the measured 1MiB case on this machine, not arbitrary input sizes,
+unsupported CPUs, large graph scale, live client hooks or worst-case scheduling.
+An intermediate rounds-only acceleration still took approximately 1.4ms for
+1MiB; moving the unchanged message schedule to SHA instructions removed that
+remaining measured cost. No external cryptographic library/wheel was introduced.
+
+The x86-64 implementation checks CPUID SHA and SSSE3 support once and dispatches
+only where available. Other targets retain the scalar implementation. A build
+with SWEGCA_SHA256_SCALAR_ONLY forces the scalar path for differential checking.
+The native function's target attribute confines required CPU instructions;
+the overall binary does not require global -march=native or -msha.
+
+Independent verification compares 1052 binary inputs (0..257 and larger block/
+padding boundaries, four alignment offsets, up to 1MiB) against Python hashlib.
+Every input also uses six different streaming partitions. Both native and
+forced-scalar executables must agree with the independent digest and each other.
+The same vectors run with undefined-behavior sanitization. Python is used only
+as the test oracle, not in the C++ runtime.
+
+After the final compression change, core tests passed 3961 checks with zero
+hot-path allocations; runtime lifecycle passed 101 checks. Core benchmark
+block-average medians remained in ns: 1/4/8-axis judgment 28.405/51.0668/85.584,
+observation admission 2.79183, head publication 5.77316, Replay comparison
+3.56143, strength update 1.37061, four-axis connection verification 56.318.
+These are batch-average timing medians, not individually sampled tail latency.
