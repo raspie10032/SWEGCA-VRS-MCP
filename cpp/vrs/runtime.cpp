@@ -20,6 +20,15 @@ Runtime::Active::Active(SessionRuntime& session,const DigestBytes& id,MemoryBudg
     :identity(id),runtime(session),router(runtime,memory) {
     router.mount_main(main); indexed_main=main.head();
 }
+Runtime::~Runtime() { discard_work(); }
+void Runtime::discard_work() noexcept {
+    if(!work_)return;
+    const auto source=work_->source;
+    const auto identity=source?work_->ids[work_->index]:DigestBytes{};
+    // Joining/dropping prepared work is not session end or Main publication.
+    work_.reset();
+    if(source)sources_.release_preparation(identity);
+}
 void Runtime::start_session(const DigestBytes& identity,std::string_view name) {
     if(active_)throw std::logic_error("a session already owns the input route");
     auto& session=sources_.acquire_session(identity,name,config_.session_block_capacity,false);
@@ -86,11 +95,53 @@ RecordedRefinement Runtime::retain(const OriginalExperienceView& original,std::u
     require_active();return active_->runtime.retain_input(original,config_.initial_strength,config_.policy,seed,step);
 }
 std::size_t Runtime::work(std::uint64_t seed,std::uint64_t step) {
+    if(work_)throw std::logic_error("background Main preparation already scheduled");
     const auto count=sources_.merge_published(main_,seed,step);
+    refresh_main();
+    return count;
+}
+void Runtime::refresh_main() {
     if(active_&&active_->indexed_main!=main_.head()) {
         active_->router.mount_main(main_);
         active_->indexed_main=main_.head();
     }
-    return count;
+}
+bool Runtime::schedule_work(std::uint64_t seed,std::uint64_t step) {
+    if(work_)throw std::logic_error("background Main preparation already scheduled");
+    (void)main_.graph();refresh_main();
+    work_.emplace(sources_.published(),seed,step);
+    try {
+        if(launch_next())return true;
+        discard_work();return false;
+    } catch(...) { discard_work();throw; }
+}
+bool Runtime::launch_next() {
+    auto& work=*work_;
+    while(work.index<work.ids.size()&&main_.graph().has_source(work.ids[work.index]))++work.index;
+    if(work.index==work.ids.size())return false;
+    work.source=&sources_.acquire_preparation(work.ids[work.index]);
+    work.done.store(false,std::memory_order_relaxed);
+    work.thread=std::jthread([this] {
+        auto& job=*work_;
+        try { job.prepared.emplace(main_.prepare_merge(job.source->runtime(),job.seed,job.step)); }
+        catch(...) { job.failure=std::current_exception(); }
+        job.done.store(true,std::memory_order_release);
+    });
+    return true;
+}
+std::optional<std::size_t> Runtime::poll_work() {
+    if(!work_)return std::size_t{0};
+    if(!work_->done.load(std::memory_order_acquire))return std::nullopt;
+    work_->thread.join();
+    try {
+        if(work_->failure)std::rethrow_exception(work_->failure);
+        if(main_.commit_merge(std::move(*work_->prepared)))++work_->merged;
+        work_->prepared.reset();
+        sources_.release_preparation(work_->ids[work_->index]);
+        work_->source=nullptr;++work_->index;
+        refresh_main();
+        if(launch_next())return std::nullopt;
+        const auto count=work_->merged;discard_work();return count;
+    } catch(...) { discard_work();throw; }
 }
 } // namespace swegca::vrs

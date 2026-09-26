@@ -57,13 +57,13 @@ SessionRuntime& MainSources::Source::runtime() {
     return *cache;
 }
 void MainSources::Source::release_cache() noexcept {
-    if(leased)return;
+    if(leased||preparing)return;
     if(cache){cache->~SessionRuntime();memory.deallocate(cache,sizeof(SessionRuntime),alignof(SessionRuntime));cache=nullptr;}
 }
 SessionRuntime& MainSources::acquire_session(const DigestBytes& id,std::string_view session_name,
     std::uint64_t capacity,bool resume) {
     auto found=sources_.find(id);
-    if(found!=sources_.end()&&(!resume||found->second.leased))
+    if(found!=sources_.end()&&(!resume||found->second.leased||found->second.preparing))
         throw std::logic_error("session source already owned");
     if(found==sources_.end())
         found=sources_.try_emplace(id,root_,id,memory_,read_limit_,storage_,true,resume,session_name,capacity,workers_).first;
@@ -96,6 +96,7 @@ const SessionRuntime& MainSources::resolve(const DigestBytes& id) {
     require_file(root_/"main"/name(id));
     auto [where,inserted]=sources_.try_emplace(id,root_,id,memory_,read_limit_,storage_,false,true,std::string_view{},0,workers_);
     (void)inserted;
+    if(where->second.preparing)throw std::logic_error("source is owned by merge preparation");
     if(!kernel::main_session_readable(where->second.store->phase(),where->second.store->usable()))
         throw std::logic_error("Main source is not ended and published");
     // Active leases are retained; other decoded caches may be released. The graph
@@ -104,6 +105,20 @@ const SessionRuntime& MainSources::resolve(const DigestBytes& id) {
     return where->second.runtime();
 }
 void MainSources::release_caches() noexcept { for(auto& [id,source]:sources_){(void)id;source.release_cache();} }
+MainSources::Source& MainSources::acquire_preparation(const DigestBytes& id) {
+    if(!kernel::named_digest(id))throw std::invalid_argument("empty Main source identity");
+    require_file(root_/"main"/name(id));
+    auto& source=sources_.try_emplace(id,root_,id,memory_,read_limit_,storage_,false,true,std::string_view{},0,workers_).first->second;
+    if(source.leased||source.preparing||!kernel::main_session_readable(source.store->phase(),source.store->usable()))
+        throw std::logic_error("source cannot enter merge preparation");
+    source.preparing=true;
+    return source;
+}
+void MainSources::release_preparation(const DigestBytes& id) noexcept {
+    const auto found=sources_.find(id);
+    if(found==sources_.end())return;
+    found->second.preparing=false;found->second.release_cache();
+}
 std::size_t MainSources::merge_published(PersistentMainGraph& graph,std::uint64_t seed,std::uint64_t step) {
     std::size_t merged=0;
     try {

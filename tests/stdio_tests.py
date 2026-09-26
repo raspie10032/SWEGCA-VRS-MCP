@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Real subprocess transport/lifecycle checks; no client app or service is changed."""
-import json, os, pathlib, select, subprocess, sys, tempfile
+import json, os, pathlib, select, subprocess, sys, tempfile, time
 exe=pathlib.Path(sys.argv[1]).resolve()
 checks=0
 mode_prefix="limited-" if "--limited" in sys.argv[2:] else ""
@@ -34,7 +34,7 @@ class Client:
         check('error' in self.call('tools/list'))
         initialized=self.call('initialize',{'protocolVersion':'2025-06-18','capabilities':{},'clientInfo':{'name':'test','version':'1'}})['result']
         check(initialized['protocolVersion']=='2025-06-18')
-        check(initialized['capabilities']['experimental']['swegcaHostInput']['version']=='3')
+        check(initialized['capabilities']['experimental']['swegcaHostInput']['version']=='4')
         self.notice('notifications/initialized')
         tools=self.call('tools/list')['result']['tools']
         check([t['name'] for t in tools]==['vrs_replay','vrs_re_evidence'])
@@ -246,6 +246,33 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     check([entry['original'] for entry in result['candidates'][2:6]]==retained)
     replay=c.call('tools/call',{'name':'vrs_replay','arguments':{'receipt':result['receipt'],'candidate':'5'}})['result']['structuredContent']
     check(replay['source']=='compaction' and replay['contentHex']==text.encode().hex())
+    check(c.call('swegca/end')['result']=={});c.close()
+    # Native async work remains host-owned; input can run before publication.
+    async_root=root/'async';async_root.mkdir()
+    c=Client('create',async_root,path);c.initialize()
+    check(c.call('swegca/work/start',{'seed':'7','step':'0'})['result']=={'started':False})
+    check(c.call('swegca/start',{'identity':identity(8),'name':'async'})['result']=={})
+    original=c.call('swegca/receive',event('async'))['result']['original']
+    check(c.call('swegca/work/start',{'seed':'7','step':'0'})['result']=={'started':False})
+    check(c.call('swegca/end')['result']=={})
+    check(c.call('swegca/work/start',{'seed':'7','step':'0'})['result']=={'started':True})
+    check('error' in c.call('swegca/work',{'seed':'7','step':'0'}))
+    check('error' in c.call('swegca/work/start',{'seed':'7','step':'0'}))
+    check(c.call('swegca/start',{'identity':identity(9),'name':'async-active'})['result']=={})
+    live=c.call('swegca/receive',event('async-active',content='new active input'))['result']
+    # Preparation never publishes itself, even if it has already finished.
+    check(live['candidateCount']=='0')
+    deadline=time.monotonic()+10
+    while True:
+        state=c.call('swegca/work/poll')['result']
+        if not state['running']:
+            check(state['merged']=='1');break
+        check(state['merged'] is None and time.monotonic()<deadline)
+    recalled=c.call('swegca/receive',event('async-active',sequence='1'))['result']
+    check(not recalled['temporary'] and recalled['candidateCount']=='1')
+    replay=c.call('tools/call',{'name':'vrs_replay','arguments':{'receipt':recalled['receipt'],'candidate':'0'}})['result']['structuredContent']
+    check(replay['original']==original and replay['contentHex']==text.encode().hex())
+    check(c.call('swegca/work/poll')['result']=={'running':False,'merged':'0'})
     check(c.call('swegca/end')['result']=={});c.close()
     # A separate config file must not change the root being measured.
     def stored_bytes():

@@ -36,7 +36,10 @@ private:
         SessionStore* store = nullptr;
         SessionRuntime* cache = nullptr;
         bool leased = false;
+        bool preparing = false;
     };
+    Source& acquire_preparation(const architecture::DigestBytes&);
+    void release_preparation(const architecture::DigestBytes&) noexcept;
     std::filesystem::path root_;
     MemoryBudget& memory_;
     StorageBudget* storage_;

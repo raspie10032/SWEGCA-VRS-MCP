@@ -30,6 +30,8 @@ UTF-8 JSON-RPC 한 줄 메시지와 [도구 호출](https://modelcontextprotocol
 | `swegca/observe` | 이벤트 필드 + `observation` | 기록된 관측을 저장·셔플·코어 검증 |
 | `swegca/end` | `{}` | 명시적 종료·발행. EOF는 종료가 아님 |
 | `swegca/work` | `seed`, `step` | 종료·발행된 미병합 원천 처리 및 조회 인덱스 갱신 |
+| `swegca/work/start` | `seed`, `step` | 종료·발행 원천의 백그라운드 복구·병합 준비 예약 |
+| `swegca/work/poll` | `{}` | 준비 완료 확인·Main 발행·조회 인덱스 갱신 |
 
 `identity`는 64자리 소문자 hex다. 이벤트에는 `sequence`, `observedAt`, `seed`, `step`의
 십진 문자열, `session`, `source`, `media`, 그리고 `content` 또는 `contentHex` 중 하나를
@@ -37,7 +39,7 @@ UTF-8 JSON-RPC 한 줄 메시지와 [도구 호출](https://modelcontextprotocol
 호스트 확장은 `experimental.swegcaHostInput`으로 고지한다. 실제 클라이언트가 모델 호출
 전에 모든 이벤트를 전달하는 연결은 아직 설치하지 않았다.
 
-호스트 확장 버전은 `3`다. 버전 3은 기존 요청 형식을 유지하면서 `retain`을 추가한다.
+호스트 확장 버전은 `4`다. 버전 3에서 `retain`, 버전 4에서 작업 start/poll을 추가했다.
 수신 응답은 현재 receipt, 기록된 원경험 주소, 기록 전 후보의
 첫 페이지를 돌려준다. `candidateCount`는 전체 후보 수의 십진 문자열이고, `nextOffset`은
 다음 페이지 시작 인덱스의 십진 문자열 또는 끝을 나타내는 `null`이다. `candidates`의
@@ -81,7 +83,8 @@ build/swegca-vrs-mcp open /path/to/new-vrs-root examples/stdio-config.json
 초기화·도구 목록, malformed/oversized 입력, Unicode/NUL/binary 보존, 기록 전 후보,
 선택 Replay, 활성 세션에서 병합 없음, EOF 후 재개, 명시적 종료 후 재시작 병합을 검사한다.
 
-현재 전송은 동기적이다. 배경 워커와 모든 실제 세션 이벤트 훅은 아직 남아 있다. 수신 성공 뒤 응답 전 연결이 끊긴 경우, 재전송 중복 방지를 위한 영속 요청 ID
+요청 처리는 직렬이며, 명시적으로 예약한 병합 준비는 배경 워커에서 진행한다. 실제 세션
+이벤트 훅은 아직 남아 있다. 수신 성공 뒤 응답 전 연결이 끊긴 경우, 재전송 중복 방지를 위한 영속 요청 ID
 체계도 아직 없다. 응답 오류를 자동으로 기록 미완료라고 간주해서는 안 된다.
 세션 전체 자동 수집이나 입력→Recall 1ms 달성, SSD 속도·총 저장량 준수를 주장하지 않는다.
 기존 서비스 및 Codex/Claude 설정은 변경하지 않았다.
@@ -105,13 +108,32 @@ Replay를 보존하므로, 이후 재검증은 원래 Recall 경계 이후에 �
 기록을 거부한다. 명시적 종료와 `work` 경계는 동일하다.
 
 이 전송 경로의 존재가 실제 클라이언트의 모든 이벤트가 연결됐음을 뜻하지 않는다.
-호스트가 전달하지 않은 내용은 수집하지 못한다. 현재 stdio는 동기 실행하며 응답 유실 뒤
+호스트가 전달하지 않은 내용은 수집하지 못한다. 이벤트 기록 요청은 동기 실행하며 응답 유실 뒤
 재전송 중복 방지 및 실제 앱 이벤트 연결은 여전히 남아 있다.
 
 검증: CPU 6·7에서 네이티브 서버를 실행한 `tests/stdio_tests.py`의 1,105개 확인이 통과했다.
 모델·도구·reasoning·compaction 출처의 테스트 이벤트, UTF-8/NUL/바이너리, 현재 receipt 유지,
 같은 연결의 새 원경험만 재검증, 잘못된 요청과 알림의 무기록, EOF 후 복구, 종료 전 병합 없음,
 종료 후 Main 조회·선택 Replay를 포함한다. 출처 이름은 테스트 입력이며 실제 앱 수집 증거가 아니다.
+
+## 백그라운드 병합 요청
+
+`work/start`는 `started` boolean을 반환한다. false이면 예약할 미병합 원천이 없었다.
+true이면 종료·발행 원천 목록을 예약했으며 준비가 끝나도 자동 발행하지 않는다.
+준비 중 다른 세션의 입력·이벤트 기록·Replay를 받을 수 있다. 중복 start와 기존 동기 work는
+현재 예약이 해제될 때까지 거부한다. 알림 형태의 start/poll은 다른 변경 요청처럼 실행하지 않는다.
+
+`work/poll`은 준비 중이면 `{"running":true,"merged":null}`, 모든 예약 원천 처리가
+끝났으면 `{"running":false,"merged":"N"}`을 반환한다. N은 해당 예약에서 실제 발행한
+원천 수다. 예약이 없는 poll은 0이다. 준비 실패는 오류 응답이며, 이전 원천이 이미 발행됐을
+수 있으므로 자동 롤백이나 무기록으로 해석하지 않는다. 영속 쓰기 실패는 재개방이 필요하다.
+EOF는 작업을 join하고 미발행 결과를 폐기하며 세션을 끝내거나 Main에 발행하지 않는다.
+
+준비 중 poll은 계산 완료를 기다리지 않지만, 완료 후 발행·조회 인덱스 갱신은 동기 처리다.
+호스트는 입력 처리 바깥에서 이를 호출해야 한다. 자세한 계약은 ASYNC_RUNTIME_WORK.md를 따른다.
+
+네이티브 stdio 검사 1,184개가 통과했다. 작업 예약 후 새 세션 입력 처리, 중복 작업 거부,
+명시적 poll 후 Main 원경험 Replay를 포함한다. 실제 앱 자동 호출이 설치된 결과는 아니다.
 
 ## 기록된 관측의 전송 (후속)
 

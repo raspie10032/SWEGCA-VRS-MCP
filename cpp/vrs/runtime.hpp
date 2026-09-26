@@ -1,6 +1,8 @@
 #pragma once
 #include "vrs/main_sources.hpp"
 #include "vrs/storage_inventory.hpp"
+#include <thread>
+#include <exception>
 
 namespace swegca::vrs {
 struct ReceivedInput {
@@ -19,8 +21,9 @@ struct RuntimeConfig {
 };
 
 // Main's serialized lifecycle owner. Destruction never implies session end.
-// Input and background work are separate entries; callers do not run them
-// concurrently. Borrowed Recall/Replay receipts expire when the session ends.
+// Public calls remain serialized on the owner. An internal preparation worker
+// may run alongside them; only poll_work publishes completed Main work.
+// Borrowed Recall/Replay receipts expire when the session ends.
 class Runtime final {
 public:
     static Runtime create(const std::filesystem::path&, const RuntimeConfig&, MemoryBudget&);
@@ -29,6 +32,7 @@ public:
     Runtime& operator=(const Runtime&) = delete;
     Runtime(Runtime&&) = delete;
     Runtime& operator=(Runtime&&) = delete;
+    ~Runtime();
     void start_session(const architecture::DigestBytes&, std::string_view name);
     void resume_session(const architecture::DigestBytes&);
     void end_session();
@@ -49,6 +53,13 @@ public:
     // Drain only published ended sources and refresh the current query index.
     // Never called from input(). Failures leave durable work available to retry.
     [[nodiscard]] std::size_t work(std::uint64_t seed, std::uint64_t step);
+    // Explicit background work scheduling, never called from input or end.
+    // Returns false when no published unmerged source is available.
+    [[nodiscard]] bool schedule_work(std::uint64_t seed, std::uint64_t step);
+    // nullopt: preparation still running (or next source launched).
+    // A value: this scheduled batch finished, with that many committed sources.
+    // Readiness never waits for a running worker; ready publication may do I/O.
+    [[nodiscard]] std::optional<std::size_t> poll_work();
 private:
     struct Active {
         Active(SessionRuntime&, const architecture::DigestBytes&, MemoryBudget&, const PersistentMainGraph&);
@@ -61,6 +72,22 @@ private:
     [[nodiscard]] Active& require_session();
     [[nodiscard]] const Active& require_session() const;
     void require_active() const;
+    void refresh_main();
+    bool launch_next();
+    void discard_work() noexcept;
+    struct Work {
+        Work(std::pmr::vector<architecture::DigestBytes>&& ids, std::uint64_t seed, std::uint64_t step)
+            : ids(std::move(ids)), seed(seed), step(step) {}
+        std::pmr::vector<architecture::DigestBytes> ids;
+        std::uint64_t seed, step;
+        std::size_t index=0, merged=0;
+        MainSources::Source* source=nullptr;
+        std::optional<MainGraph::PreparedMerge> prepared;
+        std::exception_ptr failure;
+        std::atomic<bool> done{false};
+        // Must join before prepared/failure storage is destroyed.
+        std::jthread thread;
+    };
     std::filesystem::path root_;
     RuntimeConfig config_;
     MemoryBudget& memory_;
@@ -69,5 +96,6 @@ private:
     MainSources sources_;
     PersistentMainGraph main_;
     std::optional<Active> active_;
+    std::optional<Work> work_;
 };
 } // namespace swegca::vrs

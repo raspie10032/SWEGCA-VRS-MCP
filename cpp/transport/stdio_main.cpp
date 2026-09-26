@@ -61,7 +61,7 @@ public:
                 if(initialized_)throw std::invalid_argument("already initialized");
                 const auto& p=request.at("params");(void)p.at("protocolVersion").string();
                 if(p.at("capabilities").kind!=Json::Kind::object||p.at("clientInfo").kind!=Json::Kind::object)throw std::invalid_argument("invalid initialize parameters");
-                initialized_=true;result(encoded_id,R"({"protocolVersion":"2025-06-18","capabilities":{"tools":{},"experimental":{"swegcaHostInput":{"version":"3"}}},"serverInfo":{"name":"swegca-vrs-cpp","version":"0.1"}})");return;
+                initialized_=true;result(encoded_id,R"({"protocolVersion":"2025-06-18","capabilities":{"tools":{},"experimental":{"swegcaHostInput":{"version":"4"}}},"serverInfo":{"name":"swegca-vrs-cpp","version":"0.1"}})");return;
             }
             if(method=="ping"){result(encoded_id,"{}");return;}
             if(!ready_)throw std::invalid_argument("initialization not completed");
@@ -120,6 +120,15 @@ private:
         if(method=="swegca/resume"){runtime_.resume_session(digest(p.at("identity").string()));return std::pmr::string("{}",&memory_);}
         if(method=="swegca/end"){clear();runtime_.end_session();return std::pmr::string("{}",&memory_);}
         if(method=="swegca/work"){const auto count=runtime_.work(integer(p.at("seed")),integer(p.at("step")));return std::pmr::string("{\"merged\":\"",&memory_)+std::to_string(count).c_str()+"\"}";}
+        if(method=="swegca/work/start"){
+            const bool started=runtime_.schedule_work(integer(p.at("seed")),integer(p.at("step")));
+            return std::pmr::string(started?"{\"started\":true}":"{\"started\":false}",&memory_);
+        }
+        if(method=="swegca/work/poll"){
+            const auto count=runtime_.poll_work();
+            if(!count)return std::pmr::string("{\"running\":true,\"merged\":null}",&memory_);
+            return std::pmr::string("{\"running\":false,\"merged\":\"",&memory_)+std::to_string(*count).c_str()+"\"}";
+        }
         if(method=="swegca/define"){runtime_.define_connection(digest(p.at("identity").string()));return std::pmr::string("{}",&memory_);}
         if(method=="swegca/receive"||method=="swegca/observe"||method=="swegca/retain"){
             const auto page_limit=method=="swegca/receive"?candidate_limit(p):64;
