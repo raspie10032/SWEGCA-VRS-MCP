@@ -43,7 +43,7 @@ class Client:
 with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     root=pathlib.Path(directory)
     config={
-        'storageBytes':'500000000000','mergeWorkers':'2','memoryBytes':str(64<<20),'frameBytes':'4096','mainIdentity':identity(99),'initialStrength':1.0,
+        'ioBytesPerSecond':'625000000','storageBytes':'500000000000','mergeWorkers':'2','memoryBytes':str(64<<20),'frameBytes':'4096','mainIdentity':identity(99),'initialStrength':1.0,
         'sessionBlockBytes':'65536','mainBlockBytes':'4096','readLimit':'16384',
         'policy':{'chance_rate':0.2,'accept_margin':0.25,'confidence_level':0.9,'prior_alpha':1.0,'prior_beta':1.0,
             'regime_change_threshold':0.3,'minimum_effective_samples_per_axis':'4','minimum_source_diversity':'2',

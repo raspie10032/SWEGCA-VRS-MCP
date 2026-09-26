@@ -71,7 +71,7 @@ public:
 
     [[nodiscard]] static ExperienceBlock create(const std::filesystem::path& path,
         const architecture::DigestBytes& identity, std::uint64_t capacity, StorageBudget* storage = nullptr);
-    [[nodiscard]] static ExperienceBlock open_reader(const std::filesystem::path& path);
+    [[nodiscard]] static ExperienceBlock open_reader(const std::filesystem::path& path, StorageBudget* storage = nullptr);
     [[nodiscard]] static ExperienceBlock open_writer(const std::filesystem::path& path, StorageBudget* storage = nullptr);
 
     ExperienceBlock(const ExperienceBlock&) = delete;
@@ -106,7 +106,7 @@ public:
 
 private:
     ExperienceBlock() = default;
-    [[nodiscard]] static ExperienceBlock open(const std::filesystem::path& path, bool writer);
+    [[nodiscard]] static ExperienceBlock open(const std::filesystem::path& path, bool writer, StorageBudget* storage);
     int fd_ = -1;
     architecture::DigestBytes identity_{};
     std::uint64_t capacity_ = 0;

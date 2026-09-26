@@ -115,7 +115,7 @@ void PersistentMainGraph::restore(MainSourceResolver& resolver){
  std::sort(indices.begin(),indices.end());
  for(const auto index:indices){
   if(index!=next_index_||index==std::numeric_limits<std::uint64_t>::max())throw std::runtime_error("Main block sequence gap");
-  auto block=ExperienceBlock::open_reader(directory_/filename(index));
+  auto block=ExperienceBlock::open_reader(directory_/filename(index), storage_);
   if(block.identity()!=block_id(identity_,false,index)||block.capacity()!=capacity_)throw std::runtime_error("Main block identity mismatch");
   const auto extent=block.inspect();
   for(auto offset=ExperienceBlock::header_bytes;offset<extent.complete_bytes;){

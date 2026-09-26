@@ -15,6 +15,7 @@ struct RuntimeConfig {
     std::uint64_t session_block_capacity, main_block_capacity, read_limit;
     std::uint32_t merge_workers = 1;
     std::uint64_t storage_bytes = 500000000000ULL;
+    std::uint64_t io_bytes_per_second = 625000000;
 };
 
 // Main's serialized lifecycle owner. Destruction never implies session end.

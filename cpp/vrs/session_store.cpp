@@ -136,7 +136,7 @@ SessionStore::SessionStore(const std::filesystem::path& root, const DigestBytes&
         const auto parsed = std::from_chars(filename.data() + 2, filename.data() + 18, index, 16);
         if (parsed.ec != std::errc{} || parsed.ptr != filename.data() + 18 || block_path(index).filename() != file.path().filename())
             throw std::runtime_error("invalid session block number");
-        auto block = ExperienceBlock::open_reader(file.path());
+        auto block = ExperienceBlock::open_reader(file.path(), storage_);
         if (block.identity() != block_id(identity_, "data", index) || block.capacity() != block_capacity_ ||
             !ordered.emplace(index, block.identity()).second)
             throw std::runtime_error("session block lineage mismatch");
@@ -155,7 +155,7 @@ SessionStore::SessionStore(const std::filesystem::path& root, const DigestBytes&
     phase_ = SessionPhase::active;
     const auto closed = directory_ / "closed.block";
     if (std::filesystem::exists(closed)) {
-        auto block = ExperienceBlock::open_reader(closed);
+        auto block = ExperienceBlock::open_reader(closed, storage_);
         const auto record = block.read(block.location_at(ExperienceBlock::header_bytes), memory_.limit(), memory_);
         const auto view = record.view();
         const auto actual = metadata(block_capacity_, records_, blocks_.size(), inventory());
@@ -251,7 +251,7 @@ ExperienceEvidence SessionStore::append_evidence(const EvidenceRules& rules,
 StoredExperience SessionStore::read(const ExperienceLocation& location, std::uint64_t limit) const {
     const auto found = blocks_.find(location.block);
     if (found == blocks_.end()) throw std::invalid_argument("experience block does not belong to this session");
-    auto block = ExperienceBlock::open_reader(block_path(found->second.index));
+    auto block = ExperienceBlock::open_reader(block_path(found->second.index), storage_);
     return block.read(location, limit, memory_);
 }
 
@@ -275,7 +275,7 @@ DigestBytes SessionStore::inventory() const {
     }
     const auto current = directory_ / "connections" / "current.block";
     if (std::filesystem::exists(current)) {
-        auto pointer = ExperienceBlock::open_reader(current);
+        auto pointer = ExperienceBlock::open_reader(current, storage_);
         const auto location = pointer.location_at(ExperienceBlock::header_bytes);
         const auto record = pointer.read(location, memory_.limit(), memory_);
         (void)record;

@@ -101,3 +101,10 @@ exclusive root lock before accepting writes. One allowance covers session,
 catalog and Main block writes. Quota exhaustion returns an error; it does not
 implicitly end a session or merge it. See STORAGE_BUDGET.md for conservative
 failed-write/replaced-file accounting and physical-device limitations.
+
+### Transfer allowance
+
+Configuration also requires `ioBytesPerSecond`, default example `"625000000"`
+(5Gbps). One limiter covers block reads and writes together, with a 1MiB burst.
+This controls logical requests rather than the entire physical SSD; see
+TRANSFER_BUDGET.md. The setting is VRS-level and does not alter SWEGCA verdicts.

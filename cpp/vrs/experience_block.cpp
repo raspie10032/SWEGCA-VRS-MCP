@@ -58,8 +58,9 @@ std::uint64_t file_size(int fd) {
     return static_cast<std::uint64_t>(information.st_size);
 }
 
-void read_exact(int fd, std::span<std::byte> output, std::uint64_t offset) {
+void read_exact(int fd, std::span<std::byte> output, std::uint64_t offset, StorageBudget* storage) {
     while (!output.empty()) {
+        if(storage)storage->transfer().wait(std::min<std::size_t>(output.size(), TransferBudget::chunk_bytes));
         const auto count = ::pread(fd, output.data(), std::min<std::size_t>(output.size(), 1U << 20),
                                    static_cast<off_t>(offset));
         if (count < 0) {
@@ -72,8 +73,9 @@ void read_exact(int fd, std::span<std::byte> output, std::uint64_t offset) {
     }
 }
 
-void write_exact(int fd, std::span<const std::byte> input, std::uint64_t offset) {
+void write_exact(int fd, std::span<const std::byte> input, std::uint64_t offset, StorageBudget* storage) {
     while (!input.empty()) {
+        if(storage)storage->transfer().wait(std::min<std::size_t>(input.size(), TransferBudget::chunk_bytes));
         const auto count = ::pwrite(fd, input.data(), std::min<std::size_t>(input.size(), 1U << 20),
                                     static_cast<off_t>(offset));
         if (count < 0) {
@@ -183,7 +185,7 @@ ExperienceBlock ExperienceBlock::create(const std::filesystem::path& path,
     const auto digest = Sha256::of(std::span<const std::byte>(header).first(48));
     std::copy(digest.begin(), digest.end(), header.begin() + 48);
     charge.retain();
-    write_exact(block.fd_, header, 0);
+    write_exact(block.fd_, header, 0, block.storage_);
     sync_data(block.fd_);
     const auto parent = path.has_parent_path() ? path.parent_path() : std::filesystem::path(".");
     const auto directory = ::open(parent.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
@@ -197,14 +199,14 @@ ExperienceBlock ExperienceBlock::create(const std::filesystem::path& path,
     return block;
 }
 
-ExperienceBlock ExperienceBlock::open(const std::filesystem::path& path, bool writer) {
-    ExperienceBlock block;
+ExperienceBlock ExperienceBlock::open(const std::filesystem::path& path, bool writer, StorageBudget* storage) {
+    ExperienceBlock block; block.storage_=storage;
     block.fd_ = ::open(path.c_str(), (writer ? O_RDWR : O_RDONLY) | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
     if (block.fd_ < 0) io_error("open experience block");
     const auto size = file_size(block.fd_);
     if (writer && ::flock(block.fd_, LOCK_EX | LOCK_NB) < 0) io_error("lock experience block");
     std::array<std::byte, header_bytes> header;
-    read_exact(block.fd_, header, 0);
+    read_exact(block.fd_, header, 0, block.storage_);
     const auto digest = Sha256::of(std::span<const std::byte>(header).first(48));
     if (!magic_is(header, block_magic) || !std::equal(digest.begin(), digest.end(), header.begin() + 48))
         throw std::runtime_error("invalid experience block header");
@@ -222,9 +224,9 @@ ExperienceBlock ExperienceBlock::open(const std::filesystem::path& path, bool wr
     return block;
 }
 
-ExperienceBlock ExperienceBlock::open_reader(const std::filesystem::path& path) { return open(path, false); }
+ExperienceBlock ExperienceBlock::open_reader(const std::filesystem::path& path, StorageBudget* storage) { return open(path, false, storage); }
 ExperienceBlock ExperienceBlock::open_writer(const std::filesystem::path& path, StorageBudget* storage) {
-    auto block = open(path, true); block.storage_ = storage; return block;
+    auto block = open(path, true, storage); block.storage_ = storage; return block;
 }
 
 ExperienceLocation ExperienceBlock::append(const OriginalExperienceView& experience) {
@@ -266,7 +268,7 @@ ExperienceLocation ExperienceBlock::append(const OriginalExperienceView& experie
         for (const auto part : {std::span<const std::byte>(prefix), as_bytes(experience.session),
                                as_bytes(experience.source), as_bytes(experience.media_type),
                                experience.content, std::span<const std::byte>(trailer)}) {
-            write_exact(fd_, part, at);
+            write_exact(fd_, part, at, storage_);
             at += part.size();
         }
         sync_data(fd_);
@@ -287,11 +289,11 @@ ExperienceLocation ExperienceBlock::location_at(std::uint64_t offset) const {
     if (offset > size || size - offset < record_overhead)
         throw std::runtime_error("incomplete experience frame");
     std::array<std::byte, prefix_bytes> prefix;
-    read_exact(fd_, prefix, offset);
+    read_exact(fd_, prefix, offset, storage_);
     const auto total = record_length(prefix, capacity_ - offset);
     if (total > size - offset) throw std::runtime_error("incomplete experience frame");
     std::array<std::byte, trailer_bytes> trailer;
-    read_exact(fd_, trailer, offset + total - trailer_bytes);
+    read_exact(fd_, trailer, offset + total - trailer_bytes, storage_);
     DigestBytes digest;
     std::copy_n(trailer.begin(), digest.size(), digest.begin());
     check_trailer(trailer, total, digest);
@@ -306,7 +308,7 @@ StoredExperience ExperienceBlock::read(const ExperienceLocation& location,
         location.bytes > std::numeric_limits<std::size_t>::max())
         throw std::invalid_argument("invalid experience location or read budget");
     std::array<std::byte, prefix_bytes> prefix;
-    read_exact(fd_, prefix, location.offset);
+    read_exact(fd_, prefix, location.offset, storage_);
     if (record_length(prefix, capacity_ - location.offset) != location.bytes)
         throw std::runtime_error("experience location length mismatch");
     const auto size = file_size(fd_);
@@ -315,7 +317,7 @@ StoredExperience ExperienceBlock::read(const ExperienceLocation& location,
     StoredExperience experience(memory);
     experience.encoded_.resize(static_cast<std::size_t>(location.bytes));
     std::copy(prefix.begin(), prefix.end(), experience.encoded_.begin());
-    read_exact(fd_, std::span(experience.encoded_).subspan(prefix_bytes), location.offset + prefix_bytes);
+    read_exact(fd_, std::span(experience.encoded_).subspan(prefix_bytes), location.offset + prefix_bytes, storage_);
     const auto encoded = std::span<const std::byte>(experience.encoded_);
     const auto digest = Sha256::of(encoded.first(encoded.size() - trailer_bytes));
     check_trailer(encoded.last(trailer_bytes), location.bytes, digest);
@@ -334,7 +336,7 @@ BlockRecovery ExperienceBlock::inspect() const {
         const auto at = recovery.complete_bytes;
         if (size - at < prefix_bytes) break;
         std::array<std::byte, prefix_bytes> prefix;
-        read_exact(fd_, prefix, at);
+        read_exact(fd_, prefix, at, storage_);
         const auto bytes = record_length(prefix, capacity_ - at);
         if (bytes > size - at) break;
         Sha256 hash;
@@ -344,13 +346,13 @@ BlockRecovery ExperienceBlock::inspect() const {
         while (remaining > 0) {
             const auto count = static_cast<std::size_t>(std::min<std::uint64_t>(remaining, scratch.size()));
             const auto chunk = std::span(scratch).first(count);
-            read_exact(fd_, chunk, cursor);
+            read_exact(fd_, chunk, cursor, storage_);
             hash.update(chunk);
             cursor += count;
             remaining -= count;
         }
         std::array<std::byte, trailer_bytes> trailer;
-        read_exact(fd_, trailer, cursor);
+        read_exact(fd_, trailer, cursor, storage_);
         const auto digest = hash.finish();
         check_trailer(trailer, bytes, digest);
         recovery.content_digest = extend_experience_digest(recovery.content_digest,

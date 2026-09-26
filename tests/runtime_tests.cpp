@@ -29,9 +29,12 @@ int main(){
   throws<std::logic_error>([&]{host.start_session(id(2),"two");});
   auto before=host.input("text/plain",content);CHECK(!before.familiar());
   first=host.retain({0,0,"one","user","text/plain",content},7,0).original;
+  const auto transfers=host.storage().transfer().requested();
   const auto r=reads,w=writes;auto recalled=host.input("text/plain",content);
   CHECK(recalled.temporary()&&reads==r&&writes==w);
+  CHECK(host.storage().transfer().requested()==transfers);
   CHECK(host.replay(recalled,0).location()==first);
+  CHECK(host.storage().transfer().requested()>transfers);
   CHECK(host.work(7,0)==0&&host.main().graph().generation()==0);
   // Destroying the runtime is not an explicit end event.
  }

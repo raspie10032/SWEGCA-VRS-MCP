@@ -1,4 +1,5 @@
 #pragma once
+#include "vrs/transfer_budget.hpp"
 #include <atomic>
 #include <cstdint>
 #include <stdexcept>
@@ -14,14 +15,17 @@ public:
 // writers; hard-linked originals must be counted only once by that owner.
 class StorageBudget final {
 public:
-    explicit StorageBudget(std::uint64_t limit, std::uint64_t existing_bytes=0)
-        :limit_(limit),used_(existing_bytes) {
+    explicit StorageBudget(std::uint64_t limit, std::uint64_t existing_bytes=0, std::uint64_t bytes_per_second=625000000)
+        :limit_(limit),used_(existing_bytes),transfer_(bytes_per_second) {
         if(existing_bytes>limit)throw StorageLimit();
     }
     StorageBudget(const StorageBudget&)=delete;
     StorageBudget& operator=(const StorageBudget&)=delete;
     [[nodiscard]] std::uint64_t used() const noexcept{return used_.load(std::memory_order_relaxed);}
     [[nodiscard]] std::uint64_t limit() const noexcept{return limit_;}
+
+    [[nodiscard]] TransferBudget& transfer() noexcept{return transfer_;}
+    [[nodiscard]] const TransferBudget& transfer() const noexcept{return transfer_;}
 
     class Reservation final {
     public:
@@ -54,5 +58,6 @@ private:
     }
     const std::uint64_t limit_;
     std::atomic<std::uint64_t> used_;
+    TransferBudget transfer_;
 };
 } // namespace swegca::vrs

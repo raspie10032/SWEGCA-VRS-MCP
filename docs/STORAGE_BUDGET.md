@@ -51,8 +51,9 @@ Runtime path always supplies one.
 ## Remaining physical resource boundary
 
 This enforces logical byte reservations for the Runtime-owned tree. Filesystem
-allocation units/metadata, unrelated processes, SSD bandwidth and total process
-RSS are separate requirements. Failed-write reservations and publication-sync failures remain conservatively
+allocation units/metadata, unrelated processes and total process RSS are separate
+requirements. Logical block-transfer pacing is described in TRANSFER_BUDGET.md;
+physical SSD bandwidth confirmation remains separate. Failed-write reservations and publication-sync failures remain conservatively
 charged until reopen: live usage may overestimate retained bytes. Successfully
 replaced catalog pointers are reclaimed only after rename and directory sync,
 when fstat on the held old descriptor reports zero links and that descriptor

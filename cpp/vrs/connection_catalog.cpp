@@ -131,7 +131,7 @@ const ConnectionHead* ConnectionCatalog::find(const DigestBytes& identity) const
 void ConnectionCatalog::restore() {
     const auto current_path = directory_ / "current.block";
     if (!std::filesystem::exists(current_path)) return;
-    auto pointer = ExperienceBlock::open_reader(current_path);
+    auto pointer = ExperienceBlock::open_reader(current_path, session_.storage_);
     const auto frame = pointer.location_at(ExperienceBlock::header_bytes);
     const auto fixed_limit = ExperienceBlock::record_overhead + session_.name().size() + source.size() + media.size() + pointer_size;
     const auto record = pointer.read(frame, fixed_limit, memory_);
