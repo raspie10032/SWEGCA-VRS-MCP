@@ -273,6 +273,18 @@ DigestBytes SessionStore::inventory() const {
         put(shape, 16, inspected.complete_bytes); put(shape, 24, inspected.unfinished_bytes);
         hash.update(identity); hash.update(shape); hash.update(inspected.content_digest);
     }
+    const auto current = directory_ / "connections" / "current.block";
+    if (std::filesystem::exists(current)) {
+        auto pointer = ExperienceBlock::open_reader(current);
+        const auto location = pointer.location_at(ExperienceBlock::header_bytes);
+        const auto record = pointer.read(location, memory_.limit(), memory_);
+        (void)record;
+        const auto extent = pointer.inspect();
+        if (extent.complete_records != 1 || extent.unfinished_bytes != 0)
+            throw std::runtime_error("invalid ended-session catalog reference");
+        hash.update("SWEGCA session catalog reference v1");
+        hash.update(pointer.identity()); hash.update(location.digest);
+    }
     return hash.finish();
 }
 

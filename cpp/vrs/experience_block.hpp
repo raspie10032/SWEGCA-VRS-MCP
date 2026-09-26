@@ -1,6 +1,7 @@
 #pragma once
 
 #include "swegca_architecture/digest_bytes.hpp"
+#include "swegca_architecture/record_address.hpp"
 #include "vrs/memory_budget.hpp"
 
 #include <cstddef>
@@ -25,12 +26,7 @@ struct OriginalExperienceView {
     std::span<const std::byte> content;
 };
 
-struct ExperienceLocation {
-    architecture::DigestBytes block{};
-    std::uint64_t offset = 0;
-    std::uint64_t bytes = 0;
-    architecture::DigestBytes digest{};
-};
+using ExperienceLocation = architecture::RecordAddress;
 
 class StoredExperience final {
 public:

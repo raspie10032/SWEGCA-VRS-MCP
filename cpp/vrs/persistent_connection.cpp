@@ -275,4 +275,37 @@ ConnectionRefinement PersistentConnection::refine(std::uint64_t seed, std::uint6
     return report;
 }
 
+ConnectionHead PersistentConnection::snapshot() const noexcept {
+    return {state_->identity(), head_, state_->revision(), ordinal_, state_->experiences().size(), state_->strength()};
+}
+
+bool PersistentConnection::verifies_extension(SessionStore& session, const ConnectionHead& candidate,
+    const ExperienceLocation& previous) {
+    auto cursor = candidate.record;
+    auto remaining = candidate.ordinal;
+    for (;;) {
+        const auto event = read_event(session, cursor);
+        if (event.identity != candidate.identity || event.ordinal != remaining)
+            throw std::runtime_error("VRS extension identity mismatch");
+        if (cursor == previous) return true;
+        if (event.kind == EventKind::create || remaining == 0) return false;
+        --remaining; cursor = event.parent;
+    }
+}
+
+bool PersistentConnection::contains_history(std::span<const ExperienceLocation> addresses) const {
+    if (addresses.empty()) return true;
+    auto cursor = head_;
+    auto remaining = ordinal_;
+    std::size_t found = 0;
+    for (;;) {
+        if (cursor == addresses[found] && ++found == addresses.size()) return true;
+        const auto event = read_event(session_, cursor);
+        if (event.identity != state_->identity() || event.ordinal != remaining)
+            throw std::runtime_error("VRS history identity mismatch");
+        if (event.kind == EventKind::create || remaining == 0) return false;
+        --remaining; cursor = event.parent;
+    }
+}
+
 }  // namespace swegca::vrs

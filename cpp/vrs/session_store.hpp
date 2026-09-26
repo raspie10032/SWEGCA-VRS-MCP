@@ -39,6 +39,7 @@ public:
     [[nodiscard]] std::string_view name() const noexcept { return name_; }
 
 private:
+    friend class ConnectionCatalog;
     struct BlockState {
         std::uint64_t index = 0;
         BlockRecovery extent{0, ExperienceBlock::header_bytes, 0};

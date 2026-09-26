@@ -1,6 +1,7 @@
 #pragma once
 
 #include "swegca_architecture/evidence_rules.hpp"
+#include "swegca_architecture/head_publication_kernel.hpp"
 #include "vrs/connection.hpp"
 #include "vrs/session_store.hpp"
 
@@ -31,8 +32,15 @@ public:
     [[nodiscard]] const ExperienceLocation& head() const noexcept { return head_; }
     [[nodiscard]] const Connection& state() const noexcept { return *state_; }
     [[nodiscard]] const architecture::EvidencePolicy& policy() const noexcept { return policy_; }
+    [[nodiscard]] architecture::kernel::ConnectionHead snapshot() const noexcept;
+    // Addresses are ordered newest to oldest. Verification reads only the
+    // linked connection records and never treats a greater number as ancestry.
+    [[nodiscard]] bool contains_history(std::span<const ExperienceLocation> addresses) const;
+    [[nodiscard]] static bool verifies_extension(SessionStore& session,
+        const architecture::kernel::ConnectionHead& candidate, const ExperienceLocation& previous);
 
 private:
+    friend class ConnectionCatalog;
     PersistentConnection(SessionStore&, const architecture::DigestBytes&, double,
         const architecture::EvidencePolicy&, MemoryBudget&, std::uint64_t);
     PersistentConnection(SessionStore&, const ExperienceLocation&, MemoryBudget&, std::uint64_t);
