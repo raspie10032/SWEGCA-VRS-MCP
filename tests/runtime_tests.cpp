@@ -1,4 +1,5 @@
 #include "vrs/runtime.hpp"
+#include "vrs/storage_inventory.hpp"
 #include <cerrno>
 #include <cstdio>
 #include <cstdlib>
@@ -120,6 +121,38 @@ int main(){
   fail_write=true;
   throws<std::system_error>([&]{(void)host.receive({1,0,"next","assistant","text/plain",content},7,0);});
   CHECK(!host.session().usable());
+ }
+ {
+  const auto budget_root=root/"budget-runtime";fs::create_directory(budget_root);
+  std::uint64_t initial=0,charged=0;
+  {
+   auto host=Runtime::create(budget_root,config,memory);
+   throws<std::system_error>([&]{(void)Runtime::open(budget_root,config,memory);});
+   initial=stored_bytes(budget_root,memory);CHECK(host.storage().used()==initial);
+   host.start_session(id(80),"quota");
+   (void)host.retain({0,0,"quota","user","text/plain",content},7,0);
+   host.end_session();CHECK(host.work(7,0)==1);
+   charged=host.storage().used();CHECK(charged>=stored_bytes(budget_root,memory));
+  }
+  const auto actual=stored_bytes(budget_root,memory);CHECK(actual>initial);
+  // Publication aliases are hard links: adding another name costs no payload.
+  fs::create_hard_link(budget_root/"graph"/"control.block",budget_root/"alias.block");
+  CHECK(stored_bytes(budget_root,memory)==actual);
+  auto exact=config;exact.storage_bytes=actual;
+  {
+   auto host=Runtime::open(budget_root,exact,memory);
+   CHECK(host.storage().used()==actual);
+   const auto before=writes;
+   throws<StorageLimit>([&]{host.start_session(id(81),"denied");});
+   CHECK(writes==before&&host.storage().used()==actual);
+   CHECK(stored_bytes(budget_root,memory)==actual);
+  }
+  exact.storage_bytes=actual-1;
+  throws<StorageLimit>([&]{(void)Runtime::open(budget_root,exact,memory);});
+  CHECK(stored_bytes(budget_root,memory)==actual);
+  fs::create_symlink(budget_root/"graph"/"control.block",budget_root/"unsafe-link");
+  throws<std::runtime_error>([&]{(void)stored_bytes(budget_root,memory);});
+  fs::remove(budget_root/"unsafe-link");
  }
  CHECK(memory.used()==0);fs::remove_all(root);std::printf("runtime lifecycle tests: %u checks passed\n",checks);
 }

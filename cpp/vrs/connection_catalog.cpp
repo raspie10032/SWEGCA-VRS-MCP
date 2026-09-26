@@ -202,7 +202,7 @@ void ConnectionCatalog::publish(std::span<const HeadUpdate> changes) {
             staging = directory_ / ("pointer-stage-" + std::to_string(++attempt) + ".block");
         }
         const auto capacity = ExperienceBlock::header_bytes + ExperienceBlock::record_overhead + session_.name().size() + source.size() + media.size() + pointer_size;
-        auto pointer = ExperienceBlock::create(staging, pointer_id(session_.name()), capacity);
+        auto pointer = ExperienceBlock::create(staging, pointer_id(session_.name()), capacity, session_.storage_);
         (void)pointer.append({generation_ + 1, 0, session_.name(), source, media, pointer_data});
         const auto current = directory_ / "current.block";
         if (::rename(staging.c_str(), current.c_str()) < 0) io_error("publish catalog pointer");

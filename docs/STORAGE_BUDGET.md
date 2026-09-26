@@ -24,15 +24,40 @@ current class does not scan directories, deduplicate hard links, or allow a
 live counter reset. Multiple independent budgets do not collectively enforce
 a shared device limit.
 
-## Current boundary
+## Runtime integration
 
-This commit connects the budget to physical ExperienceBlock writes. The full
-Runtime/SessionStore/Main/catalog chain has not yet been wired to one mandatory
-owner. Omitted budget pointers retain the existing low-level unbudgeted behavior.
-This is not yet a claimed 500GB system-wide limit. Remaining integration must
-include metadata files, startup inventory with inode deduplication, crash tails,
-and the separate SSD bandwidth policy. Filesystem allocation units, metadata,
-and unrelated processes are not measured by these logical-byte counters.
+Runtime owns one mandatory shared StorageBudget. Session controls, original
+blocks, connection/catalog records, catalog pointer staging files, end markers,
+Main controls and Main merge journals receive that same owner. Publishing hard
+links does not reserve the payload again. The stdio configuration requires
+`storageBytes`; the example uses 500,000,000,000 decimal bytes and callers may
+configure a larger value. The C++ RuntimeConfig default is also 500GB.
+
+Before opening writers, Runtime holds an exclusive advisory lock on the root
+directory, inventories regular-file logical sizes, and deduplicates device/inode
+pairs. It includes partial and unrelated regular files under this dedicated
+root, rejects symlinks/special files, detects sum overflow, and charges the
+inventory's inode set to MemoryBudget. The directory walk is a cold startup
+operation and does not run in input/Recall. Cooperating Runtime owners cannot
+race inventory against each other's writes. External processes and standalone
+low-level stores must not mutate the owned root.
+
+Reopen creates a fresh budget from actual retained extents. A smaller limit than
+the existing inventory refuses startup before any block writes. Opening at the
+exact existing size permits reads/recovery but denies new storage growth.
+Low-level standalone store APIs can still omit a budget for isolated use; the
+Runtime path always supplies one.
+
+## Remaining physical resource boundary
+
+This enforces logical byte reservations for the Runtime-owned tree. Filesystem
+allocation units/metadata, unrelated processes, SSD bandwidth and total process
+RSS are separate requirements. Failed-write reservations and replaced catalog
+pointer files currently remain conservatively charged until reopen: live usage
+may overestimate retained bytes, never intentionally underestimate them. This
+can cause earlier quota rejection; reclaiming confirmed removed extents remains
+an accounting improvement. No claim of physical-device 500GB or 5Gbps compliance
+is made by these logical counters alone.
 
 Tests cover shared block limits, exact capacity, failed create rollback, no
 file on denied create, no record on denied append, move/reopen accounting,

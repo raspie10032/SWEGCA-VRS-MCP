@@ -85,16 +85,16 @@ bool same_file(const std::filesystem::path& left, const std::filesystem::path& r
 }  // namespace
 
 SessionStore SessionStore::create(const std::filesystem::path& root, const DigestBytes& identity,
-    std::string_view name, std::uint64_t block_capacity, MemoryBudget& memory) {
-    return SessionStore(root, identity, memory, true, name, block_capacity);
+    std::string_view name, std::uint64_t block_capacity, MemoryBudget& memory, StorageBudget* storage) {
+    return SessionStore(root, identity, memory, true, name, block_capacity, storage);
 }
-SessionStore SessionStore::open(const std::filesystem::path& root, const DigestBytes& identity, MemoryBudget& memory) {
-    return SessionStore(root, identity, memory, false, {}, 0);
+SessionStore SessionStore::open(const std::filesystem::path& root, const DigestBytes& identity, MemoryBudget& memory, StorageBudget* storage) {
+    return SessionStore(root, identity, memory, false, {}, 0, storage);
 }
 
 SessionStore::SessionStore(const std::filesystem::path& root, const DigestBytes& identity,
-    MemoryBudget& memory, bool create, std::string_view name, std::uint64_t block_capacity)
-    : root_(root), directory_(root / "sessions" / hex(identity)), identity_(identity), memory_(memory),
+    MemoryBudget& memory, bool create, std::string_view name, std::uint64_t block_capacity, StorageBudget* storage)
+    : root_(root), directory_(root / "sessions" / hex(identity)), identity_(identity), memory_(memory), storage_(storage),
       name_(name, &memory), block_capacity_(block_capacity), blocks_(&memory) {
     if (!named_digest(identity)) throw std::invalid_argument("empty session identity");
     const auto control_path = directory_ / "control.block";
@@ -106,14 +106,14 @@ SessionStore::SessionStore(const std::filesystem::path& root, const DigestBytes&
         std::filesystem::create_directories(root_ / "main");
         if (!std::filesystem::create_directory(directory_)) throw std::runtime_error("session already exists");
         sync_directory(root_); sync_directory(root_ / "sessions");
-        control_.emplace(ExperienceBlock::create(control_path, block_id(identity_, "control", 0), metadata_capacity(name_)));
+        control_.emplace(ExperienceBlock::create(control_path, block_id(identity_, "control", 0), metadata_capacity(name_), storage_));
         const auto data = metadata(block_capacity_);
         (void)control_->append({0, 0, name_, source, media, data});
         phase_ = SessionPhase::active;
         return;
     }
     // This lock lasts for the owner's lifetime, including ended sessions.
-    control_.emplace(ExperienceBlock::open_writer(control_path));
+    control_.emplace(ExperienceBlock::open_writer(control_path, storage_));
     if (control_->identity() != block_id(identity_, "control", 0)) throw std::runtime_error("session identity mismatch");
     const auto stored = control_->read(control_->location_at(ExperienceBlock::header_bytes), memory_.limit(), memory_);
     const auto meta = stored.view();
@@ -176,7 +176,7 @@ SessionStore::SessionStore(const std::filesystem::path& root, const DigestBytes&
         phase_ = next;
     }
     if (phase_ == SessionPhase::active && next_block_ != 0) {
-        writer_.emplace(ExperienceBlock::open_writer(block_path(next_block_ - 1)));
+        writer_.emplace(ExperienceBlock::open_writer(block_path(next_block_ - 1), storage_));
         current_records_ = writer_->inspect().complete_records;
     }
 }
@@ -201,7 +201,7 @@ void SessionStore::next_block() {
     const auto identity = block_id(identity_, "data", next_block_);
     const auto inserted = blocks_.emplace(identity, BlockState{next_block_}).first;
     try {
-        auto next = ExperienceBlock::create(block_path(next_block_), identity, block_capacity_);
+        auto next = ExperienceBlock::create(block_path(next_block_), identity, block_capacity_, storage_);
         writer_.emplace(std::move(next));
         ++next_block_;
         current_records_ = 0;
@@ -300,7 +300,7 @@ void SessionStore::end() {
             if (attempt == std::numeric_limits<std::uint64_t>::max()) throw std::overflow_error("session end attempts exhausted");
             staging = directory_ / ("ending-" + std::to_string(++attempt) + ".block");
         }
-        auto block = ExperienceBlock::create(staging, block_id(identity_, "end", 0), metadata_capacity(name_));
+        auto block = ExperienceBlock::create(staging, block_id(identity_, "end", 0), metadata_capacity(name_), storage_);
         (void)block.append({1, 0, name_, source, media, data});
         const auto closed = directory_ / "closed.block";
         if (::link(staging.c_str(), closed.c_str()) < 0) io_error("publish session end marker");

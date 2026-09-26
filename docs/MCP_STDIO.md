@@ -92,3 +92,12 @@ build/swegca-vrs-mcp open /path/to/new-vrs-root examples/stdio-config.json
 실제 서버 프로세스에서 지지·반박 관측을 보내 3상별 ×1.01/×0.995/유지를 확인하고,
 과거 지지 원경험을 Replay한 후 새 반박 8개만 재검증해 불일치를 확인했다.
 현재 관측 주소 목록이 보낸 반박 원경험 주소와 정확히 일치하는 것도 확인했다.
+
+### Storage allowance
+
+Configuration requires `storageBytes` as a decimal string; the example uses
+`"500000000000"`. Runtime inventories and deduplicates existing files under its
+exclusive root lock before accepting writes. One allowance covers session,
+catalog and Main block writes. Quota exhaustion returns an error; it does not
+implicitly end a session or merge it. See STORAGE_BUDGET.md for conservative
+failed-write/replaced-file accounting and physical-device limitations.

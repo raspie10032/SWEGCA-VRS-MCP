@@ -43,7 +43,7 @@ class Client:
 with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     root=pathlib.Path(directory)
     config={
-        'mergeWorkers':'2','memoryBytes':str(64<<20),'frameBytes':'4096','mainIdentity':identity(99),'initialStrength':1.0,
+        'storageBytes':'500000000000','mergeWorkers':'2','memoryBytes':str(64<<20),'frameBytes':'4096','mainIdentity':identity(99),'initialStrength':1.0,
         'sessionBlockBytes':'65536','mainBlockBytes':'4096','readLimit':'16384',
         'policy':{'chance_rate':0.2,'accept_margin':0.25,'confidence_level':0.9,'prior_alpha':1.0,'prior_beta':1.0,
             'regime_change_threshold':0.3,'minimum_effective_samples_per_axis':'4','minimum_source_diversity':'2',
@@ -133,4 +133,21 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     check(c.call('swegca/end')['result']=={})
     check(c.call('swegca/work',{'seed':'7','step':'0'})['result']['merged']=='1')
     c.close()
+    # A separate config file must not change the root being measured.
+    def stored_bytes():
+        seen=set();total=0
+        for entry in root.rglob('*'):
+            if not entry.is_file():continue
+            st=entry.stat();key=(st.st_dev,st.st_ino)
+            if key not in seen:total+=st.st_size;seen.add(key)
+        return total
+    with tempfile.TemporaryDirectory(prefix='swegca-quota-config-') as external:
+        quota=dict(config);quota['storageBytes']=str(stored_bytes())
+        quota_path=pathlib.Path(external)/'config.json';quota_path.write_text(json.dumps(quota))
+        before=stored_bytes()
+        c=Client('open',root,quota_path);c.initialize()
+        rejected=c.call('swegca/start',{'identity':identity(100),'name':'quota-denied'})
+        check('error' in rejected)
+        check(stored_bytes()==before)
+        c.close()
 print(f'stdio subprocess tests: {checks} checks passed')

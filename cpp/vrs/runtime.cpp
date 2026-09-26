@@ -1,4 +1,5 @@
 #include "vrs/runtime.hpp"
+#include "vrs/storage_inventory.hpp"
 
 namespace swegca::vrs {
 using namespace architecture;
@@ -10,25 +11,25 @@ Runtime Runtime::open(const std::filesystem::path& root,const RuntimeConfig& con
     return Runtime(root,config,memory,false);
 }
 Runtime::Runtime(const std::filesystem::path& root,const RuntimeConfig& config,MemoryBudget& memory,bool create)
-    :root_(root),config_(config),memory_(memory),sources_(root,memory,config.read_limit),
-    main_(create ? PersistentMainGraph::create(root/"graph",config.main_identity,memory,config.initial_strength,config.policy,config.main_block_capacity,config.merge_workers)
-                 : PersistentMainGraph::open(root/"graph",config.main_identity,memory,config.initial_strength,config.policy,sources_,config.merge_workers)) {
+    :root_(root),config_(config),memory_(memory),storage_root_(root),storage_(config.storage_bytes,stored_bytes(root,memory)),sources_(root,memory,config.read_limit,&storage_),
+    main_(create ? PersistentMainGraph::create(root/"graph",config.main_identity,memory,config.initial_strength,config.policy,config.main_block_capacity,config.merge_workers,&storage_)
+                 : PersistentMainGraph::open(root/"graph",config.main_identity,memory,config.initial_strength,config.policy,sources_,config.merge_workers,&storage_)) {
     sources_.release_caches();
 }
 Runtime::Active::Active(const std::filesystem::path& root,const DigestBytes& identity,std::string_view name,
-    const RuntimeConfig& config,MemoryBudget& memory,const PersistentMainGraph& main,bool resume)
-    :store(resume ? SessionStore::open(root,identity,memory)
-                  : SessionStore::create(root,identity,name,config.session_block_capacity,memory)),
+    const RuntimeConfig& config,MemoryBudget& memory,const PersistentMainGraph& main,bool resume,StorageBudget& storage)
+    :store(resume ? SessionStore::open(root,identity,memory,&storage)
+                  : SessionStore::create(root,identity,name,config.session_block_capacity,memory,&storage)),
     runtime(store,memory,config.read_limit),router(runtime,memory) {
     router.mount_main(main); indexed_main=main.head();
 }
 void Runtime::start_session(const DigestBytes& identity,std::string_view name) {
     if(active_)throw std::logic_error("a session already owns the input route");
-    active_.emplace(root_,identity,name,config_,memory_,main_,false);
+    active_.emplace(root_,identity,name,config_,memory_,main_,false,storage_);
 }
 void Runtime::resume_session(const DigestBytes& identity) {
     if(active_)throw std::logic_error("a session already owns the input route");
-    active_.emplace(root_,identity,std::string_view{},config_,memory_,main_,true);
+    active_.emplace(root_,identity,std::string_view{},config_,memory_,main_,true,storage_);
 }
 Runtime::Active& Runtime::require_session() {
     if(!active_)throw std::logic_error("no session owns the input route");

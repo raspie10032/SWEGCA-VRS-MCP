@@ -17,9 +17,9 @@ class SessionStore final {
 public:
     [[nodiscard]] static SessionStore create(const std::filesystem::path& root,
         const architecture::DigestBytes& identity, std::string_view name,
-        std::uint64_t block_capacity, MemoryBudget& memory);
+        std::uint64_t block_capacity, MemoryBudget& memory, StorageBudget* storage = nullptr);
     [[nodiscard]] static SessionStore open(const std::filesystem::path& root,
-        const architecture::DigestBytes& identity, MemoryBudget& memory);
+        const architecture::DigestBytes& identity, MemoryBudget& memory, StorageBudget* storage = nullptr);
     SessionStore(const SessionStore&) = delete;
     SessionStore& operator=(const SessionStore&) = delete;
     SessionStore(SessionStore&&) = delete;
@@ -46,7 +46,7 @@ private:
         BlockRecovery extent{0, ExperienceBlock::header_bytes, 0};
     };
     SessionStore(const std::filesystem::path& root, const architecture::DigestBytes& identity,
-        MemoryBudget& memory, bool create, std::string_view name, std::uint64_t block_capacity);
+        MemoryBudget& memory, bool create, std::string_view name, std::uint64_t block_capacity, StorageBudget* storage);
     void require(architecture::kernel::SessionOperation operation) const;
     void next_block();
     void verify_name(const OriginalExperienceView& experience) const;
@@ -57,6 +57,7 @@ private:
     std::filesystem::path root_, directory_;
     architecture::DigestBytes identity_;
     MemoryBudget& memory_;
+    StorageBudget* storage_;
     std::pmr::string name_;
     std::uint64_t block_capacity_ = 0, next_block_ = 0, records_ = 0, current_records_ = 0;
     architecture::kernel::SessionPhase phase_ = architecture::kernel::SessionPhase::invalid;

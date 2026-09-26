@@ -8,7 +8,7 @@ namespace swegca::vrs {
 // Discovery never ends or publishes an active session.
 class MainSources final : public MainSourceResolver {
 public:
-    MainSources(const std::filesystem::path& root, MemoryBudget&, std::uint64_t read_limit);
+    MainSources(const std::filesystem::path& root, MemoryBudget&, std::uint64_t read_limit, StorageBudget* storage = nullptr);
     MainSources(const MainSources&) = delete;
     MainSources& operator=(const MainSources&) = delete;
     [[nodiscard]] std::pmr::vector<architecture::DigestBytes> published() const;
@@ -19,7 +19,7 @@ public:
     [[nodiscard]] std::size_t merge_published(PersistentMainGraph&, std::uint64_t seed, std::uint64_t step);
 private:
     struct Source {
-        Source(const std::filesystem::path&, const architecture::DigestBytes&, MemoryBudget&, std::uint64_t);
+        Source(const std::filesystem::path&, const architecture::DigestBytes&, MemoryBudget&, std::uint64_t, StorageBudget*);
         ~Source();
         Source(const Source&) = delete;
         Source& operator=(const Source&) = delete;
@@ -32,6 +32,7 @@ private:
     };
     std::filesystem::path root_;
     MemoryBudget& memory_;
+    StorageBudget* storage_;
     std::uint64_t read_limit_;
     std::pmr::map<architecture::DigestBytes, Source> sources_;
 };

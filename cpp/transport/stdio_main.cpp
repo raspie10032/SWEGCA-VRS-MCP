@@ -172,6 +172,7 @@ int main(int argc,char** argv){
         RuntimeConfig settings{digest(config.at("mainIdentity").string()),policy,real(config.at("initialStrength")),integer(config.at("sessionBlockBytes")),integer(config.at("mainBlockBytes")),integer(config.at("readLimit"))};
         const auto workers=integer(config.at("mergeWorkers"));
         if(!workers||workers>UINT32_MAX)throw std::invalid_argument("invalid merge worker count");
+        settings.storage_bytes=integer(config.at("storageBytes"));
         settings.merge_workers=static_cast<std::uint32_t>(workers);
         auto runtime=mode=="create"?Runtime::create(argv[2],settings,memory):Runtime::open(argv[2],settings,memory);
         Server server(runtime,memory);bool eof=false;

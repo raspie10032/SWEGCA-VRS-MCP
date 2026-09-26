@@ -35,27 +35,27 @@ void check_metadata(const StoredExperience& stored){const auto v=stored.view();i
 }
 
 PersistentMainGraph PersistentMainGraph::create(const std::filesystem::path& path,const DigestBytes& identity,
- MemoryBudget& memory,double strength,const EvidencePolicy& policy,std::uint64_t capacity,std::uint32_t workers){
+ MemoryBudget& memory,double strength,const EvidencePolicy& policy,std::uint64_t capacity,std::uint32_t workers,StorageBudget* storage){
  if(capacity<ExperienceBlock::header_bytes+metadata+record_size)throw std::invalid_argument("Main block cannot hold a merge");
- return PersistentMainGraph(path,identity,memory,strength,policy,capacity,nullptr,workers);
+ return PersistentMainGraph(path,identity,memory,strength,policy,capacity,nullptr,workers,storage);
 }
 PersistentMainGraph PersistentMainGraph::open(const std::filesystem::path& path,const DigestBytes& identity,
- MemoryBudget& memory,double strength,const EvidencePolicy& policy,MainSourceResolver& resolver,std::uint32_t workers){
- return PersistentMainGraph(path,identity,memory,strength,policy,0,&resolver,workers);
+ MemoryBudget& memory,double strength,const EvidencePolicy& policy,MainSourceResolver& resolver,std::uint32_t workers,StorageBudget* storage){
+ return PersistentMainGraph(path,identity,memory,strength,policy,0,&resolver,workers,storage);
 }
 PersistentMainGraph::PersistentMainGraph(const std::filesystem::path& path,const DigestBytes& identity,
- MemoryBudget& memory,double strength,const EvidencePolicy& policy,std::uint64_t capacity,MainSourceResolver* resolver,std::uint32_t workers)
- :directory_(path),identity_(identity),memory_(memory),graph_(memory,strength,policy,workers),capacity_(capacity){
+ MemoryBudget& memory,double strength,const EvidencePolicy& policy,std::uint64_t capacity,MainSourceResolver* resolver,std::uint32_t workers,StorageBudget* storage)
+ :directory_(path),identity_(identity),memory_(memory),storage_(storage),graph_(memory,strength,policy,workers),capacity_(capacity){
  if(!architecture::kernel::named_digest(identity))throw std::invalid_argument("empty Main identity");
  std::array<std::byte,config_size> config{};std::memcpy(config.data(),"SWGCMCF1",8);
  put(config,8,std::bit_cast<std::uint64_t>(strength));put_digest(config,16,evidence_policy_digest(policy).bytes());
  if(!resolver){
   if(!std::filesystem::create_directory(path))throw std::runtime_error("Main directory already exists");
   sync_directory(path.parent_path().empty()?std::filesystem::path("."):path.parent_path());
-  control_.emplace(ExperienceBlock::create(path/"control.block",block_id(identity,true,0),ExperienceBlock::header_bytes+metadata+config_size));
+  control_.emplace(ExperienceBlock::create(path/"control.block",block_id(identity,true,0),ExperienceBlock::header_bytes+metadata+config_size,storage_));
   put(config,48,capacity_);(void)control_->append({0,0,session,source,media,config});
  }else{
-  control_.emplace(ExperienceBlock::open_writer(path/"control.block"));
+  control_.emplace(ExperienceBlock::open_writer(path/"control.block",storage_));
   if(control_->identity()!=block_id(identity,true,0))throw std::runtime_error("Main identity mismatch");
   const auto inspected=control_->inspect();
   if(inspected.complete_records!=1||inspected.unfinished_bytes)throw std::runtime_error("incomplete Main configuration");
@@ -80,7 +80,7 @@ void PersistentMainGraph::next_block(){
  std::uint64_t attempt=0;std::filesystem::path staging;
  do {staging=directory_/("pending-"+std::to_string(next_index_)+"-"+std::to_string(attempt++)+".block");}
  while(std::filesystem::exists(staging));
- auto created=ExperienceBlock::create(staging,block_id(identity_,false,next_index_),capacity_);
+ auto created=ExperienceBlock::create(staging,block_id(identity_,false,next_index_),capacity_,storage_);
  if(::link(staging.c_str(),final.c_str())<0)throw std::system_error(errno,std::generic_category(),"publish Main block");
  if(::unlink(staging.c_str())<0)throw std::system_error(errno,std::generic_category(),"release Main block staging name");
  sync_directory(directory_);writer_.emplace(std::move(created));++next_index_;

@@ -27,12 +27,12 @@ void require_file(const std::filesystem::path& path) {
     if(!std::filesystem::is_regular_file(status))throw std::runtime_error("Main source publication is not a regular file");
 }
 }
-MainSources::MainSources(const std::filesystem::path& root,MemoryBudget& memory,std::uint64_t limit)
-    :root_(root),memory_(memory),read_limit_(limit),sources_(&memory) {}
-MainSources::Source::Source(const std::filesystem::path& root,const DigestBytes& id,MemoryBudget& budget,std::uint64_t limit)
+MainSources::MainSources(const std::filesystem::path& root,MemoryBudget& memory,std::uint64_t limit,StorageBudget* storage)
+    :root_(root),memory_(memory),storage_(storage),read_limit_(limit),sources_(&memory) {}
+MainSources::Source::Source(const std::filesystem::path& root,const DigestBytes& id,MemoryBudget& budget,std::uint64_t limit,StorageBudget* storage_budget)
     :memory(budget),read_limit(limit) {
     void* storage=memory.allocate(sizeof(SessionStore),alignof(SessionStore));
-    try { store=new(storage) SessionStore(SessionStore::open(root,id,memory)); }
+    try { store=new(storage) SessionStore(SessionStore::open(root,id,memory,storage_budget)); }
     catch(...) { memory.deallocate(storage,sizeof(SessionStore),alignof(SessionStore));throw; }
     if(!kernel::main_session_readable(store->phase(),store->usable())) {
         store->~SessionStore();memory.deallocate(store,sizeof(SessionStore),alignof(SessionStore));store=nullptr;
@@ -70,7 +70,7 @@ std::pmr::vector<DigestBytes> MainSources::published() const {
 const SessionRuntime& MainSources::resolve(const DigestBytes& id) {
     if(!kernel::named_digest(id))throw std::invalid_argument("empty Main source identity");
     require_file(root_/"main"/name(id));
-    auto [where,inserted]=sources_.try_emplace(id,root_,id,memory_,read_limit_);
+    auto [where,inserted]=sources_.try_emplace(id,root_,id,memory_,read_limit_,storage_);
     (void)inserted;
     // During replay, at most one decoded source cache is retained. The graph
     // keeps stable store pointers, not pointers to these runtime caches.

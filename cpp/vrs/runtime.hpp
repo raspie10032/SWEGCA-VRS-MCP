@@ -1,5 +1,6 @@
 #pragma once
 #include "vrs/main_sources.hpp"
+#include "vrs/storage_inventory.hpp"
 
 namespace swegca::vrs {
 struct ReceivedInput {
@@ -13,6 +14,7 @@ struct RuntimeConfig {
     double initial_strength;
     std::uint64_t session_block_capacity, main_block_capacity, read_limit;
     std::uint32_t merge_workers = 1;
+    std::uint64_t storage_bytes = 500000000000ULL;
 };
 
 // Main's serialized lifecycle owner. Destruction never implies session end.
@@ -29,6 +31,7 @@ public:
     void start_session(const architecture::DigestBytes&, std::string_view name);
     void resume_session(const architecture::DigestBytes&);
     void end_session();
+    [[nodiscard]] const StorageBudget& storage() const noexcept { return storage_; }
     [[nodiscard]] bool has_session() const noexcept { return active_.has_value(); }
     [[nodiscard]] const SessionRuntime& session() const;
     [[nodiscard]] const PersistentMainGraph& main() const noexcept { return main_; }
@@ -48,7 +51,7 @@ public:
 private:
     struct Active {
         Active(const std::filesystem::path&, const architecture::DigestBytes&, std::string_view,
-            const RuntimeConfig&, MemoryBudget&, const PersistentMainGraph&, bool resume);
+            const RuntimeConfig&, MemoryBudget&, const PersistentMainGraph&, bool resume, StorageBudget&);
         SessionStore store;
         SessionRuntime runtime;
         ExperienceRouter router;
@@ -61,6 +64,8 @@ private:
     std::filesystem::path root_;
     RuntimeConfig config_;
     MemoryBudget& memory_;
+    StorageRoot storage_root_;
+    StorageBudget storage_;
     MainSources sources_;
     PersistentMainGraph main_;
     std::optional<Active> active_;
