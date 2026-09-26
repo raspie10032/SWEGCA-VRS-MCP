@@ -1,0 +1,329 @@
+{
+  "date": "2026-09-26",
+  "baseline_commit": "f720a4f",
+  "branch": "codex/core-hardening-20260926",
+  "processor": "AMD Ryzen 7 9800X3D 8-Core Processor",
+  "compiler": "GCC 16.2.1 20260819 (Red Hat 16.2.1-2)",
+  "flags": "-std=c++20 -O3 -march=native -ffp-contract=off",
+  "background": "Palworld remained active",
+  "statistic": "Median of three run medians of block-average nanoseconds per call; not individual-call tail latency",
+  "paired_benchmark": {
+    "cpu": 6,
+    "samples_per_run": 31,
+    "calls_per_sample": 100000,
+    "runs": [
+      {
+        "version": "before",
+        "rows": [
+          {
+            "operation": "judge_1_axis",
+            "median_ns": 21.2394,
+            "p95_block_mean_ns": 26.704,
+            "min_ns": 19.6679
+          },
+          {
+            "operation": "judge_4_axes",
+            "median_ns": 51.3501,
+            "p95_block_mean_ns": 75.0294,
+            "min_ns": 45.02
+          },
+          {
+            "operation": "judge_8_axes",
+            "median_ns": 89.052,
+            "p95_block_mean_ns": 125.434,
+            "min_ns": 80.7111
+          },
+          {
+            "operation": "promotion_eligibility",
+            "median_ns": 1.64981,
+            "p95_block_mean_ns": 2.09402,
+            "min_ns": 1.55701
+          },
+          {
+            "operation": "promotion_decision",
+            "median_ns": 2.06202,
+            "p95_block_mean_ns": 2.49383,
+            "min_ns": 1.94832
+          },
+          {
+            "operation": "transaction_transition",
+            "median_ns": 2.18063,
+            "p95_block_mean_ns": 2.62662,
+            "min_ns": 1.97882
+          }
+        ]
+      },
+      {
+        "version": "after",
+        "rows": [
+          {
+            "operation": "judge_1_axis",
+            "median_ns": 21.2391,
+            "p95_block_mean_ns": 30.9832,
+            "min_ns": 18.8899
+          },
+          {
+            "operation": "judge_4_axes",
+            "median_ns": 53.9232,
+            "p95_block_mean_ns": 95.2731,
+            "min_ns": 45.5211
+          },
+          {
+            "operation": "judge_8_axes",
+            "median_ns": 132.917,
+            "p95_block_mean_ns": 174.907,
+            "min_ns": 88.8837
+          },
+          {
+            "operation": "promotion_eligibility",
+            "median_ns": 1.06871,
+            "p95_block_mean_ns": 1.48061,
+            "min_ns": 1.06661
+          },
+          {
+            "operation": "promotion_decision",
+            "median_ns": 1.81472,
+            "p95_block_mean_ns": 10.5061,
+            "min_ns": 1.18491
+          },
+          {
+            "operation": "transaction_transition",
+            "median_ns": 1.62731,
+            "p95_block_mean_ns": 4.73075,
+            "min_ns": 1.52522
+          }
+        ]
+      },
+      {
+        "version": "after",
+        "rows": [
+          {
+            "operation": "judge_1_axis",
+            "median_ns": 25.6599,
+            "p95_block_mean_ns": 55.087,
+            "min_ns": 19.1997
+          },
+          {
+            "operation": "judge_4_axes",
+            "median_ns": 63.3035,
+            "p95_block_mean_ns": 104.551,
+            "min_ns": 49.031
+          },
+          {
+            "operation": "judge_8_axes",
+            "median_ns": 126.544,
+            "p95_block_mean_ns": 171.732,
+            "min_ns": 90.1892
+          },
+          {
+            "operation": "promotion_eligibility",
+            "median_ns": 1.13801,
+            "p95_block_mean_ns": 5.45055,
+            "min_ns": 1.06831
+          },
+          {
+            "operation": "promotion_decision",
+            "median_ns": 1.72761,
+            "p95_block_mean_ns": 5.62645,
+            "min_ns": 1.18801
+          },
+          {
+            "operation": "transaction_transition",
+            "median_ns": 2.09292,
+            "p95_block_mean_ns": 3.05533,
+            "min_ns": 2.00702
+          }
+        ]
+      },
+      {
+        "version": "before",
+        "rows": [
+          {
+            "operation": "judge_1_axis",
+            "median_ns": 23.8465,
+            "p95_block_mean_ns": 84.8837,
+            "min_ns": 18.5399
+          },
+          {
+            "operation": "judge_4_axes",
+            "median_ns": 57.8374,
+            "p95_block_mean_ns": 94.0076,
+            "min_ns": 43.8778
+          },
+          {
+            "operation": "judge_8_axes",
+            "median_ns": 119.809,
+            "p95_block_mean_ns": 148.977,
+            "min_ns": 82.5183
+          },
+          {
+            "operation": "promotion_eligibility",
+            "median_ns": 1.11132,
+            "p95_block_mean_ns": 4.87254,
+            "min_ns": 1.06761
+          },
+          {
+            "operation": "promotion_decision",
+            "median_ns": 1.39441,
+            "p95_block_mean_ns": 2.66512,
+            "min_ns": 1.24851
+          },
+          {
+            "operation": "transaction_transition",
+            "median_ns": 1.61022,
+            "p95_block_mean_ns": 5.35715,
+            "min_ns": 1.52572
+          }
+        ]
+      },
+      {
+        "version": "before",
+        "rows": [
+          {
+            "operation": "judge_1_axis",
+            "median_ns": 22.8946,
+            "p95_block_mean_ns": 66.9257,
+            "min_ns": 18.6731
+          },
+          {
+            "operation": "judge_4_axes",
+            "median_ns": 59.1854,
+            "p95_block_mean_ns": 112.461,
+            "min_ns": 44.4305
+          },
+          {
+            "operation": "judge_8_axes",
+            "median_ns": 117.446,
+            "p95_block_mean_ns": 158.829,
+            "min_ns": 86.2113
+          },
+          {
+            "operation": "promotion_eligibility",
+            "median_ns": 1.09971,
+            "p95_block_mean_ns": 1.64211,
+            "min_ns": 1.06711
+          },
+          {
+            "operation": "promotion_decision",
+            "median_ns": 1.41992,
+            "p95_block_mean_ns": 2.15212,
+            "min_ns": 1.24802
+          },
+          {
+            "operation": "transaction_transition",
+            "median_ns": 1.67512,
+            "p95_block_mean_ns": 2.16692,
+            "min_ns": 1.52582
+          }
+        ]
+      },
+      {
+        "version": "after",
+        "rows": [
+          {
+            "operation": "judge_1_axis",
+            "median_ns": 24.8043,
+            "p95_block_mean_ns": 62.753,
+            "min_ns": 19.384
+          },
+          {
+            "operation": "judge_4_axes",
+            "median_ns": 62.3312,
+            "p95_block_mean_ns": 109.344,
+            "min_ns": 45.7265
+          },
+          {
+            "operation": "judge_8_axes",
+            "median_ns": 135.314,
+            "p95_block_mean_ns": 166.992,
+            "min_ns": 85.1349
+          },
+          {
+            "operation": "promotion_eligibility",
+            "median_ns": 1.55151,
+            "p95_block_mean_ns": 7.57078,
+            "min_ns": 1.06681
+          },
+          {
+            "operation": "promotion_decision",
+            "median_ns": 1.18701,
+            "p95_block_mean_ns": 3.25203,
+            "min_ns": 1.07521
+          },
+          {
+            "operation": "transaction_transition",
+            "median_ns": 1.65262,
+            "p95_block_mean_ns": 5.05865,
+            "min_ns": 1.52812
+          }
+        ]
+      }
+    ]
+  },
+  "summary": {
+    "before": {
+      "judge_1_axis": {
+        "median_ns": 22.8946,
+        "max_p95_block_mean_ns": 84.8837
+      },
+      "judge_4_axes": {
+        "median_ns": 57.8374,
+        "max_p95_block_mean_ns": 112.461
+      },
+      "judge_8_axes": {
+        "median_ns": 117.446,
+        "max_p95_block_mean_ns": 158.829
+      },
+      "promotion_eligibility": {
+        "median_ns": 1.11132,
+        "max_p95_block_mean_ns": 4.87254
+      },
+      "promotion_decision": {
+        "median_ns": 1.41992,
+        "max_p95_block_mean_ns": 2.66512
+      },
+      "transaction_transition": {
+        "median_ns": 1.67512,
+        "max_p95_block_mean_ns": 5.35715
+      }
+    },
+    "after": {
+      "judge_1_axis": {
+        "median_ns": 24.8043,
+        "max_p95_block_mean_ns": 62.753
+      },
+      "judge_4_axes": {
+        "median_ns": 62.3312,
+        "max_p95_block_mean_ns": 109.344
+      },
+      "judge_8_axes": {
+        "median_ns": 132.917,
+        "max_p95_block_mean_ns": 174.907
+      },
+      "promotion_eligibility": {
+        "median_ns": 1.13801,
+        "max_p95_block_mean_ns": 7.57078
+      },
+      "promotion_decision": {
+        "median_ns": 1.72761,
+        "max_p95_block_mean_ns": 10.5061
+      },
+      "transaction_transition": {
+        "median_ns": 1.65262,
+        "max_p95_block_mean_ns": 5.05865
+      }
+    }
+  },
+  "equivalence": {
+    "cases": 32768,
+    "match": "all status, reasons, binary64 bits and metadata identical",
+    "sha256": "b520864f93b92f52fb6ea275e6832f14256df985893602774d16f654d97cac8d"
+  },
+  "checks": {
+    "runtime_checks": 3951,
+    "compile_probes": 10,
+    "observed_hot_path_new_calls": 0,
+    "ubsan_trap": "passed",
+    "asan": "unavailable: missing libasan.so.8.0.0"
+  }
+}

@@ -26,7 +26,7 @@ struct VerificationResult final {
     const architecture::kernel::EvidenceTally& shuffled_evidence) noexcept {
     const auto judgment = architecture::kernel::judge_evidence(rules, shuffled_evidence);
     ConnectionChange change = ConnectionChange::preserve;
-    switch (judgment.status) {
+    switch (judgment.status()) {
     case architecture::kernel::EvidenceStatus::accept:
         change = ConnectionChange::strengthen;
         break;

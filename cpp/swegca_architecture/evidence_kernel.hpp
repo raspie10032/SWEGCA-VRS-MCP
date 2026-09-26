@@ -1,6 +1,7 @@
 #pragma once
 
 #include "swegca_architecture/digest_bytes.hpp"
+#include "swegca_architecture/numeric_contract.hpp"
 
 #include <array>
 #include <cmath>
@@ -74,17 +75,36 @@ struct EvidenceTally {
     std::uint64_t revision = 0;
 };
 
-struct EvidenceJudgment {
-    EvidenceStatus status = EvidenceStatus::abstain;
-    EvidenceReason reason = EvidenceReason::invalid_input;
-    double posterior_mean = 0;
-    double causal_lower_bound = 0;
-    double overall_upper_bound = 0;
-    double effective_sample_size = 0;
-    double regime_change_score = 0;
-    std::uint32_t source_diversity = 0;
-    std::uint32_t context_diversity = 0;
-    std::uint64_t revision = 0;
+// A default value is invalid. Only judge_evidence can produce another result.
+// Copying a result preserves its fields; normal callers cannot fabricate an
+// acceptance or edit a copied result. This is an API invariant, not a security
+// capability or proof that Main still owns the same current state.
+class EvidenceJudgment final {
+public:
+    constexpr EvidenceJudgment() noexcept = default;
+    [[nodiscard]] constexpr EvidenceStatus status() const noexcept { return status_; }
+    [[nodiscard]] constexpr EvidenceReason reason() const noexcept { return reason_; }
+    [[nodiscard]] constexpr double posterior_mean() const noexcept { return posterior_mean_; }
+    [[nodiscard]] constexpr double causal_lower_bound() const noexcept { return causal_lower_bound_; }
+    [[nodiscard]] constexpr double overall_upper_bound() const noexcept { return overall_upper_bound_; }
+    [[nodiscard]] constexpr double effective_sample_size() const noexcept { return effective_sample_size_; }
+    [[nodiscard]] constexpr double regime_change_score() const noexcept { return regime_change_score_; }
+    [[nodiscard]] constexpr std::uint32_t source_diversity() const noexcept { return source_diversity_; }
+    [[nodiscard]] constexpr std::uint32_t context_diversity() const noexcept { return context_diversity_; }
+    [[nodiscard]] constexpr std::uint64_t revision() const noexcept { return revision_; }
+
+private:
+    friend EvidenceJudgment judge_evidence(const EvidenceRules&, const EvidenceTally&) noexcept;
+    EvidenceStatus status_ = EvidenceStatus::abstain;
+    EvidenceReason reason_ = EvidenceReason::invalid_input;
+    double posterior_mean_ = 0;
+    double causal_lower_bound_ = 0;
+    double overall_upper_bound_ = 0;
+    double effective_sample_size_ = 0;
+    double regime_change_score_ = 0;
+    std::uint32_t source_diversity_ = 0;
+    std::uint32_t context_diversity_ = 0;
+    std::uint64_t revision_ = 0;
 };
 
 // Structure-of-arrays view of `count` claims. Axis columns are axis-major:
@@ -109,6 +129,10 @@ struct EvidenceJudgmentColumns {
     std::span<double> overall_upper_bound;
     std::span<double> effective_sample_size;
     std::span<double> regime_change_score;
+    // Optional caller-owned results for composing another core operation.
+    // Preserve the SoA outputs, and do not reconstruct a trusted judgment
+    // from their public numeric columns or run the judgment a second time.
+    std::span<EvidenceJudgment> judgments{};
 };
 
 // Validated decision rules. Only `make_evidence_rules` constructs one; the
@@ -193,14 +217,15 @@ struct Interval {
 [[nodiscard]] inline EvidenceJudgment judge_evidence(const EvidenceRules& r,
                                                      const EvidenceTally& t) noexcept {
     EvidenceJudgment out;
-    out.source_diversity = t.source_diversity;
-    out.context_diversity = t.context_diversity;
-    out.revision = t.revision;
+    out.source_diversity_ = t.source_diversity;
+    out.context_diversity_ = t.context_diversity;
+    out.revision_ = t.revision;
     if (!rules_valid(r) || t.revision == 0 || t.recent_count > r.recent_window_ ||
         !finite_count(t.recent_sum) || t.recent_sum > t.recent_count)
         return out;  // abstain, invalid_input
     for (std::size_t axis = 0; axis < r.axis_count_; ++axis)
-        if (!finite_count(t.axis_support[axis]) || !finite_count(t.axis_refute[axis]))
+        if (!finite_count(t.axis_support[axis]) || !finite_count(t.axis_refute[axis]) ||
+            t.axis_source_diversity[axis] > t.source_diversity)
             return out;
 
     double supports = 0;
@@ -235,30 +260,30 @@ struct Interval {
     if (!std::isfinite(posterior_mean) || !std::isfinite(causal_lower) ||
         !std::isfinite(overall_upper) || !std::isfinite(regime_score))
         return out;
-    out.posterior_mean = posterior_mean;
-    out.causal_lower_bound = causal_lower;
-    out.overall_upper_bound = overall_upper;
-    out.effective_sample_size = samples;
-    out.regime_change_score = regime_score;
+    out.posterior_mean_ = posterior_mean;
+    out.causal_lower_bound_ = causal_lower;
+    out.overall_upper_bound_ = overall_upper;
+    out.effective_sample_size_ = samples;
+    out.regime_change_score_ = regime_score;
 
     using S = EvidenceStatus;
     using R = EvidenceReason;
     if (short_axis) {
-        out.status = S::abstain, out.reason = R::minimum_effective_samples;
+        out.status_ = S::abstain, out.reason_ = R::minimum_effective_samples;
     } else if (t.source_diversity < r.minimum_source_diversity_) {
-        out.status = S::abstain, out.reason = R::source_diversity;
+        out.status_ = S::abstain, out.reason_ = R::source_diversity;
     } else if (narrow_axis) {
-        out.status = S::abstain, out.reason = R::axis_source_diversity;
+        out.status_ = S::abstain, out.reason_ = R::axis_source_diversity;
     } else if (t.context_diversity < r.minimum_context_diversity_) {
-        out.status = S::abstain, out.reason = R::context_diversity;
-    } else if (out.regime_change_score >= r.regime_change_threshold_) {
-        out.status = S::abstain, out.reason = R::regime_change_suspected;
-    } else if (out.causal_lower_bound > r.threshold_) {
-        out.status = S::accept, out.reason = R::causal_lower_bound;
-    } else if (out.overall_upper_bound <= r.threshold_) {
-        out.status = S::reject, out.reason = R::upper_bound_below_threshold;
+        out.status_ = S::abstain, out.reason_ = R::context_diversity;
+    } else if (out.regime_change_score_ >= r.regime_change_threshold_) {
+        out.status_ = S::abstain, out.reason_ = R::regime_change_suspected;
+    } else if (out.causal_lower_bound_ > r.threshold_) {
+        out.status_ = S::accept, out.reason_ = R::causal_lower_bound;
+    } else if (out.overall_upper_bound_ <= r.threshold_) {
+        out.status_ = S::reject, out.reason_ = R::upper_bound_below_threshold;
     } else {
-        out.status = S::abstain, out.reason = R::uncertain;
+        out.status_ = S::abstain, out.reason_ = R::uncertain;
     }
     return out;
 }
@@ -313,7 +338,8 @@ template <class T>
         return false;
     if (out.status.size() != n || out.reason.size() != n || out.posterior_mean.size() != n ||
         out.causal_lower_bound.size() != n || out.overall_upper_bound.size() != n ||
-        out.effective_sample_size.size() != n || out.regime_change_score.size() != n)
+        out.effective_sample_size.size() != n || out.regime_change_score.size() != n ||
+        (!out.judgments.empty() && out.judgments.size() != n))
         return false;
     std::array<EvidenceByteRange, 8> inputs;
     if (!evidence_byte_range(in.axis_support, inputs[0]) ||
@@ -325,14 +351,15 @@ template <class T>
         !evidence_byte_range(in.recent_sum, inputs[6]) ||
         !evidence_byte_range(in.revision, inputs[7]))
         return false;
-    std::array<EvidenceByteRange, 7> outputs;
+    std::array<EvidenceByteRange, 8> outputs;
     if (!evidence_byte_range(out.status, outputs[0]) ||
         !evidence_byte_range(out.reason, outputs[1]) ||
         !evidence_byte_range(out.posterior_mean, outputs[2]) ||
         !evidence_byte_range(out.causal_lower_bound, outputs[3]) ||
         !evidence_byte_range(out.overall_upper_bound, outputs[4]) ||
         !evidence_byte_range(out.effective_sample_size, outputs[5]) ||
-        !evidence_byte_range(out.regime_change_score, outputs[6]))
+        !evidence_byte_range(out.regime_change_score, outputs[6]) ||
+        !evidence_byte_range(out.judgments, outputs[7]))
         return false;
     for (std::size_t output = 0; output < outputs.size(); ++output) {
         for (const auto input : inputs)
@@ -353,13 +380,14 @@ template <class T>
         tally.recent_sum = in.recent_sum[item];
         tally.revision = in.revision[item];
         const auto judged = judge_evidence(rules, tally);
-        out.status[item] = judged.status;
-        out.reason[item] = judged.reason;
-        out.posterior_mean[item] = judged.posterior_mean;
-        out.causal_lower_bound[item] = judged.causal_lower_bound;
-        out.overall_upper_bound[item] = judged.overall_upper_bound;
-        out.effective_sample_size[item] = judged.effective_sample_size;
-        out.regime_change_score[item] = judged.regime_change_score;
+        out.status[item] = judged.status();
+        out.reason[item] = judged.reason();
+        out.posterior_mean[item] = judged.posterior_mean();
+        out.causal_lower_bound[item] = judged.causal_lower_bound();
+        out.overall_upper_bound[item] = judged.overall_upper_bound();
+        out.effective_sample_size[item] = judged.effective_sample_size();
+        out.regime_change_score[item] = judged.regime_change_score();
+        if (!out.judgments.empty()) out.judgments[item] = judged;
     }
     return true;
 }

@@ -25,6 +25,7 @@ namespace swegca::architecture::kernel {
 // literal in the author's journal.
 // SWEGCA: docs/SWEGCA_CPP_ARCHITECTURE_MODULE_INVENTORY_20260923.md@cefdc3fce8b5c605166d668924baa5d4a6c49dc0:177-180
 enum class MemoryTransactionStage : std::uint8_t {
+    invalid = 0,           // failed-call sentinel, never a journal stage
     prepared = 1,          // :99
     memory_committed = 2,  // :265
     state_committed = 3,   // :270
@@ -69,14 +70,16 @@ enum class MemoryTransactionEdge : std::uint8_t {
 // rollback_pending. The author changes a stored stage only when it still
 // equals the expected one (:122-129, :163-165), which is `from` here. Any
 // other pair, or a value outside the enumerations, has no edge: the function
-// returns false and leaves `out` unchanged, and the Main shell must fail
-// closed on false. rolled_back has no edge out.
+// returns false and resets `out` to invalid; a failed call never preserves a
+// previous completed stage. Main must fail closed on false. rolled_back has
+// no edge out. The invalid sentinel is not a persistent transaction stage.
 // Lineage: direct — every stage change the author makes, no other.
 // SWEGCA: src/tinylm_slicer/mosaic_world_memory_transaction.py@3bddcb7:114-183
 // SWEGCA: src/tinylm_slicer/mosaic_world_memory_transaction.py@3bddcb7:212-361
 [[nodiscard]] constexpr bool next_memory_transaction_stage(MemoryTransactionStage from,
                                                            MemoryTransactionEdge edge,
                                                            MemoryTransactionStage& out) noexcept {
+    out = MemoryTransactionStage::invalid;
     if (!memory_transaction_stage_valid(from)) return false;
     MemoryTransactionStage next = from;
     switch (edge) {

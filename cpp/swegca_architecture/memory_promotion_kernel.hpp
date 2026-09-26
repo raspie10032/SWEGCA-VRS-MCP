@@ -30,6 +30,7 @@ enum class MemoryTier : std::uint8_t {
 };
 
 enum class MemoryPromotionAction : std::uint8_t {
+    none = 0,  // invalid result; never an instruction to mutate memory
     quarantine = 1,
     retract = 2,
     promote = 3,
@@ -39,7 +40,7 @@ enum class MemoryPromotionAction : std::uint8_t {
 
 // The author's reason is the judgment's own reason, or "incomplete_provenance".
 // Values 1-8 equal EvidenceReason's, so the judgment's reason carries over
-// unchanged; EvidenceReason::invalid_input (9) never reaches a decision.
+// unchanged; invalid_input denotes a failed call and grants no action.
 enum class MemoryPromotionReason : std::uint8_t {
     minimum_effective_samples = 1,
     source_diversity = 2,
@@ -49,14 +50,15 @@ enum class MemoryPromotionReason : std::uint8_t {
     causal_lower_bound = 6,
     upper_bound_below_threshold = 7,
     uncertain = 8,
+    invalid_input = 9,
     incomplete_provenance = 10,
 };
 
 struct MemoryPromotionDecision {
     MemoryTier previous_tier = MemoryTier::none;
     MemoryTier next_tier = MemoryTier::none;
-    MemoryPromotionAction action = MemoryPromotionAction::record_episode;
-    MemoryPromotionReason reason = MemoryPromotionReason::uncertain;
+    MemoryPromotionAction action = MemoryPromotionAction::none;
+    MemoryPromotionReason reason = MemoryPromotionReason::invalid_input;
     bool semantic_read_allowed = false;
 };
 
@@ -86,22 +88,19 @@ struct SemanticPromotionThresholds {
 // This reproduces only the linked-promotion evidence threshold checks. Main
 // must separately authenticate the EvidenceDecision, verify the current state
 // against the write receipt, check candidate references, and own the native
-// transaction and capability. It does not add a second judgment-validity rule.
-// The source refuses a lower bound only when `value < minimum`; NaN would
-// pass that one comparison. This `>=` fails closed for NaN. An authoritative
-// accepted judgment cannot carry NaN: its accumulator requires a lower bound
-// above its threshold, which is false for NaN. The difference is unreachable
-// after Main authenticates that judgment.
+// transaction and capability. EvidenceJudgment now carries the unchanged
+// result of judge_evidence; its public default is invalid and cannot pass.
+// No hashing, allocation, or second evidence judgment is needed here.
 // Lineage: direct — the author's accepted-status and three minima checks.
 // SWEGCA: src/tinylm_slicer/mosaic_world_memory_transaction.py@3bddcb7:226-233
 [[nodiscard]] constexpr bool semantic_promotion_evidence_eligible(
     const EvidenceJudgment& judgment,
     const SemanticPromotionThresholds& thresholds) noexcept {
     return semantic_promotion_thresholds_valid(thresholds) &&
-           judgment.status == EvidenceStatus::accept &&
-           judgment.causal_lower_bound >= thresholds.minimum_causal_lower_bound &&
-           judgment.source_diversity >= thresholds.minimum_source_diversity &&
-           judgment.context_diversity >= thresholds.minimum_context_diversity;
+           judgment.status() == EvidenceStatus::accept &&
+           judgment.causal_lower_bound() >= thresholds.minimum_causal_lower_bound &&
+           judgment.source_diversity() >= thresholds.minimum_source_diversity &&
+           judgment.context_diversity() >= thresholds.minimum_context_diversity;
 }
 
 // Lineage: native mechanism — the author's tier and accumulator values are
@@ -143,16 +142,18 @@ struct SemanticPromotionThresholds {
 // change or without a verified counterfactual is quarantined; anything else
 // is recorded as an episode. An input the author cannot reach (see
 // memory_promotion_input_valid) yields no decision: the function returns
-// false and leaves `out` unchanged (codex 2026-09-24 02:31). The Main shell
-// must fail closed on false: no promotion authority, no store change, and no
-// stale `out` read as a decision (codex 02:35).
+// false and resets `out` to an invalid, no-action result. Failed calls cannot
+// leave a previous semantic-read permission in the output. Main still checks
+// the return and owns any mutation or authorization.
 // SWEGCA: src/tinylm_slicer/mosaic_memory_promotion.py@3bddcb7:193-246
 [[nodiscard]] constexpr bool decide_memory_promotion(MemoryTier current,
-                                                     EvidenceStatus status,
-                                                     EvidenceReason reason,
+                                                     const EvidenceJudgment& judgment,
                                                      bool counterfactual_verified,
                                                      bool provenance_complete,
                                                      MemoryPromotionDecision& out) noexcept {
+    out = {};
+    const auto status = judgment.status();
+    const auto reason = judgment.reason();
     if (!memory_promotion_input_valid(current, status, reason))
         return false;
     const auto carried = static_cast<MemoryPromotionReason>(reason);
