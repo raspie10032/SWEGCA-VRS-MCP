@@ -59,7 +59,7 @@ Connection inheritance preserves per-experience core admission checks and sets
 the same initial candidate revision as the former repeated-append path. The
 candidate still shuffles every actual old and new experience and reruns the
 same core reduction and verdict. It does not inherit an accumulated tally or
-skip older observations. Origin-store reference arrays and refinement reports
+skip older observations. Origin-store ranges and refinement reports
 are still separately allocated; this does not make the whole merge constant
 space or implement concurrent reader snapshots/region graph partitioning.
 
@@ -78,3 +78,24 @@ This is a prefix-metadata allocation result, not a whole-merge/RSS saving claim.
 Normal/UBSan connection checks: 12907. Main graph: 3746 (742 allocation failure
 points); parallel Main: 1272 (223 failure points); persistent Main: 174. The
 original SWEGCA oracle still matches 15 shuffled batches / 2038 observations.
+
+
+## Main original-source ranges
+
+Each connection now retains one exclusive-end range per nonempty incoming
+source, rather than repeating the source store pointer and read limit for each
+experience. Appending experiences keeps their exact ordering and locations.
+Replay checks the connection's observation count, then binary-searches the first
+range ending after the selected index. The existing SWEGCA source-readability
+check and exact original-location verification still apply before returning it.
+
+Ranges are candidate-owned and published with the same atomic Main merge. A
+failed candidate cannot change prior ranges. Recovery reconstructs the ranges
+from existing source merges; no journal or original format changes. Source stores
+must still outlive Main reads. This reduces provenance-reference metadata, not
+the observation sequence or the full shuffle/core reduction work.
+
+Regression coverage replays every index across two source ranges (16 and 64
+observations), also checking a separate connection and both out-of-range bounds.
+Existing allocation-failure, parallel merge and persistent recovery tests cover
+the same publication paths.

@@ -1,5 +1,6 @@
 #include "vrs/main_graph.hpp"
 #include "swegca_architecture/sha256.hpp"
+#include <algorithm>
 #include <thread>
 #include <exception>
 
@@ -57,11 +58,12 @@ bool MainGraph::merge_impl(const SessionRuntime& source, std::uint64_t seed, std
             candidate.origins.assign(task.previous->origins.begin(), task.previous->origins.end());
         }
         const auto added = task.incoming->state().experiences();
-        candidate.origins.reserve(candidate.origins.size() + added.size());
+        if (!added.empty()) candidate.origins.reserve(candidate.origins.size() + 1);
         for (std::size_t index = 0; index < added.size(); ++index) {
             candidate.connection.append(added[index]);
-            candidate.origins.push_back({&source.store_, source.read_limit_});
         }
+        if (!added.empty())
+            candidate.origins.push_back({&source.store_, source.read_limit_, candidate.connection.experiences().size()});
         // Each connection keeps its exact serial shuffle and SWEGCA reduction.
         // Only independent connections run concurrently, into private candidates.
         candidate.report.emplace(candidate.connection.refine(seed, step));
@@ -121,9 +123,13 @@ const ConnectionRefinement* MainGraph::refinement(const DigestBytes& identity) c
 }
 StoredExperience MainGraph::replay(const DigestBytes& identity, std::size_t index) const {
     const auto found = connections_.find(identity);
-    if (found == connections_.end() || index >= found->second.origins.size())
+    if (found == connections_.end() || index >= found->second.connection.experiences().size())
         throw std::out_of_range("Main original selection");
-    const auto& origin = found->second.origins[index];
+    const auto& origins = found->second.origins;
+    const auto selected = std::upper_bound(origins.begin(), origins.end(), index,
+        [](std::size_t position, const Origin& range) { return position < range.end; });
+    if (selected == origins.end()) throw std::logic_error("Main original source range missing");
+    const auto& origin = *selected;
     if (!main_session_readable(origin.store->phase(), origin.store->usable()))
         throw std::logic_error("Main original source unavailable");
     auto result = origin.store->read(found->second.connection.experiences()[index].original(), origin.read_limit);

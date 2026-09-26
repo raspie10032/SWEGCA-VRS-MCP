@@ -82,6 +82,14 @@ int main(){
   CHECK(a.find(id(10))->head()==a_head&&b.find(id(10))->head()==b_head);
   CHECK(graph.replay(id(10),16).location()==b.find(id(10))->state().experiences()[0].original());
   CHECK(graph.replay(id(10),0).location()==first);
+  for(std::size_t index=0;index<80;++index){
+   const auto expected=index<16?a.find(id(10))->state().experiences()[index].original():
+       b.find(id(10))->state().experiences()[index-16].original();
+   CHECK(graph.replay(id(10),index).location()==expected);
+  }
+  for(std::size_t index=0;index<16;++index)
+   CHECK(graph.replay(id(11),index).location()==b.find(id(11))->state().experiences()[index].original());
+  throws<std::out_of_range>([&]{(void)graph.replay(id(11),16);});
   CHECK(!graph.merge(b,8,100001)&&graph.generation()==2);
   throws<std::out_of_range>([&]{(void)graph.replay(id(10),80);});
   auto bad_store=SessionStore::create(root,id(3),"bad",65536,source_memory);SessionRuntime bad(bad_store,source_memory,8192);

@@ -30,7 +30,8 @@ private:
     using MergeSink = void (*)(void*, const architecture::DigestBytes&, const ExperienceLocation&,
         const architecture::DigestBytes&, std::uint64_t, std::uint64_t, std::uint64_t);
     bool merge_impl(const SessionRuntime&, std::uint64_t, std::uint64_t, MergeSink, void*);
-    struct Origin { const SessionStore* store; std::uint64_t read_limit; };
+    // Consecutive originals from one source share a store and read bound.
+    struct Origin { const SessionStore* store; std::uint64_t read_limit; std::size_t end; };
     struct Entry {
         Entry(const architecture::DigestBytes& identity, double strength,
             const architecture::kernel::EvidenceRules& rules, MemoryBudget& memory);
