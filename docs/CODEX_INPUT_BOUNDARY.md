@@ -55,6 +55,45 @@
 앱의 과거 transcript를 읽는 구현만으로 선행 입력 훅을 대체하지 않는다. 훅 생성·등록과 실제
 실행은 별도 상태이며, 사용자의 신뢰 설정을 우회해 자동 승인하지 않는다.
 
+## 실제 데스크톱 내장본 재확인
+
+실행 중인 프로세스의 `/proc/PID/exe`를 확인한 결과 현재 데스크톱은
+`/usr/lib/chatgpt/resources/codex`를 사용한다. 이 바이너리의 `--version`은
+`codex-cli 0.155.0-alpha.9.2`다. 위 최초 조사에서 사용한 PATH의 `codex`는
+별도 standalone 설치본 `0.153.4`이므로 데스크톱 연결 계약을 그것만으로 확정하면 안 된다.
+프로세스 인자, 환경 변수, 인증 파일, 대화 본문은 읽지 않았다.
+
+내장본으로 `app-server generate-json-schema --out build/codex-desktop-schema`를 실행했다.
+
+| 파일 | 데스크톱 SHA-256 | standalone 스키마와 동일 |
+| --- | --- | --- |
+| `v2/HooksListResponse.json` | `891dd10ef7f78e59631fce05fff2becddb8004b3c0338dbbbd6b4f17ef1fa64f` | 예 |
+| `v2/TurnStartParams.json` | `2dfcf68705896fadc344ccfeb2e9fe5a6bcbbb8b9a90cf449ce232b636daf05a` | 아니오 |
+| `v2/TurnSteerParams.json` | `857e7a2b061ae46ed6aedea6a5fddd3a6ce14f0334bf7eafaf10d4cbe68ec78b` | 아니오 |
+| `ServerNotification.json` | `df70f8f8ded90d8da63c744ccfef7018223d99e918e5e0aefa0d90856a7f67cc` | 아니오 |
+
+내장본 `turn/start`에는 `disabledPluginIds`, `turn/steer`에는 `clientUserMessageId`가
+추가돼 있다. hook 목록 자체가 동일하다는 사실과 전체 입력·이벤트 프로토콜이 동일하다는
+주장은 구분해야 한다. 현재 도구 목록에는 임의의 선행 입력 훅이나 app-server 이벤트 구독을
+설치하는 도구가 없었다. 생성 스키마 확인은 실제 데스크톱 연결·이벤트 전달의 증거가 아니다.
+
+## SessionEnd를 VRS 명시적 종료로 치환하지 않는다
+
+[현재 공식 Hooks 문서](https://learn.chatgpt.com/docs/hooks#sessionend)는 SessionEnd가
+명시적 대화 보관·삭제 외에도 앱 정상 종료 및 클라이언트가 열지 않은 채 30분 유휴 상태일 때
+발생한다고 설명한다. `reason`은 현재 모두 `other`다. 따라서 이 훅만으로 사용자의 명시적
+종료와 자동 종료를 식별할 수 없다. 이전의 “명시적 종료 경로” 요구를 SessionEnd라는 이름만
+보고 충족했다고 판단하면 사용자가 금지한 자동 유휴 병합이 생긴다.
+
+연결 시 SessionEnd만으로 `swegca/end`를 보내지 않는다. VRS 종료를 확정하는 명시적
+호스트 입력을 별도로 확보해야 한다. `turn/completed`, 창 닫힘, EOF, 유휴, 압축 후
+SessionStart도 VRS 종료 증거로 사용하지 않는다. 이 문서 변경은 새로운 종료 기능이나
+추측 판정을 구현한 것이 아니라 사용자 종료 제약을 실제 호스트 신호에 대조한 결과다.
+
+사용자에게 실제 통합 대상이 현재 데스크톱인지 별도 app-server 클라이언트인지 질문을
+전달했다. 둘은 같은 배포·연결 작업이 아니므로 선택 전 데스크톱 파일을 수정하거나 별도
+클라이언트를 실제 앱 연결의 대체물로 설치하지 않는다. 서비스와 훅 설정은 변경하지 않았다.
+
 ## 이번 확인이 증명하지 않는 것
 
 현재 데스크톱 작업에 VRS 훅이 설치됐거나, 세션 전체가 자동 수집되거나, 사용자 입력부터
