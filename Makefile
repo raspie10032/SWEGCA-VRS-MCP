@@ -48,7 +48,10 @@ $(BUILD)/session-runtime-tests: tests/session_runtime_tests.cpp $(VRS_SOURCES) $
 $(BUILD)/main-graph-tests: tests/main_graph_tests.cpp cpp/vrs/main_graph.cpp $(VRS_SOURCES) $(CORE_SOURCES) $(CORE_HEADERS) $(VRS_HEADERS) | $(BUILD)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< cpp/vrs/main_graph.cpp $(VRS_SOURCES) $(CORE_SOURCES) -Wl,--wrap=pread -Wl,--wrap=pwrite -o $@
 
-check: $(BUILD)/core-tests $(BUILD)/vrs-tests $(BUILD)/experience-block-tests $(BUILD)/memory-budget-tests $(BUILD)/connection-tests $(BUILD)/session-tests $(BUILD)/persistent-connection-tests $(BUILD)/catalog-tests $(BUILD)/session-runtime-tests $(BUILD)/main-graph-tests
+$(BUILD)/persistent-main-tests: tests/persistent_main_tests.cpp cpp/vrs/persistent_main_graph.cpp cpp/vrs/main_graph.cpp $(VRS_SOURCES) $(CORE_SOURCES) $(CORE_HEADERS) $(VRS_HEADERS) | $(BUILD)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< cpp/vrs/persistent_main_graph.cpp cpp/vrs/main_graph.cpp $(VRS_SOURCES) $(CORE_SOURCES) -Wl,--wrap=pwrite -Wl,--wrap=fdatasync -o $@
+
+check: $(BUILD)/core-tests $(BUILD)/vrs-tests $(BUILD)/experience-block-tests $(BUILD)/memory-budget-tests $(BUILD)/connection-tests $(BUILD)/session-tests $(BUILD)/persistent-connection-tests $(BUILD)/catalog-tests $(BUILD)/session-runtime-tests $(BUILD)/main-graph-tests $(BUILD)/persistent-main-tests
 	./$(BUILD)/core-tests
 	./$(BUILD)/vrs-tests
 	./$(BUILD)/experience-block-tests
@@ -59,10 +62,11 @@ check: $(BUILD)/core-tests $(BUILD)/vrs-tests $(BUILD)/experience-block-tests $(
 	./$(BUILD)/catalog-tests
 	./$(BUILD)/session-runtime-tests
 	./$(BUILD)/main-graph-tests
+	./$(BUILD)/persistent-main-tests
 	CXX="$(CXX)" python3 tests/compile_contract.py
 
 bench: $(BUILD)/core-bench
 	./$(BUILD)/core-bench
 
 clean:
-	rm -f $(BUILD)/core-tests $(BUILD)/core-bench $(BUILD)/vrs-tests $(BUILD)/experience-block-tests $(BUILD)/memory-budget-tests $(BUILD)/connection-tests $(BUILD)/session-tests $(BUILD)/persistent-connection-tests $(BUILD)/catalog-tests $(BUILD)/session-runtime-tests $(BUILD)/main-graph-tests
+	rm -f $(BUILD)/core-tests $(BUILD)/core-bench $(BUILD)/vrs-tests $(BUILD)/experience-block-tests $(BUILD)/memory-budget-tests $(BUILD)/connection-tests $(BUILD)/session-tests $(BUILD)/persistent-connection-tests $(BUILD)/catalog-tests $(BUILD)/session-runtime-tests $(BUILD)/main-graph-tests $(BUILD)/persistent-main-tests

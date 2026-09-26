@@ -1,4 +1,5 @@
 #include "vrs/main_graph.hpp"
+#include "swegca_architecture/sha256.hpp"
 
 namespace swegca::vrs {
 using namespace architecture;
@@ -12,6 +13,10 @@ MainGraph::MainGraph(MemoryBudget& memory, double initial_strength, const Eviden
     if (!finite_count(initial_strength)) throw std::invalid_argument("invalid Main initial strength");
 }
 bool MainGraph::merge(const SessionRuntime& source, std::uint64_t seed, std::uint64_t step) {
+    return merge_impl(source, seed, step, nullptr, nullptr);
+}
+bool MainGraph::merge_impl(const SessionRuntime& source, std::uint64_t seed, std::uint64_t step,
+    MergeSink sink, void* context) {
     if (!main_session_readable(source.phase(), source.usable()))
         throw std::logic_error("Main merge requires an ended published session");
     const auto identity = source.store_.identity();
@@ -49,6 +54,17 @@ bool MainGraph::merge(const SessionRuntime& source, std::uint64_t seed, std::uin
         candidate.report.emplace(candidate.connection.refine(seed, step));
         if (!candidate.report->result().strength().valid())
             throw std::runtime_error("SWEGCA rejected Main strength projection");
+    }
+    if (sink) {
+        Sha256 hash; hash.update("SWEGCA Main merge result v1"); hash.update(policy_digest_);
+        for (const auto& [id, candidate] : pending) {
+            hash.update(id); hash.update(refinement_digest(*candidate.report));
+            DigestBytes originals{};
+            for (const auto& value : candidate.connection.experiences())
+                originals = extend_experience_digest(originals, value.original());
+            hash.update(originals);
+        }
+        sink(context, identity, source.catalog_.root(), hash.finish(), generation_ + 1, seed, step);
     }
     // No allocations or fallible persistence follow this point. Transfer the
     // prepared nodes under Main's serialized ownership, then publish generation.

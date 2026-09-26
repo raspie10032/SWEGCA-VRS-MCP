@@ -23,6 +23,10 @@ public:
     [[nodiscard]] std::uint64_t generation() const noexcept { return generation_; }
     [[nodiscard]] std::size_t source_count() const noexcept { return merged_.size(); }
 private:
+    friend class PersistentMainGraph;
+    using MergeSink = void (*)(void*, const architecture::DigestBytes&, const ExperienceLocation&,
+        const architecture::DigestBytes&, std::uint64_t, std::uint64_t, std::uint64_t);
+    bool merge_impl(const SessionRuntime&, std::uint64_t, std::uint64_t, MergeSink, void*);
     struct Origin { const SessionStore* store; std::uint64_t read_limit; };
     struct Entry {
         Entry(const architecture::DigestBytes& identity, double strength,

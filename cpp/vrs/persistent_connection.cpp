@@ -150,6 +150,8 @@ Event decode(const StoredExperience& stored, std::string_view session) {
     return event;
 }
 
+}  // namespace
+
 DigestBytes refinement_digest(const ConnectionRefinement& report) {
     Sha256 hash;
     hash.update("SWEGCA connection refinement v1"); hash.update(report.connection());
@@ -174,6 +176,7 @@ DigestBytes refinement_digest(const ConnectionRefinement& report) {
     for (const auto& sample : report.samples()) { number(sample.experience_index); number(static_cast<unsigned>(sample.use)); }
     return hash.finish();
 }
+namespace {
 Event read_event(SessionStore& session, const ExperienceLocation& location) {
     // Fixed schema plus session metadata bounds the read before allocation.
     const auto limit = ExperienceBlock::record_overhead + session.name().size() + source.size() + media.size() + 256;

@@ -40,6 +40,9 @@ private:
     std::pmr::vector<RefinementSample> samples_;
 };
 
+// Canonical digest of the complete recorded shuffle/core result.
+[[nodiscard]] architecture::DigestBytes refinement_digest(const ConnectionRefinement& report);
+
 // Main owns and serializes each connection. Workers may own different
 // connections; this object cannot be copied/moved into a second state owner.
 // No precomputed tally or externally produced verdict can be installed here.
