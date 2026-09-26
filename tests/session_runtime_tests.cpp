@@ -1,4 +1,5 @@
 #include "vrs/session_runtime.hpp"
+#include "swegca_architecture/input_cue.hpp"
 
 #include <cstdio>
 #include <cstdlib>
@@ -10,6 +11,15 @@ using namespace swegca::architecture::kernel;
 using namespace swegca::vrs;
 namespace fs = std::filesystem;
 static unsigned checks = 0;
+static std::uint64_t reads = 0, writes = 0;
+extern "C" ssize_t __real_pread(int, void*, size_t, off_t);
+extern "C" ssize_t __wrap_pread(int fd, void* data, size_t count, off_t offset) {
+    ++reads; return __real_pread(fd, data, count, offset);
+}
+extern "C" ssize_t __real_pwrite(int, const void*, size_t, off_t);
+extern "C" ssize_t __wrap_pwrite(int fd, const void* data, size_t count, off_t offset) {
+    ++writes; return __real_pwrite(fd, data, count, offset);
+}
 #define CHECK(e) do { ++checks; if (!(e)) { std::fprintf(stderr, "FAIL %d: %s\n", __LINE__, #e); std::abort(); } } while (false)
 template<class E, class F> void throws(F f) { bool caught=false; try { f(); } catch (const E&) { caught=true; } CHECK(caught); }
 DigestBytes id(unsigned n) { DigestBytes d{}; d[0]=std::byte(n); return d; }
@@ -36,8 +46,9 @@ int main() {
         SessionRuntime old(old_store,memory,8192);
         old.define_connection(id(10),1.0,policy);
         CHECK(old.find(id(10))==nullptr); // Unobserved definitions are not recall candidates.
-        auto raw=old.record(input("old",0));
-        CHECK(old_store.read(raw,8192).view().content.size()==payload.size());
+        auto raw_input=input("old",0); raw_input.content={};
+        auto raw=old.retain_input(raw_input,0.75,policy,0,0);
+        CHECK(evidence_payload(old_store.read(raw.original,8192)).content.empty());
         for (unsigned n=1;n<=16;++n) {
             auto result=observe(old,"old",10,n,EvidenceOutcome::support);
             if (n==1) first=result.original;
@@ -55,6 +66,13 @@ int main() {
         old.end();
         throws<std::logic_error>([&] { router.mount_main(old); });
         old.publish_originals(); router.mount_main(old); router.mount_main(old);
+        const auto reads_before=reads, writes_before=writes;
+        auto natural=router.input("application/octet-stream",std::as_bytes(std::span(payload)));
+        CHECK(reads==reads_before && writes==writes_before);
+        CHECK(natural.familiar() && !natural.temporary() && natural.matches().size()==16);
+        CHECK(router.replay(natural,0).location()==first);
+        CHECK(reads>reads_before && writes==writes_before);
+        CHECK(!router.input("text/plain",std::as_bytes(std::span(payload))).familiar());
         auto recalled=router.recall(id(10));
         CHECK(!recalled.temporary() && recalled.size()==1);
         auto replayed=router.replay(recalled,0,0);
@@ -70,8 +88,12 @@ int main() {
         auto preferred=router.recall(id(10));
         CHECK(preferred.temporary() && preferred.size()==1);
         CHECK(router.replay(preferred,0,0).location()==local.original);
+        auto natural_local=router.input("application/octet-stream",std::as_bytes(std::span(payload)));
+        CHECK(natural_local.temporary() && natural_local.matches().size()==1);
+        CHECK(router.replay(natural_local,0).location()==local.original);
         (void)observe(live,"live",10,2,EvidenceOutcome::support);
         throws<std::logic_error>([&] { (void)router.replay(preferred,0,0); });
+        throws<std::logic_error>([&] { (void)router.replay(natural_local,0); });
         CHECK(router.replay(router.recall(id(10)),0,0).location()==local.original);
         CHECK(old.find(id(10))->state().strength()==saved_strength);
         // Separate Main session lineage must not overwrite the first one.
@@ -87,13 +109,29 @@ int main() {
         ExperienceRouter fallback(blank,memory); fallback.mount_main(old); fallback.mount_main(other);
         CHECK(fallback.recall(id(10)).size()==2);
         CHECK(fallback.replay(fallback.recall(id(10)),0,0).location()==first);
+        CHECK(fallback.input("application/octet-stream",std::as_bytes(std::span(payload))).matches().size()==32);
+        // A natural utterance without a known outcome remains insufficient,
+        // but is retained through the actual shuffle/core/publication path.
+        const std::string utterance="스웨카가 셔플값을 검증한다.";
+        const OriginalExperienceView message{25,25,"live","user","text/plain",std::as_bytes(std::span(utterance))};
+        CHECK(!router.input(message.media_type,message.content).familiar());
+        auto retained=live.retain_input(message,0.75,policy,25,25);
+        CHECK(retained.refinement.result().verification().judgment().status()==EvidenceStatus::abstain);
+        CHECK(retained.refinement.result().strength().current()==0.75);
+        auto known=router.input(message.media_type,message.content);
+        CHECK(known.temporary() && known.matches().size()==1);
+        auto selected=router.replay(known,0);
+        CHECK(selected.location()==retained.original);
+        CHECK(evidence_payload(selected).content.size()==message.content.size());
+        CHECK(live.find(input_cue(message.media_type,message.content))->state().experiences()[0].value().outcome==EvidenceOutcome::insufficient);
         // Temporary write failure must not become a false miss and Main fallback.
         blank.define_connection(id(10),1.0,policy);
         std::string huge(100000,'x'); auto oversized=input("blank",1);
         oversized.content=std::as_bytes(std::span(huge));
-        throws<std::length_error>([&] { (void)blank.record(oversized); });
+        throws<std::length_error>([&] { (void)blank.retain_input(oversized,0.75,policy,1,1); });
         CHECK(!blank.usable());
         throws<std::logic_error>([&] { (void)fallback.recall(id(10)); });
+        throws<std::logic_error>([&] { (void)fallback.input("application/octet-stream",std::as_bytes(std::span(payload))); });
     }
     CHECK(memory.used()==0);
     {
@@ -106,6 +144,9 @@ int main() {
         SessionRuntime live(live_store,memory,8192);
         ExperienceRouter router(live,memory); router.mount_main(old);
         CHECK(router.recall(id(10)).temporary());
+        CHECK(router.input("application/octet-stream",std::as_bytes(std::span(payload))).matches().size()==2);
+        const std::string utterance="스웨카가 셔플값을 검증한다.";
+        CHECK(router.input("text/plain",std::as_bytes(std::span(utterance))).familiar());
         auto result=observe(live,"live",10,3,EvidenceOutcome::support);
         CHECK(live.find(id(10))->head()!=ExperienceLocation{});
         CHECK(result.refinement.after_revision()>result.refinement.before_revision());

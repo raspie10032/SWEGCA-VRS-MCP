@@ -57,6 +57,13 @@ int main(){
   }
  }
  auto bad=tally();bad.revision=0;expect_invalid(rules,bad);
+ const auto empty=judge_evidence(rules,EvidenceTally{});
+ CHECK(empty.status()==EvidenceStatus::abstain);
+ CHECK(empty.reason()==EvidenceReason::minimum_effective_samples);
+ CHECK(empty.posterior_mean()==0.5 && empty.effective_sample_size()==0);
+ CHECK(!semantic_promotion_evidence_eligible(empty,SemanticPromotionThresholds{}));
+ auto impossible_empty=EvidenceTally{};impossible_empty.source_diversity=1;expect_invalid(rules,impossible_empty);
+ impossible_empty={};impossible_empty.recent_count=1;expect_invalid(rules,impossible_empty);
  bad=tally();bad.recent_count=7;expect_invalid(rules,bad);
  bad=tally();bad.recent_count=6;bad.recent_sum=6.1;expect_invalid(rules,bad);
  bad=tally();bad.axis_support.fill(std::numeric_limits<double>::max());expect_invalid(rules,bad);

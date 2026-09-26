@@ -32,6 +32,7 @@ public:
     [[nodiscard]] const ExperienceLocation& head() const noexcept { return head_; }
     [[nodiscard]] const Connection& state() const noexcept { return *state_; }
     [[nodiscard]] const architecture::EvidencePolicy& policy() const noexcept { return policy_; }
+    [[nodiscard]] const architecture::kernel::EvidenceRules& rules() const noexcept { return *rules_; }
     [[nodiscard]] architecture::kernel::ConnectionHead snapshot() const noexcept;
     // Addresses are ordered newest to oldest. Verification reads only the
     // linked connection records and never treats a greater number as ancestry.

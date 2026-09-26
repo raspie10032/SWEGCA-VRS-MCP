@@ -115,9 +115,10 @@ void oracle(const Connection& connection, const ConnectionRefinement& report) {
     std::printf("],\"axis_sources\":[");
     for (unsigned i = 0; i < 4; ++i) std::printf("%s%u", i ? "," : "", t.axis_source_diversity[i]);
     std::printf("],\"source_diversity\":%u,\"context_diversity\":%u,\"recent_count\":%u,"
-        "\"recent_sum\":%.17g,\"revision\":%llu,\"status\":%u}\n",
+        "\"recent_sum\":%.17g,\"revision\":%llu,\"status\":%u,\"reason\":%u}\n",
         t.source_diversity, t.context_diversity, t.recent_count, t.recent_sum,
-        (unsigned long long)t.revision, unsigned(report.result().verification().judgment().status()));
+        (unsigned long long)t.revision, unsigned(report.result().verification().judgment().status()),
+        unsigned(report.result().verification().judgment().reason()));
 }
 
 // Fail any allocation number in a refinement. The same owner is reused after
@@ -316,8 +317,9 @@ int main(int argc, char** argv) {
         Connection unknown(id(7), 0.5, rules, memory);
         const auto empty = unknown.refine(1, 0);
         oracle(unknown, empty);
-        CHECK(!empty.result().strength().valid());
-        CHECK(unknown.revision() == 0 && unknown.strength() == 0.5);
+        CHECK(empty.result().strength().valid());
+        CHECK(empty.result().verification().judgment().reason() == EvidenceReason::minimum_effective_samples);
+        CHECK(unknown.revision() == 1 && unknown.strength() == 0.5);
         originals.fill(unknown, EvidenceOutcome::insufficient);
         const auto report = unknown.refine(3, 5);
         oracle(unknown, report);

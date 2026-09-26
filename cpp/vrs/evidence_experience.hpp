@@ -12,6 +12,7 @@ class ExperienceEvidence final {
 public:
     [[nodiscard]] const ExperienceLocation& original() const noexcept { return original_; }
     [[nodiscard]] const architecture::kernel::EvidenceObservation& value() const noexcept { return value_; }
+    [[nodiscard]] const architecture::DigestBytes& cue() const noexcept { return cue_; }
 private:
     friend ExperienceEvidence record_evidence(ExperienceBlock&,
         const architecture::kernel::EvidenceRules&, const OriginalExperienceView&,
@@ -19,9 +20,11 @@ private:
     friend ExperienceEvidence decode_evidence(const architecture::kernel::EvidenceRules&,
         const StoredExperience&);
     ExperienceEvidence(const ExperienceLocation& original,
-        const architecture::kernel::EvidenceObservation& value) : original_(original), value_(value) {}
+        const architecture::kernel::EvidenceObservation& value, const architecture::DigestBytes& cue)
+        : original_(original), value_(value), cue_(cue) {}
     ExperienceLocation original_;
     architecture::kernel::EvidenceObservation value_;
+    architecture::DigestBytes cue_;
 };
 
 // The observation is the recorded result of an experiment or producer, never

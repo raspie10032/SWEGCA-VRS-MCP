@@ -224,9 +224,19 @@ struct Interval {
     out.source_diversity_ = t.source_diversity;
     out.context_diversity_ = t.context_diversity;
     out.revision_ = t.revision;
-    if (!rules_valid(r) || t.revision == 0 || t.recent_count > r.recent_window_ ||
+    if (!rules_valid(r) || t.recent_count > r.recent_window_ ||
         !finite_count(t.recent_sum) || t.recent_sum > t.recent_count)
         return out;  // abstain, invalid_input
+    // The author's authoritative empty accumulator has revision 0 and is
+    // assessed as minimum_effective_samples, including an insufficient-only
+    // input batch. Revision 0 with claimed evidence remains inconsistent.
+    if (t.revision == 0) {
+        if (t.source_diversity || t.context_diversity || t.recent_count || t.recent_sum != 0)
+            return out;
+        for (std::size_t axis = 0; axis < r.axis_count_; ++axis)
+            if (t.axis_support[axis] != 0 || t.axis_refute[axis] != 0 || t.axis_source_diversity[axis])
+                return out;
+    }
     for (std::size_t axis = 0; axis < r.axis_count_; ++axis)
         if (!finite_count(t.axis_support[axis]) || !finite_count(t.axis_refute[axis]) ||
             t.axis_source_diversity[axis] > t.source_diversity)

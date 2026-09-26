@@ -62,6 +62,12 @@ def main():
         assert row["revision"] == state.revision
         decision = ns["assess_accumulator"](state, config)
         assert row["status"] == {"accept": 1, "reject": 2, "abstain": 0}[decision.status]
+        assert row["reason"] == {
+            "minimum_effective_samples": 1, "source_diversity": 2,
+            "axis_source_diversity": 3, "context_diversity": 4,
+            "regime_change_suspected": 5, "causal_lower_bound": 6,
+            "upper_bound_below_threshold": 7, "uncertain": 8,
+        }[decision.reason]
         cases += 1
     assert cases >= 14
     print(f"PASS: {cases} shuffled batches, {observations} observations agree with original accumulator")

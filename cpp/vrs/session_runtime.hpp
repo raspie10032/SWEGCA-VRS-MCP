@@ -10,6 +10,11 @@ struct RecordedRefinement {
     ConnectionRefinement refinement;
 };
 
+struct CueReference {
+    architecture::DigestBytes connection;
+    std::size_t original_index = 0;
+};
+
 // Main owns this composition and serializes access. Store and budget outlive it.
 // Reopen restores verified connections before admitting queries, not in Recall.
 class SessionRuntime final {
@@ -19,9 +24,13 @@ public:
     SessionRuntime& operator=(const SessionRuntime&) = delete;
     void define_connection(const architecture::DigestBytes& identity, double strength,
         const architecture::EvidencePolicy& policy);
-    [[nodiscard]] ExperienceLocation record(const OriginalExperienceView& original);
     [[nodiscard]] RecordedRefinement observe(const architecture::DigestBytes& identity,
         const OriginalExperienceView& original, const architecture::kernel::EvidenceObservation& observation,
+        std::uint64_t shuffle_seed, std::uint64_t current_step);
+    // Retains natural content through the same shuffle/core path. With no
+    // observed outcome, evidence stays insufficient. No prose verdict is made.
+    [[nodiscard]] RecordedRefinement retain_input(const OriginalExperienceView& original,
+        double initial_strength, const architecture::EvidencePolicy& policy,
         std::uint64_t shuffle_seed, std::uint64_t current_step);
     [[nodiscard]] const PersistentConnection* find(const architecture::DigestBytes& identity) const;
     [[nodiscard]] StoredExperience replay(const architecture::DigestBytes& identity, std::size_t original_index) const;
@@ -48,6 +57,7 @@ private:
     std::uint64_t read_limit_;
     ConnectionCatalog catalog_;
     std::pmr::map<architecture::DigestBytes, Slot> connections_;
+    std::pmr::map<architecture::DigestBytes, std::pmr::vector<CueReference>> cues_;
     bool usable_ = true;
 };
 
@@ -55,6 +65,29 @@ struct RecallMatch {
     const SessionRuntime* session = nullptr;
     const PersistentConnection* connection = nullptr;
     architecture::kernel::ConnectionHead recalled_head;
+};
+
+struct InputMatch {
+    RecallMatch recalled;
+    std::size_t original_index = 0;
+};
+
+class InputRecall final {
+public:
+    InputRecall(const InputRecall&) = delete;
+    InputRecall& operator=(const InputRecall&) = delete;
+    InputRecall(InputRecall&&) noexcept = default;
+    InputRecall& operator=(InputRecall&&) = delete;
+    [[nodiscard]] bool familiar() const noexcept { return !matches_.empty(); }
+    [[nodiscard]] bool temporary() const noexcept { return temporary_; }
+    [[nodiscard]] std::span<const InputMatch> matches() const noexcept { return matches_; }
+    [[nodiscard]] const architecture::DigestBytes& cue() const noexcept { return cue_; }
+private:
+    friend class ExperienceRouter;
+    explicit InputRecall(MemoryBudget& memory) : matches_(&memory) {}
+    architecture::DigestBytes cue_{};
+    bool temporary_ = false;
+    std::pmr::vector<InputMatch> matches_;
 };
 
 // Borrowed result: use before changing the router or its sessions. No original
@@ -77,12 +110,22 @@ public:
     ExperienceRouter(SessionRuntime& temporary, MemoryBudget& memory);
     void mount_main(const SessionRuntime& session);
     [[nodiscard]] RecallCandidates recall(const architecture::DigestBytes& identity) const;
+    // Immediate natural-input entry: exact familiarity lookup, then Recall.
+    // No disk, recording, shuffle or LLM precedes Recall. SHA-256 cue work is
+    // part of Deja vu and is included in any input-to-Recall timing.
+    [[nodiscard]] InputRecall input(std::string_view media, std::span<const std::byte> content) const;
+    [[nodiscard]] StoredExperience replay(const InputRecall& recalled, std::size_t candidate) const;
     [[nodiscard]] StoredExperience replay(const RecallCandidates& candidates, std::size_t candidate,
         std::size_t original_index) const;
 private:
     SessionRuntime& temporary_;
+    MemoryBudget& memory_;
     std::pmr::vector<const SessionRuntime*> mounted_;
     std::pmr::map<architecture::DigestBytes, std::pmr::vector<RecallMatch>> main_;
+    struct MainCue { const SessionRuntime* session; CueReference reference; };
+    std::pmr::map<architecture::DigestBytes, std::pmr::vector<MainCue>> main_cues_;
+    [[nodiscard]] InputRecall recall_cue(const architecture::DigestBytes& cue,
+        architecture::kernel::RecallScope scope) const;
 };
 
 }  // namespace swegca::vrs

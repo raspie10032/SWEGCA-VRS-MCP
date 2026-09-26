@@ -156,13 +156,13 @@ int main() {
         {
             auto connection = PersistentConnection::create(session, id(51), -0.0, policy, memory, 4096);
             const auto result = connection.refine(7, 0);
-            CHECK(result.result().verification().judgment().reason() == EvidenceReason::invalid_input);
-            CHECK(connection.state().revision() == 0 && same_bits(connection.state().strength(), -0.0));
+            CHECK(result.result().verification().judgment().reason() == EvidenceReason::minimum_effective_samples);
+            CHECK(connection.state().revision() == 1 && same_bits(connection.state().strength(), -0.0));
             head = connection.head();
         }
         {
             auto connection = PersistentConnection::recover(session, head, memory, 4096);
-            CHECK(connection.state().revision() == 0 && same_bits(connection.state().strength(), -0.0));
+            CHECK(connection.state().revision() == 1 && same_bits(connection.state().strength(), -0.0));
             EvidenceObservation value;
             value.hypothesis = id(51); value.source = id(1); value.context = id(2); value.producer = id(3);
             value.outcome = EvidenceOutcome::support;
@@ -172,11 +172,11 @@ int main() {
             const auto result = connection.refine(17, 0);
             CHECK(result.result().verification().judgment().reason() == EvidenceReason::minimum_effective_samples);
             CHECK(result.result().strength().valid());
-            CHECK(connection.state().revision() == 2 && same_bits(connection.state().strength(), -0.0));
+            CHECK(connection.state().revision() == 3 && same_bits(connection.state().strength(), -0.0));
             head = connection.head();
         }
         auto recovered = PersistentConnection::recover(session, head, memory, 4096);
-        CHECK(recovered.state().revision() == 2 && same_bits(recovered.state().strength(), -0.0));
+        CHECK(recovered.state().revision() == 3 && same_bits(recovered.state().strength(), -0.0));
     }
     CHECK(memory.used() == 0);
     {

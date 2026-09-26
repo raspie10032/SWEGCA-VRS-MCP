@@ -1,4 +1,5 @@
 #include "vrs/evidence_experience.hpp"
+#include "swegca_architecture/input_cue.hpp"
 
 #include <algorithm>
 #include <bit>
@@ -79,7 +80,7 @@ ExperienceEvidence record_evidence(ExperienceBlock& block, const EvidenceRules& 
     const auto location = block.append(wrapped);
     auto bound = value;
     bound.address = location.digest;
-    return ExperienceEvidence(location, bound);
+    return ExperienceEvidence(location, bound, architecture::input_cue(original.media_type, original.content));
 }
 
 ExperienceEvidence decode_evidence(const EvidenceRules& rules, const StoredExperience& stored) {
@@ -99,7 +100,7 @@ ExperienceEvidence decode_evidence(const EvidenceRules& rules, const StoredExper
     value.has_expiry = get(data, 157, 1) != 0;
     if (admit_observation(rules, value.hypothesis, value, value.observed_at, false) == ObservationUse::invalid)
         throw std::invalid_argument("invalid stored SWEGCA observation");
-    return ExperienceEvidence(stored.location(), value);
+    return ExperienceEvidence(stored.location(), value, architecture::input_cue(original.media_type, original.content));
 }
 
 OriginalExperienceView evidence_payload(const StoredExperience& stored) { return parse_payload(stored); }

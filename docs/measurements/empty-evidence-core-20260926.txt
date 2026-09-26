@@ -1,0 +1,16 @@
+CPU 7; GCC 16.2.1; -O3 -std=c++20 -ffp-contract=off
+100000 warmup; 31 blocks of 100000 calls; block mean medians.
+Palworld active; full-check compilation on CPU 6.
+These are core microbenchmarks, not full input-to-Recall measurements.
+judge_1_axis,median_ns=20.5686,p95_block_mean_ns=23.4711,min_ns=20.5207
+judge_4_axes,median_ns=44.051,p95_block_mean_ns=46.4372,min_ns=43.8622
+judge_8_axes,median_ns=77.6849,p95_block_mean_ns=78.2491,min_ns=76.7679
+observation_admission,median_ns=2.62843,p95_block_mean_ns=3.09793,min_ns=2.52532
+evidence_group_normalization,median_ns=1.58662,p95_block_mean_ns=1.62201,min_ns=1.58441
+session_transition,median_ns=1.25222,p95_block_mean_ns=1.99932,min_ns=1.22851
+head_publication,median_ns=5.24675,p95_block_mean_ns=6.30136,min_ns=5.19195
+promotion_eligibility,median_ns=1.07571,p95_block_mean_ns=1.13941,min_ns=1.07371
+promotion_decision,median_ns=1.15502,p95_block_mean_ns=1.94072,min_ns=1.14071
+connection_strength,median_ns=1.25041,p95_block_mean_ns=1.31842,min_ns=1.24761
+connection_verification_4_axes,median_ns=51.0242,p95_block_mean_ns=51.6415,min_ns=49.7648
+transaction_transition,median_ns=1.33682,p95_block_mean_ns=1.35041,min_ns=1.33581

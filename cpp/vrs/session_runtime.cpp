@@ -1,4 +1,5 @@
 #include "vrs/session_runtime.hpp"
+#include "swegca_architecture/input_cue.hpp"
 
 #include <algorithm>
 #include <new>
@@ -25,9 +26,14 @@ SessionRuntime::Slot::~Slot() {
     memory.deallocate(connection, sizeof(PersistentConnection), alignof(PersistentConnection));
 }
 SessionRuntime::SessionRuntime(SessionStore& store, MemoryBudget& memory, std::uint64_t limit)
-    : store_(store), memory_(memory), read_limit_(limit), catalog_(store, memory, limit), connections_(&memory) {
-    for (const auto& [identity, head] : catalog_.heads())
-        connections_.try_emplace(identity, store_, memory_, read_limit_, head.record);
+    : store_(store), memory_(memory), read_limit_(limit), catalog_(store, memory, limit), connections_(&memory), cues_(&memory) {
+    for (const auto& [identity, head] : catalog_.heads()) {
+        auto [where, inserted] = connections_.try_emplace(identity, store_, memory_, read_limit_, head.record);
+        (void)inserted;
+        const auto experiences = where->second.connection->state().experiences();
+        for (std::size_t i = 0; i < experiences.size(); ++i)
+            cues_.try_emplace(experiences[i].cue()).first->second.push_back({identity, i});
+    }
 }
 void SessionRuntime::require_usable() const {
     if (!usable()) throw std::logic_error("session runtime unavailable; reopen required");
@@ -36,14 +42,6 @@ void SessionRuntime::define_connection(const DigestBytes& identity, double stren
     require_usable();
     if (connections_.contains(identity)) throw std::invalid_argument("connection already defined");
     connections_.try_emplace(identity, store_, memory_, read_limit_, identity, strength, policy);
-}
-ExperienceLocation SessionRuntime::record(const OriginalExperienceView& original) {
-    require_usable();
-    try {
-        const auto saved = store_.append(original);
-        if (catalog_.generation() == 0) catalog_.publish({});
-        return saved;
-    } catch (...) { usable_ = false; throw; }
 }
 RecordedRefinement SessionRuntime::observe(const DigestBytes& identity, const OriginalExperienceView& original,
     const EvidenceObservation& observation, std::uint64_t seed, std::uint64_t step) {
@@ -54,14 +52,33 @@ RecordedRefinement SessionRuntime::observe(const DigestBytes& identity, const Or
     auto& connection = *found->second.connection;
     const auto* prior = catalog_.find(identity);
     const auto expected = prior ? prior->record : ExperienceLocation{};
+    const auto cue = input_cue(original.media_type, original.content);
+    auto& references = cues_.try_emplace(cue).first->second;
+    references.reserve(references.size() + 1);
+    const auto index = connection.state().experiences().size();
     try {
-        const auto saved = store_.append_evidence(make_evidence_rules(connection.policy()), original, observation);
+        const auto saved = store_.append_evidence(connection.rules(), original, observation);
         connection.append(saved.original());
         auto report = connection.refine(seed, step);
         const HeadUpdate update{&connection, expected};
         catalog_.publish(std::span(&update, 1));
+        references.push_back({identity, index});
         return {saved.original(), std::move(report)};
     } catch (...) { usable_ = false; throw; }
+}
+RecordedRefinement SessionRuntime::retain_input(const OriginalExperienceView& original,
+    double initial_strength, const EvidencePolicy& policy, std::uint64_t seed, std::uint64_t step) {
+    require_usable();
+    const auto identity = input_cue(original.media_type, original.content);
+    if (!connections_.contains(identity)) define_connection(identity, initial_strength, policy);
+    EvidenceObservation observation;
+    observation.hypothesis = identity;
+    Sha256 source; source.update("SWEGCA input source v1"); source.update(original.source);
+    observation.source = observation.producer = source.finish();
+    Sha256 context; context.update("SWEGCA input session v1"); context.update(original.session);
+    observation.context = context.finish();
+    observation.observed_at = original.observed_at_ns;
+    return observe(identity, original, observation, seed, step);
 }
 const PersistentConnection* SessionRuntime::find(const DigestBytes& identity) const {
     require_usable();
@@ -84,7 +101,7 @@ RecallMatch RecallCandidates::at(std::size_t index) const {
     return temporary_.session ? temporary_ : main_[index];
 }
 ExperienceRouter::ExperienceRouter(SessionRuntime& temporary, MemoryBudget& memory)
-    : temporary_(temporary), mounted_(&memory), main_(&memory) {}
+    : temporary_(temporary), memory_(memory), mounted_(&memory), main_(&memory), main_cues_(&memory) {}
 void ExperienceRouter::mount_main(const SessionRuntime& session) {
     if (!main_session_readable(session.phase(), session.usable()))
         throw std::logic_error("Main requires a published ended session");
@@ -98,12 +115,54 @@ void ExperienceRouter::mount_main(const SessionRuntime& session) {
         (void)inserted;
         where->second.reserve(where->second.size() + 1);
     }
+    for (const auto& [cue, references] : session.cues_) {
+        auto& destination = main_cues_.try_emplace(cue).first->second;
+        destination.reserve(destination.size() + references.size());
+    }
     for (const auto& [identity, head] : session.catalog_.heads()) {
         (void)head;
         const auto* connection = session.connections_.find(identity)->second.connection;
         main_.find(identity)->second.push_back({&session, connection, connection->snapshot()});
     }
+    for (const auto& [cue, references] : session.cues_)
+        for (const auto& reference : references)
+            main_cues_.find(cue)->second.push_back({&session, reference});
     mounted_.push_back(&session);
+}
+InputRecall ExperienceRouter::input(std::string_view media, std::span<const std::byte> content) const {
+    // Deja vu: natural bytes reach the core cue primitive immediately. This
+    // anonymous exact familiarity signal is not a truth/semantic judgment.
+    const auto cue = input_cue(media, content);
+    const auto found = temporary_.cues_.find(cue);
+    const bool present = found != temporary_.cues_.end() && !found->second.empty();
+    return recall_cue(cue, recall_scope(temporary_.usable(), present));
+}
+InputRecall ExperienceRouter::recall_cue(const DigestBytes& cue, RecallScope scope) const {
+    // Recall begins here, before allocating result addresses. No original
+    // payloads, connection recovery, storage writes or shuffles run here.
+    if (scope == RecallScope::unavailable) throw std::logic_error("temporary experience unavailable");
+    InputRecall result(memory_); result.cue_ = cue;
+    const auto append = [&](const SessionRuntime& session, const CueReference& reference) {
+        const auto* connection = session.find(reference.connection);
+        if (!connection) throw std::logic_error("cue refers to an unavailable connection");
+        result.matches_.push_back({{&session, connection, connection->snapshot()}, reference.original_index});
+    };
+    if (scope == RecallScope::temporary) {
+        result.temporary_ = true;
+        for (const auto& reference : temporary_.cues_.find(cue)->second) append(temporary_, reference);
+    } else {
+        const auto found = main_cues_.find(cue);
+        if (found != main_cues_.end())
+            for (const auto& candidate : found->second) append(*candidate.session, candidate.reference);
+    }
+    return result;
+}
+StoredExperience ExperienceRouter::replay(const InputRecall& recalled, std::size_t candidate) const {
+    if (candidate >= recalled.matches_.size()) throw std::out_of_range("input recall candidate");
+    const auto& selected = recalled.matches_[candidate];
+    RecallCandidates bound;
+    bound.temporary_ = selected.recalled;
+    return replay(bound, 0, selected.original_index);
 }
 RecallCandidates ExperienceRouter::recall(const DigestBytes& identity) const {
     RecallCandidates result;

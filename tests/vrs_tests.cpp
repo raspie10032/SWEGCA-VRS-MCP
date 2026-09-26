@@ -38,7 +38,11 @@ int main() {
     const auto accepted = verify_experience(rules, tally(100, 0));
     const auto rejected = verify_experience(rules, tally(0, 100));
     const auto uncertain = verify_experience(rules, tally(50, 50));
-    const auto invalid = verify_experience(rules, {});
+    EvidenceTally malformed; malformed.source_diversity = 1;
+    const auto invalid = verify_experience(rules, malformed);
+    const auto no_observations = verify_connection(rules, {}, 0.75);
+    CHECK(no_observations.verification().judgment().reason() == EvidenceReason::minimum_effective_samples);
+    CHECK(no_observations.strength().valid() && no_observations.strength().current() == 0.75);
     CHECK(accepted.judgment().status() == EvidenceStatus::accept);
     CHECK(accepted.connection_change() == ConnectionChange::strengthen);
     CHECK(rejected.judgment().status() == EvidenceStatus::reject);
@@ -70,7 +74,7 @@ int main() {
     CHECK(held.strength().valid());
     CHECK(held.strength().current() == 1.0);
     CHECK(held.strength().evidence_eligible());
-    const auto invalid_strength = verify_connection(rules, {}, 1.0);
+    const auto invalid_strength = verify_connection(rules, malformed, 1.0);
     CHECK(!invalid_strength.strength().valid());
     CHECK(!invalid_strength.strength().evidence_eligible());
     for (const auto previous : {-1.0, std::numeric_limits<double>::infinity(),
