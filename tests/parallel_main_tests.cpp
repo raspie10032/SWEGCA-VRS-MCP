@@ -84,6 +84,19 @@ int main(){
   }
   CHECK(completed&&failures>0);CHECK(upstream.saw_worker&&upstream.worker_failures>0);
   CHECK(serial.merge(a,31,0));equal(serial,parallel);
+  for(unsigned identity=10;identity<13;++identity){
+   for(std::size_t n=0;n<8;++n){
+    const auto* source=&a.find(id(identity))->state().experiences()[n];
+    CHECK((&serial.find(id(identity))->experiences()[n]==source)==(n<7));
+    CHECK(&parallel.find(id(identity))->experiences()[n]!=source);
+   }
+  }
+  {
+   MainGraph shared_parallel(memory,1,policy,2);
+   CHECK(shared_parallel.merge(a,31,0));equal(serial,shared_parallel);
+   for(unsigned identity=10;identity<13;++identity)
+    CHECK(&shared_parallel.find(id(identity))->experiences()[0]==&a.find(id(identity))->state().experiences()[0]);
+  }
   CHECK(serial.merge(b,37,0)&&parallel.merge(b,37,0));equal(serial,parallel);
   CHECK(parallel.replay(id(10),8).location()==b.find(id(10))->state().experiences()[0].original());
   CHECK(!parallel.merge(b,99,1));equal(serial,parallel);

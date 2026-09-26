@@ -76,9 +76,14 @@ void Connection::inherit_experiences(const Connection& previous) {
         throw std::logic_error("invalid Main experience inheritance");
     // Preserve the original per-experience core admission check. Sharing only
     // replaces physical metadata copies, never the later full shuffled tally.
-    for(const auto& value:previous.experiences())validate_experience(value);
-    experiences_.share_prefix(previous.experiences_);
-    revision_=experiences_.size();
+    if(&memory_==&previous.memory_) {
+        for(const auto& value:previous.experiences())validate_experience(value);
+        experiences_.share_prefix(previous.experiences_);
+        revision_=experiences_.size();
+    } else {
+        // Separate budget lifetimes cannot own each other's segments.
+        for(const auto& value:previous.experiences())append(value);
+    }
 }
 
 void Connection::prepare_append(const ExperienceEvidence& experience) {

@@ -72,8 +72,14 @@ MainGraph::PreparedMerge MainGraph::prepare_merge(const SessionRuntime& source, 
         }
         const auto added = task.incoming->state().experiences();
         if (!added.empty()) candidate.origins.reserve(candidate.origins.size() + 1);
-        for (std::size_t index = 0; index < added.size(); ++index) {
-            candidate.connection.append(added[index]);
+        if(!task.previous) {
+            // A first Main connection can share sealed source segments under
+            // the same VRS budget. Core admission and fresh shuffle still run;
+            // source strength/revision are not installed as Main's judgment.
+            candidate.connection.inherit_experiences(task.incoming->state());
+        } else {
+            for (std::size_t index = 0; index < added.size(); ++index)
+                candidate.connection.append(added[index]);
         }
         if (!added.empty())
             candidate.origins.push_back({&source.store_, source.read_limit_, candidate.connection.experiences().size()});
