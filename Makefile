@@ -9,7 +9,7 @@ CORE_HEADERS := $(wildcard cpp/swegca_architecture/*.hpp)
 VRS_HEADERS := $(wildcard cpp/vrs/*.hpp)
 VRS_SOURCES := cpp/vrs/runtime.cpp cpp/vrs/main_sources.cpp cpp/vrs/main_graph.cpp cpp/vrs/persistent_main_graph.cpp cpp/vrs/experience_block.cpp cpp/vrs/evidence_experience.cpp cpp/vrs/connection.cpp cpp/vrs/session_store.cpp cpp/vrs/persistent_connection.cpp cpp/vrs/connection_catalog.cpp cpp/vrs/session_runtime.cpp
 
-.PHONY: all check check-stdio check-sha256 check-resource-profile bench clean
+.PHONY: all check check-stdio check-sha256 check-resource-profile check-oom-recovery bench clean
 all: $(BUILD)/core-tests
 
 $(BUILD):
@@ -80,6 +80,9 @@ $(BUILD)/swegca-vrs-mcp: cpp/transport/stdio_main.cpp cpp/transport/json.cpp cpp
 
 $(BUILD)/parallel-main-tests: tests/parallel_main_tests.cpp $(VRS_SOURCES) $(CORE_SOURCES) $(CORE_HEADERS) $(VRS_HEADERS) | $(BUILD)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< $(VRS_SOURCES) $(CORE_SOURCES) -ldl -o $@
+
+check-oom-recovery: $(BUILD)/swegca-vrs-mcp
+	python3 tests/check_oom_recovery.py $(BUILD)/swegca-vrs-mcp
 
 check-resource-profile: $(BUILD)/resource-profile-probe $(BUILD)/swegca-vrs-mcp
 	python3 tests/check_resource_profile.py $(BUILD)/resource-profile-probe
