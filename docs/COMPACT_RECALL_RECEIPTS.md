@@ -1,6 +1,7 @@
 # Compact natural-input Recall receipts
 
-`InputRecall` owns pinned original addresses and remembered connection contexts.
+`InputRecall` owns remembered connection contexts. Exact-cue results pin original
+addresses; continuation results pin shared sealed experience segments.
 Consecutive candidates from the same owner, connection identity, recorded head
 and current-observation boundary share one full `RecallMatch` snapshot. Every
 candidate still owns its original location, original index and context index.
@@ -20,7 +21,8 @@ append removes its newly inserted context; a failed overall Recall destroys the
 private result. No partially built result is published. This is storage layout
 compaction, not evidence selection or a new judgment rule.
 
-The receipt still stores one pinned address per candidate. Cue enumeration still traverses all candidates. MCP now serializes bounded
+Exact-cue receipts still store one pinned address per candidate. Exact-cue
+enumeration still traverses all candidates. MCP now serializes bounded
 pages (see MCP_STDIO.md), while the receipt itself is not constant-space.
 Giant-graph latency remains unproven.
 
@@ -29,7 +31,53 @@ separate sources with the same identity and different strengths, exact selected
 Replay, and receive-after-Recall/Re-evidence boundary preservation. Persistent
 Main tests exercise old receipts across subsequent Main publication as before.
 
-Observed on the native build: a 16-candidate one-context receipt uses 1712
+Measured before adding segment snapshots in continuation contexts: a 16-candidate one-context receipt uses 1712
 tracked bytes, versus 4224 bytes for 16 expanded InputMatch values (excluding
 container object storage in both figures). Session runtime: 429 checks; runtime
 lifecycle: 101; persistent Main: 174; native stdio subprocess protocol: 363.
+
+
+## Continuation Recall without expanding original addresses
+
+A continuation selects the existing connection history. It now retains one
+read-only `ExperienceSequence::Snapshot` and remembered head per candidate
+connection, plus that range's exclusive end. It does not copy an original
+address for every observation. Indexed access binary-searches the connection
+range and addresses its sealed segment in O(1). MCP pages consequently assemble
+only the requested matches; no live connection state is consulted for them.
+
+Snapshots share ownership of segments, including a partially filled tail. The
+writer can append new slots but cannot modify previously sealed values. The
+snapshot count excludes those later slots. This differs from two independent
+writers, for which Main's existing prefix sharing still copies the partial tail.
+A snapshot's directory uses the requesting VRS MemoryBudget; sealed storage
+remains charged to its original budget. Both budgets must outlive the snapshot.
+All directories and shared ownership use native C++/PMR with no external package.
+
+Destroying/replacing the source sequence cannot invalidate pinned values. A
+snapshot can retain old segment memory until its receipt is released. Replay
+still checks current source lineage, and stale Main receipts still cannot
+Replay after a new Main publication. Retaining metadata does not confer current
+Main authority. Allocation failure leaves the source and published graph intact.
+
+Continuation receipt metadata scales with segment count plus connection count,
+not one full address per observation. It is not constant-space, and exact-cue
+candidate storage remains a separate scaling limitation. No core verdict,
+shuffle traversal, source admission, persistent format or memory-stage ordering
+changes in this implementation.
+
+
+Native regression measurements after this change: 16-candidate continuation
+receipt uses 264 tracked bytes, versus 4224 bytes for expanded InputMatch values.
+The exact-cue receipt uses 1768 bytes (previously 1712), because its context now
+also accommodates an optional snapshot. Shared sealed data was already stored;
+these figures measure new receipt allocations, not retained-data/RSS totals.
+Connection checks: 14972; session runtime: 497; persistent Main: 196; MCP stdio
+subprocess: 918. Failure injection covers snapshot-directory and context setup;
+old receipts remain readable as metadata after Main entry replacement while
+stale Replay is rejected.
+
+ASan+UBSan instrumentation could not link on this host: the toolchain points to
+missing `/usr/lib64/libasan.so.8.0.0`. No ASan execution or address-sanitizer
+coverage is claimed; no system package change was made.
+The UBSan trap build of persistent Main passed all 196 checks.

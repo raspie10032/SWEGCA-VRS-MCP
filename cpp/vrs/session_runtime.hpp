@@ -105,7 +105,7 @@ public:
             const InputRecall* owner_ = nullptr;
             std::size_t index_ = 0;
         };
-        [[nodiscard]] std::size_t size() const noexcept { return owner_->addresses_.size(); }
+        [[nodiscard]] std::size_t size() const noexcept { return owner_->count_; }
         [[nodiscard]] bool empty() const noexcept { return !size(); }
         [[nodiscard]] InputMatch operator[](std::size_t index) const { return owner_->at(index); }
         [[nodiscard]] Iterator begin() const noexcept { return Iterator(owner_, 0); }
@@ -117,9 +117,12 @@ public:
     };
     InputRecall(const InputRecall&) = delete;
     InputRecall& operator=(const InputRecall&) = delete;
-    InputRecall(InputRecall&&) noexcept = default;
+    InputRecall(InputRecall&& other) noexcept
+        : cue_(other.cue_), issuer_(std::exchange(other.issuer_, nullptr)), temporary_(other.temporary_),
+          key_kind_(other.key_kind_), count_(std::exchange(other.count_, 0)),
+          contexts_(std::move(other.contexts_)), addresses_(std::move(other.addresses_)) {}
     InputRecall& operator=(InputRecall&&) = delete;
-    [[nodiscard]] bool familiar() const noexcept { return !addresses_.empty(); }
+    [[nodiscard]] bool familiar() const noexcept { return count_ != 0; }
     [[nodiscard]] bool temporary() const noexcept { return temporary_; }
     [[nodiscard]] architecture::kernel::FamiliarityKey key_kind() const noexcept { return key_kind_; }
     // The receipt must outlive its view. No reference to a synthesized match is retained.
@@ -127,11 +130,25 @@ public:
     [[nodiscard]] const architecture::DigestBytes& cue() const noexcept { return cue_; }
 private:
     friend class ExperienceRouter;
-    struct Context { RecallMatch recalled; std::size_t current_observations; };
+    struct Context {
+        RecallMatch recalled;
+        std::size_t current_observations;
+        std::optional<ExperienceSequence::Snapshot> sequence;
+        std::size_t end = 0;
+    };
     struct Address { std::size_t context; std::size_t original_index; ExperienceLocation original; };
     explicit InputRecall(MemoryBudget& memory) : contexts_(&memory), addresses_(&memory) {}
     void append(const InputMatch& match);
+    void append_range(const RecallMatch&, std::size_t boundary, const Connection&, MemoryBudget&);
     [[nodiscard]] InputMatch at(std::size_t index) const {
+        if (index >= count_) throw std::out_of_range("input recall candidate");
+        if (key_kind_ == architecture::kernel::FamiliarityKey::continuation) {
+            const auto found = std::upper_bound(contexts_.begin(), contexts_.end(), index,
+                [](std::size_t position, const Context& range) { return position < range.end; });
+            const auto original_index = index - (found->end - found->sequence->size());
+            return {found->recalled, original_index, found->current_observations,
+                (*found->sequence)[original_index].original()};
+        }
         const auto& address = addresses_.at(index);
         const auto& context = contexts_[address.context];
         return {context.recalled, address.original_index, context.current_observations, address.original};
@@ -140,6 +157,7 @@ private:
     const ExperienceRouter* issuer_ = nullptr;
     bool temporary_ = false;
     architecture::kernel::FamiliarityKey key_kind_ = architecture::kernel::FamiliarityKey::missing;
+    std::size_t count_ = 0;
     std::pmr::vector<Context> contexts_;
     std::pmr::vector<Address> addresses_;
 };

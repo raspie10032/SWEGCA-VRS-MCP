@@ -200,9 +200,22 @@ void InputRecall::append(const InputMatch& match) {
             context.current_observations == match.current_observations;
     };
     const bool added = contexts_.empty() || !same(contexts_.back());
-    if (added) contexts_.push_back({match.recalled, match.current_observations});
+    if (added) contexts_.push_back({match.recalled, match.current_observations, std::nullopt, 0});
     try { addresses_.push_back({contexts_.size() - 1, match.original_index, match.original}); }
     catch (...) { if (added) contexts_.pop_back(); throw; }
+    ++count_;
+}
+
+void InputRecall::append_range(const RecallMatch& match, std::size_t boundary,
+    const Connection& connection, MemoryBudget& memory) {
+    auto sequence = connection.snapshot_experiences(memory);
+    if (sequence.size() != match.recalled_head.observations)
+        throw std::logic_error("Recall snapshot observation count changed");
+    if (sequence.size() > std::numeric_limits<std::size_t>::max() - count_)
+        throw std::overflow_error("Recall candidate count overflow");
+    const auto end = count_ + sequence.size();
+    if (sequence.size()) contexts_.push_back({match, boundary, std::move(sequence), end});
+    count_ = end;
 }
 
 InputRecall ExperienceRouter::input(std::string_view media, std::span<const std::byte> content) const {
@@ -241,13 +254,11 @@ InputRecall ExperienceRouter::recall_cue(const DigestBytes& cue, RecallScope sco
         const auto candidates = recall(*continuation_);
         for (std::size_t candidate = 0; candidate < candidates.size(); ++candidate) {
             const auto match = candidates.at(candidate);
-            const auto count = match.recalled_head.observations;
             const auto* active = temporary_.find(match.recalled_head.identity);
             const auto boundary = active ? active->state().experiences().size() : 0;
-            for (std::size_t index = 0; index < count; ++index)
-                result.append({match, index, boundary,
-                    match.main_graph ? match.main_graph->graph().find(match.recalled_head.identity)->experiences()[index].original()
-                                     : match.connection->state().experiences()[index].original()});
+            const auto& connection = match.main_graph
+                ? *match.main_graph->graph().find(match.recalled_head.identity) : match.connection->state();
+            result.append_range(match, boundary, connection, memory_);
         }
         return result;
     }

@@ -210,6 +210,13 @@ int main(int argc, char** argv) {
                 std::optional<ExperienceSequence> parent;
                 parent.emplace(segmented_memory);
                 for(const auto& value:expected){parent->prepare_append();parent->commit_append(value);}
+                {
+                    const auto used=segmented_memory.used();
+                    upstream.until_failure=0;
+                    expect_throw<std::bad_alloc>([&]{(void)parent->snapshot(segmented_memory);});
+                    upstream.until_failure=std::numeric_limits<std::size_t>::max();
+                    CHECK(segmented_memory.used()==used);
+                }
                 ExperienceSequence child(segmented_memory);
                 const auto baseline=segmented_memory.used();
                 unsigned failed=0;
@@ -230,11 +237,17 @@ int main(int argc, char** argv) {
                     CHECK(child[n].original()==expected[n].original());
                     CHECK((&child[n]==&(*parent)[n])==(n<1016));
                 }
+                auto pinned=parent->snapshot(segmented_memory);
+                CHECK(pinned.size()==1030);
+                for(std::size_t n=0;n<expected.size();++n)CHECK(&pinned[n]==&(*parent)[n]);
                 parent->prepare_append();parent->commit_append(expected[0]);
                 CHECK(child.size()==1030);
                 child.prepare_append();child.commit_append(expected[1]);
                 CHECK((*parent)[1030].original()!=child[1030].original());
                 parent.reset();
+                auto moved=std::move(pinned);CHECK(pinned.size()==0&&moved.size()==1030);
+                expect_throw<std::out_of_range>([&]{(void)moved[1030];});
+                for(std::size_t n=0;n<expected.size();++n)CHECK(moved[n].original()==expected[n].original());
                 for(std::size_t n=0;n<expected.size();++n)CHECK(child[n].original()==expected[n].original());
             }
             const auto report = segmented.refine(12345, 5);

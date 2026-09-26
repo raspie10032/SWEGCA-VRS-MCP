@@ -99,3 +99,11 @@ Regression coverage replays every index across two source ranges (16 and 64
 observations), also checking a separate connection and both out-of-range bounds.
 Existing allocation-failure, parallel merge and persistent recovery tests cover
 the same publication paths.
+
+
+Read-only snapshots can also pin complete segments and the current partial
+tail without copying values. Their captured count prevents access to later
+appends. Only sealed slots are read; the writer's mutable used count is not
+consulted. This does not change the independent-writer partial-tail copy rule
+above. See COMPACT_RECALL_RECEIPTS.md for continuation receipt ownership and
+budget lifetime requirements.

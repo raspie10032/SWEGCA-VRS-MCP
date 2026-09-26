@@ -151,11 +151,28 @@ int main(){
    CHECK(recalled.matches()[0].recalled.recalled_head.strength==main.graph().find(id(10))->strength());
    auto original=route.replay(recalled,3);
    CHECK(original.location()==a.find(id(10))->state().experiences()[3].original());
+   const auto receipt_baseline=query_memory.used();
+   unsigned receipt_failures=0;
+   for(std::size_t point=0;point<16;++point){
+    failures.remaining=point;bool success=false;
+    try{auto probe=route.input("text/other",{});success=true;}
+    catch(const std::bad_alloc&){++receipt_failures;}
+    failures.remaining=std::numeric_limits<std::size_t>::max();
+    CHECK(query_memory.used()==receipt_baseline);
+    if(success)break;
+   }
+   CHECK(receipt_failures==2);
    auto continued=route.input("text/other",{});
    CHECK(continued.key_kind()==FamiliarityKey::continuation&&continued.matches().size()==8);
    CHECK(route.re_evidence(original,9,0).agreement()==ReplayAgreement::insufficient);
    auto old=route.input("text/plain",{});
    CHECK(main.merge(b,19,0));
+   CHECK(continued.matches().size()==8);
+   for(std::size_t n=0;n<8;++n){
+    CHECK(continued.matches()[n].original==a.find(id(10))->state().experiences()[n].original());
+    CHECK(continued.matches()[n].recalled.recalled_head.observations==8);
+   }
+   throws<std::logic_error>([&]{(void)route.replay(continued,0);});
    throws<std::logic_error>([&]{(void)route.input("text/plain",{});});
    throws<std::logic_error>([&]{(void)route.replay(old,0);});
    unsigned failure_points=0;

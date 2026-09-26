@@ -96,7 +96,11 @@ int main() {
         CHECK(reads>reads_before && writes==writes_before);
         CHECK(router.input("text/plain",std::as_bytes(std::span(payload))).key_kind()==FamiliarityKey::continuation);
         const auto context_reads=reads, context_writes=writes;
+        const auto continued_before=memory.used();
         auto continued=router.input("text/plain",std::as_bytes(std::span(followup)));
+        const auto continued_bytes=memory.used()-continued_before;
+        CHECK(continued_bytes<16*sizeof(ExperienceLocation));
+        std::printf("16-candidate continued receipt: %zu tracked bytes\n",continued_bytes);
         CHECK(continued.key_kind()==FamiliarityKey::continuation && !continued.temporary());
         CHECK(continued.matches().size()==16 && reads==context_reads && writes==context_writes);
         CHECK(router.replay(continued,0).location()==first);
@@ -147,6 +151,14 @@ int main() {
             CHECK(match.original==owner.find(id(10))->state().experiences()[index%16].original());
             CHECK(fallback.replay(moved,index).location()==match.original);
         }
+        auto ranged=fallback.input("text/plain",std::as_bytes(std::span(followup)));
+        CHECK(ranged.key_kind()==FamiliarityKey::continuation && ranged.matches().size()==32);
+        for(std::size_t index=0;index<32;++index){
+            CHECK(ranged.matches()[index].original==moved.matches()[index].original);
+            CHECK(ranged.matches()[index].recalled.session==moved.matches()[index].recalled.session);
+        }
+        auto ranged_moved=std::move(ranged);CHECK(!ranged.familiar()&&ranged.matches().empty());
+        CHECK(fallback.replay(ranged_moved,31).location()==moved.matches()[31].original);
         // A natural utterance without a known outcome remains insufficient,
         // but is retained through the actual shuffle/core/publication path.
         const std::string utterance="스웨카가 셔플값을 검증한다.";

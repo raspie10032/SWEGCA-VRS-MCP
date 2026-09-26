@@ -62,6 +62,7 @@ public:
     [[nodiscard]] const architecture::DigestBytes& identity() const noexcept { return identity_; }
     [[nodiscard]] double strength() const noexcept { return strength_; }
     [[nodiscard]] std::uint64_t revision() const noexcept { return revision_; }
+    [[nodiscard]] ExperienceSequence::Snapshot snapshot_experiences(MemoryBudget& memory) const { return experiences_.snapshot(memory); }
     [[nodiscard]] ExperienceSequence::View experiences() const noexcept { return experiences_.view(); }
 
 private:

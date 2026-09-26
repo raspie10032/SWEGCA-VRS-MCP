@@ -25,6 +25,28 @@ class ExperienceSequence final {
         ExperienceEvidence* data;
     };
 public:
+    // Pins existing sealed values, including the current tail. The writer may
+    // append later values to that tail, but cannot alter an already sealed slot.
+    // Both the data budget and directory budget must outlive this snapshot.
+    class Snapshot final {
+    public:
+        Snapshot(const Snapshot&)=delete;
+        Snapshot& operator=(const Snapshot&)=delete;
+        Snapshot(Snapshot&& other) noexcept:chunks_(std::move(other.chunks_)),count_(std::exchange(other.count_,0)){}
+        Snapshot& operator=(Snapshot&&)=delete;
+        [[nodiscard]] std::size_t size() const noexcept{return count_;}
+        [[nodiscard]] const ExperienceEvidence& operator[](std::size_t index) const {
+            if(index>=count_)throw std::out_of_range("experience snapshot index");
+            if(index<248){const auto chunk=std::bit_width(index+8)-4;return chunks_[chunk]->data[index-8*((std::size_t{1}<<chunk)-1)];}
+            return chunks_[5+(index-248)/256]->data[(index-248)%256];
+        }
+    private:
+        friend class ExperienceSequence;
+        Snapshot(const ExperienceSequence& source,MemoryBudget& directory_memory)
+            :chunks_(source.chunks_.begin(),source.chunks_.end(),&directory_memory),count_(source.size_){}
+        std::pmr::vector<std::shared_ptr<Chunk>> chunks_;
+        std::size_t count_;
+    };
     class View {
     public:
         struct Iterator {
@@ -60,6 +82,7 @@ public:
     ExperienceSequence(const ExperienceSequence&)=delete;
     ExperienceSequence& operator=(const ExperienceSequence&)=delete;
     [[nodiscard]] std::size_t size() const noexcept{return size_;}
+    [[nodiscard]] Snapshot snapshot(MemoryBudget& directory_memory) const{return Snapshot(*this,directory_memory);}
     [[nodiscard]] View view() const noexcept{return View(this,0,size_);}
     [[nodiscard]] const ExperienceEvidence& operator[](std::size_t index) const noexcept{
         // 8,16,32,64,128 entries, then fixed 256-entry segments. No linear
