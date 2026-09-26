@@ -45,6 +45,7 @@ public:
     // operation, never part of input or Recall. Each borrowed record is verified.
     void visit_deliveries(std::string_view session,std::string_view source,std::string_view media,
         void*,void (*)(void*,const OriginalDelivery&)) const;
+    [[nodiscard]] StoredExperience read_original(const ExperienceLocation&) const;
     void end();
     void publish_originals();
     [[nodiscard]] bool usable() const noexcept { return usable_ && store_.usable() && catalog_.usable(); }

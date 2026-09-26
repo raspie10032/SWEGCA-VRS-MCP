@@ -34,7 +34,7 @@ class Client:
         check('error' in self.call('tools/list'))
         initialized=self.call('initialize',{'protocolVersion':'2025-06-18','capabilities':{},'clientInfo':{'name':'test','version':'1'}})['result']
         check(initialized['protocolVersion']=='2025-06-18')
-        check(initialized['capabilities']['experimental']['swegcaHostInput']['version']=='8')
+        check(initialized['capabilities']['experimental']['swegcaHostInput']['version']=='9')
         self.notice('notifications/initialized')
         tools=self.call('tools/list')['result']['tools']
         check([t['name'] for t in tools]==['vrs_replay','vrs_re_evidence'])
@@ -474,6 +474,51 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     check(a2['result']['candidateCount']=='2')
     check(c.call('swegca/end')['result']=={})
     check(c.call('swegca/work',{'seed':'7','step':'6'})['result']['merged']=='1')
+    c.close()
+    # Responses bind to an earlier committed request original, not a selected
+    # session guess or a volatile pending map. The relation survives restart.
+    response_root=root/'app-responses';response_root.mkdir()
+    c=Client('create',response_root,path);c.initialize()
+    response_id=c.call('swegca/agent/attach',app_binding)['result']['identity']
+    check(c.call('swegca/select',{'identity':response_id})['result']=={})
+    def app_response(seq,request_seq,reply_id=1):
+        raw=json.dumps({'id':reply_id,'result':{'exact':'response 원문','unknown':True}},ensure_ascii=False)
+        params={'sequence':str(seq),'observedAt':str(seq),'seed':'7','step':str(seq),'native':raw}
+        if request_seq is not None:params['requestSequence']=str(request_seq)
+        return raw,c.call('swegca/agent/event',params)
+    _,r0=app_event(0,'turn/start',{'input':app_input},1)
+    check('error' in app_response(1,0,reply_id=9)[1])
+    check('error' in app_response(1,None)[1])
+    reply_raw,r1=app_response(1,0);r1=r1['result']
+    check(r1['refinement']['status']==0)
+    _,r2=app_event(2,'turn/start',{'input':app_input},1)
+    r2=r2['result'];check(r2['candidateCount']=='1')
+    _,r3=app_response(3,2);r3=r3['result']
+    check('error' in app_response(3,0)[1]) # Same wire ID/body, wrong original lineage.
+    check(app_response(3,2)[1]['result']['duplicate'])
+    check('error' in app_response(4,1)[1]) # A response cannot masquerade as a request.
+    _,r4=app_event(4,'turn/start',{'input':app_input},2)
+    r4=r4['result'];check(r4['candidateCount']=='2')
+    c.close()
+    c=Client('open',response_root,path);c.initialize()
+    check(c.call('swegca/agent/attach/resume',app_binding)['result']['identity']==response_id)
+    check(c.call('swegca/select',{'identity':response_id})['result']=={})
+    check('error' in app_response(3,0)[1])
+    check(app_response(3,2)[1]['result']=={'duplicate':True,'original':r3['original'],'receipt':None})
+    _,r5=app_response(5,4,reply_id=2);r5=r5['result']
+    check(r5['refinement']['status']==0)
+    _,r6=app_event(6,'turn/start',{'input':app_input},3)
+    r6=r6['result'];check(r6['candidateCount']=='3')
+    check('structuredContent' in replay_receipt(r6['receipt']))
+    _,continued=app_event(7,'turn/start',{'input':[{'type':'text','text':'continue recalled connection'}]},4)
+    continued=continued['result']
+    selected=next(item for item in continued['candidates'] if item['original']==r1['original'])
+    response_replay=c.call('tools/call',{'name':'vrs_replay','arguments':{
+        'receipt':continued['receipt'],'candidate':selected['index']}})['result']['structuredContent']
+    check(bytes.fromhex(response_replay['contentHex'])==reply_raw.encode())
+    check(c.call('swegca/work',{'seed':'7','step':'7'})['result']['merged']=='0')
+    check(c.call('swegca/end')['result']=={})
+    check(c.call('swegca/work',{'seed':'7','step':'7'})['result']['merged']=='1')
     c.close()
     # A separate config file must not change the root being measured.
     def stored_bytes():

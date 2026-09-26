@@ -62,13 +62,58 @@ request that reused an ID. Unique owner identities also protect against another
 connection and object reconstruction at the same memory address. Failed parsing,
 allocation or unknown-ID lookup preserves the pending request.
 
-This component is not yet wired into the live transport or MCP ingress; therefore
-responses without explicit threadId are still rejected by the standalone event
-endpoint. Durable reconstruction of outstanding request correlations and requests
-that create a new thread remain integration work. A `recorded` call is the trusted
+The live wire transport remains uninstalled. MCP response ingestion with an
+explicit committed request proof is now implemented below; unbound responses
+remain rejected. Requests that create a new thread remain integration work. A `recorded` call is the trusted
 owner's acknowledgement, not an independently verified durable-storage receipt.
 No connection, model turn, app setting or desktop process was started by this work.
 
 Correlation verification: 38 focused checks (bidirectional/type collisions,
 late/foreign tickets, same-address reconstruction, int64 boundaries, capacity and
 allocation failure), 174 event adapter checks, and 1,810 MCP subprocess checks.
+
+## Committed-request response ingress (host protocol 9)
+
+The MCP native event endpoint now accepts `requestSequence` for an app-server
+response. This is an explicit earlier committed delivery in the same bound
+session, not a caller-supplied thread guess. The owner reads that exact original
+through SessionRuntime/SessionStore, verifies its native source/media/session,
+parses the original request, and uses AppServerRequests to match the response ID.
+Notifications without IDs, response originals, unknown sequences, later deliveries
+and mismatched IDs cannot serve as request proof.
+
+The response's exact original JSON is then appended to the request's existing
+connection through Runtime::observe and the existing shuffle/core/three-phase
+refinement. The observation stays insufficient; JSON-RPC success/error is not
+translated into evidence support/refutation or execution authority. Its context
+field contains the request original's address digest, preserving the lineage
+under the same observation checksum. The current Recall/Replay is retained.
+
+Authenticated streaming delivery recovery now also returns the already-stored
+observation context. A retried response must match its bytes/timestamp AND the
+same request original digest, including after restart. An old response cannot be
+reattached to a newer or older request merely because its JSON-RPC ID was reused.
+No migration or new persistent sidecar is involved.
+
+This endpoint uses a one-request matcher reconstructed from the committed
+original. It therefore accepts a pending response after restart without trusting
+a lost in-memory table. The live wire owner's table remains responsible for
+choosing the correct requestSequence, observing which peer sent a frame, and
+preventing conflicting live wire IDs. The proof authenticates an explicit
+request/response association; it does not itself authenticate the physical peer.
+The synthetic client/server roles in this single-request matcher are lookup roles,
+not an inferred assertion about physical network direction.
+
+The native request original is currently decoded in full when binding its reply;
+large request envelopes can hit the configured allocation/read limit. Ordinary
+delivery-index recovery remains streaming. Actual desktop interception, thread
+creation/global messages, attachment bytes and item-fragment lineage remain
+unfinished; this endpoint is not a claim of complete live capture.
+
+MCP verification covers response ID mismatch, absent request proof, response-as-
+request rejection, reused IDs with distinct original lineage, same-process and
+post-restart retry, a response arriving after restart, exact response Replay from
+the remembered request connection, and explicit-only Main publication.
+
+Verification for protocol 9: MCP subprocess suite 1,942 checks, Runtime lifecycle
+suite 180 checks, request binding suite 38 checks; git diff whitespace check passed.

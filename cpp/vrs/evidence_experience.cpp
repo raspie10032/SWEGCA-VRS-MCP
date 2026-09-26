@@ -227,9 +227,9 @@ OriginalDelivery read_delivery(const EvidenceRules& rules,const ExperienceBlock&
     const ExperienceLocation& location,std::uint64_t limit,std::string_view session,
     std::string_view source,std::string_view media) {
     Digest fingerprint{};std::uint64_t sequence=0;
-    (void)EvidenceReader::read(rules,block,location,limit,nullptr,0,0,nullptr,
+    const auto evidence=EvidenceReader::read(rules,block,location,limit,nullptr,0,0,nullptr,
         &fingerprint,&sequence,session,source,media);
-    return OriginalDelivery(location,sequence,fingerprint);
+    return OriginalDelivery(location,sequence,fingerprint,evidence.value().context);
 }
 
 OriginalExperienceView evidence_payload(const StoredExperience& stored) { return parse_payload(stored); }

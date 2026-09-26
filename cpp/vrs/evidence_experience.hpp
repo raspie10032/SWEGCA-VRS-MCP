@@ -81,15 +81,16 @@ public:
     [[nodiscard]] const ExperienceLocation& original() const noexcept{return original_;}
     [[nodiscard]] std::uint64_t sequence() const noexcept{return sequence_;}
     [[nodiscard]] const architecture::DigestBytes& fingerprint() const noexcept{return fingerprint_;}
+    [[nodiscard]] const architecture::DigestBytes& context() const noexcept{return context_;}
 private:
     friend OriginalDelivery read_delivery(const architecture::kernel::EvidenceRules&,
         const ExperienceBlock&,const ExperienceLocation&,std::uint64_t,
         std::string_view,std::string_view,std::string_view);
-    OriginalDelivery(ExperienceLocation original,std::uint64_t sequence,architecture::DigestBytes fingerprint)
-        :original_(original),sequence_(sequence),fingerprint_(fingerprint){}
+    OriginalDelivery(ExperienceLocation original,std::uint64_t sequence,architecture::DigestBytes fingerprint,architecture::DigestBytes context)
+        :original_(original),sequence_(sequence),fingerprint_(fingerprint),context_(context){}
     ExperienceLocation original_;
     std::uint64_t sequence_;
-    architecture::DigestBytes fingerprint_;
+    architecture::DigestBytes fingerprint_,context_;
 };
 [[nodiscard]] OriginalDelivery read_delivery(const architecture::kernel::EvidenceRules&,
     const ExperienceBlock&,const ExperienceLocation&,std::uint64_t limit,

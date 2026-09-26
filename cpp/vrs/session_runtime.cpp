@@ -146,6 +146,9 @@ void SessionRuntime::visit_deliveries(std::string_view session,std::string_view 
         }
     }
 }
+StoredExperience SessionRuntime::read_original(const ExperienceLocation& location) const {
+    require_usable();return store_.read(location,read_limit_);
+}
 void SessionRuntime::end() { require_usable(); store_.end(); }
 void SessionRuntime::publish_originals() { require_usable(); store_.publish_originals(); }
 
