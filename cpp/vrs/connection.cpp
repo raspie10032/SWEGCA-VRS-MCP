@@ -56,6 +56,11 @@ Connection::Connection(const architecture::DigestBytes& identity, double initial
 }
 
 void Connection::append(const ExperienceEvidence& experience) {
+    prepare_append(experience);
+    commit_append(experience);
+}
+
+void Connection::prepare_append(const ExperienceEvidence& experience) {
     const auto& address = experience.original();
     const auto& value = experience.value();
     if (!named_digest(address.block) || address.offset < ExperienceBlock::header_bytes ||
@@ -67,11 +72,30 @@ void Connection::append(const ExperienceEvidence& experience) {
     if (experiences_.size() >= std::numeric_limits<std::uint32_t>::max() ||
         revision_ == std::numeric_limits<std::uint64_t>::max())
         throw std::overflow_error("VRS connection revision or sample count exhausted");
-    experiences_.push_back(experience);  // failed allocation leaves owner unchanged
+    // Reserve before any durable publication. Use geometric growth rather
+    // than reserve(size+1), which would make recording quadratic.
+    if (experiences_.size() == experiences_.capacity()) {
+        const auto maximum = std::min<std::size_t>(experiences_.max_size(), std::numeric_limits<std::uint32_t>::max());
+        const auto capacity = experiences_.capacity();
+        if (capacity >= maximum) throw std::length_error("VRS connection storage exhausted");
+        experiences_.reserve(capacity == 0 ? std::min<std::size_t>(8, maximum)
+            : capacity + std::min(capacity, maximum - capacity));
+    }
+}
+
+void Connection::commit_append(const ExperienceEvidence& experience) noexcept {
+    // Only prepare_append followed by this call on the same serialized owner.
+    experiences_.push_back(experience);
     ++revision_;
 }
 
 ConnectionRefinement Connection::refine(std::uint64_t seed, std::uint64_t current_step) {
+    auto report = prepare_refinement(seed, current_step);
+    commit_refinement(report);
+    return report;
+}
+
+ConnectionRefinement Connection::prepare_refinement(std::uint64_t seed, std::uint64_t current_step) const {
     if (revision_ == std::numeric_limits<std::uint64_t>::max())
         throw std::overflow_error("VRS connection revision exhausted");
     ConnectionRefinement report(memory_);
@@ -137,13 +161,15 @@ ConnectionRefinement Connection::refine(std::uint64_t seed, std::uint64_t curren
             std::min(sources.size(), producers.size()));
     }
     report.result_ = verify_connection(rules_, tally, strength_);
-    // Nothing after this point allocates or throws. The result cannot be
-    // replayed onto another connection; there is deliberately no apply API.
-    if (report.result_.strength().valid()) {
-        strength_ = report.result_.strength().current();
-        report.after_revision_ = ++revision_;
-    }
+    if (report.result_.strength().valid()) report.after_revision_ = revision_ + 1;
     return report;
+}
+
+void Connection::commit_refinement(const ConnectionRefinement& report) noexcept {
+    // Private, serialized composition; no externally supplied result can be
+    // installed. The persistent owner writes the exact result before this step.
+    if (report.result().strength().valid()) strength_ = report.result().strength().current();
+    revision_ = report.after_revision();
 }
 
 }  // namespace swegca::vrs

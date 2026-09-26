@@ -62,6 +62,11 @@ public:
     [[nodiscard]] std::span<const ExperienceEvidence> experiences() const noexcept { return experiences_; }
 
 private:
+    friend class PersistentConnection;
+    void prepare_append(const ExperienceEvidence& experience);
+    void commit_append(const ExperienceEvidence& experience) noexcept;
+    [[nodiscard]] ConnectionRefinement prepare_refinement(std::uint64_t seed, std::uint64_t current_step) const;
+    void commit_refinement(const ConnectionRefinement& report) noexcept;
     architecture::DigestBytes identity_;
     double strength_;
     std::uint64_t revision_ = 0;
