@@ -102,7 +102,7 @@ RecallMatch RecallCandidates::at(std::size_t index) const {
     return (temporary_.session || temporary_.main_graph) ? temporary_ : main_[index];
 }
 ExperienceRouter::ExperienceRouter(SessionRuntime& temporary, MemoryBudget& memory)
-    : temporary_(temporary), memory_(memory), mounted_(&memory), main_(&memory), main_cues_(&memory) {}
+    : temporary_(temporary), memory_(memory), mounted_(&memory), main_(&memory), main_cues_(&memory), merged_cues_(&memory) {}
 void ExperienceRouter::mount_main(const SessionRuntime& session) {
     if (merged_main_) throw std::logic_error("cannot mix merged Main with session candidates");
     if (!main_session_readable(session.phase(), session.usable()))
@@ -151,7 +151,7 @@ void ExperienceRouter::mount_main(const PersistentMainGraph& graph) {
     const auto& state = graph.graph();
     if (merged_main_ && merged_head_ == graph.head()) return;
     decltype(main_) candidates(&memory_);
-    decltype(main_cues_) cues(&memory_);
+    decltype(merged_cues_) cues(&memory_);
     for (const auto& [identity, entry] : state.connections_) {
         const auto& connection = entry.connection;
         const auto values = connection.experiences();
@@ -164,27 +164,17 @@ void ExperienceRouter::mount_main(const PersistentMainGraph& graph) {
         // originals need cue extraction; strength changes do not change cues.
         if (indexed > values.size()) throw std::logic_error("Main original prefix shrank");
         for (std::size_t index = indexed; index < values.size(); ++index)
-            cues[values[index].cue()].push_back({nullptr, {identity, index}});
+            cues[values[index].cue()].emplace(identity, index);
     }
+    // Stage only new candidate nodes. All allocations have completed before
+    // existing sets are modified; node transfer keeps old candidates in place.
     for (auto& [cue, additions] : cues) {
-        const auto previous = main_cues_.find(cue);
-        if (previous == main_cues_.end()) continue;
-        // Both ranges already follow connection/index order. Merge them in
-        // linear time without an unbudgeted sorting scratch allocation.
-        std::pmr::vector<MainCue> joined(&memory_);
-        joined.reserve(previous->second.size() + additions.size());
-        std::merge(previous->second.begin(), previous->second.end(), additions.begin(), additions.end(),
-            std::back_inserter(joined), [](const MainCue& a, const MainCue& b) {
-                if (a.reference.connection != b.reference.connection)
-                    return a.reference.connection < b.reference.connection;
-                return a.reference.original_index < b.reference.original_index;
-            });
-        additions.swap(joined);
+        const auto previous = merged_cues_.find(cue);
+        if (previous != merged_cues_.end()) previous->second.merge(additions);
     }
-    // Every allocation precedes publication. Unaffected cue nodes stay put;
-    // prepared replacements transfer without allocation under serialized Main.
-    for (const auto& [cue, additions] : cues) { (void)additions; main_cues_.erase(cue); }
-    main_cues_.merge(cues);
+    // Existing-key empty staging sets are discarded. New-key nodes transfer
+    // with their entire prepared set, without allocation.
+    merged_cues_.merge(cues);
     main_.swap(candidates);
     merged_main_ = &graph; merged_head_ = graph.head();
 }
@@ -202,7 +192,10 @@ InputRecall ExperienceRouter::input(std::string_view media, std::span<const std:
     if (scope == RecallScope::temporary) return recall_cue(cue, scope, local_kind);
     require_main_current();
     const auto main_cue = main_cues_.find(cue);
-    const bool main_exact = main_cue != main_cues_.end() && !main_cue->second.empty();
+    const auto merged_cue = merged_cues_.find(cue);
+    const bool main_exact = merged_main_
+        ? merged_cue != merged_cues_.end() && !merged_cue->second.empty()
+        : main_cue != main_cues_.end() && !main_cue->second.empty();
     const auto main_context = continuation_ ? main_.find(*continuation_) : main_.end();
     const auto main_kind = familiarity_key(main_exact,
         main_context != main_.end() && !main_context->second.empty());
@@ -239,19 +232,20 @@ InputRecall ExperienceRouter::recall_cue(const DigestBytes& cue, RecallScope sco
     if (scope == RecallScope::temporary) {
         result.temporary_ = true;
         for (const auto& reference : temporary_.cues_.find(cue)->second) append(temporary_, reference);
+    } else if (merged_main_) {
+        const auto found = merged_cues_.find(cue);
+        if (found != merged_cues_.end())
+            for (const auto& [identity, index] : found->second) {
+                const auto match = merged_match(identity);
+                const auto* active = temporary_.find(identity);
+                result.matches_.push_back({match, index,
+                    active ? active->state().experiences().size() : 0,
+                    merged_main_->graph().find(identity)->experiences()[index].original()});
+            }
     } else {
         const auto found = main_cues_.find(cue);
         if (found != main_cues_.end())
-            for (const auto& candidate : found->second) {
-                if (candidate.session) append(*candidate.session, candidate.reference);
-                else {
-                    const auto match = merged_match(candidate.reference.connection);
-                    const auto* active = temporary_.find(candidate.reference.connection);
-                    result.matches_.push_back({match, candidate.reference.original_index,
-                        active ? active->state().experiences().size() : 0,
-                        merged_main_->graph().find(candidate.reference.connection)->experiences()[candidate.reference.original_index].original()});
-                }
-            }
+            for (const auto& candidate : found->second) append(*candidate.session, candidate.reference);
     }
     return result;
 }

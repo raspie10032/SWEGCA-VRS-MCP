@@ -53,19 +53,27 @@ to extract cues only from new originals. Main's merge contract preserves the
 old original prefix; refinement and strength changes do not rewrite those cues.
 Several successful merges may occur between refreshes.
 
-Only affected cue vectors are staged. Each new suffix and the existing vector
-are already ordered by connection identity and original index, so a linear
-merge preserves exactly the ordering of a fresh complete index. Unaffected cue
-nodes remain in place. All preparation uses the VRS memory budget. Allocation
+Only new cue candidate nodes are staged in ordered PMR sets keyed by connection
+identity and original index. Node transfer preserves exactly the ordering of a
+fresh complete index without copying existing candidates. Both affected and
+unaffected old candidate nodes remain in place. All preparation uses the VRS
+memory budget. Allocation
 failure frees staged state and leaves the old head/index intact; querying stale
 Main still raises until a successful refresh. Node transfer and head publication
 remain serialized and perform no further allocations.
 
 This is incremental cue extraction, not a fully incremental graph snapshot:
 the connection summary map is still rebuilt to update each borrowed head receipt.
-A frequently repeated cue also still requires copying its entire candidate
-vector. Those costs, concurrent readers, and graph partitioning remain open.
+Per-candidate tree nodes have more allocation and pointer overhead than packed
+vectors, trading that footprint for growth without whole-list copies. Recall
+still materializes its result vector; lazy candidate delivery, concurrent readers,
+and graph partitioning remain open.
 
 Coverage includes multiple connections sharing cues, an unchanged distinct cue,
 two merges between refreshes, equivalence to a fresh index, stale receipts,
 no-allocation unchanged-head refresh, and failure at every refresh allocation.
+
+A multi-connection, repeated-cue regression permits no refresh allocation larger
+than 512 bytes in its fixture. The previous contiguous candidate-vector path
+cannot satisfy this bound. This is an allocation-shape check, not a whole-process
+4GB proof or a general upper bound for every other VRS allocation.

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "vrs/connection_catalog.hpp"
+#include <set>
 #include "swegca_architecture/recall_route_kernel.hpp"
 #include "swegca_architecture/replay_evidence_kernel.hpp"
 
@@ -196,6 +197,8 @@ private:
     void require_main_current() const;
     [[nodiscard]] RecallMatch merged_match(const architecture::DigestBytes& identity) const;
     std::pmr::map<architecture::DigestBytes, std::pmr::vector<MainCue>> main_cues_;
+    using MergedCueReference = std::pair<architecture::DigestBytes, std::size_t>;
+    std::pmr::map<architecture::DigestBytes, std::pmr::set<MergedCueReference>> merged_cues_;
     // Main-owned dialogue continuity, updated only after a successful selected
     // Replay. It holds an experience key, never copied dialogue text or a verdict.
     mutable std::optional<architecture::DigestBytes> continuation_;

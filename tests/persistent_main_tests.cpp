@@ -25,8 +25,9 @@ extern "C" int __wrap_fdatasync(int fd){if(fail_sync){fail_sync=false;errno=EIO;
 DigestBytes id(unsigned n){DigestBytes d{};for(unsigned i=0;i<4;++i)d[i]=std::byte(n>>(8*i));return d;}
 class FailingMemory final:public std::pmr::memory_resource {
 public: std::size_t remaining=std::numeric_limits<std::size_t>::max();
+ std::size_t request_limit=std::numeric_limits<std::size_t>::max(),largest_request=0;
 private:
- void* do_allocate(std::size_t n,std::size_t a)override{if(!remaining)throw std::bad_alloc();--remaining;return std::pmr::new_delete_resource()->allocate(n,a);}
+ void* do_allocate(std::size_t n,std::size_t a)override{largest_request=std::max(largest_request,n);if(!remaining||n>request_limit)throw std::bad_alloc();--remaining;return std::pmr::new_delete_resource()->allocate(n,a);}
  void do_deallocate(void* p,std::size_t n,std::size_t a)override{std::pmr::new_delete_resource()->deallocate(p,n,a);}
  bool do_is_equal(const std::pmr::memory_resource& other)const noexcept override{return this==&other;}
 };
@@ -64,13 +65,17 @@ int main(){
    SessionRuntime query(query_store,memory,8192);
    auto indexed=PersistentMainGraph::create(root/"incremental-main",id(73),memory,1,policy,1024);
    CHECK(indexed.merge(extra,1,0));CHECK(indexed.merge(a,2,0));
-   ExperienceRouter incremental(query,memory);incremental.mount_main(indexed);
+   FailingMemory index_allocator;MemoryBudget index_memory(1<<20,&index_allocator);
+   ExperienceRouter incremental(query,index_memory);incremental.mount_main(indexed);
    const auto untouched=incremental.input("text/untouched",{});
    CHECK(untouched.matches().size()==2);
    // Skip a generation deliberately; the old observation counts still select
    // exactly the new suffix across both commits.
    CHECK(indexed.merge(b,3,0));CHECK(indexed.merge(c,4,0));
+   index_allocator.largest_request=0;index_allocator.request_limit=512;
    incremental.mount_main(indexed);
+   CHECK(index_allocator.largest_request<=512);
+   index_allocator.request_limit=std::numeric_limits<std::size_t>::max();
    ExperienceRouter rebuilt(query,memory);rebuilt.mount_main(indexed);
    for(const auto media:{"text/plain","text/untouched"}) {
     const auto delta=incremental.input(media,{});const auto complete=rebuilt.input(media,{});
