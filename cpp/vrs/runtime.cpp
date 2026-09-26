@@ -17,7 +17,7 @@ Runtime Runtime::open(const std::filesystem::path& root,const RuntimeConfig& con
 Runtime::Runtime(const std::filesystem::path& root,const RuntimeConfig& config,MemoryBudget& memory,bool create)
     :root_(root),config_(config),memory_(memory),storage_root_(root),storage_(config.storage_bytes,stored_bytes(root,memory),config.io_bytes_per_second),sources_(root,memory,config.read_limit,&storage_,config.merge_workers),
     main_(create ? PersistentMainGraph::create(root/"graph",config.main_identity,memory,config.initial_strength,config.policy,config.main_block_capacity,config.merge_workers,&storage_)
-                 : PersistentMainGraph::open(root/"graph",config.main_identity,memory,config.initial_strength,config.policy,sources_,config.merge_workers,&storage_)) {
+                 : PersistentMainGraph::open(root/"graph",config.main_identity,memory,config.initial_strength,config.policy,sources_,config.merge_workers,&storage_)),sessions_(&memory) {
     sources_.release_caches();
 }
 Runtime::Active::Active(SessionRuntime& session,const DigestBytes& id,MemoryBudget& memory,const PersistentMainGraph& main)
@@ -33,17 +33,26 @@ void Runtime::discard_work() noexcept {
     work_.reset();
     if(source)sources_.release_preparation(identity);
 }
+void Runtime::attach(const DigestBytes& identity,std::string_view name,bool resume) {
+    if(sessions_.contains(identity))throw std::logic_error("session route already attached");
+    auto& session=sources_.acquire_session(identity,name,config_.session_block_capacity,resume);
+    try{sessions_.try_emplace(identity,session,identity,memory_,main_);}
+    catch(...){sources_.release_session(identity,false);throw;}
+}
+void Runtime::attach_session(const DigestBytes& identity,std::string_view name) { attach(identity,name,false); }
+void Runtime::attach_resumed_session(const DigestBytes& identity) { attach(identity,{},true); }
+void Runtime::select_session(const DigestBytes& identity) {
+    const auto found=sessions_.find(identity);
+    if(found==sessions_.end())throw std::invalid_argument("session route is not attached");
+    active_=&found->second;
+}
 void Runtime::start_session(const DigestBytes& identity,std::string_view name) {
     if(active_)throw std::logic_error("a session already owns the input route");
-    auto& session=sources_.acquire_session(identity,name,config_.session_block_capacity,false);
-    try{active_.emplace(session,identity,memory_,main_);}
-    catch(...){sources_.release_session(identity,false);throw;}
+    attach_session(identity,name);select_session(identity);
 }
 void Runtime::resume_session(const DigestBytes& identity) {
     if(active_)throw std::logic_error("a session already owns the input route");
-    auto& session=sources_.acquire_session(identity,{},config_.session_block_capacity,true);
-    try{active_.emplace(session,identity,memory_,main_);}
-    catch(...){sources_.release_session(identity,false);throw;}
+    attach_resumed_session(identity);select_session(identity);
 }
 Runtime::Active& Runtime::require_session() {
     if(!active_)throw std::logic_error("no session owns the input route");
@@ -70,7 +79,8 @@ void Runtime::end_session() {
     // hand the already verified cache back to its stable Main-owned store.
     // Consolidation remains deferred until work(); no history replay is needed.
     const auto identity=active_->identity;
-    active_.reset();
+    active_=nullptr;
+    sessions_.erase(identity);
     sources_.release_session(identity,true);
 }
 ReceivedInput Runtime::receive(const OriginalExperienceView& original,std::uint64_t seed,std::uint64_t step) {
@@ -109,9 +119,11 @@ std::size_t Runtime::work(std::uint64_t seed,std::uint64_t step) {
     return count;
 }
 void Runtime::refresh_main() {
-    if(active_&&active_->indexed_main!=main_.head()) {
-        active_->router.mount_main(main_);
-        active_->indexed_main=main_.head();
+    for(auto& [identity,session]:sessions_) {
+        (void)identity;
+        if(session.indexed_main==main_.head())continue;
+        session.router.mount_main(main_);
+        session.indexed_main=main_.head();
     }
 }
 bool Runtime::schedule_work(std::uint64_t seed,std::uint64_t step) {

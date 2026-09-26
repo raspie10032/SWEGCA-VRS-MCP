@@ -84,7 +84,7 @@ $(BUILD)/runtime-tests: tests/runtime_tests.cpp $(VRS_SOURCES) $(CORE_SOURCES) $
 $(BUILD)/async-runtime-tests: tests/async_runtime_tests.cpp $(VRS_SOURCES) $(CORE_SOURCES) $(CORE_HEADERS) $(VRS_HEADERS) | $(BUILD)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< $(VRS_SOURCES) $(CORE_SOURCES) -ldl -o $@
 
-check: $(BUILD)/async-runtime-tests $(BUILD)/agent-event-tests
+check: $(BUILD)/multi-session-runtime-tests $(BUILD)/async-runtime-tests $(BUILD)/agent-event-tests
 
 $(BUILD)/swegca-vrs-mcp: cpp/transport/stdio_main.cpp cpp/transport/json.cpp cpp/transport/json.hpp cpp/transport/resource_profile.hpp $(VRS_SOURCES) $(CORE_SOURCES) $(CORE_HEADERS) $(VRS_HEADERS) | $(BUILD)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< cpp/transport/json.cpp $(VRS_SOURCES) $(CORE_SOURCES) -o $@
@@ -106,6 +106,7 @@ check-stdio: $(BUILD)/swegca-vrs-mcp
 	python3 tests/stdio_tests.py $(BUILD)/swegca-vrs-mcp
 
 check: $(BUILD)/parallel-recovery-tests $(BUILD)/transfer-budget-tests $(BUILD)/parallel-main-tests $(BUILD)/runtime-tests $(BUILD)/main-sources-tests $(BUILD)/core-tests $(BUILD)/vrs-tests $(BUILD)/experience-block-tests $(BUILD)/memory-budget-tests $(BUILD)/connection-tests $(BUILD)/session-tests $(BUILD)/persistent-connection-tests $(BUILD)/catalog-tests $(BUILD)/session-runtime-tests $(BUILD)/main-graph-tests $(BUILD)/persistent-main-tests
+	./$(BUILD)/multi-session-runtime-tests
 	./$(BUILD)/agent-event-tests
 	./$(BUILD)/async-runtime-tests
 	./$(BUILD)/transfer-budget-tests
@@ -139,3 +140,6 @@ $(BUILD)/agent-event-tests: tests/agent_event_tests.cpp cpp/transport/agent_even
 
 check-agent-event: $(BUILD)/agent-event-tests
 	./$(BUILD)/agent-event-tests
+
+$(BUILD)/multi-session-runtime-tests: tests/multi_session_runtime_tests.cpp cpp/transport/agent_event.hpp $(VRS_SOURCES) $(CORE_SOURCES) $(CORE_HEADERS) $(VRS_HEADERS) | $(BUILD)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< $(VRS_SOURCES) $(CORE_SOURCES) -Wl,--wrap=pread -Wl,--wrap=pwrite -o $@

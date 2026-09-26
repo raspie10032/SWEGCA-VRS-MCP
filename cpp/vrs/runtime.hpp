@@ -35,9 +35,15 @@ public:
     ~Runtime();
     void start_session(const architecture::DigestBytes&, std::string_view name);
     void resume_session(const architecture::DigestBytes&);
+    // Attach additional live routes to this same Main. Attachment does not
+    // select, end, publish or merge a session. Public calls remain serialized.
+    void attach_session(const architecture::DigestBytes&, std::string_view name);
+    void attach_resumed_session(const architecture::DigestBytes&);
+    void select_session(const architecture::DigestBytes&);
+    [[nodiscard]] std::size_t attached_sessions() const noexcept { return sessions_.size(); }
     void end_session();
     [[nodiscard]] const StorageBudget& storage() const noexcept { return storage_; }
-    [[nodiscard]] bool has_session() const noexcept { return active_.has_value(); }
+    [[nodiscard]] bool has_session() const noexcept { return active_!=nullptr; }
     [[nodiscard]] const SessionRuntime& session() const;
     [[nodiscard]] const PersistentMainGraph& main() const noexcept { return main_; }
     // Recall before recording this event, then synchronously retain its full
@@ -74,6 +80,7 @@ private:
     [[nodiscard]] Active& require_session();
     [[nodiscard]] const Active& require_session() const;
     void require_active() const;
+    void attach(const architecture::DigestBytes&, std::string_view, bool resume);
     void refresh_main();
     bool launch_next();
     void discard_work() noexcept;
@@ -97,7 +104,8 @@ private:
     StorageBudget storage_;
     MainSources sources_;
     PersistentMainGraph main_;
-    std::optional<Active> active_;
+    std::pmr::map<architecture::DigestBytes,Active> sessions_;
+    Active* active_=nullptr;
     std::optional<Work> work_;
 };
 } // namespace swegca::vrs

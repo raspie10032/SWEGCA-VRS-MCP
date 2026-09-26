@@ -46,3 +46,6 @@
 Codex 형식 근거: https://learn.chatgpt.com/docs/hooks 의 Common input fields,
 UserPromptSubmit, SessionEnd. subagent 훅의 session_id는 부모 세션을 나타내므로 별도
 agent_id가 있으면 원문에 보존하며 자식의 완료를 부모 세션 종료로 사용하지 않는다.
+
+구현 갱신: Runtime의 다중 활성 세션 부착·선택·독립 종료 및 전체 경로 Main 색인 갱신을
+구현했다. 상세 경계와 실제 어댑터 연결 잔여 작업은 MULTI_SESSION_RUNTIME.md에 있다.
