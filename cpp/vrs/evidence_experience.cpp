@@ -35,7 +35,7 @@ std::string_view text(std::span<const std::byte> data) {
 }
 void validate_encoding(std::span<const std::byte> data,std::uint64_t total) {
     if (data.size() < prefix_bytes || total < prefix_bytes || text(data.first(8)) != magic ||
-        get(data, 158, 1) > 1 || get(data, 159, 1) != 0 || get(data, 157, 1) > 1)
+        get(data, 158, 1) > 1 || get(data, 159, 1) > 2 || get(data, 157, 1) > 1)
         throw std::invalid_argument("invalid SWEGCA observation encoding");
     const auto media_bytes = get(data, 160), payload_bytes = get(data, 168);
     const auto header = prefix_bytes + (get(data,158,1) ? 32 : 0);
@@ -68,6 +68,7 @@ OriginalExperienceView parse_payload(const StoredExperience& stored) {
     const auto header=prefix_bytes+(get(data,158,1)?32:0);
     original.media_type = text(data.subspan(header, media_bytes));
     original.content = data.subspan(header + media_bytes);
+    original.sender = static_cast<ExperienceSender>(get(data,159,1));
     return original;
 }
 }  // namespace
@@ -75,7 +76,7 @@ OriginalExperienceView parse_payload(const StoredExperience& stored) {
 ExperienceEvidence record_evidence(ExperienceBlock& block, const EvidenceRules& rules,
     const OriginalExperienceView& original, const EvidenceObservation& value, std::optional<Digest> input_key) {
     if (!observation_values_valid(rules, value.hypothesis, value) || named_digest(value.address) ||
-        value.observed_at != original.observed_at_ns || original.media_type.empty())
+        value.observed_at != original.observed_at_ns || original.media_type.empty() || static_cast<unsigned>(original.sender)>2)
         throw std::invalid_argument("invalid recorded SWEGCA observation");
     const auto header = prefix_bytes + (input_key ? 32 : 0);
     if (original.media_type.size() > std::numeric_limits<std::size_t>::max() - header ||
@@ -93,6 +94,7 @@ ExperienceEvidence record_evidence(ExperienceBlock& block, const EvidenceRules& 
     put(encoded, 156, static_cast<std::uint8_t>(value.outcome), 1);
     put(encoded, 157, value.has_expiry, 1);
     put(encoded, 158, input_key.has_value(), 1);
+    put(encoded, 159, static_cast<unsigned>(original.sender), 1);
     put(encoded, 160, original.media_type.size());
     put(encoded, 168, original.content.size());
     auto wrapped = original;
@@ -123,7 +125,7 @@ public:
         std::pmr::vector<std::byte>* payload = nullptr, std::uint64_t offset = 0,
         std::uint64_t count = 0, std::uint64_t* total = nullptr,
         Digest* fingerprint = nullptr,std::uint64_t* sequence = nullptr,
-        std::string_view session = {},std::string_view source = {},std::string_view media = {}) {
+        std::string_view session = {},std::string_view source = {},std::string_view media = {},ExperienceSender* sender = nullptr) {
         struct Decoder {
             std::array<std::byte,prefix_bytes> prefix;
             architecture::Sha256 cue;
@@ -205,6 +207,7 @@ public:
         if(total)*total=decoder.total;
         if(fingerprint)*fingerprint=decoder.delivery_hash.finish();
         if(sequence)*sequence=decoder.sequence;
+        if(sender)*sender=static_cast<ExperienceSender>(get(decoder.prefix,159,1));
         return ExperienceEvidence(location,value,decoder.input_key ? *decoder.input_key : decoder.cue.finish());
     }
 };
@@ -226,10 +229,10 @@ EvidencePayloadSlice read_evidence_slice(const EvidenceRules& rules,const Experi
 OriginalDelivery read_delivery(const EvidenceRules& rules,const ExperienceBlock& block,
     const ExperienceLocation& location,std::uint64_t limit,std::string_view session,
     std::string_view source,std::string_view media) {
-    Digest fingerprint{};std::uint64_t sequence=0;
+    Digest fingerprint{};std::uint64_t sequence=0;ExperienceSender sender{};
     const auto evidence=EvidenceReader::read(rules,block,location,limit,nullptr,0,0,nullptr,
-        &fingerprint,&sequence,session,source,media);
-    return OriginalDelivery(location,sequence,fingerprint,evidence.value().context);
+        &fingerprint,&sequence,session,source,media,&sender);
+    return OriginalDelivery(location,sequence,fingerprint,evidence.value().context,sender);
 }
 
 OriginalExperienceView evidence_payload(const StoredExperience& stored) { return parse_payload(stored); }

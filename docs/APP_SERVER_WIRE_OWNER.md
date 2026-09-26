@@ -386,3 +386,29 @@ identity and missing identity. This supplies authenticated original access for
 transport recovery. Stored native originals still lack explicit RPC sender
 provenance, so automatic pending-request reconstruction is not complete; do not
 infer sender from method names or claim that recovery is finished.
+
+## Host protocol 13: durable sender provenance
+
+Wire now supplies `sender: "client" | "server"` from its actual ingress lane.
+VRS stores this as ExperienceSender in byte 159 of the sealed observation
+prefix, under the same original checksum as native bytes and cue. Values are
+0 unspecified, 1 client, 2 server; other values are rejected. Unspecified is
+for experiences without declared transport provenance, not inferred direction.
+Full original decoding and streaming delivery recovery expose this field.
+No sender field is inserted into native JSON. Evidence source/producer,
+judgment inputs and strength arithmetic do not change with sender metadata.
+
+Host duplicate matching requires the same sender. A response with specified
+sender requires the opposite recorded request sender; missing direction cannot
+be substituted for recorded direction. Native user input from server and
+thread/started from client are rejected. The recovery original API returns
+sender or null for unspecified provenance. Proxy requires host version 13.
+
+Verification: 439 experience-block checks (including full and streaming sender
+recovery across large payload boundaries and invalid sender rejection), and
+2,307 real subprocess checks. The proxy records client input, server approval
+requests, their replies and connection initialization with preserved direction;
+a restarted host returns those directions and rejects same-direction/missing-
+direction replies to recorded directional requests. No live desktop changes.
+Pending request reconstruction in the proxy is still to be connected; records
+with unspecified direction must not be guessed during that reconstruction.

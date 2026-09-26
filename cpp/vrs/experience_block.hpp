@@ -22,6 +22,8 @@ class ExperienceEvidence;
 // mutation authority is inferred from storage/read success (SWEGCA I03/I07,
 // ARCHITECTURE_SPEC.md@5901a5a sections 2, 4.2). Failed and unknown experience
 // content is preserved byte-for-byte; the VRS layer binds evidence separately.
+enum class ExperienceSender : std::uint8_t { unspecified, client, server };
+
 struct OriginalExperienceView {
     std::uint64_t sequence = 0;
     std::uint64_t observed_at_ns = 0;
@@ -29,6 +31,7 @@ struct OriginalExperienceView {
     std::string_view source;
     std::string_view media_type;
     std::span<const std::byte> content;
+    ExperienceSender sender = ExperienceSender::unspecified;
 };
 
 using ExperienceLocation = architecture::RecordAddress;

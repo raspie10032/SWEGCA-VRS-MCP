@@ -314,8 +314,14 @@ int main() {
             std::string media(media_size,'m');std::vector<std::byte> payload(2<<20);
             for(std::size_t n=0;n<payload.size();++n)payload[n]=std::byte(n%251);
             auto input=first;input.media_type=media;input.content=payload;
+            input.sender=static_cast<ExperienceSender>(index%3);
+            auto invalid=input;invalid.sender=static_cast<ExperienceSender>(3);
+            expect_throw<std::invalid_argument>([&]{(void)record_evidence(block,rules,invalid,value);});
             const auto saved=record_evidence(block,rules,input,value);
             const auto stored=block.read(saved.original(),8<<20,full_read_memory);
+            CHECK(evidence_payload(stored).sender==input.sender);
+            const auto delivery=read_delivery(rules,block,saved.original(),8<<20,input.session,input.source,input.media_type);
+            CHECK(delivery.sender()==input.sender);
             const auto expected=decode_evidence(rules,stored);
             largest_read=0;
             const auto streamed=read_evidence(rules,block,saved.original(),8<<20);

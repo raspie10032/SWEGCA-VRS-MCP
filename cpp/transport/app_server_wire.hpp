@@ -168,6 +168,7 @@ public:
             "\",\"observedAt\":\""+std::to_string(delivery.observed_).c_str()+"\",\"seed\":\""+
             std::to_string(seed).c_str()+"\",\"step\":\""+std::to_string(step).c_str()+"\",\"native\":"+
             quote_json(delivery.event().native_bytes(),memory_);
+        body+=delivery.sender_==RpcSender::client?",\"sender\":\"client\"":",\"sender\":\"server\"";
         if(const auto sequence=delivery.request_sequence()){body+=",\"requestSequence\":\"";body+=std::to_string(*sequence);body+='"';}
         body+='}';return body;
     }

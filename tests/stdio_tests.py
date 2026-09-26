@@ -34,7 +34,7 @@ class Client:
         check('error' in self.call('tools/list'))
         initialized=self.call('initialize',{'protocolVersion':'2025-06-18','capabilities':{},'clientInfo':{'name':'test','version':'1'}})['result']
         check(initialized['protocolVersion']=='2025-06-18')
-        check(initialized['capabilities']['experimental']['swegcaHostInput']['version']=='12')
+        check(initialized['capabilities']['experimental']['swegcaHostInput']['version']=='13')
         self.notice('notifications/initialized')
         tools=self.call('tools/list')['result']['tools']
         check([t['name'] for t in tools]==['vrs_replay','vrs_re_evidence'])
@@ -597,6 +597,7 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
             global_frames[0],{'id':1,'result':{}},global_frames[1],
             global_frames[2],{'id':2,'result':{}}][sequence])
         check(item['native']==proxy_frame(json.loads(item['native']))[:-1].decode())
+        check(item['sender']==('server' if sequence in (1,4) else 'client'))
         recovered.append(item)
     check(recovered[1]['context']==recovered[0]['original']['digest'])
     check(recovered[4]['context']==recovered[3]['original']['digest'])
@@ -609,6 +610,9 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
             'native':json.dumps({'id':2,'result':{}}),'requestSequence':'3'}
     # Recovered request validation must understand connection-owned originals.
     params['sequence']='5'
+    check('error' in c.call('swegca/agent/event',params))
+    check('error' in c.call('swegca/agent/event',dict(params,sender='client')))
+    params['sender']='server'
     appended=c.call('swegca/agent/event',params)['result']
     check('original' in appended and 'refinement' in appended)
     check(c.call('swegca/agent/event',params)['result']['duplicate'] is True)
@@ -619,6 +623,9 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
         attached=c.call('swegca/agent/attach/resume',{'provider':'codex','instance':'proxy-tested',
             'session':session,'protocol':'app-server'})['result']
         check(attached['nextSequence']==count)
+        stored=c.call('swegca/agent/original',{'identity':attached['identity'],'sequence':'0'})['result']
+        check(stored['sender']==('client' if session=='a' else 'server'))
+
         ensured=c.call('swegca/agent/attach/ensure',{'provider':'codex','instance':'proxy-tested',
             'session':session,'protocol':'app-server'})['result']
         check(ensured==attached)

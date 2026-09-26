@@ -64,7 +64,7 @@ public:
                 if(initialized_)throw std::invalid_argument("already initialized");
                 const auto& p=request.at("params");(void)p.at("protocolVersion").string();
                 if(p.at("capabilities").kind!=Json::Kind::object||p.at("clientInfo").kind!=Json::Kind::object)throw std::invalid_argument("invalid initialize parameters");
-                initialized_=true;result(encoded_id,R"({"protocolVersion":"2025-06-18","capabilities":{"tools":{},"experimental":{"swegcaHostInput":{"version":"12"}}},"serverInfo":{"name":"swegca-vrs-cpp","version":"0.1"}})");return;
+                initialized_=true;result(encoded_id,R"({"protocolVersion":"2025-06-18","capabilities":{"tools":{},"experimental":{"swegcaHostInput":{"version":"13"}}},"serverInfo":{"name":"swegca-vrs-cpp","version":"0.1"}})");return;
             }
             if(method=="ping"){result(encoded_id,"{}");return;}
             if(!ready_)throw std::invalid_argument("initialization not completed");
@@ -86,7 +86,7 @@ public:
 private:
     Runtime& runtime_;MemoryBudget& memory_;bool initialized_=false,ready_=false;
     struct Context {
-        struct Delivery { DigestBytes fingerprint; ExperienceLocation original; DigestBytes context{}; };
+        struct Delivery { DigestBytes fingerprint; ExperienceLocation original; DigestBytes context{}; ExperienceSender sender=ExperienceSender::unspecified; };
         Context(MemoryBudget& memory,std::string_view native,bool app,bool connection):deliveries(&memory),native_session(native,&memory),app_server(app),connection_scope(connection){}
         std::pmr::map<std::uint64_t,Delivery> deliveries;
         bool native_ready=false;
@@ -171,7 +171,7 @@ private:
                 [](void* opaque,const OriginalDelivery& delivery){
                 auto& target=*static_cast<Context*>(opaque);
                 const auto [at,inserted]=target.deliveries.try_emplace(delivery.sequence(),
-                    Context::Delivery{delivery.fingerprint(),delivery.original(),delivery.context()});
+                    Context::Delivery{delivery.fingerprint(),delivery.original(),delivery.context(),delivery.sender()});
                 if(!inserted && (at->second.fingerprint!=delivery.fingerprint() || at->second.original!=delivery.original()))
                     throw std::invalid_argument("conflicting stored native sequence");
             });
@@ -191,14 +191,15 @@ private:
             const auto stored=runtime_.session().read_original(found->second.original);
             const auto original=evidence_payload(stored);
             if(original.source!=state.native_source()||original.session!=state.native_session||
-               original.media_type!="application/json"||original.sequence!=found->first)
+               original.media_type!="application/json"||original.sequence!=found->first||original.sender!=found->second.sender)
                 throw std::invalid_argument("native original binding mismatch");
             const std::string_view bytes(reinterpret_cast<const char*>(original.content.data()),original.content.size());
             if(agent_delivery_identity(original.sequence,original.observed_at_ns,bytes)!=found->second.fingerprint)
                 throw std::invalid_argument("native original fingerprint mismatch");
             return "{\"original\":"+address(found->second.original,memory_)+
                 ",\"context\":\""+hex(found->second.context,memory_)+"\",\"source\":"+
-                quote_json(original.source,memory_)+",\"observedAt\":\""+
+                quote_json(original.source,memory_)+",\"sender\":"+
+                (original.sender==ExperienceSender::unspecified?"null":original.sender==ExperienceSender::client?"\"client\"":"\"server\"")+",\"observedAt\":\""+
                 std::to_string(original.observed_at_ns).c_str()+"\",\"native\":"+quote_json(bytes,memory_)+"}";
         }
         if(method=="swegca/agent/event"){
@@ -212,6 +213,13 @@ private:
             std::optional<AppServerRequests::Response> response;
             std::optional<ExperienceLocation> request_original;
             DigestBytes request_connection{};
+            ExperienceSender sender=ExperienceSender::unspecified;
+            if(const auto* incoming=p.find("sender")){
+                if(!state.app_server)throw std::invalid_argument("sender requires app-server binding");
+                if(incoming->string()=="client")sender=ExperienceSender::client;
+                else if(incoming->string()=="server")sender=ExperienceSender::server;
+                else throw std::invalid_argument("invalid native sender");
+            }
             if(const auto* request_sequence=p.find("requestSequence")){
                 if(!state.app_server)throw std::invalid_argument("response requires app-server binding");
                 const auto request=state.deliveries.find(integer(*request_sequence));
@@ -222,6 +230,9 @@ private:
                 if(original.source!=state.native_source()||original.session!=state.native_session||original.media_type!="application/json")
                     throw std::invalid_argument("request original binding mismatch");
                 const std::string_view bytes(reinterpret_cast<const char*>(original.content.data()),original.content.size());
+                if((sender==ExperienceSender::unspecified)!=(original.sender==ExperienceSender::unspecified)||
+                   (sender!=ExperienceSender::unspecified&&original.sender==sender))
+                    throw std::invalid_argument("response sender does not oppose recorded request");
                 auto request_event=state.connection_scope?adapt_codex_app_server_connection(bytes,state.native_session,memory_):adapt_codex_app_server(bytes,memory_);
                 if(request_event.session()!=state.native_session)throw std::invalid_argument("request session mismatch");
                 binding.emplace(memory_,1);binding->track(RpcSender::client,request_event);
@@ -236,10 +247,14 @@ private:
             }
             const auto& event=response?response->event():*parsed_event;
             if(event.session()!=state.native_session)throw std::invalid_argument("native session mismatch");
+            if(sender==ExperienceSender::server&&event.kind()==swegca::architecture::kernel::AgentEventKind::input)
+                throw std::invalid_argument("input must originate from client");
+            if(sender==ExperienceSender::client&&event.native_name()=="thread/started")
+                throw std::invalid_argument("thread started must originate from server");
             const auto sequence=integer(p.at("sequence")),observed=integer(p.at("observedAt"));
             const auto seed=integer(p.at("seed")),step=integer(p.at("step"));
             const OriginalExperienceView original{sequence,observed,state.native_session,state.native_source(),
-                "application/json",std::as_bytes(std::span(event.native_bytes()))};
+                "application/json",std::as_bytes(std::span(event.native_bytes())),sender};
             using namespace swegca::architecture::kernel;
             const auto route=route_agent_event(runtime_.session().phase(),event.kind());
             if(route!=AgentEventRoute::recall_then_record && route!=AgentEventRoute::record)
@@ -251,7 +266,7 @@ private:
             const auto fingerprint=found==state.deliveries.end()?DigestBytes{}:
                 agent_delivery_identity(sequence,observed,event.native_bytes());
             const auto delivery=route_agent_delivery(runtime_.session().phase(),found!=state.deliveries.end(),
-                found!=state.deliveries.end() && found->second.fingerprint==fingerprint &&
+                found!=state.deliveries.end() && found->second.fingerprint==fingerprint && found->second.sender==sender &&
                     (!request_original||found->second.context==request_original->digest),
                 !state.deliveries.empty(),state.deliveries.empty()?0:state.deliveries.rbegin()->first,sequence);
             if(delivery==AgentDeliveryRoute::reject)throw std::invalid_argument("conflicting or out-of-order native delivery");
@@ -264,7 +279,7 @@ private:
                 body+='}';return body;
             }
             // Reserve the index node before mutating durable experience state.
-            const auto slot=state.deliveries.try_emplace(sequence,Context::Delivery{fingerprint,{}}).first;
+            const auto slot=state.deliveries.try_emplace(sequence,Context::Delivery{fingerprint,{}, {},sender}).first;
             bool committed=false;
             try {
                 if(route==AgentEventRoute::recall_then_record){
