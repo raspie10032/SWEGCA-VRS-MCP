@@ -100,7 +100,8 @@ void ExperienceRouter::mount_main(const SessionRuntime& session) {
     }
     for (const auto& [identity, head] : session.catalog_.heads()) {
         (void)head;
-        main_.find(identity)->second.push_back({&session, session.connections_.find(identity)->second.connection});
+        const auto* connection = session.connections_.find(identity)->second.connection;
+        main_.find(identity)->second.push_back({&session, connection, connection->snapshot()});
     }
     mounted_.push_back(&session);
 }
@@ -109,7 +110,7 @@ RecallCandidates ExperienceRouter::recall(const DigestBytes& identity) const {
     const auto* local = temporary_.usable() ? temporary_.find(identity) : nullptr;
     switch (recall_scope(temporary_.usable(), local != nullptr)) {
     case RecallScope::unavailable: throw std::logic_error("temporary experience unavailable");
-    case RecallScope::temporary: result.temporary_ = {&temporary_, local}; return result;
+    case RecallScope::temporary: result.temporary_ = {&temporary_, local, local->snapshot()}; return result;
     case RecallScope::main: break;
     }
     const auto found = main_.find(identity);
@@ -119,6 +120,12 @@ RecallCandidates ExperienceRouter::recall(const DigestBytes& identity) const {
 StoredExperience ExperienceRouter::replay(const RecallCandidates& candidates, std::size_t candidate,
     std::size_t original_index) const {
     const auto selected = candidates.at(candidate);
+    const auto* current = selected.session->find(selected.recalled_head.identity);
+    if (!current) throw std::logic_error("recalled connection is no longer available");
+    const auto head = current->snapshot();
+    if (assess_head_publication(&head, selected.recalled_head.record, selected.recalled_head, true)
+        != HeadPublication::unchanged)
+        throw std::logic_error("connection changed after Recall; recall current experience again");
     return selected.session->replay(selected.connection->state().identity(), original_index);
 }
 

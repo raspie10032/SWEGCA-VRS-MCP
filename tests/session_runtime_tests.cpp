@@ -70,6 +70,9 @@ int main() {
         auto preferred=router.recall(id(10));
         CHECK(preferred.temporary() && preferred.size()==1);
         CHECK(router.replay(preferred,0,0).location()==local.original);
+        (void)observe(live,"live",10,2,EvidenceOutcome::support);
+        throws<std::logic_error>([&] { (void)router.replay(preferred,0,0); });
+        CHECK(router.replay(router.recall(id(10)),0,0).location()==local.original);
         CHECK(old.find(id(10))->state().strength()==saved_strength);
         // Separate Main session lineage must not overwrite the first one.
         auto other_store=SessionStore::create(root,id(3),"other",65536,memory);
@@ -103,7 +106,7 @@ int main() {
         SessionRuntime live(live_store,memory,8192);
         ExperienceRouter router(live,memory); router.mount_main(old);
         CHECK(router.recall(id(10)).temporary());
-        auto result=observe(live,"live",10,2,EvidenceOutcome::support);
+        auto result=observe(live,"live",10,3,EvidenceOutcome::support);
         CHECK(live.find(id(10))->head()!=ExperienceLocation{});
         CHECK(result.refinement.after_revision()>result.refinement.before_revision());
     }

@@ -54,6 +54,7 @@ private:
 struct RecallMatch {
     const SessionRuntime* session = nullptr;
     const PersistentConnection* connection = nullptr;
+    architecture::kernel::ConnectionHead recalled_head;
 };
 
 // Borrowed result: use before changing the router or its sessions. No original
