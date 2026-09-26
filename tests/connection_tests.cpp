@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <limits>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -174,7 +175,7 @@ int main(int argc, char** argv) {
                         upstream.until_failure = allowed;
                         try { segmented.append(value); break; }
                         catch (const std::bad_alloc&) {
-                            CHECK(allowed < 2);
+                            CHECK(allowed < 3);
                             CHECK(segmented_memory.used() == before);
                             CHECK(segmented.revision() == revision);
                             CHECK(segmented.strength() == 1);
@@ -205,6 +206,37 @@ int main(int argc, char** argv) {
             CHECK(view.subspan(1030).empty());
             expect_throw<std::out_of_range>([&] { (void)view.subspan(1031); });
             upstream.request_limit = std::numeric_limits<std::size_t>::max();
+            {
+                std::optional<ExperienceSequence> parent;
+                parent.emplace(segmented_memory);
+                for(const auto& value:expected){parent->prepare_append();parent->commit_append(value);}
+                ExperienceSequence child(segmented_memory);
+                const auto baseline=segmented_memory.used();
+                unsigned failed=0;
+                for(std::size_t allowed=0;;++allowed){
+                    upstream.until_failure=allowed;
+                    try{child.share_prefix(*parent);break;}
+                    catch(const std::bad_alloc&){
+                        ++failed;CHECK(child.size()==0);CHECK(parent->size()==1030);
+                        CHECK(segmented_memory.used()==baseline);CHECK(allowed<3);
+                    }
+                }
+                upstream.until_failure=std::numeric_limits<std::size_t>::max();
+                CHECK(failed==3);
+                CHECK(segmented_memory.used()-baseline < 256*sizeof(ExperienceEvidence)+4096);
+                std::printf("Shared prefix: %zu new bytes for 1030 experiences (%zu bytes of sealed values)\n",
+                    segmented_memory.used()-baseline,expected.size()*sizeof(ExperienceEvidence));
+                for(std::size_t n=0;n<expected.size();++n){
+                    CHECK(child[n].original()==expected[n].original());
+                    CHECK((&child[n]==&(*parent)[n])==(n<1016));
+                }
+                parent->prepare_append();parent->commit_append(expected[0]);
+                CHECK(child.size()==1030);
+                child.prepare_append();child.commit_append(expected[1]);
+                CHECK((*parent)[1030].original()!=child[1030].original());
+                parent.reset();
+                for(std::size_t n=0;n<expected.size();++n)CHECK(child[n].original()==expected[n].original());
+            }
             const auto report = segmented.refine(12345, 5);
             oracle(segmented, report);
             CHECK(report.samples().size() == 1030);

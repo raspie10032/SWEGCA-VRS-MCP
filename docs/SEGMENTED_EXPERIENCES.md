@@ -38,3 +38,43 @@ Verification:
 This removes contiguous whole-connection metadata reallocation. It does not
 implement region/portal/shared-experience graph partitioning, bound total RSS,
 stream giant originals, or eliminate the refinement report's linear storage.
+
+## Main candidate prefix sharing
+
+Main merge candidates now retain references to immutable full segments of the
+previous Main connection. Their incomplete last segment is copied eagerly;
+new appended observations never mutate any shared segment. This preserves
+logical indices and existing object addresses in each sequence. Segment data
+and shared ownership control storage both use the same VRS MemoryBudget, which
+must outlive all holders. Sharing across different budget owners is rejected.
+
+All segments are prepared in a temporary directory before publishing the new
+sequence. Failed directory/control/data allocation releases the candidate's
+references and leaves the previous Main state and accounting unchanged. The
+last holder releases a segment, so destroying a previous sequence does not
+invalidate its successor. Main still publishes its candidate graph atomically
+only after successful preparation and persistence.
+
+Connection inheritance preserves per-experience core admission checks and sets
+the same initial candidate revision as the former repeated-append path. The
+candidate still shuffles every actual old and new experience and reruns the
+same core reduction and verdict. It does not inherit an accumulated tally or
+skip older observations. Origin-store reference arrays and refinement reports
+are still separately allocated; this does not make the whole merge constant
+space or implement concurrent reader snapshots/region graph partitioning.
+
+Regression coverage uses a 1030-value prefix: 1016 values in full immutable
+segments are shared, the 14-value partial tail has separate storage, and both
+owners can append independently. The successor survives destruction of the
+previous owner. Failure injection covers prefix directory/control/data setup.
+The real Main merge also checks that an original in a full segment retains its
+object address after publication, while its exact serial/core result is checked
+against freshly appended observations.
+
+Observed allocation in the 1030-value regression: sealed values total 313120
+bytes; creating the shared successor required 78024 additional tracked bytes,
+including its directory, ownership control and independently allocated tail.
+This is a prefix-metadata allocation result, not a whole-merge/RSS saving claim.
+Normal/UBSan connection checks: 12907. Main graph: 3746 (742 allocation failure
+points); parallel Main: 1272 (223 failure points); persistent Main: 174. The
+original SWEGCA oracle still matches 15 shuffled batches / 2038 observations.

@@ -56,6 +56,7 @@ int main(){
   b.define_connection(id(11),0.75,policy);fill(b,"b",11,2000,16,EvidenceOutcome::support);
   b.end();b.publish_originals();
   const auto a_head=a.find(id(10))->head(),b_head=b.find(id(10))->head();
+  const auto* shared_first=&graph.find(id(10))->experiences()[0];
   const auto baseline=graph_memory.used();unsigned failures=0;bool completed=false;
   for(unsigned point=0;point<3000;++point){
    failing.remaining=point;
@@ -67,6 +68,7 @@ int main(){
    failing.remaining=std::numeric_limits<std::size_t>::max();if(completed)break;
   }
   CHECK(completed&&failures>0);CHECK(graph.generation()==2&&graph.source_count()==2);
+  CHECK(&graph.find(id(10))->experiences()[0]==shared_first);
   CHECK(graph.find(id(10))->experiences().size()==80&&graph.find(id(11))->experiences().size()==16);
   {
    const auto rules=make_evidence_rules(policy);Connection expected(id(10),1.01,rules,source_memory);

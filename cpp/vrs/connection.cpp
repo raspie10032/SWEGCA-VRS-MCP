@@ -60,7 +60,7 @@ void Connection::append(const ExperienceEvidence& experience) {
     commit_append(experience);
 }
 
-void Connection::prepare_append(const ExperienceEvidence& experience) {
+void Connection::validate_experience(const ExperienceEvidence& experience) const {
     const auto& address = experience.original();
     const auto& value = experience.value();
     if (!named_digest(address.block) || address.offset < ExperienceBlock::header_bytes ||
@@ -69,6 +69,20 @@ void Connection::prepare_append(const ExperienceEvidence& experience) {
         address.digest != value.address ||
         admit_observation(rules_, identity_, value, value.observed_at, false) == ObservationUse::invalid)
         throw std::invalid_argument("invalid VRS experience observation");
+}
+
+void Connection::inherit_experiences(const Connection& previous) {
+    if(identity_!=previous.identity_||revision_||experiences_.size())
+        throw std::logic_error("invalid Main experience inheritance");
+    // Preserve the original per-experience core admission check. Sharing only
+    // replaces physical metadata copies, never the later full shuffled tally.
+    for(const auto& value:previous.experiences())validate_experience(value);
+    experiences_.share_prefix(previous.experiences_);
+    revision_=experiences_.size();
+}
+
+void Connection::prepare_append(const ExperienceEvidence& experience) {
+    validate_experience(experience);
     if (experiences_.size() >= std::numeric_limits<std::uint32_t>::max() ||
         revision_ == std::numeric_limits<std::uint64_t>::max())
         throw std::overflow_error("VRS connection revision or sample count exhausted");

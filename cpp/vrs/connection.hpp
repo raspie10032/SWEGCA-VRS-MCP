@@ -66,6 +66,9 @@ public:
 
 private:
     friend class PersistentConnection;
+    friend class MainGraph;
+    void inherit_experiences(const Connection&);
+    void validate_experience(const ExperienceEvidence&) const;
     void prepare_append(const ExperienceEvidence& experience);
     void commit_append(const ExperienceEvidence& experience) noexcept;
     [[nodiscard]] ConnectionRefinement prepare_refinement(std::uint64_t seed, std::uint64_t current_step) const;

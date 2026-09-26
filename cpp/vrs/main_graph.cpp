@@ -53,7 +53,7 @@ bool MainGraph::merge_impl(const SessionRuntime& source, std::uint64_t seed, std
     const auto prepare = [&](const Task& task) {
         auto& candidate = *task.candidate;
         if (task.previous) {
-            for (const auto& value : task.previous->connection.experiences()) candidate.connection.append(value);
+            candidate.connection.inherit_experiences(task.previous->connection);
             candidate.origins.assign(task.previous->origins.begin(), task.previous->origins.end());
         }
         const auto added = task.incoming->state().experiences();
