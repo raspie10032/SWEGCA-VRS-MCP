@@ -117,3 +117,7 @@ the remembered request connection, and explicit-only Main publication.
 
 Verification for protocol 9: MCP subprocess suite 1,942 checks, Runtime lifecycle
 suite 180 checks, request binding suite 38 checks; git diff whitespace check passed.
+
+Automatic session/sequence/request selection and VRS-confirmation-before-forward
+logic are now provided by AppServerWire. Real MCP round-trip verification and the
+remaining live process-I/O boundary are documented in APP_SERVER_WIRE_OWNER.md.

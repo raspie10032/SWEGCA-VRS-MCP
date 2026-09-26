@@ -55,6 +55,8 @@ public:
     [[nodiscard]] const Json& fields() const noexcept{return parsed_;}
 private:
     friend class AppServerRequests;
+    friend class AppServerWire;
+    static AgentEvent from_app_server(std::string_view,Json,std::pmr::memory_resource&);
     friend AgentEvent adapt_codex_app_server(std::string_view,std::pmr::memory_resource&);
     friend AgentEvent adapt_codex_hook(std::string_view,std::pmr::memory_resource&);
     AgentEvent(std::string_view native,Json parsed,architecture::kernel::AgentEventKind kind,
@@ -88,9 +90,8 @@ inline AgentEvent adapt_codex_hook(std::string_view bytes,std::pmr::memory_resou
 // Parse actual app-server request/notification envelopes. Replies without an
 // explicit thread binding need the owning transport's request-ID correlation;
 // they are rejected here rather than assigned to whichever session is selected.
-inline AgentEvent adapt_codex_app_server(std::string_view bytes,std::pmr::memory_resource& memory){
+inline AgentEvent AgentEvent::from_app_server(std::string_view bytes,Json parsed,std::pmr::memory_resource& memory){
     using architecture::kernel::AgentEventKind;
-    auto parsed=parse_json(bytes,memory);
     const auto method=parsed.at("method").string();
     const auto& params=parsed.at("params");
     const auto session=params.at("threadId").string();
@@ -114,5 +115,8 @@ inline AgentEvent adapt_codex_app_server(std::string_view bytes,std::pmr::memory
     AgentEvent event(bytes,std::move(parsed),kind,memory);event.app_server_=true;
     if(kind==AgentEventKind::input)event.cue_=encode_json(event.parsed_.at("params").at("input"),memory);
     return event;
+}
+inline AgentEvent adapt_codex_app_server(std::string_view bytes,std::pmr::memory_resource& memory){
+    return AgentEvent::from_app_server(bytes,parse_json(bytes,memory),memory);
 }
 } // namespace swegca::transport

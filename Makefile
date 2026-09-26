@@ -102,11 +102,12 @@ check-resource-profile: $(BUILD)/resource-profile-probe $(BUILD)/swegca-vrs-mcp
 	python3 tests/check_resource_profile.py $(BUILD)/resource-profile-probe
 	python3 tests/stdio_tests.py $(BUILD)/swegca-vrs-mcp --limited
 
-check-stdio: $(BUILD)/swegca-vrs-mcp
+check-stdio: $(BUILD)/swegca-vrs-mcp $(BUILD)/app-server-wire-tests
 	python3 tests/stdio_tests.py $(BUILD)/swegca-vrs-mcp
 
 check: $(BUILD)/parallel-recovery-tests $(BUILD)/transfer-budget-tests $(BUILD)/parallel-main-tests $(BUILD)/runtime-tests $(BUILD)/main-sources-tests $(BUILD)/core-tests $(BUILD)/vrs-tests $(BUILD)/experience-block-tests $(BUILD)/memory-budget-tests $(BUILD)/connection-tests $(BUILD)/session-tests $(BUILD)/persistent-connection-tests $(BUILD)/catalog-tests $(BUILD)/session-runtime-tests $(BUILD)/main-graph-tests $(BUILD)/persistent-main-tests
 	./$(BUILD)/multi-session-runtime-tests
+	./$(BUILD)/app-server-wire-tests
 	./$(BUILD)/app-server-requests-tests
 	./$(BUILD)/agent-event-tests
 	./$(BUILD)/async-runtime-tests
@@ -149,3 +150,8 @@ $(BUILD)/app-server-requests-tests: tests/app_server_requests_tests.cpp cpp/tran
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< cpp/transport/json.cpp $(CORE_SOURCES) -o $@
 
 check: $(BUILD)/app-server-requests-tests
+
+$(BUILD)/app-server-wire-tests: tests/app_server_wire_tests.cpp cpp/transport/app_server_wire.hpp cpp/transport/app_server_requests.hpp cpp/transport/agent_event.hpp cpp/transport/json.cpp cpp/transport/json.hpp $(CORE_HEADERS) $(CORE_SOURCES) | $(BUILD)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< cpp/transport/json.cpp $(CORE_SOURCES) -o $@
+
+check: $(BUILD)/app-server-wire-tests

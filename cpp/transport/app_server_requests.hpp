@@ -18,14 +18,16 @@ public:
         Response& operator=(const Response&)=delete;
         Response(Response&&) noexcept=default;
         [[nodiscard]] const AgentEvent& event() const noexcept{return event_;}
+        [[nodiscard]] std::optional<std::uint64_t> request_sequence() const noexcept{return sequence_;}
     private:
         friend class AppServerRequests;
-        Response(AgentEvent event,std::pmr::string key,std::uint64_t owner,std::uint64_t generation)
-            :event_(std::move(event)),key_(std::move(key)),owner_(owner),generation_(generation){}
+        Response(AgentEvent event,std::pmr::string key,std::uint64_t owner,std::uint64_t generation,std::optional<std::uint64_t> sequence)
+            :event_(std::move(event)),key_(std::move(key)),owner_(owner),generation_(generation),sequence_(sequence){}
         AgentEvent event_;
         std::pmr::string key_;
         std::uint64_t owner_;
         std::uint64_t generation_;
+        std::optional<std::uint64_t> sequence_;
     };
     AppServerRequests(std::pmr::memory_resource& memory,std::size_t capacity)
         :memory_(memory),capacity_(capacity),owner_(next_owner()),pending_(&memory){
@@ -38,7 +40,7 @@ public:
     // Reserve before forwarding a request, so its response cannot race ahead.
     // Exact re-registration is harmless; another live request with the same ID
     // is a conflict. String IDs and signed integer IDs occupy separate keys.
-    void track(RpcSender sender,const AgentEvent& request){
+    void track(RpcSender sender,const AgentEvent& request,std::optional<std::uint64_t> sequence=std::nullopt){
         if(!request.is_app_server()||request.native_name().empty())throw std::invalid_argument("app-server request required");
         const auto& fields=request.fields();
         if(fields.find("result")||fields.find("error"))throw std::invalid_argument("request contains response fields");
@@ -46,20 +48,24 @@ public:
         architecture::Sha256 hash;hash.update(request.native_bytes());const auto digest=hash.finish();
         const auto found=pending_.find(key);
         if(found!=pending_.end()){
-            if(found->second.digest!=digest||found->second.session!=request.session())
+            if(found->second.digest!=digest||found->second.session!=request.session()||found->second.sequence!=sequence)
                 throw std::invalid_argument("conflicting live request ID");
             return;
         }
         if(pending_.size()==capacity_)throw std::length_error("pending request capacity exhausted");
         if(generation_==std::numeric_limits<std::uint64_t>::max())throw std::overflow_error("request generation exhausted");
-        pending_.try_emplace(std::move(key),request.session(),digest,generation_+1,memory_);
+        pending_.try_emplace(std::move(key),request.session(),digest,generation_+1,sequence,memory_);
         ++generation_;
     }
 
     // Binding is read-only. Keep the request until the owner confirms durable
     // recording of this exact returned response. No selected-session fallback.
     [[nodiscard]] Response bind(std::string_view bytes,RpcSender sender) const{
-        auto parsed=parse_json(bytes,memory_);
+        return bind_parsed(bytes,parse_json(bytes,memory_),sender);
+    }
+private:
+    friend class AppServerWire;
+    [[nodiscard]] Response bind_parsed(std::string_view bytes,Json parsed,RpcSender sender) const{
         if(parsed.kind!=Json::Kind::object||parsed.find("method")||
            bool(parsed.find("result"))==bool(parsed.find("error")))
             throw std::invalid_argument("invalid app-server response envelope");
@@ -74,8 +80,9 @@ public:
         }
         AgentEvent event(bytes,std::move(parsed),architecture::kernel::AgentEventKind::content,memory_);
         event.app_server_=true;event.bound_session_=found->second.session;
-        return Response(std::move(event),std::move(key),owner_,found->second.generation);
+        return Response(std::move(event),std::move(key),owner_,found->second.generation,found->second.sequence);
     }
+public:
     // Call only after VRS has recorded the response. A stale ticket cannot erase
     // a subsequent request that reused the ID, nor another connection's request.
     void recorded(const Response& response){
@@ -95,11 +102,12 @@ private:
         return value+1;
     }
     struct Pending {
-        Pending(std::string_view session,architecture::DigestBytes digest,std::uint64_t generation,std::pmr::memory_resource& memory)
-            :session(session,&memory),digest(digest),generation(generation){}
+        Pending(std::string_view session,architecture::DigestBytes digest,std::uint64_t generation,std::optional<std::uint64_t> sequence,std::pmr::memory_resource& memory)
+            :session(session,&memory),digest(digest),generation(generation),sequence(sequence){}
         std::pmr::string session;
         architecture::DigestBytes digest;
         std::uint64_t generation;
+        std::optional<std::uint64_t> sequence;
     };
     static RpcSender opposite(RpcSender sender){
         switch(sender){case RpcSender::client:return RpcSender::server;case RpcSender::server:return RpcSender::client;}

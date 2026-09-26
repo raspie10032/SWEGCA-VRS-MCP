@@ -34,7 +34,7 @@ class Client:
         check('error' in self.call('tools/list'))
         initialized=self.call('initialize',{'protocolVersion':'2025-06-18','capabilities':{},'clientInfo':{'name':'test','version':'1'}})['result']
         check(initialized['protocolVersion']=='2025-06-18')
-        check(initialized['capabilities']['experimental']['swegcaHostInput']['version']=='9')
+        check(initialized['capabilities']['experimental']['swegcaHostInput']['version']=='10')
         self.notice('notifications/initialized')
         tools=self.call('tools/list')['result']['tools']
         check([t['name'] for t in tools]==['vrs_replay','vrs_re_evidence'])
@@ -520,6 +520,40 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     check(c.call('swegca/end')['result']=={})
     check(c.call('swegca/work',{'seed':'7','step':'7'})['result']['merged']=='1')
     c.close()
+    # The C++ wire owner chooses thread and requestSequence automatically. Only
+    # acknowledge its plan after the real VRS process confirms ingestion.
+    wire_root=root/'wire-owner';wire_root.mkdir()
+    c=Client('create',wire_root,path);c.initialize()
+    wire_ids={}
+    for session in ('a','b'):
+        attached=c.call('swegca/agent/attach',{'provider':'codex','instance':'wire-tested',
+            'session':session,'protocol':'app-server'})['result']
+        check(attached['nextSequence']=='0');wire_ids[session]=attached['identity']
+    owner=subprocess.Popen([str(exe.parent/'app-server-wire-tests'),'--exchange'],
+        stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,bufsize=0)
+    for index,session in enumerate(('a','b','a','b')):
+        check(bool(select.select([owner.stdout],[],[],10)[0]))
+        plan=json.loads(owner.stdout.readline());check(plan['session']==session)
+        params=plan['parameters'];check(params['sequence']==('0' if index<2 else '1'))
+        if index>=2:check(params['requestSequence']=='0')
+        else:check('requestSequence' not in params)
+        check(c.call('swegca/select',{'identity':wire_ids[session]})['result']=={})
+        check('original' in c.call('swegca/agent/event',params)['result'])
+        owner.stdin.write(b'recorded\n');owner.stdin.flush()
+        check(bool(select.select([owner.stdout],[],[],10)[0]))
+        forwarded=json.loads(owner.stdout.readline());check(forwarded['forwarded']==params['native'])
+    owner.stdin.close();check(owner.wait(timeout=10)==0)
+    check(owner.stdout.read()==b'' and owner.stderr.read()==b'')
+    check(c.call('swegca/work',{'seed':'7','step':'0'})['result']['merged']=='0')
+    c.close()
+    c=Client('open',wire_root,path);c.initialize()
+    for session in ('a','b'):
+        attached=c.call('swegca/agent/attach/resume',{'provider':'codex','instance':'wire-tested',
+            'session':session,'protocol':'app-server'})['result']
+        check(attached['nextSequence']=='2')
+        check(c.call('swegca/select',{'identity':attached['identity']})['result']=={})
+        check(c.call('swegca/end')['result']=={})
+    check(c.call('swegca/work',{'seed':'7','step':'0'})['result']['merged']=='2');c.close()
     # A separate config file must not change the root being measured.
     def stored_bytes():
         seen=set();total=0

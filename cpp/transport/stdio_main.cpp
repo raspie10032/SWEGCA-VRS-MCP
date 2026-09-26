@@ -64,7 +64,7 @@ public:
                 if(initialized_)throw std::invalid_argument("already initialized");
                 const auto& p=request.at("params");(void)p.at("protocolVersion").string();
                 if(p.at("capabilities").kind!=Json::Kind::object||p.at("clientInfo").kind!=Json::Kind::object)throw std::invalid_argument("invalid initialize parameters");
-                initialized_=true;result(encoded_id,R"({"protocolVersion":"2025-06-18","capabilities":{"tools":{},"experimental":{"swegcaHostInput":{"version":"9"}}},"serverInfo":{"name":"swegca-vrs-cpp","version":"0.1"}})");return;
+                initialized_=true;result(encoded_id,R"({"protocolVersion":"2025-06-18","capabilities":{"tools":{},"experimental":{"swegcaHostInput":{"version":"10"}}},"serverInfo":{"name":"swegca-vrs-cpp","version":"0.1"}})");return;
             }
             if(method=="ping"){result(encoded_id,"{}");return;}
             if(!ready_)throw std::invalid_argument("initialization not completed");
@@ -164,7 +164,7 @@ private:
                state.deliveries.rbegin()->first!=state.deliveries.size()-1))
                 throw std::invalid_argument("noncontiguous stored native sequence");
             state.native_ready=true;
-            return "{\"identity\":\""+hex(identity,memory_)+"\"}";
+            return "{\"identity\":\""+hex(identity,memory_)+"\",\"nextSequence\":\""+std::to_string(state.deliveries.size()).c_str()+"\"}";
         }
         if(method=="swegca/agent/event"){
             auto& state=context();
