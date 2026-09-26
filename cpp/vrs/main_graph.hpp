@@ -24,6 +24,7 @@ public:
     [[nodiscard]] std::size_t source_count() const noexcept { return merged_.size(); }
 private:
     friend class PersistentMainGraph;
+    friend class ExperienceRouter;
     using MergeSink = void (*)(void*, const architecture::DigestBytes&, const ExperienceLocation&,
         const architecture::DigestBytes&, std::uint64_t, std::uint64_t, std::uint64_t);
     bool merge_impl(const SessionRuntime&, std::uint64_t, std::uint64_t, MergeSink, void*);

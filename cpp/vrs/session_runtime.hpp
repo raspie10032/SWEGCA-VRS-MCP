@@ -63,10 +63,13 @@ private:
     bool usable_ = true;
 };
 
+class PersistentMainGraph;
+
 struct RecallMatch {
     const SessionRuntime* session = nullptr;
     const PersistentConnection* connection = nullptr;
     architecture::kernel::ConnectionHead recalled_head;
+    const PersistentMainGraph* main_graph = nullptr;
 };
 
 struct InputMatch {
@@ -150,7 +153,7 @@ private:
 // bytes are read by Recall. Main's caller selects one experience for Replay.
 class RecallCandidates final {
 public:
-    [[nodiscard]] std::size_t size() const noexcept { return temporary_.session ? 1 : main_.size(); }
+    [[nodiscard]] std::size_t size() const noexcept { return (temporary_.session || temporary_.main_graph) ? 1 : main_.size(); }
     [[nodiscard]] RecallMatch at(std::size_t index) const;
     [[nodiscard]] bool temporary() const noexcept { return temporary_.session != nullptr; }
 private:
@@ -165,6 +168,9 @@ class ExperienceRouter final {
 public:
     ExperienceRouter(SessionRuntime& temporary, MemoryBudget& memory);
     void mount_main(const SessionRuntime& session);
+    // Atomically refresh the query index of one durable merged Main. Sources
+    // need not retain their SessionRuntime caches. Graph/store owners outlive us.
+    void mount_main(const PersistentMainGraph& graph);
     [[nodiscard]] RecallCandidates recall(const architecture::DigestBytes& identity) const;
     // Immediate natural-input entry: exact/continued familiarity, then Recall.
     // No disk, recording, shuffle or LLM precedes Recall. SHA-256 cue work is
@@ -184,6 +190,10 @@ private:
     std::pmr::vector<const SessionRuntime*> mounted_;
     std::pmr::map<architecture::DigestBytes, std::pmr::vector<RecallMatch>> main_;
     struct MainCue { const SessionRuntime* session; CueReference reference; };
+    const PersistentMainGraph* merged_main_ = nullptr;
+    ExperienceLocation merged_head_;
+    void require_main_current() const;
+    [[nodiscard]] RecallMatch merged_match(const architecture::DigestBytes& identity) const;
     std::pmr::map<architecture::DigestBytes, std::pmr::vector<MainCue>> main_cues_;
     // Main-owned dialogue continuity, updated only after a successful selected
     // Replay. It holds an experience key, never copied dialogue text or a verdict.

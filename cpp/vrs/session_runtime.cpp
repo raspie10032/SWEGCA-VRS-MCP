@@ -1,3 +1,4 @@
+#include "vrs/persistent_main_graph.hpp"
 #include "vrs/session_runtime.hpp"
 #include "swegca_architecture/input_cue.hpp"
 
@@ -98,11 +99,12 @@ void SessionRuntime::publish_originals() { require_usable(); store_.publish_orig
 
 RecallMatch RecallCandidates::at(std::size_t index) const {
     if (index >= size()) throw std::out_of_range("recall candidate");
-    return temporary_.session ? temporary_ : main_[index];
+    return (temporary_.session || temporary_.main_graph) ? temporary_ : main_[index];
 }
 ExperienceRouter::ExperienceRouter(SessionRuntime& temporary, MemoryBudget& memory)
     : temporary_(temporary), memory_(memory), mounted_(&memory), main_(&memory), main_cues_(&memory) {}
 void ExperienceRouter::mount_main(const SessionRuntime& session) {
+    if (merged_main_) throw std::logic_error("cannot mix merged Main with session candidates");
     if (!main_session_readable(session.phase(), session.usable()))
         throw std::logic_error("Main requires a published ended session");
     if (std::find(mounted_.begin(), mounted_.end(), &session) != mounted_.end()) return;
@@ -129,6 +131,39 @@ void ExperienceRouter::mount_main(const SessionRuntime& session) {
             main_cues_.find(cue)->second.push_back({&session, reference});
     mounted_.push_back(&session);
 }
+void ExperienceRouter::require_main_current() const {
+    if (merged_main_) {
+        (void)merged_main_->graph();
+        if (merged_main_->head() != merged_head_)
+            throw std::logic_error("Main changed; refresh the query index before Main Recall");
+    }
+}
+RecallMatch ExperienceRouter::merged_match(const DigestBytes& identity) const {
+    require_main_current();
+    const auto* connection = merged_main_->graph().find(identity);
+    if (!connection) throw std::logic_error("merged Main cue has no connection");
+    return {nullptr, nullptr, {identity, merged_head_, connection->revision(), connection->revision(),
+        connection->experiences().size(), connection->strength()}, merged_main_};
+}
+void ExperienceRouter::mount_main(const PersistentMainGraph& graph) {
+    if (!mounted_.empty()) throw std::logic_error("cannot mix session candidates with merged Main");
+    if (merged_main_ && merged_main_ != &graph) throw std::logic_error("Main owner cannot change within a route");
+    const auto& state = graph.graph();
+    decltype(main_) candidates(&memory_);
+    decltype(main_cues_) cues(&memory_);
+    for (const auto& [identity, entry] : state.connections_) {
+        const auto& connection = entry.connection;
+        const auto values = connection.experiences();
+        if (values.empty()) continue;
+        candidates[identity].push_back({nullptr, nullptr,
+            {identity, graph.head(), connection.revision(), connection.revision(), values.size(), connection.strength()}, &graph});
+        for (std::size_t index = 0; index < values.size(); ++index)
+            cues[values[index].cue()].push_back({nullptr, {identity, index}});
+    }
+    // All allocation precedes publication. Main serializes merges and readers.
+    main_.swap(candidates); main_cues_.swap(cues);
+    merged_main_ = &graph; merged_head_ = graph.head();
+}
 InputRecall ExperienceRouter::input(std::string_view media, std::span<const std::byte> content) const {
     // Deja vu: natural bytes reach the core cue primitive immediately. This
     // anonymous exact familiarity signal is not a truth/semantic judgment.
@@ -140,6 +175,7 @@ InputRecall ExperienceRouter::input(std::string_view media, std::span<const std:
         !present && continuation_ && temporary_.find(*continuation_) != nullptr);
     const auto scope = recall_scope(true, local_kind != FamiliarityKey::missing);
     if (scope == RecallScope::temporary) return recall_cue(cue, scope, local_kind);
+    require_main_current();
     const auto main_cue = main_cues_.find(cue);
     const bool main_exact = main_cue != main_cues_.end() && !main_cue->second.empty();
     const auto main_context = continuation_ ? main_.find(*continuation_) : main_.end();
@@ -158,7 +194,7 @@ InputRecall ExperienceRouter::recall_cue(const DigestBytes& cue, RecallScope sco
         const auto candidates = recall(*continuation_);
         for (std::size_t candidate = 0; candidate < candidates.size(); ++candidate) {
             const auto match = candidates.at(candidate);
-            const auto count = match.connection->state().experiences().size();
+            const auto count = match.recalled_head.observations;
             const auto* active = temporary_.find(match.recalled_head.identity);
             const auto boundary = active ? active->state().experiences().size() : 0;
             for (std::size_t index = 0; index < count; ++index)
@@ -179,7 +215,15 @@ InputRecall ExperienceRouter::recall_cue(const DigestBytes& cue, RecallScope sco
     } else {
         const auto found = main_cues_.find(cue);
         if (found != main_cues_.end())
-            for (const auto& candidate : found->second) append(*candidate.session, candidate.reference);
+            for (const auto& candidate : found->second) {
+                if (candidate.session) append(*candidate.session, candidate.reference);
+                else {
+                    const auto match = merged_match(candidate.reference.connection);
+                    const auto* active = temporary_.find(candidate.reference.connection);
+                    result.matches_.push_back({match, candidate.reference.original_index,
+                        active ? active->state().experiences().size() : 0});
+                }
+            }
     }
     return result;
 }
@@ -197,8 +241,11 @@ ReEvidenceResult ExperienceRouter::re_evidence(const ReplayedInput& replayed,
     const auto& remembered = replayed.match_.recalled;
     const auto identity = remembered.recalled_head.identity;
     const auto* current = temporary_.find(identity);
-    const auto& rules = current ? current->rules() : remembered.connection->rules();
-    const auto prior = decode_evidence(remembered.connection->rules(), replayed.original_);
+    // The Main policy is immutable. Never dereference a replaced merged
+    // connection through a retained Replay receipt.
+    const auto& prior_rules = remembered.main_graph ? remembered.main_graph->graph().rules_ : remembered.connection->rules();
+    const auto& rules = current ? current->rules() : prior_rules;
+    const auto prior = decode_evidence(prior_rules, replayed.original_);
     Connection fresh(identity, current ? current->state().strength() : remembered.recalled_head.strength, rules, memory_);
     std::pmr::vector<ExperienceLocation> addresses(&memory_);
     ConnectionHead current_head{};
@@ -228,6 +275,7 @@ RecallCandidates ExperienceRouter::recall(const DigestBytes& identity) const {
     case RecallScope::temporary: result.temporary_ = {&temporary_, local, local->snapshot()}; return result;
     case RecallScope::main: break;
     }
+    require_main_current();
     const auto found = main_.find(identity);
     if (found != main_.end()) result.main_ = found->second;
     return result;
@@ -235,6 +283,17 @@ RecallCandidates ExperienceRouter::recall(const DigestBytes& identity) const {
 StoredExperience ExperienceRouter::replay(const RecallCandidates& candidates, std::size_t candidate,
     std::size_t original_index) const {
     const auto selected = candidates.at(candidate);
+    if (selected.main_graph) {
+        require_main_current();
+        if (selected.main_graph != merged_main_) throw std::invalid_argument("Recall belongs to a different Main");
+        const auto current = merged_match(selected.recalled_head.identity);
+        if (assess_head_publication(&current.recalled_head, selected.recalled_head.record, selected.recalled_head, true)
+            != HeadPublication::unchanged)
+            throw std::logic_error("Main changed after Recall; recall current experience again");
+        auto original = merged_main_->graph().replay(selected.recalled_head.identity, original_index);
+        continuation_ = selected.recalled_head.identity;
+        return original;
+    }
     const auto* current = selected.session->find(selected.recalled_head.identity);
     if (!current) throw std::logic_error("recalled connection is no longer available");
     const auto head = current->snapshot();
