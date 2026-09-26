@@ -9,7 +9,7 @@ namespace swegca::vrs {
 // are serialized by Main. Durable merged-root publication is a separate gate.
 class MainGraph final {
 public:
-    MainGraph(MemoryBudget& memory, double initial_strength, const architecture::EvidencePolicy& policy);
+    MainGraph(MemoryBudget& memory, double initial_strength, const architecture::EvidencePolicy& policy, std::uint32_t workers = 1);
     MainGraph(const MainGraph&) = delete;
     MainGraph& operator=(const MainGraph&) = delete;
     // False for an already merged source or a source without connections.
@@ -39,6 +39,7 @@ private:
     };
     MemoryBudget& memory_;
     double initial_strength_;
+    std::uint32_t workers_;
     architecture::kernel::EvidenceRules rules_;
     architecture::DigestBytes policy_digest_;
     std::pmr::map<architecture::DigestBytes, Entry> connections_;

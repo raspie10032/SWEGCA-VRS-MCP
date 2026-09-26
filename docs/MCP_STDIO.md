@@ -52,7 +52,8 @@ build/swegca-vrs-mcp open /path/to/new-vrs-root examples/stdio-config.json
 ```
 
 예제 설정은 사용자가 선택할 Main identity·초기 강도·기존 EvidencePolicy 필드를 모두
-명시한다. 호스트와 서버는 같은 프로세스의 Runtime을 두 번 소유하지 않는다.
+명시한다. `mergeWorkers`는 Main 병합 준비의 작업 슬롯 수이며 예제는 2다.
+호스트와 서버는 같은 프로세스의 Runtime을 두 번 소유하지 않는다.
 설정 파일은 최대 64KiB다. 예제의 4GB는 VRS 공유 할당 예산이며 실제 RSS·페이지 캐시·
 부트스트랩 설정 파싱 예산을 모두 포함한 프로세스 제한은 아직 아니다.
 

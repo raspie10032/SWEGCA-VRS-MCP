@@ -35,17 +35,17 @@ void check_metadata(const StoredExperience& stored){const auto v=stored.view();i
 }
 
 PersistentMainGraph PersistentMainGraph::create(const std::filesystem::path& path,const DigestBytes& identity,
- MemoryBudget& memory,double strength,const EvidencePolicy& policy,std::uint64_t capacity){
+ MemoryBudget& memory,double strength,const EvidencePolicy& policy,std::uint64_t capacity,std::uint32_t workers){
  if(capacity<ExperienceBlock::header_bytes+metadata+record_size)throw std::invalid_argument("Main block cannot hold a merge");
- return PersistentMainGraph(path,identity,memory,strength,policy,capacity,nullptr);
+ return PersistentMainGraph(path,identity,memory,strength,policy,capacity,nullptr,workers);
 }
 PersistentMainGraph PersistentMainGraph::open(const std::filesystem::path& path,const DigestBytes& identity,
- MemoryBudget& memory,double strength,const EvidencePolicy& policy,MainSourceResolver& resolver){
- return PersistentMainGraph(path,identity,memory,strength,policy,0,&resolver);
+ MemoryBudget& memory,double strength,const EvidencePolicy& policy,MainSourceResolver& resolver,std::uint32_t workers){
+ return PersistentMainGraph(path,identity,memory,strength,policy,0,&resolver,workers);
 }
 PersistentMainGraph::PersistentMainGraph(const std::filesystem::path& path,const DigestBytes& identity,
- MemoryBudget& memory,double strength,const EvidencePolicy& policy,std::uint64_t capacity,MainSourceResolver* resolver)
- :directory_(path),identity_(identity),memory_(memory),graph_(memory,strength,policy),capacity_(capacity){
+ MemoryBudget& memory,double strength,const EvidencePolicy& policy,std::uint64_t capacity,MainSourceResolver* resolver,std::uint32_t workers)
+ :directory_(path),identity_(identity),memory_(memory),graph_(memory,strength,policy,workers),capacity_(capacity){
  if(!architecture::kernel::named_digest(identity))throw std::invalid_argument("empty Main identity");
  std::array<std::byte,config_size> config{};std::memcpy(config.data(),"SWGCMCF1",8);
  put(config,8,std::bit_cast<std::uint64_t>(strength));put_digest(config,16,evidence_policy_digest(policy).bytes());

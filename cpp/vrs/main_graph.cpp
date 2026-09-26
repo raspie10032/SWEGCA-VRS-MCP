@@ -1,5 +1,7 @@
 #include "vrs/main_graph.hpp"
 #include "swegca_architecture/sha256.hpp"
+#include <thread>
+#include <exception>
 
 namespace swegca::vrs {
 using namespace architecture;
@@ -7,9 +9,10 @@ using namespace architecture::kernel;
 
 MainGraph::Entry::Entry(const DigestBytes& identity, double strength, const EvidenceRules& rules, MemoryBudget& memory)
     : connection(identity, strength, rules, memory), origins(&memory) {}
-MainGraph::MainGraph(MemoryBudget& memory, double initial_strength, const EvidencePolicy& policy)
-    : memory_(memory), initial_strength_(initial_strength), rules_(make_evidence_rules(policy)),
+MainGraph::MainGraph(MemoryBudget& memory, double initial_strength, const EvidencePolicy& policy, std::uint32_t workers)
+    : memory_(memory), initial_strength_(initial_strength), workers_(workers), rules_(make_evidence_rules(policy)),
       policy_digest_(evidence_policy_digest(policy).bytes()), connections_(&memory), merged_(&memory) {
+    if (!workers_) throw std::invalid_argument("Main merge worker count must be positive");
     if (!finite_count(initial_strength)) throw std::invalid_argument("invalid Main initial strength");
 }
 bool MainGraph::merge(const SessionRuntime& source, std::uint64_t seed, std::uint64_t step) {
@@ -31,6 +34,9 @@ bool MainGraph::merge_impl(const SessionRuntime& source, std::uint64_t seed, std
     std::pmr::map<DigestBytes, Entry> pending(&memory_);
     std::pmr::map<DigestBytes, ExperienceLocation> marker(&memory_);
     marker.emplace(identity, source.catalog_.root());
+    struct Task { Entry* candidate; const Entry* previous; const PersistentConnection* incoming; };
+    std::pmr::vector<Task> tasks(&memory_);
+    tasks.reserve(source.catalog_.heads().size());
     for (const auto& [connection_id, head] : source.catalog_.heads()) {
         (void)head;
         const auto* incoming = source.find(connection_id);
@@ -39,21 +45,43 @@ bool MainGraph::merge_impl(const SessionRuntime& source, std::uint64_t seed, std
         const auto previous = connections_.find(connection_id);
         const auto strength = previous == connections_.end() ? initial_strength_ : previous->second.connection.strength();
         auto& candidate = pending.try_emplace(connection_id, connection_id, strength, rules_, memory_).first->second;
-        if (previous != connections_.end()) {
-            for (const auto& value : previous->second.connection.experiences()) candidate.connection.append(value);
-            candidate.origins.assign(previous->second.origins.begin(), previous->second.origins.end());
+        tasks.push_back({&candidate, previous == connections_.end() ? nullptr : &previous->second, incoming});
+    }
+    const auto prepare = [&](const Task& task) {
+        auto& candidate = *task.candidate;
+        if (task.previous) {
+            for (const auto& value : task.previous->connection.experiences()) candidate.connection.append(value);
+            candidate.origins.assign(task.previous->origins.begin(), task.previous->origins.end());
         }
-        const auto added = incoming->state().experiences();
+        const auto added = task.incoming->state().experiences();
         candidate.origins.reserve(candidate.origins.size() + added.size());
         for (std::size_t index = 0; index < added.size(); ++index) {
             candidate.connection.append(added[index]);
             candidate.origins.push_back({&source.store_, source.read_limit_});
         }
-        // Fresh shuffle of the combined recorded values. No averaging or
-        // addition of per-session strengths, no alternate stability classifier.
+        // Each connection keeps its exact serial shuffle and SWEGCA reduction.
+        // Only independent connections run concurrently, into private candidates.
         candidate.report.emplace(candidate.connection.refine(seed, step));
         if (!candidate.report->result().strength().valid())
             throw std::runtime_error("SWEGCA rejected Main strength projection");
+    };
+    const auto count = std::min<std::size_t>(workers_, tasks.size());
+    if (count < 2) {
+        for (const auto& task : tasks) prepare(task);
+    } else {
+        std::pmr::vector<std::exception_ptr> failures(count, &memory_);
+        // Declared after failures/tasks: failed thread creation also joins all
+        // started workers before their candidate storage or captures disappear.
+        std::pmr::vector<std::jthread> threads(&memory_);
+        threads.reserve(count - 1);
+        const auto run = [&](std::size_t worker) {
+            try { for (std::size_t index = worker; index < tasks.size(); index += count) prepare(tasks[index]); }
+            catch (...) { failures[worker] = std::current_exception(); }
+        };
+        for (std::size_t worker = 1; worker < count; ++worker) threads.emplace_back(run, worker);
+        run(0);
+        for (auto& thread : threads) thread.join();
+        for (const auto& failure : failures) if (failure) std::rethrow_exception(failure);
     }
     if (sink) {
         Sha256 hash; hash.update("SWEGCA Main merge result v1"); hash.update(policy_digest_);

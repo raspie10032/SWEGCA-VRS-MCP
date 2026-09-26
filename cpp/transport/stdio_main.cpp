@@ -170,6 +170,9 @@ int main(int argc,char** argv){
 #undef REAL
 #undef UINT
         RuntimeConfig settings{digest(config.at("mainIdentity").string()),policy,real(config.at("initialStrength")),integer(config.at("sessionBlockBytes")),integer(config.at("mainBlockBytes")),integer(config.at("readLimit"))};
+        const auto workers=integer(config.at("mergeWorkers"));
+        if(!workers||workers>UINT32_MAX)throw std::invalid_argument("invalid merge worker count");
+        settings.merge_workers=static_cast<std::uint32_t>(workers);
         auto runtime=mode=="create"?Runtime::create(argv[2],settings,memory):Runtime::open(argv[2],settings,memory);
         Server server(runtime,memory);bool eof=false;
         while(!eof){try{auto line=read_frame(std::cin,frame,memory,eof);if(!eof)server.message(line);}catch(const std::bad_alloc&){std::cerr<<"VRS memory budget exhausted\n";return 2;}catch(const std::exception&){server.framing_error();}if(!std::cout)return 2;}

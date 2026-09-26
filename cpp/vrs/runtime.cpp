@@ -11,8 +11,8 @@ Runtime Runtime::open(const std::filesystem::path& root,const RuntimeConfig& con
 }
 Runtime::Runtime(const std::filesystem::path& root,const RuntimeConfig& config,MemoryBudget& memory,bool create)
     :root_(root),config_(config),memory_(memory),sources_(root,memory,config.read_limit),
-    main_(create ? PersistentMainGraph::create(root/"graph",config.main_identity,memory,config.initial_strength,config.policy,config.main_block_capacity)
-                 : PersistentMainGraph::open(root/"graph",config.main_identity,memory,config.initial_strength,config.policy,sources_)) {
+    main_(create ? PersistentMainGraph::create(root/"graph",config.main_identity,memory,config.initial_strength,config.policy,config.main_block_capacity,config.merge_workers)
+                 : PersistentMainGraph::open(root/"graph",config.main_identity,memory,config.initial_strength,config.policy,sources_,config.merge_workers)) {
     sources_.release_caches();
 }
 Runtime::Active::Active(const std::filesystem::path& root,const DigestBytes& identity,std::string_view name,

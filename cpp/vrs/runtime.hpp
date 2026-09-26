@@ -12,6 +12,7 @@ struct RuntimeConfig {
     architecture::EvidencePolicy policy;
     double initial_strength;
     std::uint64_t session_block_capacity, main_block_capacity, read_limit;
+    std::uint32_t merge_workers = 1;
 };
 
 // Main's serialized lifecycle owner. Destruction never implies session end.

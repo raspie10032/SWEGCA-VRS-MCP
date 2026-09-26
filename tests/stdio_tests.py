@@ -43,7 +43,7 @@ class Client:
 with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     root=pathlib.Path(directory)
     config={
-        'memoryBytes':str(64<<20),'frameBytes':'4096','mainIdentity':identity(99),'initialStrength':1.0,
+        'mergeWorkers':'2','memoryBytes':str(64<<20),'frameBytes':'4096','mainIdentity':identity(99),'initialStrength':1.0,
         'sessionBlockBytes':'65536','mainBlockBytes':'4096','readLimit':'16384',
         'policy':{'chance_rate':0.2,'accept_margin':0.25,'confidence_level':0.9,'prior_alpha':1.0,'prior_beta':1.0,
             'regime_change_threshold':0.3,'minimum_effective_samples_per_axis':'4','minimum_source_diversity':'2',
@@ -130,5 +130,7 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
         expected=last_strength*1.01 if result['status']==1 else last_strength*0.995 if result['status']==2 else last_strength
         check(result['strength']==expected);last_strength=result['strength'];states.add(result['status'])
     check(last_strength<1.0 and states=={0,1,2})
-    check(c.call('swegca/end')['result']=={});c.close()
+    check(c.call('swegca/end')['result']=={})
+    check(c.call('swegca/work',{'seed':'7','step':'0'})['result']['merged']=='1')
+    c.close()
 print(f'stdio subprocess tests: {checks} checks passed')

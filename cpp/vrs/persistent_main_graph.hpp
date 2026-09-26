@@ -14,9 +14,9 @@ public:
 class PersistentMainGraph final {
 public:
     static PersistentMainGraph create(const std::filesystem::path&, const architecture::DigestBytes&,
-        MemoryBudget&, double initial_strength, const architecture::EvidencePolicy&, std::uint64_t block_capacity);
+        MemoryBudget&, double initial_strength, const architecture::EvidencePolicy&, std::uint64_t block_capacity, std::uint32_t workers = 1);
     static PersistentMainGraph open(const std::filesystem::path&, const architecture::DigestBytes&,
-        MemoryBudget&, double initial_strength, const architecture::EvidencePolicy&, MainSourceResolver&);
+        MemoryBudget&, double initial_strength, const architecture::EvidencePolicy&, MainSourceResolver&, std::uint32_t workers = 1);
     PersistentMainGraph(const PersistentMainGraph&) = delete;
     PersistentMainGraph& operator=(const PersistentMainGraph&) = delete;
     PersistentMainGraph(PersistentMainGraph&&) = delete;
@@ -32,7 +32,7 @@ private:
         ExperienceLocation source_root, parent;
     };
     PersistentMainGraph(const std::filesystem::path&, const architecture::DigestBytes&, MemoryBudget&,
-        double, const architecture::EvidencePolicy&, std::uint64_t, MainSourceResolver*);
+        double, const architecture::EvidencePolicy&, std::uint64_t, MainSourceResolver*, std::uint32_t);
     void next_block();
     void restore(MainSourceResolver&);
     static void persist(void*, const architecture::DigestBytes&, const ExperienceLocation&,
