@@ -131,15 +131,18 @@ EvidencePayloadSlice SessionRuntime::read_payload_slice(const DigestBytes& ident
     return store_.read_payload_slice(connection->rules(),connection->state().experiences()[index].original(),
         read_limit_,offset,count);
 }
-void SessionRuntime::visit_originals(void* context,void (*consume)(void*,const StoredExperience&)) const {
+void SessionRuntime::visit_deliveries(std::string_view session,std::string_view source,std::string_view media,
+    void* context,void (*consume)(void*,const OriginalDelivery&)) const {
     require_usable();
     if(!consume)throw std::invalid_argument("missing original visitor");
+    if(session!=store_.name())throw std::invalid_argument("native session name mismatch");
+    auto cursor=store_.read_cursor();
     for(const auto& [identity,head]:catalog_.heads()){
         (void)head;
         const auto* connection=find(identity);
         for(const auto& evidence:connection->state().experiences()){
-            auto stored=store_.read(evidence.original(),read_limit_);
-            consume(context,stored);
+            auto delivery=cursor.read_delivery(connection->rules(),evidence.original(),read_limit_,source,media);
+            consume(context,delivery);
         }
     }
 }

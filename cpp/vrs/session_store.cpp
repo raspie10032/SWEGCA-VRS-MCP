@@ -248,6 +248,11 @@ ExperienceEvidence SessionStore::append_evidence(const EvidenceRules& rules,
       catch (...) { usable_ = false; throw; }
 }
 
+OriginalDelivery SessionStore::ReadCursor::read_delivery(const EvidenceRules& rules,
+    const ExperienceLocation& location,std::uint64_t limit,std::string_view source,std::string_view media) {
+    return swegca::vrs::read_delivery(rules,reader(location),location,limit,store_.name(),source,media);
+}
+
 ExperienceBlock& SessionStore::ReadCursor::reader(const ExperienceLocation& location) {
     if (!block_ || block_->identity() != location.block) {
         const auto found = store_.blocks_.find(location.block);

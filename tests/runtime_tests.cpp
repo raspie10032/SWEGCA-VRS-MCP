@@ -1,6 +1,7 @@
 #include "vrs/runtime.hpp"
 #include "vrs/storage_inventory.hpp"
 #include "swegca_architecture/input_cue.hpp"
+#include "swegca_architecture/agent_delivery_identity.hpp"
 #include <cerrno>
 #include <cstdio>
 #include <cstdlib>
@@ -309,6 +310,40 @@ int main(){
    auto replay=host.replay(recall,0);
    CHECK(std::ranges::equal(evidence_payload(replay.original()).content,raw));
   }
+ }
+ {
+  const auto path=root/"delivery-stream";fs::create_directory(path);
+  auto cfg=config;cfg.session_block_capacity=8<<20;cfg.read_limit=8<<20;
+  MemoryBudget bounded(256<<10);
+  const std::string payload(2<<20,'z');const auto raw=std::as_bytes(std::span(payload));
+  const std::string prompt="small input";const auto cue=std::as_bytes(std::span(prompt));
+  ExperienceLocation saved;
+  {
+   auto host=Runtime::create(path,cfg,bounded);host.start_session(id(93),"stream");
+   saved=host.receive_envelope("text/plain",cue,{0,42,"stream","codex/hook","application/json",raw},7,0).recorded.original;
+  }
+  CHECK(bounded.used()==0);
+  {
+   auto host=Runtime::open(path,cfg,bounded);host.resume_session(id(93));
+   struct Expected{ExperienceLocation original;DigestBytes fingerprint;unsigned visits=0;};
+   Expected expected{saved,agent_delivery_identity(0,42,payload)};
+   const auto used=bounded.used();const auto before_writes=writes;
+   host.session().visit_deliveries("stream","codex/hook","application/json",&expected,
+    [](void* context,const OriginalDelivery& delivery){
+     auto& expected=*static_cast<Expected*>(context);++expected.visits;
+     CHECK(delivery.original()==expected.original && delivery.fingerprint()==expected.fingerprint);
+     CHECK(delivery.sequence()==0);
+    });
+   CHECK(expected.visits==1 && bounded.used()==used && writes==before_writes);
+   throws<std::invalid_argument>([&]{host.session().visit_deliveries("wrong","codex/hook","application/json",&expected,
+    [](void*,const OriginalDelivery&){CHECK(false);});});
+   throws<std::invalid_argument>([&]{host.session().visit_deliveries("stream","wrong","application/json",&expected,
+    [](void*,const OriginalDelivery&){CHECK(false);});});
+   throws<std::invalid_argument>([&]{host.session().visit_deliveries("stream","codex/hook","text/plain",&expected,
+    [](void*,const OriginalDelivery&){CHECK(false);});});
+   throws<std::bad_alloc>([&]{(void)host.replay(host.input("text/plain",cue),0);});
+  }
+  CHECK(bounded.used()==0);
  }
  CHECK(memory.used()==0);fs::remove_all(root);std::printf("runtime lifecycle tests: %u checks passed\n",checks);
 }

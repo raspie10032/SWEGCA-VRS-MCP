@@ -1,5 +1,6 @@
 #include "vrs/evidence_experience.hpp"
 #include "swegca_architecture/input_cue.hpp"
+#include "swegca_architecture/agent_delivery_identity.hpp"
 
 #include <algorithm>
 #include <bit>
@@ -120,7 +121,9 @@ public:
     static ExperienceEvidence read(const EvidenceRules& rules, const ExperienceBlock& block,
         const ExperienceLocation& location, std::uint64_t limit,
         std::pmr::vector<std::byte>* payload = nullptr, std::uint64_t offset = 0,
-        std::uint64_t count = 0, std::uint64_t* total = nullptr) {
+        std::uint64_t count = 0, std::uint64_t* total = nullptr,
+        Digest* fingerprint = nullptr,std::uint64_t* sequence = nullptr,
+        std::string_view session = {},std::string_view source = {},std::string_view media = {}) {
         struct Decoder {
             std::array<std::byte,prefix_bytes> prefix;
             architecture::Sha256 cue;
@@ -128,11 +131,24 @@ public:
             std::pmr::vector<std::byte>* payload;
             std::uint64_t offset, count, total = 0, payload_begin = 0;
             bool seen = false;
-        } decoder{{}, {}, {}, payload, offset, count};
-        const auto consume=[](void* opaque, bool media, std::span<const std::byte> data,
+            bool delivery = false;
+            std::uint64_t sequence = 0;
+            architecture::Sha256 delivery_hash;
+            std::string_view session,source,media;
+        } decoder{{}, {}, {}, payload, offset, count,0,0,false,
+            fingerprint!=nullptr,0,{},session,source,media};
+        const auto consume=[](void* opaque, unsigned field, std::span<const std::byte> data,
                               std::uint64_t position, std::uint64_t length) {
             auto& state=*static_cast<Decoder*>(opaque);
-            if(media) {
+            if(field<2){
+                if(state.delivery){
+                    const auto expected=field==0?state.session:state.source;
+                    if(length!=expected.size() || text(data)!=expected.substr(static_cast<std::size_t>(position),data.size()))
+                        throw std::invalid_argument("native session contains unbound original");
+                }
+                return;
+            }
+            if(field==2) {
                 if(length!=format.size() || text(data)!=format.substr(static_cast<std::size_t>(position),data.size()))
                     throw std::invalid_argument("invalid SWEGCA observation encoding");
                 return;
@@ -158,6 +174,17 @@ public:
                 position+=header;
             }
             if(!state.input_key)state.cue.update(data);
+            if(state.delivery){
+                const auto media_begin=state.payload_begin-get(state.prefix,160);
+                if(get(state.prefix,160)!=state.media.size())throw std::invalid_argument("native payload media mismatch");
+                if(position<state.payload_begin){
+                    const auto length=static_cast<std::size_t>(std::min<std::uint64_t>(data.size(),state.payload_begin-position));
+                    if(text(data.first(length))!=state.media.substr(static_cast<std::size_t>(position-media_begin),length))
+                        throw std::invalid_argument("native payload media mismatch");
+                }
+                const auto start=std::max(position,state.payload_begin);
+                if(start<position+data.size())state.delivery_hash.update(data.subspan(static_cast<std::size_t>(start-position)));
+            }
             if(state.payload && state.count) {
                 const auto first=state.payload_begin+state.offset;
                 const auto begin=std::max(first,position);
@@ -168,10 +195,16 @@ public:
                         state.payload->begin()+static_cast<std::size_t>(begin-first));
             }
         };
-        const auto observed=block.visit_evidence(location,limit,&decoder,consume);
+        const auto begin=[](void* opaque,std::uint64_t sequence,std::uint64_t observed){
+            auto& state=*static_cast<Decoder*>(opaque);state.sequence=sequence;
+            if(state.delivery)state.delivery_hash=architecture::agent_delivery_prefix(sequence,observed);
+        };
+        const auto observed=block.visit_evidence(location,limit,&decoder,consume,begin);
         if(!decoder.seen)throw std::invalid_argument("missing SWEGCA observation encoding");
         const auto value=decode_observation(rules,decoder.prefix,location,observed);
         if(total)*total=decoder.total;
+        if(fingerprint)*fingerprint=decoder.delivery_hash.finish();
+        if(sequence)*sequence=decoder.sequence;
         return ExperienceEvidence(location,value,decoder.input_key ? *decoder.input_key : decoder.cue.finish());
     }
 };
@@ -188,6 +221,15 @@ EvidencePayloadSlice read_evidence_slice(const EvidenceRules& rules,const Experi
     std::uint64_t total=0;
     auto evidence=EvidenceReader::read(rules,block,location,limit,&payload,offset,count,&total);
     return EvidencePayloadSlice(std::move(evidence),offset,total,std::move(payload));
+}
+
+OriginalDelivery read_delivery(const EvidenceRules& rules,const ExperienceBlock& block,
+    const ExperienceLocation& location,std::uint64_t limit,std::string_view session,
+    std::string_view source,std::string_view media) {
+    Digest fingerprint{};std::uint64_t sequence=0;
+    (void)EvidenceReader::read(rules,block,location,limit,nullptr,0,0,nullptr,
+        &fingerprint,&sequence,session,source,media);
+    return OriginalDelivery(location,sequence,fingerprint);
 }
 
 OriginalExperienceView evidence_payload(const StoredExperience& stored) { return parse_payload(stored); }

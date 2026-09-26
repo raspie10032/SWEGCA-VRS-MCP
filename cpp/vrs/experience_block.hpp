@@ -118,9 +118,10 @@ private:
         const ExperienceBlock&, const ExperienceLocation&, std::uint64_t);
     // Private decoder visitor. Chunks are provisional until this returns after
     // checking the complete record; the decoder may not publish them early.
-    // Callback: context, outer-media flag, bytes, field offset, field length.
+    // Private callbacks: all four original fields and original sequence/time.
     [[nodiscard]] std::uint64_t visit_evidence(const ExperienceLocation&, std::uint64_t,
-        void*, void (*)(void*, bool, std::span<const std::byte>, std::uint64_t, std::uint64_t)) const;
+        void*, void (*)(void*, unsigned, std::span<const std::byte>, std::uint64_t, std::uint64_t),
+        void (*)(void*, std::uint64_t, std::uint64_t)) const;
     [[nodiscard]] ExperienceLocation append_parts(const OriginalExperienceView&,
         std::span<const std::span<const std::byte>> content);
     [[nodiscard]] static ExperienceBlock open(const std::filesystem::path& path, bool writer, StorageBudget* storage);

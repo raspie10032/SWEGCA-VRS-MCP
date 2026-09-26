@@ -74,6 +74,27 @@ private:
     const ExperienceBlock&, const ExperienceLocation&, std::uint64_t max_read_bytes,
     std::uint64_t offset, std::uint64_t count, MemoryBudget&);
 
+// Sealed delivery provenance, exposed only after full original authentication
+// and SWEGCA observation admission. Does not retain the original payload.
+class OriginalDelivery final {
+public:
+    [[nodiscard]] const ExperienceLocation& original() const noexcept{return original_;}
+    [[nodiscard]] std::uint64_t sequence() const noexcept{return sequence_;}
+    [[nodiscard]] const architecture::DigestBytes& fingerprint() const noexcept{return fingerprint_;}
+private:
+    friend OriginalDelivery read_delivery(const architecture::kernel::EvidenceRules&,
+        const ExperienceBlock&,const ExperienceLocation&,std::uint64_t,
+        std::string_view,std::string_view,std::string_view);
+    OriginalDelivery(ExperienceLocation original,std::uint64_t sequence,architecture::DigestBytes fingerprint)
+        :original_(original),sequence_(sequence),fingerprint_(fingerprint){}
+    ExperienceLocation original_;
+    std::uint64_t sequence_;
+    architecture::DigestBytes fingerprint_;
+};
+[[nodiscard]] OriginalDelivery read_delivery(const architecture::kernel::EvidenceRules&,
+    const ExperienceBlock&,const ExperienceLocation&,std::uint64_t limit,
+    std::string_view session,std::string_view source,std::string_view media);
+
 // Zero-copy access to the exact original media type/payload. The StoredExperience
 // must outlive the view. No evidence verdict is inferred by this read.
 [[nodiscard]] OriginalExperienceView evidence_payload(const StoredExperience& stored);

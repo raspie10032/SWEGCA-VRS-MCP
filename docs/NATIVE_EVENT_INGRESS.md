@@ -92,9 +92,10 @@ No payload hashing or disk scan for delivery identity is inserted ahead of new
 input Recall. There is still host parsing, sequence validation and node reservation
 before Runtime entry; desktop input latency remains unproven.
 
-Current recovery reads one complete original at a time, and the delivery index
-uses memory proportional to native event count. This is a known resource gap for
-large sessions. It does not weaken the configurable budget or establish 4GB-scale
+Recovery now verifies originals with a fixed 64KiB scratch buffer and retains
+only sealed delivery identity, sequence and original address. The delivery index
+still uses memory proportional to native event count, a remaining resource gap
+for large sessions. It does not weaken the configurable budget or establish 4GB-scale
 graph completion. A crash before catalog publication can leave preserved physical
 orphan records; they are not committed experiences and are not acknowledged by
 this index. Arbitrary interruption points still require targeted validation.
@@ -111,3 +112,30 @@ selected or ended. Duplicate retries leave the connection revision unchanged;
 the next genuinely new event adds the existing append+refine revision pair and
 preserves the insufficient-evidence strength. These are ingestion/recovery tests,
 not model performance or desktop latency measurements.
+
+
+## Streaming delivery recovery
+
+`SessionRuntime::visit_deliveries` now reuses a session read cursor (at most one
+open original block) and the private evidence streaming decoder. The record
+sequence/time initialize the same core delivery hash used by ingress. The
+original session, source, outer evidence media and inner payload media are
+validated while streaming. Only original payload bytes enter the delivery hash;
+observation headers and the optional lookup cue remain covered by the enclosing
+record checksum and address digest.
+
+No provisional chunks are exposed. `OriginalDelivery` is constructed only after
+full trailer/address authentication and SWEGCA observation admission. The host
+then inserts its existing retry index entry. This removes full-payload allocation
+from resume without a second read or a separate sidecar. Read bandwidth still
+scales with stored original bytes; the retry index still scales with event count.
+
+A targeted Runtime case creates a 2MiB original, reopens it under a 256KiB VRS
+tracked allocation budget, and verifies its exact delivery fingerprint without
+increasing tracked retained memory or performing writes. Full Replay fails with
+bad_alloc under the same budget. Session/source/media mismatches fail before a
+visitor receives a result. The 64KiB stack scratch and ordinary process overhead
+are outside that PMR counter; this is not a 256KiB process-RSS claim.
+
+Streaming change verification: Runtime 180 checks, physical block 424 checks,
+MCP subprocess 1,767 checks in this run (async polling affects the counter).

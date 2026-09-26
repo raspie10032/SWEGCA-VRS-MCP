@@ -2,6 +2,7 @@
 #include "transport/json.hpp"
 #include "swegca_architecture/agent_event_kernel.hpp"
 #include "swegca_architecture/sha256.hpp"
+#include "swegca_architecture/agent_delivery_identity.hpp"
 #include <array>
 #include <cstdint>
 #include <utility>
@@ -25,13 +26,7 @@ inline architecture::DigestBytes agent_session_identity(std::string_view provide
 
 // Same native bytes and original timestamp under the same sequence constitute
 // the same delivery. Shuffle seed/step are processing controls, not new evidence.
-inline architecture::DigestBytes agent_delivery_identity(std::uint64_t sequence,
-    std::uint64_t observed,std::string_view native) {
-    architecture::Sha256 hash;hash.update("SWEGCA native delivery v1");
-    std::array<std::byte,16> prefix{};
-    for(unsigned n=0;n<8;++n){prefix[n]=std::byte((sequence>>(n*8))&255);prefix[8+n]=std::byte((observed>>(n*8))&255);}
-    hash.update(prefix);hash.update(native);return hash.finish();
-}
+using architecture::agent_delivery_identity;
 
 // Owns the complete native envelope and its parsed fields. The event is not a
 // recorded experience until the Main ingress stores it through VRS. Preserve

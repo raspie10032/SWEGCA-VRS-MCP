@@ -339,7 +339,8 @@ StoredExperience ExperienceBlock::read(const ExperienceLocation& location,
 }
 
 std::uint64_t ExperienceBlock::visit_evidence(const ExperienceLocation& location, std::uint64_t limit,
-    void* context, void (*consume)(void*, bool, std::span<const std::byte>, std::uint64_t, std::uint64_t)) const {
+    void* context, void (*consume)(void*, unsigned, std::span<const std::byte>, std::uint64_t, std::uint64_t),
+    void (*begin)(void*, std::uint64_t, std::uint64_t)) const {
     if (fd_ < 0 || location.block != identity_ || location.offset < header_bytes ||
         location.offset > capacity_ || location.bytes < record_overhead ||
         location.bytes > capacity_ - location.offset || location.bytes > limit ||
@@ -352,6 +353,7 @@ std::uint64_t ExperienceBlock::visit_evidence(const ExperienceLocation& location
     const auto size=file_size(fd_);
     if(location.offset>size||location.bytes>size-location.offset)
         throw std::runtime_error("incomplete selected experience");
+    begin(context,get_u64(prefix,16),get_u64(prefix,24));
     Sha256 hash;hash.update(prefix);
     std::array<std::byte,65536> scratch;
     auto cursor=location.offset+prefix_bytes;
@@ -361,10 +363,10 @@ std::uint64_t ExperienceBlock::visit_evidence(const ExperienceLocation& location
             const auto count=static_cast<std::size_t>(std::min<std::uint64_t>(length-offset,scratch.size()));
             const auto chunk=std::span(scratch).first(count);
             read_exact(fd_,chunk,cursor,storage_);hash.update(chunk);
-            if(field>=2)consume(context,field==2,chunk,offset,length);
+            consume(context,field,chunk,offset,length);
             cursor+=count;offset+=count;
         }
-        if(field>=2&&length==0)consume(context,field==2,{},0,0);
+        if(length==0)consume(context,field,{},0,0);
     }
     std::array<std::byte,trailer_bytes> trailer;
     read_exact(fd_,trailer,cursor,storage_);const auto digest=hash.finish();

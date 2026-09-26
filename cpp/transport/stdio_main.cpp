@@ -145,15 +145,12 @@ private:
             const auto identity=agent_session_identity(provider,p.at("instance").string(),native);
             attach_context(identity,native,method=="swegca/agent/attach/resume",false,native);
             auto& state=contexts_.at(identity);
-            runtime_.attached_session(identity).visit_originals(&state,[](void* opaque,const StoredExperience& stored){
+            runtime_.attached_session(identity).visit_deliveries(state.native_session,"codex/hook","application/json",&state,
+                [](void* opaque,const OriginalDelivery& delivery){
                 auto& target=*static_cast<Context*>(opaque);
-                const auto original=evidence_payload(stored);
-                if(original.source!="codex/hook"||original.media_type!="application/json"||original.session!=target.native_session)
-                    throw std::invalid_argument("native session contains unbound original");
-                const std::string_view bytes(reinterpret_cast<const char*>(original.content.data()),original.content.size());
-                const auto fingerprint=agent_delivery_identity(original.sequence,original.observed_at_ns,bytes);
-                const auto [at,inserted]=target.deliveries.try_emplace(original.sequence,Context::Delivery{fingerprint,stored.location()});
-                if(!inserted && (at->second.fingerprint!=fingerprint || at->second.original!=stored.location()))
+                const auto [at,inserted]=target.deliveries.try_emplace(delivery.sequence(),
+                    Context::Delivery{delivery.fingerprint(),delivery.original()});
+                if(!inserted && (at->second.fingerprint!=delivery.fingerprint() || at->second.original!=delivery.original()))
                     throw std::invalid_argument("conflicting stored native sequence");
             });
             if(!state.deliveries.empty() && (state.deliveries.begin()->first!=0 ||
