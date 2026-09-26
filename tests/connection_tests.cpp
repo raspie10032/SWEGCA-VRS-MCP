@@ -126,9 +126,12 @@ void oracle(const Connection& connection, const ConnectionRefinement& report) {
 class FailingMemory final : public std::pmr::memory_resource {
 public:
     std::size_t until_failure = std::numeric_limits<std::size_t>::max();
+    std::size_t maximum_request = 0;
+    std::size_t request_limit = std::numeric_limits<std::size_t>::max();
 private:
     void* do_allocate(std::size_t bytes, std::size_t alignment) override {
-        if (until_failure == 0) throw std::bad_alloc();
+        maximum_request = std::max(maximum_request, bytes);
+        if (until_failure == 0 || bytes > request_limit) throw std::bad_alloc();
         --until_failure;
         return std::pmr::new_delete_resource()->allocate(bytes, alignment);
     }
@@ -149,6 +152,73 @@ int main(int argc, char** argv) {
     const auto rules = make_evidence_rules(EvidencePolicy{});
     MemoryBudget memory(16 << 20);
     Originals originals;
+    {
+        FailingMemory upstream;
+        MemoryBudget segmented_memory(16 << 20, &upstream);
+        upstream.request_limit = 256 * sizeof(ExperienceEvidence);
+        {
+            Connection segmented(id(90), 1, rules, segmented_memory);
+            std::vector<ExperienceEvidence> expected;
+            std::vector<const ExperienceEvidence*> addresses;
+            for (unsigned i = 0; i < 1030; ++i) {
+                auto value = originals.sample(id(90), i % 4, i / 4, EvidenceOutcome::support);
+                const auto snapshot = segmented.experiences();
+                const auto before = segmented_memory.used();
+                const auto revision = segmented.revision();
+                const bool boundary = i == 0 || i == 8 || i == 24 || i == 56 ||
+                    i == 120 || i == 248 || i == 504 || i == 760 || i == 1016;
+                if (boundary) {
+                    // Segment allocation, followed by directory growth when
+                    // needed. A failed append must release both reservations.
+                    for (std::size_t allowed = 0;; ++allowed) {
+                        upstream.until_failure = allowed;
+                        try { segmented.append(value); break; }
+                        catch (const std::bad_alloc&) {
+                            CHECK(allowed < 2);
+                            CHECK(segmented_memory.used() == before);
+                            CHECK(segmented.revision() == revision);
+                            CHECK(segmented.strength() == 1);
+                            CHECK(segmented.experiences().size() == i);
+                        }
+                    }
+                    upstream.until_failure = std::numeric_limits<std::size_t>::max();
+                } else segmented.append(value);
+                expected.push_back(value);
+                addresses.push_back(&segmented.experiences()[i]);
+                CHECK(snapshot.size() == i);
+                if (i) CHECK(&snapshot[i-1] == addresses[i-1]);
+            }
+            CHECK(upstream.maximum_request <= 256 * sizeof(ExperienceEvidence));
+            const auto view = segmented.experiences();
+            std::size_t i = 0;
+            for (const auto& value : view) {
+                CHECK(&value == addresses[i]);
+                CHECK(value.original() == expected[i].original());
+                CHECK(value.value().address == expected[i].value().address);
+                CHECK(value.value().axis == expected[i].value().axis);
+                ++i;
+            }
+            CHECK(i == 1030);
+            const auto suffix = view.subspan(247);
+            CHECK(suffix.size() == 783);
+            CHECK(&suffix[1] == addresses[248]);
+            CHECK(view.subspan(1030).empty());
+            expect_throw<std::out_of_range>([&] { (void)view.subspan(1031); });
+            upstream.request_limit = std::numeric_limits<std::size_t>::max();
+            const auto report = segmented.refine(12345, 5);
+            oracle(segmented, report);
+            CHECK(report.samples().size() == 1030);
+            CHECK(report.result().verification().judgment().status() == EvidenceStatus::accept);
+            CHECK(segmented.strength() == 1.01);
+            std::array<bool, 1030> seen{};
+            for (const auto& sample : report.samples()) {
+                CHECK(sample.experience_index < seen.size());
+                CHECK(!seen[sample.experience_index]);
+                seen[sample.experience_index] = true;
+            }
+        }
+        CHECK(segmented_memory.used() == 0);
+    }
     {
         Connection positive(id(1), 0.999, rules, memory);
         originals.fill(positive, EvidenceOutcome::support);

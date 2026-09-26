@@ -1,6 +1,6 @@
 #pragma once
 
-#include "vrs/evidence_experience.hpp"
+#include "vrs/experience_sequence.hpp"
 #include "vrs/verification.hpp"
 
 #include <vector>
@@ -62,7 +62,7 @@ public:
     [[nodiscard]] const architecture::DigestBytes& identity() const noexcept { return identity_; }
     [[nodiscard]] double strength() const noexcept { return strength_; }
     [[nodiscard]] std::uint64_t revision() const noexcept { return revision_; }
-    [[nodiscard]] std::span<const ExperienceEvidence> experiences() const noexcept { return experiences_; }
+    [[nodiscard]] ExperienceSequence::View experiences() const noexcept { return experiences_.view(); }
 
 private:
     friend class PersistentConnection;
@@ -75,7 +75,7 @@ private:
     std::uint64_t revision_ = 0;
     architecture::kernel::EvidenceRules rules_;
     MemoryBudget& memory_;
-    std::pmr::vector<ExperienceEvidence> experiences_;
+    ExperienceSequence experiences_;
 };
 
 }  // namespace swegca::vrs

@@ -50,7 +50,7 @@ void shuffle(std::span<RefinementSample> values, std::uint64_t seed) {
 Connection::Connection(const architecture::DigestBytes& identity, double initial_strength,
     const architecture::kernel::EvidenceRules& rules, MemoryBudget& memory)
     : identity_(identity), strength_(initial_strength), rules_(rules), memory_(memory),
-      experiences_(&memory) {
+      experiences_(memory) {
     if (!named_digest(identity_) || !finite_count(strength_) || !rules_valid(rules_))
         throw std::invalid_argument("invalid VRS connection");
 }
@@ -72,20 +72,12 @@ void Connection::prepare_append(const ExperienceEvidence& experience) {
     if (experiences_.size() >= std::numeric_limits<std::uint32_t>::max() ||
         revision_ == std::numeric_limits<std::uint64_t>::max())
         throw std::overflow_error("VRS connection revision or sample count exhausted");
-    // Reserve before any durable publication. Use geometric growth rather
-    // than reserve(size+1), which would make recording quadratic.
-    if (experiences_.size() == experiences_.capacity()) {
-        const auto maximum = std::min<std::size_t>(experiences_.max_size(), std::numeric_limits<std::uint32_t>::max());
-        const auto capacity = experiences_.capacity();
-        if (capacity >= maximum) throw std::length_error("VRS connection storage exhausted");
-        experiences_.reserve(capacity == 0 ? std::min<std::size_t>(8, maximum)
-            : capacity + std::min(capacity, maximum - capacity));
-    }
+    experiences_.prepare_append();
 }
 
 void Connection::commit_append(const ExperienceEvidence& experience) noexcept {
     // Only prepare_append followed by this call on the same serialized owner.
-    experiences_.push_back(experience);
+    experiences_.commit_append(experience);
     ++revision_;
 }
 
