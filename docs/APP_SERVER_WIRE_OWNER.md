@@ -187,3 +187,66 @@ outstanding-request reconstruction are still not installed.
 
 Verification after this integration: 87 combined pump/acknowledgement checks and
 2,100 stdio subprocess checks pass, with builds and runs restricted to CPUs 6,7.
+
+## Executable stream owner
+
+`make build/swegca-app-server-proxy` now builds the actual stream-owner process:
+
+```
+swegca-app-server-proxy CLIENT_FD SERVER_FD VRS_FD CONFIG
+```
+
+The launcher must supply three distinct, exclusive connected stream descriptors
+above 2. The VRS descriptor is the dedicated stdin/stdout channel of a fresh VRS
+MCP process, not a second reader on another client's connection. No listening
+port, backend replacement or running desktop configuration is installed by this
+executable. Startup initializes protocol 2025-06-18, requires host-input version
+10, sends initialized, and attaches or resumes the configured native sessions.
+Only then does stdout emit `ready`. Stdout/stderr carry status, not native content.
+
+Example configuration (all resource integers are decimal strings):
+
+```json
+{
+  "memoryBytes": "8388608",
+  "frameBytes": "65536",
+  "pendingRequests": "64",
+  "instance": "local-desktop",
+  "seed": "7",
+  "step": "0",
+  "sessions": [{"session": "native-thread-id", "mode": "attach"}]
+}
+```
+
+Use `resume` only for an existing retained VRS session. A resumed sequence comes
+from authenticated VRS history, but outstanding wire request direction/IDs are
+not reconstructed yet: an unmatched resumed reply is rejected, not guessed.
+The configured seed/step pass directly to existing refinement. The process does
+not derive evidence validity or expiry from wall-clock transport timestamps.
+
+The main loop services both native directions. Buffered coalesced frames are
+drained without waiting for a new socket edge. Partial writes wait for the
+destination's writable state. VRS RPCs use synchronous backpressure and poll;
+no model is invoked. EOF half-closes only the corresponding outgoing stream,
+allowing the opposite side to finish responses. Neither EOF nor process failure
+issues `swegca/end` or `swegca/work`. Endpoint error/disconnection stops forwarding.
+No automatic reconnect, partial-stream resend or lossless crash recovery is
+claimed. Uncaptured failing frames are not durably spooled by this executable.
+
+The proxy allocation budget is additional to the VRS process's budget. It does
+not prove a combined 4GB RSS ceiling; a common cgroup/launcher is still required.
+The default socket wait has no timeout and applies backpressure until endpoint
+progress, closure or process termination. The input-to-Recall requirement is
+unproven for this IPC path. Runtime Recall receipts are checked/retained within
+the commit but are not yet injected back into the agent's context.
+
+Verification: 87 pump/acknowledgement checks and 2,149 subprocess checks pass.
+The real executable and VRS process exercise split/coalesced native frames,
+two sessions, same-ID requests in both directions, exact forwarded bytes,
+half-close shutdown, persisted sequence recovery and no EOF-triggered merge.
+A second resumed run kills only its test VRS child: the proxy exits with an
+error and forwards zero bytes of the new native input.
+
+Remaining desktop work includes actual endpoint installation, dynamic/new-thread
+and global lifecycle capture, attachment payloads, outstanding-request recovery,
+Recall/Replay delivery to the agent, complete content assembly and latency proof.

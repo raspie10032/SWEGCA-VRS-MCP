@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Real subprocess transport/lifecycle checks; no client app or service is changed."""
-import json, os, pathlib, select, subprocess, sys, tempfile, time
+import json, os, pathlib, select, socket, subprocess, sys, tempfile, time
 exe=pathlib.Path(sys.argv[1]).resolve()
 checks=0
 mode_prefix="limited-" if "--limited" in sys.argv[2:] else ""
@@ -522,6 +522,87 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     c.close()
     # The C++ wire owner chooses thread and requestSequence automatically. Only
     # acknowledge its plan after the real VRS process confirms ingestion.
+    proxy_root=root/'proxy-process';proxy_root.mkdir()
+    proxy_config=root/'proxy.json'
+    proxy_config.write_text(json.dumps({'memoryBytes':str(8<<20),'frameBytes':'4096',
+        'pendingRequests':'16','seed':'7','step':'0','instance':'proxy-tested',
+        'sessions':[{'session':name,'mode':'attach'} for name in ('a','b')]}))
+    client_side,client_proxy=socket.socketpair()
+    server_side,server_proxy=socket.socketpair()
+    vrs_side,vrs_proxy=socket.socketpair()
+    vrs_process=subprocess.Popen([str(exe),'create',str(proxy_root),str(path)],
+        stdin=vrs_side,stdout=vrs_side,stderr=subprocess.PIPE)
+    proxy_process=subprocess.Popen([str(exe.parent/'swegca-app-server-proxy'),
+        str(client_proxy.fileno()),str(server_proxy.fileno()),str(vrs_proxy.fileno()),str(proxy_config)],
+        pass_fds=(client_proxy.fileno(),server_proxy.fileno(),vrs_proxy.fileno()),
+        stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+    for endpoint in (client_proxy,server_proxy,vrs_side,vrs_proxy):endpoint.close()
+    client_side.settimeout(10);server_side.settimeout(10)
+    try:
+        check(bool(select.select([proxy_process.stdout],[],[],10)[0]))
+        check(proxy_process.stdout.readline()==b'ready\n')
+        def proxy_frame(value):return json.dumps(value,ensure_ascii=False).encode()+b'\n'
+        def proxy_read(endpoint):
+            data=bytearray()
+            while not data.endswith(b'\n'):
+                chunk=endpoint.recv(1)
+                if not chunk:raise RuntimeError('proxy closed before complete frame')
+                data.extend(chunk)
+            return bytes(data)
+        request=proxy_frame({'id':7,'method':'turn/start','params':{'threadId':'a',
+            'input':[{'type':'text','text':'프록시 원문'}]}})
+        note=proxy_frame({'method':'item/agentMessage/delta','params':{'threadId':'a','delta':'보존'}})
+        # Fragment first frame, then coalesce its tail with the next whole frame.
+        client_side.sendall(request[:5]);client_side.sendall(request[5:]+note)
+        check(proxy_read(server_side)==request);check(proxy_read(server_side)==note)
+        response=proxy_frame({'id':7,'result':{'ok':True}})
+        approval=proxy_frame({'id':7,'method':'item/commandExecution/requestApproval',
+            'params':{'threadId':'b','command':'never executed'}})
+        server_side.sendall(response+approval)
+        check(proxy_read(client_side)==response);check(proxy_read(client_side)==approval)
+        client_side.sendall(response);check(proxy_read(server_side)==response)
+        client_side.shutdown(socket.SHUT_WR);check(server_side.recv(1)==b'')
+        server_side.shutdown(socket.SHUT_WR);check(client_side.recv(1)==b'')
+        check(proxy_process.wait(timeout=10)==0)
+        check(proxy_process.stdout.read()==b'' and proxy_process.stderr.read()==b'')
+        check(vrs_process.wait(timeout=10)==0 and vrs_process.stderr.read()==b'')
+    finally:
+        client_side.close();server_side.close()
+        for process in (proxy_process,vrs_process):
+            if process.poll() is None:process.terminate();process.wait(timeout=10)
+    c=Client('open',proxy_root,path);c.initialize()
+    for session,count in (('a','3'),('b','2')):
+        attached=c.call('swegca/agent/attach/resume',{'provider':'codex','instance':'proxy-tested',
+            'session':session,'protocol':'app-server'})['result']
+        check(attached['nextSequence']==count)
+    check(c.call('swegca/work',{'seed':'7','step':'0'})['result']['merged']=='0')
+    c.close()
+    # The executable must not pass native content when its VRS endpoint is gone.
+    resumed=json.loads(proxy_config.read_text())
+    for entry in resumed['sessions']:entry['mode']='resume'
+    proxy_config.write_text(json.dumps(resumed))
+    client_side,client_proxy=socket.socketpair();server_side,server_proxy=socket.socketpair()
+    vrs_side,vrs_proxy=socket.socketpair()
+    vrs_process=subprocess.Popen([str(exe),'open',str(proxy_root),str(path)],
+        stdin=vrs_side,stdout=vrs_side,stderr=subprocess.PIPE)
+    proxy_process=subprocess.Popen([str(exe.parent/'swegca-app-server-proxy'),
+        str(client_proxy.fileno()),str(server_proxy.fileno()),str(vrs_proxy.fileno()),str(proxy_config)],
+        pass_fds=(client_proxy.fileno(),server_proxy.fileno(),vrs_proxy.fileno()),
+        stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+    for endpoint in (client_proxy,server_proxy,vrs_side,vrs_proxy):endpoint.close()
+    server_side.settimeout(10)
+    try:
+        check(bool(select.select([proxy_process.stdout],[],[],10)[0]))
+        check(proxy_process.stdout.readline()==b'ready\n')
+        vrs_process.terminate();vrs_process.wait(timeout=10)
+        client_side.sendall(request)
+        check(proxy_process.wait(timeout=10)==1)
+        check(server_side.recv(1)==b'')
+        check(b'VRS' in proxy_process.stderr.read())
+    finally:
+        client_side.close();server_side.close()
+        for process in (proxy_process,vrs_process):
+            if process.poll() is None:process.terminate();process.wait(timeout=10)
     wire_root=root/'wire-owner';wire_root.mkdir()
     c=Client('create',wire_root,path);c.initialize()
     wire_ids={}

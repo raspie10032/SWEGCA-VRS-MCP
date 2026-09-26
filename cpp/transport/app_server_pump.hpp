@@ -16,6 +16,10 @@ public:
     void attach(std::string_view session,std::uint64_t next){wire_.attach(session,next);}
     void restore_request(RpcSender sender,const AgentEvent& event,std::uint64_t sequence){wire_.restore_request(sender,event,sequence);}
     [[nodiscard]] std::size_t pending_requests() const noexcept{return wire_.pending_requests();}
+    [[nodiscard]] bool buffered(RpcSender sender) const{
+        if(sender!=RpcSender::client&&sender!=RpcSender::server)throw std::invalid_argument("invalid pump sender");
+        return sender==RpcSender::client?client_.buffered():server_.buffered();
+    }
     [[nodiscard]] std::pmr::string parameters(const AppServerWire::Delivery& delivery,std::uint64_t seed,std::uint64_t step) const{
         return wire_.parameters(delivery,seed,step);
     }
