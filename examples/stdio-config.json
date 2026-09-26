@@ -1,0 +1,24 @@
+{
+  "memoryBytes": "4294967296",
+  "frameBytes": "1048576",
+  "mainIdentity": "6300000000000000000000000000000000000000000000000000000000000000",
+  "initialStrength": 1.0,
+  "sessionBlockBytes": "8388608",
+  "mainBlockBytes": "8388608",
+  "readLimit": "16777216",
+  "policy": {
+    "chance_rate": 0.2,
+    "accept_margin": 0.25,
+    "confidence_level": 0.9,
+    "prior_alpha": 1.0,
+    "prior_beta": 1.0,
+    "regime_change_threshold": 0.3,
+    "minimum_effective_samples_per_axis": "4",
+    "minimum_source_diversity": "2",
+    "minimum_axis_source_diversity": "1",
+    "minimum_context_diversity": "4",
+    "recent_window": "6",
+    "minimum_recent_samples": "4",
+    "axis_count": "4"
+  }
+}
