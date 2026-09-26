@@ -17,8 +17,11 @@ enum class FamiliarityKey { missing, exact, continuation, context };
     std::size_t pin_bytes) noexcept {
     return pin_bytes && count >= range_bytes/pin_bytes + (range_bytes%pin_bytes!=0);
 }
-[[nodiscard]] constexpr FamiliarityKey familiarity_key(bool exact, bool continued,bool shared_context=false) noexcept {
-    return exact ? FamiliarityKey::exact : continued ? FamiliarityKey::continuation :
+// A Main-owned context linking distinct connections may extend a continued
+// memory. The caller supplies recorded index membership, never a truth score.
+[[nodiscard]] constexpr FamiliarityKey familiarity_key(bool exact, bool continued,bool shared_context=false,
+    bool linked_context=false) noexcept {
+    return exact ? FamiliarityKey::exact : shared_context&&linked_context ? FamiliarityKey::context : continued ? FamiliarityKey::continuation :
         shared_context ? FamiliarityKey::context : FamiliarityKey::missing;
 }
 [[nodiscard]] constexpr RecallScope recall_scope(bool temporary_usable, bool temporary_found) noexcept {

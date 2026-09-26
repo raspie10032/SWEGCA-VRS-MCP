@@ -60,6 +60,12 @@ private:
     architecture::kernel::EvidenceRules rules_;
     architecture::DigestBytes policy_digest_;
     ConnectionRegions<Entry> connections_;
+    // Recorded context links, not semantic scores. Ranges point into existing
+    // connections; originals and observation cardinalities are never copied.
+    using PortalReference=std::pair<architecture::DigestBytes,std::size_t>;
+    using PortalRanges=std::pmr::map<PortalReference,std::size_t>;
+    using ContextPortals=std::pmr::map<architecture::DigestBytes,PortalRanges>;
+    ContextPortals contexts_;
     std::pmr::map<architecture::DigestBytes, ExperienceLocation> merged_;
     // One entry per live connection, ordered by its latest committed generation.
     std::pmr::set<std::pair<std::uint64_t, architecture::DigestBytes>> changed_;
@@ -85,6 +91,7 @@ private:
     std::pmr::set<std::pair<std::uint64_t, architecture::DigestBytes>> changes_;
     architecture::DigestBytes result_{};
     std::optional<ConnectionRegions<Entry>::Prepared> regions_;
+    ContextPortals contexts_;
 };
 
 }  // namespace swegca::vrs

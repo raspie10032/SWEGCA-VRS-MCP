@@ -290,7 +290,9 @@ int main(){
   for(unsigned n=1;n<=257;++n){
    const auto connection=id(10000+n);source.define_connection(connection,1,policy);
    EvidenceObservation value;value.hypothesis=connection;value.source=id(9000);value.context=id(n);value.producer=id(9001);
-   (void)source.observe(connection,{n,0,"regions","experiment","text/plain",{}},value,7,0);
+   const std::string text=n==257?"context anchor":n==239?"context neighbor":"";
+   if(n==257||n==239)value.context=id(9999);
+   (void)source.observe(connection,{n,0,"regions","experiment","text/plain",std::as_bytes(std::span(text))},value,7,0);
   }
   source.end();source.publish_originals();Resolver resolver;resolver.sources={{id(600),&source}};
   ExperienceLocation root_head;
@@ -305,6 +307,34 @@ int main(){
    const auto connection=id(10000+n);CHECK(restored.graph().find(connection)->experiences().size()==1);
    CHECK(restored.graph().replay(connection,0).location()==source.find(connection)->state().experiences()[0].original());
   }
+  auto active_store=SessionStore::create(root,id(602),"portal-live",65536,memory);SessionRuntime active(active_store,memory,8192);
+  ExperienceRouter route(active,memory);route.mount_main(restored);
+  const std::string anchor="context anchor",follow="continue context",neighbor="context neighbor";
+  auto first=route.input("text/plain",std::as_bytes(std::span(anchor)));
+  CHECK(first.matches().size()==1);(void)route.replay(first,0);
+  const auto before=reads;const auto old_head=restored.head();
+  auto linked=route.input("text/plain",std::as_bytes(std::span(follow)));
+  CHECK(!linked.temporary()&&linked.key_kind()==FamiliarityKey::context&&linked.matches().size()==2);
+  CHECK(reads==before&&restored.head()==old_head);
+  // ID 10239 sorts into the second address region; ID 10257 is in the first.
+  CHECK(linked.matches()[0].recalled.recalled_head.identity==id(10257));
+  CHECK(linked.matches()[1].recalled.recalled_head.identity==id(10239));
+  CHECK(route.replay(linked,1).location()==source.find(id(10239))->state().experiences()[0].original());
+  CHECK(restored.graph().find(id(10239))->strength()==1);
+  auto exact=route.input("text/plain",std::as_bytes(std::span(neighbor)));
+  CHECK(exact.key_kind()==FamiliarityKey::exact&&exact.matches().size()==1);
+  auto extra_store=SessionStore::create(root,id(603),"portal-added",65536,memory);SessionRuntime extra(extra_store,memory,8192);
+  extra.define_connection(id(10239),1,policy);
+  EvidenceObservation added;added.hypothesis=id(10239);added.source=id(9000);added.context=id(9999);added.producer=id(9001);
+  const std::string appended="appended related original";
+  const auto new_original=extra.observe(id(10239),{0,0,"portal-added","experiment","text/plain",std::as_bytes(std::span(appended))},added,7,0).original;
+  extra.end();extra.publish_originals();CHECK(restored.merge(extra,7,0));
+  throws<std::logic_error>([&]{(void)route.replay(linked,0);});
+  route.mount_main(restored);
+  auto extended=route.input("text/plain",std::as_bytes(std::span(follow)));
+  CHECK(extended.key_kind()==FamiliarityKey::context&&extended.matches().size()==3);
+  CHECK(extended.matches()[2].original==new_original);
+  CHECK(route.replay(extended,2).location()==new_original);
  }
  CHECK(memory.used()==0);
  {

@@ -17,6 +17,8 @@ static_assert(familiarity_key(true,true,true)==FamiliarityKey::exact);
 static_assert(familiarity_key(false,true,true)==FamiliarityKey::continuation);
 static_assert(familiarity_key(false,false,true)==FamiliarityKey::context);
 static_assert(familiarity_key(false,false,false)==FamiliarityKey::missing);
+static_assert(familiarity_key(false,true,true,true)==FamiliarityKey::context);
+static_assert(familiarity_key(true,true,true,true)==FamiliarityKey::exact);
 static unsigned checks = 0;
 static std::uint64_t reads = 0, writes = 0;
 static bool fail_read = false;

@@ -328,8 +328,15 @@ InputRecall ExperienceRouter::input(std::string_view media, std::span<const std:
         ? merged_cue != merged_cues_.end() && !merged_cue->second.empty()
         : main_cue != main_cues_.end() && !main_cue->second.empty();
     const auto main_context = continuation_ ? main_.find(*continuation_) : main_.end();
+    bool shared_context=false;
+    if(!main_exact&&merged_main_&&continued_context_){
+        const auto& portals=merged_main_->graph().contexts_;
+        const auto found=portals.find(*continued_context_);
+        shared_context=found!=portals.end()&&!found->second.empty()&&
+            found->second.begin()->first.first!=found->second.rbegin()->first.first;
+    }
     const auto main_kind = familiarity_key(main_exact,
-        main_context != main_.end() && !main_context->second.empty());
+        main_context != main_.end() && !main_context->second.empty(),shared_context,shared_context);
     return recall_cue(cue, scope, main_kind);
 }
 InputRecall ExperienceRouter::recall_cue(const DigestBytes& cue, RecallScope scope, FamiliarityKey kind) const {
@@ -368,8 +375,11 @@ InputRecall ExperienceRouter::recall_cue(const DigestBytes& cue, RecallScope sco
             ?temporary_.contexts_.at(*continued_context_):temporary_.cues_.at(cue);
         for (const auto& reference : references) append(temporary_, reference);
     } else if (merged_main_) {
-        const auto found = merged_cues_.find(cue);
-        if (found != merged_cues_.end())
+        // Context portals are Main-owned and shared by all session routers.
+        // Exact cue and portal ranges have the same original-address form.
+        const auto& index=kind==FamiliarityKey::context?merged_main_->graph().contexts_:merged_cues_;
+        const auto found = index.find(kind==FamiliarityKey::context?*continued_context_:cue);
+        if (found != index.end())
             for (const auto& [first, end] : found->second) {
                 const auto& [identity, begin]=first;
                 const auto match = merged_match(identity);
