@@ -1,0 +1,16 @@
+CPU 6; GCC 16.2.1; -O3 -std=c++20 -ffp-contract=off
+100000 warmup; 31 blocks of 100000 calls; block mean medians.
+UBSan compilation on CPU 7. Core timings only, not full input-to-Recall.
+judge_1_axis,median_ns=21.0162,p95_block_mean_ns=22.757,min_ns=20.5365
+judge_4_axes,median_ns=44.3996,p95_block_mean_ns=44.876,min_ns=43.8478
+judge_8_axes,median_ns=77.4007,p95_block_mean_ns=79.9341,min_ns=77.0457
+observation_admission,median_ns=2.63023,p95_block_mean_ns=2.89323,min_ns=2.52973
+evidence_group_normalization,median_ns=1.23501,p95_block_mean_ns=1.34331,min_ns=1.23151
+session_transition,median_ns=1.23011,p95_block_mean_ns=2.17832,min_ns=1.22891
+familiarity_key,median_ns=0.95441,p95_block_mean_ns=1.06841,min_ns=0.95421
+head_publication,median_ns=5.21805,p95_block_mean_ns=6.19306,min_ns=5.19645
+promotion_eligibility,median_ns=1.07541,p95_block_mean_ns=1.08841,min_ns=1.07461
+promotion_decision,median_ns=1.09511,p95_block_mean_ns=1.10961,min_ns=1.08781
+connection_strength,median_ns=1.26371,p95_block_mean_ns=1.37092,min_ns=1.25961
+connection_verification_4_axes,median_ns=50.521,p95_block_mean_ns=53.0363,min_ns=49.7836
+transaction_transition,median_ns=1.33721,p95_block_mean_ns=1.81202,min_ns=1.33502

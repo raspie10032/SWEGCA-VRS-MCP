@@ -133,15 +133,37 @@ InputRecall ExperienceRouter::input(std::string_view media, std::span<const std:
     // Deja vu: natural bytes reach the core cue primitive immediately. This
     // anonymous exact familiarity signal is not a truth/semantic judgment.
     const auto cue = input_cue(media, content);
+    if (!temporary_.usable()) return recall_cue(cue, RecallScope::unavailable, FamiliarityKey::missing);
     const auto found = temporary_.cues_.find(cue);
     const bool present = found != temporary_.cues_.end() && !found->second.empty();
-    return recall_cue(cue, recall_scope(temporary_.usable(), present));
+    const auto local_kind = familiarity_key(present,
+        !present && continuation_ && temporary_.find(*continuation_) != nullptr);
+    const auto scope = recall_scope(true, local_kind != FamiliarityKey::missing);
+    if (scope == RecallScope::temporary) return recall_cue(cue, scope, local_kind);
+    const auto main_cue = main_cues_.find(cue);
+    const bool main_exact = main_cue != main_cues_.end() && !main_cue->second.empty();
+    const auto main_context = continuation_ ? main_.find(*continuation_) : main_.end();
+    const auto main_kind = familiarity_key(main_exact,
+        main_context != main_.end() && !main_context->second.empty());
+    return recall_cue(cue, scope, main_kind);
 }
-InputRecall ExperienceRouter::recall_cue(const DigestBytes& cue, RecallScope scope) const {
+InputRecall ExperienceRouter::recall_cue(const DigestBytes& cue, RecallScope scope, FamiliarityKey kind) const {
     // Recall begins here, before allocating result addresses. No original
     // payloads, connection recovery, storage writes or shuffles run here.
     if (scope == RecallScope::unavailable) throw std::logic_error("temporary experience unavailable");
-    InputRecall result(memory_); result.cue_ = cue;
+    InputRecall result(memory_); result.cue_ = cue; result.key_kind_ = kind;
+    result.temporary_ = scope == RecallScope::temporary;
+    if (kind == FamiliarityKey::missing) return result;
+    if (kind == FamiliarityKey::continuation) {
+        const auto candidates = recall(*continuation_);
+        for (std::size_t candidate = 0; candidate < candidates.size(); ++candidate) {
+            const auto match = candidates.at(candidate);
+            const auto count = match.connection->state().experiences().size();
+            for (std::size_t index = 0; index < count; ++index)
+                result.matches_.push_back({match, index});
+        }
+        return result;
+    }
     const auto append = [&](const SessionRuntime& session, const CueReference& reference) {
         const auto* connection = session.find(reference.connection);
         if (!connection) throw std::logic_error("cue refers to an unavailable connection");
@@ -185,7 +207,9 @@ StoredExperience ExperienceRouter::replay(const RecallCandidates& candidates, st
     if (assess_head_publication(&head, selected.recalled_head.record, selected.recalled_head, true)
         != HeadPublication::unchanged)
         throw std::logic_error("connection changed after Recall; recall current experience again");
-    return selected.session->replay(selected.connection->state().identity(), original_index);
+    auto original = selected.session->replay(selected.connection->state().identity(), original_index);
+    continuation_ = selected.recalled_head.identity;
+    return original;
 }
 
 }  // namespace swegca::vrs

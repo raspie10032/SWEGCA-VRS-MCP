@@ -2,6 +2,7 @@
 #include "swegca_architecture/evidence_observation_kernel.hpp"
 #include "swegca_architecture/session_kernel.hpp"
 #include "swegca_architecture/head_publication_kernel.hpp"
+#include "swegca_architecture/recall_route_kernel.hpp"
 #include "swegca_architecture/memory_promotion_kernel.hpp"
 #include "swegca_architecture/memory_transaction_stage_kernel.hpp"
 #include "vrs/verification.hpp"
@@ -37,6 +38,9 @@ __attribute__((noinline)) HeadPublication measured_publication(const ConnectionH
  return assess_head_publication(current,expected,candidate,lineage);
 }
 template<class T> inline void consume(const T& value) {asm volatile("" : : "m"(value) : "memory");}
+__attribute__((noinline)) FamiliarityKey measured_familiarity(bool exact,bool continued) noexcept {
+ return familiarity_key(exact,continued);
+}
 template<class Fn> void measure(const char* name,Fn fn) {
  constexpr std::size_t iterations=100000;
  for(std::size_t i=0;i<iterations;++i)fn(i);
@@ -71,6 +75,7 @@ int main(){
  measure("observation_admission",[&](std::size_t i){auto a=measured_admission(r,hypothesis,observations[i&63],i%16,i%7==0);consume(a);});
  measure("evidence_group_normalization",[&](std::size_t i){auto g=measured_group(i%16,i%7);consume(g);});
  measure("session_transition",[&](std::size_t i){SessionPhase next;auto valid=measured_session(static_cast<SessionPhase>(i%5),static_cast<SessionOperation>((i/5)%5),next);consume(valid);consume(next);});
+ measure("familiarity_key",[&](std::size_t i){auto key=measured_familiarity(i%2,(i/2)%2);consume(key);});
  ConnectionHead current;current.identity=hypothesis;current.record={hypothesis,80,300,hypothesis};current.revision=2;current.ordinal=2;current.observations=1;current.strength=0.5;
  std::array<ConnectionHead,64> versions{};
  for(std::size_t i=0;i<versions.size();++i){versions[i]=current;versions[i].ordinal=3+i;versions[i].revision=3+i;versions[i].record.offset=400+300*i;versions[i].strength=0.51+0.001*i;}

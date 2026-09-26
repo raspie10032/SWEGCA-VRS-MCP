@@ -2,6 +2,7 @@
 #include "swegca_architecture/input_cue.hpp"
 
 #include <cstdio>
+#include <cerrno>
 #include <cstdlib>
 #include <string>
 #include <unistd.h>
@@ -12,9 +13,12 @@ using namespace swegca::vrs;
 namespace fs = std::filesystem;
 static unsigned checks = 0;
 static std::uint64_t reads = 0, writes = 0;
+static bool fail_read = false;
 extern "C" ssize_t __real_pread(int, void*, size_t, off_t);
 extern "C" ssize_t __wrap_pread(int fd, void* data, size_t count, off_t offset) {
-    ++reads; return __real_pread(fd, data, count, offset);
+    ++reads;
+    if (fail_read) { fail_read=false; errno=EIO; return -1; }
+    return __real_pread(fd, data, count, offset);
 }
 extern "C" ssize_t __real_pwrite(int, const void*, size_t, off_t);
 extern "C" ssize_t __wrap_pwrite(int fd, const void* data, size_t count, off_t offset) {
@@ -39,6 +43,10 @@ int main() {
     fs::path root(pattern);
     MemoryBudget memory(32 << 20);
     EvidencePolicy policy; policy.axis_count=1;
+    const std::string followup="그 다음은 어떻게 이어지지?";
+    CHECK(familiarity_key(false,false)==FamiliarityKey::missing);
+    CHECK(familiarity_key(true,true)==FamiliarityKey::exact);
+    CHECK(familiarity_key(false,true)==FamiliarityKey::continuation);
     ExperienceLocation first;
     double saved_strength=0;
     {
@@ -66,13 +74,19 @@ int main() {
         old.end();
         throws<std::logic_error>([&] { router.mount_main(old); });
         old.publish_originals(); router.mount_main(old); router.mount_main(old);
+        CHECK(!router.input("text/plain",std::as_bytes(std::span(followup))).familiar());
         const auto reads_before=reads, writes_before=writes;
         auto natural=router.input("application/octet-stream",std::as_bytes(std::span(payload)));
         CHECK(reads==reads_before && writes==writes_before);
         CHECK(natural.familiar() && !natural.temporary() && natural.matches().size()==16);
         CHECK(router.replay(natural,0).location()==first);
         CHECK(reads>reads_before && writes==writes_before);
-        CHECK(!router.input("text/plain",std::as_bytes(std::span(payload))).familiar());
+        CHECK(router.input("text/plain",std::as_bytes(std::span(payload))).key_kind()==FamiliarityKey::continuation);
+        const auto context_reads=reads, context_writes=writes;
+        auto continued=router.input("text/plain",std::as_bytes(std::span(followup)));
+        CHECK(continued.key_kind()==FamiliarityKey::continuation && !continued.temporary());
+        CHECK(continued.matches().size()==16 && reads==context_reads && writes==context_writes);
+        CHECK(router.replay(continued,0).location()==first);
         auto recalled=router.recall(id(10));
         CHECK(!recalled.temporary() && recalled.size()==1);
         auto replayed=router.replay(recalled,0,0);
@@ -114,16 +128,30 @@ int main() {
         // but is retained through the actual shuffle/core/publication path.
         const std::string utterance="스웨카가 셔플값을 검증한다.";
         const OriginalExperienceView message{25,25,"live","user","text/plain",std::as_bytes(std::span(utterance))};
-        CHECK(!router.input(message.media_type,message.content).familiar());
+        CHECK(router.input(message.media_type,message.content).key_kind()==FamiliarityKey::continuation);
         auto retained=live.retain_input(message,0.75,policy,25,25);
         CHECK(retained.refinement.result().verification().judgment().status()==EvidenceStatus::abstain);
         CHECK(retained.refinement.result().strength().current()==0.75);
         auto known=router.input(message.media_type,message.content);
         CHECK(known.temporary() && known.matches().size()==1);
+        CHECK(known.key_kind()==FamiliarityKey::exact);
+        fail_read=true;
+        throws<std::system_error>([&] { (void)router.replay(known,0); });
+        CHECK(router.input("text/plain",std::as_bytes(std::span(followup))).matches()[0].recalled.recalled_head.identity==id(10));
         auto selected=router.replay(known,0);
         CHECK(selected.location()==retained.original);
         CHECK(evidence_payload(selected).content.size()==message.content.size());
         CHECK(live.find(input_cue(message.media_type,message.content))->state().experiences()[0].value().outcome==EvidenceOutcome::insufficient);
+        auto continued_new=router.input("text/plain",std::as_bytes(std::span(followup)));
+        CHECK(continued_new.temporary() && continued_new.matches().size()==1);
+        CHECK(continued_new.matches()[0].recalled.recalled_head.identity==known.cue());
+        // A temporary continued experience is considered before an exact key
+        // that exists only in Main (the initial empty old-session original).
+        auto temporary_context=router.input("application/octet-stream",{});
+        CHECK(temporary_context.temporary() && temporary_context.key_kind()==FamiliarityKey::continuation);
+        // Fresh router/session dialogue state does not inherit a prior key.
+        ExperienceRouter fresh(live,memory); fresh.mount_main(old);
+        CHECK(!fresh.input("text/plain",std::as_bytes(std::span(followup))).familiar());
         // Temporary write failure must not become a false miss and Main fallback.
         blank.define_connection(id(10),1.0,policy);
         std::string huge(100000,'x'); auto oversized=input("blank",1);

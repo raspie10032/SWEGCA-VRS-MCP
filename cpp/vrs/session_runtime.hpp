@@ -80,6 +80,7 @@ public:
     InputRecall& operator=(InputRecall&&) = delete;
     [[nodiscard]] bool familiar() const noexcept { return !matches_.empty(); }
     [[nodiscard]] bool temporary() const noexcept { return temporary_; }
+    [[nodiscard]] architecture::kernel::FamiliarityKey key_kind() const noexcept { return key_kind_; }
     [[nodiscard]] std::span<const InputMatch> matches() const noexcept { return matches_; }
     [[nodiscard]] const architecture::DigestBytes& cue() const noexcept { return cue_; }
 private:
@@ -87,6 +88,7 @@ private:
     explicit InputRecall(MemoryBudget& memory) : matches_(&memory) {}
     architecture::DigestBytes cue_{};
     bool temporary_ = false;
+    architecture::kernel::FamiliarityKey key_kind_ = architecture::kernel::FamiliarityKey::missing;
     std::pmr::vector<InputMatch> matches_;
 };
 
@@ -110,7 +112,7 @@ public:
     ExperienceRouter(SessionRuntime& temporary, MemoryBudget& memory);
     void mount_main(const SessionRuntime& session);
     [[nodiscard]] RecallCandidates recall(const architecture::DigestBytes& identity) const;
-    // Immediate natural-input entry: exact familiarity lookup, then Recall.
+    // Immediate natural-input entry: exact/continued familiarity, then Recall.
     // No disk, recording, shuffle or LLM precedes Recall. SHA-256 cue work is
     // part of Deja vu and is included in any input-to-Recall timing.
     [[nodiscard]] InputRecall input(std::string_view media, std::span<const std::byte> content) const;
@@ -124,8 +126,11 @@ private:
     std::pmr::map<architecture::DigestBytes, std::pmr::vector<RecallMatch>> main_;
     struct MainCue { const SessionRuntime* session; CueReference reference; };
     std::pmr::map<architecture::DigestBytes, std::pmr::vector<MainCue>> main_cues_;
+    // Main-owned dialogue continuity, updated only after a successful selected
+    // Replay. It holds an experience key, never copied dialogue text or a verdict.
+    mutable std::optional<architecture::DigestBytes> continuation_;
     [[nodiscard]] InputRecall recall_cue(const architecture::DigestBytes& cue,
-        architecture::kernel::RecallScope scope) const;
+        architecture::kernel::RecallScope scope, architecture::kernel::FamiliarityKey kind) const;
 };
 
 }  // namespace swegca::vrs
