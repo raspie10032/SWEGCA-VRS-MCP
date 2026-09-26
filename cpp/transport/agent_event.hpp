@@ -44,7 +44,7 @@ public:
         const auto& params=parsed_.at("params");
         return parsed_.at("method").string()=="thread/started"?params.at("thread").at("id").string():params.at("threadId").string();
     }
-    [[nodiscard]] std::string_view native_name() const{if(!bound_session_.empty())return {};return parsed_.at(app_server_?"method":"hook_event_name").string();}
+    [[nodiscard]] std::string_view native_name() const{if(app_server_&&!parsed_.find("method"))return {};return parsed_.at(app_server_?"method":"hook_event_name").string();}
     [[nodiscard]] bool is_app_server() const noexcept{return app_server_;}
     [[nodiscard]] std::optional<std::string_view> prompt() const{
         if(app_server_||kind_!=architecture::kernel::AgentEventKind::input)return std::nullopt;
@@ -62,6 +62,8 @@ private:
     friend class AppServerRequests;
     friend class AppServerWire;
     static AgentEvent from_app_server(std::string_view,Json,std::pmr::memory_resource&);
+    static AgentEvent from_app_server_connection(std::string_view,Json,std::string_view,std::pmr::memory_resource&);
+    friend AgentEvent adapt_codex_app_server_connection(std::string_view,std::string_view,std::pmr::memory_resource&);
     friend AgentEvent adapt_codex_app_server(std::string_view,std::pmr::memory_resource&);
     friend AgentEvent adapt_codex_hook(std::string_view,std::pmr::memory_resource&);
     AgentEvent(std::string_view native,Json parsed,architecture::kernel::AgentEventKind kind,
@@ -126,6 +128,28 @@ inline AgentEvent AgentEvent::from_app_server(std::string_view bytes,Json parsed
     AgentEvent event(bytes,std::move(parsed),kind,memory);event.app_server_=true;
     if(kind==AgentEventKind::input)event.cue_=encode_json(event.parsed_.at("params").at("input"),memory);
     return event;
+}
+// Connection identity comes from the transport owner. Never manufacture a
+// threadId in native bytes or downgrade a malformed user input to content.
+inline AgentEvent AgentEvent::from_app_server_connection(std::string_view bytes,Json parsed,
+    std::string_view connection,std::pmr::memory_resource& memory){
+    using architecture::kernel::AgentEventKind;
+    if(connection.empty())throw std::invalid_argument("connection binding required");
+    const auto method=parsed.at("method").string();
+    if(method.empty()||method=="turn/start"||method=="turn/steer"||method=="thread/started")
+        throw std::invalid_argument("thread event requires thread binding");
+    if(parsed.find("result")||parsed.find("error"))throw std::invalid_argument("method contains response fields");
+    if(const auto* params=parsed.find("params");params&&params->kind!=Json::Kind::null){
+        if(params->kind!=Json::Kind::object||params->find("threadId"))
+            throw std::invalid_argument("connection event contains invalid or thread parameters");
+    }
+    AgentEvent event(bytes,std::move(parsed),AgentEventKind::content,memory);
+    event.app_server_=true;event.bound_session_=connection;
+    return event;
+}
+inline AgentEvent adapt_codex_app_server_connection(std::string_view bytes,std::string_view connection,
+    std::pmr::memory_resource& memory){
+    return AgentEvent::from_app_server_connection(bytes,parse_json(bytes,memory),connection,memory);
 }
 inline AgentEvent adapt_codex_app_server(std::string_view bytes,std::pmr::memory_resource& memory){
     return AgentEvent::from_app_server(bytes,parse_json(bytes,memory),memory);

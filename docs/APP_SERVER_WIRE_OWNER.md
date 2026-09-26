@@ -314,3 +314,29 @@ checks its target, rejects absent/wrong/malformed bindings, and still exercises
 lost acknowledgement/deduplication. The lower subprocess assertion count reflects
 removing checks for the deleted selection round trip. No latency claim follows
 from this structural change: the preserved over-1ms observations remain open.
+
+## Connection-owned native envelopes (adapter and wire)
+
+`adapt_codex_app_server_connection` preserves initialization, thread creation
+requests and global notifications without inventing a native threadId. The
+transport owner supplies a separate, nonempty connection session identity.
+These envelopes are content facts; the existing core `route_agent_event`
+remains responsible for record/recall/end decisions. They do not end a session.
+
+`AppServerWire::attach_connection` reserves this session within the configured
+session capacity. Method envelopes without a thread route use it; responses
+still require an outstanding request-ID binding and a committed request
+sequence. Native thread identities cannot collide with the connection identity.
+`turn/start`, `turn/steer` and `thread/started` always require their normal thread
+schema, so malformed input never falls back to content recording. Original
+JSON remains byte-exact. Bound methods retain their method name for request
+tracking; correlated responses still have no native method name.
+
+Verification: agent event 208, wire owner 55, request binding 38, socket
+forwarding 35, duplex pump 88 checks passed on CPUs 6 and 7. This covers native
+adaptation, committed-sequence correlation, collision rejection, and existing
+thread transport behavior. The host protocol and proxy configuration do not
+select this route yet; this is not live desktop capture or end-to-end global
+message ingestion. Connection EOF does not authorize Main merge. Linking a
+thread creation result to the newly created thread and recovering pending
+requests remain unfinished.

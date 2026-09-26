@@ -69,5 +69,30 @@ int main(){
   CHECK(bindings==1);
  }
  CHECK(memory.used()==0);
+ {
+  AppServerWire wire(memory,2,3);
+  const auto init=R"({"id":1,"method":"initialize","params":{"clientInfo":{"name":"fixture"}}})";
+  rejects([&]{(void)wire.prepare(init,RpcSender::client,1);});
+  wire.attach_connection("transport",0);wire.attach("a",0);
+  rejects([&]{wire.attach_connection("other",0);});
+  auto request=wire.prepare(init,RpcSender::client,1);
+  CHECK(request.event().session()=="transport"&&request.sequence()==0);
+  rejects([&]{(void)wire.forward(request);});
+  wire.recorded(request);CHECK(wire.forward(request)==init&&wire.pending_requests()==1);
+  auto reply=wire.prepare(R"({"id":1,"result":{}})",RpcSender::server,2);
+  CHECK(reply.event().session()=="transport"&&reply.sequence()==1&&reply.request_sequence()==0);
+  wire.recorded(reply);CHECK(wire.pending_requests()==0);
+  auto ready=wire.prepare(R"({"method":"initialized"})",RpcSender::client,3);
+  CHECK(ready.event().session()=="transport"&&ready.sequence()==2);wire.recorded(ready);
+  auto input=wire.prepare(a,RpcSender::client,4);
+  CHECK(input.event().kind()==swegca::architecture::kernel::AgentEventKind::input&&input.event().session()=="a"&&input.sequence()==0);
+  wire.recorded(input);
+  for(const auto raw:{R"({"id":2,"method":"turn/start","params":{"input":[]}})",
+      R"({"method":"notice","params":{"threadId":"transport"}})",
+      R"({"method":"thread/started","params":{"thread":{"id":"transport"}}})",
+      R"({"method":"notice","params":{"threadId":null}})"})
+   rejects([&]{(void)wire.prepare(raw,RpcSender::server,5);});
+ }
+ CHECK(memory.used()==0);
  std::printf("app-server wire owner tests: %u checks passed\n",checks);
 }

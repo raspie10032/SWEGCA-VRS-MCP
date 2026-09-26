@@ -97,5 +97,23 @@ int main(){
   R"({"id":1,"method":"thread/started","params":{"thread":{"id":"new"}}})"})
   rejects([&]{(void)adapt_codex_app_server(raw,memory);});
  CHECK(memory.used()==0);
+ for(const auto raw:{R"({"id":1,"method":"initialize","params":{"clientInfo":{"name":"fixture"}}})",
+     R"({"method":"initialized"})",R"({"method":"notice","params":null})",
+     R"({"id":"start","method":"thread/start","params":{"cwd":"/fixture"}})"}){
+  auto event=adapt_codex_app_server_connection(raw,"connection-1",memory);
+  CHECK(event.session()=="connection-1"&&event.native_bytes()==raw&&!event.native_name().empty());
+  CHECK(event.is_app_server()&&event.kind()==AgentEventKind::content);
+  CHECK(route_agent_event(SessionPhase::active,event.kind())==AgentEventRoute::record);
+  CHECK(!event.fields().find("threadId"));
+ }
+ for(const auto raw:{R"({"id":1,"method":"turn/start","params":{"input":[]}})",
+     R"({"method":"turn/steer"})",R"({"method":"thread/started"})",
+     R"({"method":"notice","params":{"threadId":"t"}})",
+     R"({"method":"notice","params":{"threadId":null}})",
+     R"({"method":"notice","params":[]})",R"({"method":""})",
+     R"({"id":1,"result":null})",R"({"method":"notice","result":null})"})
+  rejects([&]{(void)adapt_codex_app_server_connection(raw,"connection-1",memory);});
+ rejects([&]{(void)adapt_codex_app_server_connection(R"({"method":"initialized"})","",memory);});
+ CHECK(memory.used()==0);
  std::printf("agent event tests: %u checks passed\n",checks);
 }

@@ -62,7 +62,7 @@ public:
     };
     AppServerWire(std::pmr::memory_resource& memory,std::size_t sessions,std::size_t requests)
         :memory_(memory),capacity_(sessions),request_capacity_(requests),identity_(std::allocate_shared<Identity>(std::pmr::polymorphic_allocator<Identity>(&memory))),
-         sessions_(&memory),requests_(memory,requests){
+         sessions_(&memory),connection_(&memory),requests_(memory,requests){
         if(!sessions)throw std::invalid_argument("wire session capacity must be positive");
     }
     AppServerWire(const AppServerWire&)=delete;
@@ -73,6 +73,13 @@ public:
         if(sessions_.size()==capacity_)throw std::length_error("wire session capacity exhausted");
         sessions_.try_emplace(std::pmr::string(session,&memory_),next);
     }
+    // A separate VRS session, already attached by the owner, for global RPCs.
+    // Reserve its name so no native thread can impersonate this route.
+    void attach_connection(std::string_view session,std::uint64_t next){
+        if(!connection_.empty())throw std::invalid_argument("connection already attached");
+        std::pmr::string owned(session,&memory_);
+        attach(session,next);connection_.swap(owned);
+    }
     [[nodiscard]] Delivery prepare(std::string_view native,RpcSender sender,std::uint64_t observed){
         return prepare(native,sender,observed,[](const AgentEvent&)->std::uint64_t{throw std::invalid_argument("wire session has not been attached to VRS");});
     }
@@ -81,7 +88,7 @@ public:
         if(sender!=RpcSender::client&&sender!=RpcSender::server)throw std::invalid_argument("invalid wire sender");
         auto fields=parse_json(native,memory_);
         Delivery::Value value=fields.find("method")?
-            Delivery::Value(AgentEvent::from_app_server(native,std::move(fields),memory_)):
+            Delivery::Value(adapt_method(native,std::move(fields))):
             Delivery::Value(requests_.bind_parsed(native,std::move(fields),sender));
         const auto& event=std::holds_alternative<AgentEvent>(value)?std::get<AgentEvent>(value):std::get<AppServerRequests::Response>(value).event();
         if(event.kind()==architecture::kernel::AgentEventKind::input&&sender!=RpcSender::client)
@@ -173,6 +180,19 @@ public:
         requests_.track(sender,event,sequence);
     }
 private:
+    AgentEvent adapt_method(std::string_view native,Json fields){
+        const auto method=fields.at("method").string();
+        const auto* params=fields.find("params");
+        const bool thread=method=="turn/start"||method=="turn/steer"||method=="thread/started"||
+            (params&&params->find("threadId"));
+        if(thread){
+            auto event=AgentEvent::from_app_server(native,std::move(fields),memory_);
+            if(!connection_.empty()&&event.session()==connection_)
+                throw std::invalid_argument("thread collides with connection binding");
+            return event;
+        }
+        return AgentEvent::from_app_server_connection(native,std::move(fields),connection_,memory_);
+    }
     void validate(const Delivery& delivery) const{
         if(delivery.owner_!=identity_||delivery.recorded_)throw std::invalid_argument("foreign or recorded wire delivery");
     }
@@ -180,6 +200,7 @@ private:
     std::size_t capacity_,request_capacity_;
     std::shared_ptr<const Identity> identity_;
     std::pmr::map<std::pmr::string,std::uint64_t,std::less<>> sessions_;
+    std::pmr::string connection_;
     AppServerRequests requests_;
 };
 } // namespace swegca::transport
