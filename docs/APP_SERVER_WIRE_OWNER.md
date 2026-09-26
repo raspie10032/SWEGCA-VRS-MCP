@@ -56,3 +56,34 @@ Verification: wire owner 29 checks, request binding 38 checks, real MCP subproce
 suite 2,080 checks including the C++ owner exchange. The fixture uses unbuffered
 binary pipes so readiness checks cannot overlook lines buffered by Python's text
 reader. No desktop/backend connection was started by these tests.
+
+## Stream socket forwarding
+
+A confirmed Delivery can now bind one SOCK_STREAM endpoint and send its exact
+native JSON plus one LF delimiter through `send_ready`. Binding duplicates the
+fd with close-on-exec; closing/reusing the caller's fd cannot redirect a partially
+sent frame. The original socket flags and global SIGPIPE disposition are not
+modified. MSG_DONTWAIT and MSG_NOSIGNAL make each send attempt nonblocking and
+prevent a closed peer from terminating the process.
+
+The Delivery retains its successfully sent byte offset through partial sends,
+EAGAIN, EINTR, moves and peer failure. Completion closes the owned descriptor and
+repeated completion checks produce no additional bytes. A bound or partly sent
+frame cannot be rebound to another socket. The original native body must be a
+single JSON line without a delimiter; pretty-printed/multiline bodies are refused
+instead of rewritten.
+
+Each observed wire direction permits only one active frame. A second frame cannot
+interleave with a partial first frame. Destroying an unsent frame releases that
+lane. Destroying a partially sent frame leaves the lane unavailable for the
+remaining owner lifetime, because skipping its suffix would corrupt framing.
+No automatic reconnection, replay of a possibly delivered request, or inference
+of downstream execution success is implemented. The actual process-I/O owner
+must bind the correct endpoint for each direction.
+
+Verification: 35 socket checks using Unix socket pairs, a 512KiB message and a
+small kernel send buffer. Tests include real backpressure/partial sends, injected
+EINTR, moving a partial frame, caller-fd closure, duplicate completion, competing
+frames, abandoned partial frame and peer closure without SIGPIPE termination.
+Wire owner checks remain 29 and real MCP round-trip suite passes 2,080 checks.
+These isolated sockets do not connect to or modify the running desktop/backend.

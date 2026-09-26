@@ -2,18 +2,39 @@
 #include "transport/app_server_requests.hpp"
 #include <memory>
 #include <variant>
+#include <cerrno>
+#include <system_error>
+#include <fcntl.h>
+#include <sys/socket.h>
+#include <unistd.h>
 
 namespace swegca::transport {
 // One serialized app-server connection. Plans contain transport facts only;
 // SWEGCA judgment and recording remain in the existing Main-owned VRS endpoint.
 class AppServerWire final {
-    struct Identity {};
+    struct Identity {
+        // Serialized owner only. A destroyed partial frame deliberately leaves
+        // its lane occupied: continuing that stream would corrupt JSON framing.
+        mutable std::array<std::uint64_t,2> active{0,0};
+        mutable std::uint64_t next=0;
+    };
 public:
     class Delivery final {
     public:
         Delivery(const Delivery&)=delete;
         Delivery& operator=(const Delivery&)=delete;
-        Delivery(Delivery&&) noexcept=default;
+        Delivery(Delivery&& other) noexcept
+            :value_(std::move(other.value_)),sender_(other.sender_),sequence_(other.sequence_),observed_(other.observed_),
+             owner_(std::move(other.owner_)),recorded_(other.recorded_),socket_(std::exchange(other.socket_,-1)),
+             offset_(other.offset_),newline_(other.newline_),ticket_(other.ticket_){}
+        ~Delivery(){
+            if(socket_>=0){
+                ::close(socket_);
+                const auto lane=sender_==RpcSender::client?0:1;
+                if(!offset_&&owner_&&owner_->active[lane]==ticket_)owner_->active[lane]=0;
+            }
+        }
+        [[nodiscard]] std::size_t sent_bytes() const noexcept{return offset_+(newline_?1:0);}
         [[nodiscard]] const AgentEvent& event() const noexcept{
             if(const auto* response=std::get_if<AppServerRequests::Response>(&value_))return response->event();
             return std::get<AgentEvent>(value_);
@@ -34,6 +55,10 @@ public:
         std::uint64_t sequence_,observed_;
         std::shared_ptr<const Identity> owner_;
         bool recorded_=false;
+        int socket_=-1;
+        std::size_t offset_=0;
+        bool newline_=false;
+        std::uint64_t ticket_=0;
     };
     AppServerWire(std::pmr::memory_resource& memory,std::size_t sessions,std::size_t requests)
         :memory_(memory),capacity_(sessions),request_capacity_(requests),identity_(std::allocate_shared<Identity>(std::pmr::polymorphic_allocator<Identity>(&memory))),
@@ -79,6 +104,46 @@ public:
     [[nodiscard]] std::string_view forward(const Delivery& delivery) const{
         if(delivery.owner_!=identity_||!delivery.recorded_)throw std::invalid_argument("VRS ingestion confirmation required");
         return delivery.event().native_bytes();
+    }
+    // Bind one stream socket to this confirmed frame. Owning a duplicated fd
+    // prevents descriptor reuse/reconnection from silently resuming a prefix on
+    // another stream. Does not change caller fd flags or process SIGPIPE state.
+    void bind_socket(Delivery& delivery,int socket) const{
+        const auto native=forward(delivery);
+        if(delivery.socket_>=0||delivery.offset_||delivery.newline_)throw std::invalid_argument("frame socket already bound");
+        if(native.find_first_of("\r\n")!=std::string_view::npos)
+            throw std::invalid_argument("app-server stream requires a single JSON line without delimiter");
+        const auto lane=delivery.sender_==RpcSender::client?0:1;
+        if(identity_->active[lane])throw std::logic_error("prior frame still owns this wire direction");
+        if(identity_->next==std::numeric_limits<std::uint64_t>::max())throw std::overflow_error("frame ticket exhausted");
+        int type=0;socklen_t size=sizeof(type);
+        if(::getsockopt(socket,SOL_SOCKET,SO_TYPE,&type,&size)<0)throw std::system_error(errno,std::generic_category(),"frame socket type");
+        if(type!=SOCK_STREAM)throw std::invalid_argument("frame requires a stream socket");
+        const int owned=::fcntl(socket,F_DUPFD_CLOEXEC,0);
+        if(owned<0)throw std::system_error(errno,std::generic_category(),"duplicate frame socket");
+        delivery.socket_=owned;delivery.ticket_=++identity_->next;identity_->active[lane]=delivery.ticket_;
+    }
+    // One nonblocking send attempt. False means more readiness/drain is needed;
+    // successful prefixes remain consumed through EAGAIN/EINTR or peer failure.
+    // Exactly one line delimiter follows the byte-exact original JSON.
+    [[nodiscard]] bool send_ready(Delivery& delivery) const{
+        const auto native=forward(delivery);
+        if(delivery.newline_)return true;
+        if(delivery.socket_<0)throw std::invalid_argument("frame socket not bound");
+        const auto lane=delivery.sender_==RpcSender::client?0:1;
+        if(identity_->active[lane]!=delivery.ticket_)throw std::logic_error("frame no longer owns wire direction");
+        const bool body=delivery.offset_<native.size();
+        const auto remaining=body?native.substr(delivery.offset_):std::string_view("\n");
+        const auto count=::send(delivery.socket_,remaining.data(),remaining.size(),MSG_DONTWAIT|MSG_NOSIGNAL);
+        if(count<0){
+            const auto code=errno;
+            if(code==EAGAIN||code==EWOULDBLOCK||code==EINTR)return false;
+            throw std::system_error(code,std::generic_category(),"forward app-server frame");
+        }
+        if(count==0)throw std::system_error(EPIPE,std::generic_category(),"zero-byte frame send");
+        if(body)delivery.offset_+=static_cast<std::size_t>(count);
+        else {delivery.newline_=true;::close(delivery.socket_);delivery.socket_=-1;identity_->active[lane]=0;}
+        return delivery.newline_;
     }
     [[nodiscard]] std::pmr::string parameters(const Delivery& delivery,std::uint64_t seed,std::uint64_t step) const{
         validate(delivery);
