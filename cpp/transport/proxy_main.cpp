@@ -79,31 +79,35 @@ int main(int argc,char** argv){
         if(!ram||!frame||frame>ram||!capacity)throw std::invalid_argument("invalid proxy limits");
         const auto& sessions=config.at("sessions");
         if(sessions.kind!=Json::Kind::array)throw std::invalid_argument("session bindings must be an array");
+        const auto* connection=config.find("connectionSession");
+        const auto initial_sessions=sessions.values.size()+(connection?1:0);
         const auto* configured_sessions=config.find("sessionCapacity");
-        const auto session_capacity=configured_sessions?number(configured_sessions->string()):sessions.values.size();
-        if(!session_capacity||session_capacity<sessions.values.size())throw std::invalid_argument("invalid session capacity");
+        const auto session_capacity=configured_sessions?number(configured_sessions->string()):initial_sessions;
+        if(!session_capacity||session_capacity<initial_sessions)throw std::invalid_argument("invalid session capacity");
         swegca::vrs::MemoryBudget memory(ram);
         AppServerPump pump(client,server,frame,memory,session_capacity,capacity);
         VrsStream stream(vrs,frame,memory);
         const auto initialized=call(stream,"proxy/initialize","initialize",R"({"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"swegca-app-server-proxy","version":"0.1"}})",memory);
         const auto& result=initialized.at("result");
-        if(result.at("protocolVersion").string()!="2025-06-18"||result.at("capabilities").at("experimental").at("swegcaHostInput").at("version").string()!="11")
+        if(result.at("protocolVersion").string()!="2025-06-18"||result.at("capabilities").at("experimental").at("swegcaHostInput").at("version").string()!="12")
             throw std::runtime_error("unsupported VRS host protocol");
         stream.send(R"({"jsonrpc":"2.0","method":"notifications/initialized"})");
         std::pmr::map<std::pmr::string,std::pmr::string,std::less<>> bindings(&memory);
         std::uint64_t serial=0;
-        for(const auto& session:sessions.values){
+        const auto attach=[&](const Json& session,bool connection_scope){
             const auto name=session.at("session").string();
             const auto mode=session.at("mode").string();
             if(mode!="attach"&&mode!="resume")throw std::invalid_argument("invalid binding mode");
             if(bindings.contains(name))throw std::invalid_argument("duplicate session binding");
-            const auto params="{\"provider\":\"codex\",\"protocol\":\"app-server\",\"instance\":"+quote_json(config.at("instance").string(),memory)+",\"session\":"+quote_json(name,memory)+"}";
+            const auto params="{\"provider\":\"codex\",\"protocol\":"+quote_json(connection_scope?"app-server-connection":"app-server",memory)+",\"instance\":"+quote_json(config.at("instance").string(),memory)+",\"session\":"+quote_json(name,memory)+"}";
             const auto attached=call(stream,"proxy/attach/"+std::to_string(++serial),mode=="attach"?"swegca/agent/attach":"swegca/agent/attach/resume",params,memory);
             const auto& body=attached.at("result");
             const auto next=number(body.at("nextSequence").string());
-            pump.attach(name,next);
+            if(connection_scope)pump.attach_connection(name,next);else pump.attach(name,next);
             bindings.try_emplace(std::pmr::string(name,&memory),body.at("identity").string());
-        }
+        };
+        if(connection)attach(*connection,true);
+        for(const auto& session:sessions.values)attach(session,false);
         const auto bind_started=[&](const AgentEvent& event){
             if(serial==UINT64_MAX)throw std::overflow_error("proxy request IDs exhausted");
             const auto name=event.session();

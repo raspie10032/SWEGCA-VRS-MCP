@@ -34,7 +34,7 @@ class Client:
         check('error' in self.call('tools/list'))
         initialized=self.call('initialize',{'protocolVersion':'2025-06-18','capabilities':{},'clientInfo':{'name':'test','version':'1'}})['result']
         check(initialized['protocolVersion']=='2025-06-18')
-        check(initialized['capabilities']['experimental']['swegcaHostInput']['version']=='11')
+        check(initialized['capabilities']['experimental']['swegcaHostInput']['version']=='12')
         self.notice('notifications/initialized')
         tools=self.call('tools/list')['result']['tools']
         check([t['name'] for t in tools]==['vrs_replay','vrs_re_evidence'])
@@ -525,7 +525,7 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     proxy_root=root/'proxy-process';proxy_root.mkdir()
     proxy_config=root/'proxy.json'
     proxy_config.write_text(json.dumps({'memoryBytes':str(8<<20),'frameBytes':'4096',
-        'pendingRequests':'16','sessionCapacity':'3','seed':'7','step':'0','instance':'proxy-tested',
+        'pendingRequests':'16','sessionCapacity':'4','connectionSession':{'session':'transport','mode':'attach'},'seed':'7','step':'0','instance':'proxy-tested',
         'sessions':[{'session':name,'mode':'attach'} for name in ('a','b')]}))
     client_side,client_proxy=socket.socketpair()
     server_side,server_proxy=socket.socketpair()
@@ -549,6 +549,13 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
                 if not chunk:raise RuntimeError('proxy closed before complete frame')
                 data.extend(chunk)
             return bytes(data)
+        global_frames=[{'id':1,'method':'initialize','params':{'clientInfo':{'name':'fixture'}}},
+                       {'method':'initialized'}, {'id':2,'method':'thread/start','params':{}}]
+        for frame in global_frames:
+            raw=proxy_frame(frame);client_side.sendall(raw);check(proxy_read(server_side)==raw)
+            if 'id' in frame:
+                raw=proxy_frame({'id':frame['id'],'result':{}})
+                server_side.sendall(raw);check(proxy_read(client_side)==raw)
         request=proxy_frame({'id':7,'method':'turn/start','params':{'threadId':'a',
             'input':[{'type':'text','text':'프록시 원문'}]}})
         note=proxy_frame({'method':'item/agentMessage/delta','params':{'threadId':'a','delta':'보존'}})
@@ -578,6 +585,21 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
         for process in (proxy_process,vrs_process):
             if process.poll() is None:process.terminate();process.wait(timeout=10)
     c=Client('open',proxy_root,path);c.initialize()
+    connection_binding={'provider':'codex','instance':'proxy-tested','session':'transport',
+                        'protocol':'app-server-connection'}
+    connection=c.call('swegca/agent/attach/resume',connection_binding)['result']
+    check(connection['nextSequence']=='5')
+    check('error' in c.call('swegca/agent/attach/ensure',dict(connection_binding,protocol='app-server')))
+    params={'identity':connection['identity'],'sequence':'4','observedAt':'0','seed':'7','step':'0',
+            'native':json.dumps({'id':2,'result':{}}),'requestSequence':'3'}
+    # Recovered request validation must understand connection-owned originals.
+    params['sequence']='5'
+    appended=c.call('swegca/agent/event',params)['result']
+    check('original' in appended and 'refinement' in appended)
+    check(c.call('swegca/agent/event',params)['result']['duplicate'] is True)
+    bad=dict(params,sequence='6',native=json.dumps({'id':3,'method':'turn/start','params':{'input':[]}}))
+    del bad['requestSequence']
+    check('error' in c.call('swegca/agent/event',bad))
     for session,count in (('a','3'),('b','2'),('c','3')):
         attached=c.call('swegca/agent/attach/resume',{'provider':'codex','instance':'proxy-tested',
             'session':session,'protocol':'app-server'})['result']
@@ -591,6 +613,7 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     c.close()
     # The executable must not pass native content when its VRS endpoint is gone.
     resumed=json.loads(proxy_config.read_text())
+    resumed['connectionSession']['mode']='resume'
     for entry in resumed['sessions']:entry['mode']='resume'
     proxy_config.write_text(json.dumps(resumed))
     client_side,client_proxy=socket.socketpair();server_side,server_proxy=socket.socketpair()

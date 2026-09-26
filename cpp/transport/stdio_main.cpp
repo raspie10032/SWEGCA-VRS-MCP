@@ -64,7 +64,7 @@ public:
                 if(initialized_)throw std::invalid_argument("already initialized");
                 const auto& p=request.at("params");(void)p.at("protocolVersion").string();
                 if(p.at("capabilities").kind!=Json::Kind::object||p.at("clientInfo").kind!=Json::Kind::object)throw std::invalid_argument("invalid initialize parameters");
-                initialized_=true;result(encoded_id,R"({"protocolVersion":"2025-06-18","capabilities":{"tools":{},"experimental":{"swegcaHostInput":{"version":"11"}}},"serverInfo":{"name":"swegca-vrs-cpp","version":"0.1"}})");return;
+                initialized_=true;result(encoded_id,R"({"protocolVersion":"2025-06-18","capabilities":{"tools":{},"experimental":{"swegcaHostInput":{"version":"12"}}},"serverInfo":{"name":"swegca-vrs-cpp","version":"0.1"}})");return;
             }
             if(method=="ping"){result(encoded_id,"{}");return;}
             if(!ready_)throw std::invalid_argument("initialization not completed");
@@ -87,12 +87,13 @@ private:
     Runtime& runtime_;MemoryBudget& memory_;bool initialized_=false,ready_=false;
     struct Context {
         struct Delivery { DigestBytes fingerprint; ExperienceLocation original; DigestBytes context{}; };
-        Context(MemoryBudget& memory,std::string_view native,bool app):deliveries(&memory),native_session(native,&memory),app_server(app){}
+        Context(MemoryBudget& memory,std::string_view native,bool app,bool connection):deliveries(&memory),native_session(native,&memory),app_server(app),connection_scope(connection){}
         std::pmr::map<std::uint64_t,Delivery> deliveries;
         bool native_ready=false;
         std::pmr::string native_session;
         bool app_server=false;
-        std::string_view native_source() const noexcept{return app_server?"codex/app-server":"codex/hook";}
+        bool connection_scope=false;
+        std::string_view native_source() const noexcept{return connection_scope?"codex/app-server-connection":app_server?"codex/app-server":"codex/hook";}
         std::uint64_t receipt=0;
         std::optional<ReceivedInput> received;
         std::optional<ReplayedInput> replayed;
@@ -112,11 +113,11 @@ private:
         runtime_.select_session(identity);selected_=&found->second;
     }
     void attach_context(const DigestBytes& identity,std::string_view name,bool resume,bool select,
-        std::string_view native = {},bool app_server=false,bool ensure=false) {
+        std::string_view native = {},bool app_server=false,bool ensure=false,bool connection_scope=false) {
         if(select&&runtime_.has_session())throw std::invalid_argument("session already selected");
         // Reserve transport state before acquiring a Runtime lease. Failure
         // leaves the prior selection and all existing receipts untouched.
-        auto [it,inserted]=contexts_.try_emplace(identity,memory_,native,app_server);
+        auto [it,inserted]=contexts_.try_emplace(identity,memory_,native,app_server,connection_scope);
         if(!inserted)throw std::invalid_argument("session already attached");
         try {
             if(ensure)runtime_.attach_available_session(identity,name);
@@ -157,12 +158,12 @@ private:
             const auto identity=agent_session_identity(provider,p.at("instance").string(),native);
             const auto* protocol=p.find("protocol");
             const auto format=protocol?protocol->string():"hook";
-            if(format!="hook"&&format!="app-server")throw std::invalid_argument("unknown native protocol");
+            if(format!="hook"&&format!="app-server"&&format!="app-server-connection")throw std::invalid_argument("unknown native protocol");
             const bool ensure=method=="swegca/agent/attach/ensure";
             if(!ensure||!contexts_.contains(identity))
-                attach_context(identity,native,method=="swegca/agent/attach/resume",false,native,format=="app-server",ensure);
+                attach_context(identity,native,method=="swegca/agent/attach/resume",false,native,format!="hook",ensure,format=="app-server-connection");
             auto& state=contexts_.at(identity);
-            if(state.native_session!=native||state.app_server!=(format=="app-server"))throw std::invalid_argument("native session binding mismatch");
+            if(state.native_session!=native||state.app_server!=(format!="hook")||state.connection_scope!=(format=="app-server-connection"))throw std::invalid_argument("native session binding mismatch");
             const auto& attached=runtime_.attached_session(identity);
             if(ensure&&(!attached.usable()||kernel::route_agent_event(attached.phase(),kernel::AgentEventKind::lifecycle)!=kernel::AgentEventRoute::record))
                 throw std::invalid_argument("stored session no longer accepts lifecycle events");
@@ -201,7 +202,7 @@ private:
                 if(original.source!=state.native_source()||original.session!=state.native_session||original.media_type!="application/json")
                     throw std::invalid_argument("request original binding mismatch");
                 const std::string_view bytes(reinterpret_cast<const char*>(original.content.data()),original.content.size());
-                auto request_event=adapt_codex_app_server(bytes,memory_);
+                auto request_event=state.connection_scope?adapt_codex_app_server_connection(bytes,state.native_session,memory_):adapt_codex_app_server(bytes,memory_);
                 if(request_event.session()!=state.native_session)throw std::invalid_argument("request session mismatch");
                 binding.emplace(memory_,1);binding->track(RpcSender::client,request_event);
                 response.emplace(binding->bind(p.at("native").string(),RpcSender::server));
@@ -210,7 +211,7 @@ private:
                 const auto cue=input?request_event.cue_content():request_event.native_bytes();
                 request_connection=input_cue(input?request_event.cue_media():"application/json",std::as_bytes(std::span(cue)));
             }else{
-                parsed_event.emplace(state.app_server?adapt_codex_app_server(p.at("native").string(),memory_):
+                parsed_event.emplace(state.connection_scope?adapt_codex_app_server_connection(p.at("native").string(),state.native_session,memory_):state.app_server?adapt_codex_app_server(p.at("native").string(),memory_):
                     adapt_codex_hook(p.at("native").string(),memory_));
             }
             const auto& event=response?response->event():*parsed_event;

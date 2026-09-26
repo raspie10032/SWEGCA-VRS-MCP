@@ -13,6 +13,7 @@ public:
         :client_(client,frame_limit,memory),server_(server,frame_limit,memory),wire_(memory,sessions,requests){}
     AppServerPump(const AppServerPump&)=delete;
     AppServerPump& operator=(const AppServerPump&)=delete;
+    void attach_connection(std::string_view session,std::uint64_t next){wire_.attach_connection(session,next);}
     void attach(std::string_view session,std::uint64_t next){wire_.attach(session,next);}
     void restore_request(RpcSender sender,const AgentEvent& event,std::uint64_t sequence){wire_.restore_request(sender,event,sequence);}
     [[nodiscard]] std::size_t pending_requests() const noexcept{return wire_.pending_requests();}

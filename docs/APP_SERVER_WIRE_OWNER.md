@@ -340,3 +340,29 @@ select this route yet; this is not live desktop capture or end-to-end global
 message ingestion. Connection EOF does not authorize Main merge. Linking a
 thread creation result to the newly created thread and recovering pending
 requests remain unfinished.
+
+## Host protocol 12: connection ingestion enabled
+
+The host now accepts `protocol: "app-server-connection"` on agent attach,
+resume and ensure. Its source is `codex/app-server-connection`, distinct from
+thread events. Recovery validates that source, and response lineage reparses
+the stored request with the same connection adapter before binding the reply.
+Changing an attached session's protocol is rejected. All records use the
+existing Main-owned core event route and SessionRuntime refinement path.
+
+The proxy accepts optional `connectionSession: {"session":"transport",
+"mode":"attach"}` (or mode `resume`). It attaches this before thread sessions;
+this entry counts toward sessionCapacity. If omitted, global messages remain
+rejected. The proxy requires host protocol 12. Connection identifiers must be
+chosen distinctly from native thread identifiers; Wire rejects collisions.
+
+Real subprocess verification passed 2,238 checks: synthetic client/backend
+sockets through the actual proxy and VRS binaries, initial initialize request
+and reply, initialized notification, thread/start request and reply (five
+connection records), ordinary thread traffic, restart recovering nextSequence
+5, another reply validated against the recovered request, duplicate delivery
+reuse, protocol mismatch rejection, malformed input rejection, and no Main
+merge on EOF. A resumed proxy also opens the stored connection successfully.
+This is executable integration evidence, not a running desktop installation.
+Automatic pending-request restoration, new thread lineage linkage, agent
+context injection and combined resource/latency verification remain unfinished.
