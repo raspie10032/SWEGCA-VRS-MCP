@@ -32,3 +32,29 @@ Main이 다른 에이전트의 활성 임시 경험을 미리 합치지 않는�
 이 변경은 native Runtime 연결 기반이다. 현재 MCP 서버의 선택 receipt 상태와 실제
 데스크톱 이벤트 수신은 아직 여러 세션용으로 연결되지 않았다. 실제 데스크톱 설치·전체
 이벤트 수집·1ms 충족 증거로 사용하지 않는다.
+
+## MCP host session contexts
+
+Host input protocol version 5 binds each attached Runtime session to its own
+Recall and completed Replay state. `swegca/attach` accepts identity/name;
+`swegca/attach/resume` accepts identity. Both attach without changing selection.
+`swegca/select` selects an attached identity without recording or ending it.
+Existing start/resume still attach and select only when none is selected.
+
+Receipt numbers are unique within one server process. Switching sessions preserves
+parked receipts, while replay/candidates/re-evidence validate only the selected
+session's receipt. Ending drops only that context; transport EOF does not end any
+session. Receipts do not survive process restart. The host must serialize selection
+and the corresponding operation on this stdio connection: these methods are host
+routing, not authentication or concurrent multi-client transport. Models still have
+only Replay and Re-evidence tools, with no session lifecycle tools.
+
+Context allocation precedes Runtime attachment. Attachment failure removes the
+new empty context and preserves prior selection/receipts. Selected receipts are
+cleared before explicit end releases their borrowed Runtime resources. A failed
+end may therefore invalidate that session's receipts, but never another session's.
+
+The subprocess test covers two simultaneous agents, cross-session receipt rejection,
+parked full Replay retention, attachment/selection failures, isolated end/merge,
+EOF without end, explicit resume and post-restart Recall. Native desktop event
+capture and delivery are still separate unfinished integration work.

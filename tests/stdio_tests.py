@@ -34,7 +34,7 @@ class Client:
         check('error' in self.call('tools/list'))
         initialized=self.call('initialize',{'protocolVersion':'2025-06-18','capabilities':{},'clientInfo':{'name':'test','version':'1'}})['result']
         check(initialized['protocolVersion']=='2025-06-18')
-        check(initialized['capabilities']['experimental']['swegcaHostInput']['version']=='4')
+        check(initialized['capabilities']['experimental']['swegcaHostInput']['version']=='5')
         self.notice('notifications/initialized')
         tools=self.call('tools/list')['result']['tools']
         check([t['name'] for t in tools]==['vrs_replay','vrs_re_evidence'])
@@ -294,6 +294,55 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     check(replay['original']==original and replay['contentHex']==text.encode().hex())
     check(c.call('swegca/work/poll')['result']=={'running':False,'merged':'0'})
     check(c.call('swegca/end')['result']=={});c.close()
+    # One host/Main, independent live session receipts and explicit ends.
+    multi_root=root/'multi';multi_root.mkdir()
+    c=Client('create',multi_root,path);c.initialize()
+    def select_session(n):
+        check(c.call('swegca/select',{'identity':identity(n)})['result']=={})
+    def replay_receipt(receipt):
+        return c.call('tools/call',{'name':'vrs_replay','arguments':{'receipt':receipt,'candidate':'0'}})['result']
+    def recheck(receipt):
+        return c.call('tools/call',{'name':'vrs_re_evidence','arguments':{'receipt':receipt,'seed':'7','step':'0'}})['result']
+    check(c.call('swegca/start',{'identity':identity(10),'name':'agent-a'})['result']=={})
+    a0=c.call('swegca/receive',event('agent-a',content='a'))['result']
+    a1=c.call('swegca/receive',event('agent-a',content='a',sequence='1'))['result']
+    check(replay_receipt(a1['receipt'])['structuredContent']['original']==a0['original'])
+    check(c.call('swegca/attach',{'identity':identity(11),'name':'agent-b'})['result']=={})
+    # Attachment and failed attachment/selection preserve A's completed Replay.
+    check('error' in c.call('swegca/attach',{'identity':identity(11),'name':'duplicate'}))
+    check('error' in c.call('swegca/select',{'identity':identity(12)}))
+    check('error' in c.call('swegca/attach/resume',{'identity':identity(12)}))
+    check('structuredContent' in recheck(a1['receipt']))
+    select_session(11)
+    check(replay_receipt(a1['receipt'])['isError'])
+    b0=c.call('swegca/receive',event('agent-b',content='b'))['result']
+    b1=c.call('swegca/receive',event('agent-b',content='b',sequence='1'))['result']
+    check(b1['receipt']!=a1['receipt'] and b1['candidateCount']=='1')
+    check(replay_receipt(a1['receipt'])['isError'])
+    check(replay_receipt(b1['receipt'])['structuredContent']['original']==b0['original'])
+    select_session(10)
+    check('structuredContent' in recheck(a1['receipt']))
+    check(replay_receipt(b1['receipt'])['isError'])
+    check(c.call('swegca/candidates',{'receipt':a1['receipt'],'offset':'0'})['result']['candidates'][0]['original']==a0['original'])
+    check(c.call('swegca/work',{'seed':'7','step':'0'})['result']['merged']=='0')
+    check(c.call('swegca/end')['result']=={})
+    check('error' in c.call('swegca/select',{'identity':identity(10)}))
+    check(replay_receipt(a1['receipt'])['isError'])
+    check(c.call('swegca/work',{'seed':'7','step':'0'})['result']['merged']=='1')
+    select_session(11)
+    check('structuredContent' in recheck(b1['receipt']))
+    c.close() # Parked/live B survives transport EOF without publication.
+    c=Client('open',multi_root,path);c.initialize()
+    check(c.call('swegca/attach/resume',{'identity':identity(11)})['result']=={})
+    check('error' in c.call('swegca/end')) # attach alone has no selection
+    check(c.call('swegca/work',{'seed':'7','step':'0'})['result']['merged']=='0')
+    select_session(11)
+    check(replay_receipt(b1['receipt'])['isError']) # receipts are process-local
+    b2=c.call('swegca/receive',event('agent-b',content='b',sequence='2'))['result']
+    check(b2['temporary'] and b2['candidateCount']=='2')
+    check(c.call('swegca/end')['result']=={})
+    check(c.call('swegca/work',{'seed':'7','step':'0'})['result']['merged']=='1')
+    c.close()
     # A separate config file must not change the root being measured.
     def stored_bytes():
         seen=set();total=0

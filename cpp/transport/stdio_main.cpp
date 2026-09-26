@@ -45,7 +45,7 @@ constexpr std::string_view tools_list=R"({"tools":[
 ]})";
 class Server {
 public:
-    Server(Runtime& runtime,MemoryBudget& memory):runtime_(runtime),memory_(memory){}
+    Server(Runtime& runtime,MemoryBudget& memory):runtime_(runtime),memory_(memory),contexts_(&memory){}
     void message(std::string_view line){
         Json request(&memory_);
         try{request=parse_json(line,memory_);}catch(const std::bad_alloc&){throw;}catch(const std::exception&){error("null",-32700,"invalid JSON");return;}
@@ -61,7 +61,7 @@ public:
                 if(initialized_)throw std::invalid_argument("already initialized");
                 const auto& p=request.at("params");(void)p.at("protocolVersion").string();
                 if(p.at("capabilities").kind!=Json::Kind::object||p.at("clientInfo").kind!=Json::Kind::object)throw std::invalid_argument("invalid initialize parameters");
-                initialized_=true;result(encoded_id,R"({"protocolVersion":"2025-06-18","capabilities":{"tools":{},"experimental":{"swegcaHostInput":{"version":"4"}}},"serverInfo":{"name":"swegca-vrs-cpp","version":"0.1"}})");return;
+                initialized_=true;result(encoded_id,R"({"protocolVersion":"2025-06-18","capabilities":{"tools":{},"experimental":{"swegcaHostInput":{"version":"5"}}},"serverInfo":{"name":"swegca-vrs-cpp","version":"0.1"}})");return;
             }
             if(method=="ping"){result(encoded_id,"{}");return;}
             if(!ready_)throw std::invalid_argument("initialization not completed");
@@ -82,12 +82,34 @@ public:
     void framing_error(){error("null",-32700,"invalid or oversized MCP frame");}
 private:
     Runtime& runtime_;MemoryBudget& memory_;bool initialized_=false,ready_=false;
-    std::uint64_t receipt_=0;
-    std::optional<ReceivedInput> received_;
-    std::optional<ReplayedInput> replayed_;
+    struct Context {
+        std::uint64_t receipt=0;
+        std::optional<ReceivedInput> received;
+        std::optional<ReplayedInput> replayed;
+    };
+    std::uint64_t next_receipt_=0;
+    std::pmr::map<DigestBytes,Context> contexts_;
+    Context* selected_=nullptr;
+    Context& context() const {
+        if(!selected_)throw std::invalid_argument("no selected session");
+        return *selected_;
+    }
+    void attach_context(const Json& p,bool resume,bool select) {
+        const auto identity=digest(p.at("identity").string());
+        if(select&&runtime_.has_session())throw std::invalid_argument("session already selected");
+        // Reserve transport state before acquiring a Runtime lease. Failure
+        // leaves the prior selection and all existing receipts untouched.
+        auto [it,inserted]=contexts_.try_emplace(identity);
+        if(!inserted)throw std::invalid_argument("session already attached");
+        try {
+            if(resume)runtime_.attach_resumed_session(identity);
+            else runtime_.attach_session(identity,p.at("name").string());
+        } catch(...) {contexts_.erase(it);throw;}
+        if(select){runtime_.select_session(identity);selected_=&it->second;}
+    }
     void result(std::string_view id,std::string_view body){std::cout<<"{\"jsonrpc\":\"2.0\",\"id\":"<<id<<",\"result\":"<<body<<"}\n"<<std::flush;if(!std::cout)throw std::runtime_error("MCP output disconnected");}
     void error(std::string_view id,int code,std::string_view message){std::cout<<"{\"jsonrpc\":\"2.0\",\"id\":"<<id<<",\"error\":{\"code\":"<<code<<",\"message\":"<<quote_json(message,memory_)<<"}}\n"<<std::flush;}
-    void clear(){replayed_.reset();received_.reset();}
+    void clear(){context().replayed.reset();context().received.reset();}
     static std::size_t candidate_limit(const Json& p) {
         const auto* value=p.find("candidateLimit");
         const auto limit=value?integer(*value):64;
@@ -95,7 +117,7 @@ private:
         return static_cast<std::size_t>(limit);
     }
     void candidate_page(std::pmr::string& body,std::uint64_t offset,std::size_t limit) const {
-        const auto matches=received_->recalled.matches();
+        const auto matches=context().received->recalled.matches();
         if(offset>matches.size())throw std::invalid_argument("candidate offset exceeds receipt");
         const auto begin=static_cast<std::size_t>(offset);
         const auto end=begin+std::min(limit,matches.size()-begin);
@@ -111,14 +133,29 @@ private:
     }
     std::pmr::string host(std::string_view method,const Json& p){
         if(method=="swegca/candidates"){
-            if(!received_||integer(p.at("receipt"))!=receipt_)throw std::invalid_argument("expired receipt");
+            if(!context().received||integer(p.at("receipt"))!=context().receipt)throw std::invalid_argument("expired receipt");
             const auto limit=candidate_limit(p);
-            std::pmr::string body("{\"receipt\":\"",&memory_);body+=std::to_string(receipt_);body+="\",";
+            std::pmr::string body("{\"receipt\":\"",&memory_);body+=std::to_string(context().receipt);body+="\",";
             candidate_page(body,integer(p.at("offset")),limit);body+='}';return body;
         }
-        if(method=="swegca/start"){runtime_.start_session(digest(p.at("identity").string()),p.at("name").string());return std::pmr::string("{}",&memory_);}
-        if(method=="swegca/resume"){runtime_.resume_session(digest(p.at("identity").string()));return std::pmr::string("{}",&memory_);}
-        if(method=="swegca/end"){clear();runtime_.end_session();return std::pmr::string("{}",&memory_);}
+        if(method=="swegca/start"||method=="swegca/resume"||method=="swegca/attach"||method=="swegca/attach/resume"){
+            attach_context(p,method=="swegca/resume"||method=="swegca/attach/resume",
+                method=="swegca/start"||method=="swegca/resume");
+            return std::pmr::string("{}",&memory_);
+        }
+        if(method=="swegca/select"){
+            const auto identity=digest(p.at("identity").string());
+            const auto found=contexts_.find(identity);
+            if(found==contexts_.end())throw std::invalid_argument("session not attached");
+            runtime_.select_session(identity);selected_=&found->second;
+            return std::pmr::string("{}",&memory_);
+        }
+        if(method=="swegca/end"){
+            clear();runtime_.end_session();
+            for(auto it=contexts_.begin();it!=contexts_.end();++it)
+                if(&it->second==selected_){selected_=nullptr;contexts_.erase(it);break;}
+            return std::pmr::string("{}",&memory_);
+        }
         if(method=="swegca/work"){const auto count=runtime_.work(integer(p.at("seed")),integer(p.at("step")));return std::pmr::string("{\"merged\":\"",&memory_)+std::to_string(count).c_str()+"\"}";}
         if(method=="swegca/work/start"){
             const bool started=runtime_.schedule_work(integer(p.at("seed")),integer(p.at("step")));
@@ -164,22 +201,22 @@ private:
                 auto recorded=runtime_.observe(value.hypothesis,{sequence,observed,session,source,media,content},value,seed,step);
                 return "{\"original\":"+address(recorded.original,memory_)+",\"refinement\":"+refinement(recorded.refinement,memory_)+"}";
             }
-            if(receipt_==std::numeric_limits<std::uint64_t>::max())throw std::overflow_error("receipt sequence exhausted");
-            clear();++receipt_;received_.emplace(runtime_.receive({sequence,observed,session,source,media,content},seed,step));
-            std::pmr::string body("{\"receipt\":\"",&memory_);body+=std::to_string(receipt_);body+="\",\"original\":";body+=address(received_->recorded.original,memory_);
-            body+=",\"temporary\":";body+=received_->recalled.temporary()?"true":"false";body+=',';
+            if(next_receipt_==std::numeric_limits<std::uint64_t>::max())throw std::overflow_error("receipt sequence exhausted");
+            clear();context().receipt=++next_receipt_;context().received.emplace(runtime_.receive({sequence,observed,session,source,media,content},seed,step));
+            std::pmr::string body("{\"receipt\":\"",&memory_);body+=std::to_string(context().receipt);body+="\",\"original\":";body+=address(context().received->recorded.original,memory_);
+            body+=",\"temporary\":";body+=context().received->recalled.temporary()?"true":"false";body+=',';
             candidate_page(body,0,page_limit);
-            body+=",\"refinement\":";body+=refinement(received_->recorded.refinement,memory_);body+='}';return body;
+            body+=",\"refinement\":";body+=refinement(context().received->recorded.refinement,memory_);body+='}';return body;
         }
         throw std::invalid_argument("unknown SWEGCA host method");
     }
     std::pmr::string call(std::string_view method,const Json& p){
-        if(!received_||integer(p.at("receipt"))!=receipt_)throw std::invalid_argument("expired receipt");
+        if(!context().received||integer(p.at("receipt"))!=context().receipt)throw std::invalid_argument("expired receipt");
         if(method=="vrs_replay"){
-            const auto candidate=integer(p.at("candidate"));replayed_.reset();
+            const auto candidate=integer(p.at("candidate"));context().replayed.reset();
             if(p.find("offset") || p.find("count")){
                 const auto offset=integer(p.at("offset")),count=integer(p.at("count"));
-                auto part=runtime_.read_payload_slice(received_->recalled,candidate,offset,count);
+                auto part=runtime_.read_payload_slice(context().received->recalled,candidate,offset,count);
                 std::pmr::string body("{\"original\":",&memory_);
                 body+=address(part.evidence().original(),memory_);
                 body+=",\"partial\":true,\"offset\":\"";body+=std::to_string(part.offset());
@@ -187,13 +224,13 @@ private:
                 body+="\",\"contentHex\":\"";body+=hex(part.content(),memory_);body+="\"}";
                 return body;
             }
-            replayed_.emplace(runtime_.replay(received_->recalled,candidate));
-            const auto value=evidence_payload(replayed_->original());
-            return "{\"original\":"+address(replayed_->location(),memory_)+",\"media\":"+quote_json(value.media_type,memory_)+",\"source\":"+quote_json(value.source,memory_)+",\"contentHex\":\""+hex(value.content,memory_)+"\"}";
+            context().replayed.emplace(runtime_.replay(context().received->recalled,candidate));
+            const auto value=evidence_payload(context().replayed->original());
+            return "{\"original\":"+address(context().replayed->location(),memory_)+",\"media\":"+quote_json(value.media_type,memory_)+",\"source\":"+quote_json(value.source,memory_)+",\"contentHex\":\""+hex(value.content,memory_)+"\"}";
         }
         if(method=="vrs_re_evidence"){
-            if(!replayed_)throw std::invalid_argument("Replay required before Re-evidence");
-            auto checked=runtime_.re_evidence(*replayed_,integer(p.at("seed")),integer(p.at("step")));
+            if(!context().replayed)throw std::invalid_argument("Replay required before Re-evidence");
+            auto checked=runtime_.re_evidence(*context().replayed,integer(p.at("seed")),integer(p.at("step")));
             auto body=std::pmr::string("{\"agreement\":",&memory_)+std::to_string(static_cast<unsigned>(checked.agreement())).c_str()+",\"status\":"+std::to_string(static_cast<unsigned>(checked.verification().result().verification().judgment().status())).c_str();
             body+=",\"replayedOriginal\":";body+=address(checked.replayed_original(),memory_);
             body+=",\"rememberedHead\":";body+=address(checked.remembered_head().record,memory_);
