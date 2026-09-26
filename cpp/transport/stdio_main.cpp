@@ -62,7 +62,7 @@ public:
                 if(initialized_)throw std::invalid_argument("already initialized");
                 const auto& p=request.at("params");(void)p.at("protocolVersion").string();
                 if(p.at("capabilities").kind!=Json::Kind::object||p.at("clientInfo").kind!=Json::Kind::object)throw std::invalid_argument("invalid initialize parameters");
-                initialized_=true;result(encoded_id,R"({"protocolVersion":"2025-06-18","capabilities":{"tools":{},"experimental":{"swegcaHostInput":{"version":"7"}}},"serverInfo":{"name":"swegca-vrs-cpp","version":"0.1"}})");return;
+                initialized_=true;result(encoded_id,R"({"protocolVersion":"2025-06-18","capabilities":{"tools":{},"experimental":{"swegcaHostInput":{"version":"8"}}},"serverInfo":{"name":"swegca-vrs-cpp","version":"0.1"}})");return;
             }
             if(method=="ping"){result(encoded_id,"{}");return;}
             if(!ready_)throw std::invalid_argument("initialization not completed");
@@ -85,10 +85,12 @@ private:
     Runtime& runtime_;MemoryBudget& memory_;bool initialized_=false,ready_=false;
     struct Context {
         struct Delivery { DigestBytes fingerprint; ExperienceLocation original; };
-        Context(MemoryBudget& memory,std::string_view native):deliveries(&memory),native_session(native,&memory){}
+        Context(MemoryBudget& memory,std::string_view native,bool app):deliveries(&memory),native_session(native,&memory),app_server(app){}
         std::pmr::map<std::uint64_t,Delivery> deliveries;
         bool native_ready=false;
         std::pmr::string native_session;
+        bool app_server=false;
+        std::string_view native_source() const noexcept{return app_server?"codex/app-server":"codex/hook";}
         std::uint64_t receipt=0;
         std::optional<ReceivedInput> received;
         std::optional<ReplayedInput> replayed;
@@ -101,11 +103,11 @@ private:
         return *selected_;
     }
     void attach_context(const DigestBytes& identity,std::string_view name,bool resume,bool select,
-        std::string_view native = {}) {
+        std::string_view native = {},bool app_server=false) {
         if(select&&runtime_.has_session())throw std::invalid_argument("session already selected");
         // Reserve transport state before acquiring a Runtime lease. Failure
         // leaves the prior selection and all existing receipts untouched.
-        auto [it,inserted]=contexts_.try_emplace(identity,memory_,native);
+        auto [it,inserted]=contexts_.try_emplace(identity,memory_,native,app_server);
         if(!inserted)throw std::invalid_argument("session already attached");
         try {
             if(resume)runtime_.attach_resumed_session(identity);
@@ -143,9 +145,12 @@ private:
             if(provider!="codex")throw std::invalid_argument("native provider adapter unavailable");
             const auto native=p.at("session").string();
             const auto identity=agent_session_identity(provider,p.at("instance").string(),native);
-            attach_context(identity,native,method=="swegca/agent/attach/resume",false,native);
+            const auto* protocol=p.find("protocol");
+            const auto format=protocol?protocol->string():"hook";
+            if(format!="hook"&&format!="app-server")throw std::invalid_argument("unknown native protocol");
+            attach_context(identity,native,method=="swegca/agent/attach/resume",false,native,format=="app-server");
             auto& state=contexts_.at(identity);
-            runtime_.attached_session(identity).visit_deliveries(state.native_session,"codex/hook","application/json",&state,
+            runtime_.attached_session(identity).visit_deliveries(state.native_session,state.native_source(),"application/json",&state,
                 [](void* opaque,const OriginalDelivery& delivery){
                 auto& target=*static_cast<Context*>(opaque);
                 const auto [at,inserted]=target.deliveries.try_emplace(delivery.sequence(),
@@ -162,11 +167,12 @@ private:
         if(method=="swegca/agent/event"){
             auto& state=context();
             if(state.native_session.empty()||!state.native_ready)throw std::invalid_argument("native session binding required");
-            auto event=adapt_codex_hook(p.at("native").string(),memory_);
+            auto event=state.app_server?adapt_codex_app_server(p.at("native").string(),memory_):
+                adapt_codex_hook(p.at("native").string(),memory_);
             if(event.session()!=state.native_session)throw std::invalid_argument("native session mismatch");
             const auto sequence=integer(p.at("sequence")),observed=integer(p.at("observedAt"));
             const auto seed=integer(p.at("seed")),step=integer(p.at("step"));
-            const OriginalExperienceView original{sequence,observed,state.native_session,"codex/hook",
+            const OriginalExperienceView original{sequence,observed,state.native_session,state.native_source(),
                 "application/json",std::as_bytes(std::span(event.native_bytes()))};
             using namespace swegca::architecture::kernel;
             const auto route=route_agent_event(runtime_.session().phase(),event.kind());
@@ -197,8 +203,8 @@ private:
                 if(route==AgentEventRoute::recall_then_record){
                     if(next_receipt_==std::numeric_limits<std::uint64_t>::max())throw std::overflow_error("receipt sequence exhausted");
                     clear();state.receipt=++next_receipt_;
-                    const auto prompt=*event.prompt();
-                    state.received.emplace(runtime_.receive_envelope("text/plain",std::as_bytes(std::span(prompt)),original,seed,step));
+                    const auto prompt=event.cue_content();
+                    state.received.emplace(runtime_.receive_envelope(event.cue_media(),std::as_bytes(std::span(prompt)),original,seed,step));
                     slot->second.original=state.received->recorded.original;committed=true;
                     slot->second.fingerprint=agent_delivery_identity(sequence,observed,event.native_bytes());
                     return received_body(limit);

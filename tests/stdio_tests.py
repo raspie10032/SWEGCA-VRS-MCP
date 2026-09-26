@@ -34,7 +34,7 @@ class Client:
         check('error' in self.call('tools/list'))
         initialized=self.call('initialize',{'protocolVersion':'2025-06-18','capabilities':{},'clientInfo':{'name':'test','version':'1'}})['result']
         check(initialized['protocolVersion']=='2025-06-18')
-        check(initialized['capabilities']['experimental']['swegcaHostInput']['version']=='7')
+        check(initialized['capabilities']['experimental']['swegcaHostInput']['version']=='8')
         self.notice('notifications/initialized')
         tools=self.call('tools/list')['result']['tools']
         check([t['name'] for t in tools]==['vrs_replay','vrs_re_evidence'])
@@ -441,6 +441,39 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     check('error' in c.call('swegca/select',{'identity':native_id}))
     check('error' in c.call('swegca/end'))
     check(c.call('swegca/work',{'seed':'7','step':'0'})['result']['merged']=='0')
+    c.close()
+    app_root=root/'app-server-events';app_root.mkdir()
+    c=Client('create',app_root,path);c.initialize()
+    app_binding={'provider':'codex','instance':'desktop-wire','session':'thread-x','protocol':'app-server'}
+    app_id=c.call('swegca/agent/attach',app_binding)['result']['identity']
+    check(c.call('swegca/select',{'identity':app_id})['result']=={})
+    app_input=[{'type':'text','text':text},{'type':'localImage','path':'/never/open/asset.png'}]
+    def app_event(seq,method,params,request_id=None):
+        envelope={'method':method,'params':{'threadId':'thread-x',**params}}
+        if request_id is not None:envelope['id']=request_id
+        raw=json.dumps(envelope,ensure_ascii=False)
+        return raw,resend_native(raw,seq)
+    app_raw,a0=app_event(0,'turn/start',{'input':app_input,'unknown':True},1)
+    a0=a0['result'];check(a0['candidateCount']=='0')
+    _,a1=app_event(1,'turn/steer',{'input':app_input,'expectedTurnId':'turn-x'},2)
+    a1=a1['result'];check(a1['candidateCount']=='1')
+    app_replay=replay_receipt(a1['receipt'])['structuredContent']
+    check(app_replay['source']=='codex/app-server' and bytes.fromhex(app_replay['contentHex'])==app_raw.encode())
+    check(resend_native(app_raw,0)['result']['duplicate'])
+    for seq,method in enumerate(['item/agentMessage/delta','item/completed','turn/completed','thread/archived'],2):
+        _,reply=app_event(seq,method,{'delta':'original output','unknown':{'keep':True}})
+        check('original' in reply['result'] and 'receipt' not in reply['result'])
+    check('structuredContent' in recheck(a1['receipt']))
+    check(c.call('swegca/work',{'seed':'7','step':'6'})['result']['merged']=='0')
+    c.close()
+    c=Client('open',app_root,path);c.initialize()
+    check(c.call('swegca/agent/attach/resume',app_binding)['result']['identity']==app_id)
+    check(c.call('swegca/select',{'identity':app_id})['result']=={})
+    check(resend_native(app_raw,0)['result']['duplicate'])
+    _,a2=app_event(6,'turn/start',{'input':app_input},3)
+    check(a2['result']['candidateCount']=='2')
+    check(c.call('swegca/end')['result']=={})
+    check(c.call('swegca/work',{'seed':'7','step':'6'})['result']['merged']=='1')
     c.close()
     # A separate config file must not change the root being measured.
     def stored_bytes():

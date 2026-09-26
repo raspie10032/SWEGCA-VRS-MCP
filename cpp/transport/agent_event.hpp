@@ -38,20 +38,30 @@ public:
     AgentEvent(AgentEvent&&) noexcept=default;
     [[nodiscard]] architecture::kernel::AgentEventKind kind() const noexcept{return kind_;}
     [[nodiscard]] std::string_view native_bytes() const noexcept{return native_;}
-    [[nodiscard]] std::string_view session() const{return parsed_.at("session_id").string();}
-    [[nodiscard]] std::string_view native_name() const{return parsed_.at("hook_event_name").string();}
+    [[nodiscard]] std::string_view session() const{return app_server_?parsed_.at("params").at("threadId").string():parsed_.at("session_id").string();}
+    [[nodiscard]] std::string_view native_name() const{return parsed_.at(app_server_?"method":"hook_event_name").string();}
     [[nodiscard]] std::optional<std::string_view> prompt() const{
-        if(kind_!=architecture::kernel::AgentEventKind::input)return std::nullopt;
+        if(app_server_||kind_!=architecture::kernel::AgentEventKind::input)return std::nullopt;
         return parsed_.at("prompt").string();
+    }
+    [[nodiscard]] std::string_view cue_media() const noexcept{
+        return app_server_?"application/vnd.swegca.codex-input-v1":"text/plain";
+    }
+    [[nodiscard]] std::string_view cue_content() const{
+        if(kind_!=architecture::kernel::AgentEventKind::input)throw std::invalid_argument("event has no input cue");
+        return app_server_?std::string_view(cue_):*prompt();
     }
     [[nodiscard]] const Json& fields() const noexcept{return parsed_;}
 private:
+    friend AgentEvent adapt_codex_app_server(std::string_view,std::pmr::memory_resource&);
     friend AgentEvent adapt_codex_hook(std::string_view,std::pmr::memory_resource&);
     AgentEvent(std::string_view native,Json parsed,architecture::kernel::AgentEventKind kind,
-        std::pmr::memory_resource& memory):native_(native,&memory),parsed_(std::move(parsed)),kind_(kind){}
+        std::pmr::memory_resource& memory):native_(native,&memory),parsed_(std::move(parsed)),kind_(kind),cue_(&memory){}
     std::pmr::string native_;
     Json parsed_;
     architecture::kernel::AgentEventKind kind_;
+    bool app_server_=false;
+    std::pmr::string cue_;
 };
 
 // Codex's SessionEnd (reason=other), Stop, compaction and subagent completion
@@ -71,5 +81,35 @@ inline AgentEvent adapt_codex_hook(std::string_view bytes,std::pmr::memory_resou
         kind=AgentEventKind::lifecycle;
     }
     return AgentEvent(bytes,std::move(parsed),kind,memory);
+}
+// Parse actual app-server request/notification envelopes. Replies without an
+// explicit thread binding need the owning transport's request-ID correlation;
+// they are rejected here rather than assigned to whichever session is selected.
+inline AgentEvent adapt_codex_app_server(std::string_view bytes,std::pmr::memory_resource& memory){
+    using architecture::kernel::AgentEventKind;
+    auto parsed=parse_json(bytes,memory);
+    const auto method=parsed.at("method").string();
+    const auto& params=parsed.at("params");
+    const auto session=params.at("threadId").string();
+    if(method.empty()||session.empty())throw std::invalid_argument("empty app-server identity");
+    auto kind=AgentEventKind::content;
+    if(method=="turn/start"||method=="turn/steer"){
+        const auto& id=parsed.at("id");
+        if(id.kind!=Json::Kind::string&&id.kind!=Json::Kind::number)throw std::invalid_argument("input request requires id");
+        if(method=="turn/steer"&&params.at("expectedTurnId").string().empty())throw std::invalid_argument("empty expected turn");
+        const auto& input=params.at("input");
+        if(input.kind!=Json::Kind::array)throw std::invalid_argument("input must be an array");
+        for(const auto& item:input.values){
+            const auto type=item.at("type").string();
+            if(type.empty())throw std::invalid_argument("empty input type");
+            if(type=="text")(void)item.at("text").string();
+            // Keep image/audio/skill/mention and future fields exactly. No
+            // attachment is fetched or opened by syntax adaptation.
+        }
+        kind=AgentEventKind::input;
+    }
+    AgentEvent event(bytes,std::move(parsed),kind,memory);event.app_server_=true;
+    if(kind==AgentEventKind::input)event.cue_=encode_json(event.parsed_.at("params").at("input"),memory);
+    return event;
 }
 } // namespace swegca::transport

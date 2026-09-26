@@ -59,5 +59,31 @@ int main(){
  CHECK(agent_session_identity("a","bc","d")!=agent_session_identity("ab","c","d"));
  rejects([&]{(void)agent_session_identity("codex","","s");});
  {swegca::vrs::MemoryBudget tiny(1);rejects([&]{(void)adapt_codex_hook("{}",tiny);});CHECK(tiny.used()==0);}
+ {
+  const std::string raw=R"({"id":1,"method":"turn/start","params":{"threadId":"t","input":[{"type":"text","text":"한글"},{"type":"image","url":"never-fetch://asset"}],"unknown":42}})";
+  auto event=adapt_codex_app_server(raw,memory);
+  CHECK(event.native_bytes()==raw && event.session()=="t" && event.native_name()=="turn/start");
+  CHECK(event.kind()==AgentEventKind::input && !event.prompt());
+  CHECK(event.cue_media()=="application/vnd.swegca.codex-input-v1");
+  auto input=parse_json(event.cue_content(),memory);
+  CHECK(input.values.size()==2 && input.values[1].at("url").string()=="never-fetch://asset");
+  auto moved=std::move(event);CHECK(moved.native_bytes()==raw && moved.cue_content().size()>0);
+ }
+ CHECK(memory.used()==0);
+ for(const auto method:{"item/started","item/agentMessage/delta","item/completed","turn/completed","thread/closed","thread/archived","future/event"}){
+  const std::string raw="{\"method\":\""+std::string(method)+"\",\"params\":{\"threadId\":\"t\",\"unknown\":true}}";
+  auto event=adapt_codex_app_server(raw,memory);
+  CHECK(event.native_bytes()==raw && event.kind()==AgentEventKind::content);
+  CHECK(route_agent_event(SessionPhase::active,event.kind())==AgentEventRoute::record);
+  rejects([&]{(void)event.cue_content();});
+ }
+ for(const auto raw:{R"({"id":1,"result":{}})",
+  R"({"id":1,"method":"turn/start","params":{"threadId":"t","input":"bad"}})",
+  R"({"id":1,"method":"turn/start","params":{"threadId":"t","input":[{"type":"text","text":42}]}})",
+  R"({"method":"turn/start","params":{"threadId":"t","input":[]}})",
+  R"({"id":1,"method":"turn/steer","params":{"threadId":"t","input":[]}})",
+  R"({"method":"item/completed","params":{"threadId":""}})"})
+  rejects([&]{(void)adapt_codex_app_server(raw,memory);});
+ CHECK(memory.used()==0);
  std::printf("agent event tests: %u checks passed\n",checks);
 }
