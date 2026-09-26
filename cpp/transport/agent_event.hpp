@@ -38,8 +38,9 @@ public:
     AgentEvent(AgentEvent&&) noexcept=default;
     [[nodiscard]] architecture::kernel::AgentEventKind kind() const noexcept{return kind_;}
     [[nodiscard]] std::string_view native_bytes() const noexcept{return native_;}
-    [[nodiscard]] std::string_view session() const{return app_server_?parsed_.at("params").at("threadId").string():parsed_.at("session_id").string();}
-    [[nodiscard]] std::string_view native_name() const{return parsed_.at(app_server_?"method":"hook_event_name").string();}
+    [[nodiscard]] std::string_view session() const{if(!bound_session_.empty())return bound_session_;return app_server_?parsed_.at("params").at("threadId").string():parsed_.at("session_id").string();}
+    [[nodiscard]] std::string_view native_name() const{if(!bound_session_.empty())return {};return parsed_.at(app_server_?"method":"hook_event_name").string();}
+    [[nodiscard]] bool is_app_server() const noexcept{return app_server_;}
     [[nodiscard]] std::optional<std::string_view> prompt() const{
         if(app_server_||kind_!=architecture::kernel::AgentEventKind::input)return std::nullopt;
         return parsed_.at("prompt").string();
@@ -53,15 +54,17 @@ public:
     }
     [[nodiscard]] const Json& fields() const noexcept{return parsed_;}
 private:
+    friend class AppServerRequests;
     friend AgentEvent adapt_codex_app_server(std::string_view,std::pmr::memory_resource&);
     friend AgentEvent adapt_codex_hook(std::string_view,std::pmr::memory_resource&);
     AgentEvent(std::string_view native,Json parsed,architecture::kernel::AgentEventKind kind,
-        std::pmr::memory_resource& memory):native_(native,&memory),parsed_(std::move(parsed)),kind_(kind),cue_(&memory){}
+        std::pmr::memory_resource& memory):native_(native,&memory),parsed_(std::move(parsed)),kind_(kind),cue_(&memory),bound_session_(&memory){}
     std::pmr::string native_;
     Json parsed_;
     architecture::kernel::AgentEventKind kind_;
     bool app_server_=false;
     std::pmr::string cue_;
+    std::pmr::string bound_session_;
 };
 
 // Codex's SessionEnd (reason=other), Stop, compaction and subagent completion

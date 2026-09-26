@@ -44,3 +44,31 @@ Verification: event adapter/core suite 174 checks; MCP subprocess suite 1,810
 checks in this run. Scenarios include multimodal input preservation, steer/start
 cue agreement, byte-exact Replay, output events retaining the current receipt,
 no merge on turn/archive messages, restart deduplication and explicit end/merge.
+
+## Request/response correlation component
+
+`AppServerRequests` now provides a bounded, Main-host-owned table for one app-server
+wire connection. Pending keys distinguish request origin (client/server) and ID
+type (string/signed int64, as generated RequestId specifies). A request's explicit
+threadId supplies its session. Conflicting reuse of a live ID is rejected; exact
+re-registration is harmless. Capacity is supplied by its owner and allocations
+use the shared memory resource.
+
+`bind` parses an unchanged result/error response and returns a move-only response
+with an internally bound AgentEvent session. It does not remove the pending entry
+or infer a VRS verdict/end. The owner must durably ingest the raw response, then
+call `recorded`. Generations prevent late acknowledgements from erasing a new
+request that reused an ID. Unique owner identities also protect against another
+connection and object reconstruction at the same memory address. Failed parsing,
+allocation or unknown-ID lookup preserves the pending request.
+
+This component is not yet wired into the live transport or MCP ingress; therefore
+responses without explicit threadId are still rejected by the standalone event
+endpoint. Durable reconstruction of outstanding request correlations and requests
+that create a new thread remain integration work. A `recorded` call is the trusted
+owner's acknowledgement, not an independently verified durable-storage receipt.
+No connection, model turn, app setting or desktop process was started by this work.
+
+Correlation verification: 38 focused checks (bidirectional/type collisions,
+late/foreign tickets, same-address reconstruction, int64 boundaries, capacity and
+allocation failure), 174 event adapter checks, and 1,810 MCP subprocess checks.

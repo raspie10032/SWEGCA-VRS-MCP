@@ -107,6 +107,7 @@ check-stdio: $(BUILD)/swegca-vrs-mcp
 
 check: $(BUILD)/parallel-recovery-tests $(BUILD)/transfer-budget-tests $(BUILD)/parallel-main-tests $(BUILD)/runtime-tests $(BUILD)/main-sources-tests $(BUILD)/core-tests $(BUILD)/vrs-tests $(BUILD)/experience-block-tests $(BUILD)/memory-budget-tests $(BUILD)/connection-tests $(BUILD)/session-tests $(BUILD)/persistent-connection-tests $(BUILD)/catalog-tests $(BUILD)/session-runtime-tests $(BUILD)/main-graph-tests $(BUILD)/persistent-main-tests
 	./$(BUILD)/multi-session-runtime-tests
+	./$(BUILD)/app-server-requests-tests
 	./$(BUILD)/agent-event-tests
 	./$(BUILD)/async-runtime-tests
 	./$(BUILD)/transfer-budget-tests
@@ -143,3 +144,8 @@ check-agent-event: $(BUILD)/agent-event-tests
 
 $(BUILD)/multi-session-runtime-tests: tests/multi_session_runtime_tests.cpp cpp/transport/agent_event.hpp $(VRS_SOURCES) $(CORE_SOURCES) $(CORE_HEADERS) $(VRS_HEADERS) | $(BUILD)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< $(VRS_SOURCES) $(CORE_SOURCES) -Wl,--wrap=pread -Wl,--wrap=pwrite -o $@
+
+$(BUILD)/app-server-requests-tests: tests/app_server_requests_tests.cpp cpp/transport/app_server_requests.hpp cpp/transport/agent_event.hpp cpp/transport/json.cpp cpp/transport/json.hpp $(CORE_HEADERS) $(CORE_SOURCES) | $(BUILD)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< cpp/transport/json.cpp $(CORE_SOURCES) -o $@
+
+check: $(BUILD)/app-server-requests-tests
