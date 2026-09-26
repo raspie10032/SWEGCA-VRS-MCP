@@ -3,6 +3,7 @@
 #include "swegca_architecture/digest_bytes.hpp"
 #include "swegca_architecture/record_address.hpp"
 #include "vrs/memory_budget.hpp"
+#include "vrs/storage_budget.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -69,9 +70,9 @@ public:
     static constexpr std::uint64_t record_overhead = 112;
 
     [[nodiscard]] static ExperienceBlock create(const std::filesystem::path& path,
-        const architecture::DigestBytes& identity, std::uint64_t capacity);
+        const architecture::DigestBytes& identity, std::uint64_t capacity, StorageBudget* storage = nullptr);
     [[nodiscard]] static ExperienceBlock open_reader(const std::filesystem::path& path);
-    [[nodiscard]] static ExperienceBlock open_writer(const std::filesystem::path& path);
+    [[nodiscard]] static ExperienceBlock open_writer(const std::filesystem::path& path, StorageBudget* storage = nullptr);
 
     ExperienceBlock(const ExperienceBlock&) = delete;
     ExperienceBlock& operator=(const ExperienceBlock&) = delete;
@@ -111,6 +112,7 @@ private:
     std::uint64_t capacity_ = 0;
     std::uint64_t end_ = header_bytes;
     bool writable_ = false;
+    StorageBudget* storage_ = nullptr;
 };
 
 }  // namespace swegca::vrs

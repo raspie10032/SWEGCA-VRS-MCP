@@ -9,10 +9,20 @@
 #include <limits>
 #include <string>
 #include <type_traits>
+#include <thread>
+#include <cerrno>
+#include <unistd.h>
 #include <vector>
 
 using namespace swegca::vrs;
 namespace fs = std::filesystem;
+static int writes_left=-1;
+extern "C" ssize_t __real_pwrite(int,const void*,size_t,off_t);
+extern "C" ssize_t __wrap_pwrite(int fd,const void* data,size_t size,off_t offset){
+    if(writes_left==0){writes_left=-1;errno=ENOSPC;return -1;}
+    if(writes_left>0)--writes_left;
+    return __real_pwrite(fd,data,size,offset);
+}
 static unsigned checks = 0;
 #define CHECK(expression) do { \
     ++checks; \
@@ -204,6 +214,65 @@ int main() {
         CHECK(fs::file_size(bounded_path) == bounded.capacity());
         expect_throw<std::length_error>([&] { (void)bounded.append(first); });
         CHECK(bounded.inspect().complete_records == 1);
+    }
+    {
+        const auto one_size=first_location.bytes;
+        StorageBudget storage(2*ExperienceBlock::header_bytes+one_size);
+        const auto left_path=directory/"quota-left.block",right_path=directory/"quota-right.block";
+        {
+            auto left=ExperienceBlock::create(left_path,identity,capacity,&storage);
+            auto right=ExperienceBlock::create(right_path,identity,capacity,&storage);
+            CHECK(storage.used()==2*ExperienceBlock::header_bytes);
+            // Failed exclusive creation returns its reservation.
+            expect_throw<std::system_error>([&]{(void)ExperienceBlock::create(left_path,identity,capacity,&storage);});
+            CHECK(storage.used()==2*ExperienceBlock::header_bytes);
+            auto moved=std::move(left);
+            (void)moved.append(first);
+            CHECK(storage.used()==storage.limit());
+            expect_throw<StorageLimit>([&]{(void)right.append(first);});
+            CHECK(right.can_append());
+            CHECK(fs::file_size(right_path)==ExperienceBlock::header_bytes);
+            expect_throw<StorageLimit>([&]{(void)ExperienceBlock::create(directory/"over-quota.block",identity,capacity,&storage);});
+            CHECK(!fs::exists(directory/"over-quota.block"));
+        }
+        // Closing a handle never frees persistent storage accounting.
+        CHECK(storage.used()==storage.limit());
+        auto reopened=ExperienceBlock::open_writer(right_path,&storage);
+        expect_throw<StorageLimit>([&]{(void)reopened.append(first);});
+        CHECK(storage.used()==storage.limit());
+        // A fresh owner starts from the actual existing extent; opening does
+        // not double-charge it. Increasing the configured resource is allowed.
+        StorageBudget larger(storage.limit()+one_size,storage.used());
+        auto old_left=ExperienceBlock::open_writer(left_path,&larger);
+        (void)old_left.append(first);
+        CHECK(larger.used()==larger.limit());
+    }
+    {
+        const auto torn_path=directory/"quota-torn.block";
+        StorageBudget storage(ExperienceBlock::header_bytes+first_location.bytes);
+        auto torn=ExperienceBlock::create(torn_path,identity,capacity,&storage);
+        writes_left=1; // The prefix reaches disk; the following write fails.
+        expect_throw<std::system_error>([&]{(void)torn.append(first);});
+        CHECK(!torn.can_append());
+        CHECK(storage.used()==storage.limit());
+        CHECK(fs::file_size(torn_path)>ExperienceBlock::header_bytes);
+        CHECK(fs::file_size(torn_path)<storage.used());
+        CHECK(torn.inspect().unfinished_bytes>0);
+        expect_throw<StorageLimit>([&]{StorageBudget::Reservation r(&storage,1);});
+    }
+    {
+        StorageBudget shared(1000);
+        std::atomic<unsigned> successes{0};
+        const auto worker=[&]{for(unsigned n=0;n<1000;++n){
+            try{StorageBudget::Reservation r(&shared,1);r.retain();++successes;}
+            catch(const StorageLimit&){}
+        }};
+        std::thread a(worker),b(worker);a.join();b.join();
+        CHECK(shared.used()==1000&&successes==1000);
+        StorageBudget edge(std::numeric_limits<std::uint64_t>::max(),std::numeric_limits<std::uint64_t>::max()-1);
+        {StorageBudget::Reservation r(&edge,1);r.retain();}
+        expect_throw<StorageLimit>([&]{StorageBudget::Reservation r(&edge,1);});
+        expect_throw<StorageLimit>([]{StorageBudget invalid(1,2);});
     }
     expect_throw<std::invalid_argument>([&] { (void)ExperienceBlock::create(directory / "zero.block", {}, capacity); });
     CHECK(!fs::exists(directory / "zero.block"));

@@ -147,7 +147,7 @@ OriginalExperienceView StoredExperience::view() const noexcept {
 
 ExperienceBlock::ExperienceBlock(ExperienceBlock&& other) noexcept
     : fd_(std::exchange(other.fd_, -1)), identity_(other.identity_), capacity_(other.capacity_),
-      end_(other.end_), writable_(std::exchange(other.writable_, false)) {}
+      end_(other.end_), writable_(std::exchange(other.writable_, false)), storage_(std::exchange(other.storage_, nullptr)) {}
 
 ExperienceBlock& ExperienceBlock::operator=(ExperienceBlock&& other) noexcept {
     if (this != &other) {
@@ -157,6 +157,7 @@ ExperienceBlock& ExperienceBlock::operator=(ExperienceBlock&& other) noexcept {
         capacity_ = other.capacity_;
         end_ = other.end_;
         writable_ = std::exchange(other.writable_, false);
+        storage_ = std::exchange(other.storage_, nullptr);
     }
     return *this;
 }
@@ -164,11 +165,12 @@ ExperienceBlock& ExperienceBlock::operator=(ExperienceBlock&& other) noexcept {
 ExperienceBlock::~ExperienceBlock() { if (fd_ >= 0) ::close(fd_); }
 
 ExperienceBlock ExperienceBlock::create(const std::filesystem::path& path,
-    const DigestBytes& identity, std::uint64_t capacity) {
+    const DigestBytes& identity, std::uint64_t capacity, StorageBudget* storage) {
     if (identity == architecture::zero_digest_bytes || capacity < header_bytes + record_overhead ||
         capacity > static_cast<std::uint64_t>(std::numeric_limits<off_t>::max()))
         throw std::invalid_argument("invalid experience block identity or capacity");
-    ExperienceBlock block;
+    StorageBudget::Reservation charge(storage, header_bytes);
+    ExperienceBlock block; block.storage_ = storage;
     block.fd_ = ::open(path.c_str(), O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0600);
     if (block.fd_ < 0) io_error("create experience block");
     if (::flock(block.fd_, LOCK_EX | LOCK_NB) < 0) io_error("lock new experience block");
@@ -180,6 +182,7 @@ ExperienceBlock ExperienceBlock::create(const std::filesystem::path& path,
     put_u64(header, 40, capacity);
     const auto digest = Sha256::of(std::span<const std::byte>(header).first(48));
     std::copy(digest.begin(), digest.end(), header.begin() + 48);
+    charge.retain();
     write_exact(block.fd_, header, 0);
     sync_data(block.fd_);
     const auto parent = path.has_parent_path() ? path.parent_path() : std::filesystem::path(".");
@@ -220,7 +223,9 @@ ExperienceBlock ExperienceBlock::open(const std::filesystem::path& path, bool wr
 }
 
 ExperienceBlock ExperienceBlock::open_reader(const std::filesystem::path& path) { return open(path, false); }
-ExperienceBlock ExperienceBlock::open_writer(const std::filesystem::path& path) { return open(path, true); }
+ExperienceBlock ExperienceBlock::open_writer(const std::filesystem::path& path, StorageBudget* storage) {
+    auto block = open(path, true); block.storage_ = storage; return block;
+}
 
 ExperienceLocation ExperienceBlock::append(const OriginalExperienceView& experience) {
     if (!writable_ || fd_ < 0) throw std::logic_error("experience block cannot append");
@@ -234,6 +239,7 @@ ExperienceLocation ExperienceBlock::append(const OriginalExperienceView& experie
         remaining -= count;
     }
     const auto total = capacity_ - end_ - remaining;
+    StorageBudget::Reservation charge(storage_, total);
     std::array<std::byte, prefix_bytes> prefix{};
     std::memcpy(prefix.data(), record_magic.data(), record_magic.size());
     put_u64(prefix, 8, total);
@@ -255,6 +261,7 @@ ExperienceLocation ExperienceBlock::append(const OriginalExperienceView& experie
     std::memcpy(trailer.data() + 32, end_magic.data(), end_magic.size());
     put_u64(trailer, 40, total);
     auto at = end_;
+    charge.retain();
     try {
         for (const auto part : {std::span<const std::byte>(prefix), as_bytes(experience.session),
                                as_bytes(experience.source), as_bytes(experience.media_type),
