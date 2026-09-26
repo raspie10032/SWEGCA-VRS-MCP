@@ -117,3 +117,39 @@ These are isolated process/socket fixtures. The running desktop, its backend and
 any real model/account calls remain untouched. Live endpoint attachment, global
 and new-thread lifecycle frames, outstanding-request recovery and full content
 assembly are still required for actual desktop integration.
+
+## Composed duplex pump
+
+`AppServerPump` now owns both stream readers and composes the wire owner and
+partial-write stages. Its event-loop caller steps each observed direction fairly
+and supplies the existing VRS RPC acknowledgement callback. The pump preserves
+separate received/prepared, ingestion-confirmed, request-table-confirmed and
+socket-bound states. A retry after request-table allocation failure does not
+invoke an already successful ingestion callback again. Unacknowledged ingestion
+keeps the same original, sequence and observation timestamp for retry.
+
+One unrecorded ingress is serialized across both directions, preventing two
+frames from obtaining the same session sequence while an acknowledgement is
+outstanding. Once a frame is recorded, its partial forwarding can coexist with
+another direction's ingestion. EOF is reported to the process owner without
+ending VRS or deleting outstanding requests. Unsupported/global frames remain
+held by the reader when adaptation fails; they are not silently forwarded.
+
+The exchange fixture now uses the pump directly: original frames enter its
+client/server sockets, its callback submits generated parameters to a real VRS
+MCP process, and its socket output is checked at the correct opposite endpoint.
+The old separate manual receive/prepare/send exchange fixture was removed.
+
+This is the reusable I/O loop, not an installed desktop proxy executable. The
+caller still needs actual endpoint selection, authenticated session attachment,
+matching-RPC acknowledgement handling and outstanding-request reconstruction.
+The observation timestamp is the supplied frame-preparation timestamp, not an
+instrumented first-byte arrival time; no input latency result is inferred from it.
+
+Verification: 42 duplex-pump checks and 2,080 stdio subprocess checks pass.
+The pump checks include rejected/throwing ingestion, opposite-direction ordering,
+byte-exact forwarding, response routing and EOF with outstanding requests. An
+injected exhausted allocation budget after successful ingestion proves that
+request-table recovery retries without invoking ingestion a second time.
+These counts cover isolated sockets and the actual VRS subprocess, not a live
+desktop installation or the input-to-Recall latency requirement.

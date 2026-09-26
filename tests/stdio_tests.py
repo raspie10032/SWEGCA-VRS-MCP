@@ -529,7 +529,7 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
         attached=c.call('swegca/agent/attach',{'provider':'codex','instance':'wire-tested',
             'session':session,'protocol':'app-server'})['result']
         check(attached['nextSequence']=='0');wire_ids[session]=attached['identity']
-    owner=subprocess.Popen([str(exe.parent/'app-server-wire-tests'),'--exchange'],
+    owner=subprocess.Popen([str(exe.parent/'app-server-pump-tests'),'--exchange'],
         stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,bufsize=0)
     for index,session in enumerate(('a','b','a','b')):
         check(bool(select.select([owner.stdout],[],[],10)[0]))

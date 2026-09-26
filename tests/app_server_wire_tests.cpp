@@ -1,48 +1,17 @@
 #include "transport/app_server_wire.hpp"
-#include "transport/socket_frames.hpp"
 #include "vrs/memory_budget.hpp"
 #include <cstdio>
 #include <cstdlib>
-#include <iostream>
 using namespace swegca::transport;
 static unsigned checks=0;
 #define CHECK(x) do{++checks;if(!(x)){std::fprintf(stderr,"FAIL %d: %s\n",__LINE__,#x);std::abort();}}while(false)
 template<class F>void rejects(F f){bool failed=false;try{f();}catch(const std::exception&){failed=true;}CHECK(failed);}
-int main(int argc,char** argv){
+int main(){
  swegca::vrs::MemoryBudget memory(1<<20);
  const std::string a=R"({"id":1,"method":"turn/start","params":{"threadId":"a","input":[{"type":"text","text":"입력"}]}})";
  const std::string b=R"({"id":1,"method":"item/commandExecution/requestApproval","params":{"threadId":"b","unknown":true}})";
  const std::string reply=R"({"id":1,"result":{"original":"reply"}})";
- if(argc==2&&std::string_view(argv[1])=="--exchange"){
-  AppServerWire wire(memory,2,2);wire.attach("a",0);wire.attach("b",0);
-  int inbound[2],outbound[2];
-  CHECK(::socketpair(AF_UNIX,SOCK_STREAM|SOCK_CLOEXEC,0,inbound)==0);
-  CHECK(::socketpair(AF_UNIX,SOCK_STREAM|SOCK_CLOEXEC,0,outbound)==0);
-  SocketFrames incoming(inbound[0],65536,memory),backend(outbound[1],65536,memory);
-  ::close(inbound[0]);::close(outbound[1]);
-  const auto deliver=[&](std::string_view raw,RpcSender sender){
-   auto encoded=std::string(raw)+"\n";std::string_view unsent=encoded;
-   while(!unsent.empty()){
-    const auto count=::send(inbound[1],unsent.data(),unsent.size(),MSG_NOSIGNAL);
-    CHECK(count>0);unsent.remove_prefix(static_cast<std::size_t>(count));
-   }
-   CHECK(incoming.poll()==SocketFrames::State::frame);
-   auto plan=wire.prepare(incoming.frame(),sender,42);incoming.consumed();
-   std::cout<<"{\"session\":"<<quote_json(plan.event().session(),memory)
-       <<",\"parameters\":"<<wire.parameters(plan,7,0)<<"}\n"<<std::flush;
-   std::string ack;if(!std::getline(std::cin,ack)||ack!="recorded")throw std::runtime_error("ingestion not confirmed");
-   wire.recorded(plan);
-   wire.bind_socket(plan,outbound[0]);
-   while(!wire.send_ready(plan)){}
-   CHECK(backend.poll()==SocketFrames::State::frame);
-   CHECK(backend.frame()==raw);
-   std::cout<<"{\"forwarded\":"<<quote_json(backend.frame(),memory)<<"}\n"<<std::flush;
-   backend.consumed();
-  };
-  deliver(a,RpcSender::client);deliver(b,RpcSender::server);
-  deliver(reply,RpcSender::server);deliver(reply,RpcSender::client);
-  CHECK(wire.pending_requests()==0);::close(inbound[1]);::close(outbound[0]);return 0;
- }
+
  {
   AppServerWire wire(memory,2,2);wire.attach("a",0);wire.attach("b",4);
   rejects([&]{wire.attach("a",0);});rejects([&]{wire.attach("c",0);});

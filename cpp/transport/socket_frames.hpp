@@ -68,6 +68,7 @@ public:
     [[nodiscard]] bool buffered() const noexcept{return ready_||begin_<end_;}
     [[nodiscard]] std::size_t retained_bytes() const noexcept{return line_.size()+end_-begin_;}
 private:
+    friend class AppServerPump;
     int fd_=-1;
     std::size_t limit_;
     std::pmr::string line_;
