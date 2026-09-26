@@ -42,6 +42,7 @@ public:
 
 private:
     friend class ExperienceRouter;
+    friend class MainGraph;
     struct Slot {
         Slot(SessionStore&, MemoryBudget&, std::uint64_t, const ExperienceLocation&);
         Slot(SessionStore&, MemoryBudget&, std::uint64_t, const architecture::DigestBytes&,

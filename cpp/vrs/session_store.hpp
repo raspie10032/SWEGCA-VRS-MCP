@@ -37,6 +37,7 @@ public:
     [[nodiscard]] std::size_t block_count() const noexcept { return blocks_.size(); }
     [[nodiscard]] bool usable() const noexcept { return usable_; }
     [[nodiscard]] std::string_view name() const noexcept { return name_; }
+    [[nodiscard]] const architecture::DigestBytes& identity() const noexcept { return identity_; }
 
 private:
     friend class ConnectionCatalog;
