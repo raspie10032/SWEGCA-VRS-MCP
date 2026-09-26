@@ -48,6 +48,41 @@ int main(){
   auto b_store=SessionStore::create(root,id(2),"b",65536,memory);SessionRuntime b(b_store,memory,8192);b.define_connection(id(10),0.75,policy);fill(b,"b",200,EvidenceOutcome::refute);
   auto c_store=SessionStore::create(root,id(3),"c",65536,memory);SessionRuntime c(c_store,memory,8192);c.define_connection(id(10),0.75,policy);fill(c,"c",300,EvidenceOutcome::insufficient);
   Resolver resolver;resolver.sources={{id(1),&a},{id(2),&b},{id(3),&c}};
+  {
+   auto extra_store=SessionStore::create(root,id(71),"extra",65536,memory);
+   SessionRuntime extra(extra_store,memory,8192);
+   for(unsigned connection:{9U,11U}) {
+    extra.define_connection(id(connection),1,policy);
+    for(unsigned n=0;n<2;++n) {
+     EvidenceObservation value;value.hypothesis=id(connection);value.source=id(700+n);
+     value.context=id(1700+n);value.producer=id(2700+n);value.outcome=EvidenceOutcome::insufficient;
+     (void)extra.observe(id(connection),{n,0,"extra","experiment",n?"text/untouched":"text/plain",{}},value,7,0);
+    }
+   }
+   extra.end();extra.publish_originals();
+   auto query_store=SessionStore::create(root,id(72),"query",65536,memory);
+   SessionRuntime query(query_store,memory,8192);
+   auto indexed=PersistentMainGraph::create(root/"incremental-main",id(73),memory,1,policy,1024);
+   CHECK(indexed.merge(extra,1,0));CHECK(indexed.merge(a,2,0));
+   ExperienceRouter incremental(query,memory);incremental.mount_main(indexed);
+   const auto untouched=incremental.input("text/untouched",{});
+   CHECK(untouched.matches().size()==2);
+   // Skip a generation deliberately; the old observation counts still select
+   // exactly the new suffix across both commits.
+   CHECK(indexed.merge(b,3,0));CHECK(indexed.merge(c,4,0));
+   incremental.mount_main(indexed);
+   ExperienceRouter rebuilt(query,memory);rebuilt.mount_main(indexed);
+   for(const auto media:{"text/plain","text/untouched"}) {
+    const auto delta=incremental.input(media,{});const auto complete=rebuilt.input(media,{});
+    CHECK(delta.matches().size()==complete.matches().size());
+    for(std::size_t i=0;i<delta.matches().size();++i) {
+     CHECK(delta.matches()[i].original==complete.matches()[i].original);
+     CHECK(delta.matches()[i].recalled.recalled_head.identity==complete.matches()[i].recalled.recalled_head.identity);
+     CHECK(delta.matches()[i].recalled.recalled_head.record==indexed.head());
+    }
+   }
+   CHECK(incremental.recall(id(9)).at(0).recalled_head.record==indexed.head());
+  }
   const auto path=root/"main-graph";const auto identity=id(77);ExperienceLocation first_head,last_head;double strength=0;
   {
    auto main=PersistentMainGraph::create(path,identity,memory,1,policy,1024);
@@ -95,17 +130,9 @@ int main(){
    CHECK(main.merge(a,17,0));
    FailingMemory failures;MemoryBudget query_memory(1<<20,&failures);
    ExperienceRouter route(active,query_memory);route.mount_main(main);
-   unsigned failure_points=0;
-   for(std::size_t point=0;point<100;++point){
-    const auto used=query_memory.used();failures.remaining=point;bool failed=false;
-    try{route.mount_main(main);}catch(const std::bad_alloc&){failed=true;}
-    failures.remaining=std::numeric_limits<std::size_t>::max();
-    if(!failed)break;
-    ++failure_points;CHECK(query_memory.used()==used);
-    CHECK(route.input("text/plain",{}).matches().size()==8);
-   }
-   CHECK(failure_points>3);
-   std::printf("Main query index allocation failure points: %u\n",failure_points);
+   // Refreshing an unchanged head allocates nothing.
+   failures.remaining=0;route.mount_main(main);
+   failures.remaining=std::numeric_limits<std::size_t>::max();
    const auto before=reads;
    auto recalled=route.input("text/plain",{});
    CHECK(reads==before&&!recalled.temporary()&&recalled.matches().size()==8);
@@ -119,7 +146,17 @@ int main(){
    CHECK(main.merge(b,19,0));
    throws<std::logic_error>([&]{(void)route.input("text/plain",{});});
    throws<std::logic_error>([&]{(void)route.replay(old,0);});
-   route.mount_main(main);
+   unsigned failure_points=0;
+   for(std::size_t point=0;point<100;++point){
+    const auto used=query_memory.used();failures.remaining=point;bool failed=false;
+    try{route.mount_main(main);}catch(const std::bad_alloc&){failed=true;}
+    failures.remaining=std::numeric_limits<std::size_t>::max();
+    if(!failed)break;
+    ++failure_points;CHECK(query_memory.used()==used);
+    throws<std::logic_error>([&]{(void)route.input("text/plain",{});});
+   }
+   CHECK(failure_points>3);
+   std::printf("Incremental Main index failure points: %u\n",failure_points);
    throws<std::logic_error>([&]{(void)route.replay(old,0);});
    auto joined=route.input("text/plain",{});
    CHECK(joined.matches().size()==16);

@@ -149,6 +149,7 @@ void ExperienceRouter::mount_main(const PersistentMainGraph& graph) {
     if (!mounted_.empty()) throw std::logic_error("cannot mix session candidates with merged Main");
     if (merged_main_ && merged_main_ != &graph) throw std::logic_error("Main owner cannot change within a route");
     const auto& state = graph.graph();
+    if (merged_main_ && merged_head_ == graph.head()) return;
     decltype(main_) candidates(&memory_);
     decltype(main_cues_) cues(&memory_);
     for (const auto& [identity, entry] : state.connections_) {
@@ -157,13 +158,37 @@ void ExperienceRouter::mount_main(const PersistentMainGraph& graph) {
         if (values.empty()) continue;
         candidates[identity].push_back({nullptr, nullptr,
             {identity, graph.head(), connection.revision(), connection.revision(), values.size(), connection.strength()}, &graph});
-        for (std::size_t index = 0; index < values.size(); ++index)
+        const auto previous = main_.find(identity);
+        const auto indexed = previous == main_.end() ? 0 : previous->second.front().recalled_head.observations;
+        // Main merges preserve the original prefix. Only newly appended
+        // originals need cue extraction; strength changes do not change cues.
+        if (indexed > values.size()) throw std::logic_error("Main original prefix shrank");
+        for (std::size_t index = indexed; index < values.size(); ++index)
             cues[values[index].cue()].push_back({nullptr, {identity, index}});
     }
-    // All allocation precedes publication. Main serializes merges and readers.
-    main_.swap(candidates); main_cues_.swap(cues);
+    for (auto& [cue, additions] : cues) {
+        const auto previous = main_cues_.find(cue);
+        if (previous == main_cues_.end()) continue;
+        // Both ranges already follow connection/index order. Merge them in
+        // linear time without an unbudgeted sorting scratch allocation.
+        std::pmr::vector<MainCue> joined(&memory_);
+        joined.reserve(previous->second.size() + additions.size());
+        std::merge(previous->second.begin(), previous->second.end(), additions.begin(), additions.end(),
+            std::back_inserter(joined), [](const MainCue& a, const MainCue& b) {
+                if (a.reference.connection != b.reference.connection)
+                    return a.reference.connection < b.reference.connection;
+                return a.reference.original_index < b.reference.original_index;
+            });
+        additions.swap(joined);
+    }
+    // Every allocation precedes publication. Unaffected cue nodes stay put;
+    // prepared replacements transfer without allocation under serialized Main.
+    for (const auto& [cue, additions] : cues) { (void)additions; main_cues_.erase(cue); }
+    main_cues_.merge(cues);
+    main_.swap(candidates);
     merged_main_ = &graph; merged_head_ = graph.head();
 }
+
 InputRecall ExperienceRouter::input(std::string_view media, std::span<const std::byte> content) const {
     // Deja vu: natural bytes reach the core cue primitive immediately. This
     // anonymous exact familiarity signal is not a truth/semantic judgment.

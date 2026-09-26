@@ -44,3 +44,28 @@
 호스트 훅, 종료 후 병합 및 조회 인덱스 갱신 스케줄링은 남아 있다.
 현재 인덱스 갱신은 전체 주소 인덱스를 준비한다. 대규모 분할·증분 갱신·동시 스냅샷은
 추가 구현 대상이다. 실제 입력→Recall 1ms, 전체 4GB RSS 및 I/O 조건은 아직 입증하지 않았다.
+
+## Incremental cue refresh
+
+Refreshing the same durable Main head returns without allocation. On a newer
+head, the router uses the prior indexed observation count for each connection
+to extract cues only from new originals. Main's merge contract preserves the
+old original prefix; refinement and strength changes do not rewrite those cues.
+Several successful merges may occur between refreshes.
+
+Only affected cue vectors are staged. Each new suffix and the existing vector
+are already ordered by connection identity and original index, so a linear
+merge preserves exactly the ordering of a fresh complete index. Unaffected cue
+nodes remain in place. All preparation uses the VRS memory budget. Allocation
+failure frees staged state and leaves the old head/index intact; querying stale
+Main still raises until a successful refresh. Node transfer and head publication
+remain serialized and perform no further allocations.
+
+This is incremental cue extraction, not a fully incremental graph snapshot:
+the connection summary map is still rebuilt to update each borrowed head receipt.
+A frequently repeated cue also still requires copying its entire candidate
+vector. Those costs, concurrent readers, and graph partitioning remain open.
+
+Coverage includes multiple connections sharing cues, an unchanged distinct cue,
+two merges between refreshes, equivalence to a fresh index, stale receipts,
+no-allocation unchanged-head refresh, and failure at every refresh allocation.
