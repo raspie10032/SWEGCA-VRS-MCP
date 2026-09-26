@@ -18,17 +18,23 @@ public:
     // own durable commit; a later failure never rolls back earlier commits.
     [[nodiscard]] std::size_t merge_published(PersistentMainGraph&, std::uint64_t seed, std::uint64_t step);
 private:
+    friend class Runtime;
+    SessionRuntime& acquire_session(const architecture::DigestBytes&, std::string_view,
+        std::uint64_t block_capacity, bool resume);
+    void release_session(const architecture::DigestBytes&, bool keep_cache) noexcept;
     struct Source {
-        Source(const std::filesystem::path&, const architecture::DigestBytes&, MemoryBudget&, std::uint64_t, StorageBudget*);
+        Source(const std::filesystem::path&, const architecture::DigestBytes&, MemoryBudget&, std::uint64_t, StorageBudget*, bool active = false,
+            bool resume = true, std::string_view name = {}, std::uint64_t block_capacity = 0);
         ~Source();
         Source(const Source&) = delete;
         Source& operator=(const Source&) = delete;
-        const SessionRuntime& runtime();
+        SessionRuntime& runtime();
         void release_cache() noexcept;
         MemoryBudget& memory;
         std::uint64_t read_limit;
         SessionStore* store = nullptr;
         SessionRuntime* cache = nullptr;
+        bool leased = false;
     };
     std::filesystem::path root_;
     MemoryBudget& memory_;

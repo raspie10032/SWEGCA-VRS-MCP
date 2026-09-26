@@ -1,0 +1,9 @@
+{"phase":"recorded","mode":"distinct","experiences":8192,"receiveMedianNs":30671,"receiveP95Ns":38140,"receiveMaxNs":630287,"trackedBytes":27985176,"storedBytes":17892515}
+{"route":"temporary-exact","candidates":1,"samples":30,"entryMedianNs":170,"entryP95Ns":170,"entryMaxNs":170,"entryAtLeast1ms":0,"completeMedianNs":310,"completeP95Ns":310,"receiptBytes":264,"trackedBytes":27985176}
+{"route":"temporary-continuation","candidates":1,"samples":30,"entryMedianNs":190,"entryP95Ns":190,"entryMaxNs":190,"entryAtLeast1ms":0,"completeMedianNs":300,"completeP95Ns":310,"receiptBytes":248,"trackedBytes":27985176}
+{"phase":"merged","elapsedNs":36928280,"trackedBytes":26936352}
+{"route":"main-exact","candidates":1,"samples":30,"entryMedianNs":170,"entryP95Ns":170,"entryMaxNs":170,"entryAtLeast1ms":0,"completeMedianNs":270,"completeP95Ns":270,"receiptBytes":264,"trackedBytes":30672824}
+{"route":"main-continuation","candidates":1,"samples":30,"entryMedianNs":210,"entryP95Ns":360,"entryMaxNs":390,"entryAtLeast1ms":0,"completeMedianNs":400,"completeP95Ns":530,"receiptBytes":248,"trackedBytes":30672824}
+{"phase":"reopened","elapsedNs":384244521,"trackedBytes":30672824}
+{"route":"reopened-main-exact","candidates":1,"samples":30,"entryMedianNs":170,"entryP95Ns":200,"entryMaxNs":220,"entryAtLeast1ms":0,"completeMedianNs":290,"completeP95Ns":370,"receiptBytes":264,"trackedBytes":30672824}
+{"phase":"finished","maxRssKiB":60440}

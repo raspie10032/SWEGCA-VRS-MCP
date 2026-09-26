@@ -80,3 +80,8 @@ its entire recovery in the same process. Historical verification and original
 lineage must remain intact. Cold restart recovery, asynchronous publication and
 much larger disk-backed graphs remain unfinished. No checks or core operations
 were removed to obtain these measurements.
+
+
+The same-process handoff described above is now implemented and measured in
+ENDED_SESSION_HANDOFF.md. These baseline JSONL files remain unchanged for
+comparison. Restart reconstruction remains unfinished performance work.

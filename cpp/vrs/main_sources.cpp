@@ -29,21 +29,24 @@ void require_file(const std::filesystem::path& path) {
 }
 MainSources::MainSources(const std::filesystem::path& root,MemoryBudget& memory,std::uint64_t limit,StorageBudget* storage)
     :root_(root),memory_(memory),storage_(storage),read_limit_(limit),sources_(&memory) {}
-MainSources::Source::Source(const std::filesystem::path& root,const DigestBytes& id,MemoryBudget& budget,std::uint64_t limit,StorageBudget* storage_budget)
+MainSources::Source::Source(const std::filesystem::path& root,const DigestBytes& id,MemoryBudget& budget,std::uint64_t limit,StorageBudget* storage_budget,
+    bool active,bool resume,std::string_view session_name,std::uint64_t capacity)
     :memory(budget),read_limit(limit) {
     void* storage=memory.allocate(sizeof(SessionStore),alignof(SessionStore));
-    try { store=new(storage) SessionStore(SessionStore::open(root,id,memory,storage_budget)); }
+    try { store=new(storage) SessionStore(active&&!resume
+        ? SessionStore::create(root,id,session_name,capacity,memory,storage_budget)
+        : SessionStore::open(root,id,memory,storage_budget)); }
     catch(...) { memory.deallocate(storage,sizeof(SessionStore),alignof(SessionStore));throw; }
-    if(!kernel::main_session_readable(store->phase(),store->usable())) {
+    if(!active&&!kernel::main_session_readable(store->phase(),store->usable())) {
         store->~SessionStore();memory.deallocate(store,sizeof(SessionStore),alignof(SessionStore));store=nullptr;
         throw std::runtime_error("Main source is not ended and published");
     }
 }
 MainSources::Source::~Source() {
-    release_cache();
+    leased=false;release_cache();
     if(store){store->~SessionStore();memory.deallocate(store,sizeof(SessionStore),alignof(SessionStore));}
 }
-const SessionRuntime& MainSources::Source::runtime() {
+SessionRuntime& MainSources::Source::runtime() {
     if(!cache){
         void* storage=memory.allocate(sizeof(SessionRuntime),alignof(SessionRuntime));
         try { cache=new(storage) SessionRuntime(*store,memory,read_limit); }
@@ -52,7 +55,26 @@ const SessionRuntime& MainSources::Source::runtime() {
     return *cache;
 }
 void MainSources::Source::release_cache() noexcept {
+    if(leased)return;
     if(cache){cache->~SessionRuntime();memory.deallocate(cache,sizeof(SessionRuntime),alignof(SessionRuntime));cache=nullptr;}
+}
+SessionRuntime& MainSources::acquire_session(const DigestBytes& id,std::string_view session_name,
+    std::uint64_t capacity,bool resume) {
+    auto found=sources_.find(id);
+    if(found!=sources_.end()&&(!resume||found->second.leased))
+        throw std::logic_error("session source already owned");
+    if(found==sources_.end())
+        found=sources_.try_emplace(id,root_,id,memory_,read_limit_,storage_,true,resume,session_name,capacity).first;
+    auto& runtime=found->second.runtime();
+    found->second.leased=true;
+    return runtime;
+}
+void MainSources::release_session(const DigestBytes& id,bool keep_cache) noexcept {
+    const auto found=sources_.find(id);
+    if(found==sources_.end())return;
+    found->second.leased=false;
+    if(!keep_cache)found->second.release_cache();
+    else for(auto& [other,source]:sources_)if(other!=id)source.release_cache();
 }
 std::pmr::vector<DigestBytes> MainSources::published() const {
     std::pmr::vector<DigestBytes> ids(&memory_);
@@ -72,7 +94,9 @@ const SessionRuntime& MainSources::resolve(const DigestBytes& id) {
     require_file(root_/"main"/name(id));
     auto [where,inserted]=sources_.try_emplace(id,root_,id,memory_,read_limit_,storage_);
     (void)inserted;
-    // During replay, at most one decoded source cache is retained. The graph
+    if(!kernel::main_session_readable(where->second.store->phase(),where->second.store->usable()))
+        throw std::logic_error("Main source is not ended and published");
+    // Active leases are retained; other decoded caches may be released. The graph
     // keeps stable store pointers, not pointers to these runtime caches.
     for(auto& [other,source]:sources_)if(other!=id)source.release_cache();
     return where->second.runtime();

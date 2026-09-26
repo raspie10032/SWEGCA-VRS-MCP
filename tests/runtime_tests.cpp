@@ -1,5 +1,6 @@
 #include "vrs/runtime.hpp"
 #include "vrs/storage_inventory.hpp"
+#include "swegca_architecture/input_cue.hpp"
 #include <cerrno>
 #include <cstdio>
 #include <cstdlib>
@@ -15,6 +16,13 @@ extern "C" ssize_t __real_pread(int,void*,size_t,off_t);
 extern "C" ssize_t __wrap_pread(int fd,void* p,size_t n,off_t o){++reads;return __real_pread(fd,p,n,o);}
 extern "C" ssize_t __real_pwrite(int,const void*,size_t,off_t);
 extern "C" ssize_t __wrap_pwrite(int fd,const void* p,size_t n,off_t o){++writes;if(fail_write){fail_write=false;errno=ENOSPC;return -1;}return __real_pwrite(fd,p,n,o);}
+class FailingMemory final:public std::pmr::memory_resource {
+public: bool fail=false;
+private:
+ void* do_allocate(std::size_t n,std::size_t a) override {if(fail)throw std::bad_alloc();return std::pmr::new_delete_resource()->allocate(n,a);}
+ void do_deallocate(void* p,std::size_t n,std::size_t a) override {std::pmr::new_delete_resource()->deallocate(p,n,a);}
+ bool do_is_equal(const std::pmr::memory_resource& other)const noexcept override{return this==&other;}
+};
 DigestBytes id(unsigned n){DigestBytes d{};d[0]=std::byte(n);return d;}
 int main(){
  auto pattern=(fs::temp_directory_path()/"swegca-runtime-XXXXXX").string();CHECK(::mkdtemp(pattern.data()));const fs::path root(pattern);
@@ -174,6 +182,47 @@ int main(){
   CHECK(reads==r&&writes==w);
   CHECK(receipt.matches()[0].original==retained);
   host.end_session();
+ }
+ CHECK(memory.used()==0);
+ {
+  const auto path=root/"warm-handoff";fs::create_directory(path);
+  auto host=Runtime::create(path,config,memory);host.start_session(id(92),"ended");
+  ExperienceLocation original;
+  for(unsigned n=0;n<32;++n){auto saved=host.retain({n,0,"ended","user","text/plain",content},7,0);if(!n)original=saved.original;}
+  host.end_session();CHECK(!host.has_session()&&host.main().graph().generation()==0);
+  host.start_session(id(93),"active");const auto* active=&host.session();
+  const std::string other="separate active input";const auto other_bytes=std::as_bytes(std::span(other));
+  const auto fresh=host.retain({0,0,"active","user","text/plain",other_bytes},7,0).original;
+  const auto before=reads;
+  CHECK(host.work(7,0)==1);
+  CHECK(reads==before); // The ended source was already verified; no history re-read.
+  CHECK(&host.session()==active&&host.session().phase()==SessionPhase::active);
+  auto recalled=host.input("text/plain",content);CHECK(!recalled.temporary()&&recalled.matches().size()==32);
+  CHECK(host.replay(recalled,0).location()==original);
+  auto local=host.input("text/plain",other_bytes);CHECK(local.temporary());
+  CHECK(host.replay(local,0).location()==fresh);
+  (void)host.retain({1,0,"active","assistant","text/plain",other_bytes},7,0);
+  CHECK(host.work(7,0)==0);host.end_session();
+  const auto next_reads=reads;CHECK(host.work(7,0)==1);CHECK(reads==next_reads);
+ }
+ CHECK(memory.used()==0);
+ {
+  FailingMemory upstream;MemoryBudget bounded(64<<20,&upstream);
+  const auto path=root/"handoff-allocation-failure";fs::create_directory(path);
+  {
+   auto host=Runtime::create(path,config,bounded);host.start_session(id(94),"closed");
+   const auto original=host.retain({0,0,"closed","user","text/plain",content},7,0).original;
+   host.end_session();host.start_session(id(95),"still-active");
+   const std::string other="active after failed work";const auto bytes=std::as_bytes(std::span(other));
+   const auto local=host.retain({0,0,"still-active","user","text/plain",bytes},7,0).original;
+   upstream.fail=true;throws<std::bad_alloc>([&]{(void)host.work(7,0);});upstream.fail=false;
+   CHECK(host.main().usable()&&host.main().graph().generation()==0&&host.has_session());
+   CHECK(host.replay(host.input("text/plain",bytes),0).location()==local);
+   const auto before=reads;CHECK(host.work(7,0)==1);CHECK(reads>before);
+   CHECK(host.main().graph().source_count()==1);
+   CHECK(host.main().graph().replay(input_cue("text/plain",content),0).location()==original);
+  }
+  CHECK(bounded.used()==0);
  }
  CHECK(memory.used()==0);fs::remove_all(root);std::printf("runtime lifecycle tests: %u checks passed\n",checks);
 }

@@ -16,20 +16,21 @@ Runtime::Runtime(const std::filesystem::path& root,const RuntimeConfig& config,M
                  : PersistentMainGraph::open(root/"graph",config.main_identity,memory,config.initial_strength,config.policy,sources_,config.merge_workers,&storage_)) {
     sources_.release_caches();
 }
-Runtime::Active::Active(const std::filesystem::path& root,const DigestBytes& identity,std::string_view name,
-    const RuntimeConfig& config,MemoryBudget& memory,const PersistentMainGraph& main,bool resume,StorageBudget& storage)
-    :store(resume ? SessionStore::open(root,identity,memory,&storage)
-                  : SessionStore::create(root,identity,name,config.session_block_capacity,memory,&storage)),
-    runtime(store,memory,config.read_limit),router(runtime,memory) {
+Runtime::Active::Active(SessionRuntime& session,const DigestBytes& id,MemoryBudget& memory,const PersistentMainGraph& main)
+    :identity(id),runtime(session),router(runtime,memory) {
     router.mount_main(main); indexed_main=main.head();
 }
 void Runtime::start_session(const DigestBytes& identity,std::string_view name) {
     if(active_)throw std::logic_error("a session already owns the input route");
-    active_.emplace(root_,identity,name,config_,memory_,main_,false,storage_);
+    auto& session=sources_.acquire_session(identity,name,config_.session_block_capacity,false);
+    try{active_.emplace(session,identity,memory_,main_);}
+    catch(...){sources_.release_session(identity,false);throw;}
 }
 void Runtime::resume_session(const DigestBytes& identity) {
     if(active_)throw std::logic_error("a session already owns the input route");
-    active_.emplace(root_,identity,std::string_view{},config_,memory_,main_,true,storage_);
+    auto& session=sources_.acquire_session(identity,{},config_.session_block_capacity,true);
+    try{active_.emplace(session,identity,memory_,main_);}
+    catch(...){sources_.release_session(identity,false);throw;}
 }
 Runtime::Active& Runtime::require_session() {
     if(!active_)throw std::logic_error("no session owns the input route");
@@ -52,9 +53,12 @@ void Runtime::end_session() {
     if(runtime.phase()==SessionPhase::ended)runtime.publish_originals();
     if(!main_session_readable(runtime.phase(),runtime.usable()))
         throw std::logic_error("session closure requires recovery before handoff");
-    // Publication is the durable queue entry. Release the temporary owner so
-    // MainSources can acquire the ended store; graph consolidation is deferred.
+    // Publication is the durable queue entry. Invalidate the input route, then
+    // hand the already verified cache back to its stable Main-owned store.
+    // Consolidation remains deferred until work(); no history replay is needed.
+    const auto identity=active_->identity;
     active_.reset();
+    sources_.release_session(identity,true);
 }
 ReceivedInput Runtime::receive(const OriginalExperienceView& original,std::uint64_t seed,std::uint64_t step) {
     auto recalled=input(original.media_type,original.content);

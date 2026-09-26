@@ -51,10 +51,9 @@ public:
     [[nodiscard]] std::size_t work(std::uint64_t seed, std::uint64_t step);
 private:
     struct Active {
-        Active(const std::filesystem::path&, const architecture::DigestBytes&, std::string_view,
-            const RuntimeConfig&, MemoryBudget&, const PersistentMainGraph&, bool resume, StorageBudget&);
-        SessionStore store;
-        SessionRuntime runtime;
+        Active(SessionRuntime&, const architecture::DigestBytes&, MemoryBudget&, const PersistentMainGraph&);
+        architecture::DigestBytes identity;
+        SessionRuntime& runtime;
         ExperienceRouter router;
         ExperienceLocation indexed_main;
     };
