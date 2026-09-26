@@ -259,6 +259,17 @@ int main(int argc, char** argv) {
                     upstream.until_failure=std::numeric_limits<std::size_t>::max();
                     CHECK(segmented_memory.used()==used);
                 }
+                for(const auto [begin,end]:std::array<std::pair<std::size_t,std::size_t>,12>{
+                    {{0,0},{0,8},{7,9},{23,25},{55,57},{119,121},{247,249},
+                     {503,505},{1015,1017},{1029,1030},{1030,1030},{200,1000}}}){
+                    auto slice=parent->snapshot(segmented_memory,begin,end);
+                    CHECK(slice.size()==end-begin && slice.original_begin()==begin);
+                    for(std::size_t n=begin;n<end;++n)CHECK(&slice[n-begin]==&(*parent)[n]);
+                    auto moved=std::move(slice);CHECK(slice.size()==0 && moved.size()==end-begin);
+                    expect_throw<std::out_of_range>([&]{(void)moved[end-begin];});
+                }
+                expect_throw<std::out_of_range>([&]{(void)parent->snapshot(segmented_memory,1,0);});
+                expect_throw<std::out_of_range>([&]{(void)parent->snapshot(segmented_memory,0,1031);});
                 ExperienceSequence child(segmented_memory);
                 const auto baseline=segmented_memory.used();
                 unsigned failed=0;
@@ -291,6 +302,16 @@ int main(int argc, char** argv) {
                 expect_throw<std::out_of_range>([&]{(void)moved[1030];});
                 for(std::size_t n=0;n<expected.size();++n)CHECK(moved[n].original()==expected[n].original());
                 for(std::size_t n=0;n<expected.size();++n)CHECK(child[n].original()==expected[n].original());
+            }
+            {
+                const auto baseline=segmented_memory.used();
+                std::optional<ExperienceSequence> owner;owner.emplace(segmented_memory);
+                for(const auto& value:expected){owner->prepare_append();owner->commit_append(value);}
+                auto slice=owner->snapshot(segmented_memory,1020,1025);
+                owner->prepare_append();owner->commit_append(expected[0]);owner.reset();
+                CHECK(slice.size()==5 && slice.original_begin()==1020);
+                for(std::size_t n=0;n<5;++n)CHECK(slice[n].original()==expected[1020+n].original());
+                CHECK(segmented_memory.used()-baseline<256*sizeof(ExperienceEvidence)+256);
             }
             {
                 const auto baseline=segmented_memory.used();

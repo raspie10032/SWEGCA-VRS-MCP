@@ -58,7 +58,7 @@ int main(){
     for(unsigned n=0;n<5;++n) {
      EvidenceObservation value;value.hypothesis=id(connection);value.source=id(700+n);
      value.context=id(1700+n);value.producer=id(2700+n);value.outcome=EvidenceOutcome::insufficient;
-     (void)extra.observe(id(connection),{n,0,"extra","experiment",(n==1||n==4)?"text/untouched":"text/plain",{}},value,7,0);
+     (void)extra.observe(id(connection),{n,0,"extra","experiment",(n==1||n==4)?"text/untouched":(connection==9&&n==3)?"text/single":"text/plain",{}},value,7,0);
     }
    }
    extra.end();extra.publish_originals();
@@ -85,7 +85,7 @@ int main(){
    throws<std::logic_error>([&]{(void)incremental.replay(prior_direct,0,0);});
    index_allocator.request_limit=std::numeric_limits<std::size_t>::max();
    ExperienceRouter rebuilt(query,memory);rebuilt.mount_main(indexed);
-   for(const auto media:{"text/plain","text/untouched"}) {
+   for(const auto media:{"text/plain","text/untouched","text/single"}) {
     const auto delta=incremental.input(media,{});const auto complete=rebuilt.input(media,{});
     CHECK(delta.matches().size()==complete.matches().size());
     const auto cue=swegca::architecture::input_cue(media,{});
@@ -174,6 +174,14 @@ int main(){
    auto recalled=route.input("text/plain",{});
    CHECK(reads==before&&!recalled.temporary()&&recalled.matches().size()==8);
    CHECK(recalled.matches()[0].recalled.recalled_head.strength==main.graph().find(id(10))->strength());
+   const auto before_exact=query_memory.used();
+   {
+    auto compact=route.input("text/plain",{});
+    const auto used=query_memory.used()-before_exact;
+    std::printf("8-original Main exact receipt: %zu tracked bytes\n",used);
+    CHECK(used<8*32+sizeof(RecallMatch)+128);
+   }
+   CHECK(query_memory.used()==before_exact);
    auto original=route.replay(recalled,3);
    CHECK(original.location()==a.find(id(10))->state().experiences()[3].original());
    const auto receipt_baseline=query_memory.used();

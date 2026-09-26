@@ -32,20 +32,29 @@ public:
     public:
         Snapshot(const Snapshot&)=delete;
         Snapshot& operator=(const Snapshot&)=delete;
-        Snapshot(Snapshot&& other) noexcept:chunks_(std::move(other.chunks_)),count_(std::exchange(other.count_,0)){}
+        Snapshot(Snapshot&& other) noexcept:chunks_(std::move(other.chunks_)),count_(std::exchange(other.count_,0)),begin_(other.begin_),first_chunk_(other.first_chunk_){}
         Snapshot& operator=(Snapshot&&)=delete;
         [[nodiscard]] std::size_t size() const noexcept{return count_;}
+        [[nodiscard]] std::size_t original_begin() const noexcept{return begin_;}
         [[nodiscard]] const ExperienceEvidence& operator[](std::size_t index) const {
             if(index>=count_)throw std::out_of_range("experience snapshot index");
-            if(index<248){const auto chunk=std::bit_width(index+8)-4;return chunks_[chunk]->data[index-8*((std::size_t{1}<<chunk)-1)];}
-            return chunks_[5+(index-248)/256]->data[(index-248)%256];
+            index+=begin_;
+            if(index<248){const auto chunk=std::bit_width(index+8)-4;return chunks_[chunk-first_chunk_]->data[index-8*((std::size_t{1}<<chunk)-1)];}
+            return chunks_[5+(index-248)/256-first_chunk_]->data[(index-248)%256];
         }
     private:
         friend class ExperienceSequence;
-        Snapshot(const ExperienceSequence& source,MemoryBudget& directory_memory)
-            :chunks_(source.chunks_.begin(),source.chunks_.end(),&directory_memory),count_(source.size_){}
+        Snapshot(const ExperienceSequence& source,MemoryBudget& directory_memory,std::size_t begin,std::size_t end)
+            :chunks_(&directory_memory),count_(0),begin_(begin),first_chunk_(0){
+            if(begin>end || end>source.size_)throw std::out_of_range("experience snapshot range");
+            if(begin==end)return;
+            const auto chunk=[](std::size_t i){return i<248?std::bit_width(i+8)-4:5+(i-248)/256;};
+            first_chunk_=chunk(begin);
+            chunks_.assign(source.chunks_.begin()+first_chunk_,source.chunks_.begin()+chunk(end-1)+1);
+            count_=end-begin;
+        }
         std::pmr::vector<std::shared_ptr<Chunk>> chunks_;
-        std::size_t count_;
+        std::size_t count_,begin_,first_chunk_;
     };
     class View {
     public:
@@ -89,7 +98,8 @@ public:
         const auto chunk=index<248?std::bit_width(index+8)-4:5+(index-248)/256;
         return std::shared_ptr<const ExperienceEvidence>(chunks_[chunk], &(*this)[index]);
     }
-    [[nodiscard]] Snapshot snapshot(MemoryBudget& directory_memory) const{return Snapshot(*this,directory_memory);}
+    [[nodiscard]] Snapshot snapshot(MemoryBudget& directory_memory) const{return Snapshot(*this,directory_memory,0,size_);}
+    [[nodiscard]] Snapshot snapshot(MemoryBudget& memory,std::size_t begin,std::size_t end) const {return Snapshot(*this,memory,begin,end);}
     [[nodiscard]] View view() const noexcept{return View(this,0,size_);}
     [[nodiscard]] const ExperienceEvidence& operator[](std::size_t index) const noexcept{
         // 8,16,32,64,128 entries, then fixed 256-entry segments. No linear

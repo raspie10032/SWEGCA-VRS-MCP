@@ -267,10 +267,10 @@ void InputRecall::append(const RecallMatch& match, std::size_t index, std::size_
 }
 
 void InputRecall::append_range(const RecallMatch& match, std::size_t boundary,
-    const Connection& connection, MemoryBudget& memory) {
-    auto sequence = connection.snapshot_experiences(memory);
-    if (sequence.size() != match.recalled_head.observations)
+    const Connection& connection, MemoryBudget& memory,std::size_t begin,std::size_t finish) {
+    if (connection.experiences().size() != match.recalled_head.observations)
         throw std::logic_error("Recall snapshot observation count changed");
+    auto sequence=connection.snapshot_experiences(memory,begin,finish);
     if (sequence.size() > std::numeric_limits<std::size_t>::max() - count_)
         throw std::overflow_error("Recall candidate count overflow");
     const auto end = count_ + sequence.size();
@@ -318,7 +318,7 @@ InputRecall ExperienceRouter::recall_cue(const DigestBytes& cue, RecallScope sco
             const auto boundary = active ? active->state().experiences().size() : 0;
             const auto& connection = match.main_graph
                 ? *match.main_graph->graph().find(match.recalled_head.identity) : match.connection->state();
-            result.append_range(match, boundary, connection, memory_);
+            result.append_range(match, boundary, connection, memory_,0,connection.experiences().size());
         }
         return result;
     }
@@ -342,7 +342,12 @@ InputRecall ExperienceRouter::recall_cue(const DigestBytes& cue, RecallScope sco
                 const auto* active = temporary_.find(identity);
                 const auto boundary=active ? active->state().experiences().size() : 0;
                 const auto* connection=merged_main_->graph().find(identity);
-                for(auto index=begin;index<end;++index)
+                // A single contiguous exact-cue result uses one bounded segment
+                // snapshot. Fragmented results retain individual pins, avoiding
+                // repeated context/directory overhead for sparse selections.
+                if(found->second.size()==1)
+                    result.append_range(match,boundary,*connection,memory_,begin,end);
+                else for(auto index=begin;index<end;++index)
                     result.append(match,index,boundary,connection->pin_experience(index));
             }
     } else {
