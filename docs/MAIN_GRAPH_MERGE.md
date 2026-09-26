@@ -37,7 +37,8 @@
 [영속 Main 문서](PERSISTENT_MAIN_GRAPH.md)에 기록했다. 직접 사용하는 `MainGraph`는
 여전히 메모리 객체이며, 영속성이 필요한 소유자는 `PersistentMainGraph`를 사용한다.
 입력 라우터 연결은 [Main 조회 문서](MERGED_MAIN_QUERY.md)에 기록했다.
-원천 자동 발견 및 종료 후 작업 스케줄링의 통합은 남아 있다.
+원천 자동 발견은 [Main 원천 문서](MAIN_SOURCES.md)에 기록했다.
+실제 호스트의 종료 후 작업 스케줄링은 남아 있다.
 
 ## 확인
 

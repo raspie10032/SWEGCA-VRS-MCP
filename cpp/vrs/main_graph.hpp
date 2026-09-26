@@ -21,6 +21,7 @@ public:
     [[nodiscard]] const ConnectionRefinement* refinement(const architecture::DigestBytes& identity) const noexcept;
     [[nodiscard]] StoredExperience replay(const architecture::DigestBytes& identity, std::size_t index) const;
     [[nodiscard]] std::uint64_t generation() const noexcept { return generation_; }
+    [[nodiscard]] bool has_source(const architecture::DigestBytes& identity) const noexcept { return merged_.contains(identity); }
     [[nodiscard]] std::size_t source_count() const noexcept { return merged_.size(); }
 private:
     friend class PersistentMainGraph;
