@@ -181,6 +181,26 @@ private:
             state.native_ready=true;
             return "{\"identity\":\""+hex(identity,memory_)+"\",\"nextSequence\":\""+std::to_string(state.deliveries.size()).c_str()+"\"}";
         }
+        if(method=="swegca/agent/original"){
+            select_context(digest(p.at("identity").string()));
+            const auto& state=context();
+            if(state.native_session.empty()||!state.native_ready)
+                throw std::invalid_argument("native session binding required");
+            const auto found=state.deliveries.find(integer(p.at("sequence")));
+            if(found==state.deliveries.end())throw std::invalid_argument("native delivery not recorded");
+            const auto stored=runtime_.session().read_original(found->second.original);
+            const auto original=evidence_payload(stored);
+            if(original.source!=state.native_source()||original.session!=state.native_session||
+               original.media_type!="application/json"||original.sequence!=found->first)
+                throw std::invalid_argument("native original binding mismatch");
+            const std::string_view bytes(reinterpret_cast<const char*>(original.content.data()),original.content.size());
+            if(agent_delivery_identity(original.sequence,original.observed_at_ns,bytes)!=found->second.fingerprint)
+                throw std::invalid_argument("native original fingerprint mismatch");
+            return "{\"original\":"+address(found->second.original,memory_)+
+                ",\"context\":\""+hex(found->second.context,memory_)+"\",\"source\":"+
+                quote_json(original.source,memory_)+",\"observedAt\":\""+
+                std::to_string(original.observed_at_ns).c_str()+"\",\"native\":"+quote_json(bytes,memory_)+"}";
+        }
         if(method=="swegca/agent/event"){
             // A targeted native request selects its already attached in-memory
             // route within this call; no separate select RPC or storage discovery.

@@ -589,6 +589,21 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
                         'protocol':'app-server-connection'}
     connection=c.call('swegca/agent/attach/resume',connection_binding)['result']
     check(connection['nextSequence']=='5')
+    recovered=[]
+    for sequence in range(5):
+        item=c.call('swegca/agent/original',{'identity':connection['identity'],'sequence':str(sequence)})['result']
+        check(item['source']=='codex/app-server-connection')
+        check(json.loads(item['native'])==[
+            global_frames[0],{'id':1,'result':{}},global_frames[1],
+            global_frames[2],{'id':2,'result':{}}][sequence])
+        check(item['native']==proxy_frame(json.loads(item['native']))[:-1].decode())
+        recovered.append(item)
+    check(recovered[1]['context']==recovered[0]['original']['digest'])
+    check(recovered[4]['context']==recovered[3]['original']['digest'])
+    for bad in ({'identity':connection['identity'],'sequence':'5'},
+                {'identity':identity(250),'sequence':'0'}, {'sequence':'0'}):
+        check('error' in c.call('swegca/agent/original',bad))
+
     check('error' in c.call('swegca/agent/attach/ensure',dict(connection_binding,protocol='app-server')))
     params={'identity':connection['identity'],'sequence':'4','observedAt':'0','seed':'7','step':'0',
             'native':json.dumps({'id':2,'result':{}}),'requestSequence':'3'}

@@ -366,3 +366,23 @@ merge on EOF. A resumed proxy also opens the stored connection successfully.
 This is executable integration evidence, not a running desktop installation.
 Automatic pending-request restoration, new thread lineage linkage, agent
 context injection and combined resource/latency verification remain unfinished.
+
+## Verified native original access for request recovery
+
+`swegca/agent/original` takes an attached `identity` and recorded `sequence`.
+It resolves the existing delivery's experience address, reads through the VRS
+original reader, and checks source/session/media/sequence and the native
+fingerprint before returning original address, context digest, source,
+observedAt and byte-exact native JSON. It does not read a separate chat log,
+infer an RPC sender, create a Recall receipt, update strength, or end a session.
+The existing VRS read limit and memory budget apply; the response currently
+materializes the whole original JSON. The lookup selects the requested session,
+like targeted native ingestion; it does not clear its existing Recall/Replay.
+
+The real subprocess suite passed 2,282 checks, including five originals read
+following restart, exact JSON bytes, both response context digests matching the
+respective request originals, and rejection of unrecorded sequence, unattached
+identity and missing identity. This supplies authenticated original access for
+transport recovery. Stored native originals still lack explicit RPC sender
+provenance, so automatic pending-request reconstruction is not complete; do not
+infer sender from method names or claim that recovery is finished.
