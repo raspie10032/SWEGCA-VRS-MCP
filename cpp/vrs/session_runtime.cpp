@@ -6,6 +6,10 @@
 #include <new>
 #include <stdexcept>
 
+#ifdef SWEGCA_RECALL_ENTRY_PROBE
+extern "C" void swegca_recall_entry_probe() noexcept;
+#endif
+
 namespace swegca::vrs {
 using namespace architecture;
 using namespace architecture::kernel;
@@ -206,6 +210,9 @@ InputRecall ExperienceRouter::input(std::string_view media, std::span<const std:
     return recall_cue(cue, scope, main_kind);
 }
 InputRecall ExperienceRouter::recall_cue(const DigestBytes& cue, RecallScope scope, FamiliarityKey kind) const {
+#ifdef SWEGCA_RECALL_ENTRY_PROBE
+    swegca_recall_entry_probe();
+#endif
     // Recall begins here, before allocating result addresses. No original
     // payloads, connection recovery, storage writes or shuffles run here.
     if (scope == RecallScope::unavailable) throw std::logic_error("temporary experience unavailable");
