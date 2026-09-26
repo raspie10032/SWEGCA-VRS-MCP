@@ -3,6 +3,7 @@
 #include "swegca_architecture/session_kernel.hpp"
 #include "swegca_architecture/head_publication_kernel.hpp"
 #include "swegca_architecture/recall_route_kernel.hpp"
+#include "swegca_architecture/replay_evidence_kernel.hpp"
 #include "swegca_architecture/memory_promotion_kernel.hpp"
 #include "swegca_architecture/memory_transaction_stage_kernel.hpp"
 #include "vrs/verification.hpp"
@@ -40,6 +41,10 @@ __attribute__((noinline)) HeadPublication measured_publication(const ConnectionH
 template<class T> inline void consume(const T& value) {asm volatile("" : : "m"(value) : "memory");}
 __attribute__((noinline)) FamiliarityKey measured_familiarity(bool exact,bool continued) noexcept {
  return familiarity_key(exact,continued);
+}
+__attribute__((noinline)) ReplayAgreement measured_replay(const EvidenceRules& rules,const EvidenceObservation& original,
+ const Digest& hypothesis,const EvidenceJudgment& current,std::uint64_t step) noexcept {
+ return compare_replay_evidence(rules,original,hypothesis,current,step);
 }
 template<class Fn> void measure(const char* name,Fn fn) {
  constexpr std::size_t iterations=100000;
@@ -82,6 +87,7 @@ int main(){
  measure("head_publication",[&](std::size_t i){auto result=measured_publication(i%7?&current:nullptr,i%7?current.record:RecordAddress{},versions[i&63],i%3!=0);consume(result);});
  std::array<EvidenceJudgment,64> decisions{};
  for(std::size_t i=0;i<64;++i)decisions[i]=judge_evidence(r,fixtures[i]);
+ measure("replay_evidence_comparison",[&](std::size_t i){auto result=measured_replay(r,observations[i&63],hypothesis,decisions[i&63],i%16);consume(result);});
  SemanticPromotionThresholds thresholds;
  measure("promotion_eligibility",[&](std::size_t i){auto b=measured_eligible(decisions[i&63],thresholds);consume(b);});
  measure("promotion_decision",[&](std::size_t i){MemoryPromotionDecision o;auto b=measured_promotion(decisions[i&63],o);consume(b);consume(o);});

@@ -151,7 +151,7 @@ InputRecall ExperienceRouter::recall_cue(const DigestBytes& cue, RecallScope sco
     // Recall begins here, before allocating result addresses. No original
     // payloads, connection recovery, storage writes or shuffles run here.
     if (scope == RecallScope::unavailable) throw std::logic_error("temporary experience unavailable");
-    InputRecall result(memory_); result.cue_ = cue; result.key_kind_ = kind;
+    InputRecall result(memory_); result.cue_ = cue; result.key_kind_ = kind; result.issuer_ = this;
     result.temporary_ = scope == RecallScope::temporary;
     if (kind == FamiliarityKey::missing) return result;
     if (kind == FamiliarityKey::continuation) {
@@ -159,15 +159,19 @@ InputRecall ExperienceRouter::recall_cue(const DigestBytes& cue, RecallScope sco
         for (std::size_t candidate = 0; candidate < candidates.size(); ++candidate) {
             const auto match = candidates.at(candidate);
             const auto count = match.connection->state().experiences().size();
+            const auto* active = temporary_.find(match.recalled_head.identity);
+            const auto boundary = active ? active->state().experiences().size() : 0;
             for (std::size_t index = 0; index < count; ++index)
-                result.matches_.push_back({match, index});
+                result.matches_.push_back({match, index, boundary});
         }
         return result;
     }
     const auto append = [&](const SessionRuntime& session, const CueReference& reference) {
         const auto* connection = session.find(reference.connection);
         if (!connection) throw std::logic_error("cue refers to an unavailable connection");
-        result.matches_.push_back({{&session, connection, connection->snapshot()}, reference.original_index});
+        const auto* active = temporary_.find(reference.connection);
+        const auto boundary = active ? active->state().experiences().size() : 0;
+        result.matches_.push_back({{&session, connection, connection->snapshot()}, reference.original_index, boundary});
     };
     if (scope == RecallScope::temporary) {
         result.temporary_ = true;
@@ -179,12 +183,42 @@ InputRecall ExperienceRouter::recall_cue(const DigestBytes& cue, RecallScope sco
     }
     return result;
 }
-StoredExperience ExperienceRouter::replay(const InputRecall& recalled, std::size_t candidate) const {
+ReplayedInput ExperienceRouter::replay(const InputRecall& recalled, std::size_t candidate) const {
+    if (recalled.issuer_ != this) throw std::invalid_argument("Recall belongs to a different input route");
     if (candidate >= recalled.matches_.size()) throw std::out_of_range("input recall candidate");
     const auto& selected = recalled.matches_[candidate];
     RecallCandidates bound;
     bound.temporary_ = selected.recalled;
-    return replay(bound, 0, selected.original_index);
+    return ReplayedInput(replay(bound, 0, selected.original_index), selected, this, recalled.cue_);
+}
+ReEvidenceResult ExperienceRouter::re_evidence(const ReplayedInput& replayed,
+    std::uint64_t seed, std::uint64_t step) const {
+    if (replayed.issuer_ != this) throw std::invalid_argument("Replay belongs to a different input route");
+    const auto& remembered = replayed.match_.recalled;
+    const auto identity = remembered.recalled_head.identity;
+    const auto* current = temporary_.find(identity);
+    const auto& rules = current ? current->rules() : remembered.connection->rules();
+    const auto prior = decode_evidence(remembered.connection->rules(), replayed.original_);
+    Connection fresh(identity, current ? current->state().strength() : remembered.recalled_head.strength, rules, memory_);
+    std::pmr::vector<ExperienceLocation> addresses(&memory_);
+    ConnectionHead current_head{};
+    if (current) {
+        current_head = current->snapshot();
+        const auto values = current->state().experiences();
+        const auto boundary = replayed.match_.current_observations;
+        if (boundary > values.size()) throw std::logic_error("current observation history regressed");
+        addresses.reserve(values.size() - boundary);
+        for (const auto& value : values.subspan(boundary)) {
+            fresh.append(value); addresses.push_back(value.original());
+        }
+    } else if (replayed.match_.current_observations != 0) {
+        throw std::logic_error("current observation history disappeared");
+    }
+    auto report = fresh.refine(seed, step);
+    const auto agreement = compare_replay_evidence(rules, prior.value(), identity,
+        report.result().verification().judgment(), step);
+    return ReEvidenceResult(std::move(report), agreement, remembered.recalled_head, current_head,
+        replayed.location(), replayed.input_cue(), std::move(addresses));
 }
 RecallCandidates ExperienceRouter::recall(const DigestBytes& identity) const {
     RecallCandidates result;

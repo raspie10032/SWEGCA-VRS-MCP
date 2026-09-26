@@ -2,6 +2,7 @@
 
 #include "vrs/connection_catalog.hpp"
 #include "swegca_architecture/recall_route_kernel.hpp"
+#include "swegca_architecture/replay_evidence_kernel.hpp"
 
 namespace swegca::vrs {
 
@@ -70,7 +71,10 @@ struct RecallMatch {
 struct InputMatch {
     RecallMatch recalled;
     std::size_t original_index = 0;
+    std::size_t current_observations = 0;
 };
+
+class ExperienceRouter;
 
 class InputRecall final {
 public:
@@ -87,9 +91,58 @@ private:
     friend class ExperienceRouter;
     explicit InputRecall(MemoryBudget& memory) : matches_(&memory) {}
     architecture::DigestBytes cue_{};
+    const ExperienceRouter* issuer_ = nullptr;
     bool temporary_ = false;
     architecture::kernel::FamiliarityKey key_kind_ = architecture::kernel::FamiliarityKey::missing;
     std::pmr::vector<InputMatch> matches_;
+};
+
+// Issued only after a successful selected original read. No caller can supply
+// a made-up prior outcome/head or manufacture a pre-Replay receipt.
+class ReplayedInput final {
+public:
+    ReplayedInput(const ReplayedInput&) = delete;
+    ReplayedInput& operator=(const ReplayedInput&) = delete;
+    ReplayedInput(ReplayedInput&&) noexcept = default;
+    [[nodiscard]] const StoredExperience& original() const noexcept { return original_; }
+    [[nodiscard]] const ExperienceLocation& location() const noexcept { return original_.location(); }
+    [[nodiscard]] const architecture::DigestBytes& input_cue() const noexcept { return input_cue_; }
+private:
+    friend class ExperienceRouter;
+    ReplayedInput(StoredExperience original, InputMatch match, const ExperienceRouter* issuer,
+        architecture::DigestBytes cue)
+        : original_(std::move(original)), match_(match), issuer_(issuer), input_cue_(cue) {}
+    StoredExperience original_;
+    InputMatch match_;
+    const ExperienceRouter* issuer_;
+    architecture::DigestBytes input_cue_;
+};
+
+class ReEvidenceResult final {
+public:
+    ReEvidenceResult(const ReEvidenceResult&) = delete;
+    ReEvidenceResult& operator=(const ReEvidenceResult&) = delete;
+    ReEvidenceResult(ReEvidenceResult&&) noexcept = default;
+    [[nodiscard]] const ConnectionRefinement& verification() const noexcept { return verification_; }
+    [[nodiscard]] architecture::kernel::ReplayAgreement agreement() const noexcept { return agreement_; }
+    [[nodiscard]] std::span<const ExperienceLocation> current_originals() const noexcept { return current_originals_; }
+    [[nodiscard]] const architecture::kernel::ConnectionHead& remembered_head() const noexcept { return remembered_; }
+    [[nodiscard]] const architecture::kernel::ConnectionHead& current_head() const noexcept { return current_; }
+    [[nodiscard]] const ExperienceLocation& replayed_original() const noexcept { return replayed_original_; }
+    [[nodiscard]] const architecture::DigestBytes& input_cue() const noexcept { return input_cue_; }
+private:
+    friend class ExperienceRouter;
+    ReEvidenceResult(ConnectionRefinement report, architecture::kernel::ReplayAgreement agreement,
+        architecture::kernel::ConnectionHead remembered, architecture::kernel::ConnectionHead current,
+        ExperienceLocation replayed_original, architecture::DigestBytes cue, std::pmr::vector<ExperienceLocation> originals)
+        : verification_(std::move(report)), agreement_(agreement), remembered_(remembered), current_(current),
+          replayed_original_(replayed_original), input_cue_(cue), current_originals_(std::move(originals)) {}
+    ConnectionRefinement verification_;
+    architecture::kernel::ReplayAgreement agreement_;
+    architecture::kernel::ConnectionHead remembered_, current_;
+    ExperienceLocation replayed_original_;
+    architecture::DigestBytes input_cue_;
+    std::pmr::vector<ExperienceLocation> current_originals_;
 };
 
 // Borrowed result: use before changing the router or its sessions. No original
@@ -116,7 +169,12 @@ public:
     // No disk, recording, shuffle or LLM precedes Recall. SHA-256 cue work is
     // part of Deja vu and is included in any input-to-Recall timing.
     [[nodiscard]] InputRecall input(std::string_view media, std::span<const std::byte> content) const;
-    [[nodiscard]] StoredExperience replay(const InputRecall& recalled, std::size_t candidate) const;
+    [[nodiscard]] ReplayedInput replay(const InputRecall& recalled, std::size_t candidate) const;
+    // Verify only observations appended to this temporary session after Recall.
+    // This is a read-only evaluation; it neither writes a second strength update
+    // nor makes recalled originals count as new observations.
+    [[nodiscard]] ReEvidenceResult re_evidence(const ReplayedInput& replayed,
+        std::uint64_t shuffle_seed, std::uint64_t current_step) const;
     [[nodiscard]] StoredExperience replay(const RecallCandidates& candidates, std::size_t candidate,
         std::size_t original_index) const;
 private:

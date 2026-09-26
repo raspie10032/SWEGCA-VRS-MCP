@@ -140,7 +140,7 @@ int main() {
         CHECK(router.input("text/plain",std::as_bytes(std::span(followup))).matches()[0].recalled.recalled_head.identity==id(10));
         auto selected=router.replay(known,0);
         CHECK(selected.location()==retained.original);
-        CHECK(evidence_payload(selected).content.size()==message.content.size());
+        CHECK(evidence_payload(selected.original()).content.size()==message.content.size());
         CHECK(live.find(input_cue(message.media_type,message.content))->state().experiences()[0].value().outcome==EvidenceOutcome::insufficient);
         auto continued_new=router.input("text/plain",std::as_bytes(std::span(followup)));
         CHECK(continued_new.temporary() && continued_new.matches().size()==1);
@@ -178,6 +178,58 @@ int main() {
         auto result=observe(live,"live",10,3,EvidenceOutcome::support);
         CHECK(live.find(id(10))->head()!=ExperienceLocation{});
         CHECK(result.refinement.after_revision()>result.refinement.before_revision());
+    }
+    CHECK(memory.used()==0);
+    {
+        auto archive_store=SessionStore::open(root,id(1),memory);
+        SessionRuntime archive(archive_store,memory,8192);
+        const auto remembered_head=archive.find(id(10))->head();
+        for (unsigned scenario=0;scenario<4;++scenario) {
+            auto store=SessionStore::create(root,id(50+scenario),"current",65536,memory);
+            SessionRuntime current(store,memory,8192);
+            ExperienceRouter router(current,memory); router.mount_main(archive);
+            auto activation=router.input("application/octet-stream",std::as_bytes(std::span(payload)));
+            auto played=router.replay(activation,0);
+            CHECK(played.input_cue()==activation.cue());
+            auto no_new=router.re_evidence(played,1,100);
+            CHECK(no_new.agreement()==ReplayAgreement::insufficient);
+            CHECK(no_new.current_originals().empty());
+            current.define_connection(id(10),0.75,policy);
+            for (unsigned n=1;n<=16;++n) {
+                EvidenceObservation value;
+                value.hypothesis=id(10);value.source=id(n+120);value.context=id(n+150);value.producer=id(n+190);
+                value.observed_at=n+100;
+                value.outcome=scenario==1?EvidenceOutcome::refute:scenario==2?EvidenceOutcome::insufficient:EvidenceOutcome::support;
+                value.has_expiry=scenario==3;value.expires_at=n+101;
+                (void)current.observe(id(10),input("current",n+100),value,n,1000);
+            }
+            const auto current_head=current.find(id(10))->head();
+            const auto current_strength=current.find(id(10))->state().strength();
+            const auto read_count=reads,write_count=writes;
+            auto checked=router.re_evidence(played,91,1000);
+            CHECK(reads==read_count && writes==write_count);
+            CHECK(checked.current_originals().size()==16);
+            CHECK(checked.remembered_head().record==remembered_head);
+            CHECK(checked.replayed_original()==first);
+            CHECK(checked.input_cue()==activation.cue());
+            CHECK(checked.current_head().record==current_head);
+            CHECK(current.find(id(10))->head()==current_head && current.find(id(10))->state().strength()==current_strength);
+            CHECK(archive.find(id(10))->head()==remembered_head);
+            CHECK(checked.agreement()==(scenario==0?ReplayAgreement::agrees:scenario==1?ReplayAgreement::contradicts:ReplayAgreement::insufficient));
+            CHECK(checked.verification().result().verification().judgment().status()==
+                (scenario==0?EvidenceStatus::accept:scenario==1?EvidenceStatus::reject:EvidenceStatus::abstain));
+            for (const auto& address:checked.current_originals()) CHECK(address!=first);
+            // The next Recall sets a new boundary. The already considered
+            // observations must not become new evidence for that next request.
+            auto next=router.input("application/octet-stream",std::as_bytes(std::span(payload)));
+            auto next_replay=router.replay(next,0);
+            auto already_seen=router.re_evidence(next_replay,92,1000);
+            CHECK(already_seen.current_originals().empty());
+            CHECK(already_seen.agreement()==ReplayAgreement::insufficient);
+            ExperienceRouter other(current,memory);
+            throws<std::invalid_argument>([&] { (void)other.replay(next,0); });
+            throws<std::invalid_argument>([&] { (void)other.re_evidence(next_replay,93,100); });
+        }
     }
     CHECK(memory.used()==0);
     fs::remove_all(root);
