@@ -270,6 +270,36 @@ int main() {
         CHECK(connection.state().revision() == 0 && same_location(connection.head(), before));
     }
     CHECK(memory.used() == 0);
+    {
+        MemoryBudget bounded(64<<10);ExperienceLocation large_head,large_original;
+        DigestBytes expected_cue{};
+        {
+            auto session=SessionStore::create(root,id(6),"large",8<<20,bounded);
+            auto connection=PersistentConnection::create(session,id(56),1,policy,bounded,4<<20);
+            std::vector<std::byte> payload(2<<20,std::byte{197});
+            EvidenceObservation value;value.hypothesis=id(56);value.source=id(1);
+            value.context=id(2);value.producer=id(3);
+            const auto saved=session.append_evidence(make_evidence_rules(policy),
+                {0,0,"large","experiment","application/octet-stream",payload},value);
+            large_original=saved.original();expected_cue=saved.cue();
+            connection.append(large_original);(void)connection.refine(7,0);large_head=connection.head();
+            session.end();session.publish_originals();
+        }
+        CHECK(bounded.used()==0);
+        {
+            auto session=SessionStore::open(root,id(6),bounded);
+            const auto connection=PersistentConnection::recover(session,large_head,bounded,4<<20);
+            CHECK(connection.state().experiences().size()==1);
+            CHECK(connection.state().experiences()[0].original()==large_original);
+            CHECK(connection.state().experiences()[0].cue()==expected_cue);
+            CHECK(connection.head()==large_head&&connection.state().strength()==1);
+            // Full Replay still needs a full result buffer. Recovery succeeding
+            // here must not be advertised as streaming Replay completion.
+            expect_throw<std::bad_alloc>([&]{(void)session.read(large_original,4<<20);});
+            CHECK(session.usable());
+        }
+        CHECK(bounded.used()==0&&bounded.peak_reserved()<=bounded.limit());
+    }
     fs::remove_all(root);
     std::printf("PASS: %u persistent connection checks\n", checks);
 }

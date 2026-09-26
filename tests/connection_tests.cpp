@@ -181,6 +181,9 @@ int main(int argc, char** argv) {
         const auto stored=segmented.read(saved.original(),4<<20,memory);
         const auto decoded=decode_evidence(rules,stored);
         CHECK(decoded.original()==saved.original()&&decoded.cue()==saved.cue());
+        const auto streamed=read_evidence(rules,segmented,saved.original(),4<<20);
+        CHECK(streamed.original()==decoded.original()&&streamed.cue()==decoded.cue());
+        CHECK(streamed.value().address==decoded.value().address&&streamed.value().observed_at==42);
         CHECK(decoded.value().observed_at==42&&decoded.value().hypothesis==value.hypothesis);
         CHECK(std::ranges::equal(evidence_payload(stored).content,payload));
         CHECK(contiguous.append(stored.view())==saved.original());
@@ -416,6 +419,7 @@ int main(int argc, char** argv) {
             const auto malformed = originals.left.append(envelope);
             const auto read = originals.left.read(malformed, 4096, memory);
             expect_throw<std::invalid_argument>([&] { (void)decode_evidence(rules, read); });
+            expect_throw<std::invalid_argument>([&] { (void)read_evidence(rules,originals.left,malformed,4096); });
             corrupt[offset] = previous;
         }
         const auto old_size = originals.left.inspect().complete_records;

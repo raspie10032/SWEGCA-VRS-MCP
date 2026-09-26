@@ -248,7 +248,7 @@ ExperienceEvidence SessionStore::append_evidence(const EvidenceRules& rules,
       catch (...) { usable_ = false; throw; }
 }
 
-StoredExperience SessionStore::ReadCursor::read(const ExperienceLocation& location, std::uint64_t limit) {
+ExperienceBlock& SessionStore::ReadCursor::reader(const ExperienceLocation& location) {
     if (!block_ || block_->identity() != location.block) {
         const auto found = store_.blocks_.find(location.block);
         if (found == store_.blocks_.end()) throw std::invalid_argument("experience block does not belong to this session");
@@ -258,7 +258,14 @@ StoredExperience SessionStore::ReadCursor::read(const ExperienceLocation& locati
     }
     // The handle is reused, never the payload: bounds and content checksum
     // remain checked for every requested original or history record.
-    return block_->read(location, limit, store_.memory_);
+    return *block_;
+}
+StoredExperience SessionStore::ReadCursor::read(const ExperienceLocation& location, std::uint64_t limit) {
+    return reader(location).read(location, limit, store_.memory_);
+}
+ExperienceEvidence SessionStore::ReadCursor::read_evidence(const architecture::kernel::EvidenceRules& rules,
+    const ExperienceLocation& location,std::uint64_t limit) {
+    return swegca::vrs::read_evidence(rules,reader(location),location,limit);
 }
 
 StoredExperience SessionStore::read(const ExperienceLocation& location, std::uint64_t limit) const {

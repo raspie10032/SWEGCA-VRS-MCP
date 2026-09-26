@@ -248,8 +248,7 @@ PersistentConnection::PersistentConnection(SessionStore& session, const Experien
         const auto event = read_event(reader, chain[i - 1]);
         if (state_->revision() != event.before) throw std::runtime_error("VRS connection revision mismatch");
         if (event.kind == EventKind::append) {
-            const auto record = reader.read(event.original, original_read_limit_);
-            const auto evidence = decode_evidence(*rules_, record);
+            const auto evidence = reader.read_evidence(*rules_,event.original,original_read_limit_);
             if (evidence.value().observed_at != event.step) throw std::runtime_error("VRS observation time mismatch");
             state_->append(evidence);
         } else if (event.kind == EventKind::refine) {
@@ -266,8 +265,8 @@ PersistentConnection::PersistentConnection(SessionStore& session, const Experien
 
 void PersistentConnection::append(const ExperienceLocation& original) {
     if (ordinal_ == std::numeric_limits<std::uint64_t>::max()) throw std::overflow_error("VRS connection record sequence exhausted");
-    const auto record = session_.read(original, original_read_limit_);
-    const auto evidence = decode_evidence(*rules_, record);
+    auto reader=session_.read_cursor();
+    const auto evidence=reader.read_evidence(*rules_,original,original_read_limit_);
     state_->prepare_append(evidence);
     Event event;
     event.kind = EventKind::append; event.identity = state_->identity(); event.parent = head_; event.ordinal = ordinal_ + 1;

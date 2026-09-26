@@ -338,6 +338,41 @@ StoredExperience ExperienceBlock::read(const ExperienceLocation& location,
     return experience;
 }
 
+std::uint64_t ExperienceBlock::visit_evidence(const ExperienceLocation& location, std::uint64_t limit,
+    void* context, void (*consume)(void*, bool, std::span<const std::byte>, std::uint64_t, std::uint64_t)) const {
+    if (fd_ < 0 || location.block != identity_ || location.offset < header_bytes ||
+        location.offset > capacity_ || location.bytes < record_overhead ||
+        location.bytes > capacity_ - location.offset || location.bytes > limit ||
+        location.bytes > std::numeric_limits<std::size_t>::max())
+        throw std::invalid_argument("invalid experience location or read budget");
+    std::array<std::byte, prefix_bytes> prefix;
+    read_exact(fd_,prefix,location.offset,storage_);
+    if(record_length(prefix,capacity_-location.offset)!=location.bytes)
+        throw std::runtime_error("experience location length mismatch");
+    const auto size=file_size(fd_);
+    if(location.offset>size||location.bytes>size-location.offset)
+        throw std::runtime_error("incomplete selected experience");
+    Sha256 hash;hash.update(prefix);
+    std::array<std::byte,65536> scratch;
+    auto cursor=location.offset+prefix_bytes;
+    for(unsigned field=0;field<4;++field){
+        const auto length=get_u64(prefix,32+field*8);
+        for(std::uint64_t offset=0;offset<length;){
+            const auto count=static_cast<std::size_t>(std::min<std::uint64_t>(length-offset,scratch.size()));
+            const auto chunk=std::span(scratch).first(count);
+            read_exact(fd_,chunk,cursor,storage_);hash.update(chunk);
+            if(field>=2)consume(context,field==2,chunk,offset,length);
+            cursor+=count;offset+=count;
+        }
+        if(field>=2&&length==0)consume(context,field==2,{},0,0);
+    }
+    std::array<std::byte,trailer_bytes> trailer;
+    read_exact(fd_,trailer,cursor,storage_);const auto digest=hash.finish();
+    check_trailer(trailer,location.bytes,digest);
+    if(digest!=location.digest)throw std::runtime_error("selected experience digest mismatch");
+    return get_u64(prefix,24);
+}
+
 BlockRecovery ExperienceBlock::inspect() const {
     if (fd_ < 0) throw std::logic_error("closed experience block");
     const auto size = file_size(fd_);

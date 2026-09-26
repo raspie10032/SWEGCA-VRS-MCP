@@ -49,10 +49,13 @@ private:
         ReadCursor(const ReadCursor&) = delete;
         ReadCursor& operator=(const ReadCursor&) = delete;
         [[nodiscard]] StoredExperience read(const ExperienceLocation&, std::uint64_t limit);
+        [[nodiscard]] ExperienceEvidence read_evidence(const architecture::kernel::EvidenceRules&,
+            const ExperienceLocation&, std::uint64_t limit);
         [[nodiscard]] std::string_view name() const noexcept { return store_.name(); }
     private:
         friend class SessionStore;
         explicit ReadCursor(const SessionStore& store) : store_(store) {}
+        ExperienceBlock& reader(const ExperienceLocation&);
         const SessionStore& store_;
         std::optional<ExperienceBlock> block_;
     };

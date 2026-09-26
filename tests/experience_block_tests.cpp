@@ -19,6 +19,14 @@
 using namespace swegca::vrs;
 namespace fs = std::filesystem;
 static int writes_left=-1;
+static int reads_left=-1;static std::size_t largest_read=0;
+extern "C" ssize_t __real_pread(int,void*,size_t,off_t);
+extern "C" ssize_t __wrap_pread(int fd,void* data,size_t size,off_t offset){
+    largest_read=std::max(largest_read,size);
+    if(reads_left==0){reads_left=-1;errno=EIO;return -1;}
+    if(reads_left>0)--reads_left;
+    return __real_pread(fd,data,size,offset);
+}
 extern "C" ssize_t __real_pwrite(int,const void*,size_t,off_t);
 extern "C" ssize_t __wrap_pwrite(int fd,const void* data,size_t size,off_t offset){
     if(writes_left==0){writes_left=-1;errno=ENOSPC;return -1;}
@@ -294,6 +302,42 @@ int main() {
             CHECK(block.read(previous,capacity,memory).location()==previous);
             expect_throw<std::logic_error>([&]{(void)record_evidence(block,rules,first,value);});
         }
+    }
+    {
+        using namespace swegca::architecture;using namespace swegca::architecture::kernel;
+        const auto rules=make_evidence_rules(EvidencePolicy{});MemoryBudget full_read_memory(8<<20);
+        EvidenceObservation value;value.hypothesis=identity;value.source=identity;
+        value.context=identity;value.producer=identity;value.observed_at=first.observed_at_ns;
+        unsigned index=0;
+        for(const auto media_size:{1U,65359U,65360U,65536U,65537U}){
+            auto block=ExperienceBlock::create(directory/("stream-"+std::to_string(index++)),identity,8<<20);
+            std::string media(media_size,'m');std::vector<std::byte> payload(2<<20,std::byte{129});
+            auto input=first;input.media_type=media;input.content=payload;
+            const auto saved=record_evidence(block,rules,input,value);
+            const auto stored=block.read(saved.original(),8<<20,full_read_memory);
+            const auto expected=decode_evidence(rules,stored);
+            largest_read=0;
+            const auto streamed=read_evidence(rules,block,saved.original(),8<<20);
+            CHECK(largest_read<=65536);
+            CHECK(streamed.cue()==expected.cue()&&streamed.original()==expected.original());
+            CHECK(streamed.value().observed_at==expected.value().observed_at);
+            CHECK(streamed.value().producer==expected.value().producer);
+            CHECK(streamed.value().outcome==expected.value().outcome);
+            expect_throw<std::invalid_argument>([&]{(void)read_evidence(rules,block,saved.original(),saved.original().bytes-1);});
+            reads_left=6;expect_throw<std::system_error>([&]{(void)read_evidence(rules,block,saved.original(),8<<20);});
+            CHECK(reads_left==-1);
+            // Corruption in a late payload byte must be found even though the
+            // observation prefix itself was already completely decoded.
+            const auto path=directory/("stream-"+std::to_string(index-1));
+            std::fstream file(path,std::ios::binary|std::ios::in|std::ios::out);
+            file.seekp(static_cast<std::streamoff>(saved.original().offset+saved.original().bytes-49));
+            file.put('X');file.flush();CHECK(bool(file));
+            expect_throw<std::runtime_error>([&]{(void)read_evidence(rules,block,saved.original(),8<<20);});
+        }
+        auto block=ExperienceBlock::create(directory/"stream-empty",identity,4096);
+        auto empty=first;empty.content={};
+        const auto saved=record_evidence(block,rules,empty,value);
+        CHECK(read_evidence(rules,block,saved.original(),4096).cue()==saved.cue());
     }
     expect_throw<std::invalid_argument>([&] { (void)ExperienceBlock::create(directory / "zero.block", {}, capacity); });
     CHECK(!fs::exists(directory / "zero.block"));

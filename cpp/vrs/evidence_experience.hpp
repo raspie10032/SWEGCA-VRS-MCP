@@ -19,6 +19,8 @@ private:
         const architecture::kernel::EvidenceObservation&);
     friend ExperienceEvidence decode_evidence(const architecture::kernel::EvidenceRules&,
         const StoredExperience&);
+    friend ExperienceEvidence read_evidence(const architecture::kernel::EvidenceRules&,
+        const ExperienceBlock&, const ExperienceLocation&, std::uint64_t);
     ExperienceEvidence(const ExperienceLocation& original,
         const architecture::kernel::EvidenceObservation& value, const architecture::DigestBytes& cue)
         : original_(original), value_(value), cue_(cue) {}
@@ -35,6 +37,10 @@ private:
     const architecture::kernel::EvidenceObservation& value);
 [[nodiscard]] ExperienceEvidence decode_evidence(const architecture::kernel::EvidenceRules& rules,
     const StoredExperience& stored);
+// Validate the entire original with fixed scratch space, retaining only its
+// observation and exact cue. Selected Replay still uses the full read API.
+[[nodiscard]] ExperienceEvidence read_evidence(const architecture::kernel::EvidenceRules&,
+    const ExperienceBlock&, const ExperienceLocation&, std::uint64_t max_read_bytes);
 
 // Zero-copy access to the exact original media type/payload. The StoredExperience
 // must outlive the view. No evidence verdict is inferred by this read.

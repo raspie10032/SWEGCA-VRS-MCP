@@ -32,16 +32,37 @@ Digest get_digest(std::span<const std::byte> data, std::size_t offset) {
 std::string_view text(std::span<const std::byte> data) {
     return {reinterpret_cast<const char*>(data.data()), data.size()};
 }
-OriginalExperienceView parse_payload(const StoredExperience& stored) {
-    auto original = stored.view();
-    const auto data = original.content;
-    if (original.media_type != format || data.size() < prefix_bytes || text(data.first(8)) != magic ||
+void validate_encoding(std::span<const std::byte> data,std::uint64_t total) {
+    if (data.size() < prefix_bytes || total < prefix_bytes || text(data.first(8)) != magic ||
         get(data, 158, 2) != 0 || get(data, 157, 1) > 1)
         throw std::invalid_argument("invalid SWEGCA observation encoding");
     const auto media_bytes = get(data, 160), payload_bytes = get(data, 168);
-    if (media_bytes == 0 || media_bytes > data.size() - prefix_bytes ||
-        payload_bytes != data.size() - prefix_bytes - media_bytes)
+    if (media_bytes == 0 || media_bytes > total - prefix_bytes ||
+        payload_bytes != total - prefix_bytes - media_bytes)
         throw std::invalid_argument("invalid SWEGCA observation lengths");
+}
+EvidenceObservation decode_observation(const EvidenceRules& rules,std::span<const std::byte> data,
+    const ExperienceLocation& location,std::uint64_t observed_at) {
+    EvidenceObservation value;
+    value.hypothesis = get_digest(data, 8);
+    value.source = get_digest(data, 40);
+    value.context = get_digest(data, 72);
+    value.producer = get_digest(data, 104);
+    value.address = location.digest;
+    value.observed_at = observed_at;
+    value.expires_at = get(data, 136);
+    value.producer_confidence = std::bit_cast<double>(get(data, 144));
+    value.axis = static_cast<std::uint32_t>(get(data, 152, 4));
+    value.outcome = static_cast<EvidenceOutcome>(get(data, 156, 1));
+    value.has_expiry = get(data, 157, 1) != 0;
+    if (admit_observation(rules, value.hypothesis, value, value.observed_at, false) == ObservationUse::invalid)
+        throw std::invalid_argument("invalid stored SWEGCA observation");
+    return value;
+}
+OriginalExperienceView parse_payload(const StoredExperience& stored) {
+    auto original = stored.view();const auto data=original.content;
+    if(original.media_type!=format)throw std::invalid_argument("invalid SWEGCA observation encoding");
+    validate_encoding(data,data.size());const auto media_bytes=get(data,160);
     original.media_type = text(data.subspan(prefix_bytes, media_bytes));
     original.content = data.subspan(prefix_bytes + media_bytes);
     return original;
@@ -83,21 +104,32 @@ ExperienceEvidence record_evidence(ExperienceBlock& block, const EvidenceRules& 
 ExperienceEvidence decode_evidence(const EvidenceRules& rules, const StoredExperience& stored) {
     const auto original = parse_payload(stored);
     const auto data = stored.view().content;
-    EvidenceObservation value;
-    value.hypothesis = get_digest(data, 8);
-    value.source = get_digest(data, 40);
-    value.context = get_digest(data, 72);
-    value.producer = get_digest(data, 104);
-    value.address = stored.location().digest;
-    value.observed_at = original.observed_at_ns;
-    value.expires_at = get(data, 136);
-    value.producer_confidence = std::bit_cast<double>(get(data, 144));
-    value.axis = static_cast<std::uint32_t>(get(data, 152, 4));
-    value.outcome = static_cast<EvidenceOutcome>(get(data, 156, 1));
-    value.has_expiry = get(data, 157, 1) != 0;
-    if (admit_observation(rules, value.hypothesis, value, value.observed_at, false) == ObservationUse::invalid)
-        throw std::invalid_argument("invalid stored SWEGCA observation");
+    const auto value=decode_observation(rules,data,stored.location(),original.observed_at_ns);
     return ExperienceEvidence(stored.location(), value, architecture::input_cue(original.media_type, original.content));
+}
+
+ExperienceEvidence read_evidence(const EvidenceRules& rules,const ExperienceBlock& block,
+    const ExperienceLocation& location,std::uint64_t limit) {
+    struct Decoder {std::array<std::byte,prefix_bytes> prefix;architecture::Sha256 cue;bool seen=false;} decoder;
+    const auto consume=[](void* opaque,bool media,std::span<const std::byte> data,std::uint64_t offset,std::uint64_t total){
+        auto& state=*static_cast<Decoder*>(opaque);
+        if(media){
+            if(total!=format.size()||text(data)!=format.substr(static_cast<std::size_t>(offset),data.size()))
+                throw std::invalid_argument("invalid SWEGCA observation encoding");
+            return;
+        }
+        if(offset==0){
+            validate_encoding(data,total);
+            std::copy_n(data.begin(),prefix_bytes,state.prefix.begin());state.seen=true;
+            state.cue=architecture::input_cue_prefix(get(state.prefix,160));
+            data=data.subspan(prefix_bytes);
+        }
+        state.cue.update(data);
+    };
+    const auto observed=block.visit_evidence(location,limit,&decoder,consume);
+    if(!decoder.seen)throw std::invalid_argument("missing SWEGCA observation encoding");
+    const auto value=decode_observation(rules,decoder.prefix,location,observed);
+    return ExperienceEvidence(location,value,decoder.cue.finish());
 }
 
 OriginalExperienceView evidence_payload(const StoredExperience& stored) { return parse_payload(stored); }
