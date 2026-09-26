@@ -1,4 +1,5 @@
 #include "transport/app_server_pump.hpp"
+#include "transport/agent_event_commit.hpp"
 #include "vrs/memory_budget.hpp"
 #include <cstdio>
 #include <cstdlib>
@@ -8,8 +9,47 @@ static unsigned checks=0;
 #define CHECK(x) do{++checks;if(!(x)){std::fprintf(stderr,"FAIL %d: %s\n",__LINE__,#x);std::abort();}}while(false)
 template<class F>void rejects(F f){bool failed=false;try{f();}catch(const std::exception&){failed=true;}CHECK(failed);}
 void send_frame(int fd,std::string_view text){auto framed=std::string(text)+"\n";std::string_view rest=framed;while(!rest.empty()){const auto n=::send(fd,rest.data(),rest.size(),MSG_NOSIGNAL);CHECK(n>0);rest.remove_prefix(static_cast<std::size_t>(n));}}
+void commit_checks(swegca::vrs::MemoryBudget& memory){
+ const std::string identity(64,'a');
+ rejects([&]{AgentEventCommit invalid("bad","{}","x",memory);});
+ rejects([&]{AgentEventCommit invalid(identity,"[]","x",memory);});
+ rejects([&]{AgentEventCommit invalid(identity,"{}","",memory);});
+ AgentEventCommit commit(identity,"{\n\"sequence\":\"0\",\"native\":\"line\\nnext\"\n}","x",memory);
+ const std::string select(commit.request());
+ CHECK(parse_json(select,memory).at("method").string()=="swegca/select");
+ rejects([&]{(void)commit.reply();});
+ for(const auto* raw:{R"({"jsonrpc":"2.0","id":"wrong","result":{}})",
+     R"({"jsonrpc":"2.0","id":"x/select","error":{"code":-1}})",
+     R"({"jsonrpc":"2.0","id":"x/select","result":{},"error":{}})",
+     R"({"jsonrpc":"1.0","id":"x/select","result":{}})",
+     R"({"jsonrpc":"2.0","id":1,"result":{}})",
+     R"({"jsonrpc":"2.0","id":"x/select","result":null})",
+     R"({"jsonrpc":"2.0","id":"x/select","result":{"unknown":true}})"}){
+  rejects([&]{commit.accept(raw);});CHECK(commit.request()==select);
+ }
+ commit.accept(R"({"jsonrpc":"2.0","id":"x/select","result":{}})");
+ CHECK(commit.stage()==AgentEventCommit::Stage::event);
+ const std::string event(commit.request());
+ CHECK(parse_json(event,memory).at("method").string()=="swegca/agent/event");
+ CHECK(event.find('\n')==std::string::npos);
+ CHECK(parse_json(event,memory).at("params").at("native").string()=="line\nnext");
+ const auto response=[&](std::string_view bytes){return "{\"jsonrpc\":\"2.0\",\"id\":\"x/event\",\"result\":{\"original\":{\"block\":\""+identity+"\",\"digest\":\""+identity+"\",\"offset\":\"64\",\"bytes\":\""+std::string(bytes)+"\"}}}";};
+ for(const auto* raw:{R"({"jsonrpc":"2.0","id":"x/select","result":{}})",
+     R"({"jsonrpc":"2.0","id":"x/event","result":{}})",
+     R"({"jsonrpc":"2.0","id":"x/event","result":{"original":"forged"}})",
+     R"({"jsonrpc":"2.0","id":"x/event","result":{"original":{"block":"bad"}}})"}){
+  rejects([&]{commit.accept(raw);});CHECK(commit.request()==event);
+ }
+ for(const auto* bytes:{"0","-1","18446744073709551615","18446744073709551616","1.0"}){
+  rejects([&]{commit.accept(response(bytes));});CHECK(commit.request()==event);
+ }
+ commit.accept(response("128"));
+ CHECK(commit.stage()==AgentEventCommit::Stage::complete&&commit.reply()==response("128"));
+ rejects([&]{(void)commit.request();});rejects([&]{commit.accept(response("128"));});
+}
 int main(int argc,char** argv){
  swegca::vrs::MemoryBudget memory(8<<20);
+ if(argc==1){commit_checks(memory);CHECK(memory.used()==0);}
  const std::string a=R"({"id":1,"method":"turn/start","params":{"threadId":"a","input":[{"type":"text","text":"입력"}]}})";
  const std::string b=R"({"id":1,"method":"item/commandExecution/requestApproval","params":{"threadId":"b","unknown":true}})";
  const std::string reply=R"({"id":1,"result":{"original":"reply"}})";
@@ -20,12 +60,20 @@ int main(int argc,char** argv){
   ::close(client[0]);::close(server[0]);
   SocketFrames client_out(client[1],65536,memory),server_out(server[1],65536,memory);
   if(argc==2&&std::string_view(argv[1])=="--exchange"){
+   std::string identities;CHECK(bool(std::getline(std::cin,identities)));
+   const auto bindings=parse_json(identities,memory);unsigned rpc_serial=0;
    const auto deliver=[&](std::string_view raw,RpcSender sender){
     send_frame(sender==RpcSender::client?client[1]:server[1],raw);
     unsigned calls=0;
     const auto ingest=[&](const AppServerWire::Delivery& plan){
      ++calls;std::cout<<"{\"session\":"<<quote_json(plan.event().session(),memory)<<",\"parameters\":"<<pump.parameters(plan,7,0)<<"}\n"<<std::flush;
-     std::string ack;if(!std::getline(std::cin,ack)||ack!="recorded")throw std::runtime_error("ingestion not confirmed");return true;
+     AgentEventCommit commit(bindings.at(plan.event().session()).string(),pump.parameters(plan,7,0),std::to_string(++rpc_serial),memory);
+     while(commit.stage()!=AgentEventCommit::Stage::complete){
+      std::cout<<commit.request()<<"\n"<<std::flush;
+      std::string ack;if(!std::getline(std::cin,ack))throw std::runtime_error("ingestion not confirmed");
+      commit.accept(ack);
+     }
+     return true;
     };
     State state=State::idle;for(unsigned n=0;n<16&&state!=State::forwarded;++n)state=pump.step(sender,42,ingest);
     CHECK(state==State::forwarded&&calls==1);

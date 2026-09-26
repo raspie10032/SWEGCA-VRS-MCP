@@ -531,15 +531,28 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
         check(attached['nextSequence']=='0');wire_ids[session]=attached['identity']
     owner=subprocess.Popen([str(exe.parent/'app-server-pump-tests'),'--exchange'],
         stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,bufsize=0)
+    owner.stdin.write(json.dumps(wire_ids).encode()+b'\n');owner.stdin.flush()
     for index,session in enumerate(('a','b','a','b')):
         check(bool(select.select([owner.stdout],[],[],10)[0]))
         plan=json.loads(owner.stdout.readline());check(plan['session']==session)
         params=plan['parameters'];check(params['sequence']==('0' if index<2 else '1'))
         if index>=2:check(params['requestSequence']=='0')
         else:check('requestSequence' not in params)
-        check(c.call('swegca/select',{'identity':wire_ids[session]})['result']=={})
-        check('original' in c.call('swegca/agent/event',params)['result'])
-        owner.stdin.write(b'recorded\n');owner.stdin.flush()
+        for method in ('swegca/select','swegca/agent/event'):
+            check(bool(select.select([owner.stdout],[],[],10)[0]))
+            request=json.loads(owner.stdout.readline());check(request['method']==method)
+            if method=='swegca/select':check(request['params']=={'identity':wire_ids[session]})
+            else:check(request['params']==params)
+            response=c.raw(json.dumps(request).encode()+b'\n')
+            check(response['id']==request['id'] and 'result' in response)
+            if method=='swegca/agent/event' and index==0:
+                # Simulate a lost acknowledgement, preserving the exact RPC.
+                first=response
+                response=c.raw(json.dumps(request).encode()+b'\n')
+                check(response['result']['duplicate'] is True)
+                check(response['id']==request['id'] and
+                      response['result']['original']==first['result']['original'])
+            owner.stdin.write(json.dumps(response).encode()+b'\n');owner.stdin.flush()
         check(bool(select.select([owner.stdout],[],[],10)[0]))
         forwarded=json.loads(owner.stdout.readline());check(forwarded['forwarded']==params['native'])
     owner.stdin.close();check(owner.wait(timeout=10)==0)

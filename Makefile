@@ -169,7 +169,7 @@ $(BUILD)/socket-frames-tests: tests/socket_frames_tests.cpp cpp/transport/socket
 
 check: $(BUILD)/socket-frames-tests
 
-$(BUILD)/app-server-pump-tests: tests/app_server_pump_tests.cpp cpp/transport/app_server_pump.hpp cpp/transport/socket_frames.hpp cpp/transport/app_server_wire.hpp cpp/transport/app_server_requests.hpp cpp/transport/agent_event.hpp cpp/transport/json.cpp cpp/transport/json.hpp $(CORE_HEADERS) $(CORE_SOURCES) | $(BUILD)
+$(BUILD)/app-server-pump-tests: tests/app_server_pump_tests.cpp cpp/transport/agent_event_commit.hpp cpp/transport/app_server_pump.hpp cpp/transport/socket_frames.hpp cpp/transport/app_server_wire.hpp cpp/transport/app_server_requests.hpp cpp/transport/agent_event.hpp cpp/transport/json.cpp cpp/transport/json.hpp $(CORE_HEADERS) $(CORE_SOURCES) | $(BUILD)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< cpp/transport/json.cpp $(CORE_SOURCES) -o $@
 
 check: $(BUILD)/app-server-pump-tests

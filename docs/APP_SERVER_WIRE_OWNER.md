@@ -153,3 +153,37 @@ injected exhausted allocation budget after successful ingestion proves that
 request-table recovery retries without invoking ingestion a second time.
 These counts cover isolated sockets and the actual VRS subprocess, not a live
 desktop installation or the input-to-Recall latency requirement.
+
+## Matching actual VRS acknowledgements
+
+`AgentEventCommit` owns a serialized select/event RPC transaction on an already
+initialized, exclusively owned VRS connection. The process owner supplies the
+authenticated session identity, the wire delivery's parameters, and a unique
+RPC ID namespace for that connection. Selection must be acknowledged before
+the event request is exposed. IDs for the two stages are distinct strings.
+The owner must not interleave session-selection mutations from other clients
+between them. This is transport plumbing; all experience judgment remains in
+the existing SWEGCA-backed VRS endpoint.
+
+Responses must use JSON-RPC 2.0, match the exact expected string ID, contain a
+result object and contain neither a method nor an error. The selection result
+must be empty. The event result must contain a well-formed original location
+(block/digest, offset and positive length with no extent overflow). Invalid
+or error responses leave the pending request unchanged. A full event response,
+including any Recall receipt, is retained before completion is exposed. Its
+storage allocation must succeed before the pump may acknowledge ingestion.
+This authenticates no endpoint by itself and proves no downstream execution;
+it relies on the process owner's trusted, exclusive VRS connection.
+
+The socket/process fixture now exchanges the generated RPCs and actual endpoint
+responses, replacing its former `recorded` acknowledgement string. It also
+discards one successful event reply, retransmits the same request, and checks
+that VRS returns the same original with `duplicate: true` before the pump
+forwards the native frame once. Response matching rejects stale IDs, error
+replies, incorrect result types and malformed/overflowing locations. Requests
+are encoded as single JSON lines while preserving native string contents.
+The production process owner, initialization, endpoint attachment and durable
+outstanding-request reconstruction are still not installed.
+
+Verification after this integration: 87 combined pump/acknowledgement checks and
+2,100 stdio subprocess checks pass, with builds and runs restricted to CPUs 6,7.
