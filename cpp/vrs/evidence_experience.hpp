@@ -14,6 +14,7 @@ public:
     [[nodiscard]] const architecture::kernel::EvidenceObservation& value() const noexcept { return value_; }
     [[nodiscard]] const architecture::DigestBytes& cue() const noexcept { return cue_; }
 private:
+    friend class EvidenceReader;
     friend ExperienceEvidence record_evidence(ExperienceBlock&,
         const architecture::kernel::EvidenceRules&, const OriginalExperienceView&,
         const architecture::kernel::EvidenceObservation&);
@@ -41,6 +42,36 @@ private:
 // observation and exact cue. Selected Replay still uses the full read API.
 [[nodiscard]] ExperienceEvidence read_evidence(const architecture::kernel::EvidenceRules&,
     const ExperienceBlock&, const ExperienceLocation&, std::uint64_t max_read_bytes);
+
+// A verified byte range of one original payload, not a completed Replay receipt
+// or an evidence verdict. The entire enclosing record is checked before return.
+// The caller's memory budget must outlive this object.
+class EvidencePayloadSlice final {
+public:
+    EvidencePayloadSlice(const EvidencePayloadSlice&) = delete;
+    EvidencePayloadSlice& operator=(const EvidencePayloadSlice&) = delete;
+    EvidencePayloadSlice(EvidencePayloadSlice&&) noexcept = default;
+    [[nodiscard]] const ExperienceEvidence& evidence() const noexcept { return evidence_; }
+    [[nodiscard]] std::uint64_t offset() const noexcept { return offset_; }
+    [[nodiscard]] std::uint64_t total_bytes() const noexcept { return total_; }
+    [[nodiscard]] std::span<const std::byte> content() const noexcept { return content_; }
+private:
+    friend EvidencePayloadSlice read_evidence_slice(const architecture::kernel::EvidenceRules&,
+        const ExperienceBlock&, const ExperienceLocation&, std::uint64_t,
+        std::uint64_t, std::uint64_t, MemoryBudget&);
+    EvidencePayloadSlice(ExperienceEvidence evidence, std::uint64_t offset,
+        std::uint64_t total, std::pmr::vector<std::byte> content)
+        : evidence_(std::move(evidence)), offset_(offset), total_(total), content_(std::move(content)) {}
+    ExperienceEvidence evidence_;
+    std::uint64_t offset_, total_;
+    std::pmr::vector<std::byte> content_;
+};
+
+// Strict range bounds: offset + count must fit the raw payload. Retains only
+// count bytes and uses fixed scratch space; still reads/hashes the whole record.
+[[nodiscard]] EvidencePayloadSlice read_evidence_slice(const architecture::kernel::EvidenceRules&,
+    const ExperienceBlock&, const ExperienceLocation&, std::uint64_t max_read_bytes,
+    std::uint64_t offset, std::uint64_t count, MemoryBudget&);
 
 // Zero-copy access to the exact original media type/payload. The StoredExperience
 // must outlive the view. No evidence verdict is inferred by this read.

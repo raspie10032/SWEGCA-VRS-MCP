@@ -109,6 +109,7 @@ public:
 
 private:
     ExperienceBlock() = default;
+    friend class EvidenceReader;
     friend ExperienceEvidence record_evidence(ExperienceBlock&,
         const architecture::kernel::EvidenceRules&, const OriginalExperienceView&,
         const architecture::kernel::EvidenceObservation&);

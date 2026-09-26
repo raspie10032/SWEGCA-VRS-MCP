@@ -108,28 +108,77 @@ ExperienceEvidence decode_evidence(const EvidenceRules& rules, const StoredExper
     return ExperienceEvidence(stored.location(), value, architecture::input_cue(original.media_type, original.content));
 }
 
+// This decoder alone sees provisional chunks. No callback or byte range is
+// exposed until the block trailer, address digest and core admission all pass.
+class EvidenceReader final {
+public:
+    static ExperienceEvidence read(const EvidenceRules& rules, const ExperienceBlock& block,
+        const ExperienceLocation& location, std::uint64_t limit,
+        std::pmr::vector<std::byte>* payload = nullptr, std::uint64_t offset = 0,
+        std::uint64_t count = 0, std::uint64_t* total = nullptr) {
+        struct Decoder {
+            std::array<std::byte,prefix_bytes> prefix;
+            architecture::Sha256 cue;
+            std::pmr::vector<std::byte>* payload;
+            std::uint64_t offset, count, total = 0, payload_begin = 0;
+            bool seen = false;
+        } decoder{{}, {}, payload, offset, count};
+        const auto consume=[](void* opaque, bool media, std::span<const std::byte> data,
+                              std::uint64_t position, std::uint64_t length) {
+            auto& state=*static_cast<Decoder*>(opaque);
+            if(media) {
+                if(length!=format.size() || text(data)!=format.substr(static_cast<std::size_t>(position),data.size()))
+                    throw std::invalid_argument("invalid SWEGCA observation encoding");
+                return;
+            }
+            if(position==0) {
+                validate_encoding(data,length);
+                std::copy_n(data.begin(),prefix_bytes,state.prefix.begin());
+                state.seen=true;
+                const auto media_bytes=get(state.prefix,160);
+                state.total=get(state.prefix,168);
+                state.payload_begin=prefix_bytes+media_bytes;
+                state.cue=architecture::input_cue_prefix(media_bytes);
+                if(state.payload) {
+                    if(state.offset>state.total || state.count>state.total-state.offset ||
+                       state.count>std::numeric_limits<std::size_t>::max())
+                        throw std::invalid_argument("original payload range outside record");
+                    state.payload->resize(static_cast<std::size_t>(state.count));
+                }
+                data=data.subspan(prefix_bytes);
+                position+=prefix_bytes;
+            }
+            state.cue.update(data);
+            if(state.payload && state.count) {
+                const auto first=state.payload_begin+state.offset;
+                const auto begin=std::max(first,position);
+                const auto end=std::min(first+state.count,position+data.size());
+                if(begin<end)
+                    std::copy_n(data.begin()+static_cast<std::size_t>(begin-position),
+                        static_cast<std::size_t>(end-begin),
+                        state.payload->begin()+static_cast<std::size_t>(begin-first));
+            }
+        };
+        const auto observed=block.visit_evidence(location,limit,&decoder,consume);
+        if(!decoder.seen)throw std::invalid_argument("missing SWEGCA observation encoding");
+        const auto value=decode_observation(rules,decoder.prefix,location,observed);
+        if(total)*total=decoder.total;
+        return ExperienceEvidence(location,value,decoder.cue.finish());
+    }
+};
+
 ExperienceEvidence read_evidence(const EvidenceRules& rules,const ExperienceBlock& block,
     const ExperienceLocation& location,std::uint64_t limit) {
-    struct Decoder {std::array<std::byte,prefix_bytes> prefix;architecture::Sha256 cue;bool seen=false;} decoder;
-    const auto consume=[](void* opaque,bool media,std::span<const std::byte> data,std::uint64_t offset,std::uint64_t total){
-        auto& state=*static_cast<Decoder*>(opaque);
-        if(media){
-            if(total!=format.size()||text(data)!=format.substr(static_cast<std::size_t>(offset),data.size()))
-                throw std::invalid_argument("invalid SWEGCA observation encoding");
-            return;
-        }
-        if(offset==0){
-            validate_encoding(data,total);
-            std::copy_n(data.begin(),prefix_bytes,state.prefix.begin());state.seen=true;
-            state.cue=architecture::input_cue_prefix(get(state.prefix,160));
-            data=data.subspan(prefix_bytes);
-        }
-        state.cue.update(data);
-    };
-    const auto observed=block.visit_evidence(location,limit,&decoder,consume);
-    if(!decoder.seen)throw std::invalid_argument("missing SWEGCA observation encoding");
-    const auto value=decode_observation(rules,decoder.prefix,location,observed);
-    return ExperienceEvidence(location,value,decoder.cue.finish());
+    return EvidenceReader::read(rules,block,location,limit);
+}
+
+EvidencePayloadSlice read_evidence_slice(const EvidenceRules& rules,const ExperienceBlock& block,
+    const ExperienceLocation& location,std::uint64_t limit,
+    std::uint64_t offset,std::uint64_t count,MemoryBudget& memory) {
+    std::pmr::vector<std::byte> payload(&memory);
+    std::uint64_t total=0;
+    auto evidence=EvidenceReader::read(rules,block,location,limit,&payload,offset,count,&total);
+    return EvidencePayloadSlice(std::move(evidence),offset,total,std::move(payload));
 }
 
 OriginalExperienceView evidence_payload(const StoredExperience& stored) { return parse_payload(stored); }

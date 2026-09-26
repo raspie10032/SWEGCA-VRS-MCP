@@ -29,6 +29,8 @@ public:
     [[nodiscard]] ExperienceEvidence append_evidence(const architecture::kernel::EvidenceRules& rules,
         const OriginalExperienceView& original, const architecture::kernel::EvidenceObservation& value);
     [[nodiscard]] StoredExperience read(const ExperienceLocation& location, std::uint64_t limit) const;
+    [[nodiscard]] EvidencePayloadSlice read_payload_slice(const architecture::kernel::EvidenceRules&,
+        const ExperienceLocation&, std::uint64_t limit, std::uint64_t offset, std::uint64_t count) const;
     void end();
     void publish_originals();
 

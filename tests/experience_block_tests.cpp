@@ -311,7 +311,8 @@ int main() {
         unsigned index=0;
         for(const auto media_size:{1U,65359U,65360U,65536U,65537U}){
             auto block=ExperienceBlock::create(directory/("stream-"+std::to_string(index++)),identity,8<<20);
-            std::string media(media_size,'m');std::vector<std::byte> payload(2<<20,std::byte{129});
+            std::string media(media_size,'m');std::vector<std::byte> payload(2<<20);
+            for(std::size_t n=0;n<payload.size();++n)payload[n]=std::byte(n%251);
             auto input=first;input.media_type=media;input.content=payload;
             const auto saved=record_evidence(block,rules,input,value);
             const auto stored=block.read(saved.original(),8<<20,full_read_memory);
@@ -323,6 +324,28 @@ int main() {
             CHECK(streamed.value().observed_at==expected.value().observed_at);
             CHECK(streamed.value().producer==expected.value().producer);
             CHECK(streamed.value().outcome==expected.value().outcome);
+            MemoryBudget slice_memory(4096);
+            for(const auto at:{0ULL,1ULL,65535ULL,65536ULL,2093056ULL,2097152ULL}) {
+                const auto count=std::min<std::uint64_t>(4096,payload.size()-at);
+                {
+                    largest_read=0;
+                    auto part=read_evidence_slice(rules,block,saved.original(),8<<20,at,count,slice_memory);
+                    CHECK(part.offset()==at && part.total_bytes()==payload.size());
+                    CHECK(part.evidence().cue()==expected.cue());
+                    CHECK(part.evidence().original()==saved.original());
+                    CHECK(std::ranges::equal(part.content(),std::span(payload).subspan(at,count)));
+                    CHECK(slice_memory.used()<=4096 && largest_read<=65536);
+                }
+                CHECK(slice_memory.used()==0);
+            }
+            expect_throw<std::invalid_argument>([&]{(void)read_evidence_slice(rules,block,saved.original(),8<<20,payload.size()+1,0,slice_memory);});
+            expect_throw<std::invalid_argument>([&]{(void)read_evidence_slice(rules,block,saved.original(),8<<20,1,std::numeric_limits<std::uint64_t>::max(),slice_memory);});
+            expect_throw<std::bad_alloc>([&]{(void)read_evidence_slice(rules,block,saved.original(),8<<20,0,4097,slice_memory);});
+            CHECK(slice_memory.used()==0);
+            reads_left=8;
+            expect_throw<std::system_error>([&]{(void)read_evidence_slice(rules,block,saved.original(),8<<20,0,16,slice_memory);});
+            CHECK(slice_memory.used()==0 && reads_left==-1);
+
             expect_throw<std::invalid_argument>([&]{(void)read_evidence(rules,block,saved.original(),saved.original().bytes-1);});
             reads_left=6;expect_throw<std::system_error>([&]{(void)read_evidence(rules,block,saved.original(),8<<20);});
             CHECK(reads_left==-1);
@@ -333,11 +356,21 @@ int main() {
             file.seekp(static_cast<std::streamoff>(saved.original().offset+saved.original().bytes-49));
             file.put('X');file.flush();CHECK(bool(file));
             expect_throw<std::runtime_error>([&]{(void)read_evidence(rules,block,saved.original(),8<<20);});
+            // The requested first bytes are intact, but corruption outside the
+            // requested range must still reject the entire result and free it.
+            expect_throw<std::runtime_error>([&]{(void)read_evidence_slice(rules,block,saved.original(),8<<20,0,16,slice_memory);});
+            CHECK(slice_memory.used()==0);
+
         }
         auto block=ExperienceBlock::create(directory/"stream-empty",identity,4096);
         auto empty=first;empty.content={};
         const auto saved=record_evidence(block,rules,empty,value);
         CHECK(read_evidence(rules,block,saved.original(),4096).cue()==saved.cue());
+        MemoryBudget empty_memory(1);
+        const auto empty_slice=read_evidence_slice(rules,block,saved.original(),4096,0,0,empty_memory);
+        CHECK(empty_slice.content().empty() && empty_slice.total_bytes()==0 && empty_memory.used()==0);
+        expect_throw<std::invalid_argument>([&]{(void)read_evidence_slice(rules,block,saved.original(),4096,0,1,empty_memory);});
+
     }
     expect_throw<std::invalid_argument>([&] { (void)ExperienceBlock::create(directory / "zero.block", {}, capacity); });
     CHECK(!fs::exists(directory / "zero.block"));

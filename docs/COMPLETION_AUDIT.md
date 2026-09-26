@@ -12,7 +12,7 @@
 | 실제 셔플값 → 승인/거절/기권 → 동일 연결 강화/약화/유지 | 실제 봉인된 경험의 셔플 및 새 집계·검증. `Connection::prepare_refinement`, 원본 집계 대조 및 고정 digest 벡터 | 일반 세션 전체가 실제로 들어오는 호스트 및 전체 그래프 구성이 연결돼야 함 |
 | 사용자 입력 즉시 Déjà vu→Recall | Runtime::input→ExperienceRouter::input→recall_cue. 키는 모든 원문 바이트와 media로 계산. 입력 앞에 작업 예약·병합 없음 | 실제 클라이언트의 모델 실행 전 경로는 미설치. C++ 호출부 측정을 앱 입력 측정으로 대체할 수 없음 |
 | 임시 우선, 부재 시 Main | `familiarity_key`, `recall_scope`와 임시/Main 조회. 정확한 원문 키 및 직전 성공 Replay의 연결 키 | region/portal/shared-experience 기반 전체 탐색 구성은 없음 |
-| 선택 원경험만 Replay | 선택 주소·계보·체크섬 검증, 한 원경험 읽기 | 선택 원문 전체를 결과 버퍼로 할당한다. 큰 원문을 최소 메모리로 반환하는 경로는 남아 있음 |
+| 선택 원경험만 Replay | 선택 주소·계보·체크섬 검증, 한 원경험 읽기 | 저장 계층에는 전체 검증 후 요청 구간만 반환하는 제한 메모리 API를 추가했다(`BOUNDED_PAYLOAD_READ.md`). Runtime/MCP Replay는 아직 전체 버퍼이며 연결은 남아 있음 |
 | 현재 명제와 맞으면 통과, 다르면 Re-evidence | 실제 Replay 객체에 기록된 관측 경계를 묶고 새 같은 연결 관측을 코어로 재검증. `compare_replay_evidence` | 일반 자연어 명제의 의미 대조·자동 재검증 진입은 없음. 현재 호스트/도구가 `re_evidence`를 명시 호출함 |
 | 세션 전체 내용 실시간 임시 VRS 반영 | receive/retain/observe가 저장·셔플·코어 검증을 수행. `swegca/retain`은 현재 Recall/Replay 유지 | 실제 앱의 모든 사용자·모델·도구·기타 이벤트 연결이 없음. 테스트 이벤트 source 이름은 실수집 증거가 아님 |
 | 명시적 종료 뒤에만 Main 병합 | 종료·발행 원천만 예약. 작업 중 캐시 보호, 준비 워커, 소유자 발행·복구. `schedule_work`, `poll_work` | 실제 호스트 자동 스케줄러 및 명시적 종료 입력 연결. Codex SessionEnd만으로 명시적 종료를 판별할 수 없음 |

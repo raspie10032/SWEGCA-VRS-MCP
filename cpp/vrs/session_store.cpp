@@ -275,6 +275,14 @@ StoredExperience SessionStore::read(const ExperienceLocation& location, std::uin
     return block.read(location, limit, memory_);
 }
 
+EvidencePayloadSlice SessionStore::read_payload_slice(const architecture::kernel::EvidenceRules& rules,
+    const ExperienceLocation& location,std::uint64_t limit,std::uint64_t offset,std::uint64_t count) const {
+    const auto found=blocks_.find(location.block);
+    if(found==blocks_.end())throw std::invalid_argument("experience block does not belong to this session");
+    auto block=ExperienceBlock::open_reader(block_path(found->second.index),storage_);
+    return read_evidence_slice(rules,block,location,limit,offset,count,memory_);
+}
+
 void SessionStore::recorded(const ExperienceLocation& location) noexcept {
     auto& extent = blocks_.find(location.block)->second.extent;
     extent.content_digest = extend_experience_digest(extent.content_digest, location);

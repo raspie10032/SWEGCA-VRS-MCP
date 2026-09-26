@@ -129,6 +129,11 @@ int main() {
                     {axis * 12 + group, 0, "session-b", "experiment", "text/plain", bytes(raw)}, value);
                 const auto stored = session.read(saved.original(), 4096);
                 CHECK(text(evidence_payload(stored).content) == raw);
+                const auto part=session.read_payload_slice(rules,saved.original(),4096,2,7);
+                CHECK(text(part.content())==raw.substr(2,7));
+                CHECK(part.evidence().original()==saved.original() && part.total_bytes()==raw.size());
+                CHECK(session.phase()==SessionPhase::active);
+                expect_throw<std::invalid_argument>([&]{(void)main.read_payload_slice(rules,saved.original(),4096,0,1);});
                 connection.append(decode_evidence(rules, stored));
             }
         const auto result = connection.refine(20260926, 0);
