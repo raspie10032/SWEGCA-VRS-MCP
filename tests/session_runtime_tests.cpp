@@ -11,6 +11,8 @@ using namespace swegca::architecture;
 using namespace swegca::architecture::kernel;
 using namespace swegca::vrs;
 namespace fs = std::filesystem;
+static_assert(!std::is_copy_constructible_v<ExperienceRouter>);
+static_assert(!std::is_move_constructible_v<ExperienceRouter>);
 static unsigned checks = 0;
 static std::uint64_t reads = 0, writes = 0;
 static bool fail_read = false;
@@ -122,6 +124,21 @@ int main() {
         auto natural_local=router.input("application/octet-stream",std::as_bytes(std::span(payload)));
         CHECK(natural_local.temporary() && natural_local.matches().size()==1);
         CHECK(router.replay(natural_local,0).location()==local.original);
+        {
+            std::optional<ExperienceRouter> reused;reused.emplace(live,memory);
+            const auto* address=&*reused;
+            auto old_receipt=reused->input("application/octet-stream",std::as_bytes(std::span(payload)));
+            auto old_replay=reused->replay(old_receipt,0);
+            reused.reset();reused.emplace(live,memory);
+            CHECK(&*reused==address);
+            const auto before_reads=reads,before_writes=writes;
+            throws<std::invalid_argument>([&]{(void)reused->replay(old_receipt,0);});
+            throws<std::invalid_argument>([&]{(void)reused->re_evidence(old_replay,7,0);});
+            CHECK(reads==before_reads&&writes==before_writes);
+            auto current=reused->input("application/octet-stream",std::as_bytes(std::span(payload)));
+            CHECK(reused->replay(current,0).location()==local.original);
+        }
+
         (void)observe(live,"live",10,2,EvidenceOutcome::support);
         throws<std::logic_error>([&] { (void)router.replay(preferred,0,0); });
         CHECK(router.replay(natural_local,0).location()==local.original);

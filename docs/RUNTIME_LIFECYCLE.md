@@ -54,3 +54,10 @@ Runtime 파괴나 idle은 종료 이벤트가 아니다. 명시적으로 종료�
 
 클라이언트 훅/MCP 이벤트 수집, 비동기 작업 스케줄러, 대규모 분할·병렬 처리와 실제
 입력→Recall 1ms 및 전체 자원 조건은 여전히 남아 있다.
+
+Natural-input receipts carry a shared issuing lifetime identity. Ending a
+session and constructing its successor at the same Active/router address cannot
+make an old receipt valid again. Replay and Re-evidence reject the old identity
+before consulting remembered source pointers. Pinned metadata may remain
+readable until its receipt is released, but does not authorize evaluation in the
+new session. See COMPACT_RECALL_RECEIPTS.md for allocation/lifetime details.

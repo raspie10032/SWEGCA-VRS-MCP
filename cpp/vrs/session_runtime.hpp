@@ -154,7 +154,7 @@ private:
         return {context.recalled, address.original_index, context.current_observations, address.experience->original()};
     }
     architecture::DigestBytes cue_{};
-    const ExperienceRouter* issuer_ = nullptr;
+    std::shared_ptr<const std::byte> issuer_;
     bool temporary_ = false;
     architecture::kernel::FamiliarityKey key_kind_ = architecture::kernel::FamiliarityKey::missing;
     std::size_t count_ = 0;
@@ -174,12 +174,12 @@ public:
     [[nodiscard]] const architecture::DigestBytes& input_cue() const noexcept { return input_cue_; }
 private:
     friend class ExperienceRouter;
-    ReplayedInput(StoredExperience original, InputMatch match, const ExperienceRouter* issuer,
+    ReplayedInput(StoredExperience original, InputMatch match, std::shared_ptr<const std::byte> issuer,
         architecture::DigestBytes cue)
-        : original_(std::move(original)), match_(match), issuer_(issuer), input_cue_(cue) {}
+        : original_(std::move(original)), match_(match), issuer_(std::move(issuer)), input_cue_(cue) {}
     StoredExperience original_;
     InputMatch match_;
-    const ExperienceRouter* issuer_;
+    std::shared_ptr<const std::byte> issuer_;
     architecture::DigestBytes input_cue_;
 };
 
@@ -228,6 +228,10 @@ private:
 class ExperienceRouter final {
 public:
     ExperienceRouter(SessionRuntime& temporary, MemoryBudget& memory);
+    ExperienceRouter(const ExperienceRouter&) = delete;
+    ExperienceRouter& operator=(const ExperienceRouter&) = delete;
+    ExperienceRouter(ExperienceRouter&&) = delete;
+    ExperienceRouter& operator=(ExperienceRouter&&) = delete;
     void mount_main(const SessionRuntime& session);
     // Atomically refresh the query index of one durable merged Main. Sources
     // need not retain their SessionRuntime caches. Graph/store owners outlive us.
@@ -248,6 +252,9 @@ public:
 private:
     SessionRuntime& temporary_;
     MemoryBudget& memory_;
+    // A retained receipt keeps this allocation alive, so reusing a router's
+    // object address cannot reuse its issuing identity.
+    std::shared_ptr<const std::byte> issuer_;
     std::pmr::vector<const SessionRuntime*> mounted_;
     std::pmr::map<architecture::DigestBytes, std::pmr::vector<RecallMatch>> main_;
     struct MainCue { const SessionRuntime* session; CueReference reference; };

@@ -106,7 +106,9 @@ RecallMatch RecallCandidates::at(std::size_t index) const {
     return (temporary_.session || temporary_.main_graph) ? temporary_ : main_[index];
 }
 ExperienceRouter::ExperienceRouter(SessionRuntime& temporary, MemoryBudget& memory)
-    : temporary_(temporary), memory_(memory), mounted_(&memory), main_(&memory), main_cues_(&memory), merged_cues_(&memory) {}
+    : temporary_(temporary), memory_(memory),
+      issuer_(std::allocate_shared<std::byte>(std::pmr::polymorphic_allocator<std::byte>(&memory))),
+      mounted_(&memory), main_(&memory), main_cues_(&memory), merged_cues_(&memory) {}
 void ExperienceRouter::mount_main(const SessionRuntime& session) {
     if (merged_main_) throw std::logic_error("cannot mix merged Main with session candidates");
     if (!main_session_readable(session.phase(), session.usable()))
@@ -247,7 +249,7 @@ InputRecall ExperienceRouter::recall_cue(const DigestBytes& cue, RecallScope sco
     // Recall begins here, before allocating result addresses. No original
     // payloads, connection recovery, storage writes or shuffles run here.
     if (scope == RecallScope::unavailable) throw std::logic_error("temporary experience unavailable");
-    InputRecall result(memory_); result.cue_ = cue; result.key_kind_ = kind; result.issuer_ = this;
+    InputRecall result(memory_); result.cue_ = cue; result.key_kind_ = kind; result.issuer_ = issuer_;
     result.temporary_ = scope == RecallScope::temporary;
     if (kind == FamiliarityKey::missing) return result;
     if (kind == FamiliarityKey::continuation) {
@@ -291,14 +293,14 @@ InputRecall ExperienceRouter::recall_cue(const DigestBytes& cue, RecallScope sco
     return result;
 }
 ReplayedInput ExperienceRouter::replay(const InputRecall& recalled, std::size_t candidate) const {
-    if (recalled.issuer_ != this) throw std::invalid_argument("Recall belongs to a different input route");
+    if (recalled.issuer_ != issuer_) throw std::invalid_argument("Recall belongs to a different input route");
     if (candidate >= recalled.matches().size()) throw std::out_of_range("input recall candidate");
     const auto selected = recalled.matches()[candidate];
     if (selected.recalled.main_graph) {
         RecallCandidates bound; bound.temporary_ = selected.recalled;
         auto original = replay(bound, 0, selected.original_index);
         if (original.location() != selected.original) throw std::logic_error("Main Replay original changed");
-        return ReplayedInput(std::move(original), selected, this, recalled.cue_);
+        return ReplayedInput(std::move(original), selected, issuer_, recalled.cue_);
     }
     const auto& remembered = selected.recalled;
     const auto* current = remembered.session->find(remembered.recalled_head.identity);
@@ -318,11 +320,11 @@ ReplayedInput ExperienceRouter::replay(const InputRecall& recalled, std::size_t 
     auto original = remembered.session->replay(remembered.recalled_head.identity, selected.original_index);
     if (original.location() != selected.original) throw std::logic_error("Replay original provenance mismatch");
     continuation_ = remembered.recalled_head.identity;
-    return ReplayedInput(std::move(original), selected, this, recalled.cue_);
+    return ReplayedInput(std::move(original), selected, issuer_, recalled.cue_);
 }
 ReEvidenceResult ExperienceRouter::re_evidence(const ReplayedInput& replayed,
     std::uint64_t seed, std::uint64_t step) const {
-    if (replayed.issuer_ != this) throw std::invalid_argument("Replay belongs to a different input route");
+    if (replayed.issuer_ != issuer_) throw std::invalid_argument("Replay belongs to a different input route");
     const auto& remembered = replayed.match_.recalled;
     const auto identity = remembered.recalled_head.identity;
     const auto* current = temporary_.find(identity);

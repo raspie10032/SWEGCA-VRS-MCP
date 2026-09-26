@@ -160,5 +160,20 @@ int main(){
   throws<std::runtime_error>([&]{(void)stored_bytes(budget_root,memory);});
   fs::remove(budget_root/"unsafe-link");
  }
+ CHECK(memory.used()==0);
+ {
+  const auto path=root/"expired-owner";fs::create_directory(path);
+  auto host=Runtime::create(path,config,memory);host.start_session(id(90),"old");
+  const auto retained=host.retain({0,0,"old","user","text/plain",content},7,0).original;
+  auto receipt=host.input("text/plain",content);auto replayed=host.replay(receipt,0);
+  CHECK(replayed.location()==retained);
+  host.end_session();host.start_session(id(91),"new");
+  const auto r=reads,w=writes;
+  throws<std::invalid_argument>([&]{(void)host.replay(receipt,0);});
+  throws<std::invalid_argument>([&]{(void)host.re_evidence(replayed,7,0);});
+  CHECK(reads==r&&writes==w);
+  CHECK(receipt.matches()[0].original==retained);
+  host.end_session();
+ }
  CHECK(memory.used()==0);fs::remove_all(root);std::printf("runtime lifecycle tests: %u checks passed\n",checks);
 }

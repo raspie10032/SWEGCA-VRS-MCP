@@ -114,3 +114,35 @@ InputMatch values). Continuation remains 264 bytes in that fixture. This counts
 new receipt allocations, excluding already stored or subsequently retained
 segments. Connection: 14981 checks; session runtime: 497; persistent Main: 219
 in both native and UBSan trap builds; native MCP subprocess: 918 checks.
+
+## Issuer lifetime across session replacement
+
+Natural-input Recall and Replay receipts now retain an opaque shared issuing
+identity allocated once when their ExperienceRouter is constructed. Comparing
+router object addresses was insufficient: Runtime reuses the same optional
+Active storage after ending a session, and another router can be reconstructed
+at exactly the same address. A retained receipt keeps its old identity allocation
+alive, preventing its reuse by a new router. The router cannot be copied/moved
+into another issuing owner.
+
+Replay and Re-evidence compare that identity before consulting remembered session
+or connection pointers. A receipt from a destroyed/replaced route is rejected
+without reading disk or performing evidence evaluation. This is a receipt
+ownership check; successful receipts still pass the same core lineage/admission
+and Replay/Re-evidence rules. It introduces no alternate evidence judgment.
+
+Identity allocation uses the VRS MemoryBudget once per router, outside input
+processing. Receipts share it without per-input identity allocation. The budget
+must outlive them, as it already must for pinned experience and stored Replay
+buffers. No global counter, persistent identity format, random source, clock,
+LLM or external package is involved.
+
+Regression tests reconstruct a router at precisely the same address with the
+same still-live session and verify both old Recall and old Replay rejection,
+zero I/O on rejection, and successful new Recall/Replay. Runtime tests end the
+actual old session, start another in the same owner, then reject old Replay and
+Re-evidence before accessing the destroyed source. Final accounting returns to
+zero after all receipts and owners are destroyed.
+
+Native verification after issuer lifetime binding: runtime lifecycle 107, session
+runtime 502, persistent Main 219, and stdio subprocess 918 checks passed.
