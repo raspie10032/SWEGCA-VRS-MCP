@@ -33,7 +33,7 @@ SessionRuntime::Slot::~Slot() {
     memory.deallocate(connection, sizeof(PersistentConnection), alignof(PersistentConnection));
 }
 SessionRuntime::SessionRuntime(SessionStore& store, MemoryBudget& memory, std::uint64_t limit, std::uint32_t workers)
-    : store_(store), memory_(memory), read_limit_(limit), catalog_(store, memory, limit), connections_(&memory), cues_(&memory) {
+    : store_(store), memory_(memory), read_limit_(limit), catalog_(store, memory, limit), connections_(&memory), cues_(&memory),contexts_(&memory) {
     if (!workers) throw std::invalid_argument("session recovery worker count must be positive");
     struct Task { Slot* slot; ExperienceLocation head; };
     std::pmr::vector<Task> tasks(&memory_);tasks.reserve(catalog_.heads().size());
@@ -60,8 +60,10 @@ SessionRuntime::SessionRuntime(SessionStore& store, MemoryBudget& memory, std::u
     // complete serial core replay. Workers never mutate the shared cue index.
     for (const auto& [identity, slot] : connections_) {
         const auto experiences = slot.connection->state().experiences();
-        for (std::size_t i=0; i<experiences.size(); ++i)
+        for (std::size_t i=0; i<experiences.size(); ++i){
             cues_.try_emplace(experiences[i].cue()).first->second.push_back({identity, i});
+            contexts_.try_emplace(experiences[i].value().context).first->second.push_back({identity,i});
+        }
     }
 }
 
@@ -85,6 +87,8 @@ RecordedRefinement SessionRuntime::observe(const DigestBytes& identity, const Or
     const auto cue = input_key ? *input_key : input_cue(original.media_type, original.content);
     auto& references = cues_.try_emplace(cue).first->second;
     references.reserve(references.size() + 1);
+    auto& contexts=contexts_.try_emplace(observation.context).first->second;
+    contexts.reserve(contexts.size()+1);
     const auto index = connection.state().experiences().size();
     try {
         const auto saved = store_.append_evidence(connection.rules(), original, observation, input_key);
@@ -93,6 +97,11 @@ RecordedRefinement SessionRuntime::observe(const DigestBytes& identity, const Or
         const HeadUpdate update{&connection, expected};
         catalog_.publish(std::span(&update, 1));
         references.push_back({identity, index});
+        const CueReference contextual{identity,index};
+        const auto position=std::lower_bound(contexts.begin(),contexts.end(),contextual,[](const CueReference& a,const CueReference& b){
+            return a.connection<b.connection||(a.connection==b.connection&&a.original_index<b.original_index);
+        });
+        contexts.insert(position,contextual);
         return {saved.original(), std::move(report)};
     } catch (...) { usable_ = false; throw; }
 }
@@ -305,8 +314,11 @@ InputRecall ExperienceRouter::input(std::string_view media, std::span<const std:
     if (!temporary_.usable()) return recall_cue(cue, RecallScope::unavailable, FamiliarityKey::missing);
     const auto found = temporary_.cues_.find(cue);
     const bool present = found != temporary_.cues_.end() && !found->second.empty();
-    const auto local_kind = familiarity_key(present,
-        !present && continuation_ && temporary_.find(*continuation_) != nullptr);
+    const bool continued=!present&&continuation_&&temporary_.find(*continuation_)!=nullptr;
+    const auto contextual=!present&&!continued&&continued_context_
+        ?temporary_.contexts_.find(*continued_context_):temporary_.contexts_.end();
+    const auto local_kind = familiarity_key(present,continued,
+        contextual!=temporary_.contexts_.end()&&!contextual->second.empty());
     const auto scope = recall_scope(true, local_kind != FamiliarityKey::missing);
     if (scope == RecallScope::temporary) return recall_cue(cue, scope, local_kind);
     require_main_current();
@@ -352,7 +364,9 @@ InputRecall ExperienceRouter::recall_cue(const DigestBytes& cue, RecallScope sco
     };
     if (scope == RecallScope::temporary) {
         result.temporary_ = true;
-        for (const auto& reference : temporary_.cues_.find(cue)->second) append(temporary_, reference);
+        const auto& references=kind==FamiliarityKey::context
+            ?temporary_.contexts_.at(*continued_context_):temporary_.cues_.at(cue);
+        for (const auto& reference : references) append(temporary_, reference);
     } else if (merged_main_) {
         const auto found = merged_cues_.find(cue);
         if (found != merged_cues_.end())
@@ -422,7 +436,11 @@ ReplayedInput ExperienceRouter::replay(const InputRecall& recalled,std::size_t c
         ? merged_main_->graph().replay(identity,selected.original_index)
         : selected.recalled.session->replay(identity,selected.original_index);
     if(original.location()!=selected.original)throw std::logic_error("Replay original provenance mismatch");
+    const auto& experience=selected.recalled.main_graph
+        ?merged_main_->graph().find(identity)->experiences()[selected.original_index]
+        :selected.recalled.connection->state().experiences()[selected.original_index];
     continuation_=identity;
+    continued_context_=experience.value().context;
     return ReplayedInput(std::move(original),selected,issuer_,recalled.cue_);
 }
 EvidencePayloadSlice ExperienceRouter::read_payload_slice(const InputRecall& recalled,std::size_t candidate,

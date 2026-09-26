@@ -72,6 +72,8 @@ private:
     ConnectionCatalog catalog_;
     std::pmr::map<architecture::DigestBytes, Slot> connections_;
     std::pmr::map<architecture::DigestBytes, std::pmr::vector<CueReference>> cues_;
+    // Derived only from sealed observations, not similarity or inferred truth.
+    std::pmr::map<architecture::DigestBytes, std::pmr::vector<CueReference>> contexts_;
     bool usable_ = true;
 };
 
@@ -286,6 +288,7 @@ private:
     // Main-owned dialogue continuity, updated only after a successful selected
     // Replay. It holds an experience key, never copied dialogue text or a verdict.
     mutable std::optional<architecture::DigestBytes> continuation_;
+    mutable std::optional<architecture::DigestBytes> continued_context_;
     [[nodiscard]] InputRecall recall_cue(const architecture::DigestBytes& cue,
         architecture::kernel::RecallScope scope, architecture::kernel::FamiliarityKey kind) const;
 };

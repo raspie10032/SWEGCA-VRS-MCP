@@ -13,6 +13,10 @@ using namespace swegca::vrs;
 namespace fs = std::filesystem;
 static_assert(!std::is_copy_constructible_v<ExperienceRouter>);
 static_assert(!std::is_move_constructible_v<ExperienceRouter>);
+static_assert(familiarity_key(true,true,true)==FamiliarityKey::exact);
+static_assert(familiarity_key(false,true,true)==FamiliarityKey::continuation);
+static_assert(familiarity_key(false,false,true)==FamiliarityKey::context);
+static_assert(familiarity_key(false,false,false)==FamiliarityKey::missing);
 static unsigned checks = 0;
 static std::uint64_t reads = 0, writes = 0;
 static bool fail_read = false;
@@ -281,6 +285,58 @@ int main() {
             ExperienceRouter other(current,memory);
             throws<std::invalid_argument>([&] { (void)other.replay(next,0); });
             throws<std::invalid_argument>([&] { (void)other.re_evidence(next_replay,93,100); });
+        }
+    }
+    CHECK(memory.used()==0);
+    {
+        auto prior_store=SessionStore::create(root,id(120),"context-prior",65536,memory);
+        SessionRuntime prior(prior_store,memory,8192);prior.define_connection(id(121),1,policy);
+        const std::string remembered="remembered",unseen="follow-on",nearby="related",exact="exact";
+        const auto record=[&](SessionRuntime& target,unsigned connection,unsigned context,std::string_view text,std::uint64_t sequence){
+            EvidenceObservation value;value.hypothesis=id(connection);value.context=id(context);
+            value.source=id(200);value.producer=id(201);
+            const std::string_view session=connection==121?"context-prior":"context-live";
+            return target.observe(id(connection),{sequence,0,session,"experiment","text/plain",std::as_bytes(std::span(text))},value,7,0).original;
+        };
+        const auto old=record(prior,121,123,remembered,0);prior.end();prior.publish_originals();
+        ExperienceLocation related,other_related;
+        {
+            auto store=SessionStore::create(root,id(122),"context-live",65536,memory);
+            SessionRuntime active(store,memory,8192);
+            active.define_connection(id(125),1,policy);active.define_connection(id(124),1,policy);
+            active.define_connection(id(126),1,policy);
+            // Insert opposite to connection order; recovery must retain order.
+            other_related=record(active,125,123,nearby,0);
+            related=record(active,124,123,nearby,0);
+            (void)record(active,126,127,"unrelated",0);
+            ExperienceRouter route(active,memory);route.mount_main(prior);
+            auto first=route.input("text/plain",std::as_bytes(std::span(remembered)));
+            CHECK(!first.temporary()&&first.matches()[0].original==old);
+            // Partial reads and failed Replay cannot establish a context key.
+            (void)route.read_payload_slice(first,0,0,1);
+            CHECK(!route.input("text/plain",std::as_bytes(std::span(unseen))).familiar());
+            fail_read=true;throws<std::system_error>([&]{(void)route.replay(first,0);});
+            CHECK(!route.input("text/plain",std::as_bytes(std::span(unseen))).familiar());
+            (void)route.replay(first,0);
+            const auto before_reads=reads,before_writes=writes;
+            auto continued=route.input("text/plain",std::as_bytes(std::span(unseen)));
+            CHECK(continued.temporary()&&continued.key_kind()==FamiliarityKey::context&&continued.matches().size()==2);
+            CHECK(continued.matches()[0].original==related&&continued.matches()[1].original==other_related);
+            CHECK(reads==before_reads&&writes==before_writes);
+            const auto strength=active.find(id(124))->state().strength();
+            CHECK(route.replay(continued,0).location()==related);
+            CHECK(active.find(id(124))->state().strength()==strength);
+            const auto direct=record(active,126,127,exact,1);
+            auto current=route.input("text/plain",std::as_bytes(std::span(exact)));
+            CHECK(current.key_kind()==FamiliarityKey::exact&&current.matches()[0].original==direct);
+        }
+        {
+            auto store=SessionStore::open(root,id(122),memory);SessionRuntime active(store,memory,8192);
+            ExperienceRouter route(active,memory);route.mount_main(prior);
+            auto first=route.input("text/plain",std::as_bytes(std::span(remembered)));(void)route.replay(first,0);
+            auto restored=route.input("text/plain",std::as_bytes(std::span(unseen)));
+            CHECK(restored.key_kind()==FamiliarityKey::context&&restored.matches().size()==2);
+            CHECK(restored.matches()[0].original==related&&restored.matches()[1].original==other_related);
         }
     }
     CHECK(memory.used()==0);

@@ -9,7 +9,7 @@ namespace swegca::architecture::kernel {
 enum class RecallScope { unavailable, temporary, main };
 // A current exact cue precedes the continued memory key within one tier.
 // Both are familiarity cues only, not evidence of current truth.
-enum class FamiliarityKey { missing, exact, continuation };
+enum class FamiliarityKey { missing, exact, continuation, context };
 // Receipt representation only. No candidate or evidence is discarded. Compare
 // bounded snapshot metadata with individual address pins without multiplication
 // overflow; the caller accounts for its own VRS storage representation.
@@ -17,8 +17,9 @@ enum class FamiliarityKey { missing, exact, continuation };
     std::size_t pin_bytes) noexcept {
     return pin_bytes && count >= range_bytes/pin_bytes + (range_bytes%pin_bytes!=0);
 }
-[[nodiscard]] constexpr FamiliarityKey familiarity_key(bool exact, bool continued) noexcept {
-    return exact ? FamiliarityKey::exact : continued ? FamiliarityKey::continuation : FamiliarityKey::missing;
+[[nodiscard]] constexpr FamiliarityKey familiarity_key(bool exact, bool continued,bool shared_context=false) noexcept {
+    return exact ? FamiliarityKey::exact : continued ? FamiliarityKey::continuation :
+        shared_context ? FamiliarityKey::context : FamiliarityKey::missing;
 }
 [[nodiscard]] constexpr RecallScope recall_scope(bool temporary_usable, bool temporary_found) noexcept {
     if (!temporary_usable) return RecallScope::unavailable;
