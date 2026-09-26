@@ -183,3 +183,17 @@ service. `memoryBytes` becomes MemoryMax, swap is disabled, and `cpuAffinity`
 selects its CPUs (example `"6 7"`). The child verifies the actual controls before
 opening Runtime. Direct create/open only apply C++ budgets. Details and the
 isolated OOM test are in PROCESS_RESOURCE_PROFILE.md.
+
+## 선택 원문 구간 반환
+
+기존 `vrs_replay`에 `offset`, `count`를 십진 문자열로 함께 지정하면 현재 receipt의
+선택 후보에서 원문 바이트 구간만 반환한다. 단위는 UTF-8 문자 수가 아닌 바이트다.
+`original`, `partial:true`, `offset`, `totalBytes`, `contentHex`를 반환한다.
+현재 레코드 형식에서는 전체 무결성 검증 때문에 한 구간마다 선택 레코드 전체를 읽지만,
+메모리에는 요청 구간만 남긴다. 임시/Main 둘 다 동일한 주소·계보 검사를 거친다.
+
+부분 요청은 기존 전체 Replay 상태를 폐기하며 Re-evidence 완료 조건을 충족하지 않는다.
+후속 `vrs_re_evidence`는 거부된다. offset/count를 모두 생략한 전체 Replay가 성공하면
+다시 Re-evidence를 사용할 수 있다. 둘 중 하나만 지정하거나 원문 범위를 벗어나면
+도구 오류를 반환한다. 모든 구간을 따로 읽어도 자동으로 전체 완료를 인정하지 않는다.
+현재 구현은 별도 앱의 입력·세션 이벤트 훅을 설치하지 않는다.

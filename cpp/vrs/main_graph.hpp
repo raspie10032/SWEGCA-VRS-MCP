@@ -28,6 +28,8 @@ public:
     [[nodiscard]] const Connection* find(const architecture::DigestBytes& identity) const noexcept;
     [[nodiscard]] const ConnectionRefinement* refinement(const architecture::DigestBytes& identity) const noexcept;
     [[nodiscard]] StoredExperience replay(const architecture::DigestBytes& identity, std::size_t index) const;
+    [[nodiscard]] EvidencePayloadSlice read_payload_slice(const architecture::DigestBytes&, std::size_t index,
+        std::uint64_t offset, std::uint64_t count) const;
     [[nodiscard]] std::uint64_t generation() const noexcept { return generation_; }
     [[nodiscard]] bool has_source(const architecture::DigestBytes& identity) const noexcept { return merged_.contains(identity); }
     [[nodiscard]] std::size_t source_count() const noexcept { return merged_.size(); }
@@ -40,6 +42,7 @@ private:
     bool commit_impl(PreparedMerge&, MergeSink, void*);
     // Consecutive originals from one source share a store and read bound.
     struct Origin { const SessionStore* store; std::uint64_t read_limit; std::size_t end; };
+    [[nodiscard]] const Origin& original_source(const architecture::DigestBytes&, std::size_t index) const;
     struct Entry {
         Entry(const architecture::DigestBytes& identity, double strength,
             const architecture::kernel::EvidenceRules& rules, MemoryBudget& memory);

@@ -37,6 +37,8 @@ public:
         std::uint64_t shuffle_seed, std::uint64_t current_step);
     [[nodiscard]] const PersistentConnection* find(const architecture::DigestBytes& identity) const;
     [[nodiscard]] StoredExperience replay(const architecture::DigestBytes& identity, std::size_t original_index) const;
+    [[nodiscard]] EvidencePayloadSlice read_payload_slice(const architecture::DigestBytes&, std::size_t original_index,
+        std::uint64_t offset, std::uint64_t count) const;
     void end();
     void publish_originals();
     [[nodiscard]] bool usable() const noexcept { return usable_ && store_.usable() && catalog_.usable(); }
@@ -243,6 +245,10 @@ public:
     // part of Deja vu and is included in any input-to-Recall timing.
     [[nodiscard]] InputRecall input(std::string_view media, std::span<const std::byte> content) const;
     [[nodiscard]] ReplayedInput replay(const InputRecall& recalled, std::size_t candidate) const;
+    // Partial original access preserves Recall provenance but does not issue a
+    // Replay receipt or update the continuation key.
+    [[nodiscard]] EvidencePayloadSlice read_payload_slice(const InputRecall&, std::size_t candidate,
+        std::uint64_t offset, std::uint64_t count) const;
     // Verify only observations appended to this temporary session after Recall.
     // This is a read-only evaluation; it neither writes a second strength update
     // nor makes recalled originals count as new observations.
@@ -251,6 +257,7 @@ public:
     [[nodiscard]] StoredExperience replay(const RecallCandidates& candidates, std::size_t candidate,
         std::size_t original_index) const;
 private:
+    [[nodiscard]] InputMatch selected_input(const InputRecall&, std::size_t candidate) const;
     SessionRuntime& temporary_;
     MemoryBudget& memory_;
     // A retained receipt keeps this allocation alive, so reusing a router's

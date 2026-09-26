@@ -71,6 +71,25 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     check(bytes.fromhex(replay['structuredContent']['contentHex'])==text.encode())
     check(replay['structuredContent']['original']==first['original'])
     check(c.call('tools/call',{'name':'vrs_re_evidence','arguments':{'receipt':second['receipt'],'seed':'7','step':'0'}})['result']['structuredContent']['status']==0)
+    # Partial Replay retains only the requested raw bytes and cannot reuse an
+    # earlier full Replay receipt for Re-evidence, even on the same candidate.
+    def partial(receipt, offset, count):
+        return c.call('tools/call',{'name':'vrs_replay','arguments':{
+            'receipt':receipt,'candidate':'0','offset':str(offset),'count':str(count)}})['result']
+    part=partial(second['receipt'],2,5)['structuredContent']
+    check(part['partial'] is True and part['offset']=='2' and part['totalBytes']==str(len(text.encode())))
+    check(bytes.fromhex(part['contentHex'])==text.encode()[2:7] and part['original']==first['original'])
+    check(c.call('tools/call',{'name':'vrs_re_evidence','arguments':{'receipt':second['receipt'],'seed':'7','step':'0'}})['result']['isError'])
+    check(partial(second['receipt'],len(text.encode()),0)['structuredContent']['contentHex']=='')
+    check(partial(second['receipt'],len(text.encode()),1)['isError'])
+    for field in ('offset','count'):
+        check(c.call('tools/call',{'name':'vrs_replay','arguments':{
+            'receipt':second['receipt'],'candidate':'0',field:'0'}})['result']['isError'])
+    check(partial(first['receipt'],0,1)['isError'])
+    check('structuredContent' in c.call('tools/call',{'name':'vrs_replay','arguments':{
+        'receipt':second['receipt'],'candidate':'0'}})['result'])
+    check('structuredContent' in c.call('tools/call',{'name':'vrs_re_evidence','arguments':{
+        'receipt':second['receipt'],'seed':'7','step':'0'}})['result'])
     check(c.call('swegca/work',{'seed':'7','step':'0'})['result']['merged']=='0')
     # UTF-8 JSON string and escape forms must preserve identical request IDs.
     for rid in ['한글🙂','\x00\n"\\',123456789012345678901234567890,-12]:
@@ -88,6 +107,7 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     fourth=c.call('swegca/receive',event('two'))['result'];check(not fourth['temporary'] and len(fourth['candidates'])==3)
     replay=c.call('tools/call',{'name':'vrs_replay','arguments':{'receipt':fourth['receipt'],'candidate':'0'}})['result']['structuredContent']
     check(replay['original']==first['original'])
+    check(partial(fourth['receipt'],1,4)['structuredContent']['contentHex']==text.encode()[1:5].hex())
     payload=event('two','tool',sequence='1',media='application/octet-stream');del payload['content'];payload['contentHex']='00ff80fe0a'
     c.call('swegca/receive',payload)
     payload['sequence']='2';binary=c.call('swegca/receive',payload)['result']

@@ -85,6 +85,10 @@ InputRecall Runtime::input(std::string_view media,std::span<const std::byte> con
 ReplayedInput Runtime::replay(const InputRecall& recalled,std::size_t candidate) const {
     return require_session().router.replay(recalled,candidate);
 }
+EvidencePayloadSlice Runtime::read_payload_slice(const InputRecall& recalled,std::size_t candidate,
+    std::uint64_t offset,std::uint64_t count) const {
+    return require_session().router.read_payload_slice(recalled,candidate,offset,count);
+}
 ReEvidenceResult Runtime::re_evidence(const ReplayedInput& replayed,std::uint64_t seed,std::uint64_t step) const {
     return require_session().router.re_evidence(replayed,seed,step);
 }

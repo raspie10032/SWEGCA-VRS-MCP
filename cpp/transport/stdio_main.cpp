@@ -40,7 +40,7 @@ std::pmr::string read_frame(std::istream& input,std::size_t limit,MemoryBudget& 
     eof=true;if(overflow||!line.empty())throw std::invalid_argument("truncated MCP frame");return line;
 }
 constexpr std::string_view tools_list=R"({"tools":[
-{"name":"vrs_replay","description":"Read one original from the host's current Recall. Does not infer truth or authorize actions.","inputSchema":{"type":"object","properties":{"receipt":{"type":"string"},"candidate":{"type":"string"}},"required":["receipt","candidate"],"additionalProperties":false}},
+{"name":"vrs_replay","description":"Read one original from current Recall. Optional offset and count return only that verified byte range, without a completed Replay receipt for Re-evidence. Does not infer truth or authorize actions.","inputSchema":{"type":"object","properties":{"receipt":{"type":"string"},"candidate":{"type":"string"},"offset":{"type":"string","description":"Raw payload byte offset; requires count."},"count":{"type":"string","description":"Byte count; requires offset."}},"required":["receipt","candidate"],"additionalProperties":false}},
 {"name":"vrs_re_evidence","description":"Use SWEGCA to check recorded current observations after the selected Replay.","inputSchema":{"type":"object","properties":{"receipt":{"type":"string"},"seed":{"type":"string"},"step":{"type":"string"}},"required":["receipt","seed","step"],"additionalProperties":false}}
 ]})";
 class Server {
@@ -176,7 +176,18 @@ private:
     std::pmr::string call(std::string_view method,const Json& p){
         if(!received_||integer(p.at("receipt"))!=receipt_)throw std::invalid_argument("expired receipt");
         if(method=="vrs_replay"){
-            const auto candidate=integer(p.at("candidate"));replayed_.reset();replayed_.emplace(runtime_.replay(received_->recalled,candidate));
+            const auto candidate=integer(p.at("candidate"));replayed_.reset();
+            if(p.find("offset") || p.find("count")){
+                const auto offset=integer(p.at("offset")),count=integer(p.at("count"));
+                auto part=runtime_.read_payload_slice(received_->recalled,candidate,offset,count);
+                std::pmr::string body("{\"original\":",&memory_);
+                body+=address(part.evidence().original(),memory_);
+                body+=",\"partial\":true,\"offset\":\"";body+=std::to_string(part.offset());
+                body+="\",\"totalBytes\":\"";body+=std::to_string(part.total_bytes());
+                body+="\",\"contentHex\":\"";body+=hex(part.content(),memory_);body+="\"}";
+                return body;
+            }
+            replayed_.emplace(runtime_.replay(received_->recalled,candidate));
             const auto value=evidence_payload(replayed_->original());
             return "{\"original\":"+address(replayed_->location(),memory_)+",\"media\":"+quote_json(value.media_type,memory_)+",\"source\":"+quote_json(value.source,memory_)+",\"contentHex\":\""+hex(value.content,memory_)+"\"}";
         }

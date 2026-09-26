@@ -147,7 +147,7 @@ const ConnectionRefinement* MainGraph::refinement(const DigestBytes& identity) c
     const auto found = connections_.find(identity);
     return found == connections_.end() ? nullptr : &*found->second.report;
 }
-StoredExperience MainGraph::replay(const DigestBytes& identity, std::size_t index) const {
+const MainGraph::Origin& MainGraph::original_source(const DigestBytes& identity, std::size_t index) const {
     const auto found = connections_.find(identity);
     if (found == connections_.end() || index >= found->second.connection.experiences().size())
         throw std::out_of_range("Main original selection");
@@ -158,10 +158,22 @@ StoredExperience MainGraph::replay(const DigestBytes& identity, std::size_t inde
     const auto& origin = *selected;
     if (!main_session_readable(origin.store->phase(), origin.store->usable()))
         throw std::logic_error("Main original source unavailable");
+    return origin;
+}
+StoredExperience MainGraph::replay(const DigestBytes& identity,std::size_t index) const {
+    const auto& origin=original_source(identity,index);
+    const auto found=connections_.find(identity);
     auto result = origin.store->read(found->second.connection.experiences()[index].original(), origin.read_limit);
     if (result.location() != found->second.connection.experiences()[index].original())
         throw std::runtime_error("Main original provenance mismatch");
     return result;
+}
+
+EvidencePayloadSlice MainGraph::read_payload_slice(const DigestBytes& identity,std::size_t index,
+    std::uint64_t offset,std::uint64_t count) const {
+    const auto& origin=original_source(identity,index);
+    const auto& original=connections_.find(identity)->second.connection.experiences()[index].original();
+    return origin.store->read_payload_slice(rules_,original,origin.read_limit,offset,count);
 }
 
 }  // namespace swegca::vrs

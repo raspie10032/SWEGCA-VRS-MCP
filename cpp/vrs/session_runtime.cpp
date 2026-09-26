@@ -123,6 +123,14 @@ StoredExperience SessionRuntime::replay(const DigestBytes& identity, std::size_t
         throw std::out_of_range("selected original not in recalled connection");
     return store_.read(connection->state().experiences()[index].original(), read_limit_);
 }
+EvidencePayloadSlice SessionRuntime::read_payload_slice(const DigestBytes& identity,std::size_t index,
+    std::uint64_t offset,std::uint64_t count) const {
+    const auto* connection=find(identity);
+    if(!connection || index>=connection->state().experiences().size())
+        throw std::out_of_range("selected original not in recalled connection");
+    return store_.read_payload_slice(connection->rules(),connection->state().experiences()[index].original(),
+        read_limit_,offset,count);
+}
 void SessionRuntime::end() { require_usable(); store_.end(); }
 void SessionRuntime::publish_originals() { require_usable(); store_.publish_originals(); }
 
@@ -317,15 +325,23 @@ InputRecall ExperienceRouter::recall_cue(const DigestBytes& cue, RecallScope sco
     }
     return result;
 }
-ReplayedInput ExperienceRouter::replay(const InputRecall& recalled, std::size_t candidate) const {
+InputMatch ExperienceRouter::selected_input(const InputRecall& recalled, std::size_t candidate) const {
     if (recalled.issuer_ != issuer_) throw std::invalid_argument("Recall belongs to a different input route");
     if (candidate >= recalled.matches().size()) throw std::out_of_range("input recall candidate");
     const auto selected = recalled.matches()[candidate];
     if (selected.recalled.main_graph) {
-        RecallCandidates bound; bound.temporary_ = selected.recalled;
-        auto original = replay(bound, 0, selected.original_index);
-        if (original.location() != selected.original) throw std::logic_error("Main Replay original changed");
-        return ReplayedInput(std::move(original), selected, issuer_, recalled.cue_);
+        require_main_current();
+        if(selected.recalled.main_graph!=merged_main_)
+            throw std::invalid_argument("Recall belongs to a different Main");
+        const auto current=merged_match(selected.recalled.recalled_head.identity);
+        if(assess_head_publication(&current.recalled_head,selected.recalled.recalled_head.record,
+            selected.recalled.recalled_head,true)!=HeadPublication::unchanged)
+            throw std::logic_error("Main changed after Recall; recall current experience again");
+        const auto* connection=merged_main_->graph().find(selected.recalled.recalled_head.identity);
+        if(!connection || selected.original_index>=connection->experiences().size() ||
+            connection->experiences()[selected.original_index].original()!=selected.original)
+            throw std::logic_error("Main Recall original changed");
+        return selected;
     }
     const auto& remembered = selected.recalled;
     const auto* current = remembered.session->find(remembered.recalled_head.identity);
@@ -342,11 +358,30 @@ ReplayedInput ExperienceRouter::replay(const InputRecall& recalled, std::size_t 
     const auto values = current->state().experiences();
     if (selected.original_index >= values.size() || values[selected.original_index].original() != selected.original)
         throw std::logic_error("Recall original address changed");
-    auto original = remembered.session->replay(remembered.recalled_head.identity, selected.original_index);
-    if (original.location() != selected.original) throw std::logic_error("Replay original provenance mismatch");
-    continuation_ = remembered.recalled_head.identity;
-    return ReplayedInput(std::move(original), selected, issuer_, recalled.cue_);
+    return selected;
 }
+ReplayedInput ExperienceRouter::replay(const InputRecall& recalled,std::size_t candidate) const {
+    const auto selected=selected_input(recalled,candidate);
+    const auto identity=selected.recalled.recalled_head.identity;
+    auto original=selected.recalled.main_graph
+        ? merged_main_->graph().replay(identity,selected.original_index)
+        : selected.recalled.session->replay(identity,selected.original_index);
+    if(original.location()!=selected.original)throw std::logic_error("Replay original provenance mismatch");
+    continuation_=identity;
+    return ReplayedInput(std::move(original),selected,issuer_,recalled.cue_);
+}
+EvidencePayloadSlice ExperienceRouter::read_payload_slice(const InputRecall& recalled,std::size_t candidate,
+    std::uint64_t offset,std::uint64_t count) const {
+    const auto selected=selected_input(recalled,candidate);
+    const auto identity=selected.recalled.recalled_head.identity;
+    auto original=selected.recalled.main_graph
+        ? merged_main_->graph().read_payload_slice(identity,selected.original_index,offset,count)
+        : selected.recalled.session->read_payload_slice(identity,selected.original_index,offset,count);
+    if(original.evidence().original()!=selected.original)
+        throw std::logic_error("partial original provenance mismatch");
+    return original;
+}
+
 ReEvidenceResult ExperienceRouter::re_evidence(const ReplayedInput& replayed,
     std::uint64_t seed, std::uint64_t step) const {
     if (replayed.issuer_ != issuer_) throw std::invalid_argument("Replay belongs to a different input route");

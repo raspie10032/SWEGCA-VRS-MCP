@@ -41,6 +41,11 @@ int main(){
   const auto r=reads,w=writes;auto recalled=host.input("text/plain",content);
   CHECK(recalled.temporary()&&reads==r&&writes==w);
   CHECK(host.storage().transfer().requested()==transfers);
+  {
+   auto slice=host.read_payload_slice(recalled,0,2,5);
+   CHECK(slice.evidence().original()==first && slice.total_bytes()==content.size());
+   CHECK(std::ranges::equal(slice.content(),content.subspan(2,5)));
+  }
   CHECK(host.replay(recalled,0).location()==first);
   CHECK(host.storage().transfer().requested()>transfers);
   CHECK(host.work(7,0)==0&&host.main().graph().generation()==0);
@@ -62,6 +67,11 @@ int main(){
   CHECK(!host.input("text/plain",content).familiar());
   CHECK(host.work(7,0)==1); // also refreshes the active session's Main index
   auto recalled=host.input("text/plain",content);CHECK(!recalled.temporary()&&recalled.matches().size()==1);
+  {
+   auto slice=host.read_payload_slice(recalled,0,2,5);
+   CHECK(slice.evidence().original()==first && slice.total_bytes()==content.size());
+   CHECK(std::ranges::equal(slice.content(),content.subspan(2,5)));
+  }
   CHECK(host.replay(recalled,0).location()==first);
   second=host.retain({0,0,"two","assistant","text/plain",content},7,0).original;
   CHECK(host.input("text/plain",content).temporary());
@@ -178,6 +188,7 @@ int main(){
   host.end_session();host.start_session(id(91),"new");
   const auto r=reads,w=writes;
   throws<std::invalid_argument>([&]{(void)host.replay(receipt,0);});
+  throws<std::invalid_argument>([&]{(void)host.read_payload_slice(receipt,0,0,1);});
   throws<std::invalid_argument>([&]{(void)host.re_evidence(replayed,7,0);});
   CHECK(reads==r&&writes==w);
   CHECK(receipt.matches()[0].original==retained);
@@ -221,6 +232,39 @@ int main(){
    const auto before=reads;CHECK(host.work(7,0)==1);CHECK(reads>before);
    CHECK(host.main().graph().source_count()==1);
    CHECK(host.main().graph().replay(input_cue("text/plain",content),0).location()==original);
+  }
+  CHECK(bounded.used()==0);
+ }
+ {
+  const auto path=root/"bounded-payload";fs::create_directory(path);
+  auto large=config;large.session_block_capacity=8<<20;large.read_limit=8<<20;
+  MemoryBudget bounded(256<<10);
+  {
+   auto host=Runtime::create(path,large,bounded);host.start_session(id(96),"large");
+   std::vector<std::byte> payload(2<<20);
+   for(std::size_t n=0;n<payload.size();++n)payload[n]=std::byte(n%251);
+   const auto original=host.retain({0,0,"large","tool","application/octet-stream",payload},7,0).original;
+   auto receipt=host.input("application/octet-stream",payload);
+   const auto check_part=[&](const InputRecall& recalled){
+    const auto before_writes=writes;const auto used=bounded.used();
+    {
+     auto part=host.read_payload_slice(recalled,0,65530,4096);
+     CHECK(part.evidence().original()==original && part.total_bytes()==payload.size());
+     CHECK(std::ranges::equal(part.content(),std::span(payload).subspan(65530,4096)));
+     CHECK(bounded.used()-used==4096);
+    }
+    CHECK(bounded.used()==used && writes==before_writes);
+    throws<std::out_of_range>([&]{(void)host.read_payload_slice(recalled,1,0,1);});
+    throws<std::invalid_argument>([&]{(void)host.read_payload_slice(recalled,0,payload.size(),1);});
+    throws<std::bad_alloc>([&]{(void)host.replay(recalled,0);});
+    CHECK(!host.input("unseen/media",{}).familiar()); // partial read is not a continuation
+   };
+   CHECK(receipt.temporary());check_part(receipt);
+   host.end_session();CHECK(host.work(7,0)==1);host.start_session(id(97),"reader");
+   auto recalled=host.input("application/octet-stream",payload);
+   CHECK(!recalled.temporary());check_part(recalled);
+   throws<std::invalid_argument>([&]{(void)host.read_payload_slice(receipt,0,0,1);});
+   CHECK(host.main().graph().generation()==1);
   }
   CHECK(bounded.used()==0);
  }
