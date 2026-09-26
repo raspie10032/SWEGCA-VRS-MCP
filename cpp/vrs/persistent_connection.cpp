@@ -177,7 +177,8 @@ DigestBytes refinement_digest(const ConnectionRefinement& report) {
     return hash.finish();
 }
 namespace {
-Event read_event(SessionStore& session, const ExperienceLocation& location) {
+template<class Reader>
+Event read_event(Reader& session, const ExperienceLocation& location) {
     // Fixed schema plus session metadata bounds the read before allocation.
     const auto limit = ExperienceBlock::record_overhead + session.name().size() + source.size() + media.size() + 256;
     return decode(session.read(location, limit), session.name());
@@ -213,11 +214,12 @@ PersistentConnection::PersistentConnection(SessionStore& session, const Experien
     : session_(session), memory_(memory), original_read_limit_(original_read_limit), head_(head) {
     if (original_read_limit == 0) throw std::invalid_argument("zero original read limit");
     std::pmr::vector<ExperienceLocation> chain(&memory_);
+    auto reader = session_.read_cursor();
     auto cursor = head;
     DigestBytes identity{};
     std::uint64_t expected = 0;
     for (;;) {
-        const auto event = read_event(session_, cursor);
+        const auto event = read_event(reader, cursor);
         if (chain.empty()) { identity = event.identity; expected = ordinal_ = event.ordinal; }
         if (event.identity != identity || event.ordinal != expected)
             throw std::runtime_error("VRS connection parent lineage mismatch");
@@ -233,10 +235,10 @@ PersistentConnection::PersistentConnection(SessionStore& session, const Experien
     // Recompute from original observations and the recorded rule configuration.
     // An encoded status or strength never bypasses SWEGCA.
     for (auto i = chain.size() - 1; i > 0; --i) {
-        const auto event = read_event(session_, chain[i - 1]);
+        const auto event = read_event(reader, chain[i - 1]);
         if (state_->revision() != event.before) throw std::runtime_error("VRS connection revision mismatch");
         if (event.kind == EventKind::append) {
-            const auto record = session_.read(event.original, original_read_limit_);
+            const auto record = reader.read(event.original, original_read_limit_);
             const auto evidence = decode_evidence(*rules_, record);
             if (evidence.value().observed_at != event.step) throw std::runtime_error("VRS observation time mismatch");
             state_->append(evidence);

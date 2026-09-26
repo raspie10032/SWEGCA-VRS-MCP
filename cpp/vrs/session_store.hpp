@@ -41,6 +41,22 @@ public:
 
 private:
     friend class ConnectionCatalog;
+    friend class PersistentConnection;
+    // Private recovery cursor: one reader per worker, at most one block open.
+    // Store and its immutable inventory must outlive the cursor.
+    class ReadCursor final {
+    public:
+        ReadCursor(const ReadCursor&) = delete;
+        ReadCursor& operator=(const ReadCursor&) = delete;
+        [[nodiscard]] StoredExperience read(const ExperienceLocation&, std::uint64_t limit);
+        [[nodiscard]] std::string_view name() const noexcept { return store_.name(); }
+    private:
+        friend class SessionStore;
+        explicit ReadCursor(const SessionStore& store) : store_(store) {}
+        const SessionStore& store_;
+        std::optional<ExperienceBlock> block_;
+    };
+    [[nodiscard]] ReadCursor read_cursor() const { return ReadCursor(*this); }
     struct BlockState {
         std::uint64_t index = 0;
         BlockRecovery extent{0, ExperienceBlock::header_bytes, 0};

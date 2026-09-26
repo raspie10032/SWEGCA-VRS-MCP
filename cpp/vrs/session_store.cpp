@@ -248,6 +248,19 @@ ExperienceEvidence SessionStore::append_evidence(const EvidenceRules& rules,
       catch (...) { usable_ = false; throw; }
 }
 
+StoredExperience SessionStore::ReadCursor::read(const ExperienceLocation& location, std::uint64_t limit) {
+    if (!block_ || block_->identity() != location.block) {
+        const auto found = store_.blocks_.find(location.block);
+        if (found == store_.blocks_.end()) throw std::invalid_argument("experience block does not belong to this session");
+        // Close before opening the next block; failure cannot retain a second fd.
+        block_.reset();
+        block_.emplace(ExperienceBlock::open_reader(store_.block_path(found->second.index), store_.storage_));
+    }
+    // The handle is reused, never the payload: bounds and content checksum
+    // remain checked for every requested original or history record.
+    return block_->read(location, limit, store_.memory_);
+}
+
 StoredExperience SessionStore::read(const ExperienceLocation& location, std::uint64_t limit) const {
     const auto found = blocks_.find(location.block);
     if (found == blocks_.end()) throw std::invalid_argument("experience block does not belong to this session");

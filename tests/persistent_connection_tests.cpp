@@ -1,6 +1,8 @@
 #include "vrs/persistent_connection.hpp"
 
 #include <bit>
+#include <cstdarg>
+#include <fcntl.h>
 #include <cerrno>
 #include <cstdio>
 #include <cstdlib>
@@ -24,6 +26,15 @@ static unsigned checks = 0;
 } while (false)
 
 // Fault injection is linked only into this executable, never the runtime.
+static unsigned reader_opens=0;
+extern "C" int __real_open(const char*,int,...);
+extern "C" int __wrap_open(const char* path,int flags,...) {
+    int fd;
+    if(flags&O_CREAT){va_list args;va_start(args,flags);const auto mode=va_arg(args,int);va_end(args);fd=__real_open(path,flags,mode);}
+    else fd=__real_open(path,flags);
+    if(fd>=0&&(flags&O_ACCMODE)==O_RDONLY&&!(flags&O_DIRECTORY))++reader_opens;
+    return fd;
+}
 static int writes_before_failure = -1;
 extern "C" ssize_t __real_pwrite(int, const void*, size_t, off_t);
 extern "C" ssize_t __wrap_pwrite(int fd, const void* data, size_t size, off_t offset) {
@@ -75,6 +86,21 @@ int main() {
     const fs::path root(made);
     MemoryBudget memory(16 << 20);
     EvidencePolicy policy;
+    {
+        auto session=SessionStore::create(root,id(9),"single-block",1<<20,memory);
+        ExperienceLocation saved;
+        {
+            auto original=PersistentConnection::create(session,id(90),1,policy,memory,4096);
+            observations(session,original,EvidenceOutcome::support,true);
+            (void)original.refine(12345,10);saved=original.head();
+        }
+        CHECK(session.block_count()==1);
+        const auto before=reader_opens;
+        auto restored=PersistentConnection::recover(session,saved,memory,4096);
+        CHECK(reader_opens==before+1);
+        CHECK(restored.state().experiences().size()==48&&restored.state().strength()==1.01);
+    }
+    CHECK(memory.used()==0);
     ExperienceLocation head, support_head;
     std::uint64_t expected_revision = 0;
     double expected_strength = 0;
