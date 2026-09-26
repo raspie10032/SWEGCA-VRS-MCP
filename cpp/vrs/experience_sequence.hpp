@@ -31,6 +31,10 @@ class ExperienceSequence final {
         ExperienceEvidence* data;
     };
 public:
+    [[nodiscard]] std::size_t snapshot_directory_bytes(std::size_t begin,std::size_t end) const {
+        if(begin>end||end>size_)throw std::out_of_range("experience snapshot range");
+        return begin==end?0:(chunk_index(end-1)-chunk_index(begin)+1)*sizeof(std::shared_ptr<Chunk>);
+    }
     // Pins existing sealed values, including the current tail. The writer may
     // append later values to that tail, but cannot alter an already sealed slot.
     // Both the data budget and directory budget must outlive this snapshot.

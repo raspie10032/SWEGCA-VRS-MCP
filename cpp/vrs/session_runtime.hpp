@@ -144,25 +144,24 @@ private:
         RecallMatch recalled;
         std::size_t current_observations;
         std::optional<ExperienceSequence::Snapshot> sequence;
-        std::size_t end = 0;
+        std::size_t begin = 0,end = 0,address_begin = 0;
     };
-    struct Address { std::size_t context; std::size_t original_index; std::shared_ptr<const ExperienceEvidence> experience; };
+    struct Address { std::size_t original_index; std::shared_ptr<const ExperienceEvidence> experience; };
     explicit InputRecall(MemoryBudget& memory) : contexts_(&memory), addresses_(&memory) {}
     void append(const RecallMatch&, std::size_t index, std::size_t boundary, std::shared_ptr<const ExperienceEvidence>);
     void append_range(const RecallMatch&, std::size_t boundary, const Connection&, MemoryBudget&,
         std::size_t begin, std::size_t end);
     [[nodiscard]] InputMatch at(std::size_t index) const {
         if (index >= count_) throw std::out_of_range("input recall candidate");
-        if (!contexts_.empty() && contexts_.front().sequence) {
-            const auto found = std::upper_bound(contexts_.begin(), contexts_.end(), index,
-                [](std::size_t position, const Context& range) { return position < range.end; });
-            const auto relative = index - (found->end - found->sequence->size());
+        const auto found = std::upper_bound(contexts_.begin(), contexts_.end(), index,
+            [](std::size_t position, const Context& range) { return position < range.end; });
+        const auto relative=index-found->begin;
+        if (found->sequence) {
             return {found->recalled, found->sequence->original_begin()+relative, found->current_observations,
                 (*found->sequence)[relative].original()};
         }
-        const auto& address = addresses_.at(index);
-        const auto& context = contexts_[address.context];
-        return {context.recalled, address.original_index, context.current_observations, address.experience->original()};
+        const auto& address = addresses_.at(found->address_begin+relative);
+        return {found->recalled, address.original_index, found->current_observations, address.experience->original()};
     }
     architecture::DigestBytes cue_{};
     std::shared_ptr<const std::byte> issuer_;

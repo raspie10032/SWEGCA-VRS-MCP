@@ -306,5 +306,48 @@ int main(){
    CHECK(restored.graph().replay(connection,0).location()==source.find(connection)->state().experiences()[0].original());
   }
  }
+ CHECK(memory.used()==0);
+ {
+  auto store=SessionStore::create(root,id(700),"mixed-runs",65536,memory);
+  SessionRuntime source(store,memory,8192);std::vector<ExperienceLocation> expected;
+  const std::string target="shared-cue",other="gap";
+  for(unsigned which=0;which<2;++which){
+   const auto connection=id(20000+which);source.define_connection(connection,1,policy);
+   const unsigned count=which?64:133;
+   for(unsigned n=0;n<count;++n){
+    const bool selected=which||!(n==1||n==66||n==68);const auto& text=selected?target:other;
+    EvidenceObservation value;value.hypothesis=connection;value.source=id(9000);value.context=id(n+1);value.producer=id(9001);
+    const auto recorded=source.observe(connection,{n,0,"mixed-runs","experiment","text/plain",std::as_bytes(std::span(text))},value,7,0);
+    if(selected)expected.push_back(recorded.original);
+   }
+  }
+  source.end();source.publish_originals();
+  auto graph=PersistentMainGraph::create(root/"mixed-run-graph",id(702),memory,1,policy,65536);CHECK(graph.merge(source,7,0));
+  auto active_store=SessionStore::create(root,id(701),"active-runs",65536,memory);SessionRuntime active(active_store,memory,8192);
+  FailingMemory failing;MemoryBudget query_memory(1<<20,&failing);ExperienceRouter route(active,query_memory);route.mount_main(graph);
+  const auto baseline=query_memory.used();const auto before_reads=reads;
+  {
+   auto recalled=route.input("text/plain",std::as_bytes(std::span(target)));
+   const auto bytes=query_memory.used()-baseline;
+   CHECK(!recalled.temporary()&&recalled.matches().size()==194&&expected.size()==194);
+   CHECK(bytes<4096&&reads==before_reads);
+   for(std::size_t n=0;n<expected.size();++n)CHECK(recalled.matches()[n].original==expected[n]);
+   CHECK(reads==before_reads);
+   auto moved=std::move(recalled);CHECK(recalled.matches().empty());
+   // Pin -> range -> pin -> range -> different connection range boundaries.
+   for(const auto n:{0U,1U,64U,65U,66U,129U,130U,193U})CHECK(route.replay(moved,n).location()==expected[n]);
+   std::printf("194-original mixed Main receipt: %zu tracked bytes\n",bytes);
+  }
+  CHECK(query_memory.used()==baseline);unsigned failures=0;bool completed=false;
+  for(unsigned limit=0;limit<64&&!completed;++limit){
+   failing.remaining=limit;
+   try{auto recalled=route.input("text/plain",std::as_bytes(std::span(target)));CHECK(recalled.matches().size()==expected.size());completed=true;}
+   catch(const std::bad_alloc&){++failures;}
+   failing.remaining=SIZE_MAX;CHECK(query_memory.used()==baseline);
+  }
+  CHECK(completed&&failures>0);
+  CHECK(recall_range_receipt(SIZE_MAX,SIZE_MAX,1));CHECK(!recall_range_receipt(1,SIZE_MAX,1));
+  CHECK(!recall_range_receipt(10,100,0));
+ }
  CHECK(memory.used()==0);fs::remove_all(root);std::printf("persistent Main tests: %u checks passed\n",checks);
 }

@@ -271,17 +271,19 @@ void InputRecall::append(const RecallMatch& match, std::size_t index, std::size_
     // during Recall. Pinned sealed values survive owner replacement afterward.
     const auto same = [&](const Context& context) {
         const auto& prior = context.recalled;
-        return prior.session == match.session && prior.connection == match.connection &&
+        return !context.sequence && prior.session == match.session && prior.connection == match.connection &&
             prior.main_graph == match.main_graph &&
             prior.recalled_head.identity == match.recalled_head.identity &&
             prior.recalled_head.record == match.recalled_head.record &&
             context.current_observations == boundary;
     };
     const bool added = contexts_.empty() || !same(contexts_.back());
-    if (added) contexts_.push_back({match, boundary, std::nullopt, 0});
-    try { addresses_.push_back({contexts_.size() - 1, index, std::move(experience)}); }
+    if(count_==std::numeric_limits<std::size_t>::max())throw std::overflow_error("Recall candidate count overflow");
+    if (added) contexts_.push_back({match, boundary, std::nullopt, count_,count_,addresses_.size()});
+    try { addresses_.push_back({index, std::move(experience)}); }
     catch (...) { if (added) contexts_.pop_back(); throw; }
     ++count_;
+    contexts_.back().end=count_;
 }
 
 void InputRecall::append_range(const RecallMatch& match, std::size_t boundary,
@@ -292,7 +294,7 @@ void InputRecall::append_range(const RecallMatch& match, std::size_t boundary,
     if (sequence.size() > std::numeric_limits<std::size_t>::max() - count_)
         throw std::overflow_error("Recall candidate count overflow");
     const auto end = count_ + sequence.size();
-    if (sequence.size()) contexts_.push_back({match, boundary, std::move(sequence), end});
+    if (sequence.size()) contexts_.push_back({match, boundary, std::move(sequence), count_,end,0});
     count_ = end;
 }
 
@@ -360,10 +362,13 @@ InputRecall ExperienceRouter::recall_cue(const DigestBytes& cue, RecallScope sco
                 const auto* active = temporary_.find(identity);
                 const auto boundary=active ? active->state().experiences().size() : 0;
                 const auto* connection=merged_main_->graph().find(identity);
-                // A single contiguous exact-cue result uses one bounded segment
-                // snapshot. Fragmented results retain individual pins, avoiding
-                // repeated context/directory overhead for sparse selections.
-                if(found->second.size()==1)
+                // Keep sparse pins compact, but long runs from multiple
+                // connections/regions share bounded segment snapshots too.
+                const auto directory=connection->snapshot_directory_bytes(begin,end);
+                if(directory>std::numeric_limits<std::size_t>::max()-sizeof(InputRecall::Context))
+                    throw std::overflow_error("Recall snapshot cost overflow");
+                if(found->second.size()==1||recall_range_receipt(end-begin,
+                    sizeof(InputRecall::Context)+directory,sizeof(InputRecall::Address)))
                     result.append_range(match,boundary,*connection,memory_,begin,end);
                 else for(auto index=begin;index<end;++index)
                     result.append(match,index,boundary,connection->pin_experience(index));

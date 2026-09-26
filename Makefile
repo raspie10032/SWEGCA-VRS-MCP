@@ -183,5 +183,5 @@ $(BUILD)/connection-regions-tests: tests/connection_regions_tests.cpp cpp/vrs/co
 
 check: $(BUILD)/connection-regions-tests
 
-$(BUILD)/region-partition-bench: benchmarks/region_partition_bench.cpp cpp/swegca_architecture/region_partition_kernel.hpp | $(BUILD)
+$(BUILD)/region-partition-bench: benchmarks/region_partition_bench.cpp cpp/swegca_architecture/region_partition_kernel.hpp cpp/swegca_architecture/recall_route_kernel.hpp | $(BUILD)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< -o $@

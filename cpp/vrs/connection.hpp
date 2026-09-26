@@ -65,6 +65,7 @@ public:
     [[nodiscard]] std::shared_ptr<const ExperienceEvidence> pin_experience(std::size_t index) const { return experiences_.pin(index); }
     [[nodiscard]] ExperienceSequence::Snapshot snapshot_experiences(MemoryBudget& memory) const { return experiences_.snapshot(memory); }
     [[nodiscard]] ExperienceSequence::Snapshot snapshot_experiences(MemoryBudget& memory,std::size_t begin,std::size_t end) const { return experiences_.snapshot(memory,begin,end); }
+    [[nodiscard]] std::size_t snapshot_directory_bytes(std::size_t begin,std::size_t end) const { return experiences_.snapshot_directory_bytes(begin,end); }
     [[nodiscard]] ExperienceSequence::View experiences() const noexcept { return experiences_.view(); }
 
 private:
