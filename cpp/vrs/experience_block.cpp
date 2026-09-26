@@ -261,7 +261,8 @@ ExperienceLocation ExperienceBlock::append(const OriginalExperienceView& experie
     return location;
 }
 
-StoredExperience ExperienceBlock::read(const ExperienceLocation& location, std::uint64_t max_read_bytes) const {
+StoredExperience ExperienceBlock::read(const ExperienceLocation& location,
+    std::uint64_t max_read_bytes, MemoryBudget& memory) const {
     if (fd_ < 0 || location.block != identity_ || location.offset < header_bytes ||
         location.offset > capacity_ || location.bytes < record_overhead ||
         location.bytes > capacity_ - location.offset || location.bytes > max_read_bytes ||
@@ -274,7 +275,7 @@ StoredExperience ExperienceBlock::read(const ExperienceLocation& location, std::
     const auto size = file_size(fd_);
     if (location.offset > size || location.bytes > size - location.offset)
         throw std::runtime_error("incomplete selected experience");
-    StoredExperience experience;
+    StoredExperience experience(memory);
     experience.encoded_.resize(static_cast<std::size_t>(location.bytes));
     std::copy(prefix.begin(), prefix.end(), experience.encoded_.begin());
     read_exact(fd_, std::span(experience.encoded_).subspan(prefix_bytes), location.offset + prefix_bytes);

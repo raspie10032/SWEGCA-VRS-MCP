@@ -1,6 +1,7 @@
 #pragma once
 
 #include "swegca_architecture/digest_bytes.hpp"
+#include "vrs/memory_budget.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -33,13 +34,19 @@ struct ExperienceLocation {
 
 class StoredExperience final {
 public:
+    StoredExperience(const StoredExperience&) = delete;
+    StoredExperience& operator=(const StoredExperience&) = delete;
+    StoredExperience(StoredExperience&&) noexcept = default;
+    StoredExperience& operator=(StoredExperience&&) = delete;
+
     [[nodiscard]] OriginalExperienceView view() const noexcept;
     [[nodiscard]] const ExperienceLocation& location() const noexcept { return location_; }
 
 private:
     friend class ExperienceBlock;
+    explicit StoredExperience(MemoryBudget& memory) : encoded_(&memory) {}
     ExperienceLocation location_;
-    std::vector<std::byte> encoded_;
+    std::pmr::vector<std::byte> encoded_;
 };
 
 struct BlockRecovery {
@@ -74,10 +81,11 @@ public:
     // On I/O failure this handle refuses further appends; partial bytes remain.
     [[nodiscard]] ExperienceLocation append(const OriginalExperienceView& experience);
 
-    // Allocation is bounded by the caller's VRS read budget, not a core limit.
+    // Allocation uses Main's shared VRS budget as well as a per-read limit.
+    // `memory` must outlive the returned record. Moving it does not allocate.
     // Only this record is read. No scan of other experiences occurs here.
     [[nodiscard]] StoredExperience read(const ExperienceLocation& location,
-        std::uint64_t max_read_bytes) const;
+        std::uint64_t max_read_bytes, MemoryBudget& memory) const;
 
     // Startup recovery streams through a fixed-size scratch buffer. A short
     // final record is reported and preserved; a complete corrupt record throws.

@@ -8,6 +8,7 @@
 #include <fstream>
 #include <limits>
 #include <string>
+#include <type_traits>
 #include <vector>
 
 using namespace swegca::vrs;
@@ -33,6 +34,8 @@ std::span<const std::byte> bytes(const std::string& value) {
 }
 
 int main() {
+    static_assert(!std::is_copy_constructible_v<StoredExperience>);
+    static_assert(!std::is_copy_assignable_v<StoredExperience>);
     std::array<char, 64> pattern{};
     const std::string base = (fs::temp_directory_path() / "swegca-block-test-XXXXXX").string();
     CHECK(base.size() < pattern.size());
@@ -44,6 +47,7 @@ int main() {
     swegca::architecture::DigestBytes identity{};
     identity[0] = std::byte{1};
     const auto capacity = std::uint64_t{1} << 20;
+    MemoryBudget memory(capacity);
     const std::string raw("첫 대화\0반박과 불확실성", sizeof("첫 대화\0반박과 불확실성") - 1);
     const OriginalExperienceView first{0, 1234, "session-1", "user-input", "text/plain", bytes(raw)};
     std::string binary(100000, '\0');
@@ -65,36 +69,53 @@ int main() {
         auto reader = ExperienceBlock::open_reader(path);
         CHECK(!reader.can_append());
         expect_throw<std::logic_error>([&] { (void)reader.append(first); });
-        auto original = reader.read(first_location, capacity);
+        auto original = reader.read(first_location, capacity, memory);
+        CHECK(memory.used() == first_location.bytes);
         CHECK(original.view().sequence == 0);
         CHECK(original.view().observed_at_ns == 1234);
         CHECK(original.view().session == first.session);
         CHECK(original.view().source == first.source);
         CHECK(original.view().media_type == first.media_type);
         CHECK(std::ranges::equal(original.view().content, bytes(raw)));
-        CHECK(reader.read(empty_location, capacity).view().content.empty());
+        CHECK(reader.read(empty_location, capacity, memory).view().content.empty());
         auto moved = std::move(original);
         CHECK(std::ranges::equal(moved.view().content, bytes(raw)));
+        CHECK(memory.used() == first_location.bytes);
         const auto inspected = reader.inspect();
         CHECK(inspected.complete_records == 3);
         CHECK(inspected.complete_bytes == fs::file_size(path));
         CHECK(inspected.unfinished_bytes == 0);
-        expect_throw<std::invalid_argument>([&] { (void)reader.read(first_location, first_location.bytes - 1); });
+        expect_throw<std::invalid_argument>([&] { (void)reader.read(first_location, first_location.bytes - 1, memory); });
         auto wrong = first_location;
         wrong.block[1] = std::byte{7};
-        expect_throw<std::invalid_argument>([&] { (void)reader.read(wrong, capacity); });
+        expect_throw<std::invalid_argument>([&] { (void)reader.read(wrong, capacity, memory); });
         wrong = first_location;
         wrong.offset = std::numeric_limits<std::uint64_t>::max();
-        expect_throw<std::invalid_argument>([&] { (void)reader.read(wrong, capacity); });
+        expect_throw<std::invalid_argument>([&] { (void)reader.read(wrong, capacity, memory); });
         wrong = first_location;
         wrong.bytes = std::numeric_limits<std::uint64_t>::max();
-        expect_throw<std::invalid_argument>([&] { (void)reader.read(wrong, capacity); });
+        expect_throw<std::invalid_argument>([&] { (void)reader.read(wrong, capacity, memory); });
         wrong = first_location;
         wrong.digest[0] ^= std::byte{1};
-        expect_throw<std::runtime_error>([&] { (void)reader.read(wrong, capacity); });
+        expect_throw<std::runtime_error>([&] { (void)reader.read(wrong, capacity, memory); });
         wrong = first_location;
         ++wrong.bytes;
-        expect_throw<std::runtime_error>([&] { (void)reader.read(wrong, capacity); });
+        expect_throw<std::runtime_error>([&] { (void)reader.read(wrong, capacity, memory); });
+    }
+    CHECK(memory.used() == 0);
+    {
+        auto reader = ExperienceBlock::open_reader(path);
+        MemoryBudget exactly_one(first_location.bytes);
+        {
+            auto held = reader.read(first_location, capacity, exactly_one);
+            CHECK(exactly_one.used() == first_location.bytes);
+            expect_throw<std::bad_alloc>([&] { (void)reader.read(first_location, capacity, exactly_one); });
+            CHECK(exactly_one.used() == first_location.bytes);
+            CHECK(std::ranges::equal(held.view().content, bytes(raw)));
+        }
+        CHECK(exactly_one.used() == 0);
+        const auto next = reader.read(first_location, capacity, exactly_one);
+        CHECK(next.view().sequence == 0);
     }
     // Writer reopen validates previous records with bounded scratch, then
     // appends without changing the old bytes or locations.
@@ -106,7 +127,7 @@ int main() {
         const auto appended = moved.append({3, 1237, "session-1", "user-input", "text/plain", bytes(raw)});
         CHECK(appended.offset == empty_location.offset + empty_location.bytes);
         CHECK(moved.inspect().complete_records == 4);
-        const auto saved = moved.read(second_location, capacity);
+        const auto saved = moved.read(second_location, capacity, memory);
         CHECK(std::ranges::equal(saved.view().content, bytes(binary)));
     }
     // Short last record at three different physical boundaries. Keep the
@@ -123,10 +144,10 @@ int main() {
         CHECK(recovered.complete_records == 1);
         CHECK(recovered.complete_bytes == second_location.offset);
         CHECK(recovered.unfinished_bytes == tail);
-        const auto intact = torn.read(first_location, capacity);
+        const auto intact = torn.read(first_location, capacity, memory);
         CHECK(std::ranges::equal(intact.view().content, bytes(raw)));
         expect_throw<std::logic_error>([&] { (void)torn.append(first); });
-        expect_throw<std::runtime_error>([&] { (void)torn.read(second_location, capacity); });
+        expect_throw<std::runtime_error>([&] { (void)torn.read(second_location, capacity, memory); });
         CHECK(fs::file_size(torn_path) == before);
     }
     // Completed record corruption must throw, not masquerade as an unfinished
@@ -141,9 +162,10 @@ int main() {
     }
     {
         auto corrupt = ExperienceBlock::open_reader(corrupt_path);
-        const auto intact = corrupt.read(first_location, capacity);
+        const auto intact = corrupt.read(first_location, capacity, memory);
         CHECK(std::ranges::equal(intact.view().content, bytes(raw)));
-        expect_throw<std::runtime_error>([&] { (void)corrupt.read(second_location, capacity); });
+        expect_throw<std::runtime_error>([&] { (void)corrupt.read(second_location, capacity, memory); });
+        CHECK(memory.used() == first_location.bytes);
         expect_throw<std::runtime_error>([&] { (void)corrupt.inspect(); });
         expect_throw<std::runtime_error>([&] { (void)ExperienceBlock::open_writer(corrupt_path); });
     }
@@ -159,7 +181,7 @@ int main() {
     }
     {
         auto malformed = ExperienceBlock::open_reader(malformed_path);
-        expect_throw<std::runtime_error>([&] { (void)malformed.read(first_location, capacity); });
+        expect_throw<std::runtime_error>([&] { (void)malformed.read(first_location, capacity, memory); });
         expect_throw<std::runtime_error>([&] { (void)malformed.inspect(); });
     }
     const auto short_header = directory / "short-header.block";
@@ -185,6 +207,7 @@ int main() {
     }
     expect_throw<std::invalid_argument>([&] { (void)ExperienceBlock::create(directory / "zero.block", {}, capacity); });
     CHECK(!fs::exists(directory / "zero.block"));
+    CHECK(memory.used() == 0);
     fs::remove_all(directory);  // Only this mkdtemp-owned test directory.
     std::printf("PASS: %u experience block checks\n", checks);
 }
