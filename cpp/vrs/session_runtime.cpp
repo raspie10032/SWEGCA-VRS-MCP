@@ -198,7 +198,9 @@ InputRecall ExperienceRouter::recall_cue(const DigestBytes& cue, RecallScope sco
             const auto* active = temporary_.find(match.recalled_head.identity);
             const auto boundary = active ? active->state().experiences().size() : 0;
             for (std::size_t index = 0; index < count; ++index)
-                result.matches_.push_back({match, index, boundary});
+                result.matches_.push_back({match, index, boundary,
+                    match.main_graph ? match.main_graph->graph().find(match.recalled_head.identity)->experiences()[index].original()
+                                     : match.connection->state().experiences()[index].original()});
         }
         return result;
     }
@@ -207,7 +209,7 @@ InputRecall ExperienceRouter::recall_cue(const DigestBytes& cue, RecallScope sco
         if (!connection) throw std::logic_error("cue refers to an unavailable connection");
         const auto* active = temporary_.find(reference.connection);
         const auto boundary = active ? active->state().experiences().size() : 0;
-        result.matches_.push_back({{&session, connection, connection->snapshot()}, reference.original_index, boundary});
+        result.matches_.push_back({{&session, connection, connection->snapshot()}, reference.original_index, boundary, connection->state().experiences()[reference.original_index].original()});
     };
     if (scope == RecallScope::temporary) {
         result.temporary_ = true;
@@ -221,7 +223,8 @@ InputRecall ExperienceRouter::recall_cue(const DigestBytes& cue, RecallScope sco
                     const auto match = merged_match(candidate.reference.connection);
                     const auto* active = temporary_.find(candidate.reference.connection);
                     result.matches_.push_back({match, candidate.reference.original_index,
-                        active ? active->state().experiences().size() : 0});
+                        active ? active->state().experiences().size() : 0,
+                        merged_main_->graph().find(candidate.reference.connection)->experiences()[candidate.reference.original_index].original()});
                 }
             }
     }
@@ -231,9 +234,31 @@ ReplayedInput ExperienceRouter::replay(const InputRecall& recalled, std::size_t 
     if (recalled.issuer_ != this) throw std::invalid_argument("Recall belongs to a different input route");
     if (candidate >= recalled.matches_.size()) throw std::out_of_range("input recall candidate");
     const auto& selected = recalled.matches_[candidate];
-    RecallCandidates bound;
-    bound.temporary_ = selected.recalled;
-    return ReplayedInput(replay(bound, 0, selected.original_index), selected, this, recalled.cue_);
+    if (selected.recalled.main_graph) {
+        RecallCandidates bound; bound.temporary_ = selected.recalled;
+        auto original = replay(bound, 0, selected.original_index);
+        if (original.location() != selected.original) throw std::logic_error("Main Replay original changed");
+        return ReplayedInput(std::move(original), selected, this, recalled.cue_);
+    }
+    const auto& remembered = selected.recalled;
+    const auto* current = remembered.session->find(remembered.recalled_head.identity);
+    if (!current || current != remembered.connection)
+        throw std::logic_error("Recall original owner changed");
+    const auto head = current->snapshot();
+    // This private receipt came from the same append-only owner. Subsequent
+    // observations may update strength, but cannot rewrite the selected original.
+    // The old head remains the remembered context, never a current verdict.
+    const auto relation = assess_head_publication(&remembered.recalled_head,
+        remembered.recalled_head.record, head, true);
+    if (relation != HeadPublication::unchanged && relation != HeadPublication::publish)
+        throw std::logic_error("Recall original lineage changed");
+    const auto values = current->state().experiences();
+    if (selected.original_index >= values.size() || values[selected.original_index].original() != selected.original)
+        throw std::logic_error("Recall original address changed");
+    auto original = remembered.session->replay(remembered.recalled_head.identity, selected.original_index);
+    if (original.location() != selected.original) throw std::logic_error("Replay original provenance mismatch");
+    continuation_ = remembered.recalled_head.identity;
+    return ReplayedInput(std::move(original), selected, this, recalled.cue_);
 }
 ReEvidenceResult ExperienceRouter::re_evidence(const ReplayedInput& replayed,
     std::uint64_t seed, std::uint64_t step) const {

@@ -2,6 +2,11 @@
 #include "vrs/main_sources.hpp"
 
 namespace swegca::vrs {
+struct ReceivedInput {
+    InputRecall recalled;
+    RecordedRefinement recorded;
+};
+
 struct RuntimeConfig {
     architecture::DigestBytes main_identity;
     architecture::EvidencePolicy policy;
@@ -26,6 +31,9 @@ public:
     [[nodiscard]] bool has_session() const noexcept { return active_.has_value(); }
     [[nodiscard]] const SessionRuntime& session() const;
     [[nodiscard]] const PersistentMainGraph& main() const noexcept { return main_; }
+    // Recall before recording this event, then synchronously retain its full
+    // original through SWEGCA. No choice of Replay candidate is invented here.
+    [[nodiscard]] ReceivedInput receive(const OriginalExperienceView&, std::uint64_t seed, std::uint64_t step);
     [[nodiscard]] InputRecall input(std::string_view media, std::span<const std::byte> content) const;
     [[nodiscard]] ReplayedInput replay(const InputRecall&, std::size_t candidate) const;
     [[nodiscard]] ReEvidenceResult re_evidence(const ReplayedInput&, std::uint64_t seed, std::uint64_t step) const;

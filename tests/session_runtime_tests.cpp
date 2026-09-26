@@ -107,7 +107,7 @@ int main() {
         CHECK(router.replay(natural_local,0).location()==local.original);
         (void)observe(live,"live",10,2,EvidenceOutcome::support);
         throws<std::logic_error>([&] { (void)router.replay(preferred,0,0); });
-        throws<std::logic_error>([&] { (void)router.replay(natural_local,0); });
+        CHECK(router.replay(natural_local,0).location()==local.original);
         CHECK(router.replay(router.recall(id(10)),0,0).location()==local.original);
         CHECK(old.find(id(10))->state().strength()==saved_strength);
         // Separate Main session lineage must not overwrite the first one.

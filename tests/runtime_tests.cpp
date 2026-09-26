@@ -79,5 +79,47 @@ int main(){
   throws<std::logic_error>([&]{(void)host.retain({0,0,"three","user","text/plain",content},7,0);});
   host.end_session();CHECK(!host.has_session());CHECK(host.work(7,0)==0); // no experiences
  }
+ CHECK(memory.used()==0);
+ {
+  const auto path=root/"receive";fs::create_directory(path);
+  auto host=Runtime::create(path,config,memory);host.start_session(id(10),"events");
+  ExperienceLocation initial;
+  unsigned sequence=0;
+  for(std::string_view source:{"user","assistant","tool","system"}){
+   auto event=host.receive({sequence,0,"events",source,"text/plain",content},7,0);
+   CHECK(event.recalled.matches().size()==sequence);
+   CHECK(event.recorded.refinement.result().verification().judgment().status()==EvidenceStatus::abstain);
+   if(sequence==0){CHECK(!event.recalled.familiar());initial=event.recorded.original;}
+   else {
+    // Receive has already appended the new event to the same connection.
+    // The receipt still names only experience that existed before that append.
+    CHECK(event.recalled.temporary());
+    CHECK(event.recalled.matches()[0].original==initial);
+    CHECK(event.recalled.matches()[0].recalled.recalled_head.observations==sequence);
+    auto replayed=host.replay(event.recalled,0);CHECK(replayed.location()==initial);
+    auto checked=host.re_evidence(replayed,7,0);
+    CHECK(checked.agreement()==ReplayAgreement::insufficient);
+    CHECK(checked.current_originals().size()==1&&checked.current_originals()[0]==event.recorded.original);
+   }
+   auto current=host.input("text/plain",content);CHECK(current.matches().size()==sequence+1);
+   auto retained=host.replay(current,sequence);auto original=evidence_payload(retained.original());
+   CHECK(original.source==source&&std::ranges::equal(original.content,content));
+   ++sequence;
+  }
+  const std::array<std::byte,5> binary{std::byte{0},std::byte{255},std::byte{10},std::byte{0},std::byte{127}};
+  auto tool=host.receive({4,0,"events","tool","application/octet-stream",binary},7,0);
+  CHECK(tool.recorded.original.bytes>binary.size());
+  auto stored=host.replay(host.input("application/octet-stream",binary),0);
+  CHECK(std::ranges::equal(evidence_payload(stored.original()).content,binary));
+  CHECK(host.main().graph().generation()==0);host.end_session();CHECK(host.work(7,0)==1);
+  host.start_session(id(11),"next");
+  auto event=host.receive({0,0,"next","user","text/plain",content},7,0);
+  CHECK(!event.recalled.temporary()&&event.recalled.matches().size()==4);
+  CHECK(host.replay(event.recalled,0).location()==initial);
+  CHECK(host.input("text/plain",content).temporary());
+  fail_write=true;
+  throws<std::system_error>([&]{(void)host.receive({1,0,"next","assistant","text/plain",content},7,0);});
+  CHECK(!host.session().usable());
+ }
  CHECK(memory.used()==0);fs::remove_all(root);std::printf("runtime lifecycle tests: %u checks passed\n",checks);
 }

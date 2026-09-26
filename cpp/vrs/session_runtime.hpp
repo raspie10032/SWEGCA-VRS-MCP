@@ -76,6 +76,7 @@ struct InputMatch {
     RecallMatch recalled;
     std::size_t original_index = 0;
     std::size_t current_observations = 0;
+    ExperienceLocation original;
 };
 
 class ExperienceRouter;

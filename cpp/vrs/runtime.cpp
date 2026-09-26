@@ -55,6 +55,11 @@ void Runtime::end_session() {
     // MainSources can acquire the ended store; graph consolidation is deferred.
     active_.reset();
 }
+ReceivedInput Runtime::receive(const OriginalExperienceView& original,std::uint64_t seed,std::uint64_t step) {
+    auto recalled=input(original.media_type,original.content);
+    auto recorded=retain(original,seed,step);
+    return {std::move(recalled),std::move(recorded)};
+}
 InputRecall Runtime::input(std::string_view media,std::span<const std::byte> content) const {
     // No closure, pending merge or storage work is placed before Deja vu.
     return require_session().router.input(media,content);
