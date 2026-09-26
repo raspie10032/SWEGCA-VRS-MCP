@@ -233,13 +233,13 @@ ExperienceEvidence SessionStore::append_evidence(const EvidenceRules& rules,
     try {
         if (!writer_ || !writer_->can_append()) next_block();
         try {
-            auto result = record_evidence(*writer_, rules, original, value, memory_);
+            auto result = record_evidence(*writer_, rules, original, value);
             recorded(result.original());
             return result;
         } catch (const std::length_error&) {
             if (current_records_ == 0) throw;
             next_block();
-            auto result = record_evidence(*writer_, rules, original, value, memory_);
+            auto result = record_evidence(*writer_, rules, original, value);
             recorded(result.original());
             return result;
         }

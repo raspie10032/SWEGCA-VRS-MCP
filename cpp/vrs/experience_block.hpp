@@ -12,7 +12,10 @@
 #include <string_view>
 #include <vector>
 
+namespace swegca::architecture::kernel { class EvidenceRules; struct EvidenceObservation; }
+
 namespace swegca::vrs {
+class ExperienceEvidence;
 
 // Physical original-experience storage owned by Main. No evidence verdict or
 // mutation authority is inferred from storage/read success (SWEGCA I03/I07,
@@ -106,6 +109,11 @@ public:
 
 private:
     ExperienceBlock() = default;
+    friend ExperienceEvidence record_evidence(ExperienceBlock&,
+        const architecture::kernel::EvidenceRules&, const OriginalExperienceView&,
+        const architecture::kernel::EvidenceObservation&);
+    [[nodiscard]] ExperienceLocation append_parts(const OriginalExperienceView&,
+        std::span<const std::span<const std::byte>> content);
     [[nodiscard]] static ExperienceBlock open(const std::filesystem::path& path, bool writer, StorageBudget* storage);
     int fd_ = -1;
     architecture::DigestBytes identity_{};

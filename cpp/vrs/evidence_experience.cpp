@@ -49,15 +49,14 @@ OriginalExperienceView parse_payload(const StoredExperience& stored) {
 }  // namespace
 
 ExperienceEvidence record_evidence(ExperienceBlock& block, const EvidenceRules& rules,
-    const OriginalExperienceView& original, const EvidenceObservation& value, MemoryBudget& memory) {
+    const OriginalExperienceView& original, const EvidenceObservation& value) {
     if (!observation_values_valid(rules, value.hypothesis, value) || named_digest(value.address) ||
         value.observed_at != original.observed_at_ns || original.media_type.empty())
         throw std::invalid_argument("invalid recorded SWEGCA observation");
     if (original.media_type.size() > std::numeric_limits<std::size_t>::max() - prefix_bytes ||
         original.content.size() > std::numeric_limits<std::size_t>::max() - prefix_bytes - original.media_type.size())
         throw std::overflow_error("SWEGCA observation size overflow");
-    std::pmr::vector<std::byte> encoded(&memory);
-    encoded.resize(prefix_bytes + original.media_type.size() + original.content.size());
+    std::array<std::byte, prefix_bytes> encoded{};
     for (std::size_t i = 0; i < magic.size(); ++i) encoded[i] = std::byte(magic[i]);
     put_digest(encoded, 8, value.hypothesis);
     put_digest(encoded, 40, value.source);
@@ -70,14 +69,12 @@ ExperienceEvidence record_evidence(ExperienceBlock& block, const EvidenceRules& 
     put(encoded, 157, value.has_expiry, 1);
     put(encoded, 160, original.media_type.size());
     put(encoded, 168, original.content.size());
-    for (std::size_t i = 0; i < original.media_type.size(); ++i)
-        encoded[prefix_bytes + i] = std::byte(original.media_type[i]);
-    std::copy(original.content.begin(), original.content.end(),
-        encoded.begin() + prefix_bytes + original.media_type.size());
     auto wrapped = original;
     wrapped.media_type = format;
-    wrapped.content = encoded;
-    const auto location = block.append(wrapped);
+    wrapped.content = {};
+    const std::array parts{std::span<const std::byte>(encoded),
+        std::as_bytes(std::span(original.media_type)),original.content};
+    const auto location = block.append_parts(wrapped,parts);
     auto bound = value;
     bound.address = location.digest;
     return ExperienceEvidence(location, bound, architecture::input_cue(original.media_type, original.content));

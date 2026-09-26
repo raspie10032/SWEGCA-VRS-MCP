@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <limits>
 #include <optional>
 #include <string>
@@ -72,7 +73,7 @@ struct Originals {
         value.has_expiry = expires;
         value.expires_at = 10;
         return record_evidence(block, rules,
-            {sequence++, 0, "session", "experiment", "text/plain", bytes(raw)}, value, memory);
+            {sequence++, 0, "session", "experiment", "text/plain", bytes(raw)}, value);
     }
     void fill(Connection& connection, EvidenceOutcome outcome, bool expires = false) {
         for (unsigned axis = 0; axis < 4; ++axis)
@@ -162,6 +163,35 @@ int main(int argc, char** argv) {
     const auto rules = make_evidence_rules(EvidencePolicy{});
     MemoryBudget memory(16 << 20);
     Originals originals;
+    {
+        // Encoding borrows a large original instead of allocating a second
+        // full payload. Reading/decoding still verifies every stored byte.
+        std::vector<std::byte> payload(2<<20);
+        for(std::size_t i=0;i<payload.size();++i)payload[i]=std::byte(i&255);
+        const auto segmented_path=originals.directory/"parts.block";
+        const auto contiguous_path=originals.directory/"contiguous.block";
+        auto segmented=ExperienceBlock::create(segmented_path,id(32000),8<<20);
+        auto contiguous=ExperienceBlock::create(contiguous_path,id(32000),8<<20);
+        EvidenceObservation value;value.hypothesis=id(20);value.source=id(1);
+        value.context=id(2);value.producer=id(3);value.observed_at=42;
+        const OriginalExperienceView raw{987,42,"large-session","large-source","application/octet-stream",payload};
+        const auto before_record=memory.used();
+        const auto saved=record_evidence(segmented,rules,raw,value);
+        CHECK(memory.used()==before_record);
+        const auto stored=segmented.read(saved.original(),4<<20,memory);
+        const auto decoded=decode_evidence(rules,stored);
+        CHECK(decoded.original()==saved.original()&&decoded.cue()==saved.cue());
+        CHECK(decoded.value().observed_at==42&&decoded.value().hypothesis==value.hypothesis);
+        CHECK(std::ranges::equal(evidence_payload(stored).content,payload));
+        CHECK(contiguous.append(stored.view())==saved.original());
+        std::ifstream a(segmented_path,std::ios::binary),b(contiguous_path,std::ios::binary);
+        const std::string a_bytes((std::istreambuf_iterator<char>(a)),{}),b_bytes((std::istreambuf_iterator<char>(b)),{});
+        CHECK(a_bytes==b_bytes&&a_bytes.size()==ExperienceBlock::header_bytes+saved.original().bytes);
+        auto small=ExperienceBlock::create(originals.directory/"too-small.block",id(32001),512);
+        expect_throw<std::length_error>([&]{(void)record_evidence(small,rules,raw,value);});
+        CHECK(small.can_append()&&small.inspect().complete_records==0);
+    }
+    CHECK(memory.used()==0);
     {
         FailingMemory upstream;
         MemoryBudget segmented_memory(16 << 20, &upstream);
@@ -362,7 +392,7 @@ int main(int argc, char** argv) {
         value.producer_confidence = 0.625; value.observed_at = 42;
         const std::string binary("first\0원문\0last", sizeof("first\0원문\0last") - 1);
         const OriginalExperienceView raw{987, 42, "session-z", "source-z", "application/octet-stream", bytes(binary)};
-        const auto evidence = record_evidence(originals.left, rules, raw, value, memory);
+        const auto evidence = record_evidence(originals.left, rules, raw, value);
         const auto stored = originals.left.read(evidence.original(), 4096, memory);
         const auto decoded = decode_evidence(rules, stored);
         CHECK(decoded.value().producer_confidence == 0.625);
@@ -390,7 +420,7 @@ int main(int argc, char** argv) {
         }
         const auto old_size = originals.left.inspect().complete_records;
         value.observed_at = 43;
-        expect_throw<std::invalid_argument>([&] { (void)record_evidence(originals.left, rules, raw, value, memory); });
+        expect_throw<std::invalid_argument>([&] { (void)record_evidence(originals.left, rules, raw, value); });
         CHECK(originals.left.inspect().complete_records == old_size);
     }
     CHECK(memory.used() == 0);
@@ -477,10 +507,10 @@ int main(int argc, char** argv) {
         expect_throw<std::invalid_argument>([&] { unknown.append(bad); });
         auto bad_value = unknown.experiences()[0].value();
         const OriginalExperienceView raw{0, 0, "session", "experiment", "text/plain", {}};
-        expect_throw<std::invalid_argument>([&] { (void)record_evidence(originals.left, rules, raw, bad_value, memory); });
+        expect_throw<std::invalid_argument>([&] { (void)record_evidence(originals.left, rules, raw, bad_value); });
         bad_value.address = {};
         bad_value.producer_confidence = std::numeric_limits<double>::quiet_NaN();
-        expect_throw<std::invalid_argument>([&] { (void)record_evidence(originals.left, rules, raw, bad_value, memory); });
+        expect_throw<std::invalid_argument>([&] { (void)record_evidence(originals.left, rules, raw, bad_value); });
         CHECK(unknown.revision() == before && unknown.experiences().size() == 48);
     }
     {

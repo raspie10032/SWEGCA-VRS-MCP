@@ -230,15 +230,25 @@ ExperienceBlock ExperienceBlock::open_writer(const std::filesystem::path& path, 
 }
 
 ExperienceLocation ExperienceBlock::append(const OriginalExperienceView& experience) {
+    const std::array parts{experience.content};
+    return append_parts(experience, parts);
+}
+ExperienceLocation ExperienceBlock::append_parts(const OriginalExperienceView& experience,
+    std::span<const std::span<const std::byte>> parts) {
     if (!writable_ || fd_ < 0) throw std::logic_error("experience block cannot append");
     if (experience.session.empty() || experience.source.empty() || experience.media_type.empty())
         throw std::invalid_argument("experience provenance is incomplete");
     if (capacity_ - end_ < record_overhead) throw std::length_error("experience block is full");
     auto remaining = capacity_ - end_ - record_overhead;
     for (const auto count : {experience.session.size(), experience.source.size(),
-                             experience.media_type.size(), experience.content.size()}) {
+                             experience.media_type.size()}) {
         if (count > remaining) throw std::length_error("experience does not fit in block");
         remaining -= count;
+    }
+    std::uint64_t content_bytes=0;
+    for(const auto part:parts) {
+        if(part.size()>remaining)throw std::length_error("experience does not fit in block");
+        remaining-=part.size();content_bytes+=part.size();
     }
     const auto total = capacity_ - end_ - remaining;
     StorageBudget::Reservation charge(storage_, total);
@@ -250,13 +260,13 @@ ExperienceLocation ExperienceBlock::append(const OriginalExperienceView& experie
     put_u64(prefix, 32, experience.session.size());
     put_u64(prefix, 40, experience.source.size());
     put_u64(prefix, 48, experience.media_type.size());
-    put_u64(prefix, 56, experience.content.size());
+    put_u64(prefix, 56, content_bytes);
     Sha256 hash;
     hash.update(prefix);
     hash.update(experience.session);
     hash.update(experience.source);
     hash.update(experience.media_type);
-    hash.update(experience.content);
+    for(const auto part:parts)hash.update(part);
     const auto digest = hash.finish();
     std::array<std::byte, trailer_bytes> trailer{};
     std::copy(digest.begin(), digest.end(), trailer.begin());
@@ -265,12 +275,14 @@ ExperienceLocation ExperienceBlock::append(const OriginalExperienceView& experie
     auto at = end_;
     charge.retain();
     try {
-        for (const auto part : {std::span<const std::byte>(prefix), as_bytes(experience.session),
-                               as_bytes(experience.source), as_bytes(experience.media_type),
-                               experience.content, std::span<const std::byte>(trailer)}) {
+        const auto write_part = [&](std::span<const std::byte> part) {
             write_exact(fd_, part, at, storage_);
             at += part.size();
-        }
+        };
+        for (const auto part : {std::span<const std::byte>(prefix), as_bytes(experience.session),
+                               as_bytes(experience.source), as_bytes(experience.media_type)})write_part(part);
+        for(const auto part:parts)write_part(part);
+        write_part(trailer);
         sync_data(fd_);
     } catch (...) {
         writable_ = false;

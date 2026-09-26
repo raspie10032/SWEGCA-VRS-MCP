@@ -16,7 +16,7 @@ public:
 private:
     friend ExperienceEvidence record_evidence(ExperienceBlock&,
         const architecture::kernel::EvidenceRules&, const OriginalExperienceView&,
-        const architecture::kernel::EvidenceObservation&, MemoryBudget&);
+        const architecture::kernel::EvidenceObservation&);
     friend ExperienceEvidence decode_evidence(const architecture::kernel::EvidenceRules&,
         const StoredExperience&);
     ExperienceEvidence(const ExperienceLocation& original,
@@ -32,7 +32,7 @@ private:
 // the persisted record supplies it. Its timestamp must match the original.
 [[nodiscard]] ExperienceEvidence record_evidence(ExperienceBlock& block,
     const architecture::kernel::EvidenceRules& rules, const OriginalExperienceView& original,
-    const architecture::kernel::EvidenceObservation& value, MemoryBudget& memory);
+    const architecture::kernel::EvidenceObservation& value);
 [[nodiscard]] ExperienceEvidence decode_evidence(const architecture::kernel::EvidenceRules& rules,
     const StoredExperience& stored);
 

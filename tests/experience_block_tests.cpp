@@ -1,4 +1,6 @@
 #include "vrs/experience_block.hpp"
+#include "vrs/evidence_experience.hpp"
+#include "swegca_architecture/evidence_rules.hpp"
 
 #include <algorithm>
 #include <array>
@@ -273,6 +275,25 @@ int main() {
         {StorageBudget::Reservation r(&edge,1);r.retain();}
         expect_throw<StorageLimit>([&]{StorageBudget::Reservation r(&edge,1);});
         expect_throw<StorageLimit>([]{StorageBudget invalid(1,2);});
+    }
+    {
+        using namespace swegca::architecture;
+        using namespace swegca::architecture::kernel;
+        const auto rules=make_evidence_rules(EvidencePolicy{});
+        EvidenceObservation value;value.hypothesis=identity;value.source=identity;
+        value.context=identity;value.producer=identity;value.observed_at=first.observed_at_ns;
+        // The segmented envelope has eight nonempty writes. Failure at any
+        // boundary must preserve the previous record and poison this writer.
+        for(int point=0;point<8;++point){
+            auto block=ExperienceBlock::create(directory/("parts-fail-"+std::to_string(point)),identity,capacity);
+            const auto previous=block.append(first);
+            writes_left=point;
+            expect_throw<std::system_error>([&]{(void)record_evidence(block,rules,first,value);});
+            CHECK(writes_left==-1&&!block.can_append());
+            CHECK(block.inspect().complete_records==1);
+            CHECK(block.read(previous,capacity,memory).location()==previous);
+            expect_throw<std::logic_error>([&]{(void)record_evidence(block,rules,first,value);});
+        }
     }
     expect_throw<std::invalid_argument>([&] { (void)ExperienceBlock::create(directory / "zero.block", {}, capacity); });
     CHECK(!fs::exists(directory / "zero.block"));
