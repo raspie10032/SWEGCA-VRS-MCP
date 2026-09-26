@@ -7,6 +7,7 @@
 #include <cerrno>
 #include <dlfcn.h>
 #include <unistd.h>
+#include <chrono>
 using namespace swegca::architecture;
 using namespace swegca::architecture::kernel;
 using namespace swegca::vrs;
@@ -24,10 +25,12 @@ DigestBytes id(unsigned n){DigestBytes d{};for(unsigned i=0;i<4;++i)d[i]=std::by
 class WorkerMemory final:public std::pmr::memory_resource {
 public:
  std::atomic<std::size_t> remaining{SIZE_MAX};std::atomic<bool> saw_worker{false};std::atomic<unsigned> worker_failures{0};
+ std::atomic<bool> hold{false},entered{false};
  const std::thread::id owner=std::this_thread::get_id();
 private:
  void* do_allocate(std::size_t n,std::size_t alignment)override{
   const bool worker=std::this_thread::get_id()!=owner;if(worker)saw_worker=true;
+  if(worker&&hold.load()) {entered=true;while(hold.load())hold.wait(true);}
   auto left=remaining.load();
   while(left!=SIZE_MAX){if(left==0){if(worker)++worker_failures;throw std::bad_alloc();}if(remaining.compare_exchange_weak(left,left-1))break;}
   return std::pmr::new_delete_resource()->allocate(n,alignment);
@@ -84,6 +87,47 @@ int main(){
   CHECK(serial.merge(b,37,0)&&parallel.merge(b,37,0));equal(serial,parallel);
   CHECK(parallel.replay(id(10),8).location()==b.find(id(10))->state().experiences()[0].original());
   CHECK(!parallel.merge(b,99,1));equal(serial,parallel);
+  {
+   // Preparation may run alongside real Recall/Replay and a different active
+   // temporary session. Hold a worker allocation to make overlap deterministic.
+   auto durable=PersistentMainGraph::create(root/"prepared",id(78),parallel_memory,1,policy,1024,2);
+   CHECK(durable.merge(a,31,0));const auto before=durable.head();
+   auto query_store=SessionStore::create(root,id(4),"query",65536,memory);
+   SessionRuntime query(query_store,memory,8192);ExperienceRouter router(query,memory);router.mount_main(durable);
+   std::optional<MainGraph::PreparedMerge> batch;std::exception_ptr failure;
+   upstream.hold=true;upstream.entered=false;
+   std::jthread worker([&]{try{batch.emplace(durable.prepare_merge(b,37,0));}catch(...){failure=std::current_exception();}});
+   const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(5);
+   while(!upstream.entered.load()&&std::chrono::steady_clock::now()<deadline)std::this_thread::yield();
+   CHECK(upstream.entered.load());
+   for(unsigned iteration=0;iteration<10;++iteration) {
+    auto recalled=router.input("text/plain",{});
+    CHECK(!recalled.temporary()&&recalled.matches().size()==24);
+    CHECK(router.replay(recalled,0).location()==a.find(id(10))->state().experiences()[0].original());
+    CHECK(durable.head()==before&&durable.graph().generation()==1);
+   }
+   (void)query.retain_input({0,0,"query","user","text/new",{}},1,policy,7,0);
+   CHECK(router.input("text/new",{}).temporary());
+   upstream.hold=false;upstream.hold.notify_all();worker.join();
+   if(failure)std::rethrow_exception(failure);
+   CHECK(batch.has_value()&&durable.head()==before);
+   // Another graph cannot install a batch; rejection must leave it usable by
+   // its real owner. Moving invalidates the source handle.
+   bool rejected=false;try{(void)parallel.commit_merge(std::move(*batch));}catch(const std::logic_error&){rejected=true;}CHECK(rejected);
+   auto stale=durable.prepare_merge(b,37,0);
+   auto moved=std::move(*batch);
+   rejected=false;try{(void)durable.commit_merge(std::move(*batch));}catch(const std::logic_error&){rejected=true;}CHECK(rejected);
+   CHECK(durable.commit_merge(std::move(moved)));equal(serial,durable.graph());
+   rejected=false;try{(void)durable.commit_merge(std::move(moved));}catch(const std::logic_error&){rejected=true;}CHECK(rejected);
+   rejected=false;try{(void)durable.commit_merge(std::move(stale));}catch(const std::logic_error&){rejected=true;}CHECK(rejected);
+   equal(serial,durable.graph());
+   auto duplicate=durable.prepare_merge(b,99,1);
+   CHECK(!durable.commit_merge(std::move(duplicate)));
+   rejected=false;try{(void)durable.commit_merge(std::move(duplicate));}catch(const std::logic_error&){rejected=true;}CHECK(rejected);
+   router.mount_main(durable);
+   const auto recalled=router.input("text/plain",{});CHECK(!recalled.temporary()&&recalled.matches().size()==48);
+   CHECK(router.replay(recalled,8).location()==b.find(id(10))->state().experiences()[0].original());
+  }
   ExperienceLocation head;
   {
    auto durable=PersistentMainGraph::create(root/"graph",id(77),parallel_memory,1,policy,1024,2);

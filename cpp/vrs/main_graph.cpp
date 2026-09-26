@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <thread>
 #include <exception>
+#include <utility>
 
 namespace swegca::vrs {
 using namespace architecture;
@@ -21,21 +22,33 @@ bool MainGraph::merge(const SessionRuntime& source, std::uint64_t seed, std::uin
 }
 bool MainGraph::merge_impl(const SessionRuntime& source, std::uint64_t seed, std::uint64_t step,
     MergeSink sink, void* context) {
+    auto prepared = prepare_merge(source, seed, step);
+    return commit_impl(prepared, sink, context);
+}
+MainGraph::PreparedMerge::PreparedMerge(const MainGraph& owner, std::uint64_t seed, std::uint64_t step)
+    : owner_(&owner), generation_(owner.generation_), seed_(seed), step_(step),
+      pending_(&owner.memory_), marker_(&owner.memory_), changes_(&owner.memory_) {}
+MainGraph::PreparedMerge::PreparedMerge(PreparedMerge&& other) noexcept
+    : owner_(std::exchange(other.owner_, nullptr)), generation_(other.generation_), seed_(other.seed_), step_(other.step_),
+      pending_(std::move(other.pending_)), marker_(std::move(other.marker_)),
+      changes_(std::move(other.changes_)), result_(other.result_) {}
+MainGraph::PreparedMerge MainGraph::prepare_merge(const SessionRuntime& source, std::uint64_t seed, std::uint64_t step) const {
     if (!main_session_readable(source.phase(), source.usable()))
         throw std::logic_error("Main merge requires an ended published session");
     const auto identity = source.store_.identity();
+    PreparedMerge prepared(*this, seed, step);
     const auto existing = merged_.find(identity);
     if (existing != merged_.end()) {
         if (existing->second != source.catalog_.root()) throw std::logic_error("merged session root changed");
-        return false;
+        return prepared;
     }
-    if (source.catalog_.heads().empty()) return false;
+    if (source.catalog_.heads().empty()) return prepared;
     if (!catalog_root_ready(true, generation_)) throw std::overflow_error("Main generation exhausted");
 
-    std::pmr::map<DigestBytes, Entry> pending(&memory_);
-    std::pmr::map<DigestBytes, ExperienceLocation> marker(&memory_);
+    auto& pending = prepared.pending_;
+    auto& marker = prepared.marker_;
     marker.emplace(identity, source.catalog_.root());
-    decltype(changed_) changes(&memory_);
+    auto& changes = prepared.changes_;
     struct Task { Entry* candidate; const Entry* previous; const PersistentConnection* incoming; };
     std::pmr::vector<Task> tasks(&memory_);
     tasks.reserve(source.catalog_.heads().size());
@@ -88,7 +101,7 @@ bool MainGraph::merge_impl(const SessionRuntime& source, std::uint64_t seed, std
         for (auto& thread : threads) thread.join();
         for (const auto& failure : failures) if (failure) std::rethrow_exception(failure);
     }
-    if (sink) {
+    {
         Sha256 hash; hash.update("SWEGCA Main merge result v1"); hash.update(policy_digest_);
         for (const auto& [id, candidate] : pending) {
             hash.update(id); hash.update(refinement_digest(*candidate.report));
@@ -97,8 +110,21 @@ bool MainGraph::merge_impl(const SessionRuntime& source, std::uint64_t seed, std
                 originals = extend_experience_digest(originals, value.original());
             hash.update(originals);
         }
-        sink(context, identity, source.catalog_.root(), hash.finish(), generation_ + 1, seed, step);
+        prepared.result_ = hash.finish();
     }
+    return prepared;
+}
+bool MainGraph::commit_merge(PreparedMerge&& prepared) {
+    return commit_impl(prepared, nullptr, nullptr);
+}
+bool MainGraph::commit_impl(PreparedMerge& prepared, MergeSink sink, void* context) {
+    if (prepared.owner_ != this) throw std::logic_error("Main merge batch is foreign, moved or consumed");
+    if (prepared.generation_ != generation_) throw std::logic_error("Main changed after merge preparation");
+    if (prepared.marker_.empty()) { prepared.owner_ = nullptr; return false; }
+    const auto& [identity, root] = *prepared.marker_.begin();
+    if (sink) sink(context, identity, root, prepared.result_, generation_ + 1, prepared.seed_, prepared.step_);
+    prepared.owner_ = nullptr;
+    auto& pending = prepared.pending_;
     // No allocations or fallible persistence follow this point. Transfer the
     // prepared nodes under Main's serialized ownership, then publish generation.
     for (const auto& [connection_id, entry] : pending) {
@@ -108,8 +134,8 @@ bool MainGraph::merge_impl(const SessionRuntime& source, std::uint64_t seed, std
         connections_.erase(connection_id);
     }
     connections_.merge(pending);
-    merged_.merge(marker);
-    changed_.merge(changes);
+    merged_.merge(prepared.marker_);
+    changed_.merge(prepared.changes_);
     ++generation_;
     return true;
 }

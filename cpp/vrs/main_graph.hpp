@@ -10,12 +10,19 @@ namespace swegca::vrs {
 // are serialized by Main. Durable merged-root publication is a separate gate.
 class MainGraph final {
 public:
+    class PreparedMerge;
     MainGraph(MemoryBudget& memory, double initial_strength, const architecture::EvidencePolicy& policy, std::uint32_t workers = 1);
     MainGraph(const MainGraph&) = delete;
     MainGraph& operator=(const MainGraph&) = delete;
     // False for an already merged source or a source without connections.
     // A failed batch leaves all previous connections and generation intact.
     [[nodiscard]] bool merge(const SessionRuntime& source, std::uint64_t seed, std::uint64_t step);
+    // Preparation reads the published graph and ended source without changing
+    // either. Readers may run concurrently; no graph writer may run until all
+    // preparation tasks finish. Source stores and memory outlive the batch.
+    [[nodiscard]] PreparedMerge prepare_merge(const SessionRuntime&, std::uint64_t seed, std::uint64_t step) const;
+    // Publication remains serialized by Main, after preparation has joined.
+    [[nodiscard]] bool commit_merge(PreparedMerge&&);
     // Borrowed views remain valid until a subsequent successful merge replaces
     // that connection. Readers and merges are serialized by Main.
     [[nodiscard]] const Connection* find(const architecture::DigestBytes& identity) const noexcept;
@@ -30,6 +37,7 @@ private:
     using MergeSink = void (*)(void*, const architecture::DigestBytes&, const ExperienceLocation&,
         const architecture::DigestBytes&, std::uint64_t, std::uint64_t, std::uint64_t);
     bool merge_impl(const SessionRuntime&, std::uint64_t, std::uint64_t, MergeSink, void*);
+    bool commit_impl(PreparedMerge&, MergeSink, void*);
     // Consecutive originals from one source share a store and read bound.
     struct Origin { const SessionStore* store; std::uint64_t read_limit; std::size_t end; };
     struct Entry {
@@ -50,6 +58,26 @@ private:
     // One entry per live connection, ordered by its latest committed generation.
     std::pmr::set<std::pair<std::uint64_t, architecture::DigestBytes>> changed_;
     std::uint64_t generation_ = 0;
+};
+
+// Opaque, single-use result of real shuffled SWEGCA evaluation. Callers cannot
+// install their own verdict or change a prepared connection. The originating
+// MainGraph and its memory/source stores must outlive this object.
+class MainGraph::PreparedMerge final {
+public:
+    PreparedMerge(const PreparedMerge&) = delete;
+    PreparedMerge& operator=(const PreparedMerge&) = delete;
+    PreparedMerge(PreparedMerge&&) noexcept;
+    PreparedMerge& operator=(PreparedMerge&&) = delete;
+private:
+    friend class MainGraph;
+    PreparedMerge(const MainGraph&, std::uint64_t seed, std::uint64_t step);
+    const MainGraph* owner_;
+    std::uint64_t generation_, seed_, step_;
+    std::pmr::map<architecture::DigestBytes, Entry> pending_;
+    std::pmr::map<architecture::DigestBytes, ExperienceLocation> marker_;
+    std::pmr::set<std::pair<std::uint64_t, architecture::DigestBytes>> changes_;
+    architecture::DigestBytes result_{};
 };
 
 }  // namespace swegca::vrs

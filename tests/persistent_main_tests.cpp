@@ -100,10 +100,19 @@ int main(){
    auto main=PersistentMainGraph::create(path,identity,memory,1,policy,1024);
    CHECK(main.graph().generation()==0);
    throws<std::system_error>([&]{(void)PersistentMainGraph::open(path,identity,memory,1,policy,resolver);});
+   const auto before_prepare=memory.used();
+   writes_left=0;
+   { auto discarded=main.prepare_merge(a,17,0);
+     CHECK(writes_left==0&&main.graph().generation()==0&&main.usable());
+     CHECK(!fs::exists(path/"m-0000000000000000.block")); }
+   CHECK(memory.used()==before_prepare);writes_left=-1;
    CHECK(main.merge(a,17,0));first_head=main.head();CHECK(main.graph().generation()==1);
    CHECK(!main.merge(a,18,1)&&main.head()==first_head);
-   writes_left=1;throws<std::system_error>([&]{(void)main.merge(b,19,0);});
+   auto prepared=main.prepare_merge(b,19,0);
+   CHECK(main.head()==first_head);
+   writes_left=1;throws<std::system_error>([&]{(void)main.commit_merge(std::move(prepared));});
    CHECK(!main.usable());throws<std::logic_error>([&]{(void)main.graph();});
+   throws<std::logic_error>([&]{(void)main.commit_merge(std::move(prepared));});
   }
   const auto old_size=fs::file_size(path/"m-0000000000000000.block");
   {

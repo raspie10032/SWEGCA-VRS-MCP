@@ -74,6 +74,12 @@ const MainGraph& PersistentMainGraph::graph()const{
 bool PersistentMainGraph::merge(const SessionRuntime& source,std::uint64_t seed,std::uint64_t step){
  (void)graph();return graph_.merge_impl(source,seed,step,persist,this);
 }
+MainGraph::PreparedMerge PersistentMainGraph::prepare_merge(const SessionRuntime& source,std::uint64_t seed,std::uint64_t step)const{
+ return graph().prepare_merge(source,seed,step);
+}
+bool PersistentMainGraph::commit_merge(MainGraph::PreparedMerge&& prepared){
+ (void)graph();return graph_.commit_impl(prepared,persist,this);
+}
 void PersistentMainGraph::next_block(){
  if(next_index_==std::numeric_limits<std::uint64_t>::max())throw std::overflow_error("Main block index exhausted");
  writer_.reset();const auto final=directory_/filename(next_index_);

@@ -22,6 +22,10 @@ public:
     PersistentMainGraph(PersistentMainGraph&&) = delete;
     PersistentMainGraph& operator=(PersistentMainGraph&&) = delete;
     [[nodiscard]] bool merge(const SessionRuntime&, std::uint64_t seed, std::uint64_t step);
+    // Same read/prepare versus serialized publication contract as MainGraph.
+    // Preparing never writes the journal or changes the visible head.
+    [[nodiscard]] MainGraph::PreparedMerge prepare_merge(const SessionRuntime&, std::uint64_t seed, std::uint64_t step) const;
+    [[nodiscard]] bool commit_merge(MainGraph::PreparedMerge&&);
     [[nodiscard]] const MainGraph& graph() const;
     [[nodiscard]] bool usable() const noexcept { return usable_; }
     [[nodiscard]] const ExperienceLocation& head() const noexcept { return head_; }
