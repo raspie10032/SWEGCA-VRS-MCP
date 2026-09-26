@@ -272,8 +272,10 @@ private:
     void require_main_current() const;
     [[nodiscard]] RecallMatch merged_match(const architecture::DigestBytes& identity) const;
     std::pmr::map<architecture::DigestBytes, std::pmr::vector<MainCue>> main_cues_;
+    // Exact cue index: ordered disjoint [begin,end) runs within a connection.
+    // Adjacent equal-cue originals need no repeated identity/tree node.
     using MergedCueReference = std::pair<architecture::DigestBytes, std::size_t>;
-    std::pmr::map<architecture::DigestBytes, std::pmr::set<MergedCueReference>> merged_cues_;
+    std::pmr::map<architecture::DigestBytes, std::pmr::map<MergedCueReference, std::size_t>> merged_cues_;
     // Main-owned dialogue continuity, updated only after a successful selected
     // Replay. It holds an experience key, never copied dialogue text or a verdict.
     mutable std::optional<architecture::DigestBytes> continuation_;

@@ -1,3 +1,4 @@
+#include "swegca_architecture/input_cue.hpp"
 #include "vrs/persistent_main_graph.hpp"
 #include "swegca_architecture/input_cue.hpp"
 #include <cerrno>
@@ -54,10 +55,10 @@ int main(){
    SessionRuntime extra(extra_store,memory,8192);
    for(unsigned connection:{9U,11U}) {
     extra.define_connection(id(connection),1,policy);
-    for(unsigned n=0;n<2;++n) {
+    for(unsigned n=0;n<5;++n) {
      EvidenceObservation value;value.hypothesis=id(connection);value.source=id(700+n);
      value.context=id(1700+n);value.producer=id(2700+n);value.outcome=EvidenceOutcome::insufficient;
-     (void)extra.observe(id(connection),{n,0,"extra","experiment",n?"text/untouched":"text/plain",{}},value,7,0);
+     (void)extra.observe(id(connection),{n,0,"extra","experiment",(n==1||n==4)?"text/untouched":"text/plain",{}},value,7,0);
     }
    }
    extra.end();extra.publish_originals();
@@ -68,15 +69,18 @@ int main(){
    FailingMemory index_allocator;MemoryBudget index_memory(1<<20,&index_allocator);
    ExperienceRouter incremental(query,index_memory);incremental.mount_main(indexed);
    const auto untouched=incremental.input("text/untouched",{});
-   CHECK(untouched.matches().size()==2);
+   CHECK(untouched.matches().size()==4);
    const auto prior_direct=incremental.recall(id(9));
    // Skip a generation deliberately; the old observation counts still select
    // exactly the new suffix across both commits.
    CHECK(indexed.merge(b,3,0));CHECK(indexed.merge(c,4,0));
+   const auto index_before=index_memory.used();
    index_allocator.largest_request=0;index_allocator.request_limit=512;
    index_allocator.remaining=20;
    incremental.mount_main(indexed);
    CHECK(index_allocator.largest_request<=512);
+   CHECK(index_memory.used()==index_before); // 8 -> 24 contiguous originals extend one existing run
+   std::printf("Main cue run extension: %zu resident bytes added for 16 originals\n",index_memory.used()-index_before);
    index_allocator.remaining=std::numeric_limits<std::size_t>::max();
    throws<std::logic_error>([&]{(void)incremental.replay(prior_direct,0,0);});
    index_allocator.request_limit=std::numeric_limits<std::size_t>::max();
@@ -84,6 +88,18 @@ int main(){
    for(const auto media:{"text/plain","text/untouched"}) {
     const auto delta=incremental.input(media,{});const auto complete=rebuilt.input(media,{});
     CHECK(delta.matches().size()==complete.matches().size());
+    const auto cue=swegca::architecture::input_cue(media,{});
+    std::size_t expected_index=0;
+    for(unsigned identity:{9U,10U,11U}) {
+     const auto values=indexed.graph().find(id(identity))->experiences();
+     for(std::size_t n=0;n<values.size();++n)if(values[n].cue()==cue){
+      CHECK(expected_index<delta.matches().size());
+      CHECK(delta.matches()[expected_index].original==values[n].original());
+      CHECK(delta.matches()[expected_index].original_index==n);
+      ++expected_index;
+     }
+    }
+    CHECK(expected_index==delta.matches().size());
     for(std::size_t i=0;i<delta.matches().size();++i) {
      CHECK(delta.matches()[i].original==complete.matches()[i].original);
      CHECK(delta.matches()[i].recalled.recalled_head.identity==complete.matches()[i].recalled.recalled_head.identity);

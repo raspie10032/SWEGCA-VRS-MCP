@@ -17,7 +17,7 @@
 | 세션 전체 내용 실시간 임시 VRS 반영 | receive/retain/observe가 저장·셔플·코어 검증을 수행. `swegca/retain`은 현재 Recall/Replay 유지 | 실제 앱의 모든 사용자·모델·도구·기타 이벤트 연결이 없음. 테스트 이벤트 source 이름은 실수집 증거가 아님 |
 | 명시적 종료 뒤에만 Main 병합 | 종료·발행 원천만 예약. 작업 중 캐시 보호, 준비 워커, 소유자 발행·복구. `schedule_work`, `poll_work` | 실제 호스트 자동 스케줄러 및 명시적 종료 입력 연결. Codex SessionEnd만으로 명시적 종료를 판별할 수 없음 |
 | 분할·연결선·병렬 처리 | 물리 기록 블록, 불변 경험 세그먼트 공유, 출처 범위, 독립 연결의 병렬 복구·병합 | 물리 블록 분할은 region/portal/shared-experience 그래프 완성의 대체물이 아님 |
-| Main 크기에 맞는 4GB 운용 | VRS PMR 공유 예산과 별도 프로세스 MemoryMax 경로. 실제 제한/OOM 복구 검사 있음 | MainGraph::connections_, ExperienceSequence, router의 merged_cues_가 누적 경험에 비례해 상주한다. 제한 초과 거부는 큰 그래프의 제한 내 동작을 증명하지 않음 |
+| Main 크기에 맞는 4GB 운용 | VRS PMR 공유 예산과 별도 프로세스 MemoryMax 경로. 실제 제한/OOM 복구 검사 있음 | MainGraph::connections_, ExperienceSequence가 누적 경험에 비례해 상주한다. merged_cues_는 연속 같은 cue를 구간으로 압축했지만 불연속/고유 cue에서는 여전히 경험 수에 비례한다(`MAIN_CUE_RANGES.md`). 제한 초과 거부는 큰 그래프의 제한 내 동작을 증명하지 않음 |
 | 5Gbps SSD·500GB 저장 지원 | 공유 논리 I/O 625,000,000 B/s, 저장 파일 바이트 예산 500,000,000,000 및 더 큰 설정 지원 | 실제 물리 장치의 I/O 제한·파일시스템 메타데이터 비용·500GB 수준 실행 검증은 미완료 |
 | 입력→Recall <1ms | 실제 native 경계의 원문 해시·임시/Main 탐색 포함 측정. 동시 작업 중 450개에서 2개 초과 보존 | 3.507ms 및 1.071ms 실패의 원인 미확정. 실제 앱·대규모 그래프에서 요구 달성 미입증 |
 | 코어 한 공정 ns | 기존 코어 연산의 제한된 네이티브 벤치와 원본 수치 의미 검사 존재. 최근 읽기 변경은 판정식을 바꾸지 않음 | 전체 VRS나 임의 크기 원문 처리 전체를 ns라고 주장할 수 없음 |

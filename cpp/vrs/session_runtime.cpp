@@ -205,17 +205,42 @@ void ExperienceRouter::mount_main(const PersistentMainGraph& graph) {
         // Main merges preserve the original prefix. Only newly appended
         // originals need cue extraction; strength changes do not change cues.
         if (indexed > values.size()) throw std::logic_error("Main original prefix shrank");
-        for (std::size_t index = indexed; index < values.size(); ++index)
-            cues[values[index].cue()].emplace(identity, index);
+        for (std::size_t index = indexed; index < values.size(); ++index) {
+            auto& ranges=cues[values[index].cue()];
+            const MergedCueReference key{identity,index};
+            const auto after=ranges.upper_bound(key);
+            if(after!=ranges.begin()) {
+                const auto previous=std::prev(after);
+                if(previous->first.first==identity && previous->second==index) {
+                    previous->second=index+1;
+                    continue;
+                }
+            }
+            ranges.emplace(key,index+1);
+        }
     }
-    // Stage only new candidate nodes. All allocations have completed before
-    // existing sets are modified; node transfer keeps old candidates in place.
+    // All allocations precede publication. New runs transfer their nodes;
+    // a run contiguous with the existing prefix extends only its end index.
+    // Candidate ordering remains (connection identity, original index).
     for (auto& [cue, additions] : cues) {
         const auto previous = merged_cues_.find(cue);
-        if (previous != merged_cues_.end()) previous->second.merge(additions);
+        if(previous==merged_cues_.end())continue;
+        auto& existing=previous->second;
+        while(!additions.empty()) {
+            const auto added=additions.begin();
+            const auto after=existing.upper_bound(added->first);
+            if(after!=existing.begin()) {
+                const auto prior=std::prev(after);
+                if(prior->first.first==added->first.first && prior->second==added->first.second) {
+                    prior->second=added->second;
+                    additions.erase(added);
+                    continue;
+                }
+            }
+            existing.insert(additions.extract(added));
+        }
     }
-    // Existing-key empty staging sets are discarded. New-key nodes transfer
-    // with their entire prepared set, without allocation.
+    // New cue nodes transfer with their prepared runs, without allocation.
     merged_cues_.merge(cues);
     for (const auto& [identity, values] : candidates) { (void)values; main_.erase(identity); }
     main_.merge(candidates);
@@ -311,12 +336,14 @@ InputRecall ExperienceRouter::recall_cue(const DigestBytes& cue, RecallScope sco
     } else if (merged_main_) {
         const auto found = merged_cues_.find(cue);
         if (found != merged_cues_.end())
-            for (const auto& [identity, index] : found->second) {
+            for (const auto& [first, end] : found->second) {
+                const auto& [identity, begin]=first;
                 const auto match = merged_match(identity);
                 const auto* active = temporary_.find(identity);
-                result.append(match, index,
-                    active ? active->state().experiences().size() : 0,
-                    merged_main_->graph().find(identity)->pin_experience(index));
+                const auto boundary=active ? active->state().experiences().size() : 0;
+                const auto* connection=merged_main_->graph().find(identity);
+                for(auto index=begin;index<end;++index)
+                    result.append(match,index,boundary,connection->pin_experience(index));
             }
     } else {
         const auto found = main_cues_.find(cue);
