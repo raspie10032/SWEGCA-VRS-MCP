@@ -55,8 +55,59 @@ caller-selected key and instead derives it with the preserved core cue primitive
   lifecycle preservation, resume, and another installation reading accumulated Main.
 
 This is the native event ingestion endpoint, not installed desktop capture.
-Host ordering/retransmission identity and recovery after a lost reply still need
-implementation; repeated deliveries are not yet deduplicated. Hook JSON parsing
+Delivery ordering/retransmission identity and recovery after an unread committed
+reply are implemented below. Other crash boundaries remain to be verified. Hook JSON parsing
 and framing precede this Runtime boundary. These tests do not demonstrate desktop
 input-to-Recall below 1ms or complete desktop event coverage. No app configuration
 was changed and no Claude connection was enabled.
+
+## Delivery replay and recovery (host protocol 7)
+
+Native sessions now require sequence 0, 1, ... without gaps. The core
+`route_agent_delivery` chooses append / reuse / reject from the session phase,
+existing sequence, byte identity and previous sequence. Identity binds sequence,
+original timestamp and exact native bytes. Processing seed/step do not create a
+new delivery. A changed timestamp or changed bytes under the same sequence is
+rejected. A genuinely new event with identical text and the next sequence remains
+a new experience.
+
+Before recording, the owner reserves its delivery index node. It acknowledges an
+identical retry using the existing original, with `duplicate:true`, and performs
+no record, shuffle, refinement or receipt invalidation. A still-current input
+receipt is returned; otherwise `receipt:null`. After restart, old Recall/Replay
+receipts are not reconstructed or falsely reported as live. The acknowledgement
+confirms durable ingestion, not the pre-input candidate set lost with the process.
+The client must treat this field accordingly.
+
+Resume rebuilds the index from originals referenced by the committed session
+connection heads. It does not depend on a delivery sidecar/database or raw
+transcript. Only exact native-envelope source/media/session bindings are accepted.
+Generic receive/retain/observe calls cannot bypass native session ordering.
+Index recovery errors leave that attached context unselectable; reopen is required.
+Other sessions retain their selection and receipts.
+
+New-event fingerprint hashing is after its existing Recall/record path. Retries
+hash before acknowledging so altered content cannot masquerade as a retry.
+No payload hashing or disk scan for delivery identity is inserted ahead of new
+input Recall. There is still host parsing, sequence validation and node reservation
+before Runtime entry; desktop input latency remains unproven.
+
+Current recovery reads one complete original at a time, and the delivery index
+uses memory proportional to native event count. This is a known resource gap for
+large sessions. It does not weaken the configurable budget or establish 4GB-scale
+graph completion. A crash before catalog publication can leave preserved physical
+orphan records; they are not committed experiences and are not acknowledged by
+this index. Arbitrary interruption points still require targeted validation.
+
+Verification includes same-process retry, altered payload/timestamp rejection,
+out-of-order rejection, committed-original recovery, and an unread response followed
+by SIGKILL/reopen/retry. The latter adds no stored bytes and the next input recalls
+exactly one prior experience. Existing native lifecycle tests still require
+explicit end before Main work.
+
+Delivery verification result: MCP subprocess suite 1,699 checks; event parser/core
+suite 140 checks. Recovery of an improperly bound store is rejected and cannot be
+selected or ended. Duplicate retries leave the connection revision unchanged;
+the next genuinely new event adds the existing append+refine revision pair and
+preserves the insufficient-evidence strength. These are ingestion/recovery tests,
+not model performance or desktop latency measurements.

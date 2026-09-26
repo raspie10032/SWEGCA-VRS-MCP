@@ -131,6 +131,18 @@ EvidencePayloadSlice SessionRuntime::read_payload_slice(const DigestBytes& ident
     return store_.read_payload_slice(connection->rules(),connection->state().experiences()[index].original(),
         read_limit_,offset,count);
 }
+void SessionRuntime::visit_originals(void* context,void (*consume)(void*,const StoredExperience&)) const {
+    require_usable();
+    if(!consume)throw std::invalid_argument("missing original visitor");
+    for(const auto& [identity,head]:catalog_.heads()){
+        (void)head;
+        const auto* connection=find(identity);
+        for(const auto& evidence:connection->state().experiences()){
+            auto stored=store_.read(evidence.original(),read_limit_);
+            consume(context,stored);
+        }
+    }
+}
 void SessionRuntime::end() { require_usable(); store_.end(); }
 void SessionRuntime::publish_originals() { require_usable(); store_.publish_originals(); }
 

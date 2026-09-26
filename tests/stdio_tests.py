@@ -34,7 +34,7 @@ class Client:
         check('error' in self.call('tools/list'))
         initialized=self.call('initialize',{'protocolVersion':'2025-06-18','capabilities':{},'clientInfo':{'name':'test','version':'1'}})['result']
         check(initialized['protocolVersion']=='2025-06-18')
-        check(initialized['capabilities']['experimental']['swegcaHostInput']['version']=='6')
+        check(initialized['capabilities']['experimental']['swegcaHostInput']['version']=='7')
         self.notice('notifications/initialized')
         tools=self.call('tools/list')['result']['tools']
         check([t['name'] for t in tools]==['vrs_replay','vrs_re_evidence'])
@@ -355,10 +355,22 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
         reply=c.call('swegca/agent/event',{'sequence':str(seq),'observedAt':str(seq),
             'seed':'7','step':str(seq),'native':raw})
         return raw,reply
+    def resend_native(raw, seq, observed=None):
+        return c.call('swegca/agent/event',{'sequence':str(seq),
+            'observedAt':str(seq if observed is None else observed),
+            'seed':'123','step':'999','native':raw})
     raw0,n0=native_event('UserPromptSubmit',0,prompt=text,unknown={'binary':'\u0000','turn':'a'})
     n0=n0['result'];check(n0['candidateCount']=='0' and n0['refinement']['status']==0)
     raw1,n1=native_event('UserPromptSubmit',1,prompt=text,unknown={'turn':'b'})
     n1=n1['result'];check(n1['candidateCount']=='1' and n1['candidates'][0]['original']==n0['original'])
+    # A lost response may be retried with the same event; no new refinement.
+    same=resend_native(raw1,1)['result']
+    check(same=={'duplicate':True,'original':n1['original'],'receipt':n1['receipt']})
+    check(resend_native(raw0,0)['result']=={'duplicate':True,'original':n0['original'],'receipt':None})
+    check('error' in resend_native(raw1+' ',1))
+    check('error' in resend_native(raw1,1,observed=9))
+    check('error' in native_event('Stop',8)[1])
+    check('error' in c.call('swegca/retain',event('native-session')))
     played=replay_receipt(n1['receipt'])['structuredContent']
     check(played['media']=='application/json' and bytes.fromhex(played['contentHex'])==raw0.encode())
     check('error' in native_event('UserPromptSubmit',2,session_id='wrong-session',prompt=text)[1])
@@ -372,8 +384,14 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     c=Client('open',native_root,path);c.initialize()
     check(c.call('swegca/agent/attach/resume',binding)['result']['identity']==native_id)
     check(c.call('swegca/select',{'identity':native_id})['result']=={})
+    # No process-local delivery cache survives this restart. The committed
+    # originals alone identify retries without adding observations or strength.
+    check(resend_native(raw0,0)['result']=={'duplicate':True,'original':n0['original'],'receipt':None})
+    check(resend_native(raw1,1)['result']=={'duplicate':True,'original':n1['original'],'receipt':None})
+    check('error' in resend_native(raw1+' ',1))
     _,n2=native_event('UserPromptSubmit',6,prompt=text)
     n2=n2['result'];check(n2['candidateCount']=='2')
+    check(n2['refinement']['revision']==str(int(n1['refinement']['revision'])+2) and n2['refinement']['strength']==n0['refinement']['strength'])
     check(bytes.fromhex(replay_receipt(n2['receipt'])['structuredContent']['contentHex'])==raw0.encode())
     check(c.call('swegca/end')['result']=={})
     check(c.call('swegca/work',{'seed':'7','step':'6'})['result']['merged']=='1')
@@ -385,6 +403,43 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     main_native=main_native['result']
     check(not main_native['temporary'] and main_native['candidateCount']=='3')
     check(bytes.fromhex(replay_receipt(main_native['receipt'])['structuredContent']['contentHex'])==raw0.encode())
+    check(c.call('swegca/work',{'seed':'7','step':'0'})['result']['merged']=='0')
+    c.close()
+    # Commit the first event, deliberately leave its response unread, then kill
+    # the transport. Resuming must identify its original from committed storage.
+    lost_root=root/'lost-native-reply';lost_root.mkdir()
+    c=Client('create',lost_root,path);c.initialize()
+    lost_id=c.call('swegca/agent/attach',binding)['result']['identity']
+    check(c.call('swegca/select',{'identity':lost_id})['result']=={})
+    lost_raw=json.dumps({'session_id':'native-session','hook_event_name':'UserPromptSubmit','prompt':text})
+    c.serial+=1
+    c.p.stdin.write(json.dumps({'jsonrpc':'2.0','id':c.serial,'method':'swegca/agent/event',
+        'params':{'native':lost_raw,'sequence':'0','observedAt':'0','seed':'7','step':'0'}}).encode()+b'\n')
+    c.p.stdin.flush()
+    check(bool(select.select([c.p.stdout],[],[],10)[0]))
+    c.p.kill();check(c.p.wait(timeout=10)==-9)
+    c.p.stdin.close();c.p.stdout.close();check(c.p.stderr.read()==b'');c.p.stderr.close()
+    c=Client('open',lost_root,path);c.initialize()
+    check(c.call('swegca/agent/attach/resume',binding)['result']['identity']==lost_id)
+    check(c.call('swegca/select',{'identity':lost_id})['result']=={})
+    before_retry=sum(p.stat().st_size for p in lost_root.rglob('*') if p.is_file())
+    recovered=resend_native(lost_raw,0)['result'];check(recovered['duplicate'] and recovered['receipt'] is None)
+    check(sum(p.stat().st_size for p in lost_root.rglob('*') if p.is_file())==before_retry)
+    _,after_loss=native_event('UserPromptSubmit',1,prompt=text)
+    after_loss=after_loss['result'];check(after_loss['candidateCount']=='1')
+    check(after_loss['candidates'][0]['original']==recovered['original'])
+    c.close()
+    # A native binding must not accept a store populated through an unrelated
+    # ingress. Failed native index recovery remains unselectable.
+    invalid_native=root/'invalid-native';invalid_native.mkdir()
+    c=Client('create',invalid_native,path);c.initialize()
+    check(c.call('swegca/start',{'identity':native_id,'name':'native-session'})['result']=={})
+    check('result' in c.call('swegca/retain',event('native-session')))
+    c.close()
+    c=Client('open',invalid_native,path);c.initialize()
+    check('error' in c.call('swegca/agent/attach/resume',binding))
+    check('error' in c.call('swegca/select',{'identity':native_id}))
+    check('error' in c.call('swegca/end'))
     check(c.call('swegca/work',{'seed':'7','step':'0'})['result']['merged']=='0')
     c.close()
     # A separate config file must not change the root being measured.

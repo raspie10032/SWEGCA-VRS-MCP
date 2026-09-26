@@ -69,6 +69,11 @@ void Runtime::require_active() const {
         throw std::logic_error("session no longer accepts input");
 }
 const SessionRuntime& Runtime::session() const { return require_session().runtime; }
+const SessionRuntime& Runtime::attached_session(const DigestBytes& identity) const {
+    const auto found=sessions_.find(identity);
+    if(found==sessions_.end())throw std::invalid_argument("session not attached");
+    return found->second.runtime;
+}
 void Runtime::end_session() {
     auto& runtime=require_session().runtime;
     if(runtime.phase()==SessionPhase::active)runtime.end();

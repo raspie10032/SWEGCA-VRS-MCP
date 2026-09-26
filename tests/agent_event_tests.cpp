@@ -15,6 +15,21 @@ int main(){
       kind==0?AgentEventRoute::recall_then_record:kind==3?AgentEventRoute::end:AgentEventRoute::record;
   CHECK(actual==expected);
  }
+ for(unsigned phase=0;phase<6;++phase){
+  const auto p=static_cast<SessionPhase>(phase);
+  CHECK(route_agent_delivery(p,true,true,true,5,2)==(phase==1?AgentDeliveryRoute::reuse:AgentDeliveryRoute::reject));
+  CHECK(route_agent_delivery(p,true,false,true,5,2)==AgentDeliveryRoute::reject);
+  CHECK(route_agent_delivery(p,false,false,false,0,0)==(phase==1?AgentDeliveryRoute::append:AgentDeliveryRoute::reject));
+  CHECK(route_agent_delivery(p,false,false,false,0,1)==AgentDeliveryRoute::reject);
+  CHECK(route_agent_delivery(p,false,false,true,5,6)==(phase==1?AgentDeliveryRoute::append:AgentDeliveryRoute::reject));
+  CHECK(route_agent_delivery(p,false,false,true,5,7)==AgentDeliveryRoute::reject);
+  CHECK(route_agent_delivery(p,false,false,true,5,3)==AgentDeliveryRoute::reject);
+  CHECK(route_agent_delivery(p,false,false,true,UINT64_MAX,0)==AgentDeliveryRoute::reject);
+ }
+ CHECK(agent_delivery_identity(0,1,"same")==agent_delivery_identity(0,1,"same"));
+ CHECK(agent_delivery_identity(0,1,"same")!=agent_delivery_identity(1,1,"same"));
+ CHECK(agent_delivery_identity(0,1,"same")!=agent_delivery_identity(0,2,"same"));
+ CHECK(agent_delivery_identity(0,1,"same")!=agent_delivery_identity(0,1,"changed"));
  {
   const std::string raw=" {\"session_id\":\"s-1\",\"hook_event_name\":\"UserPromptSubmit\",\"prompt\":\"한글\\n\\u0000🙂\",\"unknown\":{\"preserve\":42}} ";
   auto event=adapt_codex_hook(raw,memory);

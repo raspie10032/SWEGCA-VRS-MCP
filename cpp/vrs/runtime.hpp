@@ -45,6 +45,7 @@ public:
     [[nodiscard]] const StorageBudget& storage() const noexcept { return storage_; }
     [[nodiscard]] bool has_session() const noexcept { return active_!=nullptr; }
     [[nodiscard]] const SessionRuntime& session() const;
+    [[nodiscard]] const SessionRuntime& attached_session(const architecture::DigestBytes&) const;
     [[nodiscard]] const PersistentMainGraph& main() const noexcept { return main_; }
     // Recall before recording this event, then synchronously retain its full
     // original through SWEGCA. No choice of Replay candidate is invented here.

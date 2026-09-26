@@ -41,6 +41,9 @@ public:
     [[nodiscard]] StoredExperience replay(const architecture::DigestBytes& identity, std::size_t original_index) const;
     [[nodiscard]] EvidencePayloadSlice read_payload_slice(const architecture::DigestBytes&, std::size_t original_index,
         std::uint64_t offset, std::uint64_t count) const;
+    // Iterate only originals in committed connection heads. Startup/recovery
+    // operation, never part of input or Recall. Each borrowed record is verified.
+    void visit_originals(void*,void (*)(void*,const StoredExperience&)) const;
     void end();
     void publish_originals();
     [[nodiscard]] bool usable() const noexcept { return usable_ && store_.usable() && catalog_.usable(); }

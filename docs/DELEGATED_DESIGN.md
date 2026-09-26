@@ -35,7 +35,8 @@
   SessionEnd/Stop/Interrupt/compact/subagent 종료를 explicit_end로 변환하지 않는다.
 - 이 파서는 MCP native event 호스트 경로에서 Runtime 영속 기록에 연결됐다. 발언 키와
   전체 이벤트 원문을 하나의 경험으로 묶는다(NATIVE_EVENT_INGRESS.md). 데스크톱 훅 설치,
-  전체 이벤트 수집, 재전송 중복 처리와 실제 입력 지연 검증은 남아 있다.
+  전체 이벤트 수집과 실제 입력 지연 검증은 남아 있다. 전달 재시도는 확정 원경험에서
+  복구한 식별값으로 중복 기록을 막으며, 중간 기록 실패 지점 검증은 남아 있다.
 
 ## 다음 연결 작업
 
