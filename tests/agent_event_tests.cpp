@@ -85,5 +85,17 @@ int main(){
   R"({"method":"item/completed","params":{"threadId":""}})"})
   rejects([&]{(void)adapt_codex_app_server(raw,memory);});
  CHECK(memory.used()==0);
+ {
+  const std::string raw=R"({"method":"thread/started","params":{"thread":{"id":"new","future":true}}})";
+  auto event=adapt_codex_app_server(raw,memory);
+  CHECK(event.session()=="new"&&event.native_name()=="thread/started"&&event.native_bytes()==raw);
+  CHECK(event.kind()==AgentEventKind::lifecycle&&route_agent_event(SessionPhase::active,event.kind())==AgentEventRoute::record);
+  CHECK(route_agent_event(SessionPhase::ended,event.kind())==AgentEventRoute::invalid);
+ }
+ for(const auto raw:{R"({"method":"thread/started","params":{"thread":{"id":""}}})",
+  R"({"method":"thread/started","params":{"thread":{"id":"new"},"threadId":"other"}})",
+  R"({"id":1,"method":"thread/started","params":{"thread":{"id":"new"}}})"})
+  rejects([&]{(void)adapt_codex_app_server(raw,memory);});
+ CHECK(memory.used()==0);
  std::printf("agent event tests: %u checks passed\n",checks);
 }

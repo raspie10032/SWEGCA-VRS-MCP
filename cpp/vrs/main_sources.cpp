@@ -71,6 +71,14 @@ SessionRuntime& MainSources::acquire_session(const DigestBytes& id,std::string_v
     found->second.leased=true;
     return runtime;
 }
+bool MainSources::contains_session(const DigestBytes& id) const {
+    if(sources_.contains(id))return true;
+    auto filename=name(id);filename.resize(64);
+    const auto status=std::filesystem::symlink_status(root_/"sessions"/filename);
+    if(status.type()==std::filesystem::file_type::not_found)return false;
+    if(!std::filesystem::is_directory(status))throw std::runtime_error("invalid stored session directory");
+    return true;
+}
 void MainSources::release_session(const DigestBytes& id,bool keep_cache) noexcept {
     const auto found=sources_.find(id);
     if(found==sources_.end())return;

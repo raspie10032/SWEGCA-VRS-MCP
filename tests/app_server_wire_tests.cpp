@@ -55,5 +55,19 @@ int main(){
   rejects([&]{resumed.restore_request(RpcSender::client,original,8);});
  }
  CHECK(memory.used()==0);
+ {
+  AppServerWire wire(memory,1,2);unsigned bindings=0;
+  const auto bind=[&](const AgentEvent& event){++bindings;CHECK(event.session()=="a");return 9;};
+  const auto started=R"({"method":"thread/started","params":{"thread":{"id":"a"}}})";
+  rejects([&]{(void)wire.prepare(a,RpcSender::client,1,bind);});CHECK(bindings==0);
+  rejects([&]{(void)wire.prepare(started,RpcSender::client,1,bind);});CHECK(bindings==0);
+  auto notice=wire.prepare(started,RpcSender::server,2,bind);CHECK(bindings==1&&notice.sequence()==9);
+  wire.recorded(notice);CHECK(wire.forward(notice)==started);
+  auto input=wire.prepare(a,RpcSender::client,3,bind);CHECK(bindings==1&&input.sequence()==10);wire.recorded(input);
+  auto repeated=wire.prepare(started,RpcSender::server,4,bind);CHECK(bindings==1&&repeated.sequence()==11);wire.recorded(repeated);
+  rejects([&]{(void)wire.prepare(R"({"method":"thread/started","params":{"thread":{"id":"b"}}})",RpcSender::server,5,bind);});
+  CHECK(bindings==1);
+ }
+ CHECK(memory.used()==0);
  std::printf("app-server wire owner tests: %u checks passed\n",checks);
 }

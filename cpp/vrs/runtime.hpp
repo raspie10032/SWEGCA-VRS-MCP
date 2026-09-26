@@ -39,6 +39,8 @@ public:
     // select, end, publish or merge a session. Public calls remain serialized.
     void attach_session(const architecture::DigestBytes&, std::string_view name);
     void attach_resumed_session(const architecture::DigestBytes&);
+    // Lifecycle setup only: filesystem discovery must not precede each input.
+    void attach_available_session(const architecture::DigestBytes&,std::string_view name);
     void select_session(const architecture::DigestBytes&);
     [[nodiscard]] std::size_t attached_sessions() const noexcept { return sessions_.size(); }
     void end_session();

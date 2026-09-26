@@ -121,3 +121,10 @@ suite 180 checks, request binding suite 38 checks; git diff whitespace check pas
 Automatic session/sequence/request selection and VRS-confirmation-before-forward
 logic are now provided by AppServerWire. Real MCP round-trip verification and the
 remaining live process-I/O boundary are documented in APP_SERVER_WIRE_OWNER.md.
+
+The installed schema's `ThreadStartedNotification` has `params.thread.id`, not
+the ordinary `params.threadId`. The adapter now preserves that complete
+notification as lifecycle content. AppServerWire accepts it only from the server
+and can attach its new session through the VRS owner before recording it. Input
+events cannot trigger this storage discovery. See the lifecycle-driven session
+attachment section in APP_SERVER_WIRE_OWNER.md for constraints and verification.

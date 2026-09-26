@@ -250,3 +250,43 @@ error and forwards zero bytes of the new native input.
 Remaining desktop work includes actual endpoint installation, dynamic/new-thread
 and global lifecycle capture, attachment payloads, outstanding-request recovery,
 Recall/Replay delivery to the agent, complete content assembly and latency proof.
+
+## Lifecycle-driven session attachment
+
+The wire adapter now recognizes the installed desktop schema's `thread/started`
+notification and reads its session from `params.thread.id`. This is a lifecycle
+experience, not user input or a VRS end instruction. Its original native bytes
+and unknown thread fields are retained. Conflicting `threadId`, empty identity,
+an attached request ID, or a client-originated started notification are rejected.
+
+An unknown session may be attached through the wire owner's lifecycle callback
+only for this server notification. The callback is not called for an unknown
+`turn/start` input; session creation/recovery I/O is not added before every user
+input. Once attached, ordinary inputs take the existing route without invoking
+the lifecycle callback again. The known-session limit is checked before the
+callback can create durable state.
+
+`swegca/agent/attach/ensure` performs idempotent host attachment. Main checks its
+owned source registry and canonical session directory to choose create or open;
+storage errors are never interpreted as missing sessions. Existing original
+experiences reconstruct the next sequence through the normal authenticated
+delivery reader. Native source/protocol must match. A core session-phase check
+rejects unusable or ended sessions before committing a new route; rejection
+releases the source lease, so explicit-end Main work remains possible.
+
+The proxy accepts optional `sessionCapacity` (decimal string). Without it the
+limit remains the initial `sessions` array length. With a positive explicit
+capacity that array may be empty. Upon an unknown server `thread/started`, the
+proxy ensures the VRS session, binds the returned sequence, records the full
+notification, and then forwards it. Restarted sessions are resumed in the same
+way; the notification does not reset their stored sequence or revive an ended
+VRS session. No user input, model request or desktop restart is synthesized.
+
+Verification: 181 adapter checks, 41 wire-owner checks, and 2,225 subprocess
+checks pass. A real proxy/VRS run adds a third session after readiness, records
+its notification/input/response, and later rediscovers it at the persisted
+sequence. Repeated ensure is idempotent; a mismatching source is rejected.
+After explicit end, two ensure attempts fail and the ended source still merges
+normally. The initial `thread/start` request and other global messages without
+a native session binding remain unsupported: lifecycle notification support is
+not complete new-thread handshake or live desktop integration.

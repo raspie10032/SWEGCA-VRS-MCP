@@ -105,14 +105,15 @@ private:
         return *selected_;
     }
     void attach_context(const DigestBytes& identity,std::string_view name,bool resume,bool select,
-        std::string_view native = {},bool app_server=false) {
+        std::string_view native = {},bool app_server=false,bool ensure=false) {
         if(select&&runtime_.has_session())throw std::invalid_argument("session already selected");
         // Reserve transport state before acquiring a Runtime lease. Failure
         // leaves the prior selection and all existing receipts untouched.
         auto [it,inserted]=contexts_.try_emplace(identity,memory_,native,app_server);
         if(!inserted)throw std::invalid_argument("session already attached");
         try {
-            if(resume)runtime_.attach_resumed_session(identity);
+            if(ensure)runtime_.attach_available_session(identity,name);
+            else if(resume)runtime_.attach_resumed_session(identity);
             else runtime_.attach_session(identity,name);
         } catch(...) {contexts_.erase(it);throw;}
         if(select){runtime_.select_session(identity);selected_=&it->second;}
@@ -142,7 +143,7 @@ private:
         body+=']';
     }
     std::pmr::string host(std::string_view method,const Json& p){
-        if(method=="swegca/agent/attach"||method=="swegca/agent/attach/resume"){
+        if(method=="swegca/agent/attach"||method=="swegca/agent/attach/resume"||method=="swegca/agent/attach/ensure"){
             const auto provider=p.at("provider").string();
             if(provider!="codex")throw std::invalid_argument("native provider adapter unavailable");
             const auto native=p.at("session").string();
@@ -150,9 +151,15 @@ private:
             const auto* protocol=p.find("protocol");
             const auto format=protocol?protocol->string():"hook";
             if(format!="hook"&&format!="app-server")throw std::invalid_argument("unknown native protocol");
-            attach_context(identity,native,method=="swegca/agent/attach/resume",false,native,format=="app-server");
+            const bool ensure=method=="swegca/agent/attach/ensure";
+            if(!ensure||!contexts_.contains(identity))
+                attach_context(identity,native,method=="swegca/agent/attach/resume",false,native,format=="app-server",ensure);
             auto& state=contexts_.at(identity);
-            runtime_.attached_session(identity).visit_deliveries(state.native_session,state.native_source(),"application/json",&state,
+            if(state.native_session!=native||state.app_server!=(format=="app-server"))throw std::invalid_argument("native session binding mismatch");
+            const auto& attached=runtime_.attached_session(identity);
+            if(ensure&&(!attached.usable()||kernel::route_agent_event(attached.phase(),kernel::AgentEventKind::lifecycle)!=kernel::AgentEventRoute::record))
+                throw std::invalid_argument("stored session no longer accepts lifecycle events");
+            if(!state.native_ready)attached.visit_deliveries(state.native_session,state.native_source(),"application/json",&state,
                 [](void* opaque,const OriginalDelivery& delivery){
                 auto& target=*static_cast<Context*>(opaque);
                 const auto [at,inserted]=target.deliveries.try_emplace(delivery.sequence(),

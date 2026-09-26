@@ -19,6 +19,7 @@ public:
     [[nodiscard]] std::size_t merge_published(PersistentMainGraph&, std::uint64_t seed, std::uint64_t step);
 private:
     friend class Runtime;
+    [[nodiscard]] bool contains_session(const architecture::DigestBytes&) const;
     SessionRuntime& acquire_session(const architecture::DigestBytes&, std::string_view,
         std::uint64_t block_capacity, bool resume);
     void release_session(const architecture::DigestBytes&, bool keep_cache) noexcept;

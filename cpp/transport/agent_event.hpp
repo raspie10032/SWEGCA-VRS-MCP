@@ -38,7 +38,12 @@ public:
     AgentEvent(AgentEvent&&) noexcept=default;
     [[nodiscard]] architecture::kernel::AgentEventKind kind() const noexcept{return kind_;}
     [[nodiscard]] std::string_view native_bytes() const noexcept{return native_;}
-    [[nodiscard]] std::string_view session() const{if(!bound_session_.empty())return bound_session_;return app_server_?parsed_.at("params").at("threadId").string():parsed_.at("session_id").string();}
+    [[nodiscard]] std::string_view session() const{
+        if(!bound_session_.empty())return bound_session_;
+        if(!app_server_)return parsed_.at("session_id").string();
+        const auto& params=parsed_.at("params");
+        return parsed_.at("method").string()=="thread/started"?params.at("thread").at("id").string():params.at("threadId").string();
+    }
     [[nodiscard]] std::string_view native_name() const{if(!bound_session_.empty())return {};return parsed_.at(app_server_?"method":"hook_event_name").string();}
     [[nodiscard]] bool is_app_server() const noexcept{return app_server_;}
     [[nodiscard]] std::optional<std::string_view> prompt() const{
@@ -94,9 +99,15 @@ inline AgentEvent AgentEvent::from_app_server(std::string_view bytes,Json parsed
     using architecture::kernel::AgentEventKind;
     const auto method=parsed.at("method").string();
     const auto& params=parsed.at("params");
-    const auto session=params.at("threadId").string();
+    const bool started=method=="thread/started";
+    const auto session=started?params.at("thread").at("id").string():params.at("threadId").string();
+    if(started){
+        if(parsed.find("id"))throw std::invalid_argument("thread started must be a notification");
+        if(const auto* explicit_id=params.find("threadId");explicit_id&&explicit_id->string()!=session)
+            throw std::invalid_argument("conflicting started thread identities");
+    }
     if(method.empty()||session.empty())throw std::invalid_argument("empty app-server identity");
-    auto kind=AgentEventKind::content;
+    auto kind=started?AgentEventKind::lifecycle:AgentEventKind::content;
     if(method=="turn/start"||method=="turn/steer"){
         const auto& id=parsed.at("id");
         if(id.kind!=Json::Kind::string&&id.kind!=Json::Kind::number)throw std::invalid_argument("input request requires id");

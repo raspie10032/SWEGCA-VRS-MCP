@@ -78,9 +78,12 @@ int main(int argc,char** argv){
         const auto seed=number(config.at("seed").string()),step=number(config.at("step").string());
         if(!ram||!frame||frame>ram||!capacity)throw std::invalid_argument("invalid proxy limits");
         const auto& sessions=config.at("sessions");
-        if(sessions.kind!=Json::Kind::array||sessions.values.empty())throw std::invalid_argument("session bindings required");
+        if(sessions.kind!=Json::Kind::array)throw std::invalid_argument("session bindings must be an array");
+        const auto* configured_sessions=config.find("sessionCapacity");
+        const auto session_capacity=configured_sessions?number(configured_sessions->string()):sessions.values.size();
+        if(!session_capacity||session_capacity<sessions.values.size())throw std::invalid_argument("invalid session capacity");
         swegca::vrs::MemoryBudget memory(ram);
-        AppServerPump pump(client,server,frame,memory,sessions.values.size(),capacity);
+        AppServerPump pump(client,server,frame,memory,session_capacity,capacity);
         VrsStream stream(vrs,frame,memory);
         const auto initialized=call(stream,"proxy/initialize","initialize",R"({"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"swegca-app-server-proxy","version":"0.1"}})",memory);
         const auto& result=initialized.at("result");
@@ -101,6 +104,17 @@ int main(int argc,char** argv){
             pump.attach(name,next);
             bindings.try_emplace(std::pmr::string(name,&memory),body.at("identity").string());
         }
+        const auto bind_started=[&](const AgentEvent& event){
+            if(serial==UINT64_MAX)throw std::overflow_error("proxy request IDs exhausted");
+            const auto name=event.session();
+            const auto params="{\"provider\":\"codex\",\"protocol\":\"app-server\",\"instance\":"+quote_json(config.at("instance").string(),memory)+",\"session\":"+quote_json(name,memory)+"}";
+            const auto attached=call(stream,"proxy/ensure/"+std::to_string(++serial),"swegca/agent/attach/ensure",params,memory);
+            const auto& body=attached.at("result");const auto next=number(body.at("nextSequence").string());
+            const auto identity=body.at("identity").string();
+            const auto [where,inserted]=bindings.try_emplace(std::pmr::string(name,&memory),identity);
+            if(!inserted&&where->second!=identity)throw std::runtime_error("changed lifecycle binding");
+            return next;
+        };
         std::cout<<"ready\n"<<std::flush;
         std::array<bool,2> ended{};
         while(!ended[0]||!ended[1]){
@@ -116,7 +130,7 @@ int main(int argc,char** argv){
                     AgentEventCommit commit(found->second,pump.parameters(plan,seed,step),"proxy/event/"+std::to_string(++serial),memory);
                     while(commit.stage()!=AgentEventCommit::Stage::complete)commit.accept(stream.exchange(commit.request()));
                     return true;
-                });
+                },bind_started);
                 if(state==AppServerPump::State::end){
                     ended[lane]=true;
                     if(::shutdown(lane==0?server:client,SHUT_WR)<0)throw std::system_error(errno,std::generic_category(),"proxy half-close");

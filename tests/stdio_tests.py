@@ -525,7 +525,7 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     proxy_root=root/'proxy-process';proxy_root.mkdir()
     proxy_config=root/'proxy.json'
     proxy_config.write_text(json.dumps({'memoryBytes':str(8<<20),'frameBytes':'4096',
-        'pendingRequests':'16','seed':'7','step':'0','instance':'proxy-tested',
+        'pendingRequests':'16','sessionCapacity':'3','seed':'7','step':'0','instance':'proxy-tested',
         'sessions':[{'session':name,'mode':'attach'} for name in ('a','b')]}))
     client_side,client_proxy=socket.socketpair()
     server_side,server_proxy=socket.socketpair()
@@ -561,6 +561,13 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
         server_side.sendall(response+approval)
         check(proxy_read(client_side)==response);check(proxy_read(client_side)==approval)
         client_side.sendall(response);check(proxy_read(server_side)==response)
+        started=proxy_frame({'method':'thread/started','params':{'thread':{'id':'c','unknown':'preserved'}}})
+        server_side.sendall(started);check(proxy_read(client_side)==started)
+        dynamic=proxy_frame({'id':19,'method':'turn/start','params':{'threadId':'c',
+            'input':[{'type':'text','text':'새 세션 입력'}]}})
+        client_side.sendall(dynamic);check(proxy_read(server_side)==dynamic)
+        dynamic_reply=proxy_frame({'id':19,'result':{}})
+        server_side.sendall(dynamic_reply);check(proxy_read(client_side)==dynamic_reply)
         client_side.shutdown(socket.SHUT_WR);check(server_side.recv(1)==b'')
         server_side.shutdown(socket.SHUT_WR);check(client_side.recv(1)==b'')
         check(proxy_process.wait(timeout=10)==0)
@@ -571,10 +578,15 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
         for process in (proxy_process,vrs_process):
             if process.poll() is None:process.terminate();process.wait(timeout=10)
     c=Client('open',proxy_root,path);c.initialize()
-    for session,count in (('a','3'),('b','2')):
+    for session,count in (('a','3'),('b','2'),('c','3')):
         attached=c.call('swegca/agent/attach/resume',{'provider':'codex','instance':'proxy-tested',
             'session':session,'protocol':'app-server'})['result']
         check(attached['nextSequence']==count)
+        ensured=c.call('swegca/agent/attach/ensure',{'provider':'codex','instance':'proxy-tested',
+            'session':session,'protocol':'app-server'})['result']
+        check(ensured==attached)
+        check('error' in c.call('swegca/agent/attach/ensure',{'provider':'codex','instance':'proxy-tested',
+            'session':session,'protocol':'hook'}))
     check(c.call('swegca/work',{'seed':'7','step':'0'})['result']['merged']=='0')
     c.close()
     # The executable must not pass native content when its VRS endpoint is gone.
@@ -594,6 +606,9 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     try:
         check(bool(select.select([proxy_process.stdout],[],[],10)[0]))
         check(proxy_process.stdout.readline()==b'ready\n')
+        # Rediscover an already retained session from its real lifecycle notice.
+        client_side.settimeout(10)
+        server_side.sendall(started);check(proxy_read(client_side)==started)
         vrs_process.terminate();vrs_process.wait(timeout=10)
         client_side.sendall(request)
         check(proxy_process.wait(timeout=10)==1)
@@ -603,6 +618,17 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
         client_side.close();server_side.close()
         for process in (proxy_process,vrs_process):
             if process.poll() is None:process.terminate();process.wait(timeout=10)
+    c=Client('open',proxy_root,path);c.initialize()
+    closed_params={'provider':'codex','instance':'proxy-tested','session':'c','protocol':'app-server'}
+    restored=c.call('swegca/agent/attach/ensure',closed_params)['result']
+    check(restored['nextSequence']=='4')
+    check(c.call('swegca/select',{'identity':restored['identity']})['result']=={})
+    check(c.call('swegca/end')['result']=={})
+    check('error' in c.call('swegca/agent/attach/ensure',closed_params))
+    check('error' in c.call('swegca/agent/attach/ensure',closed_params))
+    # Failed lifecycle reattachment must not leave an ended source leased.
+    check(c.call('swegca/work',{'seed':'7','step':'0'})['result']['merged']=='1')
+    c.close()
     wire_root=root/'wire-owner';wire_root.mkdir()
     c=Client('create',wire_root,path);c.initialize()
     wire_ids={}

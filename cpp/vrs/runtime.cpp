@@ -41,6 +41,16 @@ void Runtime::attach(const DigestBytes& identity,std::string_view name,bool resu
 }
 void Runtime::attach_session(const DigestBytes& identity,std::string_view name) { attach(identity,name,false); }
 void Runtime::attach_resumed_session(const DigestBytes& identity) { attach(identity,{},true); }
+void Runtime::attach_available_session(const DigestBytes& identity,std::string_view name) {
+    if(sessions_.contains(identity))throw std::logic_error("session route already attached");
+    auto& session=sources_.acquire_session(identity,name,config_.session_block_capacity,sources_.contains_session(identity));
+    try{
+        SessionPhase next;
+        if(!session.usable()||!next_session_phase(session.phase(),SessionOperation::append,next))
+            throw std::invalid_argument("stored session no longer accepts lifecycle events");
+        sessions_.try_emplace(identity,session,identity,memory_,main_);
+    }catch(...){sources_.release_session(identity,false);throw;}
+}
 void Runtime::select_session(const DigestBytes& identity) {
     const auto found=sessions_.find(identity);
     if(found==sessions_.end())throw std::invalid_argument("session route is not attached");

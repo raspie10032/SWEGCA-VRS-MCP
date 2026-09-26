@@ -28,6 +28,10 @@ public:
     // different events the same session sequence during an acknowledgement retry.
     template<class Ingest>
     [[nodiscard]] State step(RpcSender sender,std::uint64_t observed,Ingest&& ingest){
+        return step(sender,observed,std::forward<Ingest>(ingest),[](const AgentEvent&)->std::uint64_t{throw std::invalid_argument("wire session has not been attached to VRS");});
+    }
+    template<class Ingest,class Bind>
+    [[nodiscard]] State step(RpcSender sender,std::uint64_t observed,Ingest&& ingest,Bind&& bind){
         if(sender!=RpcSender::client&&sender!=RpcSender::server)throw std::invalid_argument("invalid pump sender");
         const auto lane=sender==RpcSender::client?0:1;
         auto& stage=stages_[lane];auto& reader=lane==0?client_:server_;
@@ -36,7 +40,7 @@ public:
             const auto state=reader.poll();
             if(state==SocketFrames::State::pending)return State::idle;
             if(state==SocketFrames::State::end)return State::end;
-            stage.delivery.emplace(wire_.prepare(reader.frame(),sender,observed));
+            stage.delivery.emplace(wire_.prepare(reader.frame(),sender,observed,std::forward<Bind>(bind)));
             ingress_=sender;reader.consumed();
         }
         if(!stage.ingested){
