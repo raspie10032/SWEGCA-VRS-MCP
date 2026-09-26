@@ -87,3 +87,33 @@ EINTR, moving a partial frame, caller-fd closure, duplicate completion, competin
 frames, abandoned partial frame and peer closure without SIGPIPE termination.
 Wire owner checks remain 29 and real MCP round-trip suite passes 2,080 checks.
 These isolated sockets do not connect to or modify the running desktop/backend.
+
+## Bounded frame reception
+
+`SocketFrames` owns an exclusive duplicated stream descriptor and reads at most
+one 4KiB staging chunk per poll. LF-delimited frame bodies remain byte-exact. A
+ready frame is held until the owner consumes it; additional frames received in
+the same chunk stay buffered. Fragmented input is never exposed as a complete
+frame. Socket EOF does not end a VRS session.
+
+The current line is allocated through the shared memory resource. If line growth
+fails after recv, the bytes remain in fixed staging and the cursor is unchanged;
+a later retry can continue without re-reading or losing those bytes. Frame-size
+violations or EOF with an unfinished line make that reader terminal. It does not
+silently discard an oversized line, resynchronize to a later message, or forward
+a truncated input. The 4KiB staging array and normal object/process overhead are
+separate from the PMR counter. Partial/fault transport data are not yet persisted
+as VRS experiences by the uninstalled live process owner.
+
+Verification: 40 reader checks cover empty socket, injected EINTR, split/coalesced
+frames, stable acknowledgement, exact size limit, empty line, oversized stream,
+truncated EOF and allocation-failure retry with a 9KiB line. The C++ exchange
+fixture now receives original frames through a Unix socket/SocketFrames and,
+after actual VRS MCP acknowledgement, sends them through the production partial-
+write implementation into a second SocketFrames endpoint. Automatic A/B response
+routing and byte-exact delivery still pass: 29 owner checks and 2,080 MCP checks.
+
+These are isolated process/socket fixtures. The running desktop, its backend and
+any real model/account calls remain untouched. Live endpoint attachment, global
+and new-thread lifecycle frames, outstanding-request recovery and full content
+assembly are still required for actual desktop integration.
