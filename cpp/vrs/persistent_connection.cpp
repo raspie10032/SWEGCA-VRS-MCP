@@ -173,7 +173,17 @@ DigestBytes refinement_digest(const ConnectionRefinement& report) {
     number(judgment.source_diversity()); number(judgment.context_diversity()); number(judgment.revision());
     number(report.result().strength().valid()); real(report.result().strength().previous()); real(report.result().strength().current());
     number(report.samples().size());
-    for (const auto& sample : report.samples()) { number(sample.experience_index); number(static_cast<unsigned>(sample.use)); }
+    // Preserve the exact two little-endian uint64 fields per sample. Batch
+    // only SHA input calls; no sample, order, admission or verdict is omitted.
+    std::array<std::byte,1024> encoded;
+    std::size_t used=0;
+    for (const auto& sample : report.samples()) {
+        put(encoded,used,sample.experience_index);
+        put(encoded,used+8,static_cast<unsigned>(sample.use));
+        used+=16;
+        if (used==encoded.size()) { hash.update(encoded);used=0; }
+    }
+    if (used) hash.update(std::span(encoded).first(used));
     return hash.finish();
 }
 namespace {

@@ -1,5 +1,6 @@
 #include "swegca_architecture/evidence_rules.hpp"
 #include "vrs/connection.hpp"
+#include "refinement_digest_vectors.hpp"
 
 #include <algorithm>
 #include <array>
@@ -90,8 +91,16 @@ void print_digest(const Digest& digest) {
     for (auto byte : digest) std::printf("%02x", std::to_integer<unsigned>(byte));
 }
 void oracle(const Connection& connection, const ConnectionRefinement& report) {
+    static std::size_t vector_index=0;
+    CHECK(vector_index<refinement_digest_vectors.size());
+    const auto digest=refinement_digest(report);
+    constexpr char digits[]="0123456789abcdef";
+    std::array<char,64> encoded{};
+    for(std::size_t i=0;i<digest.size();++i){const auto byte=std::to_integer<unsigned>(digest[i]);encoded[2*i]=digits[byte>>4];encoded[2*i+1]=digits[byte&15];}
+    CHECK(std::string_view(encoded.data(),encoded.size())==refinement_digest_vectors[vector_index++]);
     if (!emit_oracle) return;
-    std::printf("ORACLE {\"hypothesis\":\""); print_digest(connection.identity());
+    std::printf("ORACLE {\"refinement_digest\":\""); print_digest(refinement_digest(report));
+    std::printf("\",\"hypothesis\":\""); print_digest(connection.identity());
     std::printf("\",\"current_step\":%llu,\"observations\":[", (unsigned long long)report.current_step());
     bool first = true;
     for (const auto& sample : report.samples()) {
