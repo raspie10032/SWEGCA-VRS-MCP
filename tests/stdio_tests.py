@@ -91,4 +91,44 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     replay=c.call('tools/call',{'name':'vrs_replay','arguments':{'receipt':binary['receipt'],'candidate':'0'}})['result']['structuredContent']
     check(replay['contentHex']=='00ff80fe0a')
     check(c.call('swegca/end')['result']=={});c.close()
+    # Recorded observations go through the same server/runtime/core route.
+    observed_root=root/'observed';observed_root.mkdir()
+    c=Client('create',observed_root,path);c.initialize()
+    check(c.call('swegca/start',{'identity':identity(3),'name':'observed'})['result']=={})
+    check(c.call('swegca/define',{'identity':identity(20)})['result']=={})
+    check(c.call('swegca/define',{'identity':identity(21)})['result']=={})
+    def observation(n,connection,outcome):
+        p=event('observed','experiment',sequence=str(n))
+        p['observation']={'hypothesis':identity(connection),'source':identity(100+n),
+            'context':identity(150+n),'producer':identity(200+n),'expiresAt':'0',
+            'hasExpiry':False,'confidence':1.0,'axis':'0','outcome':outcome}
+        return p
+    last_strength=1.0;support_original=None;states=set()
+    for n in range(8):
+        result=c.call('swegca/observe',observation(n,20,'support'))['result']
+        if n==0:support_original=result['original']
+        result=result['refinement'];status=result['status'];states.add(status)
+        expected=last_strength*1.01 if status==1 else last_strength*0.995 if status==2 else last_strength
+        check(result['strength']==expected);last_strength=result['strength']
+    check(last_strength>1.0 and 0 in states and 1 in states)
+    invalid=observation(8,20,'approve')
+    check('error' in c.call('swegca/observe',invalid))
+    recalled=c.call('swegca/receive',event('observed',sequence='8'))['result']
+    check(len(recalled['candidates'])==8)
+    receipt=recalled['receipt']
+    check(c.call('tools/call',{'name':'vrs_replay','arguments':{'receipt':receipt,'candidate':'0'}})['result']['structuredContent']['original']==support_original)
+    current=[]
+    for n in range(8,16):
+        result=c.call('swegca/observe',observation(n,20,'refute'))['result'];current.append(result['original'])
+    checked=c.call('tools/call',{'name':'vrs_re_evidence','arguments':{'receipt':receipt,'seed':'7','step':'0'}})['result']['structuredContent']
+    check(checked['status']==2 and checked['agreement']==3)
+    check(checked['currentOriginals']==current and checked['replayedOriginal']==support_original)
+    check(checked['rememberedHead']!=checked['currentHead'])
+    last_strength=1.0
+    for n in range(16,24):
+        result=c.call('swegca/observe',observation(n,21,'refute'))['result']['refinement']
+        expected=last_strength*1.01 if result['status']==1 else last_strength*0.995 if result['status']==2 else last_strength
+        check(result['strength']==expected);last_strength=result['strength'];states.add(result['status'])
+    check(last_strength<1.0 and states=={0,1,2})
+    check(c.call('swegca/end')['result']=={});c.close()
 print(f'stdio subprocess tests: {checks} checks passed')

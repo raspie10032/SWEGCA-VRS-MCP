@@ -21,6 +21,18 @@ DigestBytes digest(std::string_view text){
 }
 std::pmr::string hex(std::span<const std::byte> data,MemoryBudget& memory){constexpr char digits[]="0123456789abcdef";std::pmr::string s(&memory);for(auto v:data){unsigned n=std::to_integer<unsigned>(v);s+=digits[n>>4];s+=digits[n&15];}return s;}
 std::pmr::string address(const ExperienceLocation& a,MemoryBudget& m){return "{\"block\":\""+hex(a.block,m)+"\",\"offset\":\""+std::to_string(a.offset).c_str()+"\",\"bytes\":\""+std::to_string(a.bytes).c_str()+"\",\"digest\":\""+hex(a.digest,m)+"\"}";}
+std::pmr::string decimal(double value,MemoryBudget& memory){
+    std::array<char,64> buffer{};auto result=std::to_chars(buffer.data(),buffer.data()+buffer.size(),value,std::chars_format::general,std::numeric_limits<double>::max_digits10);
+    if(result.ec!=std::errc{})throw std::runtime_error("cannot encode numeric result");
+    return std::pmr::string(buffer.data(),result.ptr,&memory);
+}
+std::pmr::string refinement(const ConnectionRefinement& report,MemoryBudget& memory){
+    const auto& judgment=report.result().verification().judgment();
+    return std::pmr::string("{\"status\":",&memory)+std::to_string(static_cast<unsigned>(judgment.status())).c_str()+
+        ",\"reason\":"+std::to_string(static_cast<unsigned>(judgment.reason())).c_str()+
+        ",\"strength\":"+decimal(report.result().strength().current(),memory)+
+        ",\"revision\":\""+std::to_string(report.after_revision()).c_str()+"\"}";
+}
 std::pmr::string read_frame(std::istream& input,std::size_t limit,MemoryBudget& memory,bool& eof){
     std::pmr::string line(&memory);bool overflow=false;char c;
     while(input.get(c)){if(c=='\n'){if(overflow)throw std::length_error("frame exceeds configured limit");return line;}if(line.size()==limit)overflow=true;if(!overflow)line+=c;}
@@ -80,7 +92,8 @@ private:
         if(method=="swegca/resume"){runtime_.resume_session(digest(p.at("identity").string()));return std::pmr::string("{}",&memory_);}
         if(method=="swegca/end"){clear();runtime_.end_session();return std::pmr::string("{}",&memory_);}
         if(method=="swegca/work"){const auto count=runtime_.work(integer(p.at("seed")),integer(p.at("step")));return std::pmr::string("{\"merged\":\"",&memory_)+std::to_string(count).c_str()+"\"}";}
-        if(method=="swegca/receive"){
+        if(method=="swegca/define"){runtime_.define_connection(digest(p.at("identity").string()));return std::pmr::string("{}",&memory_);}
+        if(method=="swegca/receive"||method=="swegca/observe"){
             const auto sequence=integer(p.at("sequence")),observed=integer(p.at("observedAt")),seed=integer(p.at("seed")),step=integer(p.at("step"));
             const auto session=p.at("session").string(),source=p.at("source").string(),media=p.at("media").string();
             std::pmr::vector<std::byte> binary(&memory_);std::span<const std::byte> content;
@@ -89,6 +102,24 @@ private:
             if(text){const auto value=text->string();content=std::as_bytes(std::span(value));}
             else {const auto value=encoded->string();if(value.size()%2)throw std::invalid_argument("invalid content hex");
                 for(std::size_t i=0;i<value.size();i+=2){unsigned byte=0;auto r=std::from_chars(value.data()+i,value.data()+i+2,byte,16);if(r.ec!=std::errc{}||r.ptr!=value.data()+i+2)throw std::invalid_argument("invalid content hex");binary.push_back(std::byte(byte));}content=binary;}
+            if(method=="swegca/observe"){
+                using namespace swegca::architecture::kernel;
+                const auto& fields=p.at("observation");EvidenceObservation value;
+                value.hypothesis=digest(fields.at("hypothesis").string());
+                value.source=digest(fields.at("source").string());value.context=digest(fields.at("context").string());value.producer=digest(fields.at("producer").string());
+                value.observed_at=observed;value.expires_at=integer(fields.at("expiresAt"));value.producer_confidence=real(fields.at("confidence"));
+                const auto axis=integer(fields.at("axis"));if(axis>UINT32_MAX)throw std::invalid_argument("axis overflow");value.axis=static_cast<std::uint32_t>(axis);
+                const auto& expiry=fields.at("hasExpiry");if(expiry.kind!=Json::Kind::boolean)throw std::invalid_argument("hasExpiry must be boolean");value.has_expiry=expiry.scalar=="true";
+                const auto outcome=fields.at("outcome").string();
+                if(outcome=="support")value.outcome=EvidenceOutcome::support;
+                else if(outcome=="refute")value.outcome=EvidenceOutcome::refute;
+                else if(outcome=="insufficient")value.outcome=EvidenceOutcome::insufficient;
+                else throw std::invalid_argument("unknown observed outcome");
+                // This is the host's recorded observation, never a caller-supplied
+                // SWEGCA verdict. Preserve the prior selected Replay for comparison.
+                auto recorded=runtime_.observe(value.hypothesis,{sequence,observed,session,source,media,content},value,seed,step);
+                return "{\"original\":"+address(recorded.original,memory_)+",\"refinement\":"+refinement(recorded.refinement,memory_)+"}";
+            }
             if(receipt_==std::numeric_limits<std::uint64_t>::max())throw std::overflow_error("receipt sequence exhausted");
             clear();++receipt_;received_.emplace(runtime_.receive({sequence,observed,session,source,media,content},seed,step));
             std::pmr::string body("{\"receipt\":\"",&memory_);body+=std::to_string(receipt_);body+="\",\"original\":";body+=address(received_->recorded.original,memory_);
@@ -96,7 +127,7 @@ private:
             std::size_t index=0;for(const auto& match:received_->recalled.matches()){
                 if(index)body+=',';
                 body+="{\"index\":\"";body+=std::to_string(index++);body+="\",\"original\":";body+=address(match.original,memory_);body+='}';}
-            body+="]}";return body;
+            body+="],\"refinement\":";body+=refinement(received_->recorded.refinement,memory_);body+='}';return body;
         }
         throw std::invalid_argument("unknown SWEGCA host method");
     }
@@ -110,7 +141,13 @@ private:
         if(method=="vrs_re_evidence"){
             if(!replayed_)throw std::invalid_argument("Replay required before Re-evidence");
             auto checked=runtime_.re_evidence(*replayed_,integer(p.at("seed")),integer(p.at("step")));
-            return std::pmr::string("{\"agreement\":",&memory_)+std::to_string(static_cast<unsigned>(checked.agreement())).c_str()+",\"status\":"+std::to_string(static_cast<unsigned>(checked.verification().result().verification().judgment().status())).c_str()+"}";
+            auto body=std::pmr::string("{\"agreement\":",&memory_)+std::to_string(static_cast<unsigned>(checked.agreement())).c_str()+",\"status\":"+std::to_string(static_cast<unsigned>(checked.verification().result().verification().judgment().status())).c_str();
+            body+=",\"replayedOriginal\":";body+=address(checked.replayed_original(),memory_);
+            body+=",\"rememberedHead\":";body+=address(checked.remembered_head().record,memory_);
+            body+=",\"currentHead\":";body+=address(checked.current_head().record,memory_);
+            body+=",\"currentOriginals\":[";bool first=true;
+            for(const auto& original:checked.current_originals()){if(!first)body+=',';first=false;body+=address(original,memory_);}
+            body+="]}";return body;
         }
         throw std::invalid_argument("unknown tool");
     }
