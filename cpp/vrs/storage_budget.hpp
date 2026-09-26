@@ -44,6 +44,14 @@ public:
         bool retained_=false;
     };
 private:
+    friend class ConnectionCatalog;
+    // Only the catalog's confirmed removed inode path may return disk bytes.
+    void reclaim_removed(std::uint64_t bytes) noexcept {
+        auto current=used_.load(std::memory_order_relaxed);
+        do {
+            if(bytes>current)return; // Never underflow on inconsistent ownership.
+        } while(!used_.compare_exchange_weak(current,current-bytes,std::memory_order_relaxed));
+    }
     const std::uint64_t limit_;
     std::atomic<std::uint64_t> used_;
 };

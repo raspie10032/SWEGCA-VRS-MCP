@@ -52,14 +52,20 @@ Runtime path always supplies one.
 
 This enforces logical byte reservations for the Runtime-owned tree. Filesystem
 allocation units/metadata, unrelated processes, SSD bandwidth and total process
-RSS are separate requirements. Failed-write reservations and replaced catalog
-pointer files currently remain conservatively charged until reopen: live usage
-may overestimate retained bytes, never intentionally underestimate them. This
-can cause earlier quota rejection; reclaiming confirmed removed extents remains
-an accounting improvement. No claim of physical-device 500GB or 5Gbps compliance
+RSS are separate requirements. Failed-write reservations and publication-sync failures remain conservatively
+charged until reopen: live usage may overestimate retained bytes. Successfully
+replaced catalog pointers are reclaimed only after rename and directory sync,
+when fstat on the held old descriptor reports zero links and that descriptor
+has been closed. An old pointer retained by a hard link stays charged. Failed
+rename, failed sync or failed inode inspection never returns those bytes.
+Reopen reconciles any conservative failed-operation reservations. No claim of physical-device 500GB or 5Gbps compliance
 is made by these logical counters alone.
 
 Tests cover shared block limits, exact capacity, failed create rollback, no
 file on denied create, no record on denied append, move/reopen accounting,
 explicit larger limits, concurrent reservations, integer overflow boundaries,
 and a real injected pwrite failure after a prefix reached disk.
+
+Catalog quota regressions cover repeated successful replacement with exact
+inventory equality, old-pointer hard links, rename failure with both files
+retained, and directory-sync failure after rename (old bytes remain charged).

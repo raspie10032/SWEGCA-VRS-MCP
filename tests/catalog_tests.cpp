@@ -1,4 +1,5 @@
 #include "vrs/connection_catalog.hpp"
+#include "vrs/storage_inventory.hpp"
 
 #include <array>
 #include <cerrno>
@@ -239,6 +240,29 @@ int main() {
         }
         fs::rename(forged, path);
         expect_throw<std::runtime_error>([&] { ConnectionCatalog rejected(session, memory, 4096); });
+    }
+    for(unsigned mode=0;mode<4;++mode) {
+        const auto owned=root/("quota-"+std::to_string(mode));fs::create_directory(owned);
+        StorageBudget storage(1<<20);
+        auto session=SessionStore::create(owned,id(70),"quota",65536,memory,&storage);
+        auto connection=PersistentConnection::create(session,id(71),1,policy,memory,4096);
+        ConnectionCatalog catalog(session,memory,4096);
+        observe(session,connection,0);publish(catalog,connection);
+        CHECK(storage.used()==stored_bytes(owned,memory));
+        const auto prior=connection.head();
+        const auto pointer_path=directory(owned,70)/"current.block";
+        const auto pointer_bytes=fs::file_size(pointer_path);
+        if(mode==1)fs::create_hard_link(pointer_path,owned/"retained-pointer.block");
+        observe(session,connection,1);
+        if(mode==2)fail_rename=true;
+        if(mode==3)syncs_before_failure=1; // staging creation sync, then publication sync
+        if(mode>=2)expect_throw<std::system_error>([&]{publish(catalog,connection,prior);});
+        else publish(catalog,connection,prior);
+        CHECK(!fail_rename&&syncs_before_failure==-1);
+        const auto actual=stored_bytes(owned,memory);
+        if(mode==3)CHECK(storage.used()==actual+pointer_bytes); // failure must not reclaim
+        else CHECK(storage.used()==actual);
+        if(mode==1)CHECK(fs::exists(owned/"retained-pointer.block"));
     }
     CHECK(memory.used() == 0);
     fs::remove_all(root);

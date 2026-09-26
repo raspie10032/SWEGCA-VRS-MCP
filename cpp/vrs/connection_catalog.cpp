@@ -24,6 +24,25 @@ using namespace architecture::kernel;
 constexpr std::string_view source = "swegca-catalog";
 constexpr std::string_view media = "application/vnd.swegca.catalog-v1";
 constexpr std::size_t prefix_size = 104, row_size = 224, pointer_size = 96;
+struct ReplacedPointer {
+    int fd=-1;
+    ReplacedPointer(const std::filesystem::path& path,bool enabled) {
+        if(!enabled)return;
+        fd=::open(path.c_str(),O_RDONLY|O_CLOEXEC|O_NOFOLLOW|O_NONBLOCK);
+        if(fd<0&&errno!=ENOENT)throw std::system_error(errno,std::generic_category(),"open replaced catalog pointer");
+    }
+    ~ReplacedPointer(){if(fd>=0)::close(fd);}
+    ReplacedPointer(const ReplacedPointer&)=delete;
+    ReplacedPointer& operator=(const ReplacedPointer&)=delete;
+    std::uint64_t removed_bytes() noexcept {
+        struct stat value{};
+        if(fd<0||::fstat(fd,&value)<0||!S_ISREG(value.st_mode)||value.st_nlink!=0||value.st_size<0)return 0;
+        const auto bytes=static_cast<std::uint64_t>(value.st_size);
+        const auto old=fd;fd=-1;
+        if(::close(old)<0)return 0;
+        return bytes;
+    }
+};
 struct Row { ConnectionHead head; ExperienceLocation expected; };
 
 void put(std::span<std::byte> data, std::size_t at, std::uint64_t value) {
@@ -205,8 +224,12 @@ void ConnectionCatalog::publish(std::span<const HeadUpdate> changes) {
         auto pointer = ExperienceBlock::create(staging, pointer_id(session_.name()), capacity, session_.storage_);
         (void)pointer.append({generation_ + 1, 0, session_.name(), source, media, pointer_data});
         const auto current = directory_ / "current.block";
+        ReplacedPointer replaced(current,session_.storage_!=nullptr);
         if (::rename(staging.c_str(), current.c_str()) < 0) io_error("publish catalog pointer");
         sync_directory(directory_);
+        // Rename and directory durability succeeded. Retain the old inode's
+        // descriptor until its link count proves no retained name remains.
+        if(session_.storage_)session_.storage_->reclaim_removed(replaced.removed_bytes());
         // All allocations preceded durable publication. Matching allocators
         // transfer the prepared nodes; assigning existing fixed-width values
         // cannot fail. Main serializes this owner and the session writer.

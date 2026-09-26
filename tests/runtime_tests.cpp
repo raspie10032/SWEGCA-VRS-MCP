@@ -130,9 +130,12 @@ int main(){
    throws<std::system_error>([&]{(void)Runtime::open(budget_root,config,memory);});
    initial=stored_bytes(budget_root,memory);CHECK(host.storage().used()==initial);
    host.start_session(id(80),"quota");
-   (void)host.retain({0,0,"quota","user","text/plain",content},7,0);
+   for(unsigned n=0;n<5;++n){
+    (void)host.retain({n,0,"quota","user","text/plain",content},7,0);
+    CHECK(host.storage().used()==stored_bytes(budget_root,memory));
+   }
    host.end_session();CHECK(host.work(7,0)==1);
-   charged=host.storage().used();CHECK(charged>=stored_bytes(budget_root,memory));
+   charged=host.storage().used();CHECK(charged==stored_bytes(budget_root,memory));
   }
   const auto actual=stored_bytes(budget_root,memory);CHECK(actual>initial);
   // Publication aliases are hard links: adding another name costs no payload.
