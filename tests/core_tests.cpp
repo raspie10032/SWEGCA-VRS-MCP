@@ -128,6 +128,6 @@ int main(){
  const auto before=allocations;
  for(unsigned i=0;i<1000;++i){auto j=judge_evidence(rules,tally());CHECK(semantic_promotion_evidence_eligible(j,SemanticPromotionThresholds{}));CHECK(decide_memory_promotion(MemoryTier::episodic,j,true,true,promotion));CHECK(next_memory_transaction_stage(MemoryTransactionStage::prepared,MemoryTransactionEdge::commit_memory,stage));}
  CHECK(allocations==before);
- CHECK(swegca::vrs::verify_experience(rules,tally()).connection_change==swegca::vrs::ConnectionChange::strengthen);
+ CHECK(swegca::vrs::verify_experience(rules,tally()).connection_change()==swegca::vrs::ConnectionChange::strengthen);
  std::printf("PASS: %u checks; core hot-path allocations: 0\n",checks);
 }

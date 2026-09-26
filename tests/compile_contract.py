@@ -4,6 +4,7 @@ import os,pathlib,shlex,subprocess,tempfile
 root=pathlib.Path(__file__).resolve().parents[1]
 compiler=shlex.split(os.environ.get('CXX','c++'))
 include='#include "swegca_architecture/memory_promotion_kernel.hpp"\nusing namespace swegca::architecture::kernel;\n'
+vrs_include = include + '#include "vrs/verification.hpp"\nusing namespace swegca::vrs;\n'
 cases=[
  ('fast-math',include+'int main() {}',['-ffast-math'],'SWEGCA core requires strict'),
  ('finite-only',include+'int main() {}',['-ffinite-math-only'],'SWEGCA core requires strict'),
@@ -14,6 +15,11 @@ cases=[
  ('result-rewrite',include+'int main(){EvidenceJudgment j; j.status()=EvidenceStatus::accept;}',[],None),
  ('aggregate-forge',include+'int main(){EvidenceJudgment j{EvidenceStatus::accept};}',[],None),
  ('raw-status-bypass',include+'int main(){MemoryPromotionDecision out; return decide_memory_promotion(MemoryTier::episodic,EvidenceStatus::accept,EvidenceReason::causal_lower_bound,true,true,out);}',[],None),
+ ('vrs-direction-rewrite',vrs_include+'int main(){VerificationResult r; r.connection_change()=ConnectionChange::strengthen;}',[],None),
+ ('vrs-judgment-rewrite',vrs_include+'int main(){VerificationResult r; r.judgment()=EvidenceJudgment{};}',[],None),
+ ('vrs-inconsistent-result',vrs_include+'int main(){VerificationResult r{EvidenceJudgment{},ConnectionChange::strengthen};}',[],None),
+ ('vrs-strength-rewrite',vrs_include+'int main(){ConnectionVerification r; r.strength()=ConnectionStrengthResult{};}',[],None),
+ ('core-strength-forge',vrs_include+'int main(){ConnectionStrengthResult r{true,0.1,1.0};}',[],None),
 ]
 with tempfile.TemporaryDirectory(prefix='swegca-compile-contract-') as directory:
  path=pathlib.Path(directory)/'probe.cpp'
