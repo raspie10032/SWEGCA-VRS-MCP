@@ -1,0 +1,17 @@
+{"route":"main-during-prepare","inputBytes":0,"overlappedSamples":30,"entryMedianNs":80,"entryP95Ns":80,"entryMaxNs":80,"entryAtLeast1ms":0,"nonOverlappedSamples":0,"nonOverlappedMaxNs":-1}
+{"route":"temporary-during-prepare","inputBytes":0,"overlappedSamples":30,"entryMedianNs":80,"entryP95Ns":80,"entryMaxNs":80,"entryAtLeast1ms":0,"nonOverlappedSamples":0,"nonOverlappedMaxNs":-1}
+{"route":"missing-during-prepare","inputBytes":0,"overlappedSamples":30,"entryMedianNs":80,"entryP95Ns":90,"entryMaxNs":90,"entryAtLeast1ms":0,"nonOverlappedSamples":0,"nonOverlappedMaxNs":-1}
+{"route":"main-during-prepare","inputBytes":128,"overlappedSamples":30,"entryMedianNs":140,"entryP95Ns":140,"entryMaxNs":150,"entryAtLeast1ms":0,"nonOverlappedSamples":0,"nonOverlappedMaxNs":-1}
+{"route":"temporary-during-prepare","inputBytes":128,"overlappedSamples":30,"entryMedianNs":130,"entryP95Ns":140,"entryMaxNs":140,"entryAtLeast1ms":0,"nonOverlappedSamples":0,"nonOverlappedMaxNs":-1}
+{"route":"missing-during-prepare","inputBytes":128,"overlappedSamples":30,"entryMedianNs":140,"entryP95Ns":140,"entryMaxNs":140,"entryAtLeast1ms":0,"nonOverlappedSamples":0,"nonOverlappedMaxNs":-1}
+{"route":"main-during-prepare","inputBytes":4096,"overlappedSamples":30,"entryMedianNs":1830,"entryP95Ns":1840,"entryMaxNs":1840,"entryAtLeast1ms":0,"nonOverlappedSamples":0,"nonOverlappedMaxNs":-1}
+{"route":"temporary-during-prepare","inputBytes":4096,"overlappedSamples":30,"entryMedianNs":1840,"entryP95Ns":1840,"entryMaxNs":1840,"entryAtLeast1ms":0,"nonOverlappedSamples":0,"nonOverlappedMaxNs":-1}
+{"route":"missing-during-prepare","inputBytes":4096,"overlappedSamples":30,"entryMedianNs":1860,"entryP95Ns":1890,"entryMaxNs":2040,"entryAtLeast1ms":0,"nonOverlappedSamples":0,"nonOverlappedMaxNs":-1}
+{"route":"main-during-prepare","inputBytes":65536,"overlappedSamples":30,"entryMedianNs":28130,"entryP95Ns":28450,"entryMaxNs":29491,"entryAtLeast1ms":0,"nonOverlappedSamples":0,"nonOverlappedMaxNs":-1}
+{"route":"temporary-during-prepare","inputBytes":65536,"overlappedSamples":30,"entryMedianNs":28110,"entryP95Ns":28391,"entryMaxNs":29721,"entryAtLeast1ms":0,"nonOverlappedSamples":0,"nonOverlappedMaxNs":-1}
+{"route":"missing-during-prepare","inputBytes":65536,"overlappedSamples":30,"entryMedianNs":28140,"entryP95Ns":28291,"entryMaxNs":30781,"entryAtLeast1ms":0,"nonOverlappedSamples":0,"nonOverlappedMaxNs":-1}
+{"route":"main-during-prepare","inputBytes":1048576,"overlappedSamples":30,"entryMedianNs":453785,"entryP95Ns":491455,"entryMaxNs":516035,"entryAtLeast1ms":0,"nonOverlappedSamples":0,"nonOverlappedMaxNs":-1}
+{"route":"temporary-during-prepare","inputBytes":1048576,"overlappedSamples":30,"entryMedianNs":453965,"entryP95Ns":499485,"entryMaxNs":509705,"entryAtLeast1ms":0,"nonOverlappedSamples":0,"nonOverlappedMaxNs":-1}
+{"route":"missing-during-prepare","inputBytes":1048576,"overlappedSamples":30,"entryMedianNs":454604,"entryP95Ns":497805,"entryMaxNs":909549,"entryAtLeast1ms":0,"nonOverlappedSamples":0,"nonOverlappedMaxNs":-1}
+{"phase":"published","pendingExperiences":2048,"elapsedNs":232403283,"pollCommitNs":326474,"trackedBytes":902440}
+{"phase":"finished","maxRssKiB":13048}

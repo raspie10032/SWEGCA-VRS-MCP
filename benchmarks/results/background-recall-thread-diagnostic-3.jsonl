@@ -1,0 +1,17 @@
+{"route":"main-during-prepare","inputBytes":0,"overlappedSamples":30,"entryMedianNs":100,"entryP95Ns":130,"entryMaxNs":140,"entryAtLeast1ms":0,"nonOverlappedSamples":0,"nonOverlappedMaxNs":-1}
+{"route":"temporary-during-prepare","inputBytes":0,"overlappedSamples":30,"entryMedianNs":90,"entryP95Ns":90,"entryMaxNs":100,"entryAtLeast1ms":0,"nonOverlappedSamples":0,"nonOverlappedMaxNs":-1}
+{"route":"missing-during-prepare","inputBytes":0,"overlappedSamples":30,"entryMedianNs":80,"entryP95Ns":81,"entryMaxNs":90,"entryAtLeast1ms":0,"nonOverlappedSamples":0,"nonOverlappedMaxNs":-1}
+{"route":"main-during-prepare","inputBytes":128,"overlappedSamples":30,"entryMedianNs":160,"entryP95Ns":190,"entryMaxNs":230,"entryAtLeast1ms":0,"nonOverlappedSamples":0,"nonOverlappedMaxNs":-1}
+{"route":"temporary-during-prepare","inputBytes":128,"overlappedSamples":30,"entryMedianNs":140,"entryP95Ns":140,"entryMaxNs":150,"entryAtLeast1ms":0,"nonOverlappedSamples":0,"nonOverlappedMaxNs":-1}
+{"route":"missing-during-prepare","inputBytes":128,"overlappedSamples":30,"entryMedianNs":140,"entryP95Ns":140,"entryMaxNs":140,"entryAtLeast1ms":0,"nonOverlappedSamples":0,"nonOverlappedMaxNs":-1}
+{"route":"main-during-prepare","inputBytes":4096,"overlappedSamples":30,"entryMedianNs":1850,"entryP95Ns":1960,"entryMaxNs":2060,"entryAtLeast1ms":0,"nonOverlappedSamples":0,"nonOverlappedMaxNs":-1}
+{"route":"temporary-during-prepare","inputBytes":4096,"overlappedSamples":30,"entryMedianNs":1840,"entryP95Ns":1841,"entryMaxNs":1850,"entryAtLeast1ms":0,"nonOverlappedSamples":0,"nonOverlappedMaxNs":-1}
+{"route":"missing-during-prepare","inputBytes":4096,"overlappedSamples":30,"entryMedianNs":1840,"entryP95Ns":1850,"entryMaxNs":1850,"entryAtLeast1ms":0,"nonOverlappedSamples":0,"nonOverlappedMaxNs":-1}
+{"route":"main-during-prepare","inputBytes":65536,"overlappedSamples":30,"entryMedianNs":28251,"entryP95Ns":28790,"entryMaxNs":30150,"entryAtLeast1ms":0,"nonOverlappedSamples":0,"nonOverlappedMaxNs":-1}
+{"route":"temporary-during-prepare","inputBytes":65536,"overlappedSamples":30,"entryMedianNs":28380,"entryP95Ns":29000,"entryMaxNs":29020,"entryAtLeast1ms":0,"nonOverlappedSamples":0,"nonOverlappedMaxNs":-1}
+{"route":"missing-during-prepare","inputBytes":65536,"overlappedSamples":30,"entryMedianNs":28370,"entryP95Ns":29580,"entryMaxNs":32220,"entryAtLeast1ms":0,"nonOverlappedSamples":0,"nonOverlappedMaxNs":-1}
+{"route":"main-during-prepare","inputBytes":1048576,"overlappedSamples":30,"entryMedianNs":452045,"entryP95Ns":458065,"entryMaxNs":459355,"entryAtLeast1ms":0,"nonOverlappedSamples":0,"nonOverlappedMaxNs":-1}
+{"route":"temporary-during-prepare","inputBytes":1048576,"overlappedSamples":30,"entryMedianNs":453895,"entryP95Ns":459995,"entryMaxNs":485095,"entryAtLeast1ms":0,"nonOverlappedSamples":0,"nonOverlappedMaxNs":-1}
+{"route":"missing-during-prepare","inputBytes":1048576,"overlappedSamples":30,"entryMedianNs":453485,"entryP95Ns":459024,"entryMaxNs":465804,"entryAtLeast1ms":0,"nonOverlappedSamples":0,"nonOverlappedMaxNs":-1}
+{"phase":"published","pendingExperiences":2048,"elapsedNs":222245891,"pollCommitNs":359154,"trackedBytes":902440}
+{"phase":"finished","maxRssKiB":13048}

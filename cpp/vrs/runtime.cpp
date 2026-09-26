@@ -1,6 +1,10 @@
 #include "vrs/runtime.hpp"
 #include "vrs/storage_inventory.hpp"
 
+#ifdef SWEGCA_BACKGROUND_WORK_PROBE
+extern "C" void swegca_background_work_probe(bool running) noexcept;
+#endif
+
 namespace swegca::vrs {
 using namespace architecture;
 using namespace architecture::kernel;
@@ -123,8 +127,14 @@ bool Runtime::launch_next() {
     work.done.store(false,std::memory_order_relaxed);
     work.thread=std::jthread([this] {
         auto& job=*work_;
+#ifdef SWEGCA_BACKGROUND_WORK_PROBE
+        swegca_background_work_probe(true);
+#endif
         try { job.prepared.emplace(main_.prepare_merge(job.source->runtime(),job.seed,job.step)); }
         catch(...) { job.failure=std::current_exception(); }
+#ifdef SWEGCA_BACKGROUND_WORK_PROBE
+        swegca_background_work_probe(false);
+#endif
         job.done.store(true,std::memory_order_release);
     });
     return true;
