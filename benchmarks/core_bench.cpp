@@ -1,5 +1,6 @@
 #include "swegca_architecture/evidence_rules.hpp"
 #include "swegca_architecture/evidence_observation_kernel.hpp"
+#include "swegca_architecture/session_kernel.hpp"
 #include "swegca_architecture/memory_promotion_kernel.hpp"
 #include "swegca_architecture/memory_transaction_stage_kernel.hpp"
 #include "vrs/verification.hpp"
@@ -27,6 +28,9 @@ __attribute__((noinline)) ObservationUse measured_admission(const EvidenceRules&
 }
 __attribute__((noinline)) EffectiveEvidence measured_group(std::uint32_t supports,std::uint32_t refutes) noexcept {
  return normalize_evidence_group(supports,refutes);
+}
+__attribute__((noinline)) bool measured_session(SessionPhase phase,SessionOperation operation,SessionPhase& next) noexcept {
+ return next_session_phase(phase,operation,next);
 }
 template<class T> inline void consume(const T& value) {asm volatile("" : : "m"(value) : "memory");}
 template<class Fn> void measure(const char* name,Fn fn) {
@@ -62,6 +66,7 @@ int main(){
  }
  measure("observation_admission",[&](std::size_t i){auto a=measured_admission(r,hypothesis,observations[i&63],i%16,i%7==0);consume(a);});
  measure("evidence_group_normalization",[&](std::size_t i){auto g=measured_group(i%16,i%7);consume(g);});
+ measure("session_transition",[&](std::size_t i){SessionPhase next;auto valid=measured_session(static_cast<SessionPhase>(i%5),static_cast<SessionOperation>((i/5)%5),next);consume(valid);consume(next);});
  std::array<EvidenceJudgment,64> decisions{};
  for(std::size_t i=0;i<64;++i)decisions[i]=judge_evidence(r,fixtures[i]);
  SemanticPromotionThresholds thresholds;

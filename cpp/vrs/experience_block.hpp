@@ -53,7 +53,13 @@ struct BlockRecovery {
     std::uint64_t complete_records = 0;
     std::uint64_t complete_bytes = 0;
     std::uint64_t unfinished_bytes = 0;
+    architecture::DigestBytes content_digest{};
 };
+
+// Bind the ordered, fully committed record addresses without rereading their
+// bodies. Recovery reconstructs the same chain after validating each record.
+[[nodiscard]] architecture::DigestBytes extend_experience_digest(
+    const architecture::DigestBytes& previous, const ExperienceLocation& location) noexcept;
 
 // One bounded block. Block identity and capacity are assigned by Main. Blocks
 // can be owned/written independently by different workers; one block has one
@@ -86,6 +92,11 @@ public:
     // Only this record is read. No scan of other experiences occurs here.
     [[nodiscard]] StoredExperience read(const ExperienceLocation& location,
         std::uint64_t max_read_bytes, MemoryBudget& memory) const;
+
+    // Cold-path framing lookup at a known record boundary (metadata/recovery).
+    // read() verifies the returned record's content checksum. An incomplete
+    // frame throws; normal Replay already has its address and never calls this.
+    [[nodiscard]] ExperienceLocation location_at(std::uint64_t offset) const;
 
     // Startup recovery streams through a fixed-size scratch buffer. A short
     // final record is reported and preserved; a complete corrupt record throws.

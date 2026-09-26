@@ -120,6 +120,17 @@ std::string_view text_at(std::span<const std::byte> encoded, std::size_t offset,
 }
 }  // namespace
 
+DigestBytes extend_experience_digest(const DigestBytes& previous, const ExperienceLocation& location) noexcept {
+    // A fresh hash, fixed-size inputs, one finish: no fallible hash operation.
+    Sha256 hash;
+    hash.update("SWEGCA experience address chain v1");
+    hash.update(previous); hash.update(location.block); hash.update(location.digest);
+    std::array<std::byte, 16> extent{};
+    put_u64(extent, 0, location.offset); put_u64(extent, 8, location.bytes);
+    hash.update(extent);
+    return hash.finish();
+}
+
 OriginalExperienceView StoredExperience::view() const noexcept {
     if (encoded_.size() < ExperienceBlock::record_overhead) return {};
     const auto session_bytes = static_cast<std::size_t>(get_u64(encoded_, 32));
@@ -261,6 +272,25 @@ ExperienceLocation ExperienceBlock::append(const OriginalExperienceView& experie
     return location;
 }
 
+ExperienceLocation ExperienceBlock::location_at(std::uint64_t offset) const {
+    if (fd_ < 0 || offset < header_bytes || offset > capacity_ ||
+        capacity_ - offset < record_overhead)
+        throw std::invalid_argument("invalid experience frame offset");
+    const auto size = file_size(fd_);
+    if (offset > size || size - offset < record_overhead)
+        throw std::runtime_error("incomplete experience frame");
+    std::array<std::byte, prefix_bytes> prefix;
+    read_exact(fd_, prefix, offset);
+    const auto total = record_length(prefix, capacity_ - offset);
+    if (total > size - offset) throw std::runtime_error("incomplete experience frame");
+    std::array<std::byte, trailer_bytes> trailer;
+    read_exact(fd_, trailer, offset + total - trailer_bytes);
+    DigestBytes digest;
+    std::copy_n(trailer.begin(), digest.size(), digest.begin());
+    check_trailer(trailer, total, digest);
+    return {identity_, offset, total, digest};
+}
+
 StoredExperience ExperienceBlock::read(const ExperienceLocation& location,
     std::uint64_t max_read_bytes, MemoryBudget& memory) const {
     if (fd_ < 0 || location.block != identity_ || location.offset < header_bytes ||
@@ -314,7 +344,10 @@ BlockRecovery ExperienceBlock::inspect() const {
         }
         std::array<std::byte, trailer_bytes> trailer;
         read_exact(fd_, trailer, cursor);
-        check_trailer(trailer, bytes, hash.finish());
+        const auto digest = hash.finish();
+        check_trailer(trailer, bytes, digest);
+        recovery.content_digest = extend_experience_digest(recovery.content_digest,
+            {identity_, at, bytes, digest});
         recovery.complete_bytes += bytes;
         ++recovery.complete_records;
     }
