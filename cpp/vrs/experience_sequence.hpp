@@ -13,6 +13,12 @@ namespace swegca::vrs {
 // Physical metadata segments only. Logical order and the core's shuffled
 // sample indices remain unchanged. Existing experience addresses never move.
 class ExperienceSequence final {
+    static std::size_t chunk_index(std::size_t index) noexcept {
+        return index<255?std::bit_width(index+1)-1:8+(index-255)/256;
+    }
+    static std::size_t chunk_offset(std::size_t index) noexcept {
+        return index<255?index-((std::size_t{1}<<chunk_index(index))-1):(index-255)%256;
+    }
     struct Chunk {
         Chunk(MemoryBudget& budget,std::size_t count):memory(budget),capacity(count),
             data(static_cast<ExperienceEvidence*>(memory.allocate(count*sizeof(ExperienceEvidence),alignof(ExperienceEvidence)))) {}
@@ -39,8 +45,7 @@ public:
         [[nodiscard]] const ExperienceEvidence& operator[](std::size_t index) const {
             if(index>=count_)throw std::out_of_range("experience snapshot index");
             index+=begin_;
-            if(index<248){const auto chunk=std::bit_width(index+8)-4;return chunks_[chunk-first_chunk_]->data[index-8*((std::size_t{1}<<chunk)-1)];}
-            return chunks_[5+(index-248)/256-first_chunk_]->data[(index-248)%256];
+            return chunks_[chunk_index(index)-first_chunk_]->data[chunk_offset(index)];
         }
     private:
         friend class ExperienceSequence;
@@ -48,9 +53,8 @@ public:
             :chunks_(&directory_memory),count_(0),begin_(begin),first_chunk_(0){
             if(begin>end || end>source.size_)throw std::out_of_range("experience snapshot range");
             if(begin==end)return;
-            const auto chunk=[](std::size_t i){return i<248?std::bit_width(i+8)-4:5+(i-248)/256;};
-            first_chunk_=chunk(begin);
-            chunks_.assign(source.chunks_.begin()+first_chunk_,source.chunks_.begin()+chunk(end-1)+1);
+            first_chunk_=chunk_index(begin);
+            chunks_.assign(source.chunks_.begin()+first_chunk_,source.chunks_.begin()+chunk_index(end-1)+1);
             count_=end-begin;
         }
         std::pmr::vector<std::shared_ptr<Chunk>> chunks_;
@@ -95,17 +99,16 @@ public:
     // block, address copy, or complete sequence directory is allocated.
     [[nodiscard]] std::shared_ptr<const ExperienceEvidence> pin(std::size_t index) const {
         if(index>=size_)throw std::out_of_range("experience pin index");
-        const auto chunk=index<248?std::bit_width(index+8)-4:5+(index-248)/256;
+        const auto chunk=chunk_index(index);
         return std::shared_ptr<const ExperienceEvidence>(chunks_[chunk], &(*this)[index]);
     }
     [[nodiscard]] Snapshot snapshot(MemoryBudget& directory_memory) const{return Snapshot(*this,directory_memory,0,size_);}
     [[nodiscard]] Snapshot snapshot(MemoryBudget& memory,std::size_t begin,std::size_t end) const {return Snapshot(*this,memory,begin,end);}
     [[nodiscard]] View view() const noexcept{return View(this,0,size_);}
     [[nodiscard]] const ExperienceEvidence& operator[](std::size_t index) const noexcept{
-        // 8,16,32,64,128 entries, then fixed 256-entry segments. No linear
-        // traversal through earlier segments is needed for shuffled access.
-        if(index<248){const auto chunk=std::bit_width(index+8)-4;return chunks_[chunk]->data[index-8*((std::size_t{1}<<chunk)-1)];}
-        return chunks_[5+(index-248)/256]->data[(index-248)%256];
+        // 1,2,4,...,128 entries, then fixed 256-entry segments. Singleton
+        // connections reserve one value, and shuffled access remains direct.
+        return chunks_[chunk_index(index)]->data[chunk_offset(index)];
     }
     // Full segments are immutable. The incomplete tail is copied eagerly so
     // neither sequence can change a shared segment or relocate its own values.
@@ -125,7 +128,7 @@ public:
     }
     void prepare_append(){
         if(!chunks_.empty()&&chunks_.back()->used<chunks_.back()->capacity)return;
-        const auto capacity=chunks_.empty()?8:std::min<std::size_t>(256,chunks_.back()->capacity*2);
+        const auto capacity=chunks_.empty()?1:std::min<std::size_t>(256,chunks_.back()->capacity*2);
         // Allocate the segment before changing the directory. If directory
         // growth fails too, the local segment frees its reservation.
         auto next=make_chunk(capacity);chunks_.push_back(std::move(next));

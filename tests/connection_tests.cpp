@@ -208,8 +208,8 @@ int main(int argc, char** argv) {
                 const auto snapshot = segmented.experiences();
                 const auto before = segmented_memory.used();
                 const auto revision = segmented.revision();
-                const bool boundary = i == 0 || i == 8 || i == 24 || i == 56 ||
-                    i == 120 || i == 248 || i == 504 || i == 760 || i == 1016;
+                const bool boundary = i == 0 || i == 1 || i == 3 || i == 7 || i == 15 ||
+                    i == 31 || i == 63 || i == 127 || i == 255 || i == 511 || i == 767 || i == 1023;
                 if (boundary) {
                     // Segment allocation, followed by directory growth when
                     // needed. A failed append must release both reservations.
@@ -259,9 +259,9 @@ int main(int argc, char** argv) {
                     upstream.until_failure=std::numeric_limits<std::size_t>::max();
                     CHECK(segmented_memory.used()==used);
                 }
-                for(const auto [begin,end]:std::array<std::pair<std::size_t,std::size_t>,12>{
-                    {{0,0},{0,8},{7,9},{23,25},{55,57},{119,121},{247,249},
-                     {503,505},{1015,1017},{1029,1030},{1030,1030},{200,1000}}}){
+                for(const auto [begin,end]:std::array<std::pair<std::size_t,std::size_t>,15>{
+                    {{0,0},{0,1},{0,2},{2,4},{6,8},{14,16},{30,32},{62,64},{126,128},{254,256},
+                     {510,512},{1022,1024},{1029,1030},{1030,1030},{200,1000}}}){
                     auto slice=parent->snapshot(segmented_memory,begin,end);
                     CHECK(slice.size()==end-begin && slice.original_begin()==begin);
                     for(std::size_t n=begin;n<end;++n)CHECK(&slice[n-begin]==&(*parent)[n]);
@@ -288,7 +288,7 @@ int main(int argc, char** argv) {
                     segmented_memory.used()-baseline,expected.size()*sizeof(ExperienceEvidence));
                 for(std::size_t n=0;n<expected.size();++n){
                     CHECK(child[n].original()==expected[n].original());
-                    CHECK((&child[n]==&(*parent)[n])==(n<1016));
+                    CHECK((&child[n]==&(*parent)[n])==(n<1023));
                 }
                 auto pinned=parent->snapshot(segmented_memory);
                 CHECK(pinned.size()==1030);
@@ -307,10 +307,10 @@ int main(int argc, char** argv) {
                 const auto baseline=segmented_memory.used();
                 std::optional<ExperienceSequence> owner;owner.emplace(segmented_memory);
                 for(const auto& value:expected){owner->prepare_append();owner->commit_append(value);}
-                auto slice=owner->snapshot(segmented_memory,1020,1025);
+                auto slice=owner->snapshot(segmented_memory,1024,1029);
                 owner->prepare_append();owner->commit_append(expected[0]);owner.reset();
-                CHECK(slice.size()==5 && slice.original_begin()==1020);
-                for(std::size_t n=0;n<5;++n)CHECK(slice[n].original()==expected[1020+n].original());
+                CHECK(slice.size()==5 && slice.original_begin()==1024);
+                for(std::size_t n=0;n<5;++n)CHECK(slice[n].original()==expected[1024+n].original());
                 CHECK(segmented_memory.used()-baseline<256*sizeof(ExperienceEvidence)+256);
             }
             {
@@ -327,7 +327,7 @@ int main(int argc, char** argv) {
                 owner->prepare_append();owner->commit_append(expected[0]);
                 owner.reset();
                 CHECK(pinned->original()==expected[1029].original());
-                // Only the selected tail is retained, not the other 1016 values.
+                // Only the selected tail is retained, not the other 1023 values.
                 CHECK(segmented_memory.used()-baseline>=256*sizeof(ExperienceEvidence));
                 CHECK(segmented_memory.used()-baseline<256*sizeof(ExperienceEvidence)+1024);
                 auto moved=std::move(pinned);CHECK(!pinned);
