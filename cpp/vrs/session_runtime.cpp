@@ -187,6 +187,24 @@ void ExperienceRouter::mount_main(const PersistentMainGraph& graph) {
     merged_main_ = &graph; merged_head_ = graph.head(); indexed_generation_ = state.generation();
 }
 
+void InputRecall::append(const InputMatch& match) {
+    // Construction is serialized: a given owner/identity cannot change its head
+    // during this Recall. Preserve its first full snapshot, never a live pointer
+    // to mutable head data. Different source owners retain separate contexts.
+    const auto same = [&](const Context& context) {
+        const auto& prior = context.recalled;
+        return prior.session == match.recalled.session && prior.connection == match.recalled.connection &&
+            prior.main_graph == match.recalled.main_graph &&
+            prior.recalled_head.identity == match.recalled.recalled_head.identity &&
+            prior.recalled_head.record == match.recalled.recalled_head.record &&
+            context.current_observations == match.current_observations;
+    };
+    const bool added = contexts_.empty() || !same(contexts_.back());
+    if (added) contexts_.push_back({match.recalled, match.current_observations});
+    try { addresses_.push_back({contexts_.size() - 1, match.original_index, match.original}); }
+    catch (...) { if (added) contexts_.pop_back(); throw; }
+}
+
 InputRecall ExperienceRouter::input(std::string_view media, std::span<const std::byte> content) const {
     // Deja vu: natural bytes reach the core cue primitive immediately. This
     // anonymous exact familiarity signal is not a truth/semantic judgment.
@@ -227,7 +245,7 @@ InputRecall ExperienceRouter::recall_cue(const DigestBytes& cue, RecallScope sco
             const auto* active = temporary_.find(match.recalled_head.identity);
             const auto boundary = active ? active->state().experiences().size() : 0;
             for (std::size_t index = 0; index < count; ++index)
-                result.matches_.push_back({match, index, boundary,
+                result.append({match, index, boundary,
                     match.main_graph ? match.main_graph->graph().find(match.recalled_head.identity)->experiences()[index].original()
                                      : match.connection->state().experiences()[index].original()});
         }
@@ -238,7 +256,7 @@ InputRecall ExperienceRouter::recall_cue(const DigestBytes& cue, RecallScope sco
         if (!connection) throw std::logic_error("cue refers to an unavailable connection");
         const auto* active = temporary_.find(reference.connection);
         const auto boundary = active ? active->state().experiences().size() : 0;
-        result.matches_.push_back({{&session, connection, connection->snapshot()}, reference.original_index, boundary, connection->state().experiences()[reference.original_index].original()});
+        result.append({{&session, connection, connection->snapshot()}, reference.original_index, boundary, connection->state().experiences()[reference.original_index].original()});
     };
     if (scope == RecallScope::temporary) {
         result.temporary_ = true;
@@ -249,7 +267,7 @@ InputRecall ExperienceRouter::recall_cue(const DigestBytes& cue, RecallScope sco
             for (const auto& [identity, index] : found->second) {
                 const auto match = merged_match(identity);
                 const auto* active = temporary_.find(identity);
-                result.matches_.push_back({match, index,
+                result.append({match, index,
                     active ? active->state().experiences().size() : 0,
                     merged_main_->graph().find(identity)->experiences()[index].original()});
             }
@@ -262,8 +280,8 @@ InputRecall ExperienceRouter::recall_cue(const DigestBytes& cue, RecallScope sco
 }
 ReplayedInput ExperienceRouter::replay(const InputRecall& recalled, std::size_t candidate) const {
     if (recalled.issuer_ != this) throw std::invalid_argument("Recall belongs to a different input route");
-    if (candidate >= recalled.matches_.size()) throw std::out_of_range("input recall candidate");
-    const auto& selected = recalled.matches_[candidate];
+    if (candidate >= recalled.matches().size()) throw std::out_of_range("input recall candidate");
+    const auto selected = recalled.matches()[candidate];
     if (selected.recalled.main_graph) {
         RecallCandidates bound; bound.temporary_ = selected.recalled;
         auto original = replay(bound, 0, selected.original_index);

@@ -2,6 +2,7 @@
 
 #include "vrs/connection_catalog.hpp"
 #include <set>
+#include <iterator>
 #include "swegca_architecture/recall_route_kernel.hpp"
 #include "swegca_architecture/replay_evidence_kernel.hpp"
 
@@ -82,25 +83,65 @@ struct InputMatch {
 
 class ExperienceRouter;
 
+// Owns pinned original addresses and one remembered head per consecutive
+// connection group. Matches are assembled by value without reading live state.
 class InputRecall final {
 public:
+    class View final {
+    public:
+        class Iterator final {
+        public:
+            using value_type = InputMatch;
+            using difference_type = std::ptrdiff_t;
+            using iterator_category = std::input_iterator_tag;
+            Iterator() = default;
+            [[nodiscard]] InputMatch operator*() const { return owner_->at(index_); }
+            Iterator& operator++() { ++index_; return *this; }
+            Iterator operator++(int) { auto previous = *this; ++*this; return previous; }
+            bool operator==(const Iterator&) const = default;
+        private:
+            friend class View;
+            Iterator(const InputRecall* owner, std::size_t index) : owner_(owner), index_(index) {}
+            const InputRecall* owner_ = nullptr;
+            std::size_t index_ = 0;
+        };
+        [[nodiscard]] std::size_t size() const noexcept { return owner_->addresses_.size(); }
+        [[nodiscard]] bool empty() const noexcept { return !size(); }
+        [[nodiscard]] InputMatch operator[](std::size_t index) const { return owner_->at(index); }
+        [[nodiscard]] Iterator begin() const noexcept { return Iterator(owner_, 0); }
+        [[nodiscard]] Iterator end() const noexcept { return Iterator(owner_, size()); }
+    private:
+        friend class InputRecall;
+        explicit View(const InputRecall* owner) : owner_(owner) {}
+        const InputRecall* owner_;
+    };
     InputRecall(const InputRecall&) = delete;
     InputRecall& operator=(const InputRecall&) = delete;
     InputRecall(InputRecall&&) noexcept = default;
     InputRecall& operator=(InputRecall&&) = delete;
-    [[nodiscard]] bool familiar() const noexcept { return !matches_.empty(); }
+    [[nodiscard]] bool familiar() const noexcept { return !addresses_.empty(); }
     [[nodiscard]] bool temporary() const noexcept { return temporary_; }
     [[nodiscard]] architecture::kernel::FamiliarityKey key_kind() const noexcept { return key_kind_; }
-    [[nodiscard]] std::span<const InputMatch> matches() const noexcept { return matches_; }
+    // The receipt must outlive its view. No reference to a synthesized match is retained.
+    [[nodiscard]] View matches() const noexcept { return View(this); }
     [[nodiscard]] const architecture::DigestBytes& cue() const noexcept { return cue_; }
 private:
     friend class ExperienceRouter;
-    explicit InputRecall(MemoryBudget& memory) : matches_(&memory) {}
+    struct Context { RecallMatch recalled; std::size_t current_observations; };
+    struct Address { std::size_t context; std::size_t original_index; ExperienceLocation original; };
+    explicit InputRecall(MemoryBudget& memory) : contexts_(&memory), addresses_(&memory) {}
+    void append(const InputMatch& match);
+    [[nodiscard]] InputMatch at(std::size_t index) const {
+        const auto& address = addresses_.at(index);
+        const auto& context = contexts_[address.context];
+        return {context.recalled, address.original_index, context.current_observations, address.original};
+    }
     architecture::DigestBytes cue_{};
     const ExperienceRouter* issuer_ = nullptr;
     bool temporary_ = false;
     architecture::kernel::FamiliarityKey key_kind_ = architecture::kernel::FamiliarityKey::missing;
-    std::pmr::vector<InputMatch> matches_;
+    std::pmr::vector<Context> contexts_;
+    std::pmr::vector<Address> addresses_;
 };
 
 // Issued only after a successful selected original read. No caller can supply

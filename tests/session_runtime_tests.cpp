@@ -76,9 +76,22 @@ int main() {
         old.publish_originals(); router.mount_main(old); router.mount_main(old);
         CHECK(!router.input("text/plain",std::as_bytes(std::span(followup))).familiar());
         const auto reads_before=reads, writes_before=writes;
+        const auto recall_memory_before=memory.used();
         auto natural=router.input("application/octet-stream",std::as_bytes(std::span(payload)));
         CHECK(reads==reads_before && writes==writes_before);
         CHECK(natural.familiar() && !natural.temporary() && natural.matches().size()==16);
+        const auto recall_bytes=memory.used()-recall_memory_before;
+        CHECK(recall_bytes<16*sizeof(InputMatch));
+        std::printf("16-candidate receipt: %zu tracked bytes; expanded matches: %zu bytes\n",recall_bytes,16*sizeof(InputMatch));
+        std::size_t match_index=0;
+        for(const auto match:natural.matches()){
+            CHECK(match.original==old.find(id(10))->state().experiences()[match_index].original());
+            CHECK(match.original_index==match_index++);
+            CHECK(match.recalled.recalled_head.strength==saved_strength);
+            CHECK(match.current_observations==0);
+        }
+        CHECK(match_index==16);
+        throws<std::out_of_range>([&]{(void)natural.matches()[16];});
         CHECK(router.replay(natural,0).location()==first);
         CHECK(reads>reads_before && writes==writes_before);
         CHECK(router.input("text/plain",std::as_bytes(std::span(payload))).key_kind()==FamiliarityKey::continuation);
@@ -123,7 +136,17 @@ int main() {
         ExperienceRouter fallback(blank,memory); fallback.mount_main(old); fallback.mount_main(other);
         CHECK(fallback.recall(id(10)).size()==2);
         CHECK(fallback.replay(fallback.recall(id(10)),0,0).location()==first);
-        CHECK(fallback.input("application/octet-stream",std::as_bytes(std::span(payload))).matches().size()==32);
+        auto joined=fallback.input("application/octet-stream",std::as_bytes(std::span(payload)));
+        auto moved=std::move(joined);
+        CHECK(moved.matches().size()==32);
+        for(std::size_t index=0;index<32;++index){
+            const auto match=moved.matches()[index];
+            const auto& owner=index<16?old:other;
+            CHECK(match.recalled.session==&owner);
+            CHECK(match.recalled.recalled_head.strength==owner.find(id(10))->state().strength());
+            CHECK(match.original==owner.find(id(10))->state().experiences()[index%16].original());
+            CHECK(fallback.replay(moved,index).location()==match.original);
+        }
         // A natural utterance without a known outcome remains insufficient,
         // but is retained through the actual shuffle/core/publication path.
         const std::string utterance="스웨카가 셔플값을 검증한다.";
