@@ -138,6 +138,10 @@ struct EvidenceJudgmentColumns {
 // Validated decision rules. Only `make_evidence_rules` constructs one; the
 // fields are private so a valid value cannot be edited into an invalid one.
 class EvidenceRules final {
+public:
+    [[nodiscard]] constexpr std::uint32_t axis_count() const noexcept { return axis_count_; }
+    [[nodiscard]] constexpr std::uint32_t recent_window() const noexcept { return recent_window_; }
+
 private:
     EvidenceRules() = default;
     friend EvidenceRules swegca::architecture::make_evidence_rules(const EvidencePolicy&);

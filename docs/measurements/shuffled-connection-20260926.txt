@@ -1,0 +1,13 @@
+GCC 16.2.1; -O3 -march=native -std=c++20 -ffp-contract=off
+CPU affinity: 6. Palworld running. Other CPU building/running UBSan test.
+100000 warmup; 31 blocks x 100000 calls. Per-block arithmetic means.
+judge_1_axis,median_ns=26.6019,p95_block_mean_ns=31.1054,min_ns=22.45
+judge_4_axes,median_ns=54.7661,p95_block_mean_ns=65.8152,min_ns=48.6815
+judge_8_axes,median_ns=99.4563,p95_block_mean_ns=131.943,min_ns=84.7467
+observation_admission,median_ns=3.26653,p95_block_mean_ns=5.91086,min_ns=2.86103
+evidence_group_normalization,median_ns=1.12811,p95_block_mean_ns=1.33891,min_ns=1.04331
+promotion_eligibility,median_ns=1.19871,p95_block_mean_ns=1.76002,min_ns=1.18281
+promotion_decision,median_ns=1.13881,p95_block_mean_ns=1.67912,min_ns=1.07332
+connection_strength,median_ns=1.82432,p95_block_mean_ns=2.43082,min_ns=1.32822
+connection_verification_4_axes,median_ns=53.738,p95_block_mean_ns=62.3888,min_ns=49.5955
+transaction_transition,median_ns=1.73742,p95_block_mean_ns=2.72403,min_ns=1.52702

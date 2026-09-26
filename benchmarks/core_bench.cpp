@@ -1,4 +1,5 @@
 #include "swegca_architecture/evidence_rules.hpp"
+#include "swegca_architecture/evidence_observation_kernel.hpp"
 #include "swegca_architecture/memory_promotion_kernel.hpp"
 #include "swegca_architecture/memory_transaction_stage_kernel.hpp"
 #include "vrs/verification.hpp"
@@ -20,6 +21,12 @@ __attribute__((noinline)) ConnectionStrengthResult measured_strength(double prev
 }
 __attribute__((noinline)) swegca::vrs::ConnectionVerification measured_connection(const EvidenceRules& r,const EvidenceTally& t,double previous) noexcept {
  return swegca::vrs::verify_connection(r,t,previous);
+}
+__attribute__((noinline)) ObservationUse measured_admission(const EvidenceRules& r,const Digest& hypothesis,const EvidenceObservation& value,std::uint64_t step,bool seen) noexcept {
+ return admit_observation(r,hypothesis,value,step,seen);
+}
+__attribute__((noinline)) EffectiveEvidence measured_group(std::uint32_t supports,std::uint32_t refutes) noexcept {
+ return normalize_evidence_group(supports,refutes);
 }
 template<class T> inline void consume(const T& value) {asm volatile("" : : "m"(value) : "memory");}
 template<class Fn> void measure(const char* name,Fn fn) {
@@ -47,6 +54,14 @@ int main(){
   measure(name,[&](std::size_t i){auto j=measured_judge(r,fixtures[i&63]);consume(j);});
  }
  const auto r=make_evidence_rules(EvidencePolicy{});
+ Digest hypothesis{};hypothesis[0]=std::byte{1};
+ std::array<EvidenceObservation,64> observations{};
+ for(std::size_t i=0;i<observations.size();++i){
+  auto& o=observations[i];o.hypothesis=hypothesis;o.address=o.source=o.context=o.producer=hypothesis;
+  o.axis=i%4;o.outcome=static_cast<EvidenceOutcome>(i%3);o.has_expiry=i%4==0;o.expires_at=10;
+ }
+ measure("observation_admission",[&](std::size_t i){auto a=measured_admission(r,hypothesis,observations[i&63],i%16,i%7==0);consume(a);});
+ measure("evidence_group_normalization",[&](std::size_t i){auto g=measured_group(i%16,i%7);consume(g);});
  std::array<EvidenceJudgment,64> decisions{};
  for(std::size_t i=0;i<64;++i)decisions[i]=judge_evidence(r,fixtures[i]);
  SemanticPromotionThresholds thresholds;
