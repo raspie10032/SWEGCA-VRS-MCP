@@ -94,6 +94,50 @@ int main(int argc,char** argv){
         stream.send(R"({"jsonrpc":"2.0","method":"notifications/initialized"})");
         std::pmr::map<std::pmr::string,std::pmr::string,std::less<>> bindings(&memory);
         std::uint64_t serial=0;
+        // Rebuild each configured session independently so settled IDs reused
+        // by another session cannot collide. Only unfinished requests enter
+        // the live connection-wide table. Reads use verified VRS originals.
+        const auto recover=[&](std::string_view identity,std::string_view name,
+                               bool connection_scope,std::uint64_t next){
+            struct Pending { AgentEvent event; RpcSender sender; std::uint64_t sequence; };
+            std::pmr::map<std::pmr::string,Pending,std::less<>> unfinished(&memory);
+            AppServerRequests requests(memory,capacity);
+            for(std::uint64_t sequence=0;sequence<next;++sequence){
+                if(serial==UINT64_MAX)throw std::overflow_error("proxy request IDs exhausted");
+                const auto params="{\"identity\":"+quote_json(identity,memory)+",\"sequence\":\""+
+                    std::to_string(sequence).c_str()+"\"}";
+                const auto reply=call(stream,"proxy/recover/"+std::to_string(++serial),"swegca/agent/original",params,memory);
+                const auto& original=reply.at("result");
+                const auto direction=original.at("sender").string();
+                if(direction!="client"&&direction!="server")throw std::runtime_error("recorded sender required for recovery");
+                const auto sender=direction=="client"?RpcSender::client:RpcSender::server;
+                const auto raw=original.at("native").string();
+                const auto fields=parse_json(raw,memory);
+                if(fields.find("method")){
+                    auto event=connection_scope?adapt_codex_app_server_connection(raw,name,memory):adapt_codex_app_server(raw,memory);
+                    if(event.session()!=name)throw std::runtime_error("recovered request session mismatch");
+                    if(!fields.find("id"))continue;
+                    requests.track(sender,event,sequence);
+                    const auto digest=original.at("original").at("digest").string();
+                    if(!unfinished.try_emplace(std::pmr::string(digest,&memory),Pending{std::move(event),sender,sequence}).second)
+                        throw std::runtime_error("duplicate recovered original address");
+                }else{
+                    if(bool(fields.find("result"))==bool(fields.find("error")))
+                        throw std::runtime_error("invalid recorded reply");
+                    const auto found=unfinished.find(original.at("context").string());
+                    // A verified repeated reply may refer to an already settled
+                    // original. Never erase another request just because IDs match.
+                    if(found==unfinished.end())continue;
+                    const auto response=requests.bind(raw,sender);
+                    if(response.request_sequence()!=found->second.sequence)
+                        throw std::runtime_error("recovered response lineage mismatch");
+                    requests.recorded(response);unfinished.erase(found);
+                }
+            }
+            for(const auto& [digest,pending]:unfinished){
+                (void)digest;pump.restore_request(pending.sender,pending.event,pending.sequence);
+            }
+        };
         const auto attach=[&](const Json& session,bool connection_scope){
             const auto name=session.at("session").string();
             const auto mode=session.at("mode").string();
@@ -105,9 +149,12 @@ int main(int argc,char** argv){
             const auto next=number(body.at("nextSequence").string());
             if(connection_scope)pump.attach_connection(name,next);else pump.attach(name,next);
             bindings.try_emplace(std::pmr::string(name,&memory),body.at("identity").string());
+            if(next)recover(body.at("identity").string(),name,connection_scope,next);
         };
         if(connection)attach(*connection,true);
         for(const auto& session:sessions.values)attach(session,false);
+        struct Recovery { std::pmr::string identity,name; std::uint64_t next; };
+        std::optional<Recovery> pending_recovery;
         const auto bind_started=[&](const AgentEvent& event){
             if(serial==UINT64_MAX)throw std::overflow_error("proxy request IDs exhausted");
             const auto name=event.session();
@@ -117,6 +164,7 @@ int main(int argc,char** argv){
             const auto identity=body.at("identity").string();
             const auto [where,inserted]=bindings.try_emplace(std::pmr::string(name,&memory),identity);
             if(!inserted&&where->second!=identity)throw std::runtime_error("changed lifecycle binding");
+            if(next)pending_recovery.emplace(Recovery{std::pmr::string(identity,&memory),std::pmr::string(name,&memory),next});
             return next;
         };
         std::cout<<"ready\n"<<std::flush;
@@ -128,6 +176,12 @@ int main(int argc,char** argv){
                 const auto sender=lane==0?RpcSender::client:RpcSender::server;
                 const auto observed=std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
                 const auto state=pump.step(sender,static_cast<std::uint64_t>(observed),[&](const AppServerWire::Delivery& plan){
+                    // Wire has now attached the lifecycle-discovered session.
+                    // Restore before acknowledging its notification, never from input.
+                    if(pending_recovery){
+                        recover(pending_recovery->identity,pending_recovery->name,false,pending_recovery->next);
+                        pending_recovery.reset();
+                    }
                     if(serial==UINT64_MAX)throw std::overflow_error("proxy request IDs exhausted");
                     const auto found=bindings.find(plan.event().session());
                     if(found==bindings.end())throw std::runtime_error("unbound native session");

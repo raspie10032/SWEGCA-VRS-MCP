@@ -575,6 +575,14 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
         client_side.sendall(dynamic);check(proxy_read(server_side)==dynamic)
         dynamic_reply=proxy_frame({'id':19,'result':{}})
         server_side.sendall(dynamic_reply);check(proxy_read(client_side)==dynamic_reply)
+        # Leave one request pending in each direction, with the same numeric ID.
+        pending_input=proxy_frame({'id':77,'method':'turn/start','params':{'threadId':'a','input':[]}})
+        pending_approval=proxy_frame({'id':77,'method':'item/commandExecution/requestApproval',
+                                      'params':{'threadId':'b','command':'never executed'}})
+        client_side.sendall(pending_input);check(proxy_read(server_side)==pending_input)
+        server_side.sendall(pending_approval);check(proxy_read(client_side)==pending_approval)
+        dynamic_pending=proxy_frame({'id':78,'method':'turn/start','params':{'threadId':'c','input':[]}})
+        client_side.sendall(dynamic_pending);check(proxy_read(server_side)==dynamic_pending)
         client_side.shutdown(socket.SHUT_WR);check(server_side.recv(1)==b'')
         server_side.shutdown(socket.SHUT_WR);check(client_side.recv(1)==b'')
         check(proxy_process.wait(timeout=10)==0)
@@ -619,7 +627,7 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     bad=dict(params,sequence='6',native=json.dumps({'id':3,'method':'turn/start','params':{'input':[]}}))
     del bad['requestSequence']
     check('error' in c.call('swegca/agent/event',bad))
-    for session,count in (('a','3'),('b','2'),('c','3')):
+    for session,count in (('a','4'),('b','3'),('c','4')):
         attached=c.call('swegca/agent/attach/resume',{'provider':'codex','instance':'proxy-tested',
             'session':session,'protocol':'app-server'})['result']
         check(attached['nextSequence']==count)
@@ -651,9 +659,16 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     try:
         check(bool(select.select([proxy_process.stdout],[],[],10)[0]))
         check(proxy_process.stdout.readline()==b'ready\n')
+        # The new proxy reconstructs both outstanding bindings before ready.
+        client_side.settimeout(10)
+        pending_reply=proxy_frame({'id':77,'result':{'recovered':True}})
+        server_side.sendall(pending_reply);check(proxy_read(client_side)==pending_reply)
+        client_side.sendall(pending_reply);check(proxy_read(server_side)==pending_reply)
         # Rediscover an already retained session from its real lifecycle notice.
         client_side.settimeout(10)
         server_side.sendall(started);check(proxy_read(client_side)==started)
+        dynamic_recovered=proxy_frame({'id':78,'result':{'recovered':'dynamic'}})
+        server_side.sendall(dynamic_recovered);check(proxy_read(client_side)==dynamic_recovered)
         vrs_process.terminate();vrs_process.wait(timeout=10)
         client_side.sendall(request)
         check(proxy_process.wait(timeout=10)==1)
@@ -664,9 +679,17 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
         for process in (proxy_process,vrs_process):
             if process.poll() is None:process.terminate();process.wait(timeout=10)
     c=Client('open',proxy_root,path);c.initialize()
+    for session,request_seq,response_seq,count in (('a',3,4,5),('b',2,3,4)):
+        attached=c.call('swegca/agent/attach/resume',{'provider':'codex','instance':'proxy-tested',
+            'session':session,'protocol':'app-server'})['result']
+        check(attached['nextSequence']==str(count))
+        originals=[c.call('swegca/agent/original',{'identity':attached['identity'],'sequence':str(seq)})['result']
+                   for seq in (request_seq,response_seq)]
+        check(originals[1]['context']==originals[0]['original']['digest'])
+        check(originals[0]['sender']!=originals[1]['sender'])
     closed_params={'provider':'codex','instance':'proxy-tested','session':'c','protocol':'app-server'}
     restored=c.call('swegca/agent/attach/ensure',closed_params)['result']
-    check(restored['nextSequence']=='4')
+    check(restored['nextSequence']=='6')
     check(c.call('swegca/select',{'identity':restored['identity']})['result']=={})
     check(c.call('swegca/end')['result']=={})
     check('error' in c.call('swegca/agent/attach/ensure',closed_params))

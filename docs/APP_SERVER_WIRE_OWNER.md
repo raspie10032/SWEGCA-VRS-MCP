@@ -412,3 +412,34 @@ a restarted host returns those directions and rejects same-direction/missing-
 direction replies to recorded directional requests. No live desktop changes.
 Pending request reconstruction in the proxy is still to be connected; records
 with unspecified direction must not be guessed during that reconstruction.
+
+## Automatic pending-request reconstruction
+
+The proxy now rebuilds pending requests from `swegca/agent/original` before
+announcing ready for configured resumed sessions. It reconstructs each session
+independently, then installs only unfinished requests in the connection-wide
+Wire table. This avoids conflicts with settled IDs reused by other sessions.
+Each request retains its recorded sender and sequence. Responses retire a
+request only when their recorded context references that request original,
+and the existing request-ID/direction matcher agrees. Verified repeated
+responses to a settled original do not remove an unrelated reused ID.
+
+For a session rediscovered through server `thread/started`, the binder queues
+recovery, Wire attaches its sequence, and the ingestion callback completes
+recovery before acknowledging that lifecycle notification. Unknown user input
+still cannot trigger session discovery or recovery. No native frames are
+resent by this procedure. Missing sender provenance, request conflicts,
+capacity exhaustion and VRS read errors fail startup/ingress rather than guess.
+
+Real subprocess suite: 2,337 checks passed. Client and server requests sharing
+numeric ID 77 survive process restart and their replies return to the correct
+sessions; a dynamically rediscovered session recovers ID 78. Reopening VRS
+again proves persisted response-to-request original digests and opposite sender
+directions. EOF still performs no merge; a dead VRS prevents forwarding.
+
+Current cost: startup/re-discovery reads each recorded native original in that
+session. Temporary reconstruction memory is bounded by the proxy PMR budget
+and historical simultaneous pending-request capacity, but read work grows with
+session history. A persisted pending index/checkpoint is not implemented.
+This does not prove desktop installation, reconnect ownership, agent context
+injection, arbitrary-scale memory use or input-to-Recall latency completion.
