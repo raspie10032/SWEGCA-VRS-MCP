@@ -17,7 +17,7 @@ private:
     friend class EvidenceReader;
     friend ExperienceEvidence record_evidence(ExperienceBlock&,
         const architecture::kernel::EvidenceRules&, const OriginalExperienceView&,
-        const architecture::kernel::EvidenceObservation&);
+        const architecture::kernel::EvidenceObservation&, std::optional<architecture::DigestBytes>);
     friend ExperienceEvidence decode_evidence(const architecture::kernel::EvidenceRules&,
         const StoredExperience&);
     friend ExperienceEvidence read_evidence(const architecture::kernel::EvidenceRules&,
@@ -35,7 +35,8 @@ private:
 // the persisted record supplies it. Its timestamp must match the original.
 [[nodiscard]] ExperienceEvidence record_evidence(ExperienceBlock& block,
     const architecture::kernel::EvidenceRules& rules, const OriginalExperienceView& original,
-    const architecture::kernel::EvidenceObservation& value);
+    const architecture::kernel::EvidenceObservation& value,
+    std::optional<architecture::DigestBytes> input_key = std::nullopt);
 [[nodiscard]] ExperienceEvidence decode_evidence(const architecture::kernel::EvidenceRules& rules,
     const StoredExperience& stored);
 // Validate the entire original with fixed scratch space, retaining only its

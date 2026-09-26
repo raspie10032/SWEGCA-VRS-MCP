@@ -227,19 +227,19 @@ ExperienceLocation SessionStore::append(const OriginalExperienceView& experience
 }
 
 ExperienceEvidence SessionStore::append_evidence(const EvidenceRules& rules,
-    const OriginalExperienceView& original, const EvidenceObservation& value) {
+    const OriginalExperienceView& original, const EvidenceObservation& value, std::optional<DigestBytes> input_key) {
     require(SessionOperation::append); verify_name(original);
     if (records_ == std::numeric_limits<std::uint64_t>::max()) throw std::overflow_error("session count exhausted");
     try {
         if (!writer_ || !writer_->can_append()) next_block();
         try {
-            auto result = record_evidence(*writer_, rules, original, value);
+            auto result = record_evidence(*writer_, rules, original, value, input_key);
             recorded(result.original());
             return result;
         } catch (const std::length_error&) {
             if (current_records_ == 0) throw;
             next_block();
-            auto result = record_evidence(*writer_, rules, original, value);
+            auto result = record_evidence(*writer_, rules, original, value, input_key);
             recorded(result.original());
             return result;
         }

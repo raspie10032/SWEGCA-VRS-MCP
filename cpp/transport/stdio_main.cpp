@@ -1,4 +1,5 @@
 #include "transport/json.hpp"
+#include "transport/agent_event.hpp"
 #include "transport/resource_profile.hpp"
 #include "vrs/runtime.hpp"
 #include <charconv>
@@ -61,7 +62,7 @@ public:
                 if(initialized_)throw std::invalid_argument("already initialized");
                 const auto& p=request.at("params");(void)p.at("protocolVersion").string();
                 if(p.at("capabilities").kind!=Json::Kind::object||p.at("clientInfo").kind!=Json::Kind::object)throw std::invalid_argument("invalid initialize parameters");
-                initialized_=true;result(encoded_id,R"({"protocolVersion":"2025-06-18","capabilities":{"tools":{},"experimental":{"swegcaHostInput":{"version":"5"}}},"serverInfo":{"name":"swegca-vrs-cpp","version":"0.1"}})");return;
+                initialized_=true;result(encoded_id,R"({"protocolVersion":"2025-06-18","capabilities":{"tools":{},"experimental":{"swegcaHostInput":{"version":"6"}}},"serverInfo":{"name":"swegca-vrs-cpp","version":"0.1"}})");return;
             }
             if(method=="ping"){result(encoded_id,"{}");return;}
             if(!ready_)throw std::invalid_argument("initialization not completed");
@@ -83,6 +84,8 @@ public:
 private:
     Runtime& runtime_;MemoryBudget& memory_;bool initialized_=false,ready_=false;
     struct Context {
+        Context(MemoryBudget& memory,std::string_view native):native_session(native,&memory){}
+        std::pmr::string native_session;
         std::uint64_t receipt=0;
         std::optional<ReceivedInput> received;
         std::optional<ReplayedInput> replayed;
@@ -94,16 +97,16 @@ private:
         if(!selected_)throw std::invalid_argument("no selected session");
         return *selected_;
     }
-    void attach_context(const Json& p,bool resume,bool select) {
-        const auto identity=digest(p.at("identity").string());
+    void attach_context(const DigestBytes& identity,std::string_view name,bool resume,bool select,
+        std::string_view native = {}) {
         if(select&&runtime_.has_session())throw std::invalid_argument("session already selected");
         // Reserve transport state before acquiring a Runtime lease. Failure
         // leaves the prior selection and all existing receipts untouched.
-        auto [it,inserted]=contexts_.try_emplace(identity);
+        auto [it,inserted]=contexts_.try_emplace(identity,memory_,native);
         if(!inserted)throw std::invalid_argument("session already attached");
         try {
             if(resume)runtime_.attach_resumed_session(identity);
-            else runtime_.attach_session(identity,p.at("name").string());
+            else runtime_.attach_session(identity,name);
         } catch(...) {contexts_.erase(it);throw;}
         if(select){runtime_.select_session(identity);selected_=&it->second;}
     }
@@ -132,6 +135,37 @@ private:
         body+=']';
     }
     std::pmr::string host(std::string_view method,const Json& p){
+        if(method=="swegca/agent/attach"||method=="swegca/agent/attach/resume"){
+            const auto provider=p.at("provider").string();
+            if(provider!="codex")throw std::invalid_argument("native provider adapter unavailable");
+            const auto native=p.at("session").string();
+            const auto identity=agent_session_identity(provider,p.at("instance").string(),native);
+            attach_context(identity,native,method=="swegca/agent/attach/resume",false,native);
+            return "{\"identity\":\""+hex(identity,memory_)+"\"}";
+        }
+        if(method=="swegca/agent/event"){
+            auto& state=context();
+            if(state.native_session.empty())throw std::invalid_argument("native session binding required");
+            auto event=adapt_codex_hook(p.at("native").string(),memory_);
+            if(event.session()!=state.native_session)throw std::invalid_argument("native session mismatch");
+            const auto sequence=integer(p.at("sequence")),observed=integer(p.at("observedAt"));
+            const auto seed=integer(p.at("seed")),step=integer(p.at("step"));
+            const OriginalExperienceView original{sequence,observed,state.native_session,"codex/hook",
+                "application/json",std::as_bytes(std::span(event.native_bytes()))};
+            using namespace swegca::architecture::kernel;
+            const auto route=route_agent_event(runtime_.session().phase(),event.kind());
+            if(route==AgentEventRoute::recall_then_record){
+                const auto limit=candidate_limit(p);
+                if(next_receipt_==std::numeric_limits<std::uint64_t>::max())throw std::overflow_error("receipt sequence exhausted");
+                clear();state.receipt=++next_receipt_;
+                const auto prompt=*event.prompt();
+                state.received.emplace(runtime_.receive_envelope("text/plain",std::as_bytes(std::span(prompt)),original,seed,step));
+                return received_body(limit);
+            }
+            if(route!=AgentEventRoute::record)throw std::invalid_argument("native event route unavailable");
+            auto recorded=runtime_.retain(original,seed,step);
+            return "{\"original\":"+address(recorded.original,memory_)+",\"refinement\":"+refinement(recorded.refinement,memory_)+"}";
+        }
         if(method=="swegca/candidates"){
             if(!context().received||integer(p.at("receipt"))!=context().receipt)throw std::invalid_argument("expired receipt");
             const auto limit=candidate_limit(p);
@@ -139,7 +173,8 @@ private:
             candidate_page(body,integer(p.at("offset")),limit);body+='}';return body;
         }
         if(method=="swegca/start"||method=="swegca/resume"||method=="swegca/attach"||method=="swegca/attach/resume"){
-            attach_context(p,method=="swegca/resume"||method=="swegca/attach/resume",
+            const bool resume=method=="swegca/resume"||method=="swegca/attach/resume";
+            attach_context(digest(p.at("identity").string()),resume?std::string_view{}:p.at("name").string(),resume,
                 method=="swegca/start"||method=="swegca/resume");
             return std::pmr::string("{}",&memory_);
         }
@@ -203,12 +238,15 @@ private:
             }
             if(next_receipt_==std::numeric_limits<std::uint64_t>::max())throw std::overflow_error("receipt sequence exhausted");
             clear();context().receipt=++next_receipt_;context().received.emplace(runtime_.receive({sequence,observed,session,source,media,content},seed,step));
-            std::pmr::string body("{\"receipt\":\"",&memory_);body+=std::to_string(context().receipt);body+="\",\"original\":";body+=address(context().received->recorded.original,memory_);
-            body+=",\"temporary\":";body+=context().received->recalled.temporary()?"true":"false";body+=',';
-            candidate_page(body,0,page_limit);
-            body+=",\"refinement\":";body+=refinement(context().received->recorded.refinement,memory_);body+='}';return body;
+            return received_body(page_limit);
         }
         throw std::invalid_argument("unknown SWEGCA host method");
+    }
+    std::pmr::string received_body(std::size_t limit){
+            std::pmr::string body("{\"receipt\":\"",&memory_);body+=std::to_string(context().receipt);body+="\",\"original\":";body+=address(context().received->recorded.original,memory_);
+            body+=",\"temporary\":";body+=context().received->recalled.temporary()?"true":"false";body+=',';
+            candidate_page(body,0,limit);
+            body+=",\"refinement\":";body+=refinement(context().received->recorded.refinement,memory_);body+='}';return body;
     }
     std::pmr::string call(std::string_view method,const Json& p){
         if(!context().received||integer(p.at("receipt"))!=context().receipt)throw std::invalid_argument("expired receipt");

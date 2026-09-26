@@ -34,11 +34,12 @@ std::string_view text(std::span<const std::byte> data) {
 }
 void validate_encoding(std::span<const std::byte> data,std::uint64_t total) {
     if (data.size() < prefix_bytes || total < prefix_bytes || text(data.first(8)) != magic ||
-        get(data, 158, 2) != 0 || get(data, 157, 1) > 1)
+        get(data, 158, 1) > 1 || get(data, 159, 1) != 0 || get(data, 157, 1) > 1)
         throw std::invalid_argument("invalid SWEGCA observation encoding");
     const auto media_bytes = get(data, 160), payload_bytes = get(data, 168);
-    if (media_bytes == 0 || media_bytes > total - prefix_bytes ||
-        payload_bytes != total - prefix_bytes - media_bytes)
+    const auto header = prefix_bytes + (get(data,158,1) ? 32 : 0);
+    if (total < header || media_bytes == 0 || media_bytes > total - header ||
+        payload_bytes != total - header - media_bytes)
         throw std::invalid_argument("invalid SWEGCA observation lengths");
 }
 EvidenceObservation decode_observation(const EvidenceRules& rules,std::span<const std::byte> data,
@@ -63,19 +64,21 @@ OriginalExperienceView parse_payload(const StoredExperience& stored) {
     auto original = stored.view();const auto data=original.content;
     if(original.media_type!=format)throw std::invalid_argument("invalid SWEGCA observation encoding");
     validate_encoding(data,data.size());const auto media_bytes=get(data,160);
-    original.media_type = text(data.subspan(prefix_bytes, media_bytes));
-    original.content = data.subspan(prefix_bytes + media_bytes);
+    const auto header=prefix_bytes+(get(data,158,1)?32:0);
+    original.media_type = text(data.subspan(header, media_bytes));
+    original.content = data.subspan(header + media_bytes);
     return original;
 }
 }  // namespace
 
 ExperienceEvidence record_evidence(ExperienceBlock& block, const EvidenceRules& rules,
-    const OriginalExperienceView& original, const EvidenceObservation& value) {
+    const OriginalExperienceView& original, const EvidenceObservation& value, std::optional<Digest> input_key) {
     if (!observation_values_valid(rules, value.hypothesis, value) || named_digest(value.address) ||
         value.observed_at != original.observed_at_ns || original.media_type.empty())
         throw std::invalid_argument("invalid recorded SWEGCA observation");
-    if (original.media_type.size() > std::numeric_limits<std::size_t>::max() - prefix_bytes ||
-        original.content.size() > std::numeric_limits<std::size_t>::max() - prefix_bytes - original.media_type.size())
+    const auto header = prefix_bytes + (input_key ? 32 : 0);
+    if (original.media_type.size() > std::numeric_limits<std::size_t>::max() - header ||
+        original.content.size() > std::numeric_limits<std::size_t>::max() - header - original.media_type.size())
         throw std::overflow_error("SWEGCA observation size overflow");
     std::array<std::byte, prefix_bytes> encoded{};
     for (std::size_t i = 0; i < magic.size(); ++i) encoded[i] = std::byte(magic[i]);
@@ -88,24 +91,26 @@ ExperienceEvidence record_evidence(ExperienceBlock& block, const EvidenceRules& 
     put(encoded, 152, value.axis, 4);
     put(encoded, 156, static_cast<std::uint8_t>(value.outcome), 1);
     put(encoded, 157, value.has_expiry, 1);
+    put(encoded, 158, input_key.has_value(), 1);
     put(encoded, 160, original.media_type.size());
     put(encoded, 168, original.content.size());
     auto wrapped = original;
     wrapped.media_type = format;
     wrapped.content = {};
     const std::array parts{std::span<const std::byte>(encoded),
+        input_key ? std::span<const std::byte>(*input_key) : std::span<const std::byte>{},
         std::as_bytes(std::span(original.media_type)),original.content};
     const auto location = block.append_parts(wrapped,parts);
     auto bound = value;
     bound.address = location.digest;
-    return ExperienceEvidence(location, bound, architecture::input_cue(original.media_type, original.content));
+    return ExperienceEvidence(location, bound, input_key ? *input_key : architecture::input_cue(original.media_type, original.content));
 }
 
 ExperienceEvidence decode_evidence(const EvidenceRules& rules, const StoredExperience& stored) {
     const auto original = parse_payload(stored);
     const auto data = stored.view().content;
     const auto value=decode_observation(rules,data,stored.location(),original.observed_at_ns);
-    return ExperienceEvidence(stored.location(), value, architecture::input_cue(original.media_type, original.content));
+    return ExperienceEvidence(stored.location(), value, get(data,158,1) ? get_digest(data,prefix_bytes) : architecture::input_cue(original.media_type, original.content));
 }
 
 // This decoder alone sees provisional chunks. No callback or byte range is
@@ -119,10 +124,11 @@ public:
         struct Decoder {
             std::array<std::byte,prefix_bytes> prefix;
             architecture::Sha256 cue;
+            std::optional<Digest> input_key;
             std::pmr::vector<std::byte>* payload;
             std::uint64_t offset, count, total = 0, payload_begin = 0;
             bool seen = false;
-        } decoder{{}, {}, payload, offset, count};
+        } decoder{{}, {}, {}, payload, offset, count};
         const auto consume=[](void* opaque, bool media, std::span<const std::byte> data,
                               std::uint64_t position, std::uint64_t length) {
             auto& state=*static_cast<Decoder*>(opaque);
@@ -137,7 +143,10 @@ public:
                 state.seen=true;
                 const auto media_bytes=get(state.prefix,160);
                 state.total=get(state.prefix,168);
-                state.payload_begin=prefix_bytes+media_bytes;
+                const auto header=prefix_bytes+(get(state.prefix,158,1)?32:0);
+                if(data.size()<header)throw std::invalid_argument("truncated input key");
+                if(get(state.prefix,158,1))state.input_key=get_digest(data,prefix_bytes);
+                state.payload_begin=header+media_bytes;
                 state.cue=architecture::input_cue_prefix(media_bytes);
                 if(state.payload) {
                     if(state.offset>state.total || state.count>state.total-state.offset ||
@@ -145,10 +154,10 @@ public:
                         throw std::invalid_argument("original payload range outside record");
                     state.payload->resize(static_cast<std::size_t>(state.count));
                 }
-                data=data.subspan(prefix_bytes);
-                position+=prefix_bytes;
+                data=data.subspan(header);
+                position+=header;
             }
-            state.cue.update(data);
+            if(!state.input_key)state.cue.update(data);
             if(state.payload && state.count) {
                 const auto first=state.payload_begin+state.offset;
                 const auto begin=std::max(first,position);
@@ -163,7 +172,7 @@ public:
         if(!decoder.seen)throw std::invalid_argument("missing SWEGCA observation encoding");
         const auto value=decode_observation(rules,decoder.prefix,location,observed);
         if(total)*total=decoder.total;
-        return ExperienceEvidence(location,value,decoder.cue.finish());
+        return ExperienceEvidence(location,value,decoder.input_key ? *decoder.input_key : decoder.cue.finish());
     }
 };
 

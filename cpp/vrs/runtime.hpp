@@ -49,6 +49,11 @@ public:
     // Recall before recording this event, then synchronously retain its full
     // original through SWEGCA. No choice of Replay candidate is invented here.
     [[nodiscard]] ReceivedInput receive(const OriginalExperienceView&, std::uint64_t seed, std::uint64_t step);
+    // Natural cue and exact native envelope bind to one original record. Recall
+    // precedes recording; the cue is persisted under the same record checksum.
+    [[nodiscard]] ReceivedInput receive_envelope(std::string_view cue_media,
+        std::span<const std::byte> cue_content, const OriginalExperienceView& envelope,
+        std::uint64_t seed, std::uint64_t step);
     [[nodiscard]] InputRecall input(std::string_view media, std::span<const std::byte> content) const;
     [[nodiscard]] ReplayedInput replay(const InputRecall&, std::size_t candidate) const;
     [[nodiscard]] EvidencePayloadSlice read_payload_slice(const InputRecall&, std::size_t candidate,

@@ -83,6 +83,14 @@ void Runtime::end_session() {
     sessions_.erase(identity);
     sources_.release_session(identity,true);
 }
+ReceivedInput Runtime::receive_envelope(std::string_view media,std::span<const std::byte> content,
+    const OriginalExperienceView& envelope,std::uint64_t seed,std::uint64_t step) {
+    auto recalled=input(media,content);
+    require_active();
+    auto recorded=active_->runtime.retain_input(envelope,config_.initial_strength,config_.policy,
+        seed,step,recalled.cue());
+    return {std::move(recalled),std::move(recorded)};
+}
 ReceivedInput Runtime::receive(const OriginalExperienceView& original,std::uint64_t seed,std::uint64_t step) {
     auto recalled=input(original.media_type,original.content);
     auto recorded=retain(original,seed,step);

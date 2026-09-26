@@ -268,5 +268,47 @@ int main(){
   }
   CHECK(bounded.used()==0);
  }
+ {
+  const auto path=root/"native-envelope";fs::create_directory(path);
+  auto cfg=config;cfg.session_block_capacity=1<<20;cfg.read_limit=1<<20;
+  const std::string prompt="사용자 입력";
+  const auto cue=std::as_bytes(std::span(prompt));
+  const std::string envelope="{native bytes, metadata, unknown fields:"+std::string(70000,'x')+"}";
+  const auto raw=std::as_bytes(std::span(envelope));
+  ExperienceLocation saved;
+  {
+   auto host=Runtime::create(path,cfg,memory);host.start_session(id(91),"native");
+   auto first=host.receive_envelope("text/plain",cue,{0,0,"native","agent","application/json",raw},7,0);
+   saved=first.recorded.original;
+   CHECK(!first.recalled.familiar());
+   auto recall=host.input("text/plain",cue);
+   CHECK(recall.temporary() && recall.matches().size()==1);
+   CHECK(!host.input("application/json",raw).familiar());
+   auto part=host.read_payload_slice(recall,0,65520,48);
+   CHECK(part.evidence().cue()==input_cue("text/plain",cue));
+   CHECK(part.total_bytes()==raw.size() && std::ranges::equal(part.content(),raw.subspan(65520,48)));
+   auto replay=host.replay(recall,0);auto original=evidence_payload(replay.original());
+   CHECK(replay.location()==saved && original.media_type=="application/json");
+   CHECK(std::ranges::equal(original.content,raw));
+   CHECK(host.work(7,0)==0);
+  }
+  CHECK(memory.used()==0);
+  {
+   auto host=Runtime::open(path,cfg,memory);host.resume_session(id(91));
+   auto second=host.receive_envelope("text/plain",cue,{1,1,"native","agent","application/json",raw},7,1);
+   CHECK(second.recalled.matches().size()==1 && second.recalled.matches()[0].original==saved);
+   CHECK(host.input("text/plain",cue).matches().size()==2);
+   host.end_session();CHECK(host.work(7,1)==1);
+  }
+  CHECK(memory.used()==0);
+  {
+   auto host=Runtime::open(path,cfg,memory);host.start_session(id(92),"reader");
+   auto recall=host.input("text/plain",cue);
+   CHECK(!recall.temporary() && recall.matches().size()==2);
+   CHECK(recall.matches()[0].original==saved);
+   auto replay=host.replay(recall,0);
+   CHECK(std::ranges::equal(evidence_payload(replay.original()).content,raw));
+  }
+ }
  CHECK(memory.used()==0);fs::remove_all(root);std::printf("runtime lifecycle tests: %u checks passed\n",checks);
 }

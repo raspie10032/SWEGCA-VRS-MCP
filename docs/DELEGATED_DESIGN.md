@@ -33,8 +33,9 @@
 - transport/agent_event.hpp: provider·instance·session 식별과 Codex hook 파서를 작성했다.
   UserPromptSubmit의 prompt를 해석하며 native JSON 전체를 바이트 그대로 보관한다.
   SessionEnd/Stop/Interrupt/compact/subagent 종료를 explicit_end로 변환하지 않는다.
-- 이 파서는 아직 Runtime 영속 기록이나 데스크톱 훅에 연결되지 않았다. 포맷 해석 단위가
-  구현된 상태이며 실제 수집/무누락/1ms 증거는 아니다.
+- 이 파서는 MCP native event 호스트 경로에서 Runtime 영속 기록에 연결됐다. 발언 키와
+  전체 이벤트 원문을 하나의 경험으로 묶는다(NATIVE_EVENT_INGRESS.md). 데스크톱 훅 설치,
+  전체 이벤트 수집, 재전송 중복 처리와 실제 입력 지연 검증은 남아 있다.
 
 ## 다음 연결 작업
 

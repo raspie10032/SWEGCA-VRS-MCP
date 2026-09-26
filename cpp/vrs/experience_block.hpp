@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <span>
+#include <optional>
 #include <string_view>
 #include <vector>
 
@@ -112,7 +113,7 @@ private:
     friend class EvidenceReader;
     friend ExperienceEvidence record_evidence(ExperienceBlock&,
         const architecture::kernel::EvidenceRules&, const OriginalExperienceView&,
-        const architecture::kernel::EvidenceObservation&);
+        const architecture::kernel::EvidenceObservation&, std::optional<architecture::DigestBytes>);
     friend ExperienceEvidence read_evidence(const architecture::kernel::EvidenceRules&,
         const ExperienceBlock&, const ExperienceLocation&, std::uint64_t);
     // Private decoder visitor. Chunks are provisional until this returns after

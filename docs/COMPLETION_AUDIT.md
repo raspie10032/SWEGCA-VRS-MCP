@@ -1,6 +1,6 @@
 # 전체 목표 대비 현재 구성 감사
 
-기준 구현: `8642cee` 및 그 이전 같은 승인 브랜치의 커밋. 이 문서는 범위를 줄이는 새
+기준 구현: 현재 승인 브랜치의 구현. 최신 native 이벤트 경로는 NATIVE_EVENT_INGRESS.md 참조. 이 문서는 범위를 줄이는 새
 목표가 아니다. 부분 검사 통과를 전체 구성 완료로 해석하지 않도록 현재 코드 경로와
 남은 증거를 대조한 것이다. **전체 목표는 미완료**다.
 
@@ -14,7 +14,7 @@
 | 임시 우선, 부재 시 Main | `familiarity_key`, `recall_scope`와 임시/Main 조회. 정확한 원문 키 및 직전 성공 Replay의 연결 키. Main 단일 연속 cue 결과는 필요한 경험 세그먼트를 공유하는 구간 receipt 사용 | region/portal/shared-experience 기반 전체 탐색 구성은 없음 |
 | 선택 원경험만 Replay | 선택 주소·계보·체크섬 검증, 한 원경험 읽기 | 저장·Runtime·MCP에 전체 검증 후 요청 구간만 반환하는 경로를 연결했다(`BOUNDED_PAYLOAD_READ.md`). 부분 읽기는 완료 receipt가 아니며, 전체 Replay는 여전히 전체 버퍼. 반복 구간 요청의 전체 읽기 비용도 남음 |
 | 현재 명제와 맞으면 통과, 다르면 Re-evidence | 실제 Replay 객체에 기록된 관측 경계를 묶고 새 같은 연결 관측을 코어로 재검증. `compare_replay_evidence` | 일반 자연어 명제의 의미 대조·자동 재검증 진입은 없음. 현재 호스트/도구가 `re_evidence`를 명시 호출함 |
-| 세션 전체 내용 실시간 임시 VRS 반영 | receive/retain/observe가 저장·셔플·코어 검증을 수행. `swegca/retain`은 현재 Recall/Replay 유지 | 실제 앱의 모든 사용자·모델·도구·기타 이벤트 연결이 없음. 테스트 이벤트 source 이름은 실수집 증거가 아님 |
+| 세션 전체 내용 실시간 임시 VRS 반영 | receive/retain/observe와 native event 수신이 저장·셔플·코어 검증을 수행. 발언 cue와 전체 JSON은 같은 기록에 결합. 내용/생명주기는 현재 Recall/Replay 유지 | 실제 앱의 모든 사용자·모델·도구·기타 이벤트 연결이 없음. 테스트 이벤트 source 이름은 실수집 증거가 아님 |
 | 명시적 종료 뒤에만 Main 병합 | 종료·발행 원천만 예약. 작업 중 캐시 보호, 준비 워커, 소유자 발행·복구. `schedule_work`, `poll_work` | 실제 호스트 자동 스케줄러 및 명시적 종료 입력 연결. Codex SessionEnd만으로 명시적 종료를 판별할 수 없음 |
 | 분할·연결선·병렬 처리 | 물리 기록 블록, 불변 경험 세그먼트 공유, 출처 범위, 독립 연결의 병렬 복구·병합 | 물리 블록 분할은 region/portal/shared-experience 그래프 완성의 대체물이 아님 |
 | Main 크기에 맞는 4GB 운용 | VRS PMR 공유 예산과 별도 프로세스 MemoryMax 경로. 실제 제한/OOM 복구 검사 있음 | MainGraph::connections_, ExperienceSequence가 누적 경험에 비례해 상주한다. 단일 경험 연결의 초기 예약 축소로 8,192개 고유 입력의 재시작 후 추적 메모리는 56.71% 감소했지만 선형 상주는 남는다(`SINGLETON_EXPERIENCE_MEMORY.md`). merged_cues_는 연속 같은 cue를 구간으로 압축했지만 불연속/고유 cue에서는 여전히 경험 수에 비례한다(`MAIN_CUE_RANGES.md`). 제한 초과 거부는 큰 그래프의 제한 내 동작을 증명하지 않음 |

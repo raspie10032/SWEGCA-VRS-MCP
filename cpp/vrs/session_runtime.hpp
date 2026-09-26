@@ -29,12 +29,14 @@ public:
         const architecture::EvidencePolicy& policy);
     [[nodiscard]] RecordedRefinement observe(const architecture::DigestBytes& identity,
         const OriginalExperienceView& original, const architecture::kernel::EvidenceObservation& observation,
-        std::uint64_t shuffle_seed, std::uint64_t current_step);
+        std::uint64_t shuffle_seed, std::uint64_t current_step,
+        std::optional<architecture::DigestBytes> input_key = std::nullopt);
     // Retains natural content through the same shuffle/core path. With no
     // observed outcome, evidence stays insufficient. No prose verdict is made.
     [[nodiscard]] RecordedRefinement retain_input(const OriginalExperienceView& original,
         double initial_strength, const architecture::EvidencePolicy& policy,
-        std::uint64_t shuffle_seed, std::uint64_t current_step);
+        std::uint64_t shuffle_seed, std::uint64_t current_step,
+        std::optional<architecture::DigestBytes> input_key = std::nullopt);
     [[nodiscard]] const PersistentConnection* find(const architecture::DigestBytes& identity) const;
     [[nodiscard]] StoredExperience replay(const architecture::DigestBytes& identity, std::size_t original_index) const;
     [[nodiscard]] EvidencePayloadSlice read_payload_slice(const architecture::DigestBytes&, std::size_t original_index,

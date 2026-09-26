@@ -74,7 +74,7 @@ void SessionRuntime::define_connection(const DigestBytes& identity, double stren
     connections_.try_emplace(identity, store_, memory_, read_limit_, identity, strength, policy);
 }
 RecordedRefinement SessionRuntime::observe(const DigestBytes& identity, const OriginalExperienceView& original,
-    const EvidenceObservation& observation, std::uint64_t seed, std::uint64_t step) {
+    const EvidenceObservation& observation, std::uint64_t seed, std::uint64_t step, std::optional<DigestBytes> input_key) {
     require_usable();
     const auto found = connections_.find(identity);
     if (found == connections_.end()) throw std::invalid_argument("connection not defined");
@@ -82,12 +82,12 @@ RecordedRefinement SessionRuntime::observe(const DigestBytes& identity, const Or
     auto& connection = *found->second.connection;
     const auto* prior = catalog_.find(identity);
     const auto expected = prior ? prior->record : ExperienceLocation{};
-    const auto cue = input_cue(original.media_type, original.content);
+    const auto cue = input_key ? *input_key : input_cue(original.media_type, original.content);
     auto& references = cues_.try_emplace(cue).first->second;
     references.reserve(references.size() + 1);
     const auto index = connection.state().experiences().size();
     try {
-        const auto saved = store_.append_evidence(connection.rules(), original, observation);
+        const auto saved = store_.append_evidence(connection.rules(), original, observation, input_key);
         connection.append(saved.original());
         auto report = connection.refine(seed, step);
         const HeadUpdate update{&connection, expected};
@@ -97,9 +97,9 @@ RecordedRefinement SessionRuntime::observe(const DigestBytes& identity, const Or
     } catch (...) { usable_ = false; throw; }
 }
 RecordedRefinement SessionRuntime::retain_input(const OriginalExperienceView& original,
-    double initial_strength, const EvidencePolicy& policy, std::uint64_t seed, std::uint64_t step) {
+    double initial_strength, const EvidencePolicy& policy, std::uint64_t seed, std::uint64_t step, std::optional<DigestBytes> input_key) {
     require_usable();
-    const auto identity = input_cue(original.media_type, original.content);
+    const auto identity = input_key ? *input_key : input_cue(original.media_type, original.content);
     if (!connections_.contains(identity)) define_connection(identity, initial_strength, policy);
     EvidenceObservation observation;
     observation.hypothesis = identity;
@@ -108,7 +108,7 @@ RecordedRefinement SessionRuntime::retain_input(const OriginalExperienceView& or
     Sha256 context; context.update("SWEGCA input session v1"); context.update(original.session);
     observation.context = context.finish();
     observation.observed_at = original.observed_at_ns;
-    return observe(identity, original, observation, seed, step);
+    return observe(identity, original, observation, seed, step, input_key);
 }
 const PersistentConnection* SessionRuntime::find(const DigestBytes& identity) const {
     require_usable();

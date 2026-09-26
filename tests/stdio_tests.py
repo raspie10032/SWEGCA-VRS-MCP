@@ -34,7 +34,7 @@ class Client:
         check('error' in self.call('tools/list'))
         initialized=self.call('initialize',{'protocolVersion':'2025-06-18','capabilities':{},'clientInfo':{'name':'test','version':'1'}})['result']
         check(initialized['protocolVersion']=='2025-06-18')
-        check(initialized['capabilities']['experimental']['swegcaHostInput']['version']=='5')
+        check(initialized['capabilities']['experimental']['swegcaHostInput']['version']=='6')
         self.notice('notifications/initialized')
         tools=self.call('tools/list')['result']['tools']
         check([t['name'] for t in tools]==['vrs_replay','vrs_re_evidence'])
@@ -342,6 +342,50 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     check(b2['temporary'] and b2['candidateCount']=='2')
     check(c.call('swegca/end')['result']=={})
     check(c.call('swegca/work',{'seed':'7','step':'0'})['result']['merged']=='1')
+    c.close()
+    # Native envelope preserves all fields while the prompt alone keys Recall.
+    native_root=root/'native';native_root.mkdir()
+    c=Client('create',native_root,path);c.initialize()
+    binding={'provider':'codex','instance':'desktop-local','session':'native-session'}
+    native_id=c.call('swegca/agent/attach',binding)['result']['identity']
+    check(c.call('swegca/select',{'identity':native_id})['result']=={})
+    def native_event(name, seq, **fields):
+        data={'session_id':'native-session','hook_event_name':name,**fields}
+        raw=json.dumps(data,ensure_ascii=False,indent=1)
+        reply=c.call('swegca/agent/event',{'sequence':str(seq),'observedAt':str(seq),
+            'seed':'7','step':str(seq),'native':raw})
+        return raw,reply
+    raw0,n0=native_event('UserPromptSubmit',0,prompt=text,unknown={'binary':'\u0000','turn':'a'})
+    n0=n0['result'];check(n0['candidateCount']=='0' and n0['refinement']['status']==0)
+    raw1,n1=native_event('UserPromptSubmit',1,prompt=text,unknown={'turn':'b'})
+    n1=n1['result'];check(n1['candidateCount']=='1' and n1['candidates'][0]['original']==n0['original'])
+    played=replay_receipt(n1['receipt'])['structuredContent']
+    check(played['media']=='application/json' and bytes.fromhex(played['contentHex'])==raw0.encode())
+    check('error' in native_event('UserPromptSubmit',2,session_id='wrong-session',prompt=text)[1])
+    check('error' in native_event('UserPromptSubmit',2,prompt=42)[1])
+    for seq,name in enumerate(['PostToolUse','Stop','PostCompact','SessionEnd'],2):
+        _,reply=native_event(name,seq,reason='other',agent_id='child',unknown={'keep':True})
+        check('original' in reply['result'] and 'receipt' not in reply['result'])
+    check('structuredContent' in recheck(n1['receipt']))
+    check(c.call('swegca/work',{'seed':'7','step':'6'})['result']['merged']=='0')
+    c.close()
+    c=Client('open',native_root,path);c.initialize()
+    check(c.call('swegca/agent/attach/resume',binding)['result']['identity']==native_id)
+    check(c.call('swegca/select',{'identity':native_id})['result']=={})
+    _,n2=native_event('UserPromptSubmit',6,prompt=text)
+    n2=n2['result'];check(n2['candidateCount']=='2')
+    check(bytes.fromhex(replay_receipt(n2['receipt'])['structuredContent']['contentHex'])==raw0.encode())
+    check(c.call('swegca/end')['result']=={})
+    check(c.call('swegca/work',{'seed':'7','step':'6'})['result']['merged']=='1')
+    second_binding=dict(binding,instance='desktop-other')
+    second_id=c.call('swegca/agent/attach',second_binding)['result']['identity']
+    check(second_id!=native_id)
+    check(c.call('swegca/select',{'identity':second_id})['result']=={})
+    _,main_native=native_event('UserPromptSubmit',0,prompt=text)
+    main_native=main_native['result']
+    check(not main_native['temporary'] and main_native['candidateCount']=='3')
+    check(bytes.fromhex(replay_receipt(main_native['receipt'])['structuredContent']['contentHex'])==raw0.encode())
+    check(c.call('swegca/work',{'seed':'7','step':'0'})['result']['merged']=='0')
     c.close()
     # A separate config file must not change the root being measured.
     def stored_bytes():
