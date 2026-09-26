@@ -34,7 +34,7 @@ class Client:
         check('error' in self.call('tools/list'))
         initialized=self.call('initialize',{'protocolVersion':'2025-06-18','capabilities':{},'clientInfo':{'name':'test','version':'1'}})['result']
         check(initialized['protocolVersion']=='2025-06-18')
-        check(initialized['capabilities']['experimental']['swegcaHostInput']['version']=='10')
+        check(initialized['capabilities']['experimental']['swegcaHostInput']['version']=='11')
         self.notice('notifications/initialized')
         tools=self.call('tools/list')['result']['tools']
         check([t['name'] for t in tools]==['vrs_replay','vrs_re_evidence'])
@@ -645,21 +645,23 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
         params=plan['parameters'];check(params['sequence']==('0' if index<2 else '1'))
         if index>=2:check(params['requestSequence']=='0')
         else:check('requestSequence' not in params)
-        for method in ('swegca/select','swegca/agent/event'):
-            check(bool(select.select([owner.stdout],[],[],10)[0]))
-            request=json.loads(owner.stdout.readline());check(request['method']==method)
-            if method=='swegca/select':check(request['params']=={'identity':wire_ids[session]})
-            else:check(request['params']==params)
+        check(bool(select.select([owner.stdout],[],[],10)[0]))
+        request=json.loads(owner.stdout.readline());check(request['method']=='swegca/agent/event')
+        check(request['params']==dict(params,identity=wire_ids[session]))
+        if index==0:
+            # No standalone select RPC: invalid targets cannot record an event
+            # in the previously selected or another attached session.
+            for target in (identity(250),wire_ids['b'],'bad'):
+                check('error' in c.call('swegca/agent/event',dict(params,identity=target)))
+        response=c.raw(json.dumps(request).encode()+b'\n')
+        check(response['id']==request['id'] and 'result' in response)
+        if index==0:
+            first=response
             response=c.raw(json.dumps(request).encode()+b'\n')
-            check(response['id']==request['id'] and 'result' in response)
-            if method=='swegca/agent/event' and index==0:
-                # Simulate a lost acknowledgement, preserving the exact RPC.
-                first=response
-                response=c.raw(json.dumps(request).encode()+b'\n')
-                check(response['result']['duplicate'] is True)
-                check(response['id']==request['id'] and
-                      response['result']['original']==first['result']['original'])
-            owner.stdin.write(json.dumps(response).encode()+b'\n');owner.stdin.flush()
+            check(response['result']['duplicate'] is True)
+            check(response['id']==request['id'] and
+                  response['result']['original']==first['result']['original'])
+        owner.stdin.write(json.dumps(response).encode()+b'\n');owner.stdin.flush()
         check(bool(select.select([owner.stdout],[],[],10)[0]))
         forwarded=json.loads(owner.stdout.readline());check(forwarded['forwarded']==params['native'])
     owner.stdin.close();check(owner.wait(timeout=10)==0)

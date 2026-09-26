@@ -87,7 +87,7 @@ int main(int argc,char** argv){
         VrsStream stream(vrs,frame,memory);
         const auto initialized=call(stream,"proxy/initialize","initialize",R"({"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"swegca-app-server-proxy","version":"0.1"}})",memory);
         const auto& result=initialized.at("result");
-        if(result.at("protocolVersion").string()!="2025-06-18"||result.at("capabilities").at("experimental").at("swegcaHostInput").at("version").string()!="10")
+        if(result.at("protocolVersion").string()!="2025-06-18"||result.at("capabilities").at("experimental").at("swegcaHostInput").at("version").string()!="11")
             throw std::runtime_error("unsupported VRS host protocol");
         stream.send(R"({"jsonrpc":"2.0","method":"notifications/initialized"})");
         std::pmr::map<std::pmr::string,std::pmr::string,std::less<>> bindings(&memory);

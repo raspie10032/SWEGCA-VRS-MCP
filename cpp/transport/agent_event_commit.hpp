@@ -11,18 +11,19 @@ namespace swegca::transport {
 // This checks endpoint acknowledgements; it makes no evidence/authority decision.
 class AgentEventCommit final {
 public:
-    enum class Stage { select, event, complete };
+    enum class Stage { event, complete };
     AgentEventCommit(std::string_view identity,std::string_view parameters,
         std::string_view id,std::pmr::memory_resource& memory)
-        :memory_(memory),select_id_(id,&memory),event_id_(id,&memory),
-         select_(&memory),event_(&memory),reply_(&memory){
+        :memory_(memory),event_id_(id,&memory),event_(&memory),reply_(&memory){
         hex(identity);
         if(id.empty())throw std::invalid_argument("commit request ID required");
-        const auto parsed=parse_json(parameters,memory);
+        auto parsed=parse_json(parameters,memory);
         if(parsed.kind!=Json::Kind::object)
             throw std::invalid_argument("event parameters must be an object");
-        select_id_+="/select";event_id_+="/event";
-        select_=envelope(select_id_,"swegca/select","{\"identity\":"+quote_json(identity,memory)+"}");
+        if(parsed.find("identity"))throw std::invalid_argument("event target belongs to transport owner");
+        Json target(&memory);target.kind=Json::Kind::string;target.scalar=identity;
+        parsed.keys.emplace_back("identity");parsed.values.push_back(std::move(target));
+        event_id_+="/event";
         event_=envelope(event_id_,"swegca/agent/event",encode_json(parsed,memory));
     }
     AgentEventCommit(const AgentEventCommit&)=delete;
@@ -30,23 +31,18 @@ public:
     [[nodiscard]] Stage stage() const noexcept{return stage_;}
     [[nodiscard]] std::string_view request() const{
         if(stage_==Stage::complete)throw std::logic_error("event already acknowledged");
-        return stage_==Stage::select?select_:event_;
+        return event_;
     }
     // Invalid, unrelated and error replies never advance the transaction.
     // Retrying a lost event acknowledgement uses the same sequence and payload.
     void accept(std::string_view raw){
         if(stage_==Stage::complete)throw std::logic_error("event already acknowledged");
         const auto value=parse_json(raw,memory_);
-        const auto& id=stage_==Stage::select?select_id_:event_id_;
-        if(value.at("jsonrpc").string()!="2.0"||value.at("id").string()!=id||value.find("method"))
+        if(value.at("jsonrpc").string()!="2.0"||value.at("id").string()!=event_id_||value.find("method"))
             throw std::invalid_argument("unmatched VRS acknowledgement");
         if(value.find("error"))throw std::runtime_error("VRS request not confirmed");
         const auto& result=value.at("result");
         if(result.kind!=Json::Kind::object)throw std::invalid_argument("invalid VRS result");
-        if(stage_==Stage::select){
-            if(!result.keys.empty())throw std::invalid_argument("invalid selection acknowledgement");
-            stage_=Stage::event;return;
-        }
         const auto& original=result.at("original");
         hex(original.at("block").string());hex(original.at("digest").string());
         const auto offset=number(original.at("offset").string());
@@ -78,7 +74,7 @@ private:
             quote_json(method,memory_)+",\"params\":"+std::pmr::string(params,&memory_)+"}";
     }
     std::pmr::memory_resource& memory_;
-    std::pmr::string select_id_,event_id_,select_,event_,reply_;
-    Stage stage_=Stage::select;
+    std::pmr::string event_id_,event_,reply_;
+    Stage stage_=Stage::event;
 };
 } // namespace swegca::transport

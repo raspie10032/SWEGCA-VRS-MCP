@@ -14,20 +14,20 @@ void commit_checks(swegca::vrs::MemoryBudget& memory){
  rejects([&]{AgentEventCommit invalid("bad","{}","x",memory);});
  rejects([&]{AgentEventCommit invalid(identity,"[]","x",memory);});
  rejects([&]{AgentEventCommit invalid(identity,"{}","",memory);});
+ rejects([&]{AgentEventCommit invalid(identity,R"({"identity":"other"})","x",memory);});
  AgentEventCommit commit(identity,"{\n\"sequence\":\"0\",\"native\":\"line\\nnext\"\n}","x",memory);
- const std::string select(commit.request());
- CHECK(parse_json(select,memory).at("method").string()=="swegca/select");
+ const std::string pending(commit.request());
+ CHECK(parse_json(pending,memory).at("params").at("identity").string()==identity);
  rejects([&]{(void)commit.reply();});
  for(const auto* raw:{R"({"jsonrpc":"2.0","id":"wrong","result":{}})",
-     R"({"jsonrpc":"2.0","id":"x/select","error":{"code":-1}})",
-     R"({"jsonrpc":"2.0","id":"x/select","result":{},"error":{}})",
+     R"({"jsonrpc":"2.0","id":"x/event","error":{"code":-1}})",
+     R"({"jsonrpc":"2.0","id":"x/event","result":{},"error":{}})",
      R"({"jsonrpc":"1.0","id":"x/select","result":{}})",
      R"({"jsonrpc":"2.0","id":1,"result":{}})",
-     R"({"jsonrpc":"2.0","id":"x/select","result":null})",
+     R"({"jsonrpc":"2.0","id":"x/event","result":null})",
      R"({"jsonrpc":"2.0","id":"x/select","result":{"unknown":true}})"}){
-  rejects([&]{commit.accept(raw);});CHECK(commit.request()==select);
+  rejects([&]{commit.accept(raw);});CHECK(commit.request()==pending);
  }
- commit.accept(R"({"jsonrpc":"2.0","id":"x/select","result":{}})");
  CHECK(commit.stage()==AgentEventCommit::Stage::event);
  const std::string event(commit.request());
  CHECK(parse_json(event,memory).at("method").string()=="swegca/agent/event");

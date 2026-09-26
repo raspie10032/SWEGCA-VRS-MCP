@@ -64,7 +64,7 @@ public:
                 if(initialized_)throw std::invalid_argument("already initialized");
                 const auto& p=request.at("params");(void)p.at("protocolVersion").string();
                 if(p.at("capabilities").kind!=Json::Kind::object||p.at("clientInfo").kind!=Json::Kind::object)throw std::invalid_argument("invalid initialize parameters");
-                initialized_=true;result(encoded_id,R"({"protocolVersion":"2025-06-18","capabilities":{"tools":{},"experimental":{"swegcaHostInput":{"version":"10"}}},"serverInfo":{"name":"swegca-vrs-cpp","version":"0.1"}})");return;
+                initialized_=true;result(encoded_id,R"({"protocolVersion":"2025-06-18","capabilities":{"tools":{},"experimental":{"swegcaHostInput":{"version":"11"}}},"serverInfo":{"name":"swegca-vrs-cpp","version":"0.1"}})");return;
             }
             if(method=="ping"){result(encoded_id,"{}");return;}
             if(!ready_)throw std::invalid_argument("initialization not completed");
@@ -103,6 +103,13 @@ private:
     Context& context() const {
         if(!selected_)throw std::invalid_argument("no selected session");
         return *selected_;
+    }
+    void select_context(const DigestBytes& identity){
+        const auto found=contexts_.find(identity);
+        if(found==contexts_.end())throw std::invalid_argument("session not attached");
+        if(!found->second.native_session.empty()&&!found->second.native_ready)
+            throw std::invalid_argument("native recovery incomplete; reopen required");
+        runtime_.select_session(identity);selected_=&found->second;
     }
     void attach_context(const DigestBytes& identity,std::string_view name,bool resume,bool select,
         std::string_view native = {},bool app_server=false,bool ensure=false) {
@@ -174,6 +181,9 @@ private:
             return "{\"identity\":\""+hex(identity,memory_)+"\",\"nextSequence\":\""+std::to_string(state.deliveries.size()).c_str()+"\"}";
         }
         if(method=="swegca/agent/event"){
+            // A targeted native request selects its already attached in-memory
+            // route within this call; no separate select RPC or storage discovery.
+            if(const auto* identity=p.find("identity"))select_context(digest(identity->string()));
             auto& state=context();
             if(state.native_session.empty()||!state.native_ready)throw std::invalid_argument("native session binding required");
             std::optional<AgentEvent> parsed_event;
@@ -273,12 +283,7 @@ private:
             return std::pmr::string("{}",&memory_);
         }
         if(method=="swegca/select"){
-            const auto identity=digest(p.at("identity").string());
-            const auto found=contexts_.find(identity);
-            if(found==contexts_.end())throw std::invalid_argument("session not attached");
-            if(!found->second.native_session.empty()&&!found->second.native_ready)
-                throw std::invalid_argument("native recovery incomplete; reopen required");
-            runtime_.select_session(identity);selected_=&found->second;
+            select_context(digest(p.at("identity").string()));
             return std::pmr::string("{}",&memory_);
         }
         if(method=="swegca/end"){

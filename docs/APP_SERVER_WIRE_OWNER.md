@@ -290,3 +290,27 @@ After explicit end, two ensure attempts fail and the ended source still merges
 normally. The initial `thread/start` request and other global messages without
 a native session binding remain unsupported: lifecycle notification support is
 not complete new-thread handshake or live desktop integration.
+
+## Single-request native ingress (host protocol 11)
+
+The earlier select/event transaction has been removed from `AgentEventCommit`.
+The owner now places the authenticated session `identity` in the existing native
+event parameters. `swegca/agent/event` selects that already attached in-memory
+route and processes the event in the same serialized host call. Unknown,
+malformed and incompletely recovered targets are rejected. Native session/source
+checks and all original recording/Recall/deduplication behavior remain in the
+existing VRS path. The identity is transport metadata, not additional evidence.
+
+This reduces each proxy ingress from two VRS RPC round trips to one and removes
+the inter-call selection gap. There is no per-input storage discovery or new
+model call. Standalone `swegca/select` remains available to other host operations;
+native events without identity retain their existing explicitly selected-route
+behavior. The proxy requires host-input protocol 11 so it cannot silently assume
+targeted semantics from a previous endpoint that ignored the field.
+
+Verification: 88 pump/acknowledgement checks and 2,213 subprocess checks pass.
+The exchange driver now forwards exactly one generated event RPC per delivery,
+checks its target, rejects absent/wrong/malformed bindings, and still exercises
+lost acknowledgement/deduplication. The lower subprocess assertion count reflects
+removing checks for the deleted selection round trip. No latency claim follows
+from this structural change: the preserved over-1ms observations remain open.
