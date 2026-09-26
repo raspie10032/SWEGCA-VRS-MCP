@@ -24,6 +24,7 @@ UTF-8 JSON-RPC 한 줄 메시지와 [도구 호출](https://modelcontextprotocol
 | `swegca/start` | `identity`, `name` | 임시 세션 시작 |
 | `swegca/resume` | `identity` | 지정된 세션 복구 |
 | `swegca/receive` | 아래 이벤트 필드 | 먼저 Déjà vu/Recall, 이후 원문 전체 임시 반영 |
+| `swegca/retain` | 아래 이벤트 필드 | 세션 이벤트 원문을 저장·셔플·코어 검증하며 현재 Recall/Replay 유지 |
 | `swegca/candidates` | `receipt`, `offset`, 선택 `candidateLimit` | 고정된 Recall의 후보 주소 페이지 조회 |
 | `swegca/define` | `identity` | 설정된 Main 규칙·초기 강도로 임시 연결 정의 |
 | `swegca/observe` | 이벤트 필드 + `observation` | 기록된 관측을 저장·셔플·코어 검증 |
@@ -36,7 +37,8 @@ UTF-8 JSON-RPC 한 줄 메시지와 [도구 호출](https://modelcontextprotocol
 호스트 확장은 `experimental.swegcaHostInput`으로 고지한다. 실제 클라이언트가 모델 호출
 전에 모든 이벤트를 전달하는 연결은 아직 설치하지 않았다.
 
-호스트 확장 버전은 `2`다. 수신 응답은 현재 receipt, 기록된 원경험 주소, 기록 전 후보의
+호스트 확장 버전은 `3`다. 버전 3은 기존 요청 형식을 유지하면서 `retain`을 추가한다.
+수신 응답은 현재 receipt, 기록된 원경험 주소, 기록 전 후보의
 첫 페이지를 돌려준다. `candidateCount`는 전체 후보 수의 십진 문자열이고, `nextOffset`은
 다음 페이지 시작 인덱스의 십진 문자열 또는 끝을 나타내는 `null`이다. `candidates`의
 `index`는 전체 Recall 내 절대 인덱스다. 후보 순서·주소·판정은 페이지 크기로 바뀌지 않는다.
@@ -83,6 +85,33 @@ build/swegca-vrs-mcp open /path/to/new-vrs-root examples/stdio-config.json
 체계도 아직 없다. 응답 오류를 자동으로 기록 미완료라고 간주해서는 안 된다.
 세션 전체 자동 수집이나 입력→Recall 1ms 달성, SSD 속도·총 저장량 준수를 주장하지 않는다.
 기존 서비스 및 Codex/Claude 설정은 변경하지 않았다.
+
+## 사용자 입력 이후 세션 이벤트
+
+호스트는 사용자 입력을 `receive`로 전달하고, 이후 모델 발화·도구 출력·그 밖의 실제
+세션 내용을 같은 이벤트 필드로 `retain`에 전달할 수 있다. source는 호스트가 제공한
+출처를 그대로 보존한다. 이벤트 종류를 전송 계층에서 승인·거절 등의 증거로 변환하지 않는다.
+
+`retain`은 `Runtime::retain` → `SessionRuntime::retain_input` → 원경험 저장·실제 경험
+셔플·SWEGCA 검증을 호출한다. 로그만 따로 저장하지 않는다. 응답은 원경험 `original`과
+실제 코어 `refinement`이며 새 receipt를 만들지 않는다. 현재 Recall의 후보 집합과 선택
+Replay를 보존하므로, 이후 재검증은 원래 Recall 경계 이후에 추가된 같은 연결의 경험을
+검사할 수 있다. 일반 원문에는 별도 진실성 판정이 없으므로 insufficient 관측으로 보존한다.
+다른 내용 사이의 의미적 연결을 이 메서드가 추측하지 않는다.
+
+후속 사용자 입력은 계속 `receive`로 보내야 한다. `retain`을 사용자 입력 훅 대신 사용하면
+선행 Déjà vu/Recall을 실행하지 않으므로 잘못된 연결이다. `retain` 성공은 현재 임시 VRS에
+반영됐다는 뜻이며 Main 병합이나 세션 종료를 뜻하지 않는다. 세션이 없거나 종료됐으면
+기록을 거부한다. 명시적 종료와 `work` 경계는 동일하다.
+
+이 전송 경로의 존재가 실제 클라이언트의 모든 이벤트가 연결됐음을 뜻하지 않는다.
+호스트가 전달하지 않은 내용은 수집하지 못한다. 현재 stdio는 동기 실행하며 응답 유실 뒤
+재전송 중복 방지 및 실제 앱 이벤트 연결은 여전히 남아 있다.
+
+검증: CPU 6·7에서 네이티브 서버를 실행한 `tests/stdio_tests.py`의 1,105개 확인이 통과했다.
+모델·도구·reasoning·compaction 출처의 테스트 이벤트, UTF-8/NUL/바이너리, 현재 receipt 유지,
+같은 연결의 새 원경험만 재검증, 잘못된 요청과 알림의 무기록, EOF 후 복구, 종료 전 병합 없음,
+종료 후 Main 조회·선택 Replay를 포함한다. 출처 이름은 테스트 입력이며 실제 앱 수집 증거가 아니다.
 
 ## 기록된 관측의 전송 (후속)
 

@@ -61,7 +61,7 @@ public:
                 if(initialized_)throw std::invalid_argument("already initialized");
                 const auto& p=request.at("params");(void)p.at("protocolVersion").string();
                 if(p.at("capabilities").kind!=Json::Kind::object||p.at("clientInfo").kind!=Json::Kind::object)throw std::invalid_argument("invalid initialize parameters");
-                initialized_=true;result(encoded_id,R"({"protocolVersion":"2025-06-18","capabilities":{"tools":{},"experimental":{"swegcaHostInput":{"version":"2"}}},"serverInfo":{"name":"swegca-vrs-cpp","version":"0.1"}})");return;
+                initialized_=true;result(encoded_id,R"({"protocolVersion":"2025-06-18","capabilities":{"tools":{},"experimental":{"swegcaHostInput":{"version":"3"}}},"serverInfo":{"name":"swegca-vrs-cpp","version":"0.1"}})");return;
             }
             if(method=="ping"){result(encoded_id,"{}");return;}
             if(!ready_)throw std::invalid_argument("initialization not completed");
@@ -121,7 +121,7 @@ private:
         if(method=="swegca/end"){clear();runtime_.end_session();return std::pmr::string("{}",&memory_);}
         if(method=="swegca/work"){const auto count=runtime_.work(integer(p.at("seed")),integer(p.at("step")));return std::pmr::string("{\"merged\":\"",&memory_)+std::to_string(count).c_str()+"\"}";}
         if(method=="swegca/define"){runtime_.define_connection(digest(p.at("identity").string()));return std::pmr::string("{}",&memory_);}
-        if(method=="swegca/receive"||method=="swegca/observe"){
+        if(method=="swegca/receive"||method=="swegca/observe"||method=="swegca/retain"){
             const auto page_limit=method=="swegca/receive"?candidate_limit(p):64;
             const auto sequence=integer(p.at("sequence")),observed=integer(p.at("observedAt")),seed=integer(p.at("seed")),step=integer(p.at("step"));
             const auto session=p.at("session").string(),source=p.at("source").string(),media=p.at("media").string();
@@ -131,6 +131,12 @@ private:
             if(text){const auto value=text->string();content=std::as_bytes(std::span(value));}
             else {const auto value=encoded->string();if(value.size()%2)throw std::invalid_argument("invalid content hex");
                 for(std::size_t i=0;i<value.size();i+=2){unsigned byte=0;auto r=std::from_chars(value.data()+i,value.data()+i+2,byte,16);if(r.ec!=std::errc{}||r.ptr!=value.data()+i+2)throw std::invalid_argument("invalid content hex");binary.push_back(std::byte(byte));}content=binary;}
+            if(method=="swegca/retain"){
+                // Session events use the same SWEGCA admission, shuffle and
+                // refinement path without replacing the current input/Replay.
+                auto recorded=runtime_.retain({sequence,observed,session,source,media,content},seed,step);
+                return "{\"original\":"+address(recorded.original,memory_)+",\"refinement\":"+refinement(recorded.refinement,memory_)+"}";
+            }
             if(method=="swegca/observe"){
                 using namespace swegca::architecture::kernel;
                 const auto& fields=p.at("observation");EvidenceObservation value;

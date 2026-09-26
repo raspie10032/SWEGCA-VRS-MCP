@@ -32,7 +32,9 @@ class Client:
         self.p.stdin.write(json.dumps({'jsonrpc':'2.0','method':method,'params':params or {}}).encode()+b'\n');self.p.stdin.flush()
     def initialize(self):
         check('error' in self.call('tools/list'))
-        check(self.call('initialize',{'protocolVersion':'2025-06-18','capabilities':{},'clientInfo':{'name':'test','version':'1'}})['result']['protocolVersion']=='2025-06-18')
+        initialized=self.call('initialize',{'protocolVersion':'2025-06-18','capabilities':{},'clientInfo':{'name':'test','version':'1'}})['result']
+        check(initialized['protocolVersion']=='2025-06-18')
+        check(initialized['capabilities']['experimental']['swegcaHostInput']['version']=='3')
         self.notice('notifications/initialized')
         tools=self.call('tools/list')['result']['tools']
         check([t['name'] for t in tools]==['vrs_replay','vrs_re_evidence'])
@@ -178,6 +180,72 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     tail=c.call('swegca/candidates',{'receipt':main_page['receipt'],'offset':'64','candidateLimit':'256'})['result']
     check(tail['nextOffset'] is None and len(tail['candidates'])==7)
     check([entry['original'] for entry in tail['candidates'][:6]]==originals[64:70])
+    check(c.call('swegca/end')['result']=={});c.close()
+    # Session event retention preserves the current input/Replay, goes through
+    # refinement, and survives EOF recovery and explicit-end Main merging.
+    events_root=root/'events';events_root.mkdir()
+    c=Client('create',events_root,path);c.initialize()
+    check('error' in c.call('swegca/retain',event('events')))
+    check(c.call('swegca/start',{'identity':identity(6),'name':'events'})['result']=={})
+    first=c.call('swegca/receive',event('events'))['result']
+    recalled=c.call('swegca/receive',event('events',sequence='1'))['result']
+    receipt=recalled['receipt']
+    replay=c.call('tools/call',{'name':'vrs_replay','arguments':{'receipt':receipt,'candidate':'0'}})['result']['structuredContent']
+    check(replay['original']==first['original'])
+    retained=[]
+    for n,source in enumerate(('assistant','tool/result','reasoning','compaction'),2):
+        result=c.call('swegca/retain',event('events',source,sequence=str(n)))['result']
+        check(set(result)=={'original','refinement'})
+        check(result['refinement']['status']==0 and result['refinement']['strength']==1.0)
+        check(result['refinement']['revision']==str(2*(n+1)))
+        retained.append(result['original'])
+    # No new receipt, candidate expansion or selected Replay replacement.
+    page=c.call('swegca/candidates',{'receipt':receipt,'offset':'0'})['result']
+    check(page['candidateCount']=='1' and page['candidates'][0]['original']==first['original'])
+    checked=c.call('tools/call',{'name':'vrs_re_evidence','arguments':{'receipt':receipt,'seed':'7','step':'0'}})['result']['structuredContent']
+    check(checked['status']==0 and checked['replayedOriginal']==first['original'])
+    check(checked['currentOriginals']==[recalled['original']]+retained)
+    # Malformed and notification events must not produce a stored original.
+    invalid=event('events',sequence='6',contentHex='00')
+    check('error' in c.call('swegca/retain',invalid))
+    invalid=event('events',sequence='6');del invalid['content'];invalid['contentHex']='0g'
+    check('error' in c.call('swegca/retain',invalid))
+    c.notice('swegca/retain',event('events',sequence='6'))
+    checked=c.call('tools/call',{'name':'vrs_re_evidence','arguments':{'receipt':receipt,'seed':'7','step':'0'}})['result']['structuredContent']
+    check(checked['currentOriginals']==[recalled['original']]+retained)
+    binary_event=event('events','tool/binary',sequence='6',media='application/octet-stream')
+    del binary_event['content'];binary_event['contentHex']='00ff80fe0a'
+    binary_saved=c.call('swegca/retain',binary_event)['result']
+    check(binary_saved['refinement']['status']==0)
+    # Different content is preserved independently, not assigned an invented
+    # semantic relationship with the currently replayed experience.
+    checked=c.call('tools/call',{'name':'vrs_re_evidence','arguments':{'receipt':receipt,'seed':'7','step':'0'}})['result']['structuredContent']
+    check(checked['currentOriginals']==[recalled['original']]+retained)
+    check(c.call('swegca/work',{'seed':'7','step':'0'})['result']['merged']=='0')
+    c.close()
+    c=Client('open',events_root,path);c.initialize()
+    check(c.call('swegca/work',{'seed':'7','step':'0'})['result']['merged']=='0')
+    check(c.call('swegca/resume',{'identity':identity(6)})['result']=={})
+    result=c.call('swegca/receive',event('events',sequence='7'))['result']
+    check(result['temporary'] and result['candidateCount']=='6')
+    check([entry['original'] for entry in result['candidates']]==[first['original'],recalled['original']]+retained)
+    for index,source in enumerate(('assistant','tool/result','reasoning','compaction'),2):
+        replay=c.call('tools/call',{'name':'vrs_replay','arguments':{'receipt':result['receipt'],'candidate':str(index)}})['result']['structuredContent']
+        check(replay['source']==source and replay['contentHex']==text.encode().hex())
+    binary_event['sequence']='8'
+    result=c.call('swegca/receive',binary_event)['result']
+    check(result['candidateCount']=='1' and result['candidates'][0]['original']==binary_saved['original'])
+    replay=c.call('tools/call',{'name':'vrs_replay','arguments':{'receipt':result['receipt'],'candidate':'0'}})['result']['structuredContent']
+    check(replay['source']=='tool/binary' and replay['contentHex']=='00ff80fe0a')
+    check(c.call('swegca/end')['result']=={})
+    check('error' in c.call('swegca/retain',event('events',sequence='9')))
+    check(c.call('swegca/work',{'seed':'7','step':'0'})['result']['merged']=='1')
+    check(c.call('swegca/start',{'identity':identity(7),'name':'events-main'})['result']=={})
+    result=c.call('swegca/receive',event('events-main'))['result']
+    check(not result['temporary'] and result['candidateCount']=='7')
+    check([entry['original'] for entry in result['candidates'][2:6]]==retained)
+    replay=c.call('tools/call',{'name':'vrs_replay','arguments':{'receipt':result['receipt'],'candidate':'5'}})['result']['structuredContent']
+    check(replay['source']=='compaction' and replay['contentHex']==text.encode().hex())
     check(c.call('swegca/end')['result']=={});c.close()
     # A separate config file must not change the root being measured.
     def stored_bytes():
