@@ -187,21 +187,21 @@ void ExperienceRouter::mount_main(const PersistentMainGraph& graph) {
     merged_main_ = &graph; merged_head_ = graph.head(); indexed_generation_ = state.generation();
 }
 
-void InputRecall::append(const InputMatch& match) {
-    // Construction is serialized: a given owner/identity cannot change its head
-    // during this Recall. Preserve its first full snapshot, never a live pointer
-    // to mutable head data. Different source owners retain separate contexts.
+void InputRecall::append(const RecallMatch& match, std::size_t index, std::size_t boundary,
+    std::shared_ptr<const ExperienceEvidence> experience) {
+    // Construction is serialized: the owner cannot change its remembered head
+    // during Recall. Pinned sealed values survive owner replacement afterward.
     const auto same = [&](const Context& context) {
         const auto& prior = context.recalled;
-        return prior.session == match.recalled.session && prior.connection == match.recalled.connection &&
-            prior.main_graph == match.recalled.main_graph &&
-            prior.recalled_head.identity == match.recalled.recalled_head.identity &&
-            prior.recalled_head.record == match.recalled.recalled_head.record &&
-            context.current_observations == match.current_observations;
+        return prior.session == match.session && prior.connection == match.connection &&
+            prior.main_graph == match.main_graph &&
+            prior.recalled_head.identity == match.recalled_head.identity &&
+            prior.recalled_head.record == match.recalled_head.record &&
+            context.current_observations == boundary;
     };
     const bool added = contexts_.empty() || !same(contexts_.back());
-    if (added) contexts_.push_back({match.recalled, match.current_observations, std::nullopt, 0});
-    try { addresses_.push_back({contexts_.size() - 1, match.original_index, match.original}); }
+    if (added) contexts_.push_back({match, boundary, std::nullopt, 0});
+    try { addresses_.push_back({contexts_.size() - 1, index, std::move(experience)}); }
     catch (...) { if (added) contexts_.pop_back(); throw; }
     ++count_;
 }
@@ -267,7 +267,8 @@ InputRecall ExperienceRouter::recall_cue(const DigestBytes& cue, RecallScope sco
         if (!connection) throw std::logic_error("cue refers to an unavailable connection");
         const auto* active = temporary_.find(reference.connection);
         const auto boundary = active ? active->state().experiences().size() : 0;
-        result.append({{&session, connection, connection->snapshot()}, reference.original_index, boundary, connection->state().experiences()[reference.original_index].original()});
+        result.append({&session, connection, connection->snapshot()}, reference.original_index, boundary,
+            connection->state().pin_experience(reference.original_index));
     };
     if (scope == RecallScope::temporary) {
         result.temporary_ = true;
@@ -278,9 +279,9 @@ InputRecall ExperienceRouter::recall_cue(const DigestBytes& cue, RecallScope sco
             for (const auto& [identity, index] : found->second) {
                 const auto match = merged_match(identity);
                 const auto* active = temporary_.find(identity);
-                result.append({match, index,
+                result.append(match, index,
                     active ? active->state().experiences().size() : 0,
-                    merged_main_->graph().find(identity)->experiences()[index].original()});
+                    merged_main_->graph().find(identity)->pin_experience(index));
             }
     } else {
         const auto found = main_cues_.find(cue);

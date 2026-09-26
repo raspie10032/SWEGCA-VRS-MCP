@@ -136,9 +136,9 @@ private:
         std::optional<ExperienceSequence::Snapshot> sequence;
         std::size_t end = 0;
     };
-    struct Address { std::size_t context; std::size_t original_index; ExperienceLocation original; };
+    struct Address { std::size_t context; std::size_t original_index; std::shared_ptr<const ExperienceEvidence> experience; };
     explicit InputRecall(MemoryBudget& memory) : contexts_(&memory), addresses_(&memory) {}
-    void append(const InputMatch& match);
+    void append(const RecallMatch&, std::size_t index, std::size_t boundary, std::shared_ptr<const ExperienceEvidence>);
     void append_range(const RecallMatch&, std::size_t boundary, const Connection&, MemoryBudget&);
     [[nodiscard]] InputMatch at(std::size_t index) const {
         if (index >= count_) throw std::out_of_range("input recall candidate");
@@ -151,7 +151,7 @@ private:
         }
         const auto& address = addresses_.at(index);
         const auto& context = contexts_[address.context];
-        return {context.recalled, address.original_index, context.current_observations, address.original};
+        return {context.recalled, address.original_index, context.current_observations, address.experience->original()};
     }
     architecture::DigestBytes cue_{};
     const ExperienceRouter* issuer_ = nullptr;

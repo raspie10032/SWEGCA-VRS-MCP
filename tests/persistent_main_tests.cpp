@@ -165,12 +165,25 @@ int main(){
    auto continued=route.input("text/other",{});
    CHECK(continued.key_kind()==FamiliarityKey::continuation&&continued.matches().size()==8);
    CHECK(route.re_evidence(original,9,0).agreement()==ReplayAgreement::insufficient);
+   const auto exact_baseline=query_memory.used();
+   unsigned exact_failures=0;
+   for(std::size_t point=0;point<16;++point){
+    failures.remaining=point;bool success=false;
+    try{auto probe=route.input("text/plain",{});success=true;}
+    catch(const std::bad_alloc&){++exact_failures;}
+    failures.remaining=std::numeric_limits<std::size_t>::max();
+    CHECK(query_memory.used()==exact_baseline);
+    if(success)break;
+   }
+   CHECK(exact_failures>0);
    auto old=route.input("text/plain",{});
    CHECK(main.merge(b,19,0));
    CHECK(continued.matches().size()==8);
    for(std::size_t n=0;n<8;++n){
     CHECK(continued.matches()[n].original==a.find(id(10))->state().experiences()[n].original());
     CHECK(continued.matches()[n].recalled.recalled_head.observations==8);
+    CHECK(old.matches()[n].original==continued.matches()[n].original);
+    CHECK(old.matches()[n].recalled.recalled_head.observations==8);
    }
    throws<std::logic_error>([&]{(void)route.replay(continued,0);});
    throws<std::logic_error>([&]{(void)route.input("text/plain",{});});

@@ -82,6 +82,13 @@ public:
     ExperienceSequence(const ExperienceSequence&)=delete;
     ExperienceSequence& operator=(const ExperienceSequence&)=delete;
     [[nodiscard]] std::size_t size() const noexcept{return size_;}
+    // Aliasing ownership pins only the containing segment; no new control
+    // block, address copy, or complete sequence directory is allocated.
+    [[nodiscard]] std::shared_ptr<const ExperienceEvidence> pin(std::size_t index) const {
+        if(index>=size_)throw std::out_of_range("experience pin index");
+        const auto chunk=index<248?std::bit_width(index+8)-4:5+(index-248)/256;
+        return std::shared_ptr<const ExperienceEvidence>(chunks_[chunk], &(*this)[index]);
+    }
     [[nodiscard]] Snapshot snapshot(MemoryBudget& directory_memory) const{return Snapshot(*this,directory_memory);}
     [[nodiscard]] View view() const noexcept{return View(this,0,size_);}
     [[nodiscard]] const ExperienceEvidence& operator[](std::size_t index) const noexcept{

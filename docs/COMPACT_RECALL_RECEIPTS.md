@@ -1,10 +1,11 @@
 # Compact natural-input Recall receipts
 
 `InputRecall` owns remembered connection contexts. Exact-cue results pin original
-addresses; continuation results pin shared sealed experience segments.
+items through shared segment ownership; continuation results pin whole sequences
+of sealed experience segments.
 Consecutive candidates from the same owner, connection identity, recorded head
 and current-observation boundary share one full `RecallMatch` snapshot. Every
-candidate still owns its original location, original index and context index.
+exact-cue candidate retains its sealed experience, original index and context index.
 Candidate order and count are unchanged. Distinct source sessions never share
 a context merely because their connection identities match.
 
@@ -21,7 +22,7 @@ append removes its newly inserted context; a failed overall Recall destroys the
 private result. No partially built result is published. This is storage layout
 compaction, not evidence selection or a new judgment rule.
 
-Exact-cue receipts still store one pinned address per candidate. Exact-cue
+Exact-cue receipts still store one sealed-item reference per candidate. Exact-cue
 enumeration still traverses all candidates. MCP now serializes bounded
 pages (see MCP_STDIO.md), while the receipt itself is not constant-space.
 Giant-graph latency remains unproven.
@@ -62,7 +63,7 @@ Main authority. Allocation failure leaves the source and published graph intact.
 
 Continuation receipt metadata scales with segment count plus connection count,
 not one full address per observation. It is not constant-space, and exact-cue
-candidate storage remains a separate scaling limitation. No core verdict,
+candidate references still scale with match count. No core verdict,
 shuffle traversal, source admission, persistent format or memory-stage ordering
 changes in this implementation.
 
@@ -81,3 +82,35 @@ ASan+UBSan instrumentation could not link on this host: the toolchain points to
 missing `/usr/lib64/libasan.so.8.0.0`. No ASan execution or address-sanitizer
 coverage is claimed; no system package change was made.
 The UBSan trap build of persistent Main passed all 196 checks.
+
+
+## Exact-cue Recall pins selected items
+
+Exact-cue candidates now hold aliasing `shared_ptr<const ExperienceEvidence>`
+references to the selected sealed items. The pointer uses the existing segment
+ownership block; `pin` allocates no memory and copies neither an original
+location nor the connection's segment directory. Index checks precede pointer
+creation. Receipt access assembles the original location from the pinned sealed
+item, without touching the replaced owner or reading original bytes from disk.
+
+A sparse match pins only its containing segment (capacity at most 256), not the
+whole connection. Already sealed slots are immutable while later tail slots may
+be appended. The segment's original MemoryBudget must outlive its last pin.
+Holding a receipt across Main replacement can retain a segment until that receipt
+is released. This is an explicit retained-memory tradeoff; it does not guarantee
+lower total RSS for every sparse workload. Candidate ordering, authority checks,
+source lineage, shuffle results and persistent formats remain unchanged.
+
+Tests pin the tail of a 1030-value owner with allocation disabled, append another
+value, destroy the owner and read the same sealed item. Accounting shows only
+one tail segment remains, then returns exactly to baseline after the final pin
+is dropped. Additional exact-receipt allocation failure checks preserve memory
+accounting, and old exact receipt addresses survive Main entry replacement while
+stale Replay remains rejected.
+
+Native measurement: the 16-candidate exact-cue receipt now allocates 744 tracked
+bytes, down from 1768 before selected-item pinning (4224 for fully expanded
+InputMatch values). Continuation remains 264 bytes in that fixture. This counts
+new receipt allocations, excluding already stored or subsequently retained
+segments. Connection: 14981 checks; session runtime: 497; persistent Main: 219
+in both native and UBSan trap builds; native MCP subprocess: 918 checks.

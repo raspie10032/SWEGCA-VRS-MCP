@@ -250,6 +250,27 @@ int main(int argc, char** argv) {
                 for(std::size_t n=0;n<expected.size();++n)CHECK(moved[n].original()==expected[n].original());
                 for(std::size_t n=0;n<expected.size();++n)CHECK(child[n].original()==expected[n].original());
             }
+            {
+                const auto baseline=segmented_memory.used();
+                std::optional<ExperienceSequence> owner;owner.emplace(segmented_memory);
+                for(const auto& value:expected){owner->prepare_append();owner->commit_append(value);}
+                const auto before_pin=segmented_memory.used();
+                upstream.until_failure=0;
+                auto pinned=owner->pin(1029);
+                CHECK(segmented_memory.used()==before_pin);
+                CHECK(pinned.get()==&(*owner)[1029]);
+                expect_throw<std::out_of_range>([&]{(void)owner->pin(1030);});
+                upstream.until_failure=std::numeric_limits<std::size_t>::max();
+                owner->prepare_append();owner->commit_append(expected[0]);
+                owner.reset();
+                CHECK(pinned->original()==expected[1029].original());
+                // Only the selected tail is retained, not the other 1016 values.
+                CHECK(segmented_memory.used()-baseline>=256*sizeof(ExperienceEvidence));
+                CHECK(segmented_memory.used()-baseline<256*sizeof(ExperienceEvidence)+1024);
+                auto moved=std::move(pinned);CHECK(!pinned);
+                CHECK(moved->original()==expected[1029].original());
+                moved.reset();CHECK(segmented_memory.used()==baseline);
+            }
             const auto report = segmented.refine(12345, 5);
             oracle(segmented, report);
             CHECK(report.samples().size() == 1030);
