@@ -1,6 +1,7 @@
 #include "vrs/runtime.hpp"
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <charconv>
 #include <chrono>
 #include <cstdio>
@@ -11,7 +12,8 @@ using namespace swegca::vrs;
 using namespace swegca::architecture;
 using Clock=std::chrono::steady_clock;
 static Clock::time_point entered;
-static unsigned calls=0,reads=0,writes=0;
+static unsigned calls=0;
+static std::atomic<unsigned> reads{0},writes{0};
 extern "C" void swegca_recall_entry_probe() noexcept{entered=Clock::now();++calls;}
 extern "C" ssize_t __real_pread(int,void*,size_t,off_t);
 extern "C" ssize_t __wrap_pread(int fd,void* p,size_t n,off_t o){++reads;return __real_pread(fd,p,n,o);}
@@ -23,7 +25,7 @@ static void measure(Runtime& host,MemoryBudget& memory,const char* route,std::st
     std::span<const std::byte> content,std::size_t expected,bool temporary){
  std::array<long long,30> entry{},complete{};std::size_t receipt_bytes=0;unsigned exceeded=0;
  for(unsigned n=0;n<35;++n){
-  const auto r=reads,w=writes,c=calls;const auto baseline=memory.used();
+  const auto r=reads.load(),w=writes.load(),c=calls;const auto baseline=memory.used();
   {
    const auto start=Clock::now();const auto receipt=host.input(media,content);const auto end=Clock::now();
    if(reads!=r||writes!=w||calls!=c+1||receipt.matches().size()!=expected||receipt.temporary()!=temporary)
@@ -39,7 +41,10 @@ static void measure(Runtime& host,MemoryBudget& memory,const char* route,std::st
 }
 int main(int argc,char** argv){
  std::size_t count=2048;
- if(argc!=3)throw std::invalid_argument("usage: recall-scale-bench COUNT repeated|distinct");
+ if(argc!=3&&argc!=4)throw std::invalid_argument("usage: recall-scale-bench COUNT repeated|distinct [WORKERS]");
+ std::uint32_t workers=1;
+ if(argc==4){const std::string_view value=argv[3];const auto result=std::from_chars(value.data(),value.data()+value.size(),workers);
+  if(result.ec!=std::errc{}||result.ptr!=value.data()+value.size()||!workers)throw std::invalid_argument("benchmark worker count");}
  const std::string_view number=argv[1],mode=argv[2];const auto parsed=std::from_chars(number.data(),number.data()+number.size(),count);
  if(parsed.ec!=std::errc{}||parsed.ptr!=number.data()+number.size()||!count||(mode!="repeated"&&mode!="distinct"))throw std::invalid_argument("benchmark arguments");
  auto pattern=(std::filesystem::temp_directory_path()/"swegca-scale-XXXXXX").string();
@@ -47,7 +52,8 @@ int main(int argc,char** argv){
  const std::filesystem::path root(pattern);
  struct Cleanup{std::filesystem::path path;~Cleanup(){std::error_code error;std::filesystem::remove_all(path,error);}} cleanup{root};
  MemoryBudget memory(256ULL<<20);EvidencePolicy policy;policy.axis_count=1;
- RuntimeConfig config{id(99),policy,1,8<<20,4096,2<<20};
+ RuntimeConfig config{id(99),policy,1,8<<20,4096,2<<20};config.merge_workers=workers;
+ std::printf("{\"configuration\":{\"workers\":%u}}\n",workers);
  std::array<std::byte,128> content{};std::vector<long long> ingestion;ingestion.reserve(count);
  std::size_t expected=mode=="repeated"?count:1;ExperienceLocation last;
  {

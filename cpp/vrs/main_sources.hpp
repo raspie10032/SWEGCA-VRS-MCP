@@ -8,7 +8,7 @@ namespace swegca::vrs {
 // Discovery never ends or publishes an active session.
 class MainSources final : public MainSourceResolver {
 public:
-    MainSources(const std::filesystem::path& root, MemoryBudget&, std::uint64_t read_limit, StorageBudget* storage = nullptr);
+    MainSources(const std::filesystem::path& root, MemoryBudget&, std::uint64_t read_limit, StorageBudget* storage = nullptr, std::uint32_t workers = 1);
     MainSources(const MainSources&) = delete;
     MainSources& operator=(const MainSources&) = delete;
     [[nodiscard]] std::pmr::vector<architecture::DigestBytes> published() const;
@@ -24,7 +24,7 @@ private:
     void release_session(const architecture::DigestBytes&, bool keep_cache) noexcept;
     struct Source {
         Source(const std::filesystem::path&, const architecture::DigestBytes&, MemoryBudget&, std::uint64_t, StorageBudget*, bool active = false,
-            bool resume = true, std::string_view name = {}, std::uint64_t block_capacity = 0);
+            bool resume = true, std::string_view name = {}, std::uint64_t block_capacity = 0, std::uint32_t workers = 1);
         ~Source();
         Source(const Source&) = delete;
         Source& operator=(const Source&) = delete;
@@ -32,6 +32,7 @@ private:
         void release_cache() noexcept;
         MemoryBudget& memory;
         std::uint64_t read_limit;
+        std::uint32_t workers;
         SessionStore* store = nullptr;
         SessionRuntime* cache = nullptr;
         bool leased = false;
@@ -40,6 +41,7 @@ private:
     MemoryBudget& memory_;
     StorageBudget* storage_;
     std::uint64_t read_limit_;
+    std::uint32_t workers_;
     std::pmr::map<architecture::DigestBytes, Source> sources_;
 };
 } // namespace swegca::vrs

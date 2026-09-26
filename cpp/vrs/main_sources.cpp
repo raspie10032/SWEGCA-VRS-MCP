@@ -27,11 +27,13 @@ void require_file(const std::filesystem::path& path) {
     if(!std::filesystem::is_regular_file(status))throw std::runtime_error("Main source publication is not a regular file");
 }
 }
-MainSources::MainSources(const std::filesystem::path& root,MemoryBudget& memory,std::uint64_t limit,StorageBudget* storage)
-    :root_(root),memory_(memory),storage_(storage),read_limit_(limit),sources_(&memory) {}
+MainSources::MainSources(const std::filesystem::path& root,MemoryBudget& memory,std::uint64_t limit,StorageBudget* storage,std::uint32_t workers)
+    :root_(root),memory_(memory),storage_(storage),read_limit_(limit),workers_(workers),sources_(&memory) {
+    if(!workers)throw std::invalid_argument("source recovery worker count must be positive");
+}
 MainSources::Source::Source(const std::filesystem::path& root,const DigestBytes& id,MemoryBudget& budget,std::uint64_t limit,StorageBudget* storage_budget,
-    bool active,bool resume,std::string_view session_name,std::uint64_t capacity)
-    :memory(budget),read_limit(limit) {
+    bool active,bool resume,std::string_view session_name,std::uint64_t capacity,std::uint32_t worker_count)
+    :memory(budget),read_limit(limit),workers(worker_count) {
     void* storage=memory.allocate(sizeof(SessionStore),alignof(SessionStore));
     try { store=new(storage) SessionStore(active&&!resume
         ? SessionStore::create(root,id,session_name,capacity,memory,storage_budget)
@@ -49,7 +51,7 @@ MainSources::Source::~Source() {
 SessionRuntime& MainSources::Source::runtime() {
     if(!cache){
         void* storage=memory.allocate(sizeof(SessionRuntime),alignof(SessionRuntime));
-        try { cache=new(storage) SessionRuntime(*store,memory,read_limit); }
+        try { cache=new(storage) SessionRuntime(*store,memory,read_limit,workers); }
         catch(...) { memory.deallocate(storage,sizeof(SessionRuntime),alignof(SessionRuntime));throw; }
     }
     return *cache;
@@ -64,7 +66,7 @@ SessionRuntime& MainSources::acquire_session(const DigestBytes& id,std::string_v
     if(found!=sources_.end()&&(!resume||found->second.leased))
         throw std::logic_error("session source already owned");
     if(found==sources_.end())
-        found=sources_.try_emplace(id,root_,id,memory_,read_limit_,storage_,true,resume,session_name,capacity).first;
+        found=sources_.try_emplace(id,root_,id,memory_,read_limit_,storage_,true,resume,session_name,capacity,workers_).first;
     auto& runtime=found->second.runtime();
     found->second.leased=true;
     return runtime;
@@ -92,7 +94,7 @@ std::pmr::vector<DigestBytes> MainSources::published() const {
 const SessionRuntime& MainSources::resolve(const DigestBytes& id) {
     if(!kernel::named_digest(id))throw std::invalid_argument("empty Main source identity");
     require_file(root_/"main"/name(id));
-    auto [where,inserted]=sources_.try_emplace(id,root_,id,memory_,read_limit_,storage_);
+    auto [where,inserted]=sources_.try_emplace(id,root_,id,memory_,read_limit_,storage_,false,true,std::string_view{},0,workers_);
     (void)inserted;
     if(!kernel::main_session_readable(where->second.store->phase(),where->second.store->usable()))
         throw std::logic_error("Main source is not ended and published");

@@ -22,7 +22,7 @@ struct CueReference {
 // Reopen restores verified connections before admitting queries, not in Recall.
 class SessionRuntime final {
 public:
-    SessionRuntime(SessionStore& store, MemoryBudget& memory, std::uint64_t read_limit);
+    SessionRuntime(SessionStore& store, MemoryBudget& memory, std::uint64_t read_limit, std::uint32_t recovery_workers = 1);
     SessionRuntime(const SessionRuntime&) = delete;
     SessionRuntime& operator=(const SessionRuntime&) = delete;
     void define_connection(const architecture::DigestBytes& identity, double strength,
@@ -46,7 +46,8 @@ private:
     friend class ExperienceRouter;
     friend class MainGraph;
     struct Slot {
-        Slot(SessionStore&, MemoryBudget&, std::uint64_t, const ExperienceLocation&);
+        explicit Slot(MemoryBudget& budget) : memory(budget), connection(nullptr) {}
+        void recover(SessionStore&, std::uint64_t, const ExperienceLocation&);
         Slot(SessionStore&, MemoryBudget&, std::uint64_t, const architecture::DigestBytes&,
             double, const architecture::EvidencePolicy&);
         ~Slot();

@@ -11,7 +11,7 @@ Runtime Runtime::open(const std::filesystem::path& root,const RuntimeConfig& con
     return Runtime(root,config,memory,false);
 }
 Runtime::Runtime(const std::filesystem::path& root,const RuntimeConfig& config,MemoryBudget& memory,bool create)
-    :root_(root),config_(config),memory_(memory),storage_root_(root),storage_(config.storage_bytes,stored_bytes(root,memory),config.io_bytes_per_second),sources_(root,memory,config.read_limit,&storage_),
+    :root_(root),config_(config),memory_(memory),storage_root_(root),storage_(config.storage_bytes,stored_bytes(root,memory),config.io_bytes_per_second),sources_(root,memory,config.read_limit,&storage_,config.merge_workers),
     main_(create ? PersistentMainGraph::create(root/"graph",config.main_identity,memory,config.initial_strength,config.policy,config.main_block_capacity,config.merge_workers,&storage_)
                  : PersistentMainGraph::open(root/"graph",config.main_identity,memory,config.initial_strength,config.policy,sources_,config.merge_workers,&storage_)) {
     sources_.release_caches();

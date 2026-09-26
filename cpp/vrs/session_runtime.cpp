@@ -5,6 +5,8 @@
 #include <algorithm>
 #include <new>
 #include <stdexcept>
+#include <thread>
+#include <exception>
 
 #ifdef SWEGCA_RECALL_ENTRY_PROBE
 extern "C" void swegca_recall_entry_probe() noexcept;
@@ -14,8 +16,7 @@ namespace swegca::vrs {
 using namespace architecture;
 using namespace architecture::kernel;
 
-SessionRuntime::Slot::Slot(SessionStore& store, MemoryBudget& budget, std::uint64_t limit,
-    const ExperienceLocation& head) : memory(budget), connection(nullptr) {
+void SessionRuntime::Slot::recover(SessionStore& store, std::uint64_t limit, const ExperienceLocation& head) {
     void* storage = memory.allocate(sizeof(PersistentConnection), alignof(PersistentConnection));
     try { connection = new (storage) PersistentConnection(PersistentConnection::recover(store, head, memory, limit)); }
     catch (...) { memory.deallocate(storage, sizeof(PersistentConnection), alignof(PersistentConnection)); throw; }
@@ -27,19 +28,43 @@ SessionRuntime::Slot::Slot(SessionStore& store, MemoryBudget& budget, std::uint6
     catch (...) { memory.deallocate(storage, sizeof(PersistentConnection), alignof(PersistentConnection)); throw; }
 }
 SessionRuntime::Slot::~Slot() {
+    if (!connection) return;
     connection->~PersistentConnection();
     memory.deallocate(connection, sizeof(PersistentConnection), alignof(PersistentConnection));
 }
-SessionRuntime::SessionRuntime(SessionStore& store, MemoryBudget& memory, std::uint64_t limit)
+SessionRuntime::SessionRuntime(SessionStore& store, MemoryBudget& memory, std::uint64_t limit, std::uint32_t workers)
     : store_(store), memory_(memory), read_limit_(limit), catalog_(store, memory, limit), connections_(&memory), cues_(&memory) {
+    if (!workers) throw std::invalid_argument("session recovery worker count must be positive");
+    struct Task { Slot* slot; ExperienceLocation head; };
+    std::pmr::vector<Task> tasks(&memory_);tasks.reserve(catalog_.heads().size());
     for (const auto& [identity, head] : catalog_.heads()) {
-        auto [where, inserted] = connections_.try_emplace(identity, store_, memory_, read_limit_, head.record);
-        (void)inserted;
-        const auto experiences = where->second.connection->state().experiences();
-        for (std::size_t i = 0; i < experiences.size(); ++i)
+        auto& slot = connections_.try_emplace(identity, memory_).first->second;
+        tasks.push_back({&slot, head.record});
+    }
+    const auto recover = [&](const Task& task) { task.slot->recover(store_, read_limit_, task.head); };
+    const auto count = std::min<std::size_t>(workers, tasks.size());
+    if (count < 2) { for (const auto& task : tasks) recover(task); }
+    else {
+        std::pmr::vector<std::exception_ptr> failures(count, &memory_);
+        std::pmr::vector<std::jthread> threads(&memory_);threads.reserve(count - 1);
+        const auto run = [&](std::size_t worker) {
+            try { for (std::size_t index=worker; index<tasks.size(); index+=count) recover(tasks[index]); }
+            catch (...) { failures[worker]=std::current_exception(); }
+        };
+        for (std::size_t worker=1; worker<count; ++worker) threads.emplace_back(run, worker);
+        run(0);
+        for (auto& thread : threads) thread.join();
+        for (const auto& failure : failures) if (failure) std::rethrow_exception(failure);
+    }
+    // Publish cue order only after every independent history has passed its
+    // complete serial core replay. Workers never mutate the shared cue index.
+    for (const auto& [identity, slot] : connections_) {
+        const auto experiences = slot.connection->state().experiences();
+        for (std::size_t i=0; i<experiences.size(); ++i)
             cues_.try_emplace(experiences[i].cue()).first->second.push_back({identity, i});
     }
 }
+
 void SessionRuntime::require_usable() const {
     if (!usable()) throw std::logic_error("session runtime unavailable; reopen required");
 }
