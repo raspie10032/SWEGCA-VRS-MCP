@@ -2443,7 +2443,7 @@ for line in sys.stdin:
     desktop=subprocess.Popen([str(exe.parent/'swegca-codex-wrapper'),'app-server'],
         env=dict(os.environ,SWEGCA_DESKTOP_CONFIG=str(auto_wrapper)),stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,stderr=subprocess.PIPE,bufsize=0)
-    original_terms=[{'type':'text','text':'팰월드는 유지\r\nComfyUI만 중지'}]
+    original_terms=[{'type':'text','text':'팰월드는 유지. ComfyUI만 중지'}]
     corrected_terms=[{'type':'text','text':'정정: “중지” → “유지”\n다른 조건은 그대로.'}]
     try:
         desktop_send({'id':980,'method':'initialize','params':{}});check(desktop_read()=={'id':980,'result':{}})
@@ -2468,6 +2468,8 @@ for line in sys.stdin:
     first_packet=json.loads(first_native['params']['input'][0]['text'].split('\n',1)[1])
     corrected_packet=json.loads(corrected_native['params']['input'][0]['text'].split('\n',1)[1])
     check(first_native['params']['input'][1:]==original_terms)
+    check([x['quote'] for x in first_packet['inputCandidates']['candidates']]==['팰월드는 유지. ','ComfyUI만 중지'])
+    check(not first_packet['inputCandidates']['boundariesVerified'])
     check(corrected_native['params']['input'][1:]==corrected_terms)
     check(corrected_packet['inputRelations']['priorInput']==first_packet['inputCandidates']['inputOriginal'])
     check(not corrected_packet['inputRelations']['replacementVerified'])

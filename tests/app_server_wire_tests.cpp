@@ -202,6 +202,30 @@ int main(){
   CHECK(no_room.at("inputCandidates").at("candidates").values.empty());
   CHECK(no_room.at("inputCandidates").at("byteLimited").scalar=="true");
   CHECK(no_room.at("inputCandidates").at("next").at("byteOffset").string()=="0");
+  const auto paragraph=parse_json(R"({"method":"turn/start","params":{"input":[{"type":"text","text":"팰월드는 유지. ComfyUI만 중지! 준비되지 않았다면 삭제하지 마라.\n"}]}})",memory);
+  candidates="{}";append_input_candidates(candidates,paragraph,source,memory,8,4096);
+  const auto segmented=parse_json(candidates,memory);
+  const auto& segments=segmented.at("inputCandidates").at("candidates").values;
+  CHECK(segments.size()==3);
+  CHECK(segmented.at("inputCandidates").at("boundariesVerified").scalar=="false");
+  std::pmr::string joined(&memory);
+  for(const auto& segment:segments){
+   const auto anchor=requirement_anchor(segment);CHECK(requirement_matches(anchor,paragraph));
+   joined+=anchor.quote;
+  }
+  CHECK(joined==paragraph.at("params").at("input").values[0].at("text").string());
+  CHECK(segments[2].at("quote").string()=="준비되지 않았다면 삭제하지 마라.\n");
+  candidates="{}";append_input_candidates(candidates,paragraph,source,memory,1,4096);
+  const auto one_span=parse_json(candidates,memory);
+  CHECK(one_span.at("inputCandidates").at("next").at("byteOffset").string()==std::to_string(segments[0].at("quote").string().size()));
+  using swegca::architecture::kernel::input_span_end;
+  for(const auto protected_text:{"\"keep. do not delete\"", "‘keep! do not delete’", "`a. b`", "```a.\nb?\n```", "\"unclosed. keep\nthis", "1. keep version 2.2 and https://example.org/a"})
+   CHECK(input_span_end(protected_text,0)==std::string_view(protected_text).size());
+  CHECK(input_span_end("Keep it. Next",0)==9);
+  CHECK(input_span_end("Don't delete! Next",0)==14);
+  const auto no_partial_revision=parse_json(R"({"method":"turn/steer","params":{"input":[{"type":"text","text":"정정: \"a\" -> \"b\". 적용 금지."}]}})",memory);
+  candidates="{}";append_input_candidates(candidates,no_partial_revision,source,memory,8,4096);
+  CHECK(parse_json(candidates,memory).at("inputCandidates").at("revisionProposals").values.empty());
   auto related_source=parse_json(R"({"original":{"block":"a","digest":"b","offset":"1","bytes":"2"},"inputRelations":{"kind":"explicit-turn-steer","priorInput":null,"replacementVerified":false,"grantsAuthority":false}})",memory);
   candidates="{}";append_input_candidates(candidates,native,related_source,memory,8,4096);
   const auto relation_context=parse_json(candidates,memory);

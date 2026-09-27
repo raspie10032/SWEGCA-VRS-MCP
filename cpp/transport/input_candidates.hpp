@@ -1,6 +1,7 @@
 #pragma once
 #include "transport/requirement_anchor.hpp"
 #include "swegca_architecture/quoted_revision_kernel.hpp"
+#include "swegca_architecture/input_span_kernel.hpp"
 
 namespace swegca::transport {
 // Structural references into the acknowledged original, never instructions,
@@ -24,8 +25,10 @@ inline void append_input_candidates(std::pmr::string& context,const Json& native
         if(next)continue;
         std::size_t offset=0;
         while(offset<text.size()){
+            const auto end=architecture::kernel::input_span_end(text,offset);
             const auto newline=text.find('\n',offset);
-            const auto end=newline==std::string_view::npos?text.size():newline+1;
+            const auto line_end=newline==text.npos?text.size():newline+1;
+            const bool whole_line=(offset==0||text[offset-1]=='\n')&&end==line_end;
             const RequirementAnchor candidate{index,offset,text.substr(offset,end-offset)};
             if(emitted==limit){next={{index,offset}};break;}
             // Every span is checked by the existing core-backed exact-anchor
@@ -39,7 +42,7 @@ inline void append_input_candidates(std::pmr::string& context,const Json& native
             }
             if(separator)references+=',';
             references+=encoded;byte_budget-=encoded.size()+separator;++emitted;
-            if(const auto revision=architecture::kernel::quoted_revision(candidate.quote)){
+            if(const auto revision=whole_line?architecture::kernel::quoted_revision(candidate.quote):std::nullopt){
                 const RequirementAnchor prior{index,offset+revision->prior.offset,candidate.quote.substr(revision->prior.offset,revision->prior.bytes)};
                 const RequirementAnchor replacement{index,offset+revision->replacement.offset,candidate.quote.substr(revision->replacement.offset,revision->replacement.bytes)};
                 if(!requirement_matches(prior,native)||!requirement_matches(replacement,native))
@@ -65,7 +68,7 @@ inline void append_input_candidates(std::pmr::string& context,const Json& native
 
     if(context.back()!='{')context+=',';
     context+="\"inputCandidates\":{\"inputOriginal\":";append_json(context,acknowledged.at("original"));
-    context+=",\"kind\":\"uninterpreted-text-spans\",\"semanticVerified\":false,\"requirementsComplete\":false,";
+    context+=",\"kind\":\"uninterpreted-text-spans\",\"semanticVerified\":false,\"boundariesVerified\":false,\"requirementsComplete\":false,";
     context+="\"grantsAuthority\":false,\"candidates\":";context+=references;
     context+=",\"revisionProposals\":";context+=revisions;
     context+=",\"revisionProposalsLimited\":";context+=revision_limited?"true":"false";
