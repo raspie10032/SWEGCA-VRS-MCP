@@ -4,6 +4,7 @@
 #include <array>
 #include <algorithm>
 #include <bit>
+#include <limits>
 #if defined(__SSE2__) && !defined(SWEGCA_JSON_SCALAR_ONLY)
 #include <emmintrin.h>
 #endif
@@ -111,8 +112,41 @@ private:
         out.kind=Json::Kind::number;out.scalar=text_.substr(start,pos_-start);return out;
     }
 };
+std::size_t add_size(std::size_t left,std::size_t right){
+    if(right>std::numeric_limits<std::size_t>::max()-left)throw std::length_error("JSON size overflow");
+    return left+right;
+}
+std::size_t quoted_size(std::string_view text){
+    utf8(text);auto size=add_size(text.size(),2);
+    std::size_t pos=0;
+    while(pos<text.size()){
+        pos+=prefix<true>(text.substr(pos));if(pos==text.size())break;
+        size=add_size(size,static_cast<unsigned char>(text[pos++])<32?5:1);
+    }
+    return size;
+}
+std::size_t encoded_size(const Json& value){
+    switch(value.kind){
+    case Json::Kind::null:return 4;
+    case Json::Kind::boolean:case Json::Kind::number:return value.scalar.size();
+    case Json::Kind::string:return quoted_size(value.scalar);
+    case Json::Kind::array:case Json::Kind::object:{
+        const bool object=value.kind==Json::Kind::object;
+        if(object&&value.keys.size()!=value.values.size())invalid();
+        std::size_t size=2;
+        for(std::size_t i=0;i<value.values.size();++i){
+            if(i)size=add_size(size,1);
+            if(object)size=add_size(size,add_size(quoted_size(value.keys[i]),1));
+            size=add_size(size,encoded_size(value.values[i]));
+        }
+        return size;
+    }
+    }
+    invalid();
+}
+// Size validation has checked every source string before output allocation.
 void quote(std::pmr::string& out,std::string_view text){
-    utf8(text);constexpr char digits[]="0123456789abcdef";out+='"';
+    constexpr char digits[]="0123456789abcdef";out+='"';
     std::size_t pos=0;
     while(pos<text.size()){
         const auto count=prefix<true>(text.substr(pos));out.append(text.substr(pos,count));pos+=count;
@@ -161,7 +195,9 @@ void write_json_hex(std::ostream& out,std::span<const std::byte> content){
     }
 }
 Json parse_json(std::string_view text,std::pmr::memory_resource& memory,std::size_t depth){return Parser(text,memory,depth).parse();}
-std::pmr::string encode_json(const Json& value,std::pmr::memory_resource& memory){std::pmr::string out(&memory);encode(out,value);return out;}
-void append_json(std::pmr::string& destination,const Json& value){encode(destination,value);}
-std::pmr::string quote_json(std::string_view text,std::pmr::memory_resource& memory){std::pmr::string out(&memory);quote(out,text);return out;}
+std::pmr::string encode_json(const Json& value,std::pmr::memory_resource& memory){std::pmr::string out(&memory);out.reserve(encoded_size(value));encode(out,value);return out;}
+void append_json(std::pmr::string& destination,const Json& value,std::size_t suffix_capacity){
+    destination.reserve(add_size(add_size(destination.size(),encoded_size(value)),suffix_capacity));encode(destination,value);
+}
+std::pmr::string quote_json(std::string_view text,std::pmr::memory_resource& memory){std::pmr::string out(&memory);out.reserve(quoted_size(text));quote(out,text);return out;}
 } // namespace swegca::transport

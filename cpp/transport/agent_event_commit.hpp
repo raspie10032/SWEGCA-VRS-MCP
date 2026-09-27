@@ -28,7 +28,7 @@ public:
         event_id_+="/event";
         event_="{\"jsonrpc\":\"2.0\",\"id\":"+quote_json(event_id_,memory_)+
             ",\"method\":\"swegca/agent/event\",\"params\":";
-        append_json(event_,parsed);event_+='}';
+        append_json(event_,parsed,1);event_+='}';
     }
     AgentEventCommit(const AgentEventCommit&)=delete;
     AgentEventCommit& operator=(const AgentEventCommit&)=delete;

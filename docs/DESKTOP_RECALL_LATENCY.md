@@ -252,3 +252,33 @@ Verification: SSE2 and scalar JSON each 13,274 checks, framing 29, wrapper 33,
 Pump 92 and real stdio subprocess 2,560 checks passed. Added append round trips
 hold source, message and reparsed value concurrently under a separate 8MiB test
 resource; the pre-existing 4MiB output-budget tests remain unchanged.
+
+## Size-checked output allocation
+
+JSON encoding now validates/counts encoded bytes before reserving the output.
+The count includes quotes, separators, UTF-8 source bytes and escape expansion;
+all size additions check overflow. The existing emission rules then write the
+same bytes. `append_json` optionally reserves the caller's closing suffix, so
+appending the final RPC brace does not double the completed buffer. UTF-8
+validation moved into this preflight rather than being skipped.
+
+`commit-memory-sized.jsonl` shows construction PMR (not RSS or aggregate VRS):
+
+| 1MiB native content | Prior peak bytes | Sized peak bytes | Retained bytes |
+| --- | ---: | ---: | ---: |
+| repeated x | 4,194,934 | 2,097,766 | 1,048,744 |
+| repeated newline | 15,794,548 | 7,340,646 | 6,291,624 |
+
+Request byte counts remain 1,048,743 and 6,291,623 respectively. The preflight
+adds a size traversal and trades that work for reduced allocation/copy peaks.
+The five-sample ASCII latency run `desktop-recall-sized-json.jsonl` did NOT show
+a latency improvement: 64KiB median 0.201872ms (prior 0.183462ms), 1MiB median
+2.796657ms (prior 2.392023ms). It is retained for the measured memory reduction,
+not claimed as a speed win. These small sequential runs do not isolate timing
+variance; the 1MiB latency requirement remains unmet in every sample.
+
+Verification: both JSON paths pass 13,279 checks, framing 29, wrapper 33 and
+stdio process 2,560. New checks encode ordinary/escape-heavy values with budget
+for one output plus a small envelope (insufficient for doubling), and verify
+suffix-size overflow leaves the destination unchanged. No SWEGCA kernel,
+evidence semantics, native bytes or lifecycle decision was changed.

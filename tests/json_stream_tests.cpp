@@ -6,6 +6,7 @@
 #include <cstring>
 #include <sys/mman.h>
 #include <unistd.h>
+#include <limits>
 using namespace swegca::transport;
 unsigned checks=0;
 #define CHECK(x) do{++checks;if(!(x)){std::fprintf(stderr,"FAIL %d\n",__LINE__);std::abort();}}while(false)
@@ -64,6 +65,22 @@ int main(){
   if(size>=2){start[0]='"';start[size-1]='"';CHECK(parse_json(text,memory).string()==std::string(size-2,'a'));}
  }
  CHECK(::munmap(region,page*2)==0);
+ for(const char byte:{'x','\n'}){
+  Json value(&memory);value.kind=Json::Kind::string;value.scalar.assign(65536,byte);
+  const auto expected=encode_json(value,memory);
+  // Room for one encoded value and a small envelope, but not a doubled
+  // output buffer or old/new output copies during growth.
+  swegca::vrs::MemoryBudget output(expected.size()+64);
+  std::pmr::string message("{\"native\":",&output);
+  append_json(message,value,1);message+='}';
+  CHECK(parse_json(message,memory).at("native").string()==value.scalar);
+  CHECK(output.peak_reserved()<=expected.size()+64);
+ }
+ {
+  auto value=parse_json("null",memory);std::pmr::string destination("unchanged",&memory);
+  bool overflow=false;try{append_json(destination,value,std::numeric_limits<std::size_t>::max());}catch(const std::length_error&){overflow=true;}
+  CHECK(overflow&&destination=="unchanged");
+ }
  for(const auto raw:{"\"plain\\n끝\\uD83D\\uDE42tail\"","\"\\\"\\\\\\/\\b\\f\\n\\r\\t\""}){
   const auto parsed=parse_json(raw,memory);
   CHECK(parse_json(encode_json(parsed,memory),memory).string()==parsed.string());
