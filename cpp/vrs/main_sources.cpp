@@ -67,6 +67,7 @@ SessionRuntime& MainSources::acquire_session(const DigestBytes& id,std::string_v
         throw std::logic_error("session source already owned");
     if(found==sources_.end())
         found=sources_.try_emplace(id,root_,id,memory_,read_limit_,storage_,true,resume,session_name,capacity,workers_).first;
+    track_cache(found->second);
     auto& runtime=found->second.runtime();
     found->second.leased=true;
     return runtime;
@@ -83,8 +84,10 @@ void MainSources::release_session(const DigestBytes& id,bool keep_cache) noexcep
     const auto found=sources_.find(id);
     if(found==sources_.end())return;
     found->second.leased=false;
-    if(!keep_cache)found->second.release_cache();
-    else for(auto& [other,source]:sources_)if(other!=id)source.release_cache();
+    if(!keep_cache){
+        found->second.release_cache();
+        if(!found->second.preparing)untrack_cache(found->second);
+    }else release_caches_except(&found->second);
 }
 std::pmr::vector<DigestBytes> MainSources::published() const {
     std::pmr::vector<DigestBytes> ids(&memory_);
@@ -109,16 +112,41 @@ const SessionRuntime& MainSources::resolve(const DigestBytes& id) {
         throw std::logic_error("Main source is not ended and published");
     // Active leases are retained; other decoded caches may be released. The graph
     // keeps stable store pointers, not pointers to these runtime caches.
-    for(auto& [other,source]:sources_)if(other!=id)source.release_cache();
+    track_cache(where->second);
+    release_caches_except(&where->second);
     return where->second.runtime();
 }
-void MainSources::release_caches() noexcept { for(auto& [id,source]:sources_){(void)id;source.release_cache();} }
+void MainSources::track_cache(Source& source) noexcept {
+    if(source.cache_tracked)return;
+    source.cache_next=cached_sources_;
+    if(cached_sources_)cached_sources_->cache_previous=&source;
+    cached_sources_=&source;source.cache_tracked=true;
+}
+void MainSources::untrack_cache(Source& source) noexcept {
+    if(!source.cache_tracked)return;
+    if(source.cache_previous)source.cache_previous->cache_next=source.cache_next;
+    else cached_sources_=source.cache_next;
+    if(source.cache_next)source.cache_next->cache_previous=source.cache_previous;
+    source.cache_previous=source.cache_next=nullptr;source.cache_tracked=false;
+}
+void MainSources::release_caches_except(const Source* keep) noexcept {
+    auto* source=cached_sources_;
+    while(source){
+        auto* next=source->cache_next;
+        if(source!=keep&&!source->leased&&!source->preparing){
+            source->release_cache();untrack_cache(*source);
+        }
+        source=next;
+    }
+}
+void MainSources::release_caches() noexcept { release_caches_except(nullptr); }
 MainSources::Source& MainSources::acquire_preparation(const DigestBytes& id) {
     if(!kernel::named_digest(id))throw std::invalid_argument("empty Main source identity");
     require_file(root_/"main"/name(id));
     auto& source=sources_.try_emplace(id,root_,id,memory_,read_limit_,storage_,false,true,std::string_view{},0,workers_).first->second;
     if(source.leased||source.preparing||!kernel::main_session_readable(source.store->phase(),source.store->usable()))
         throw std::logic_error("source cannot enter merge preparation");
+    track_cache(source);
     source.preparing=true;
     return source;
 }
@@ -126,6 +154,7 @@ void MainSources::release_preparation(const DigestBytes& id) noexcept {
     const auto found=sources_.find(id);
     if(found==sources_.end())return;
     found->second.preparing=false;found->second.release_cache();
+    if(!found->second.leased)untrack_cache(found->second);
 }
 std::size_t MainSources::merge_published(PersistentMainGraph& graph,std::uint64_t seed,std::uint64_t step) {
     std::size_t merged=0;

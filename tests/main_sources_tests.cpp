@@ -45,6 +45,24 @@ int main(){
   // Caches can be recreated without losing originals or repeating a merge.
   CHECK(sources.resolve(id(1)).find(id(20))->state().experiences()[0].original()==a_original);
   sources.release_caches();CHECK(sources.merge_published(main,7,0)==0);
+  const auto stores_only=memory.used();
+  for(unsigned round=0;round<8;++round){
+   const auto source_id=id(round%2+1);
+   const auto& cached=sources.resolve(source_id);
+   const auto after_load=reads;
+   CHECK(&sources.resolve(source_id)==&cached&&reads==after_load);
+   sources.release_caches();CHECK(memory.used()==stores_only);
+   sources.release_caches();CHECK(memory.used()==stores_only);
+  }
+  // Tracking is allocation-free. A failed runtime construction must leave
+  // no stale list entry that prevents subsequent release/recovery.
+  const auto reserved=memory.limit()-memory.used();auto* held=memory.allocate(reserved);
+  throws<std::bad_alloc>([&]{(void)sources.resolve(id(1));});
+  sources.release_caches();memory.deallocate(held,reserved);
+  CHECK(memory.used()==stores_only);
+  CHECK(sources.resolve(id(2)).find(id(20))->state().experiences()[0].original()==b_original);
+  sources.release_caches();CHECK(memory.used()==stores_only);
+  CHECK(main.graph().replay(id(20),0).location()==a_original);
  }
  CHECK(memory.used()==0);
  {

@@ -38,7 +38,14 @@ private:
         SessionRuntime* cache = nullptr;
         bool leased = false;
         bool preparing = false;
+        // Main-owner-only membership. Preparation workers never edit links.
+        Source* cache_previous = nullptr;
+        Source* cache_next = nullptr;
+        bool cache_tracked = false;
     };
+    void track_cache(Source&) noexcept;
+    void untrack_cache(Source&) noexcept;
+    void release_caches_except(const Source*) noexcept;
     Source& acquire_preparation(const architecture::DigestBytes&);
     void release_preparation(const architecture::DigestBytes&) noexcept;
     std::filesystem::path root_;
@@ -47,5 +54,6 @@ private:
     std::uint64_t read_limit_;
     std::uint32_t workers_;
     std::pmr::map<architecture::DigestBytes, Source> sources_;
+    Source* cached_sources_ = nullptr;
 };
 } // namespace swegca::vrs
