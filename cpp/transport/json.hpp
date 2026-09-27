@@ -23,5 +23,7 @@ struct Json {
 [[nodiscard]] std::pmr::string encode_json(const Json&,std::pmr::memory_resource&);
 // Validate before output and emit quoted runs without a payload-sized copy.
 void write_json_string(std::ostream&,std::string_view);
+void write_json_string_content(std::ostream&,std::string_view);
+void write_json_hex(std::ostream&,std::span<const std::byte>);
 [[nodiscard]] std::pmr::string quote_json(std::string_view,std::pmr::memory_resource&);
 } // namespace swegca::transport

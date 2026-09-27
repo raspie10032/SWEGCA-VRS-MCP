@@ -26,5 +26,13 @@ int main(){
  bool failed=false;try{(void)quote_json(body,memory);}catch(const std::bad_alloc&){failed=true;}
  CHECK(failed);std::ostringstream out;write_json_string(out,body);CHECK(out.str().size()==body.size()+2);
  memory.deallocate(held,memory.limit());CHECK(memory.used()==0);
+ for(const auto size:{0U,1U,2048U,2049U,8193U}){
+  std::vector<std::byte> bytes(size);for(unsigned i=0;i<size;++i)bytes[i]=std::byte(i%256);
+  std::ostringstream encoded;write_json_hex(encoded,bytes);const auto text=encoded.str();
+  CHECK(text.size()==size*2);
+  const auto digit=[](char c){return c<='9'?c-'0':c-'a'+10;};
+  bool valid=true;for(unsigned i=0;i<size;++i)valid&=unsigned(digit(text[2*i])*16+digit(text[2*i+1]))==i%256;
+  CHECK(valid);
+ }
  std::printf("JSON stream tests: %u checks passed\n",checks);
 }

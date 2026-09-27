@@ -76,8 +76,9 @@ public:
                 const auto& p=request.at("params");
                 const auto name=p.at("name").string();
                 if(name!="vrs_replay"&&name!="vrs_re_evidence")throw std::invalid_argument("unknown tool");
-                try{auto body=call(name,p.at("arguments"));
-                    tool_result(encoded_id,body);
+                try{
+                    if(name=="vrs_replay")replay_result(encoded_id,p.at("arguments"));
+                    else {auto body=call(name,p.at("arguments"));tool_result(encoded_id,body);}
                 }catch(const std::exception& e){result(encoded_id,"{\"content\":[{\"type\":\"text\",\"text\":"+quote_json(e.what(),memory_)+"}],\"isError\":true}");}return;
             }
             if(method.starts_with("swegca/")){auto body=host(method,request.at("params"));result(encoded_id,body);return;}
@@ -128,6 +129,13 @@ private:
             else runtime_.attach_session(identity,name);
         } catch(...) {contexts_.erase(it);throw;}
         if(select){runtime_.select_session(identity);selected_=&it->second;}
+    }
+    void payload_result(std::string_view id,std::string_view prefix,std::span<const std::byte> bytes){
+        std::cout<<"{\"jsonrpc\":\"2.0\",\"id\":"<<id<<",\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"";
+        write_json_string_content(std::cout,prefix);write_json_hex(std::cout,bytes);
+        std::cout<<"\\\"}\"}],\"structuredContent\":"<<prefix;
+        write_json_hex(std::cout,bytes);std::cout<<"\"}}}\n"<<std::flush;
+        if(!std::cout)throw std::runtime_error("MCP output disconnected");
     }
     void tool_result(std::string_view id,std::string_view body){
         // The verified result is already materialized. Emit its two required
@@ -399,24 +407,25 @@ private:
             candidate_page(body,0,limit);
             body+=",\"refinement\":";body+=refinement(context().received->recorded.refinement,memory_);body+='}';return body;
     }
+    void replay_result(std::string_view id,const Json& p){
+        if(!context().received||integer(p.at("receipt"))!=context().receipt)throw std::invalid_argument("expired receipt");
+        const auto candidate=integer(p.at("candidate"));context().replayed.reset();
+        if(p.find("offset") || p.find("count")){
+            const auto offset=integer(p.at("offset")),count=integer(p.at("count"));
+            auto part=runtime_.read_payload_slice(context().received->recalled,candidate,offset,count);
+            auto prefix="{\"original\":"+address(part.evidence().original(),memory_)+
+                ",\"partial\":true,\"offset\":\""+std::to_string(part.offset()).c_str()+
+                "\",\"totalBytes\":\""+std::to_string(part.total_bytes()).c_str()+"\",\"contentHex\":\"";
+            payload_result(id,prefix,part.content());return;
+        }
+        context().replayed.emplace(runtime_.replay(context().received->recalled,candidate));
+        const auto value=evidence_payload(context().replayed->original());
+        auto prefix="{\"original\":"+address(context().replayed->location(),memory_)+
+            ",\"media\":"+quote_json(value.media_type,memory_)+",\"source\":"+quote_json(value.source,memory_)+",\"contentHex\":\"";
+        payload_result(id,prefix,value.content);
+    }
     std::pmr::string call(std::string_view method,const Json& p){
         if(!context().received||integer(p.at("receipt"))!=context().receipt)throw std::invalid_argument("expired receipt");
-        if(method=="vrs_replay"){
-            const auto candidate=integer(p.at("candidate"));context().replayed.reset();
-            if(p.find("offset") || p.find("count")){
-                const auto offset=integer(p.at("offset")),count=integer(p.at("count"));
-                auto part=runtime_.read_payload_slice(context().received->recalled,candidate,offset,count);
-                std::pmr::string body("{\"original\":",&memory_);
-                body+=address(part.evidence().original(),memory_);
-                body+=",\"partial\":true,\"offset\":\"";body+=std::to_string(part.offset());
-                body+="\",\"totalBytes\":\"";body+=std::to_string(part.total_bytes());
-                body+="\",\"contentHex\":\"";body+=hex(part.content(),memory_);body+="\"}";
-                return body;
-            }
-            context().replayed.emplace(runtime_.replay(context().received->recalled,candidate));
-            const auto value=evidence_payload(context().replayed->original());
-            return "{\"original\":"+address(context().replayed->location(),memory_)+",\"media\":"+quote_json(value.media_type,memory_)+",\"source\":"+quote_json(value.source,memory_)+",\"contentHex\":\""+hex(value.content,memory_)+"\"}";
-        }
         if(method=="vrs_re_evidence"){
             if(!context().replayed)throw std::invalid_argument("Replay required before Re-evidence");
             auto checked=runtime_.re_evidence(*context().replayed,integer(p.at("seed")),integer(p.at("step")));

@@ -867,6 +867,32 @@ for line in sys.stdin:
     check(mismatch.returncode==1 and mismatch.stdout==b'')
     check(b'host frame budget smaller' in mismatch.stderr)
     check(not (mismatch_root/'sessions').exists())
+    # Large selected Replay under a budget that cannot hold original + full hex.
+    replay_root=root/'streamed-replay';replay_root.mkdir()
+    replay_config=root/'streamed-replay.json'
+    replay_settings=dict(config,frameBytes=str(2<<20),readLimit=str(2<<20),sessionBlockBytes=str(2<<20))
+    replay_config.write_text(json.dumps(replay_settings))
+    c=Client('create',replay_root,replay_config);c.initialize()
+    replay_binding={'provider':'codex','instance':'streamed-fixture','session':'large-original'}
+    attached=c.call('swegca/agent/attach',replay_binding)['result']
+    large_native=json.dumps({'session_id':'large-original','hook_event_name':'UserPromptSubmit',
+                             'prompt':'small cue','padding':'x'*(768<<10)})
+    saved=c.call('swegca/agent/event',{'identity':attached['identity'],'sequence':'0','observedAt':'0',
+        'seed':'7','step':'0','native':large_native})['result']['original'];c.close()
+    replay_settings['memoryBytes']=str(2<<20);replay_config.write_text(json.dumps(replay_settings))
+    check(3*len(large_native.encode())>int(replay_settings['memoryBytes']))
+    c=Client('open',replay_root,replay_config);c.initialize()
+    attached=c.call('swegca/agent/attach/resume',replay_binding)['result']
+    recalled=c.call('swegca/agent/event',{'identity':attached['identity'],'sequence':'1','observedAt':'1',
+        'seed':'7','step':'1','native':json.dumps({'session_id':'large-original',
+            'hook_event_name':'UserPromptSubmit','prompt':'small cue'})})['result']
+    check(recalled['candidateCount']=='1')
+    played=c.call('tools/call',{'name':'vrs_replay','arguments':{'receipt':recalled['receipt'],'candidate':'0'}})['result']
+    check(played['structuredContent']['original']==saved)
+    check(bytes.fromhex(played['structuredContent']['contentHex'])==large_native.encode())
+    verified=c.call('tools/call',{'name':'vrs_re_evidence','arguments':{'receipt':recalled['receipt'],'seed':'7','step':'1'}})['result']
+    check('structuredContent' in verified)
+    c.close()
     # A separate config file must not change the root being measured.
     def stored_bytes():
         seen=set();total=0

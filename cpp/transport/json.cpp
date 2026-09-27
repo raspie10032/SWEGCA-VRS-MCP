@@ -1,6 +1,8 @@
 #include "transport/json.hpp"
 #include <stdexcept>
 #include <ostream>
+#include <array>
+#include <algorithm>
 
 namespace swegca::transport {
 const Json* Json::find(std::string_view key) const noexcept {
@@ -90,9 +92,9 @@ void encode(std::pmr::string& out,const Json& value){
     }
 }
 }
-void write_json_string(std::ostream& out,std::string_view text){
-    utf8(text);constexpr char digits[]="0123456789abcdef";
-    out.put('"');std::size_t begin=0;
+static void write_escaped_content(std::ostream& out,std::string_view text){
+    constexpr char digits[]="0123456789abcdef";
+    std::size_t begin=0;
     for(std::size_t index=0;index<text.size();++index){
         const auto c=static_cast<unsigned char>(text[index]);
         if(c!='"'&&c!='\\'&&c>=32)continue;
@@ -102,7 +104,20 @@ void write_json_string(std::ostream& out,std::string_view text){
         begin=index+1;
     }
     if(begin<text.size())out.write(text.data()+begin,static_cast<std::streamsize>(text.size()-begin));
-    out.put('"');
+}
+void write_json_string_content(std::ostream& out,std::string_view text){
+    utf8(text);write_escaped_content(out,text);
+}
+void write_json_string(std::ostream& out,std::string_view text){
+    utf8(text);out.put('"');write_escaped_content(out,text);out.put('"');
+}
+void write_json_hex(std::ostream& out,std::span<const std::byte> content){
+    constexpr char digits[]="0123456789abcdef";std::array<char,4096> buffer;
+    while(!content.empty()){
+        const auto count=std::min(content.size(),buffer.size()/2);
+        for(std::size_t i=0;i<count;++i){const auto c=std::to_integer<unsigned>(content[i]);buffer[2*i]=digits[c>>4];buffer[2*i+1]=digits[c&15];}
+        out.write(buffer.data(),static_cast<std::streamsize>(count*2));content=content.subspan(count);
+    }
 }
 Json parse_json(std::string_view text,std::pmr::memory_resource& memory,std::size_t depth){return Parser(text,memory,depth).parse();}
 std::pmr::string encode_json(const Json& value,std::pmr::memory_resource& memory){std::pmr::string out(&memory);encode(out,value);return out;}

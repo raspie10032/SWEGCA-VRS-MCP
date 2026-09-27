@@ -56,3 +56,26 @@ Full Replay still retains its original and builds a hex result body. Partial
 payload access still does not issue a completed Replay/Re-evidence receipt and
 still authenticates the entire original per request. Those remaining storage
 and Replay memory costs have not been disguised as completed bounded Replay.
+
+## Replay hex output uses a fixed buffer
+
+Full and partial MCP Replay responses now emit contentHex directly from the
+selected original/payload slice through a 4KiB conversion buffer. They no
+longer construct the full hex string or a result body containing that string.
+Small metadata prefixes are prepared before output; both required MCP text
+and structured representations are streamed from the same verified bytes.
+A full Replay keeps its existing ReplayedInput and Re-evidence authorization.
+Partial reads still reset that authorization and return partial=true only.
+No candidate selection, core verification or original authentication is skipped.
+
+The subprocess fixture records a native envelope with 768KiB padding using a
+large initial budget, reopens with a 2MiB PMR budget, recalls it via a small
+prompt, returns the entire original byte-exact and performs Re-evidence. The
+fixture checks that original bytes plus a complete 2x hex string alone would
+exceed that budget. This is a concrete allocation improvement, not a whole-
+process RSS or arbitrary-size-original guarantee. Full Replay still retains
+one complete original; partial reads still hash the entire record per request.
+
+Verification: JSON stream 25 checks, including zero/one-byte and 2048/2049/8193-
+byte hex boundaries; actual subprocess suite 2,560 checks, including the 2MiB
+Replay/Re-evidence case and text/structured result equality.
