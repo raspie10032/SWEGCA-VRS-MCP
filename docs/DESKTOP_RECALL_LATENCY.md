@@ -364,3 +364,29 @@ All fifteen 1MiB inputs still exceed 1ms. These are sequential local runs with
 shared-machine scheduling, not a universal latency guarantee. Raw final data:
 `desktop-char-scan-stages.jsonl`, `desktop-char-scan-recall.jsonl`.
 Pump 105 and real stdio 3,256 checks passed after reverting the socket trial.
+
+## Desktop relay immediate nonblocking write
+
+The desktop host previously read into an empty buffer and waited for another
+poll cycle before sending it, because POLLOUT was requested only for bytes
+pending before that poll. Both destinations already use O_NONBLOCK. The host
+now attempts one write immediately after each readable event; EAGAIN/EINTR and
+short writes preserve remaining bytes in the unchanged bounded buffer. The
+existing poll path handles backpressure. No draining loop, larger allocation,
+content parsing, or session-end inference was added.
+
+Sequential before/after runs used the same freshly built VRS ingress probe,
+CPU 6/7, 25 samples per size and no task-owned compilation during measurements.
+Raw files: desktop-relay-before.jsonl and desktop-relay-after.jsonl.
+
+| Prompt size | Before median ms | After median ms |
+| --- | ---: | ---: |
+| 128B | 0.025450 | 0.023820 |
+| 4KiB | 0.032450 | 0.032860 |
+| 64KiB | 0.171842 | 0.165222 |
+| 1MiB | 2.602477 | 2.386424 |
+
+All 25 1MiB samples exceed 1ms; final maximum was 4.029881ms. These shared-machine
+synthetic empty-Main runs show an observed improvement, not a worst-case or
+installed-desktop guarantee. Real stdio subprocess suite passed 3,370 checks,
+including desktop lifecycle, native input preservation, resume and EOF handling.

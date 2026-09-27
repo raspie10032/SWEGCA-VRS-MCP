@@ -127,10 +127,14 @@ int main(int argc,char** argv){
             if(result<0&&errno==EINTR)continue;
             require(result>=0,"desktop relay poll failed");
             for(const auto& fd:fds)require(!(fd.revents&POLLNVAL),"desktop descriptor invalid");
-            if(fds[0].revents&(POLLIN|POLLHUP))incoming.read(0,input_end);
-            if(fds[1].revents&POLLOUT)incoming.write(client[0].value);
-            if(fds[1].revents&(POLLIN|POLLHUP|POLLERR))outgoing.read(client[0].value,output_end);
-            if(fds[2].revents&(POLLOUT|POLLERR|POLLHUP))outgoing.write(1);
+            const bool input_ready=fds[0].revents&(POLLIN|POLLHUP);
+            const bool output_ready=fds[1].revents&(POLLIN|POLLHUP|POLLERR);
+            if(input_ready)incoming.read(0,input_end);
+            // Both destinations are nonblocking. Try freshly read bytes now;
+            // EAGAIN/short writes retain the suffix for the ordinary poll path.
+            if(input_ready||(fds[1].revents&POLLOUT))incoming.write(client[0].value);
+            if(output_ready)outgoing.read(client[0].value,output_end);
+            if(output_ready||(fds[2].revents&(POLLOUT|POLLERR|POLLHUP)))outgoing.write(1);
         }
         require(incoming.empty(),"backend closed with undelivered client input");client[0].close();
         // Only these children are owned. EOF is never an explicit VRS end.
