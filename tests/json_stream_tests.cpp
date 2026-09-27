@@ -28,6 +28,35 @@ int main(){
   (void)parse_json_member(R"({"params":[{"native":{}}]})",memory,path,source);CHECK(source.size==0);
  }
  std::string controls;for(char c=0;c<32;++c)controls+=c;
+ {
+  constexpr std::string_view path[]{"inputOriginal"};
+  swegca::vrs::MemoryBudget small(4096);
+  std::string large=R"({"payload":")"+std::string(1<<20,'x')+R"(","rows":[)";
+  for(unsigned i=0;i<20000;++i){if(i)large+=',';large+=R"({"a":1,"b":"\u0041"})";}
+  large+=R"(],"inputOriginal":{"id":"한글","extent":[1,2]},"tail":null})";
+  bool exhausted=false;try{(void)parse_json(large,small);}catch(const std::bad_alloc&){exhausted=true;}
+  CHECK(exhausted&&small.used()==0);
+  {
+   const auto selected=parse_json_selected(large,small,path);
+   CHECK(selected.at("id").string()=="한글"&&selected.at("extent").values.size()==2);
+   CHECK(small.peak_reserved()<=small.limit());
+  }
+  CHECK(small.used()==0);
+  CHECK(parse_json_selected(R"({"inputOriginal":null})",small,path).kind==Json::Kind::null);
+  CHECK(parse_json_selected(R"([1,true])",small,{}).values.size()==2);
+  constexpr std::string_view nested[]{"outer","inputOriginal"};
+  CHECK(parse_json_selected(R"({"outer":{"inputOriginal":"ok"},"inputOriginal":"wrong"})",small,nested).string()=="ok");
+  for(const auto bad:{R"({"inputOriginal":{},"skip":{"a":1,"\u0061":2}})",
+      R"({"inputOriginal":{},"skip":"\ud800"})",R"({"inputOriginal":{},"skip":[1,]})",
+      R"({"inputOriginal":{},"skip":01})",R"({"inputOriginal":{}} trailing)",
+      R"({"other":0})",R"({"outer":[{"inputOriginal":0}]})"}){
+   bool rejected=false;try{(void)parse_json_selected(bad,small,path);}catch(const std::invalid_argument&){rejected=true;}
+   CHECK(rejected&&small.used()==0);
+  }
+  bool rejected=false;
+  try{(void)parse_json_selected(R"({"inputOriginal":{},"skip":[[[]]]})",small,path,2);}catch(const std::length_error&){rejected=true;}
+  CHECK(rejected&&small.used()==0);
+ }
  for(const auto& text:{std::string{},controls,std::string("한글🙂 quote\" slash\\ tail"),std::string(1<<20,'a')}){
   const auto expected=quote_json(text,memory);
   CHECK(parse_json(expected,memory).string()==text);

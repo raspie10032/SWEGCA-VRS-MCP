@@ -330,14 +330,19 @@ private:
             const auto stored=runtime_.read_cognition_record(identity,input,revision,latest);
             if(!stored)throw std::invalid_argument("cognition record not found");
             if(latest)revision=Sha256::of(stored->view().content);
-            const auto metadata=parse_json(content_text(*stored),memory_);
-            if(record_address(metadata.at("inputOriginal"))!=input)
+            constexpr std::string_view input_path[]{"inputOriginal"};
+            const auto input_metadata=parse_json_selected(content_text(*stored),memory_,input_path);
+            if(record_address(input_metadata)!=input)
                 throw std::runtime_error("cognition input binding mismatch");
             const bool live=state&&state->received&&state->received->recorded.original==input&&
                 state->cognition_done&&state->cognition_snapshot_saved&&state->cognition_revision;
-            return std::pmr::string("{\"revision\":",&memory_)+(revision?quote_json(hex(*revision,memory_),memory_):"null")+
+            auto body=std::pmr::string("{\"revision\":",&memory_)+(revision?quote_json(hex(*revision,memory_),memory_):"null")+
                 ",\"liveRevision\":"+(live?quote_json(hex(*state->cognition_revision,memory_),memory_):"null")+
-                ",\"record\":"+std::pmr::string(content_text(*stored),&memory_)+"}";
+                ",\"record\":";
+            const auto raw=content_text(*stored);
+            if(body.size()==body.max_size()||raw.size()>body.max_size()-body.size()-1)
+                throw std::length_error("cognition response size overflow");
+            body.reserve(body.size()+raw.size()+1);body.append(raw);body+='}';return body;
         }
         if(method=="swegca/agent/original"){
             select_context(digest(p.at("identity").string()));

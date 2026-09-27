@@ -31,6 +31,11 @@ struct JsonMemberSource {
 [[nodiscard]] Json parse_json_member(std::string_view text,std::pmr::memory_resource&,
     std::span<const std::string_view> path,JsonMemberSource&,std::size_t max_depth=64);
 [[nodiscard]] Json parse_json(std::string_view text,std::pmr::memory_resource&,std::size_t max_depth=64);
+// Validate the complete JSON, retaining only the named object-member subtree.
+// Missing paths throw; skipped objects still check duplicate keys. Memory for
+// those keys follows object width, not the size of skipped arrays/string values.
+[[nodiscard]] Json parse_json_selected(std::string_view text,std::pmr::memory_resource&,
+    std::span<const std::string_view> path,std::size_t max_depth=64);
 [[nodiscard]] std::pmr::string encode_json(const Json&,std::pmr::memory_resource&);
 // Append directly to an exclusively owned destination. The caller must discard
 // the unfinished message on failure; value must not alias the destination.

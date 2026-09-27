@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <bit>
 #include <limits>
+#include <optional>
 #if defined(__SSE2__) && !defined(SWEGCA_JSON_SCALAR_ONLY)
 #include <emmintrin.h>
 #endif
@@ -63,11 +64,15 @@ void utf8(std::string_view text) {
 }
 class Parser {
 public:
-    Parser(std::string_view text,std::pmr::memory_resource& memory,std::size_t depth,std::span<const std::string_view> path={},JsonMemberSource* source=nullptr):text_(text),memory_(memory),depth_(depth),path_(path),source_(source){utf8(text);}
-    Json parse(){auto result=value(0);space();if(pos_!=text_.size())invalid();return result;}
+    Parser(std::string_view text,std::pmr::memory_resource& memory,std::size_t depth,std::span<const std::string_view> path={},JsonMemberSource* source=nullptr,bool selected_only=false):text_(text),memory_(memory),depth_(depth),path_(path),source_(source),selected_only_(selected_only){utf8(text);}
+    Json parse(){auto result=value(0);space();if(pos_!=text_.size())invalid();
+        if(selected_only_){if(!selected_)throw std::invalid_argument("missing JSON member path");return std::move(*selected_);}
+        return result;
+    }
 private:
     std::string_view text_;std::pmr::memory_resource& memory_;std::size_t depth_,pos_=0;
     std::span<const std::string_view> path_;JsonMemberSource* source_;
+    bool selected_only_;std::optional<Json> selected_;
     char peek()const{return pos_<text_.size()?text_[pos_]:'\0';}
     char take(){if(pos_==text_.size())invalid();return text_[pos_++];}
     void space(){while(peek()==' '||peek()=='\t'||peek()=='\r'||peek()=='\n')++pos_;}
@@ -112,29 +117,38 @@ private:
         pos_=start;out.reserve(size);(void)string_body<false>(out);
         return out;
     }
-    Json value(std::size_t depth,bool matched=true){
+    Json value(std::size_t depth,bool matched=true,bool retain=false){
         space();const auto start=pos_;
-        auto out=value_body(depth,matched);
+        const bool target=matched&&depth==path_.size();
+        auto out=value_body(depth,matched,retain||!selected_only_||target);
         if(source_&&matched&&depth==path_.size())*source_={start,pos_-start};
+        if(selected_only_&&target){selected_.emplace(std::move(out));return Json(&memory_);}
         return out;
     }
-    Json value_body(std::size_t depth,bool matched){
+    Json value_body(std::size_t depth,bool matched,bool retain){
         if(depth>depth_)throw std::length_error("JSON nesting limit");
         space();Json out(&memory_);
         const auto c=peek();
-        if(c=='"'){out.kind=Json::Kind::string;out.scalar=string();return out;}
+        if(c=='"'){
+            out.kind=Json::Kind::string;
+            if(retain)out.scalar=string();
+            else{(void)take();(void)string_body<true>(out.scalar);}
+            return out;
+        }
         if(c=='['||c=='{'){
             ++pos_;const bool object=c=='{';out.kind=object?Json::Kind::object:Json::Kind::array;space();
             const char close=object?'}':']';if(eat(close))return out;
             for(;;){space();if(object){auto key=string();for(const auto& k:out.keys)if(k==key)throw std::invalid_argument("duplicate JSON member");space();if(!eat(':'))invalid();out.keys.push_back(std::move(key));}
-                out.values.push_back(value(depth+1,matched&&object&&depth<path_.size()&&out.keys.back()==path_[depth]));space();if(eat(close))return out;if(!eat(','))invalid();}
+                auto child=value(depth+1,matched&&object&&depth<path_.size()&&out.keys.back()==path_[depth],retain);
+                if(retain)out.values.push_back(std::move(child));
+                space();if(eat(close))return out;if(!eat(','))invalid();}
         }
         for(std::string_view literal:{"null","true","false"})if(text_.substr(pos_,literal.size())==literal){pos_+=literal.size();out.kind=literal=="null"?Json::Kind::null:Json::Kind::boolean;out.scalar=literal;return out;}
         const auto start=pos_;eat('-');
         if(!eat('0')){if(peek()<'1'||peek()>'9')invalid();while(peek()>='0'&&peek()<='9')++pos_;}
         if(eat('.')){if(peek()<'0'||peek()>'9')invalid();while(peek()>='0'&&peek()<='9')++pos_;}
         if(eat('e')||eat('E')){if(!eat('+'))eat('-');if(peek()<'0'||peek()>'9')invalid();while(peek()>='0'&&peek()<='9')++pos_;}
-        out.kind=Json::Kind::number;out.scalar=text_.substr(start,pos_-start);return out;
+        out.kind=Json::Kind::number;if(retain)out.scalar=text_.substr(start,pos_-start);return out;
     }
 };
 std::size_t add_size(std::size_t left,std::size_t right){
@@ -230,6 +244,8 @@ Json parse_json_member(std::string_view text,std::pmr::memory_resource& memory,
     auto result=Parser(text,memory,depth,path,&pending).parse();source=pending;return result;
 }
 Json parse_json(std::string_view text,std::pmr::memory_resource& memory,std::size_t depth){return Parser(text,memory,depth).parse();}
+Json parse_json_selected(std::string_view text,std::pmr::memory_resource& memory,
+    std::span<const std::string_view> path,std::size_t depth){return Parser(text,memory,depth,path,nullptr,true).parse();}
 std::pmr::string encode_json(const Json& value,std::pmr::memory_resource& memory){std::pmr::string out(&memory);out.reserve(encoded_size(value));encode(out,value);return out;}
 void append_json(std::pmr::string& destination,const Json& value,std::size_t suffix_capacity){
     destination.reserve(add_size(add_size(destination.size(),encoded_size(value)),suffix_capacity));encode(destination,value);

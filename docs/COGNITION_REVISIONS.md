@@ -129,3 +129,21 @@ boundary. A retry must sync the canonical record directory, its session parent
 and the latest directory even when file identity already matches. Repeated sync
 failure is not reported as success; a successful retry adds no payload bytes.
 This is syscall fault/reopen coverage, not a physical power-loss experiment.
+
+
+## Bounded subtree validation during retrieval
+
+The host validates the metadata with parse_json_selected and retains only
+inputOriginal for address binding. It still validates complete JSON syntax,
+UTF-8, escaped code points, duplicate object keys, trailing input and nesting
+limits. Skipped array members are released as they are checked; skipped strings
+and numbers are validated without keeping their decoded values. Object keys
+remain necessary for duplicate detection, so parser space still follows object
+width and selected subtree size. The original stored bytes are not rewritten.
+
+A regression containing a 1MiB string and 20,000 two-field objects fails whole-
+tree parsing under 4KiB, while selected parsing succeeds under the same budget.
+The host appends the original record directly into its final response allocation
+with overflow-checked reservation, avoiding another full temporary string.
+Stored record and final response buffers still exist; this is not fully streaming
+file-to-wire export or a whole-process memory bound.
