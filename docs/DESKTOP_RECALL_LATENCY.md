@@ -578,3 +578,33 @@ one 4KiB failure. The production header was restored to 4KiB and proxy/socket
 test executables rebuilt. No larger socket staging buffer remains. These raw
 files are evidence of a rejected experiment, not a retained optimization or a
 1ms success. Full original-byte processing and the measurement boundary remain.
+
+## Pipe capacity and rejected kernel-transfer trial
+
+A new anonymous pipe in the current environment reports capacity 8192 bytes.
+Unprivileged attempts to set 65536 and 262144 bytes both returned EPERM. The
+system/user pipe limits were not modified. This establishes an actual constraint
+on testing larger stdin pipe capacity here, not a claim about every deployment.
+
+A Linux-only trial relayed FIFO stdin into the existing client socket with
+nonblocking splice, preserving the original buffered path on unsupported calls
+or backpressure. Socket/EOF ordering and all proxy/VRS validation remained.
+The production regression passed 4,689 checks with the trial. After compilation,
+25 samples per input size ran in before/after/after/before order on CPUs 6/7.
+The same VRS/proxy and timing boundary were used, with the saved pre-trial host
+selected through SWEGCA_BENCH_DESKTOP_HOST for before runs.
+
+| Run | 64KiB median ms | 1MiB median ms |
+| --- | ---: | ---: |
+| Before A | 0.168092 | 2.117243 |
+| After A | 0.151321 | 2.282864 |
+| After B | 0.161241 | 2.180603 |
+| Before B | 0.160501 | 2.200154 |
+
+All 1MiB samples failed 1ms. After B also had one 128B failure. The trial did not
+establish consistent end-to-end benefit and was removed. The previous production
+host source and executable were restored; no splice path or altered pipe limit
+remains. Raw files desktop-splice-{before-a,after-a,after-b,before-b}.jsonl are
+rejected-experiment evidence. Together with the rejected staging/drain trials,
+this does not justify more arbitrary buffer or copy-path changes without a more
+specific profile. Full original processing and Recall timing boundary remain.
