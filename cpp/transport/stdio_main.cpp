@@ -323,9 +323,13 @@ private:
                 input=found->second.original;
             }
             const auto* requested=p.find("revision");
-            const auto revision=requested?std::optional<DigestBytes>(digest(requested->string())):std::nullopt;
-            const auto stored=runtime_.read_cognition_record(identity,input,revision);
+            auto revision=requested?std::optional<DigestBytes>(digest(requested->string())):std::nullopt;
+            const auto* newest=p.find("latest");
+            if(newest&&newest->kind!=Json::Kind::boolean)throw std::invalid_argument("latest must be boolean");
+            const bool latest=newest&&newest->scalar=="true";
+            const auto stored=runtime_.read_cognition_record(identity,input,revision,latest);
             if(!stored)throw std::invalid_argument("cognition record not found");
+            if(latest)revision=Sha256::of(stored->view().content);
             const auto metadata=parse_json(content_text(*stored),memory_);
             if(record_address(metadata.at("inputOriginal"))!=input)
                 throw std::runtime_error("cognition input binding mismatch");

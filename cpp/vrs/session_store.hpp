@@ -42,6 +42,7 @@ public:
         std::span<const std::byte> metadata);
     [[nodiscard]] std::optional<StoredExperience> read_cognition_revision(const ExperienceLocation&,
         const architecture::DigestBytes&) const;
+    [[nodiscard]] std::optional<StoredExperience> read_latest_cognition(const ExperienceLocation&) const;
     void end();
     void publish_originals();
 
@@ -91,7 +92,7 @@ private:
     void save_cognition_record(const ExperienceLocation&,std::span<const std::byte>,
         std::optional<architecture::DigestBytes>);
     [[nodiscard]] std::optional<StoredExperience> read_cognition_record(const ExperienceLocation&,
-        std::optional<architecture::DigestBytes>) const;
+        std::optional<architecture::DigestBytes>,bool latest=false) const;
 
     std::filesystem::path root_, directory_;
     architecture::DigestBytes identity_;

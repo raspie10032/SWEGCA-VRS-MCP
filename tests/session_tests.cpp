@@ -238,6 +238,7 @@ int main() {
             auto session=SessionStore::create(root,id(9),"cognition",1024,memory,&storage);
             input=session.append({0,0,"cognition","user","text/plain",bytes(raw)});
             CHECK(!session.read_cognition(input));
+            CHECK(!session.read_latest_cognition(input));
             auto forged=input;forged.digest=id(99);
             expect_throw<std::invalid_argument>([&]{session.save_cognition(forged,bytes(metadata));});
             CHECK(!session.read_cognition(forged));
@@ -256,11 +257,16 @@ int main() {
             CHECK(later!=revision&&session.original_count()==count);
             wide_revision=session.save_cognition_revision(input,bytes(wide));
             CHECK(text(session.read_cognition_revision(input,wide_revision)->view().content)==wide);
+            CHECK(text(session.read_latest_cognition(input)->view().content)==wide);
             const auto remaining=memory.limit()-memory.used();auto* held=memory.allocate(remaining);
             expect_throw<std::bad_alloc>([&]{(void)session.read_cognition_revision(input,wide_revision);});
             memory.deallocate(held,remaining);
             CHECK(session.usable());
             CHECK(text(session.read_cognition_revision(input,wide_revision)->view().content)==wide);
+            const auto before_republish=storage.used();
+            CHECK(session.save_cognition_revision(input,bytes(updated))==revision);
+            CHECK(storage.used()==before_republish);
+            CHECK(text(session.read_latest_cognition(input)->view().content)==updated);
             CHECK(text(session.read_cognition_revision(input,revision)->view().content)==updated);
             CHECK(text(session.read_cognition(input)->view().content)==metadata);
             CHECK(!session.read_cognition_revision(forged,revision));
@@ -279,10 +285,12 @@ int main() {
             CHECK(text(session.read_cognition(input)->view().content)==metadata);
             CHECK(text(session.read_cognition_revision(input,revision)->view().content)==updated);
             CHECK(text(session.read_cognition_revision(input,later)->view().content)=="later core assessment");
+            CHECK(text(session.read_latest_cognition(input)->view().content)==updated);
             CHECK(text(session.read_cognition_revision(input,wide_revision)->view().content)==wide);
             // An interrupted staging write is not a committed receipt.
             const auto directory=session_path(root,9)/"cognition";
             std::ofstream(directory/"staging-interrupted.block")<<"incomplete";
+            std::ofstream(session_path(root,9)/"cognition-latest"/"staging-interrupted.block")<<"incomplete";
             session.end();
             expect_throw<std::logic_error>([&]{session.save_cognition(input,bytes(metadata));});
             expect_throw<std::logic_error>([&]{(void)session.save_cognition_revision(input,bytes(updated));});
@@ -291,10 +299,19 @@ int main() {
             auto session=SessionStore::open(root,id(9),memory,&storage);
             CHECK(session.phase()==SessionPhase::ended);
             CHECK(text(session.read_cognition(input)->view().content)==metadata);
+            CHECK(text(session.read_latest_cognition(input)->view().content)==updated);
             CHECK(text(session.read_cognition_revision(input,revision)->view().content)==updated);
             session.publish_originals();
         }
         // Removing a committed receipt cannot silently alter an ended session.
+        const auto latest_directory=session_path(root,9)/"cognition-latest";
+        fs::rename(latest_directory,session_path(root,9)/"held-latest");
+        expect_throw<std::runtime_error>([&]{(void)SessionStore::open(root,id(9),memory);});
+        fs::rename(session_path(root,9)/"held-latest",latest_directory);
+        {
+            auto session=SessionStore::open(root,id(9),memory);
+            CHECK(text(session.read_latest_cognition(input)->view().content)==updated);
+        }
         for(const auto& entry:fs::directory_iterator(session_path(root,9)/"cognition"))
             if(!entry.path().filename().string().starts_with("staging-"))fs::remove(entry.path());
         expect_throw<std::runtime_error>([&]{(void)SessionStore::open(root,id(9),memory);});

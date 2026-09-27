@@ -43,8 +43,10 @@ error. Lookup does not run a new comparison or grant Re-evidence authority.
 
 After process restart, the owner can attach/resume and retrieve a retained
 revision digest. The original duplicate-input Replay still uses the historical
-initial record; it is not silently replaced by the later result. Automatic
-latest-revision discovery across restart is not yet implemented. For an ended/published session, use `inputOriginal` (the complete recorded address)
+initial record; it is not silently replaced by the later result. Latest published revision discovery is available with `latest:true`, mutually
+exclusive with an explicit revision digest. If no revision has been published,
+that query reports not found; omitting both selectors still reads the initial
+input-time record. For an ended/published session, use `inputOriginal` (the complete recorded address)
 instead of `sequence`, with the same source session `identity` and optional
 `revision`. This reads the Main-owned store without attaching or reopening an
 input route, including after Main merge and process restart. Supplying both
@@ -80,8 +82,7 @@ the configured VRS MemoryBudget minus the encoded record envelope, with capacity
 overflow checks. Actual reading allocations still use the shared available PMR
 budget; admission by size does not reserve memory or promise that a full read
 will succeed under simultaneous use. Storage remains under StorageBudget. Large
-comparison address lists still materialize in memory, and automatic latest-
-revision navigation remains unfinished.
+comparison address lists still materialize in memory, and streaming comparison export remains unfinished.
 Generic host fixtures outside native session bindings still do not automatically
 persist cognition, as before this change.
 
@@ -91,3 +92,27 @@ releasing the held allocation permits an exact retry. An encoded record exceedin
 the configured memory limit is rejected before hashing/writing. This is bounded
 metadata handling, not a proof of whole-process 4GB RSS or arbitrarily large
 streaming comparison export.
+
+## Latest published revision
+
+`save_cognition_revision` first seals the immutable record, then hard-links it
+into a staging name under cognition-latest and atomically renames that alias to
+the original-input key. The source record has already been synced; the alias
+directory is synced before success is returned. An identical currently selected
+record is reused without a rename. Explicitly republishing an older existing
+result makes it the latest successfully published result without duplicating its
+physical payload. Latest means publication completion order, not highest step,
+file modification time, semantic confidence or a full chronological event log.
+
+The link aliases the already charged inode. Metadata and filesystem overhead
+remain outside the logical data-byte budget, as in other hard-link publications.
+Latest aliases enter the ended-session inventory under a distinct domain.
+Staging names are not published records. Open/read verifies the sealed result
+and its binding to the supplied original input, rather than trusting the alias
+name. Interrupted publication can leave a sealed revision not yet latest; retry
+can finish the alias publication. Publication errors make the active store
+unusable until recovery. Earlier revision files and the initial record remain.
+
+Host example: params containing identity, inputOriginal and `latest:true` return
+both the selected revision digest and its record after restart without a prior
+client-held digest. No input route or new judgment is created by the query.

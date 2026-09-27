@@ -816,6 +816,12 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     check(archived_cognition(None)['result']['record']==initial_cognition['record'])
     check(archived_cognition(explicit_revision,original=r4['original'])['result']['record']==explicit_record)
     check(archived_cognition(manual_revision,original=continued['original'])['result']['record']==manual_record)
+    latest_query={'identity':response_id,'inputOriginal':continued['original'],'latest':True}
+    latest_cognition=c.call('swegca/agent/cognition',latest_query)['result']
+    check(latest_cognition=={'revision':manual_revision,'liveRevision':None,'record':manual_record})
+    check('error' in c.call('swegca/agent/cognition',dict(latest_query,revision=manual_revision)))
+    check('error' in c.call('swegca/agent/cognition',dict(latest_query,latest='true')))
+    check(c.call('swegca/agent/cognition',dict(latest_query,latest=False))['result']['revision'] is None)
     check('error' in c.call('swegca/select',{'identity':response_id}))
     c.close()
     # Response routing follows the sealed connection, even when its identity

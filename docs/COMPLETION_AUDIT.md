@@ -998,3 +998,17 @@ cognition metadata의 고정 64KiB 상한을 제거하고 VRS MemoryBudget에서
 일치, 메모리 소진 시 읽기 거절/해제 후 재시도, 상한 초과 거절을 포함해 세션
 399개 및 stdio 3,755개 검사 통과. 주소 목록과 JSON 전체 materialization 비용은
 남으며 전체 프로세스 4GB 검증이나 무한 크기 streaming 지원으로 해석하지 않는다.
+
+
+최신 발행 cognition revision의 영속 별칭을 구현했다. SessionStore의 기존 core
+append 허가 후 불변 결과를 먼저 봉인하고, 같은 inode의 임시 hard link를
+원입력 키 위치로 rename·디렉터리 fsync하여 발행한다. 새 판정·시간순 추측·
+메타데이터 삭제는 없다. 같은 현재 결과는 그대로 재사용하고 이전 결과를 명시적으로
+재발행하면 물리 payload 중복 없이 그것이 최신이 된다. 최신 별칭도 종료 inventory에
+포함하며 조회 시 원입력·결과 해시 결합을 검증한다. Host latest:true는 특정revision과
+동시 지정할 수 없고, 저장된 별칭에서 digest를 복원하여 결과와 함께 반환한다.
+세션 408개, stdio 3,771개 통과: 재발행 시 storage bytes 불변, 재시작/종료 후 최신
+일치, staging 미채택, 종료 후 최신 디렉터리 누락 검출, 재시작 후 client가 digest를
+주지 않은 최신 조회, malformed/conflicting selector 거절을 확인했다. 최신 참조는
+전체 발행 순서 이력 로그가 아니며 기존 원경험·초기 기록·이전 revision은 보존한다.
+전체 자연어/그래프/자원·1ms 및 실제 데스크톱 통합 목표는 여전히 미완료다.

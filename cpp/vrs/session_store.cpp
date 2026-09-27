@@ -350,14 +350,18 @@ DigestBytes SessionStore::inventory() const {
         hash.update("SWEGCA session catalog reference v1");
         hash.update(pointer.identity()); hash.update(location.digest);
     }
-    const auto cognition=directory_/"cognition";
-    if(std::filesystem::exists(cognition)){
+    for(const bool latest:{false,true}){
+        const auto cognition=directory_/(latest?"cognition-latest":"cognition");
+        if(!std::filesystem::exists(cognition))continue;
         std::pmr::map<std::pmr::string,DigestBytes,std::less<>> records(&memory_);
         for(const auto& entry:std::filesystem::directory_iterator(cognition)){
             const auto filename=entry.path().filename().string();
             if(filename.starts_with("staging-"))continue;
             auto block=ExperienceBlock::open_reader(entry.path(),storage_);
-            if(filename!=hex(block.identity())+".block")throw std::runtime_error("invalid cognition filename");
+            const bool key_name=filename.size()==70&&filename.ends_with(".block")&&
+                filename.substr(0,64).find_first_not_of("0123456789abcdef")==std::string::npos;
+            if(!key_name||(!latest&&filename!=hex(block.identity())+".block"))
+                throw std::runtime_error("invalid cognition filename");
             const auto read_limit=cognition_read_limit(memory_);
             auto record=block.read(block.location_at(ExperienceBlock::header_bytes),read_limit,memory_);
             validate_cognition(record,name_);
@@ -366,7 +370,7 @@ DigestBytes SessionStore::inventory() const {
             records.emplace(std::pmr::string(filename,&memory_),record.location().digest);
         }
         for(const auto& [name,digest]:records){
-            hash.update("SWEGCA ended cognition v1");hash.update(name);hash.update(digest);
+            hash.update(latest?"SWEGCA ended cognition latest v1":"SWEGCA ended cognition v1");hash.update(name);hash.update(digest);
         }
     }
     return hash.finish();
@@ -379,21 +383,26 @@ std::optional<StoredExperience> SessionStore::read_cognition_revision(const Expe
     const DigestBytes& revision) const {
     return read_cognition_record(input,revision);
 }
+std::optional<StoredExperience> SessionStore::read_latest_cognition(const ExperienceLocation& input) const {
+    return read_cognition_record(input,std::nullopt,true);
+}
 std::optional<StoredExperience> SessionStore::read_cognition_record(const ExperienceLocation& input,
-    std::optional<DigestBytes> revision) const {
+    std::optional<DigestBytes> revision,bool latest) const {
     if(!usable_)throw std::logic_error("session unavailable");
     if(!blocks_.contains(input.block))throw std::invalid_argument("cognition input belongs to another session");
     const auto identity=cognition_id(identity_,input,revision);
-    const auto path=directory_/"cognition"/(hex(identity)+".block");
+    const auto path=directory_/(latest?"cognition-latest":"cognition")/(hex(identity)+".block");
     if(!std::filesystem::exists(path))return std::nullopt;
     auto block=ExperienceBlock::open_reader(path,storage_);
-    if(block.identity()!=identity)throw std::runtime_error("cognition identity mismatch");
+    if(!latest&&block.identity()!=identity)throw std::runtime_error("cognition identity mismatch");
     const auto read_limit=cognition_read_limit(memory_);
     auto record=block.read(block.location_at(ExperienceBlock::header_bytes),read_limit,memory_);
     const auto extent=block.inspect();
     if(extent.complete_records!=1 || extent.unfinished_bytes)
         throw std::runtime_error("invalid cognition record extent");
     validate_cognition(record,name_);
+    if(latest&&block.identity()!=cognition_id(identity_,input,Sha256::of(record.view().content)))
+        throw std::runtime_error("latest cognition input binding mismatch");
     if(revision&&Sha256::of(record.view().content)!=*revision)
         throw std::runtime_error("cognition revision content mismatch");
     return record;
@@ -405,7 +414,30 @@ DigestBytes SessionStore::save_cognition_revision(const ExperienceLocation& inpu
     require(SessionOperation::append);
     if(metadata.empty()||metadata.size()>cognition_content_limit(name_,memory_))throw std::length_error("cognition metadata limit");
     const auto revision=Sha256::of(metadata);
-    save_cognition_record(input,metadata,revision);return revision;
+    save_cognition_record(input,metadata,revision);
+    const auto directory=directory_/"cognition-latest";
+    const auto key=hex(cognition_id(identity_,input));
+    const auto current=directory/(key+".block");
+    const auto sealed=directory_/"cognition"/(hex(cognition_id(identity_,input,revision))+".block");
+    if(std::filesystem::exists(current)){
+        (void)read_latest_cognition(input);
+        if(same_file(current,sealed))return revision;
+    }
+    try{
+        if(std::filesystem::create_directory(directory))sync_directory(directory_);
+        std::uint64_t attempt=0;
+        auto staging=directory/("staging-"+key+"-0.block");
+        while(std::filesystem::exists(staging)){
+            if(attempt==UINT64_MAX)throw std::overflow_error("cognition publication attempts exhausted");
+            staging=directory/("staging-"+key+"-"+std::to_string(++attempt)+".block");
+        }
+        // Alias the already sealed record; no additional payload allocation or
+        // physical data reservation. Rename is the serialized owner's order.
+        if(::link(sealed.c_str(),staging.c_str())<0)io_error("stage latest cognition");
+        if(::rename(staging.c_str(),current.c_str())<0)io_error("publish latest cognition");
+        sync_directory(directory);
+    }catch(...){usable_=false;throw;}
+    return revision;
 }
 void SessionStore::save_cognition_record(const ExperienceLocation& input,std::span<const std::byte> metadata,
     std::optional<DigestBytes> revision) {
