@@ -654,6 +654,8 @@ int main(){
    throws<StorageLimit>([&]{host.start_session(id(236),"over-quota-denied");});
    host.resume_session(id(235));auto recalled=host.input("text/plain",content);
    CHECK(recalled.matches().size()==31&&host.select_replay(recalled)==30);
+   const auto selected_page=host.select_replay_connections(recalled,8);
+   CHECK(selected_page.entries.size()==1&&selected_page.entries[0].candidate==30);
    // An advancing Replay now commits its continuation position. At the hard
    // storage limit it must report that failure, while archive reads remain
    // available and must not relax the quota or pretend persistence succeeded.
@@ -770,6 +772,7 @@ int main(){
     CHECK(page.entries.size()==1);
     CHECK(page.entries[0].connection==full.entries[index].connection);
     CHECK(page.entries[0].candidate==full.entries[index].candidate);
+    CHECK(page.entries[0].candidate==*host.select_replay(linked,&page.entries[0].connection));
     CHECK(linked.matches()[page.entries[0].candidate].recalled.recalled_head.identity==page.entries[0].connection);
     ++index;cursor=page.next;
    }while(cursor);

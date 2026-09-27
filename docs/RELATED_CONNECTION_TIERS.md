@@ -68,3 +68,35 @@ snapshot을 유지한다. 변경된 목록의 기존 snapshot은 기존 MCP 검�
 실행 중 설치 프로세스 부재, 기존 설정 byte 동일성을 확인했다. 설치된 실제
 backend smoke에서 같은 소유자/소켓/I/O 그룹, memory.max=3999997952,
 swap=0, CPU6-7, modelCalls=0, 정상 종료와 socket 정리를 확인했다.
+
+## 페이지 후보 선택의 반복 탐색 제거
+
+페이지의 각 연결마다 모든 Recall context를 재순회하던 경로를 변경했다.
+첫 순회에서 기존 snapshot과 limit 이내 연결 ID 집합을 만들고, 두 번째 순회에서
+연속 메모리의 해당 연결별 후보에 기존 core prefer_replay를 적용한다.
+context 순서, sealed-page reduction, 동일 점수의 tie-breaking은 유지한다.
+단일 연결 선택도 같은 context reduction 함수를 사용한다.
+
+혼합 계층 목록은 각 계층의 첫 limit개 페이지를 조합한다. 각 prefix 밖의
+ID는 합집합의 첫 limit개에 들어갈 수 없으므로 결과를 누락하지 않는다.
+이제 snapshot을 얻기 위한 별도 후보 선택과 연결별 전체 재탐색이 없다.
+페이지 크기 L, context 수 C에서 후보 연결 탐색은 C*L 반복 대신 C*log(L)의
+bounded lookup이다. snapshot과 Recall 생성은 여전히 관련 메타데이터를 훑는다.
+
+benchmarks/related_pages_bench.cpp 및 Makefile target related-pages-bench 추가.
+1024개 단일 계층 연결, limit64, warmup8/측정128회, CPU7에서:
+
+- 변경 전 a955320: 평균 434587ns.
+- 최초 map 후보 누적 시도: 460541ns. 개선 확인 실패.
+- 최종 bounded contiguous reduction: 412830ns.
+- 세 경우 측정 전후 residentBytes=1380446, checksum8192 동일.
+
+이는 시스템 부하를 통제한 반복 A/B나 대규모 성능 보장이 아니며, 약 5% 차이를
+안정적 개선율로 주장하지 않는다. 원본 측정값은
+benchmarks/results/related-pages-reduction-20260927.jsonl에 보존했다.
+이 시간은 related 목록 전체이며 사용자 입력→Recall 5ms 또는 코어 ns 측정이 아니다.
+
+검증: runtime2141/stdio7236 checks 통과. 페이지 후보가 단일 연결 core 선택과
+동일한지, hard storage limit에서 31개 경험 중 같은 마지막 원경험을 선택하는지,
+기존 혼합 계층/페이지/변경된 snapshot 검증을 포함한다. 이번 최적화 소스는
+로컬 커밋으로 보존하며 설치본은 앞선 a955320 기능 버전을 유지한다.

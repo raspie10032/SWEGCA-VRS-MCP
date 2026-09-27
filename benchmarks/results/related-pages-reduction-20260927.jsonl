@@ -1,0 +1,3 @@
+{"connections": 1024, "limit": 64, "iterations": 128, "meanNs": 434587, "residentBytes": 1380446, "checksum": 8192, "stage": "before", "cpu": "7", "baselineCommit": "a955320"}
+{"connections": 1024, "limit": 64, "iterations": 128, "meanNs": 460541, "residentBytes": 1380446, "checksum": 8192, "stage": "first_map_attempt", "cpu": "7", "baselineCommit": "a955320"}
+{"connections": 1024, "limit": 64, "iterations": 128, "meanNs": 412830, "residentBytes": 1380446, "checksum": 8192, "stage": "bounded_contiguous_reduction", "cpu": "7", "baselineCommit": "a955320"}

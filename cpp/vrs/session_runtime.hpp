@@ -388,6 +388,8 @@ public:
 private:
     [[nodiscard]] ReEvidenceResult evaluate_replay(const ReplayedInput&, std::uint64_t seed,
         std::uint64_t step) const;
+    void reduce_replay_context(const InputRecall&,const InputRecall::Context&,
+        std::optional<std::size_t>& selected,architecture::kernel::ReplayCandidate& best) const;
     [[nodiscard]] InputMatch selected_input(const InputRecall&, std::size_t candidate) const;
     SessionRuntime& temporary_;
     MemoryBudget& memory_;

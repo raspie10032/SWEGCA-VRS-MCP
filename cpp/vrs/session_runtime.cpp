@@ -377,37 +377,33 @@ RelatedConnectionPage ExperienceRouter::related_connections(const ReplayedInput&
     auto primary=related(parent);
     std::optional<InputRecall> secondary;
     if(primary.temporary())secondary.emplace(related_main(parent,nullptr));
-    // A bounded ordered set gives pagination only, never semantic priority.
-    std::pmr::set<DigestBytes> identities(&memory_);bool more=false;
-    const auto gather=[&](const InputRecall& recalled){
-        for(const auto& context:recalled.contexts_){
-            const auto& identity=context.recalled.recalled_head.identity;
-            if(after&&identity<=*after)continue;
-            identities.insert(identity);
-            if(identities.size()>limit){identities.erase(std::prev(identities.end()));more=true;}
-        }
-    };
-    gather(primary);if(secondary)gather(*secondary);
+    // Each tier supplies only its first limit identities. No identity outside
+    // either prefix can enter the first limit of their ordered union.
+    const auto primary_page=select_replay_connections(primary,limit,after);
+    std::optional<ReplayConnectionPage> secondary_page;
+    if(secondary)secondary_page.emplace(select_replay_connections(*secondary,limit,after));
     RelatedConnectionPage result(memory_);
     Sha256 snapshot;snapshot.update("SWEGCA related connection tiers v1");
-    snapshot.update(parent.location().digest);
-    snapshot.update(select_replay_connections(primary,1).snapshot);
-    if(secondary)snapshot.update(select_replay_connections(*secondary,1).snapshot);
-    result.snapshot=snapshot.finish();result.entries.reserve(identities.size());
-    bool any_temporary=false,any_main=false;
-    for(const auto& identity:identities){
-        auto candidate=select_replay(primary,&identity);
-        const auto* chosen=&primary;
-        if(secondary&&recall_scope(true,candidate.has_value())!=RecallScope::temporary){
-            candidate=select_replay(*secondary,&identity);chosen=&*secondary;
+    snapshot.update(parent.location().digest);snapshot.update(primary_page.snapshot);
+    if(secondary_page)snapshot.update(secondary_page->snapshot);
+    result.snapshot=snapshot.finish();
+    std::pmr::map<DigestBytes,RelatedConnectionPage::Entry> entries(&memory_);
+    bool more=bool(primary_page.next)||(secondary_page&&bool(secondary_page->next));
+    const auto append=[&](const InputRecall& recalled,const ReplayConnectionPage& page){
+        for(const auto& entry:page.entries){
+            RelatedConnectionPage::Entry candidate{entry.connection,recalled.matches()[entry.candidate].original,recalled.temporary()};
+            auto [at,inserted]=entries.try_emplace(entry.connection,candidate);
+            if(!inserted&&recall_scope(true,at->second.temporary)!=RecallScope::temporary)at->second=candidate;
+            if(entries.size()>limit){entries.erase(std::prev(entries.end()));more=true;}
         }
-        if(!candidate)throw std::logic_error("listed connection has no eligible experience");
-        const bool temporary=chosen->temporary();
-        any_temporary|=temporary;any_main|=!temporary;
-        result.entries.push_back({identity,chosen->matches()[*candidate].original,temporary});
+    };
+    append(primary,primary_page);if(secondary)append(*secondary,*secondary_page);
+    result.entries.reserve(entries.size());bool any_temporary=false,any_main=false;
+    for(const auto& [identity,entry]:entries){
+        any_temporary|=entry.temporary;any_main|=!entry.temporary;result.entries.push_back(entry);
     }
     result.temporary=any_temporary&&!any_main;result.mixed_tiers=any_temporary&&any_main;
-    if(more)result.next=*identities.rbegin();
+    if(more)result.next=entries.rbegin()->first;
     return result;
 }
 InputRecall ExperienceRouter::input(std::string_view media, std::span<const std::byte> content) const {
@@ -618,27 +614,28 @@ InputMatch ExperienceRouter::selected_input(const InputRecall& recalled, std::si
         throw std::logic_error("Recall original address changed");
     return selected;
 }
+void ExperienceRouter::reduce_replay_context(const InputRecall& recalled,const InputRecall::Context& context,
+    std::optional<std::size_t>& selected,ReplayCandidate& best) const {
+    const auto consider=[&](std::size_t relative,const ReplayCandidate& candidate){
+        switch(prefer_replay(selected ? &best : nullptr,candidate)){
+        case ReplayPreference::invalid: throw std::logic_error("invalid Recall candidate metadata");
+        case ReplayPreference::keep: break;
+        case ReplayPreference::replace: best=candidate;selected=context.begin+relative;break;
+        }
+    };
+    const auto& head=context.recalled.recalled_head;
+    if(context.sequence)context.sequence->visit_replay_candidates(head.identity,head.strength,memory_,consider);
+    else for(std::size_t relative=0;relative<context.end-context.begin;++relative){
+        const auto& experience=*recalled.addresses_.at(context.address_begin+relative).experience;
+        consider(relative,{head.strength,experience.value().observed_at,head.identity,experience.original()});
+    }
+}
 std::optional<std::size_t> ExperienceRouter::select_replay(const InputRecall& recalled,const DigestBytes* connection) const {
     if(recalled.issuer_!=issuer_) throw std::invalid_argument("Recall belongs to a different input route");
-    std::optional<std::size_t> selected;
-    ReplayCandidate best;
-    // Reduce the same core candidates, reusing only complete sealed page
-    // reductions. Current head strength is applied at this receipt's boundary.
+    std::optional<std::size_t> selected;ReplayCandidate best;
     for(const auto& context:recalled.contexts_){
         if(connection&&context.recalled.recalled_head.identity!=*connection)continue;
-        const auto consider=[&](std::size_t relative,const ReplayCandidate& candidate){
-            switch(prefer_replay(selected ? &best : nullptr,candidate)){
-            case ReplayPreference::invalid: throw std::logic_error("invalid Recall candidate metadata");
-            case ReplayPreference::keep: break;
-            case ReplayPreference::replace: best=candidate;selected=context.begin+relative;break;
-            }
-        };
-        const auto& head=context.recalled.recalled_head;
-        if(context.sequence)context.sequence->visit_replay_candidates(head.identity,head.strength,memory_,consider);
-        else for(std::size_t relative=0;relative<context.end-context.begin;++relative){
-            const auto& experience=*recalled.addresses_.at(context.address_begin+relative).experience;
-            consider(relative,{head.strength,experience.value().observed_at,head.identity,experience.original()});
-        }
+        reduce_replay_context(recalled,context,selected,best);
     }
     return selected;
 }
@@ -656,6 +653,7 @@ ReplayConnectionPage ExperienceRouter::select_replay_connections(const InputReca
         snapshot.update(bytes);
     };
     number(recalled.temporary_);number(recalled.seed_only_);number(recalled.count_);
+    struct Selection { std::optional<std::size_t> candidate; ReplayCandidate best; };
     std::pmr::set<DigestBytes> identities(&memory_);
     bool more=false;
     for(const auto& context:recalled.contexts_){
@@ -669,11 +667,22 @@ ReplayConnectionPage ExperienceRouter::select_replay_connections(const InputReca
         if(identities.size()>limit){identities.erase(std::prev(identities.end()));more=true;}
     }
     ReplayConnectionPage result(memory_);result.snapshot=snapshot.finish();
+    // One reduction pass for the final bounded set. Contiguous state avoids
+    // allocating a large reduction node for every identity later evicted.
     result.entries.reserve(identities.size());
-    for(const auto& identity:identities){
-        const auto selected=select_replay(recalled,&identity);
-        if(!selected)throw std::logic_error("recorded connection has no Replay candidate");
-        result.entries.push_back({identity,*selected});
+    for(const auto& identity:identities)result.entries.push_back({identity,0});
+    std::pmr::vector<Selection> selections(result.entries.size(),&memory_);
+    for(const auto& context:recalled.contexts_){
+        const auto& identity=context.recalled.recalled_head.identity;
+        const auto at=std::lower_bound(result.entries.begin(),result.entries.end(),identity,
+            [](const ReplayConnectionPage::Entry& entry,const DigestBytes& key){return entry.connection<key;});
+        if(at==result.entries.end()||at->connection!=identity)continue;
+        auto& selection=selections[at-result.entries.begin()];
+        reduce_replay_context(recalled,context,selection.candidate,selection.best);
+    }
+    for(std::size_t i=0;i<selections.size();++i){
+        if(!selections[i].candidate)throw std::logic_error("recorded connection has no Replay candidate");
+        result.entries[i].candidate=*selections[i].candidate;
     }
     if(more)result.next=*identities.rbegin();
     return result;
