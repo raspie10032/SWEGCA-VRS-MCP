@@ -3,6 +3,9 @@
 #include <sstream>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
+#include <sys/mman.h>
+#include <unistd.h>
 using namespace swegca::transport;
 unsigned checks=0;
 #define CHECK(x) do{++checks;if(!(x)){std::fprintf(stderr,"FAIL %d\n",__LINE__);std::abort();}}while(false)
@@ -16,6 +19,43 @@ int main(){
   write_json_string(out,text);CHECK(std::string_view(out.str())==std::string_view(expected));CHECK(memory.used()==used);
  }
  CHECK(memory.used()==0);
+ // Exercise every ASCII byte on both sides of all 16-byte lane boundaries.
+ for(unsigned offset=0;offset<33;++offset)for(unsigned c=0;c<128;++c){
+  const std::string text=std::string(offset,'a')+char(c)+std::string(35,'z');
+  std::string escaped;const char digits[]="0123456789abcdef";
+  if(c=='"'||c=='\\'){escaped+='\\';escaped+=char(c);}
+  else if(c<32){escaped="\\u00";escaped+=digits[c>>4];escaped+=digits[c&15];}
+  else escaped+=char(c);
+  const auto expected="\""+std::string(offset,'a')+escaped+std::string(35,'z')+"\"";
+  CHECK(std::string_view(quote_json(text,memory))==expected);
+  CHECK(parse_json(expected,memory).string()==text);
+  std::ostringstream encoded;write_json_string(encoded,text);CHECK(encoded.str()==expected);
+ }
+ for(unsigned offset=0;offset<33;++offset){
+  for(const auto unicode:{"한글🙂","\xc2\x80","\xf4\x8f\xbf\xbf"}){
+   const auto text=std::string(offset,'a')+unicode+std::string(35,'z');
+   CHECK(parse_json(quote_json(text,memory),memory).string()==text);
+  }
+  for(const auto invalid:{"\x80","\xc0\x80","\xed\xa0\x80","\xf4\x90\x80\x80","\xf0\x90"}){
+   const auto text=std::string(offset,'a')+invalid;
+   std::ostringstream encoded;bool rejected=false;
+   try{write_json_string(encoded,text);}catch(const std::invalid_argument&){rejected=true;}
+   CHECK(rejected&&encoded.str().empty());
+   rejected=false;try{(void)parse_json("\""+text+"\"",memory);}catch(const std::invalid_argument&){rejected=true;}CHECK(rejected);
+  }
+ }
+ // A full-width load must never cross the supplied range into an unreadable
+ // page, including views with no accessible terminating byte.
+ const auto page=static_cast<std::size_t>(::sysconf(_SC_PAGESIZE));
+ auto* region=static_cast<char*>(::mmap(nullptr,page*2,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0));
+ CHECK(region!=MAP_FAILED);CHECK(::mprotect(region+page,page,PROT_NONE)==0);
+ for(unsigned size=0;size<65;++size){
+  auto* start=region+page-size;std::memset(start,'a',size);
+  const std::string_view text(start,size);
+  CHECK(std::string_view(quote_json(text,memory))=="\""+std::string(size,'a')+"\"");
+  if(size>=2){start[0]='"';start[size-1]='"';CHECK(parse_json(text,memory).string()==std::string(size-2,'a'));}
+ }
+ CHECK(::munmap(region,page*2)==0);
  for(const auto raw:{"\"plain\\n끝\\uD83D\\uDE42tail\"","\"\\\"\\\\\\/\\b\\f\\n\\r\\t\""}){
   const auto parsed=parse_json(raw,memory);
   CHECK(parse_json(encode_json(parsed,memory),memory).string()==parsed.string());

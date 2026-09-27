@@ -182,3 +182,33 @@ follows from this diagnosis.
 Production verification after adding probes: framing 29, JSON 38, wrapper 33,
 stdio subprocess 2,560 checks passed. `nm` confirmed both production VRS and
 proxy lack the ingress-stage and Recall probe symbols.
+
+## Bounded block scanning in JSON
+
+The transport JSON implementation now uses bounded 16-byte SSE2 scans for ASCII
+prefixes during UTF-8 validation and ordinary-byte runs during parsing/escaping.
+Non-ASCII decoding, control escaping, surrogate checks and the final encoded
+bytes are unchanged. Loads require at least 16 remaining bytes; short tails use
+scalar processing. Builds without SSE2 use the portable scalar implementation.
+`SWEGCA_JSON_SCALAR_ONLY` permits the same tests to run without block scanning.
+No dependency or prebuilt binary was introduced; no SWEGCA kernel was modified.
+
+`desktop-recall-json-block-scan.jsonl` contains the uninstrumented five-sample
+fixture after rebuilding proxy and VRS. The prompt is repeated ASCII `x`, so the
+latency result is not a multilingual or arbitrary-content performance claim.
+
+| Prompt bytes | Prior median ms | Block scan median ms | Maximum ms |
+| --- | ---: | ---: | ---: |
+| 128 | 0.011730 | 0.011080 | 0.031110 |
+| 4096 | 0.038030 | 0.019230 | 0.033011 |
+| 65536 | 0.345294 | 0.198142 | 0.262253 |
+| 1048576 | 5.406102 | 2.834246 | 3.835766 |
+
+All 1MiB samples still exceed 1ms. Graph scale, actual GUI timing and concurrent
+load remain unproven. Stage diagnosis above predates this change.
+
+Verification: both default SSE2 and forced-scalar JSON tests pass 13,270 checks
+each. These enumerate ASCII/control/escape positions across vector boundaries,
+valid and invalid UTF-8, and views ending at a PROT_NONE page boundary to detect
+out-of-range loads. Framing 29, wrapper 33 and actual stdio process 2,560 checks
+also pass. Test counts reflect boundary combinations, not product completeness.

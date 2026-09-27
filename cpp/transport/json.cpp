@@ -3,6 +3,10 @@
 #include <ostream>
 #include <array>
 #include <algorithm>
+#include <bit>
+#if defined(__SSE2__) && !defined(SWEGCA_JSON_SCALAR_ONLY)
+#include <emmintrin.h>
+#endif
 
 namespace swegca::transport {
 const Json* Json::find(std::string_view key) const noexcept {
@@ -16,9 +20,36 @@ const Json& Json::at(std::string_view key) const {
 std::string_view Json::string() const {if(kind!=Kind::string)throw std::invalid_argument("expected JSON string");return scalar;}
 namespace {
 [[noreturn]] void invalid(){throw std::invalid_argument("invalid JSON syntax");}
+// Only byte classification; Unicode and escape semantics remain below.
+// Full-width loads are used only while 16 bytes remain in the supplied view.
+template<bool Ordinary> std::size_t prefix(std::string_view text) noexcept {
+    std::size_t pos=0;
+#if defined(__SSE2__) && !defined(SWEGCA_JSON_SCALAR_ONLY)
+    while(text.size()-pos>=16){
+        const auto bytes=_mm_loadu_si128(reinterpret_cast<const __m128i*>(text.data()+pos));
+        unsigned mask;
+        if constexpr(Ordinary){
+            const auto control=_mm_cmpeq_epi8(_mm_and_si128(bytes,_mm_set1_epi8(char(0xe0))),_mm_setzero_si128());
+            const auto quote=_mm_cmpeq_epi8(bytes,_mm_set1_epi8('"'));
+            const auto slash=_mm_cmpeq_epi8(bytes,_mm_set1_epi8('\\'));
+            mask=static_cast<unsigned>(_mm_movemask_epi8(_mm_or_si128(control,_mm_or_si128(quote,slash))));
+        }else mask=static_cast<unsigned>(_mm_movemask_epi8(bytes));
+        if(mask)return pos+std::countr_zero(mask);
+        pos+=16;
+    }
+#endif
+    while(pos<text.size()){
+        const auto c=static_cast<unsigned char>(text[pos]);
+        if constexpr(Ordinary){if(c<32||c=='"'||c=='\\')break;}
+        else if(c>=128)break;
+        ++pos;
+    }
+    return pos;
+}
 void utf8(std::string_view text) {
     for(std::size_t i=0;i<text.size();){
-        const unsigned c=static_cast<unsigned char>(text[i++]);if(c<128)continue;
+        i+=prefix<false>(text.substr(i));if(i==text.size())break;
+        const unsigned c=static_cast<unsigned char>(text[i++]);
         unsigned n=0,value=0,min=0;
         if(c>=0xc2&&c<=0xdf){n=1;value=c&31;min=128;}
         else if(c>=0xe0&&c<=0xef){n=2;value=c&15;min=2048;}
@@ -51,11 +82,7 @@ private:
         std::pmr::string out(&memory_);
         for(;;){
             const auto begin=pos_;
-            while(pos_<text_.size()){
-                const auto c=static_cast<unsigned char>(text_[pos_]);
-                if(c=='"'||c=='\\'||c<32)break;
-                ++pos_;
-            }
+            pos_+=prefix<true>(text_.substr(pos_));
             out.append(text_.substr(begin,pos_-begin));
             const char c=take();if(c=='"')return out;if(static_cast<unsigned char>(c)<32)invalid();
             switch(take()){
@@ -86,16 +113,15 @@ private:
 };
 void quote(std::pmr::string& out,std::string_view text){
     utf8(text);constexpr char digits[]="0123456789abcdef";out+='"';
-    std::size_t begin=0;
-    for(std::size_t i=0;i<text.size();++i){
-        const auto c=static_cast<unsigned char>(text[i]);
-        if(c!='"'&&c!='\\'&&c>=32)continue;
-        out.append(text.substr(begin,i-begin));
+    std::size_t pos=0;
+    while(pos<text.size()){
+        const auto count=prefix<true>(text.substr(pos));out.append(text.substr(pos,count));pos+=count;
+        if(pos==text.size())break;
+        const auto c=static_cast<unsigned char>(text[pos++]);
         if(c=='"'||c=='\\'){out+='\\';out+=char(c);}
         else{out+="\\u00";out+=digits[c>>4];out+=digits[c&15];}
-        begin=i+1;
     }
-    out.append(text.substr(begin));out+='"';
+    out+='"';
 }
 void encode(std::pmr::string& out,const Json& value){
     switch(value.kind){
@@ -110,16 +136,15 @@ void encode(std::pmr::string& out,const Json& value){
 }
 static void write_escaped_content(std::ostream& out,std::string_view text){
     constexpr char digits[]="0123456789abcdef";
-    std::size_t begin=0;
-    for(std::size_t index=0;index<text.size();++index){
-        const auto c=static_cast<unsigned char>(text[index]);
-        if(c!='"'&&c!='\\'&&c>=32)continue;
-        out.write(text.data()+begin,static_cast<std::streamsize>(index-begin));
+    std::size_t pos=0;
+    while(pos<text.size()){
+        const auto count=prefix<true>(text.substr(pos));
+        out.write(text.data()+pos,static_cast<std::streamsize>(count));pos+=count;
+        if(pos==text.size())break;
+        const auto c=static_cast<unsigned char>(text[pos++]);
         if(c=='"'||c=='\\'){const char escaped[]{'\\',char(c)};out.write(escaped,2);}
         else{const char escaped[]{'\\','u','0','0',digits[c>>4],digits[c&15]};out.write(escaped,6);}
-        begin=index+1;
     }
-    if(begin<text.size())out.write(text.data()+begin,static_cast<std::streamsize>(text.size()-begin));
 }
 void write_json_string_content(std::ostream& out,std::string_view text){
     utf8(text);write_escaped_content(out,text);
