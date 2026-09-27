@@ -631,11 +631,20 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     recovered1=resend_native(raw1,1)['result']
     check(recovered1['duplicate'] and recovered1['original']==n1['original'] and recovered1['memory']==n1['memory'])
     recovered_play=c.call('tools/call',{'name':'vrs_replay','arguments':{'receipt':recovered1['receipt']}})['result'];assert 'structuredContent' in recovered_play, recovered_play
-    check(recovered_play['structuredContent']==automatic_played)
+    restored_play=recovered_play['structuredContent']
+    check(restored_play['restored'] and not restored_play['historical'])
+    check({k:v for k,v in restored_play.items() if k not in ('restored','historical','revision')}==automatic_played)
+    restored_revision=c.call('swegca/agent/cognition',{'identity':native_id,'sequence':'1','latest':True})['result']
+    check(restored_revision['revision']==restored_play['revision']==restored_revision['liveRevision'])
+    check(restored_revision['record']['recovery']==native_checkpoint)
+    check(c.call('swegca/agent/cognition',{'identity':native_id,'sequence':'1'})['result']['record']['recovery']==native_checkpoint)
+    after_recovery=sum(p.stat().st_size for p in native_root.rglob('*') if p.is_file())
+    check(after_recovery>=before_recovery)
+    check(c.call('tools/call',{'name':'vrs_replay','arguments':{'receipt':recovered1['receipt']}})['result']['structuredContent']==restored_play)
     check(c.call('swegca/agent/cognition',{'identity':native_id,'sequence':'1'})['result']['record']['recovery']==native_checkpoint)
     check(recheck(recovered1['receipt'])['isError']) # historical judgment is not a new comparison authority
     check(c.call('tools/call',{'name':'vrs_replay','arguments':{'receipt':recovered1['receipt'],'candidate':'0'}})['result']['isError'])
-    check(sum(p.stat().st_size for p in native_root.rglob('*') if p.is_file())==before_recovery)
+    check(sum(p.stat().st_size for p in native_root.rglob('*') if p.is_file())==after_recovery)
     check('error' in resend_native(raw1+' ',1))
     _,n2=native_event('UserPromptSubmit',6,prompt=text)
     n2=n2['result'];check(n2['candidateCount']=='2')
@@ -664,7 +673,9 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     main_recovered=resend_native(main_raw,0)['result']
     check(main_recovered['memory']==main_native['memory'])
     check(c.call('swegca/agent/cognition',{'identity':second_id,'sequence':'0'})['result']['record']['recovery']==main_checkpoint)
-    check(c.call('tools/call',{'name':'vrs_replay','arguments':{'receipt':main_recovered['receipt']}})['result']['structuredContent']==main_automatic)
+    restored_main=c.call('tools/call',{'name':'vrs_replay','arguments':{'receipt':main_recovered['receipt']}})['result']['structuredContent']
+    check(restored_main['restored'] and not restored_main['historical'])
+    check({k:v for k,v in restored_main.items() if k not in ('restored','historical','revision')}==main_automatic)
     c.close()
     # Commit the first event, deliberately leave its response unread, then kill
     # the transport. Resuming must identify its original from committed storage.
@@ -980,6 +991,19 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     _,recalled=producer_frame('client',{'id':producer_seq+1,'method':'turn/start',
         'params':{'threadId':'producer-thread','input':[{'type':'text','text':'claim support'}]}})
     check(recalled['candidateCount']=='16')
+
+    # Restart before the counterevidence. General restoration must reissue an
+    # actual comparison receipt, not just export the old assessment.
+    current_original=c.call('swegca/agent/original',{'identity':producer_owner,'sequence':str(current_input_sequence)})['result']
+    c.close();c=Client('open',producers_root,path);c.initialize()
+    check(c.call('swegca/agent/attach/resume',producer_binding)['result']['nextSequence']==str(producer_seq))
+    check(c.call('swegca/select',{'identity':producer_owner})['result']=={})
+    replay_event={'sequence':str(current_input_sequence),'observedAt':current_original['observedAt'],
+        'seed':'7','step':str(current_input_sequence),'sender':'client','native':current_original['native']}
+    recovered_parent=c.call('swegca/agent/event',replay_event)['result']
+    restored_parent=c.call('tools/call',{'name':'vrs_replay','arguments':{'receipt':recovered_parent['receipt']}})['result']['structuredContent']
+    check(restored_parent['restored'] and not restored_parent['historical'])
+    check(restored_parent['original']==recalled['memory']['original'])
     # Later counterevidence from the original independent contexts refreshes
     # the selected Replay without requesting Replay/Re-evidence again.
     for n,(target,turn) in enumerate(support_targets):
@@ -993,9 +1017,19 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     check(refreshed['record']['selectedOriginal']==recalled['memory']['original'])
     assessment=json.loads(refreshed['record']['replayPrefix']+'"}')['assessment']
     check(assessment['status']==2 and assessment['currentOriginalCount']=='9')
+    check(refreshed['liveRevision']==refreshed['revision'] and refreshed['revision']!=restored_parent['revision'])
+    after_counter=c.call('tools/call',{'name':'vrs_replay','arguments':{'receipt':recovered_parent['receipt']}})['result']['structuredContent']
+    check(after_counter['original']==restored_parent['original'] and after_counter['revision']==refreshed['revision'])
+    check(after_counter['assessment']==assessment)
+
     c.close()
     c=Client('open',producers_root,path);c.initialize()
     check(c.call('swegca/agent/attach/resume',producer_binding)['result']['nextSequence']==str(producer_seq))
+
+    check(c.call('swegca/select',{'identity':producer_owner})['result']=={})
+    recovered_parent=c.call('swegca/agent/event',replay_event)['result']
+    twice_restored=c.call('tools/call',{'name':'vrs_replay','arguments':{'receipt':recovered_parent['receipt']}})['result']['structuredContent']
+    check(twice_restored==after_counter)
     scoped_recovered=c.call('swegca/agent/cognition',scope_query)['result']
     check(scoped_recovered['record']==scoped_after_event['record'] and scoped_recovered['revision']==scoped_after_event['revision'])
     check(scoped_recovered['liveRevision'] is None)
@@ -1267,7 +1301,12 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     check(c.call('swegca/agent/attach/resume',app_binding)['result']['identity']==response_id)
     check(c.call('swegca/select',{'identity':response_id})['result']=={})
     historic=resend_native(r2_raw,2)['result']
-    check(response_packet(historic['receipt'])==before_response)
+    restored_response=response_packet(historic['receipt'])
+    check(restored_response['restored'] and not restored_response['historical'])
+    check(restored_response['original']==before_response['original'] and restored_response['contentHex']==before_response['contentHex'])
+    check(restored_response['assessment']['rememberedHead']==before_response['assessment']['rememberedHead'])
+    check(int(restored_response['assessment']['currentOriginalCount'])>int(after_response['assessment']['currentOriginalCount']))
+    check(not restored_response['assessment']['reEvidencePerformed'])
     check(cognition_record(2,updated_revision)['result']['record']==updated_cognition)
     check(cognition_record(4,explicit_revision)['result']['record']==explicit_record)
     check('error' in app_response(3,0)[1])

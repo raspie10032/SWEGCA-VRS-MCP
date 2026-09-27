@@ -1,5 +1,20 @@
 # 전체 목표 대비 현재 구성 감사
 
+## 최신 상태: 일반 회상의 transport 실시간 복구 연결
+
+- native 재전송의 일반 Replay가 초기 기록의 실제 복구 좌표를 인증하고 Runtime
+  대조를 재개한다. restored=true/historical=false/revision을 반환한다.
+- 복구된 선택을 유지하며 관련 새 관측의 응답 전 대조/충돌 재검증/불변 개정 저장을
+  수행한다. owner 조회의 liveRevision은 해당 입력에만 노출한다. 새 입력의 캐시
+  정리는 Recall 이후이며 scoped/현재 입력과 각각의 상태를 보존한다.
+- CPU 6,7 / make -j2 소스 빌드, stdio 5704 checks 통과. 일반 임시/Main 복구,
+  복구 뒤 8개 독립 문맥 반증의 응답 전 개정, 재시작 반복 시 동일 원경험/개정,
+  재조회 저장량 불변 및 scoped 비교 공존을 검사했다.
+- 일반 활성 native 세션의 기본 Replay 복구 경로는 연결됐다. 현재 실행 GUI 수집,
+  의미 적합성/전체 요구 추출, 전체 자원/대규모 지연 게이트는 여전히 미완료다.
+  설치 바이너리는 아직 갱신하지 않았다. 과거 좌표 없는 기록은 live 권한을 만들지
+  않으며 owner archive 조회로 보존한다. COGNITION_REVISIONS.md 마지막 절 참조.
+
 ## 최신 상태: 일반 Replay의 Runtime 복구 및 재대조
 
 - Runtime::restore_cognition과 라우터 복구 함수를 추가했다. 입력 cue, 실제 과거

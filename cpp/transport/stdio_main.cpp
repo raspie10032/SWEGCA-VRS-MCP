@@ -123,6 +123,17 @@ private:
             bool dirty=false,temporary=false,saved=false;
             std::optional<DigestBytes> revision;
         };
+        struct RestoredCognition {
+            RestoredCognition(ExperienceLocation original,InputCognition value,std::pair<std::uint64_t,std::uint64_t> params,
+                std::string_view checkpoint,MemoryBudget& memory)
+                :input(original),cognition(std::move(value)),parameters(params),recovery(checkpoint,&memory){}
+            ExperienceLocation input;
+            std::optional<InputCognition> cognition;
+            std::pair<std::uint64_t,std::uint64_t> parameters;
+            std::pmr::string recovery;
+            bool dirty=false,saved=false;
+            std::optional<DigestBytes> revision;
+        };
         struct Delivery { DigestBytes fingerprint; ExperienceLocation original; DigestBytes context{}; ExperienceSender sender=ExperienceSender::unspecified; DigestBytes connection{}; };
         Context(MemoryBudget& memory,std::string_view native,bool app,bool connection):deliveries(&memory),turn_inputs(&memory),native_session(native,&memory),app_server(app),connection_scope(connection){}
         std::pmr::map<std::uint64_t,Delivery> deliveries;
@@ -138,6 +149,7 @@ private:
         std::optional<ReplayedInput> replayed;
         std::optional<InputCognition> cognition;
         std::optional<ScopedCognition> scoped;
+        std::optional<RestoredCognition> restored;
         // Default core-selected connection survives disposal of Replay bytes.
         // This identity is bookkeeping, never a substitute for a full Replay.
         std::optional<DigestBytes> cognition_connection;
@@ -338,6 +350,10 @@ private:
             state.scoped->parameters={recorded.refinement.seed(),recorded.refinement.current_step()};
             state.scoped->dirty=true;state.scoped->saved=false;state.scoped->revision.reset();
         }
+        if(state.restored&&state.restored->cognition->assessment().remembered_head().identity==recorded.refinement.connection()){
+            state.restored->parameters={recorded.refinement.seed(),recorded.refinement.current_step()};
+            state.restored->dirty=true;state.restored->saved=false;state.restored->revision.reset();
+        }
         if(state.cognition_connection&&*state.cognition_connection==recorded.refinement.connection()){
             state.cognition_parameters=std::pair{recorded.refinement.seed(),recorded.refinement.current_step()};
             // Preserve the immutable input-time receipt; refresh only the live comparison.
@@ -374,6 +390,51 @@ private:
                 input_observation_scope(input.digest,scoped->scope));
             scoped->saved=true;
         }
+    }
+    void complete_restored_cognition(){
+        auto& restored=context().restored;if(!restored)return;
+        const auto [seed,step]=restored->parameters;
+        if(restored->dirty){
+            auto& prior=*restored->cognition;
+            auto compared=runtime_.compare_replay(prior.replayed,seed,step);
+            std::optional<ReEvidenceResult> verified;
+            if(kernel::requires_re_evidence(compared.agreement()))
+                verified.emplace(runtime_.re_evidence(prior.replayed,compared,seed,step));
+            InputCognition refreshed{prior.candidate,std::move(prior.replayed),std::move(compared),std::move(verified)};
+            restored->cognition.reset();restored->cognition.emplace(std::move(refreshed));restored->dirty=false;
+        }
+        if(restored->saved)return;
+        const auto& cognition=*restored->cognition;
+        auto metadata=std::pmr::string("{\"inputOriginal\":",&memory_)+address(restored->input,memory_);
+        metadata+=",\"seed\":\"";metadata+=std::to_string(seed);metadata+="\",\"step\":\"";metadata+=std::to_string(step);
+        metadata+="\",\"memory\":{\"completed\":true,\"candidate\":\"";metadata+=std::to_string(cognition.candidate);
+        metadata+="\",\"original\":";metadata+=address(cognition.replayed.location(),memory_);
+        metadata+=",\"agreement\":";metadata+=std::to_string(static_cast<unsigned>(cognition.assessment().agreement()));
+        metadata+=",\"reEvidencePerformed\":";metadata+=cognition.reverified?"true":"false";metadata+='}';
+        metadata+=",\"sourceSession\":\"";metadata+=hex(cognition.replayed.source_identity(),memory_);
+        metadata+="\",\"selectedOriginal\":";metadata+=address(cognition.replayed.location(),memory_);
+        metadata+=",\"replayPrefix\":";metadata+=quote_json(replay_prefix(cognition.replayed,&cognition,&restored->input),memory_);
+        metadata+=",\"recovery\":";metadata+=restored->recovery;metadata+='}';
+        restored->revision=runtime_.save_cognition_revision(restored->input,std::as_bytes(std::span(metadata)));
+        restored->saved=true;
+    }
+    ReplayRecovery recovery_coordinates(const Json& metadata){
+        const auto& value=metadata.at("recovery");ReplayRecovery result;
+        auto flag=[&](std::string_view name){const auto& field=value.at(name);
+            if(field.kind!=Json::Kind::boolean)throw std::invalid_argument("invalid recovery flag");
+            return field.scalar=="true";};
+        result.temporary=flag("temporary");result.seed_only=flag("seedOnly");
+        const auto& kind=value.at("keyKind");
+        if(kind.kind!=Json::Kind::number)throw std::invalid_argument("invalid recovery key kind");
+        const auto k=number(kind.scalar);if(k<1||k>3)throw std::invalid_argument("invalid recovery key kind");
+        result.key_kind=static_cast<kernel::FamiliarityKey>(k);
+        result.input_cue=digest(value.at("inputCue").string());result.lookup_key=digest(value.at("lookupKey").string());
+        result.connection=digest(value.at("connection").string());result.source=digest(metadata.at("sourceSession").string());
+        result.original=record_address(metadata.at("selectedOriginal"));
+        result.remembered_head=record_address(value.at("rememberedHead"));result.observation_head=record_address(value.at("observationHead"));
+        const auto index=integer(value.at("originalIndex")),boundary=integer(value.at("observationBoundary"));
+        if(index>SIZE_MAX||boundary>SIZE_MAX)throw std::invalid_argument("recovery index overflow");
+        result.original_index=index;result.observation_boundary=boundary;return result;
     }
     void append_recovery_checkpoint(std::pmr::string& metadata,const ReplayedInput& replayed,
         const ReplayComparison& compared){
@@ -547,9 +608,12 @@ private:
                 throw std::invalid_argument("cognition scope binding mismatch");
             const bool live=!scope&&state&&state->received&&state->received->recorded.original==input&&
                 state->cognition_done&&state->cognition_snapshot_saved&&state->cognition_revision;
+            const bool restored_live=!scope&&state&&state->restored&&state->restored->input==input&&
+                !state->restored->dirty&&state->restored->saved&&state->restored->revision;
             const bool scoped_live=scope&&state&&state->scoped&&state->scoped->input==input&&state->scoped->scope==*scope&&!state->scoped->dirty&&state->scoped->saved&&state->scoped->revision;
             auto body=std::pmr::string("{\"revision\":",&memory_)+(revision?quote_json(hex(*revision,memory_),memory_):"null")+
                 ",\"liveRevision\":"+(scoped_live?quote_json(hex(*state->scoped->revision,memory_),memory_):
+                    restored_live?quote_json(hex(*state->restored->revision,memory_),memory_):
                     live?quote_json(hex(*state->cognition_revision,memory_),memory_):"null")+
                 ",\"record\":";
             const auto raw=content_text(*stored);
@@ -682,7 +746,7 @@ private:
                 !state.deliveries.empty(),state.deliveries.empty()?0:state.deliveries.rbegin()->first,sequence);
             if(delivery==AgentDeliveryRoute::reject)throw std::invalid_argument("conflicting or out-of-order native delivery");
             if(delivery==AgentDeliveryRoute::reuse){
-                complete_scoped_cognition();
+                complete_scoped_cognition();complete_restored_cognition();
                 std::pmr::string body("{\"duplicate\":true,\"original\":",&memory_);
                 body+=address(found->second.original,memory_);body+=",\"receipt\":";
                 if(route==AgentEventRoute::record&&state.received&&state.cognition_connection&&
@@ -718,10 +782,10 @@ private:
                     SWEGCA_INGRESS_STAGE("host_cue_ready");
                     clear();state.receipt=++next_receipt_;
                     try{state.received.emplace(runtime_.receive_envelope(event.cue_media(),std::as_bytes(std::span(prompt)),original,seed,step));}
-                    catch(...){state.scoped.reset();throw;}
+                    catch(...){state.scoped.reset();state.restored.reset();throw;}
                     // Release the prior scoped Replay only after this input's
                     // Deja vu/Recall; no new cache destruction precedes them.
-                    state.scoped.reset();
+                    state.scoped.reset();state.restored.reset();
                     slot->second.original=state.received->recorded.original;
                     slot->second.context=state.received->recorded.context;
                     slot->second.connection=state.received->recorded.refinement.connection();committed=true;
@@ -759,6 +823,7 @@ private:
                 if(state.indexed_turn_deliveries==sequence)++state.indexed_turn_deliveries;
                 // Finish live comparison and durable revision before acknowledging
                 // the observation. Only the core's conflict opens Re-evidence.
+                complete_restored_cognition();
                 if(admitted_tool_observation){
                     complete_scoped_cognition();
                     if(state.received&&!state.cognition_done)complete_cognition();
@@ -835,7 +900,7 @@ private:
                 // refinement path without replacing the current input/Replay.
                 try {
                     auto recorded=runtime_.retain({sequence,observed,session,source,media,content},seed,step);
-                    invalidate_cognition(recorded);
+                    invalidate_cognition(recorded);complete_restored_cognition();
                     return "{\"original\":"+address(recorded.original,memory_)+",\"refinement\":"+refinement(recorded.refinement,memory_)+"}";
                 }catch(...){
                     // A partial record can make the session unusable. Force
@@ -884,14 +949,14 @@ private:
                 auto recorded=input_original?
                     runtime_.observe_input(record_address(*input_original),original,value,seed,step):
                     runtime_.observe(value.hypothesis,original,value,seed,step);
-                invalidate_cognition(recorded);
+                invalidate_cognition(recorded);complete_restored_cognition();
                 return "{\"original\":"+address(recorded.original,memory_)+",\"refinement\":"+refinement(recorded.refinement,memory_)+"}";
             }
             if(next_receipt_==std::numeric_limits<std::uint64_t>::max())throw std::overflow_error("receipt sequence exhausted");
             clear();context().receipt=++next_receipt_;
             try{context().received.emplace(runtime_.receive({sequence,observed,session,source,media,content},seed,step));}
-            catch(...){context().scoped.reset();throw;}
-            context().scoped.reset();
+            catch(...){context().scoped.reset();context().restored.reset();throw;}
+            context().scoped.reset();context().restored.reset();
             complete_cognition();
             return received_body(page_limit);
         }
@@ -995,10 +1060,29 @@ private:
             }
             if(metadata.at("selectedOriginal").kind==Json::Kind::null)
                 throw std::invalid_argument("recorded cognition had no Replay candidate");
-            const auto location=record_address(metadata.at("selectedOriginal"));
-            auto original=runtime_.read_cognition_original(digest(metadata.at("sourceSession").string()),location);
-            payload_result(id,metadata.at("replayPrefix").string(),evidence_payload(original).content);
-            return;
+            const auto input=record_address(metadata.at("inputOriginal"));
+            auto& state=context();
+            if(!state.restored||state.restored->input!=input){
+                const auto checkpoint=recovery_coordinates(metadata);
+                auto parameters=std::pair{integer(metadata.at("seed")),integer(metadata.at("step"))};
+                if(const auto* local=runtime_.session().find(checkpoint.connection)){
+                    const auto latest=local->latest_refinement_parameters();
+                    if(latest.second>=parameters.second)parameters=latest;
+                }else if(const auto* latest=runtime_.main().graph().refinement(checkpoint.connection)){
+                    if(latest->current_step()>=parameters.second)parameters={latest->seed(),latest->current_step()};
+                }
+                auto cognition=runtime_.restore_cognition(input,checkpoint,parameters.first,parameters.second);
+                cognition.candidate=integer(metadata.at("memory").at("candidate"));
+                Context::RestoredCognition prepared(input,std::move(cognition),parameters,encode_json(metadata.at("recovery"),memory_),memory_);
+                state.restored.emplace(std::move(prepared));
+            }
+            complete_restored_cognition();
+            auto prefix=replay_prefix(state.restored->cognition->replayed,&*state.restored->cognition,&input);
+            constexpr std::string_view content_field=",\"contentHex\":\"";
+            prefix.resize(prefix.size()-content_field.size());
+            prefix+=",\"restored\":true,\"historical\":false,\"revision\":\"";
+            prefix+=hex(*state.restored->revision,memory_);prefix+='"';prefix+=content_field;
+            payload_result(id,prefix,evidence_payload(state.restored->cognition->replayed.original()).content);return;
         }
         if(!context().received||integer(p.at("receipt"))!=context().receipt)throw std::invalid_argument("expired receipt");
         if(const auto* scope=p.find("scope")){

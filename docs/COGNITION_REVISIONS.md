@@ -274,3 +274,46 @@ conflict-only Re-evidence, corrupt coordinate rejection and unchanged heads.
 The context fixture uses actual receive, since retain alone does not establish
 an explicit user-input key. Main context traversal and transport restart
 integration are not claimed by these cases.
+
+## General recovery: transport live comparison
+
+For an active resumed native session, retransmitting its committed input still
+returns the original immutable input-time memory summary. A subsequent default
+`vrs_replay` now reads that record's recovery checkpoint and invokes
+`Runtime::restore_cognition`. It returns `restored:true, historical:false` and
+the published revision digest. It preserves the input-time selected original;
+it does not replace it with a newer candidate or the last manual selection.
+
+The host holds this restored comparison separately from a current input's
+cognition and from scoped cognition. It takes processing parameters from the
+saved record and the latest actual connection refinement without moving time
+backwards. Related observations mark it dirty; before native observation ACK,
+the host compares new evidence, performs conflict-only Re-evidence, and persists
+an immutable parent revision. Direct observe/retain paths also flush a dirty
+restored comparison before responding. Retries finish incomplete publication;
+the saved flag and liveRevision are published only after successful storage.
+
+Owner cognition queries expose the restored comparison's liveRevision only for
+its own input. A newly received input releases the restored cache after Recall.
+Another restored input replaces it on successful preparation. Full repeat Replay
+of an unchanged restored comparison reuses the selection and saved revision.
+Candidate selection and byte-range requests remain unavailable on a recovered
+receipt. Explicit vrs_re_evidence still requires the original current-input
+receipt; restored comparisons use their automatic conflict-driven revalidation.
+
+A record without recovery coordinates cannot acquire a new live comparison
+receipt. Stored judgments alone remain insufficient to reconstruct authority.
+The archive owner-query API can still read its retained metadata. No migration
+or compatibility implementation was introduced.
+
+This implements the transport path with actual subprocesses; it does not prove
+that the running desktop GUI is wrapped, that an agent's observation is
+semantically appropriate, or that large-input latency/resource gates are met.
+
+Verification: stdio 5704 checks, CPU 6,7 and make -j2. Tests restart before
+counterevidence, restore the general Replay, deliver refutations from eight
+independent recorded input contexts, and query the persisted conflict revision
+before requesting Replay again. A second restart reconstructs the same original
+and revision. Repeated Replay adds no storage; scoped and general restored
+comparisons coexist without overwriting each other's revision channels. Existing
+Main restoration, manual-history, explicit-end and archive regressions pass.
