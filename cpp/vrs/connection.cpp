@@ -121,7 +121,7 @@ ConnectionRefinement Connection::prepare_refinement(std::uint64_t seed, std::uin
         report.indices_[i] = static_cast<std::uint32_t>(i);
     shuffle(report.indices_, seed);
 
-    DigestSet seen(&memory_), sources(&memory_), contexts(&memory_), producers(&memory_);
+    DigestSet producers(&memory_);
     using GroupIndex=std::pmr::unordered_map<GroupKey,GroupCounts,GroupHash>;
     GroupIndex group_index(&memory_);
     // Rehash preserves node addresses. Keep first-observed order without
@@ -133,29 +133,30 @@ ConnectionRefinement Connection::prepare_refinement(std::uint64_t seed, std::uin
     // tally is neither an input nor retained on the connection.
     auto& tally = report.evidence_;
     auto reader=experiences_.reader();
-    for (std::size_t ordinal=0;ordinal<report.indices_.size();++ordinal) {
-        const auto& value = reader[report.indices_[ordinal]].value();
-        auto& use=report.uses_[ordinal];
-        use = admit_observation(rules_, identity_, value, current_step, seen.contains(value.address));
-        if (use != ObservationUse::applied) continue;
-        seen.insert(value.address);
-        sources.insert(value.source);
-        contexts.insert(value.context);
-        producers.insert(value.producer);
-        const GroupKey key{value.source, value.context, value.axis};
-        const auto [where, inserted] = group_index.try_emplace(key);
-        if (inserted) groups.push_back(&*where);
-        auto& group = where->second;
-        if (value.outcome == EvidenceOutcome::support) ++group.supports;
-        else ++group.refutes;
-        const auto recent_value = std::uint8_t(value.outcome == EvidenceOutcome::support);
-        const auto position = tally.revision % recent.size();
-        if (tally.recent_count == recent.size()) tally.recent_sum -= recent[position];
-        else ++tally.recent_count;
-        recent[position] = recent_value;
-        tally.recent_sum += recent_value;
-        ++tally.revision;
-    }
+    {
+        DigestSet seen(&memory_);
+        for (std::size_t ordinal=0;ordinal<report.indices_.size();++ordinal) {
+            const auto& value = reader[report.indices_[ordinal]].value();
+            auto& use=report.uses_[ordinal];
+            use = admit_observation(rules_, identity_, value, current_step, seen.contains(value.address));
+            if (use != ObservationUse::applied) continue;
+            seen.insert(value.address);
+            producers.insert(value.producer);
+            const GroupKey key{value.source, value.context, value.axis};
+            const auto [where, inserted] = group_index.try_emplace(key);
+            if (inserted) groups.push_back(&*where);
+            auto& group = where->second;
+            if (value.outcome == EvidenceOutcome::support) ++group.supports;
+            else ++group.refutes;
+            const auto recent_value = std::uint8_t(value.outcome == EvidenceOutcome::support);
+            const auto position = tally.revision % recent.size();
+            if (tally.recent_count == recent.size()) tally.recent_sum -= recent[position];
+            else ++tally.recent_count;
+            recent[position] = recent_value;
+            tally.recent_sum += recent_value;
+            ++tally.revision;
+        }
+    } // Admission is complete; duplicate-address storage is no longer needed.
     // The original accumulator sums groups in first-observed order per axis.
     // Retain that numerical order, independently of hash-container order.
     for (const auto* entry : groups) {
@@ -164,8 +165,14 @@ ConnectionRefinement Connection::prepare_refinement(std::uint64_t seed, std::uin
         tally.axis_support[key.axis] += effective.support;
         tally.axis_refute[key.axis] += effective.refute;
     }
+    // These keys come only from applied observations. Reuse one set after
+    // admission instead of holding both source/context sets alongside `seen`.
+    DigestSet sources(&memory_);
+    for(const auto* entry:groups)sources.insert(entry->first.source);
     tally.source_diversity = static_cast<std::uint32_t>(std::min(sources.size(), producers.size()));
-    tally.context_diversity = static_cast<std::uint32_t>(std::min(contexts.size(), producers.size()));
+    sources.clear();
+    for(const auto* entry:groups)sources.insert(entry->first.context);
+    tally.context_diversity = static_cast<std::uint32_t>(std::min(sources.size(), producers.size()));
     for (std::uint32_t axis = 0; axis < rules_.axis_count(); ++axis) {
         sources.clear();
         producers.clear();
