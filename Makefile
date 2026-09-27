@@ -228,7 +228,7 @@ $(BUILD)/json-parse-memory-bench: benchmarks/json_parse_memory.cpp cpp/transport
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< cpp/transport/json.cpp -o $@
 
 $(BUILD)/experience-page-tests: tests/experience_page_tests.cpp cpp/vrs/experience_page.cpp cpp/vrs/experience_page.hpp cpp/vrs/evidence_experience.cpp cpp/vrs/experience_block.cpp $(CORE_SOURCES) $(CORE_HEADERS) $(VRS_HEADERS) | $(BUILD)
-	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< cpp/vrs/experience_page.cpp cpp/vrs/evidence_experience.cpp cpp/vrs/experience_block.cpp $(CORE_SOURCES) -Wl,--wrap=pwrite -Wl,--wrap=fdatasync -Wl,--wrap=fsync -o $@
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< cpp/vrs/experience_page.cpp cpp/vrs/evidence_experience.cpp cpp/vrs/experience_block.cpp $(CORE_SOURCES) -Wl,--wrap=pread -Wl,--wrap=pwrite -Wl,--wrap=fdatasync -Wl,--wrap=fsync -o $@
 
 check: $(BUILD)/experience-page-tests
 

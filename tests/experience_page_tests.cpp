@@ -12,6 +12,11 @@ using namespace swegca::architecture::kernel;
 static std::int64_t body_write_remaining=-1,header_write_remaining=-1;
 static bool fail_header_sync=false,fail_directory_sync=false;
 static bool fail_body_sync=false,body_written=false;
+static std::atomic<std::size_t> read_calls=0;
+extern "C" ssize_t __real_pread(int,void*,size_t,off_t);
+extern "C" ssize_t __wrap_pread(int fd,void* bytes,size_t count,off_t offset){
+ ++read_calls;return __real_pread(fd,bytes,count,offset);
+}
 extern "C" ssize_t __real_pwrite(int,const void*,size_t,off_t);
 extern "C" int __real_fdatasync(int);
 extern "C" int __real_fsync(int);
@@ -168,16 +173,64 @@ int main(){
    const auto cold=memory.used();
    {
     auto reader=sequence.reader();
+    const auto before_reads=read_calls.load();std::size_t warmed_reads=0;
     for(unsigned n=0;n<12;++n){
      const auto index=n%2?63:127;
      CHECK(reader[index].original()==values[index].original());
-     CHECK(memory.used()<=cold+128*sizeof(ExperienceEvidence));
+     CHECK(memory.used()<=cold+192*sizeof(ExperienceEvidence));
+     if(n==1){warmed_reads=read_calls.load();CHECK(warmed_reads>before_reads);}
+     if(n>1)CHECK(read_calls.load()==warmed_reads);
     }
+    std::printf("alternating cold pages: %zu read calls for 12 accesses\n",warmed_reads-before_reads);
    }
    CHECK(memory.used()==cold);
+   {
+    auto reader=sequence.reader();CHECK(reader[127].original()==values[127].original());
+    const auto cached=memory.used();
+    const auto held_bytes=memory.limit()-cached;auto* held=memory.allocate(held_bytes);
+    rejects<std::bad_alloc>([&]{(void)reader[63];});
+    // A failed miss that required no eviction preserves the verified page.
+    const auto prior_reads=read_calls.load();
+    CHECK(reader[127].original()==values[127].original());CHECK(read_calls.load()==prior_reads);
+    memory.deallocate(held,held_bytes);CHECK(memory.used()==cached);
+    CHECK(reader[63].original()==values[63].original());
+   }
    CHECK(memory.used()==cold);
    CHECK(!sequence.page_out(63,root/"unused",id(42),rules,&storage));
    CHECK(!sequence.page_out(127,root/"unused",id(43),rules,&storage));
+  }
+  {
+   ExperienceSequence sequence(memory);
+   for(unsigned n=0;n<512;++n){sequence.prepare_append();sequence.commit_append(values[n%256]);}
+   for(unsigned n=0;n<8;++n)
+    CHECK(sequence.page_out((1U<<n)-1,root/("cache-prefix-"+std::to_string(n)),id(80+n),rules,&storage));
+   CHECK(sequence.page_out(255,root/"cache-full",id(88),rules,&storage));
+   const auto cold=memory.used();
+   {
+    auto reader=sequence.reader();
+    // All eight geometric pages fit in the same 256-value bound.
+    for(unsigned n=0;n<8;++n){const auto index=(1U<<n)-1;CHECK(reader[index].original()==values[index].original());}
+    const auto warm=read_calls.load();
+    for(unsigned n=0;n<255;++n)CHECK(reader[(n*127)%255].original()==values[(n*127)%255].original());
+    CHECK(read_calls.load()==warm&&memory.used()==cold+255*sizeof(ExperienceEvidence));
+    // Insufficient temporary read memory after eviction cannot publish a page.
+    const auto held_bytes=memory.limit()-memory.used();auto* held=memory.allocate(held_bytes);
+    rejects<std::bad_alloc>([&]{(void)reader[255];});
+    memory.deallocate(held,held_bytes);CHECK(memory.used()==cold);
+    CHECK(reader[255].original()==values[255].original());
+    CHECK(memory.used()==cold+256*sizeof(ExperienceEvidence));
+    const auto full_warm=read_calls.load();
+    CHECK(reader[510].original()==values[254].original());CHECK(read_calls.load()==full_warm);
+    // A small page evicts the full page before its replacement is allocated.
+    CHECK(reader[0].original()==values[0].original());CHECK(memory.used()==cold+sizeof(ExperienceEvidence));
+    const auto small_warm=read_calls.load();
+    CHECK(reader[255].original()==values[255].original());CHECK(read_calls.load()>small_warm);
+   }
+   CHECK(memory.used()==cold);
+   // A new reader authenticates cold storage again; cached data is not global.
+   const auto prior_reads=read_calls.load();
+   {auto reader=sequence.reader();CHECK(reader[255].original()==values[255].original());}
+   CHECK(read_calls.load()>prior_reads&&memory.used()==cold);
   }
   {
    // The page reduction must match exhaustive core selection even when append

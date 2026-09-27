@@ -3,11 +3,13 @@
 #include "swegca_architecture/metadata_residency_kernel.hpp"
 #include "swegca_architecture/recall_route_kernel.hpp"
 #include <atomic>
+#include <array>
 #include <mutex>
 #include <algorithm>
 #include <bit>
 #include <iterator>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <vector>
 #include <type_traits>
@@ -78,22 +80,47 @@ class ExperienceSequence final {
         mutable std::atomic<ExperienceEvidence*> data;
         Backing* backing=nullptr;
     };
-    class ReadCache final {
+    template<std::size_t Slots> class ReadCache final {
         MemoryBudget& memory_;
-        std::pmr::vector<ExperienceEvidence> values_;
-        const Chunk* cached_=nullptr;
+        struct Entry {
+            const Chunk* chunk;
+            std::pmr::vector<ExperienceEvidence> values;
+            unsigned rank;
+        };
+        // The eight geometric prefix segments contain at most 255 values.
+        // Share the former one-full-page allowance across them; a full page
+        // still evicts all others. This is worker-local physical read scratch.
+        std::array<std::optional<Entry>,Slots> entries_;
+        std::size_t held_=0;
+        void touch(std::size_t index) noexcept {
+            const auto old=entries_[index]->rank;
+            for(auto& entry:entries_)if(entry&&entry->rank<old)++entry->rank;
+            entries_[index]->rank=0;
+        }
     public:
-        explicit ReadCache(MemoryBudget& memory):memory_(memory),values_(&memory){}
+        explicit ReadCache(MemoryBudget& memory):memory_(memory){}
         const ExperienceEvidence& read(const Chunk& chunk,std::size_t offset) {
             if(const auto* data=chunk.data.load(std::memory_order_acquire))return data[offset];
-            if(cached_!=&chunk){
-                cached_=nullptr;
-                {decltype(values_) empty(&memory_);values_.swap(empty);}
-                values_=chunk.backing->page.load(chunk.backing->rules,memory_);
-                if(values_.size()!=chunk.used)throw std::runtime_error("experience traversal count changed");
-                cached_=&chunk;
+            for(std::size_t n=0;n<entries_.size();++n)
+                if(entries_[n]&&entries_[n]->chunk==&chunk){
+                    touch(n);return entries_[n]->values[offset];
+                }
+            while(held_+chunk.used>ExperiencePage::capacity||
+                std::all_of(entries_.begin(),entries_.end(),[](const auto& entry){return entry.has_value();})){
+                std::size_t oldest=entries_.size();
+                for(std::size_t n=0;n<entries_.size();++n)
+                    if(entries_[n]&&(oldest==entries_.size()||entries_[n]->rank>entries_[oldest]->rank))oldest=n;
+                if(oldest==entries_.size())throw std::logic_error("invalid traversal page capacity");
+                held_-=entries_[oldest]->values.size();entries_[oldest].reset();
             }
-            return values_[offset];
+            const auto slot=std::find_if(entries_.begin(),entries_.end(),[](const auto& entry){return !entry;});
+            if(slot==entries_.end())throw std::logic_error("invalid traversal page directory");
+            auto values=chunk.backing->page.load(chunk.backing->rules,memory_);
+            if(values.size()!=chunk.used)throw std::runtime_error("experience traversal count changed");
+            slot->emplace(Entry{&chunk,std::move(values),static_cast<unsigned>(entries_.size())});
+            held_+=chunk.used;
+            touch(static_cast<std::size_t>(slot-entries_.begin()));
+            return (*slot)->values[offset];
         }
     };
 public:
@@ -105,7 +132,7 @@ public:
         explicit Reader(const ExperienceSequence& source)
             :source_(source),cache_(source.memory_){}
         const ExperienceSequence& source_;
-        ReadCache cache_;
+        ReadCache<8> cache_;
     public:
         Reader(const Reader&)=delete;
         Reader& operator=(const Reader&)=delete;
@@ -182,7 +209,7 @@ public:
         template<class Visit>
         void visit_replay_candidates(const architecture::DigestBytes& connection,double strength,
             MemoryBudget& memory,Visit&& visit) const {
-            ReadCache cache(memory);
+            ReadCache<1> cache(memory);
             for(std::size_t relative=0;relative<count_;){
                 const auto absolute=begin_+relative;
                 const auto& chunk=*chunks_[chunk_index(absolute)-first_chunk_];
