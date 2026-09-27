@@ -1374,6 +1374,27 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     main_query={'identity':producer_owner,'inputOriginal':related_input['original'],'related':True,'latest':True}
     main_related_journal=c.call('swegca/agent/cognition',main_query)['result']
     check(not main_related_journal['record']['recovery']['temporary'])
+    main_consumer=producer_owner
+    producer_owner=c.call('swegca/agent/attach',{**producer_binding,'instance':'late-main-counter'})['result']['identity']
+    check(c.call('swegca/select',{'identity':producer_owner})['result']=={})
+    producer_seq=0
+    for n in range(8):
+        producer_trial('A purpose kept in Main.',n+20,'refute',
+            lambda v:v.update(scope='archived requirement outcome'))
+    check(c.call('swegca/work',{'seed':'7','step':'100'})['result']['merged']=='0')
+    check(c.call('swegca/end')['result']=={})
+    check(c.call('swegca/work',{'seed':'7','step':'100'})['result']['merged']=='1')
+    stale=c.call('swegca/agent/cognition',main_query)['result']
+    check(stale['liveRevision'] is None and stale['revision']==main_related_journal['revision'])
+    check(c.call('swegca/select',{'identity':main_consumer})['result']=={})
+    refreshed=related_call(related_input['receipt'])['result']['structuredContent']
+    check(refreshed['original']==main_related['original'] and refreshed['revision']!=main_related['revision'])
+    check(refreshed['assessment']['status']==2 and refreshed['assessment']['reEvidencePerformed'])
+    check(refreshed['assessment']['currentOriginalCount']=='8')
+    main_related=refreshed
+    main_related_journal=c.call('swegca/agent/cognition',main_query)['result']
+    check(main_related_journal['liveRevision']==main_related['revision'])
+    producer_owner=main_consumer
     c.close();c=Client('open',related_main_root,path);c.initialize()
     check(c.call('swegca/agent/attach/resume',main_binding)['result']['nextSequence']=='1')
     check(c.call('swegca/select',{'identity':producer_owner})['result']=={})

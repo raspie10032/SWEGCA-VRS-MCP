@@ -719,6 +719,19 @@ ReEvidenceResult ExperienceRouter::evaluate_replay(const ReplayedInput& replayed
         report.emplace(current->state().evaluate_suffix(boundary,seed,step));
     } else if (replayed.match_.current_observations != 0) {
         throw std::logic_error("current observation history disappeared");
+    } else if (remembered.main_graph) {
+        // Temporary absence follows the same Main route as Recall. Retain
+        // the input-time boundary: old evidence must not verify itself.
+        require_main_current();
+        const auto* main = remembered.main_graph->graph().find(identity);
+        if (!main) throw std::logic_error("remembered Main connection disappeared");
+        const auto values = main->experiences();
+        const auto boundary = remembered.recalled_head.observations;
+        if (boundary > values.size()) throw std::logic_error("Main observation history regressed");
+        current_head = merged_match(identity).recalled_head;
+        addresses.reserve(values.size() - boundary);
+        for (const auto& value : values.subspan(boundary)) addresses.push_back(value.original());
+        report.emplace(main->evaluate_suffix(boundary,seed,step));
     }
     if(!report){
         Connection fresh(identity,remembered.recalled_head.strength,rules,memory_);

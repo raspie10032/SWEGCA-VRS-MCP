@@ -63,7 +63,11 @@ public:
             if(!runtime_.work_scheduled())(void)runtime_.schedule_work(automatic_->first,automatic_->second);
             work_requested_=false;
         }
-        if(automatic_&&runtime_.work_scheduled())(void)runtime_.poll_work();
+        if(automatic_&&runtime_.work_scheduled()){
+            const auto before=runtime_.main().head();
+            (void)runtime_.poll_work();
+            if(before!=runtime_.main().head())invalidate_main_cognition();
+        }
         if(runtime_.work_scheduled())return automatic_.has_value();
         return runtime_.maintain_memory();
     }
@@ -428,6 +432,34 @@ private:
             state.cognition_parameters=std::pair{recorded.refinement.seed(),recorded.refinement.current_step()};
             // Preserve the immutable input-time receipt; refresh only the live comparison.
             state.cognition_done=false;
+        }
+    }
+    void invalidate_main_cognition(){
+        for(auto& [identity,state]:contexts_){
+            const auto& session=runtime_.attached_session(identity);
+            const auto changed=[&](const InputCognition& cognition){
+                const auto connection=cognition.assessment().remembered_head().identity;
+                return cognition.replayed.from_merged_main()&&!session.find(connection)&&
+                    cognition.assessment().current_head().record!=runtime_.main().head();
+            };
+            const auto parameters=[&](const InputCognition& cognition,auto prior){
+                const auto* report=runtime_.main().graph().refinement(cognition.assessment().remembered_head().identity);
+                if(report&&report->current_step()>=prior.second)prior={report->seed(),report->current_step()};
+                return prior;
+            };
+            const auto invalidate=[&](auto& saved){
+                if(saved&&changed(*saved->cognition)){
+                    saved->parameters=parameters(*saved->cognition,saved->parameters);
+                    saved->dirty=true;saved->saved=false;saved->revision.reset();
+                }
+            };
+            invalidate(state.scoped);invalidate(state.restored);invalidate(state.related);
+            if(state.cognition&&state.received&&changed(*state.cognition)){
+                const auto& recorded=state.received->recorded.refinement;
+                state.cognition_parameters=parameters(*state.cognition,
+                    state.cognition_parameters.value_or(std::pair{recorded.seed(),recorded.current_step()}));
+                state.cognition_done=false;
+            }
         }
     }
     void complete_scoped_cognition(){
@@ -970,7 +1002,12 @@ private:
             if(automatic_)work_requested_=true;
             return std::pmr::string("{}",&memory_);
         }
-        if(method=="swegca/work"){const auto count=runtime_.work(integer(p.at("seed")),integer(p.at("step")));return std::pmr::string("{\"merged\":\"",&memory_)+std::to_string(count).c_str()+"\"}";}
+        if(method=="swegca/work"){
+            const auto before=runtime_.main().head();
+            const auto count=runtime_.work(integer(p.at("seed")),integer(p.at("step")));
+            if(before!=runtime_.main().head())invalidate_main_cognition();
+            return std::pmr::string("{\"merged\":\"",&memory_)+std::to_string(count).c_str()+"\"}";
+        }
         if(method=="swegca/work/start"){
             const bool started=runtime_.schedule_work(integer(p.at("seed")),integer(p.at("step")));
             return std::pmr::string(started?"{\"started\":true}":"{\"started\":false}",&memory_);

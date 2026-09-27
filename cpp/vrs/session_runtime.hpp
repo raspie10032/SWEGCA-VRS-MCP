@@ -221,6 +221,7 @@ public:
     [[nodiscard]] const StoredExperience& original() const noexcept { return original_; }
     [[nodiscard]] const architecture::DigestBytes& source_identity() const noexcept { return source_identity_; }
     [[nodiscard]] std::size_t original_index() const noexcept { return match_.original_index; }
+    [[nodiscard]] bool from_merged_main() const noexcept { return match_.recalled.main_graph != nullptr; }
     [[nodiscard]] const ExperienceLocation& observation_head() const noexcept {
         return match_.recalled.main_graph?match_.recalled.observation_head:match_.recalled.recalled_head.record;
     }

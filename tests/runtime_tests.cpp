@@ -816,12 +816,19 @@ int main(){
    host.attach_session(id(248),"main-restore");host.select_session(id(248));
    for(unsigned n=10;n<=17;++n)(void)observe(host,n,EvidenceOutcome::refute);
    host.end_session();CHECK(host.work(7,17)==1);host.select_session(id(247));
+   const auto head_before=host.main().head();
+   auto live=host.compare_replay(cognition->replayed,7,17);
+   CHECK(live.evidence().current_originals().size()==8);
+   CHECK(live.evidence().verification().result().verification().judgment().status()==EvidenceStatus::reject);
+   CHECK(requires_re_evidence(live.agreement()));
+   auto reverified=host.re_evidence(cognition->replayed,live,7,17);
+   CHECK(reverified.current_originals().size()==8&&host.main().head()==head_before);
   }
   auto host=Runtime::open(path,config,memory);host.resume_session(id(247));
   auto restored=host.restore_main_cognition(input,"contents",connection,remembered,observation_head,7,selected,7,18);
   CHECK(restored.replayed.location()==selected&&restored.replayed.source_identity()==id(246));
-  CHECK(restored.assessment().remembered_head().observations==8&&restored.assessment().current_originals().empty());
-  CHECK(!restored.reverified&&restored.comparison.observation_boundary()==0);
+  CHECK(restored.assessment().remembered_head().observations==8&&restored.assessment().current_originals().size()==8);
+  CHECK(restored.reverified&&restored.comparison.observation_boundary()==0);
   for(unsigned n=19;n<=26;++n)(void)observe(host,n,EvidenceOutcome::refute);
   const auto main_head=host.main().head();const auto local_head=host.session().find(connection)->head();
   auto updated=host.restore_main_cognition(input,"contents",connection,remembered,observation_head,7,selected,7,26);
