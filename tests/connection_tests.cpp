@@ -641,5 +641,20 @@ int main(int argc, char** argv) {
             CHECK(digits[value>>4]==expected[2*i]&&digits[value&15]==expected[2*i+1]);
         }
     }
+    {
+        Originals originals8;auto policy8=EvidencePolicy{};policy8.axis_count=8;
+        originals8.rules=make_evidence_rules(policy8);MemoryBudget memory8(4<<20);
+        Connection connection8(id(10),0.75,originals8.rules,memory8);
+        for(unsigned axis=0;axis<8;++axis)
+            for(unsigned group=0;group<12;++group)
+                connection8.append(originals8.sample(id(10),axis,group,EvidenceOutcome::support,false,true));
+        // One producer covers every axis; a second producer appears only on axis 7.
+        connection8.append(originals8.sample(id(10),7,40,EvidenceOutcome::support));
+        for(const auto seed:{1U,999U}){
+            const auto report=connection8.evaluate(seed,5);
+            CHECK(report.evidence().source_diversity==2&&report.evidence().context_diversity==2);
+            for(unsigned axis=0;axis<8;++axis)CHECK(report.evidence().axis_source_diversity[axis]==(axis==7?2:1));
+        }
+    }
     std::printf("PASS: %u connection checks\n", checks);
 }

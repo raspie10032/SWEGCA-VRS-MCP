@@ -115,10 +115,13 @@ int main(){
   CHECK(graph.replay(id(10),15).location()==paged_original);
   const auto expected_report=refinement_digest(graph.find(id(10))->evaluate(19,100000));
   CHECK(graph.page_out(id(10),15,root/"must-not-create",id(181)));
+  CHECK(graph.page_out(id(10),31,root/"second-cold-page",id(182)));
   const auto cold_memory=graph_memory.used();
   {
+   const auto read_start=reads;
    const auto cold_report=graph.find(id(10))->evaluate(19,100000);
    CHECK(refinement_digest(cold_report)==expected_report);
+   std::printf("Cold refinement pread calls: %llu\n",static_cast<unsigned long long>(reads-read_start));
   }
   CHECK(graph_memory.used()==cold_memory);
   CHECK(!graph.page_out(id(10),15,root/"must-not-create",id(181)));

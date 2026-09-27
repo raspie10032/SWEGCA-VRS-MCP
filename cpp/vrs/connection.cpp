@@ -121,7 +121,9 @@ ConnectionRefinement Connection::prepare_refinement(std::uint64_t seed, std::uin
         report.indices_[i] = static_cast<std::uint32_t>(i);
     shuffle(report.indices_, seed);
 
-    DigestSet producers(&memory_);
+    static_assert(max_axes<=8);
+    std::pmr::unordered_map<Digest,std::uint8_t,DigestHash> producers(&memory_);
+    std::array<std::uint32_t,max_axes> axis_producers{};
     using GroupIndex=std::pmr::unordered_map<GroupKey,GroupCounts,GroupHash>;
     GroupIndex group_index(&memory_);
     // Rehash preserves node addresses. Keep first-observed order without
@@ -141,7 +143,9 @@ ConnectionRefinement Connection::prepare_refinement(std::uint64_t seed, std::uin
             use = admit_observation(rules_, identity_, value, current_step, seen.contains(value.address));
             if (use != ObservationUse::applied) continue;
             seen.insert(value.address);
-            producers.insert(value.producer);
+            auto& axes=producers.try_emplace(value.producer,0).first->second;
+            const auto bit=static_cast<std::uint8_t>(1U<<value.axis);
+            if(!(axes&bit)){axes|=bit;++axis_producers[value.axis];}
             const GroupKey key{value.source, value.context, value.axis};
             const auto [where, inserted] = group_index.try_emplace(key);
             if (inserted) groups.push_back(&*where);
@@ -175,17 +179,10 @@ ConnectionRefinement Connection::prepare_refinement(std::uint64_t seed, std::uin
     tally.context_diversity = static_cast<std::uint32_t>(std::min(sources.size(), producers.size()));
     for (std::uint32_t axis = 0; axis < rules_.axis_count(); ++axis) {
         sources.clear();
-        producers.clear();
-        for (const auto sample : report.samples()) {
-            if(sample.use!=ObservationUse::applied)continue;
-            const auto& value = reader[sample.experience_index].value();
-            if (value.axis == axis) {
-                sources.insert(value.source);
-                producers.insert(value.producer);
-            }
-        }
+        for(const auto* entry:groups)
+            if(entry->first.axis==axis)sources.insert(entry->first.source);
         tally.axis_source_diversity[axis] = static_cast<std::uint32_t>(
-            std::min(sources.size(), producers.size()));
+            std::min(sources.size(),static_cast<std::size_t>(axis_producers[axis])));
     }
     report.result_ = verify_connection(rules_, tally, strength_);
     if (report.result_.strength().valid()) report.after_revision_ = revision_ + 1;

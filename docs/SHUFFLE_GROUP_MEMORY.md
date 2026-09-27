@@ -48,3 +48,21 @@ canonical digest의 표본당 두 little-endian uint64 인코딩은 변경하지
 포함하여 연결 15,967개 및 Main 4,699개 검사 통과. 할당 실패 주입 지점은 각각
 246개와 910개다. 실패 지점 감소에 따라 반복 검사 총수도 달라진다. 검사 사례를
 삭제하지 않았다. 원자료 diversity-workspace-memory.txt.
+
+## 축별 원경험 재읽기 제거
+
+각 applied 관측을 처음 집계할 때 producer가 등장한 축을 8비트 마스크로 기록하고,
+각 축의 고유 producer 수를 정확히 계산한다. admission이 허용한 축만 사용하며
+SWEGCA max_axes가 8을 넘으면 컴파일 시 재검토를 요구한다. global producer 수는
+맵의 고유 키 수와 같고, source의 축별 고유 수는 applied 그룹 키에서 계산한다.
+기존 source/producer 최솟값 규칙은 유지한다.
+
+이로써 각 축마다 모든 applied 경험을 다시 읽어 집합을 만드는 순회를 제거한다.
+관측 순서, 중복·만료 admission, 그룹 정규화, 최근 창, 3상 판정은 변경하지 않는다.
+producer 축 마스크의 저장 비용이 추가되므로 메모리 감소로 단정하지 않는다.
+
+두 cold 구간/1축/같은 seed의 전체 평가에서 pread 호출은 90→46회로 감소했다.
+1,536표본 메모리 측정은 166,270→170,366바이트로 4,096바이트 증가했고 digest는
+그대로다. 디스크 재읽기 감소와 producer 축 정보의 공간 비용을 함께 보고한다.
+파일시스템/장치별 경과시간 개선율로 환산하지 않는다. 자료는
+axis-cold-reads-{before,after}.txt 및 axis-producer-memory.txt다.
