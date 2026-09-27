@@ -26,9 +26,17 @@ class ExperienceSequence final {
         return index<255?index-((std::size_t{1}<<chunk_index(index))-1):(index-255)%256;
     }
     struct Chunk {
+        // Physical backing may span multiple immutable connections. Each chunk
+        // owns only its authenticated slice and its own core Replay reduction.
+        struct PageStorage {
+            PageStorage(ExperiencePage value,const architecture::kernel::EvidenceRules& policy)
+                :page(std::move(value)),rules(policy){}
+            ExperiencePage page;
+            architecture::kernel::EvidenceRules rules;
+        };
         struct Backing {
-            Backing(ExperiencePage value,const architecture::kernel::EvidenceRules& policy,
-                std::span<const ExperienceEvidence> values):page(std::move(value)),rules(policy){
+            Backing(std::shared_ptr<PageStorage> storage,std::size_t begin,
+                std::span<const ExperienceEvidence> values):storage(std::move(storage)),begin(begin){
                 using namespace architecture::kernel;
                 for(std::size_t n=0;n<values.size();++n){
                     const auto& value=values[n];
@@ -44,8 +52,8 @@ class ExperienceSequence final {
             architecture::kernel::ReplayCandidate best;
             std::size_t best_index=0;
             bool uniform=true;
-            ExperiencePage page;
-            architecture::kernel::EvidenceRules rules;
+            std::shared_ptr<PageStorage> storage;
+            std::size_t begin;
             mutable std::mutex load_mutex;
         };
         Chunk(MemoryBudget& budget,std::size_t count):memory(budget),capacity(count),
@@ -67,7 +75,7 @@ class ExperienceSequence final {
             std::lock_guard lock(backing->load_mutex);
             if(auto* value=data.load(std::memory_order_relaxed))return value;
             auto* value=static_cast<ExperienceEvidence*>(memory.allocate(capacity*sizeof(ExperienceEvidence),alignof(ExperienceEvidence)));
-            try { backing->page.restore_into(value,used,backing->rules,memory); }
+            try { backing->storage->page.restore_range_into(value,backing->begin,used,backing->storage->rules,memory); }
             catch(...) {
                 memory.deallocate(value,capacity*sizeof(ExperienceEvidence),alignof(ExperienceEvidence));
                 throw;
@@ -77,7 +85,7 @@ class ExperienceSequence final {
         }
         [[nodiscard]] ExperienceEvidence read(std::size_t offset) const {
             if(const auto* value=data.load(std::memory_order_acquire))return value[offset];
-            return backing->page.read(offset,backing->rules,memory);
+            return backing->storage->page.read(backing->begin+offset,backing->storage->rules,memory);
         }
         MemoryBudget& memory;
         std::size_t capacity,used=0;
@@ -119,7 +127,7 @@ class ExperienceSequence final {
             }
             const auto slot=std::find_if(entries_.begin(),entries_.end(),[](const auto& entry){return !entry;});
             if(slot==entries_.end())throw std::logic_error("invalid traversal page directory");
-            auto values=chunk.backing->page.load(chunk.backing->rules,memory_);
+            auto values=chunk.backing->storage->page.load_range(chunk.backing->begin,chunk.used,chunk.backing->storage->rules,memory_);
             if(values.size()!=chunk.used)throw std::runtime_error("experience traversal count changed");
             slot->emplace(Entry{&chunk,std::move(values),static_cast<unsigned>(entries_.size())});
             held_+=chunk.used;
@@ -152,39 +160,90 @@ public:
     // owner publishes after joining. The extra shared owner protects hot data.
     class PagePreparation final {
         friend class ExperienceSequence;
+        struct Entry {std::shared_ptr<Chunk> chunk;Chunk::Backing* prepared=nullptr;};
+        PagePreparation(MemoryBudget& memory,const architecture::kernel::EvidenceRules& rules)
+            :memory_(memory),entries_(&memory),rules_(rules){}
         PagePreparation(std::shared_ptr<Chunk> chunk,const architecture::kernel::EvidenceRules& rules)
-            :chunk_(std::move(chunk)),rules_(rules){}
-        std::shared_ptr<Chunk> chunk_;
+            :PagePreparation(chunk->memory,rules){entries_.push_back({std::move(chunk)});}
+        MemoryBudget& memory_;
+        std::pmr::vector<Entry> entries_;
         architecture::kernel::EvidenceRules rules_;
-        Chunk::Backing* prepared_=nullptr;
     public:
         PagePreparation(const PagePreparation&)=delete;
         PagePreparation& operator=(const PagePreparation&)=delete;
         PagePreparation(PagePreparation&& other) noexcept
-            :chunk_(std::move(other.chunk_)),rules_(other.rules_),prepared_(std::exchange(other.prepared_,nullptr)){}
+            :memory_(other.memory_),entries_(std::move(other.entries_)),rules_(other.rules_){}
         ~PagePreparation(){
-            if(prepared_){std::destroy_at(prepared_);chunk_->memory.deallocate(prepared_,sizeof(Chunk::Backing),alignof(Chunk::Backing));}
+            for(auto& entry:entries_)if(entry.prepared){
+                std::destroy_at(entry.prepared);
+                memory_.deallocate(entry.prepared,sizeof(Chunk::Backing),alignof(Chunk::Backing));
+            }
         }
         void write(const std::filesystem::path& path,const architecture::DigestBytes& identity,StorageBudget* storage){
-            if(!chunk_||prepared_)throw std::logic_error("invalid page preparation");
-            auto* storage_ptr=static_cast<Chunk::Backing*>(chunk_->memory.allocate(sizeof(Chunk::Backing),alignof(Chunk::Backing)));
-            try {
-                std::construct_at(storage_ptr,ExperiencePage::create(path,identity,
-                    std::span<const ExperienceEvidence>(chunk_->data.load(),chunk_->used),chunk_->memory,storage),rules_,
-                    std::span<const ExperienceEvidence>(chunk_->data.load(),chunk_->used));
-            }catch(...){chunk_->memory.deallocate(storage_ptr,sizeof(Chunk::Backing),alignof(Chunk::Backing));throw;}
-            prepared_=storage_ptr;
+            if(entries_.empty())throw std::logic_error("empty page preparation");
+            std::pmr::vector<ExperienceEvidence> values(&memory_);
+            std::size_t count=0;
+            for(const auto& entry:entries_){
+                if(entry.prepared)throw std::logic_error("repeated page preparation");
+                count+=entry.chunk->used;
+            }
+            if(count>ExperiencePage::capacity)throw std::logic_error("page preparation capacity");
+            values.reserve(count);
+            for(const auto& entry:entries_){
+                const auto* data=entry.chunk->data.load();
+                values.insert(values.end(),data,data+entry.chunk->used);
+            }
+            auto page=std::allocate_shared<Chunk::PageStorage>(
+                std::pmr::polymorphic_allocator<Chunk::PageStorage>(&memory_),
+                ExperiencePage::create(path,identity,values,memory_,storage),rules_);
+            std::size_t begin=0;
+            for(auto& entry:entries_){
+                auto* prepared=static_cast<Chunk::Backing*>(memory_.allocate(sizeof(Chunk::Backing),alignof(Chunk::Backing)));
+                try {
+                    std::construct_at(prepared,page,begin,std::span<const ExperienceEvidence>(values).subspan(begin,entry.chunk->used));
+                }catch(...){memory_.deallocate(prepared,sizeof(Chunk::Backing),alignof(Chunk::Backing));throw;}
+                entry.prepared=prepared;begin+=entry.chunk->used;
+            }
         }
-        // Serialized owner call only, after worker join and outside Main prepare.
+        // Serialized owner publication after worker join. Validate the entire
+        // batch before attaching any backing; no allocation or I/O follows.
         bool commit(){
-            if(!chunk_||!prepared_||chunk_->backing)throw std::logic_error("invalid page publication");
-            chunk_->backing=std::exchange(prepared_,nullptr);
-            const auto action=architecture::kernel::metadata_release(true,chunk_.use_count()-1,true);
-            const bool release=action==architecture::kernel::MetadataRelease::release;
-            if(release)chunk_->release();
-            chunk_.reset();return release;
+            if(entries_.empty())throw std::logic_error("empty page publication");
+            for(const auto& entry:entries_)
+                if(!entry.prepared||entry.chunk->backing)throw std::logic_error("invalid page publication");
+            bool released=false;
+            for(auto& entry:entries_){
+                entry.chunk->backing=std::exchange(entry.prepared,nullptr);
+                const auto action=architecture::kernel::metadata_release(true,entry.chunk.use_count()-1,true);
+                if(action==architecture::kernel::MetadataRelease::release){entry.chunk->release();released=true;}
+            }
+            entries_.clear();return released;
         }
     };
+    // Main supplies a bounded set of immutable singleton connections under
+    // one policy. This changes physical placement only, never their identity.
+    [[nodiscard]] static std::optional<PagePreparation> prepare_small_pages(
+        std::span<const ExperienceSequence* const> sources,
+        const architecture::kernel::EvidenceRules& rules,MemoryBudget& memory) {
+        PagePreparation prepared(memory,rules);
+        for(const auto* source:sources){
+            if(&source->memory_!=&memory)throw std::logic_error("shared page budget mismatch");
+            if(source->size_!=1)continue;
+            const auto& chunk=source->chunks_.front();
+            if(chunk->backing||!chunk->data.load())continue;
+            if(architecture::kernel::metadata_release(chunk->used==chunk->capacity,chunk.use_count(),false)!=
+                architecture::kernel::MetadataRelease::persist_then_release)continue;
+            if(prepared.entries_.size()==ExperiencePage::capacity)break;
+            prepared.entries_.push_back({chunk});
+        }
+        const auto count=prepared.entries_.size();
+        // Include the shared object/control-block and conservative path storage.
+        // Keep single-page placement's core cost gate; no forced eviction.
+        const auto overhead=sizeof(Chunk::PageStorage)+2*sizeof(void*)+1024;
+        if(!count||!architecture::kernel::metadata_page_beneficial(false,
+            count*sizeof(ExperienceEvidence),count*sizeof(Chunk::Backing)+overhead))return std::nullopt;
+        return prepared;
+    }
     [[nodiscard]] std::optional<PagePreparation> prepare_page(std::size_t index,
         const architecture::kernel::EvidenceRules& rules) const {
         if(index>=size_)throw std::out_of_range("experience page prepare index");
@@ -194,6 +253,13 @@ public:
         if(action==architecture::kernel::MetadataRelease::retain||!chunk->data.load())return std::nullopt;
         if(action==architecture::kernel::MetadataRelease::release){chunk->release();return std::nullopt;}
         return PagePreparation(chunk,rules);
+    }
+    [[nodiscard]] bool range_resident(std::size_t begin,std::size_t end) const {
+        if(begin>end||end>size_)throw std::out_of_range("experience residency range");
+        if(begin==end)return true;
+        for(auto index=chunk_index(begin);index<=chunk_index(end-1);++index)
+            if(!chunks_[index]->data.load(std::memory_order_acquire))return false;
+        return true;
     }
     [[nodiscard]] std::size_t snapshot_directory_bytes(std::size_t begin,std::size_t end) const {
         if(begin>end||end>size_)throw std::out_of_range("experience snapshot range");
@@ -329,7 +395,7 @@ public:
         // First backing must actually save RAM; tiny segments are retained.
         return action!=architecture::kernel::MetadataRelease::retain&&chunk->data.load()!=nullptr&&
             architecture::kernel::metadata_page_beneficial(chunk->backing!=nullptr,
-                chunk->capacity*sizeof(ExperienceEvidence),sizeof(Chunk::Backing));
+                chunk->capacity*sizeof(ExperienceEvidence),sizeof(Chunk::Backing)+sizeof(Chunk::PageStorage)+2*sizeof(void*));
     }
     [[nodiscard]] bool page_out(std::size_t index,const std::filesystem::path& path,
         const architecture::DigestBytes& identity,const architecture::kernel::EvidenceRules& rules,
@@ -345,8 +411,11 @@ public:
             using Backing=Chunk::Backing;
             auto* backing=static_cast<Backing*>(memory_.allocate(sizeof(Backing),alignof(Backing)));
             try {
-                std::construct_at(backing,ExperiencePage::create(path,identity,
-                    std::span<const ExperienceEvidence>(chunk->resident(),chunk->used),memory_,storage),rules,
+                auto page=std::allocate_shared<Chunk::PageStorage>(
+                    std::pmr::polymorphic_allocator<Chunk::PageStorage>(&memory_),
+                    ExperiencePage::create(path,identity,
+                        std::span<const ExperienceEvidence>(chunk->resident(),chunk->used),memory_,storage),rules);
+                std::construct_at(backing,std::move(page),0,
                     std::span<const ExperienceEvidence>(chunk->resident(),chunk->used));
             }catch(...){memory_.deallocate(backing,sizeof(Backing),alignof(Backing));throw;}
             chunk->backing=backing;

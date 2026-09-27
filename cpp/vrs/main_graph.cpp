@@ -17,6 +17,25 @@ MainGraph::MainGraph(MemoryBudget& memory, double initial_strength, const Eviden
     if (!workers_) throw std::invalid_argument("Main merge worker count must be positive");
     if (!finite_count(initial_strength)) throw std::invalid_argument("invalid Main initial strength");
 }
+std::optional<ExperienceSequence::PagePreparation> MainGraph::prepare_small_pages(
+    DigestBytes& cursor,bool& exhausted) const {
+    std::array<const ExperienceSequence*,ExperiencePage::capacity> sources{};
+    std::size_t count=0;exhausted=false;
+    while(count<sources.size()){
+        const auto key=connections_.next_key(cursor);
+        if(!key){exhausted=true;break;}
+        sources[count++]=&connections_.find(*key)->connection.experiences_;
+        cursor=*key;
+        std::size_t byte=cursor.size();
+        while(byte){
+            const auto value=std::to_integer<unsigned>(cursor[--byte]);
+            cursor[byte]=std::byte((value+1)&255);
+            if(value!=255)break;
+        }
+        if(byte==0&&cursor[0]==std::byte{0}){exhausted=true;break;}
+    }
+    return ExperienceSequence::prepare_small_pages(std::span(sources).first(count),rules_,memory_);
+}
 MainGraph::PortalIndexStats MainGraph::portal_index_stats() const noexcept {
     PortalIndexStats result{cues_.size(),contexts_.size(),0,0};
     for(const auto& [key,ranges]:cues_){(void)key;result.cue_ranges+=ranges.size();}

@@ -39,6 +39,9 @@ public:
         if(!entry)throw std::out_of_range("Main page prepare connection");
         return entry->connection.prepare_page(index);
     }
+    // Bounded idle scan; cursor advances over at most one page of connections.
+    [[nodiscard]] std::optional<ExperienceSequence::PagePreparation> prepare_small_pages(
+        architecture::DigestBytes& cursor,bool& exhausted) const;
     [[nodiscard]] std::optional<architecture::DigestBytes> next_connection(const architecture::DigestBytes& lower) const noexcept {
         return connections_.next_key(lower);
     }

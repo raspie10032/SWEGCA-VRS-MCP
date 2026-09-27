@@ -151,19 +151,29 @@ ExperienceEvidence ExperiencePage::read(std::size_t index,
 }
 std::pmr::vector<ExperienceEvidence> ExperiencePage::load(
     const architecture::kernel::EvidenceRules& rules,MemoryBudget& memory) const {
+    return load_range(0,count_,rules,memory);
+}
+std::pmr::vector<ExperienceEvidence> ExperiencePage::load_range(std::size_t begin,std::size_t count,
+    const architecture::kernel::EvidenceRules& rules,MemoryBudget& memory) const {
+    if(begin>count_||count>count_-begin)throw std::out_of_range("experience page range");
     auto stored=block_.read(location_,location_.bytes,memory);
-    std::pmr::vector<ExperienceEvidence> values(&memory);values.reserve(count_);
-    for(std::size_t n=0;n<count_;++n)values.push_back(decode(n,rules,stored));
+    std::pmr::vector<ExperienceEvidence> values(&memory);values.reserve(count);
+    for(std::size_t n=0;n<count;++n)values.push_back(decode(begin+n,rules,stored));
     return values;
 }
 void ExperiencePage::restore_into(ExperienceEvidence* output,std::size_t count,
     const architecture::kernel::EvidenceRules& rules,MemoryBudget& memory) const {
     if(count!=count_)throw std::runtime_error("experience page count changed");
+    restore_range_into(output,0,count,rules,memory);
+}
+void ExperiencePage::restore_range_into(ExperienceEvidence* output,std::size_t begin,std::size_t count,
+    const architecture::kernel::EvidenceRules& rules,MemoryBudget& memory) const {
+    if(begin>count_||count>count_-begin)throw std::out_of_range("experience page restore range");
     auto stored=block_.read(location_,location_.bytes,memory);
     std::size_t constructed=0;
     try {
         for(;constructed<count;++constructed)
-            std::construct_at(output+constructed,decode(constructed,rules,stored));
+            std::construct_at(output+constructed,decode(begin+constructed,rules,stored));
     } catch(...) {
         std::destroy_n(output,constructed);
         throw;

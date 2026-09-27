@@ -302,6 +302,63 @@ int main(){
     CHECK(memory.used()==cold);
    }
   }
+  {
+   // Multiple independent singleton sequences share one physical page while
+   // retaining exact offsets, outcomes, selection and late snapshot ownership.
+   const auto baseline=storage.used();
+   std::optional<ExperienceSequence::Snapshot> retained;
+   {
+    std::vector<std::unique_ptr<ExperienceSequence>> sequences;
+    std::array<const ExperienceSequence*,64> sources{};
+    for(unsigned n=0;n<sources.size();++n){
+     auto sequence=std::make_unique<ExperienceSequence>(memory);
+     sequence->prepare_append();sequence->commit_append(values[n]);
+     sources[n]=sequence.get();sequences.push_back(std::move(sequence));
+    }
+    CHECK(!ExperienceSequence::prepare_small_pages(std::span(sources).first(1),rules,memory));
+    const auto resident=memory.used();
+    {
+     auto failed=ExperienceSequence::prepare_small_pages(sources,rules,memory);CHECK(failed.has_value());
+     body_write_remaining=0;
+     rejects<std::system_error>([&]{failed->write(root/"group-failed",id(90),&storage);});
+     body_write_remaining=-1;
+    }
+    CHECK(memory.used()==resident&&storage.used()==baseline&&!std::filesystem::exists(root/"group-failed"));
+    {
+     auto prepared=ExperienceSequence::prepare_small_pages(sources,rules,memory);CHECK(prepared.has_value());
+     // A pin acquired after scheduling must prevent this chunk's release.
+     auto pinned=sequences[0]->pin(0);
+     prepared->write(root/"group",id(91),&storage);
+     const auto before_reads=read_calls.load();CHECK(prepared->commit());
+     CHECK(read_calls.load()==before_reads&&pinned->original()==values[0].original());
+     CHECK(sequences[0]->range_resident(0,1)&&!sequences[1]->range_resident(0,1));
+    }
+    CHECK(sequences[0]->page_out(0,root/"unused-group",id(92),rules,&storage));
+    const auto cold=memory.used();CHECK(cold<resident);
+    for(unsigned n=0;n<sources.size();++n){
+     const auto restored=sequences[n]->read(0);
+     CHECK(restored.original()==values[n].original()&&restored.cue()==values[n].cue());
+     CHECK(restored.value().outcome==values[n].value().outcome&&restored.value().axis==values[n].value().axis);
+     CHECK(memory.used()==cold&&!sequences[n]->range_resident(0,1));
+     auto snapshot=sequences[n]->snapshot(memory);const auto before_reads=read_calls.load();
+     unsigned visits=0;
+     snapshot.visit_replay_candidates(id(2),0.5,memory,[&](std::size_t index,const ReplayCandidate& candidate){
+      ++visits;CHECK(index==0&&candidate.original==values[n].original()&&candidate.strength==0.5);
+     });
+     CHECK(visits==1&&read_calls.load()==before_reads);
+    }
+    {auto reader=sequences[31]->reader();CHECK(reader[0].original()==values[31].original());}
+    CHECK(memory.used()==cold);
+    CHECK((*sequences[63])[0].original()==values[63].original());
+    CHECK(memory.used()==cold+sizeof(ExperienceEvidence));
+    CHECK(sequences[63]->page_out(0,root/"unused-group",id(92),rules,&storage));
+    CHECK(memory.used()==cold);
+    retained.emplace(sequences[17]->snapshot(memory));
+   }
+   CHECK(std::filesystem::exists(root/"group")&&storage.used()>baseline);
+   CHECK(retained->read(0).original()==values[17].original());
+   retained.reset();CHECK(!std::filesystem::exists(root/"group")&&storage.used()==baseline);
+  }
   CHECK(!std::filesystem::exists(root/"segment"));
   {
    alignas(StorageBudget) std::byte slot[sizeof(StorageBudget)];
@@ -317,6 +374,9 @@ int main(){
    CHECK(!std::filesystem::exists(root/"late-release"));
    std::destroy_at(budget);
   }
+  CHECK(recall_range_receipt(1,360,24,false));
+  CHECK(!recall_range_receipt(1,360,24,true));
+  CHECK(!recall_range_receipt(0,360,24,false));
   CHECK(!metadata_pressure(9,10,false)&&!metadata_pressure(10,10,false));
   CHECK(metadata_pressure(11,10,false)&&!metadata_pressure(11,10,true));
   CHECK(!metadata_page_beneficial(false,10,10)&&metadata_page_beneficial(false,11,10));

@@ -292,6 +292,18 @@ std::optional<StoredExperience> Runtime::read_cognition_record(const DigestBytes
     return revision?found->second.store->read_cognition_revision(input,*revision):
         found->second.store->read_cognition(input);
 }
+void Runtime::schedule_page(ExperienceSequence::PagePreparation&& prepared,const DigestBytes& seed) {
+    page_work_.emplace(std::move(prepared));
+    page_work_->thread=std::jthread([this,seed]{
+        auto& job=*page_work_;
+        try {
+            const auto [path,identity]=metadata_destination(root_,seed);
+            job.prepared.write(path,identity,&storage_);
+        }
+        catch(...){job.failure=std::current_exception();}
+        job.done.store(true,std::memory_order_release);
+    });
+}
 bool Runtime::maintain_memory() {
     if(page_work_){
         if(!page_work_->done.load(std::memory_order_acquire))return true;
@@ -305,11 +317,28 @@ bool Runtime::maintain_memory() {
         catch(...){page_work_.reset();throw;}
         page_work_.reset();
     }
+    if(page_pass_complete_){
+        page_pass_complete_=false;small_page_pass_=false;page_cursor_={};page_index_=0;return false;
+    }
     const auto target=config_.memory_target_bytes?config_.memory_target_bytes:memory_.limit()-memory_.limit()/4;
     if(!metadata_pressure(memory_.used(),target,work_.has_value()))return false;
     const auto& graph=main_.graph();
+    if(small_page_pass_){
+        try {
+            bool exhausted=false;
+            auto prepared=graph.prepare_small_pages(page_cursor_,exhausted);
+            if(exhausted)page_pass_complete_=true;
+            if(prepared){
+                const auto seed=page_identity(page_cursor_,0);
+                schedule_page(std::move(*prepared),seed);
+            }
+            return true;
+        }catch(const std::bad_alloc&){page_work_.reset();return false;}
+        catch(const StorageLimit&){page_work_.reset();return false;}
+        catch(...){page_work_.reset();throw;}
+    }
     const auto key=graph.next_connection(page_cursor_);
-    if(!key){page_cursor_={};page_index_=0;return false;}
+    if(!key){page_cursor_={};page_index_=0;small_page_pass_=true;return true;}
     if(*key!=page_cursor_){page_cursor_=*key;page_index_=0;}
     const auto index=page_index_;
     const bool candidate=graph.page_candidate(*key,page_index_);
@@ -321,23 +350,14 @@ bool Runtime::maintain_memory() {
             page_cursor_[n-1]=std::byte((value+1)&255);
             if(value!=255)return true;
         }
-        return false;
+        small_page_pass_=true;return true;
     }
     if(candidate){
         try {
             auto prepared=graph.prepare_page(*key,index);
             if(prepared){
                 const auto seed=page_identity(*key,index);
-                page_work_.emplace(std::move(*prepared));
-                page_work_->thread=std::jthread([this,seed]{
-                    auto& job=*page_work_;
-                    try {
-                        const auto [path,identity]=metadata_destination(root_,seed);
-                        job.prepared.write(path,identity,&storage_);
-                    }
-                    catch(...){job.failure=std::current_exception();}
-                    job.done.store(true,std::memory_order_release);
-                });
+                schedule_page(std::move(*prepared),seed);
                 return true;
             }
         }catch(const std::bad_alloc&){page_work_.reset();return false;}

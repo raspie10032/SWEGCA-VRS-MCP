@@ -19,6 +19,8 @@ public:
     [[nodiscard]] std::size_t size() const noexcept{return count_;}
     [[nodiscard]] ExperienceEvidence read(std::size_t,
         const architecture::kernel::EvidenceRules&,MemoryBudget&) const;
+    [[nodiscard]] std::pmr::vector<ExperienceEvidence> load_range(std::size_t begin,std::size_t count,
+        const architecture::kernel::EvidenceRules&,MemoryBudget&) const;
     [[nodiscard]] std::pmr::vector<ExperienceEvidence> load(
         const architecture::kernel::EvidenceRules&,MemoryBudget&) const;
 private:
@@ -29,6 +31,8 @@ private:
         const architecture::kernel::EvidenceRules&,MemoryBudget&,StorageBudget&);
     // Constructs into unpublished raw segment storage; destroys the prefix on
     // failure. No partially authenticated/decoded segment reaches a reader.
+    void restore_range_into(ExperienceEvidence*,std::size_t begin,std::size_t count,
+        const architecture::kernel::EvidenceRules&,MemoryBudget&) const;
     void restore_into(ExperienceEvidence*,std::size_t,
         const architecture::kernel::EvidenceRules&,MemoryBudget&) const;
     [[nodiscard]] ExperienceEvidence decode(std::size_t,

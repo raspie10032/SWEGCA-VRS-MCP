@@ -569,6 +569,55 @@ int main(){
   }
  }
  {
+  const auto path=root/"singleton-pressure";fs::create_directory(path);
+  auto cfg=config;cfg.memory_target_bytes=1;
+  std::array<ExperienceLocation,64> originals;
+  const auto input_text=[](unsigned n){return "singleton pressure input "+std::to_string(n);};
+  {
+   auto host=Runtime::create(path,cfg,memory);host.start_session(id(238),"singleton-source");
+   for(unsigned n=0;n<originals.size();++n){
+    const auto value=input_text(n);
+    originals[n]=host.receive({n,n,"singleton-source","user","text/plain",std::as_bytes(std::span(value))},7,n).recorded.original;
+   }
+   host.end_session();CHECK(host.work(7,64)==1);host.start_session(id(239),"singleton-reader");
+   const auto generation=host.main().graph().generation();const auto resident=memory.used();
+   unsigned steps=0;
+   while(host.maintain_memory()){CHECK(++steps<5000);std::this_thread::sleep_for(std::chrono::milliseconds(1));}
+   CHECK(memory.used()<resident&&host.main().graph().generation()==generation);
+   CHECK(std::distance(fs::directory_iterator(path/"metadata-pages"),fs::directory_iterator{})==1);
+   const auto cold=memory.used();
+   for(unsigned n=0;n<originals.size();++n){
+    const auto value=input_text(n);const auto r=reads,w=writes;
+    auto recalled=host.input("text/plain",std::as_bytes(std::span(value)));
+    CHECK(reads==r&&writes==w&&!recalled.temporary()&&recalled.matches().size()==1);
+    CHECK(host.select_replay(recalled)==0&&reads==r);
+    CHECK(host.replay(recalled,0).location()==originals[n]);
+   }
+   CHECK(memory.used()==cold);
+   {
+    const auto r=reads,w=writes;
+    auto contextual=host.input("text/followup",content);
+    CHECK(contextual.key_kind()==FamiliarityKey::context&&contextual.matches().size()==64);
+    CHECK(reads==r&&writes==w);
+    const auto chosen=host.select_replay(contextual);CHECK(chosen.has_value()&&reads==r);
+    CHECK(host.replay(contextual,*chosen).location()==originals.back());
+   }
+   CHECK(memory.used()==cold);
+   // A subsequent real merge reads sealed slices and retains all old originals.
+   const auto value=input_text(17);
+   (void)host.receive({0,100,"singleton-reader","user","text/plain",std::as_bytes(std::span(value))},7,100);
+   host.end_session();CHECK(host.work(7,100)==1);
+   host.start_session(id(237),"singleton-after-merge");
+   auto recalled=host.input("text/plain",std::as_bytes(std::span(value)));
+   CHECK(recalled.matches().size()==2&&host.replay(recalled,0).location()==originals[17]);
+  }
+  {
+   auto host=Runtime::open(path,cfg,memory);host.resume_session(id(237));
+   const auto value=input_text(17);auto recalled=host.input("text/plain",std::as_bytes(std::span(value)));
+   CHECK(recalled.matches().size()==2&&host.replay(recalled,0).location()==originals[17]);
+  }
+ }
+ {
   const auto path=root/"pressure";fs::create_directory(path);
   auto cfg=config;cfg.memory_target_bytes=1;
   auto host=Runtime::create(path,cfg,memory);host.start_session(id(240),"pressure-source");

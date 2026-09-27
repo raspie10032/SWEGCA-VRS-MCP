@@ -554,7 +554,8 @@ InputRecall ExperienceRouter::recall_cue(const DigestBytes& cue, RecallScope sco
                 if(directory>std::numeric_limits<std::size_t>::max()-sizeof(InputRecall::Context))
                     throw std::overflow_error("Recall snapshot cost overflow");
                 if(found->second.size()==1||recall_range_receipt(end-begin,
-                    sizeof(InputRecall::Context)+directory,sizeof(InputRecall::Address)))
+                    sizeof(InputRecall::Context)+directory,sizeof(InputRecall::Address),
+                    connection->range_resident(begin,end)))
                     result.append_range(match,boundary,*connection,memory_,begin,end);
                 else for(auto index=begin;index<end;++index)
                     result.append(match,index,boundary,connection->pin_experience(index));

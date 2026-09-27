@@ -64,8 +64,11 @@ enum class ReplayPreference { invalid, keep, replace };
 // bounded snapshot metadata with individual address pins without multiplication
 // overflow; the caller accounts for its own VRS storage representation.
 [[nodiscard]] constexpr bool recall_range_receipt(std::size_t count,std::size_t range_bytes,
-    std::size_t pin_bytes) noexcept {
-    return pin_bytes && count >= range_bytes/pin_bytes + (range_bytes%pin_bytes!=0);
+    std::size_t pin_bytes,bool pins_resident=true) noexcept {
+    // Cold metadata stays as a bounded address range until selected Replay;
+    // constructing individual pins would perform speculative disk reads.
+    return count && (!pins_resident || (pin_bytes &&
+        count >= range_bytes/pin_bytes + (range_bytes%pin_bytes!=0)));
 }
 // A Main-owned context linking distinct connections may extend a continued
 // memory. The caller supplies recorded index membership, never a truth score.
