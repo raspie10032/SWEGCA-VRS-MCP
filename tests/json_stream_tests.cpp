@@ -177,5 +177,20 @@ int main(){
   bool valid=true;for(unsigned i=0;i<size;++i)valid&=unsigned(digit(text[2*i])*16+digit(text[2*i+1]))==i%256;
   CHECK(valid);
  }
+ {
+  swegca::vrs::MemoryBudget scratch(4096);
+  constexpr std::array<std::string_view,2> path{"params","input"};
+  const std::string raw="{\"params\":{\"inpu\\u0074\":[\""+std::string(1<<20,'x')+"\"]},\"tail\":true}";
+  const auto source=locate_json_member(raw,scratch,path);
+  CHECK(source.bytes(raw).size()==(1<<20)+4&&source.bytes(raw).front()=='[');
+  CHECK(scratch.used()==0);
+  CHECK(locate_json_member(" null ",scratch,{}).bytes(" null ")=="null");
+  for(const auto bad:{R"({"params":{}})",R"({"params":{"input":[],"inpu\u0074":[]}})",
+       R"({"params":{"input":[]},"tail":[1,]})",R"({"params":{"input":[]}} false)",
+       R"({"params":{"input":["\uD800"]}})"}){
+   bool rejected=false;try{(void)locate_json_member(bad,scratch,path);}catch(const std::invalid_argument&){rejected=true;}
+   CHECK(rejected&&scratch.used()==0);
+  }
+ }
  std::printf("JSON stream tests: %u checks passed\n",checks);
 }

@@ -197,5 +197,32 @@ int main(){
   rejects([&]{(void)replay_context(std::move(bad),ack,memory);});
  }
  CHECK(memory.used()==0);
+ for(const bool empty:{false,true}){
+  AppServerWire wire(memory,1,1);wire.attach("a",0);
+  const std::string prefix=R"( {"id":9,"method":"turn/start", "params":{"threadId":"a","inpu\u0074":[)";
+  const std::string input=empty?"  ":R"( {"type":"text","text":"keep\u0020escape","unknown":1e+09} )";
+  const std::string suffix=R"(],"future":{"input":"[not the array]"}}} )";
+  const auto native=prefix+input+suffix;
+  auto delivery=wire.prepare(native,RpcSender::client,1);
+  const std::string inserted=std::string(R"({"type":"text","text":"recall\u000a한글"})")+(empty?"":",");
+  const auto exact=native.size()+inserted.size();
+  rejects([&]{wire.include_context(delivery,"recall\n한글",exact-1);});
+  wire.include_context(delivery,"recall\n한글",exact);wire.recorded(delivery);
+  CHECK(wire.forward(delivery)==prefix+inserted+input+suffix);
+  CHECK(delivery.event().native_bytes()==native);
+ }
+ CHECK(memory.used()==0);
+ {
+  AppServerWire wire(memory,1,1);wire.attach("a",0);
+  const auto native=std::string(R"({"id":1,"method":"turn/start","params":{"threadId":"a","input":[{"type":"text","text":")")+
+      std::string(1<<18,'x')+R"("}]}})";
+  auto delivery=wire.prepare(native,RpcSender::client,1);
+  const auto held_bytes=memory.limit()-memory.used()-native.size()-4096;
+  auto* held=memory.allocate(held_bytes);
+  wire.include_context(delivery,"remembered",native.size()+128);
+  memory.deallocate(held,held_bytes);wire.recorded(delivery);
+  CHECK(delivery.event().native_bytes()==native&&wire.forward(delivery).size()>native.size());
+ }
+ CHECK(memory.used()==0);
  std::printf("app-server wire owner tests: %u checks passed\n",checks);
 }

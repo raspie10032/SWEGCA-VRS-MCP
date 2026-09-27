@@ -64,7 +64,7 @@ void utf8(std::string_view text) {
 }
 class Parser {
 public:
-    Parser(std::string_view text,std::pmr::memory_resource& memory,std::size_t depth,std::span<const std::string_view> path={},JsonMemberSource* source=nullptr,bool selected_only=false):text_(text),memory_(memory),depth_(depth),path_(path),source_(source),selected_only_(selected_only){utf8(text);}
+    Parser(std::string_view text,std::pmr::memory_resource& memory,std::size_t depth,std::span<const std::string_view> path={},JsonMemberSource* source=nullptr,bool selected_only=false,bool retain_selected=true):text_(text),memory_(memory),depth_(depth),path_(path),source_(source),selected_only_(selected_only),retain_selected_(retain_selected){utf8(text);}
     Json parse(){auto result=value(0);space();if(pos_!=text_.size())invalid();
         if(selected_only_){if(!selected_)throw std::invalid_argument("missing JSON member path");return std::move(*selected_);}
         return result;
@@ -72,7 +72,7 @@ public:
 private:
     std::string_view text_;std::pmr::memory_resource& memory_;std::size_t depth_,pos_=0;
     std::span<const std::string_view> path_;JsonMemberSource* source_;
-    bool selected_only_;std::optional<Json> selected_;
+    bool selected_only_,retain_selected_;std::optional<Json> selected_;
     char peek()const{return pos_<text_.size()?text_[pos_]:'\0';}
     char take(){if(pos_==text_.size())invalid();return text_[pos_++];}
     void space(){while(peek()==' '||peek()=='\t'||peek()=='\r'||peek()=='\n')++pos_;}
@@ -120,9 +120,12 @@ private:
     Json value(std::size_t depth,bool matched=true,bool retain=false){
         space();const auto start=pos_;
         const bool target=matched&&depth==path_.size();
-        auto out=value_body(depth,matched,retain||!selected_only_||target);
+        auto out=value_body(depth,matched,retain||!selected_only_||(target&&retain_selected_));
         if(source_&&matched&&depth==path_.size())*source_={start,pos_-start};
-        if(selected_only_&&target){selected_.emplace(std::move(out));return Json(&memory_);}
+        if(selected_only_&&target){
+            if(retain_selected_)selected_.emplace(std::move(out));else selected_.emplace(&memory_);
+            return Json(&memory_);
+        }
         return out;
     }
     Json value_body(std::size_t depth,bool matched,bool retain){
@@ -246,6 +249,11 @@ Json parse_json_member(std::string_view text,std::pmr::memory_resource& memory,
 Json parse_json(std::string_view text,std::pmr::memory_resource& memory,std::size_t depth){return Parser(text,memory,depth).parse();}
 Json parse_json_selected(std::string_view text,std::pmr::memory_resource& memory,
     std::span<const std::string_view> path,std::size_t depth){return Parser(text,memory,depth,path,nullptr,true).parse();}
+JsonMemberSource locate_json_member(std::string_view text,std::pmr::memory_resource& memory,
+    std::span<const std::string_view> path,std::size_t depth){
+    JsonMemberSource source;
+    (void)Parser(text,memory,depth,path,&source,true,false).parse();return source;
+}
 std::pmr::string encode_json(const Json& value,std::pmr::memory_resource& memory){std::pmr::string out(&memory);out.reserve(encoded_size(value));encode(out,value);return out;}
 void append_json(std::pmr::string& destination,const Json& value,std::size_t suffix_capacity){
     destination.reserve(add_size(add_size(destination.size(),encoded_size(value)),suffix_capacity));encode(destination,value);

@@ -143,21 +143,18 @@ public:
         if(delivery.sender_!=RpcSender::client || delivery.event().kind()!=swegca::architecture::kernel::AgentEventKind::input)
             throw std::invalid_argument("Replay context requires client input");
         if(context.empty()||delivery.projection_)throw std::invalid_argument("context already set or empty");
-        auto fields=parse_json(delivery.event().native_bytes(),memory_);
-        const auto field=[](Json& object,std::string_view key)->Json&{
-            for(std::size_t i=0;i<object.keys.size();++i)if(object.keys[i]==key)return object.values[i];
-            throw std::invalid_argument("input field missing");
-        };
-        auto& input=field(field(fields,"params"),"input");
-        if(input.kind!=Json::Kind::array)throw std::invalid_argument("input array required");
-        Json item(&memory_);item.kind=Json::Kind::object;
-        Json type(&memory_);type.kind=Json::Kind::string;type.scalar="text";
-        Json text(&memory_);text.kind=Json::Kind::string;text.scalar=context;
-        item.keys.emplace_back("type");item.values.push_back(std::move(type));
-        item.keys.emplace_back("text");item.values.push_back(std::move(text));
-        input.values.insert(input.values.begin(),std::move(item));
-        auto projected=encode_json(fields,memory_);
-        if(projected.size()>limit)throw std::length_error("Replay context exceeds forwarding frame budget");
+        const auto native=delivery.event().native_bytes();
+        constexpr std::array<std::string_view,2> path{"params","input"};
+        const auto source=locate_json_member(native,memory_,path);
+        if(source.bytes(native).front()!='[')throw std::invalid_argument("input array required");
+        std::pmr::string item("{\"type\":\"text\",\"text\":",&memory_);
+        append_json_string(item,context,2);item+='}';
+        if(!delivery.event().fields().at("params").at("input").values.empty())item+=',';
+        if(native.size()>limit||item.size()>limit-native.size())
+            throw std::length_error("Replay context exceeds forwarding frame budget");
+        std::pmr::string projected(&memory_);projected.reserve(native.size()+item.size());
+        projected.append(native.substr(0,source.offset+1));projected.append(item);
+        projected.append(native.substr(source.offset+1));
         delivery.projection_.emplace(std::move(projected));
     }
     [[nodiscard]] std::string_view forward(const Delivery& delivery) const{

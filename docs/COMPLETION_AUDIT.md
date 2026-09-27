@@ -1107,3 +1107,21 @@ Main graph 4,221개, 새 MCP subprocess 3,771개 검사 통과. 실패 주입 �
 불변과 재시도, 기존 8축 producer 제한·중복·기권/만료·suffix digest 회귀를
 포함한다. CPU 6,7/max2 빌드 유지. seen/group/producer의 본래 cardinality 저장,
 전체 Main 인덱스의 규모 제한과 전체 4GB/1ms 목표는 아직 해결되지 않았다.
+
+
+에이전트 회상 문맥 전달에서 원래 native JSON 전체를 다시 객체화·재작성하던
+부분을 제거했다. 기존 파서에 전체 문법/UTF-8/중복 키를 검증하면서 지정 경로의
+원문 위치만 반환하는 기능을 추가했다. include_context는 params.input 배열의
+검증된 시작 위치에 회상 text 항목만 삽입한다. 원래 입력·공백·escape·숫자 표현·
+미지 필드의 모든 바이트는 그대로 유지하며 VRS의 원경험/요청 추적은 원래 native
+bytes를 계속 사용한다. 프레임 상한은 실제 전달할 총 바이트에 적용하고 실패한
+projection은 설치하지 않는다. Recall 이전이나 코어 판정 경로에 작업을 넣지 않았다.
+
+1MiB 값의 위치 탐색이 4KiB scratch 예산으로 성공한다. 빈/비어 있지 않은 배열,
+escaped member 이름, 같은 이름의 문자열, 미지 필드/숫자 표기 원문 보존,
+정확한 프레임 상한과 실패 후 재시도, 256KiB 입력에서 최종 전달 버퍼+4KiB만
+남은 추가 예산으로 문맥 삽입을 검사했다. 잘못된 tail·중복 escaped key·고립
+surrogate·누락 경로는 거절한다. JSON 정상/스칼라 각 13,322개, wire owner
+135개, 새 host/proxy를 사용한 MCP subprocess 3,935개 검사 통과. 객체 키 폭에
+따른 검증 메모리와 최종 전달 프레임 버퍼는 남는다. 실제 설치 앱에서 모든
+이벤트/첨부 본문이 수집된다는 증거 또는 전체 4GB/1ms 달성은 아니다.

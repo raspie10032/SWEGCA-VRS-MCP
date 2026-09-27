@@ -36,6 +36,9 @@ struct JsonMemberSource {
 // those keys follows object width, not the size of skipped arrays/string values.
 [[nodiscard]] Json parse_json_selected(std::string_view text,std::pmr::memory_resource&,
     std::span<const std::string_view> path,std::size_t max_depth=64);
+// Validate all syntax and return only a source range, without retaining values.
+[[nodiscard]] JsonMemberSource locate_json_member(std::string_view text,std::pmr::memory_resource&,
+    std::span<const std::string_view> path,std::size_t max_depth=64);
 [[nodiscard]] std::pmr::string encode_json(const Json&,std::pmr::memory_resource&);
 // Append directly to an exclusively owned destination. The caller must discard
 // the unfinished message on failure; value must not alias the destination.
