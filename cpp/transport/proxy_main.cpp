@@ -220,7 +220,23 @@ int main(int argc,char** argv){
                             auto replay=call(stream,"proxy/context/"+std::to_string(++serial),"tools/call",params,memory);
                             auto& result=mutable_field(replay,"result");
                             if(result.find("isError"))throw std::runtime_error("VRS Replay context unavailable");
-                            auto context=replay_context(std::move(mutable_field(result,"structuredContent")),body,memory);
+                            auto& packet=mutable_field(result,"structuredContent");
+                            std::optional<Json> observation;
+                            if(const auto* available=packet.find("relatedAvailable")){
+                                if(available->kind!=Json::Kind::boolean)
+                                    throw std::runtime_error("invalid observation availability");
+                                if(available->scalar=="true"){
+                                    if(serial==UINT64_MAX)throw std::overflow_error("proxy request IDs exhausted");
+                                    const auto query="{\"name\":\"vrs_replay\",\"arguments\":{\"receipt\":"+
+                                        quote_json(body.at("receipt").string(),memory)+",\"inputOriginal\":"+
+                                        encode_json(body.at("original"),memory)+",\"related\":true}}";
+                                    auto answer=call(stream,"proxy/observation/"+std::to_string(++serial),"tools/call",query,memory);
+                                    auto& payload=mutable_field(answer,"result");
+                                    if(payload.find("isError"))throw std::runtime_error("VRS observation Replay unavailable");
+                                    observation.emplace(std::move(mutable_field(payload,"structuredContent")));
+                                }
+                            }
+                            auto context=replay_context(std::move(packet),body,memory,observation?&*observation:nullptr);
                             pump.include_context(plan,context,rpc_frame);
                         }else{
                             const auto context=input_context(body,memory);

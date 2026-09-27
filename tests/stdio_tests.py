@@ -1563,8 +1563,10 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     check(updated_cognition['recovery']==initial_cognition['record']['recovery'])
     check(updated_cognition['recovery']['observationBoundary']=='2')
     saved_packet=json.loads(updated_cognition['replayPrefix']+after_response['contentHex']+'"}')
-    check(saved_packet==after_response)
-    check(json.loads(initial_cognition['record']['replayPrefix']+before_response['contentHex']+'"}')==before_response)
+    check(isinstance(after_response['relatedAvailable'],bool))
+    check(saved_packet=={k:v for k,v in after_response.items() if k!='relatedAvailable'})
+    check(json.loads(initial_cognition['record']['replayPrefix']+before_response['contentHex']+'"}')==
+        {k:v for k,v in before_response.items() if k!='relatedAvailable'})
     check('error' in cognition_record(0,updated_revision))
     check('error' in cognition_record(2,identity(250)))
     revision_bytes=sum(p.stat().st_size for p in response_root.rglob('*') if p.is_file())
@@ -2093,6 +2095,42 @@ for line in sys.stdin:
     check(not pathlib.Path(backend_queries[0]['socket']).exists())
     check(not pathlib.Path(backend_queries[0]['socket']).parent.exists())
     check(int(first_input_reference['receipt'])>0 and int(memory_packet['receipt'])>0)
+    # A real proxy must fetch the sealed observation before the backend sees
+    # this input. No related tool call is made by the synthetic backend.
+    auto_proxy=root/'observation-proxy.json'
+    auto_proxy.write_text(json.dumps({**json.loads(desktop_proxy.read_text()),'frameBytes':'16384',
+        'instance':'observation-desktop'}))
+    auto_resources=root/'observation-resources.json'
+    auto_resources.write_text(json.dumps({**json.loads(transport_path.read_text()),'frameBytes':str(16384*6+65536)}))
+    auto_wrapper=root/'observation-wrapper.json'
+    auto_wrapper.write_text(json.dumps({**json.loads(wrapper_config.read_text()),'root':str(bound_root),
+        'resourceConfig':str(auto_resources),'proxyConfig':str(auto_proxy)}))
+    desktop=subprocess.Popen([str(exe.parent/'swegca-codex-wrapper'),'app-server'],
+        env=dict(os.environ,SWEGCA_DESKTOP_CONFIG=str(auto_wrapper)),stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,stderr=subprocess.PIPE,bufsize=0)
+    try:
+        desktop_send({'id':930,'method':'initialize','params':{}})
+        check(desktop_read()=={'id':930,'result':{}})
+        desktop_send({'id':931,'method':'thread/start','params':{}})
+        check(desktop_read()['method']=='thread/started')
+        check(desktop_read()=={'id':931,'result':{}})
+        desktop_send({'id':932,'method':'turn/start','params':{'threadId':'desktop-thread',
+            'input':[{'type':'text','text':'A purpose kept in Main.'}]}})
+        check(desktop_read()=={'id':932,'result':{}})
+        desktop.stdin.close();check(desktop.wait(timeout=10)==0)
+        check(desktop.stdout.read()==b'' and desktop.stderr.read()==b'')
+    finally:
+        if desktop.poll() is None:desktop.terminate();desktop.wait(timeout=10)
+    forwarded=next(json.loads(line) for line in captured_inputs.read_text().splitlines() if json.loads(line).get('id')==932)
+    injected_observation=json.loads(forwarded['params']['input'][0]['text'].split('\n',1)[1])
+    linked=injected_observation['relatedExperience']
+    check(injected_observation['original']==bound_input['original'])
+    check(linked['original']==bound_report['original'] and linked['relatedFrom']==injected_observation['original'])
+    check(linked['assessment']['inputOriginal']==injected_observation['assessment']['inputOriginal'])
+    check(not linked['grantsAuthority'] and linked['parentCognitionUnchanged'])
+    observed=json.loads(linked['content'])['params']['item']['result']['structuredContent']['swegcaObservation']
+    check(observed['outcome']=='refute' and observed['scope']=='archived requirement outcome')
+    check(forwarded['params']['input'][1:]==[{'type':'text','text':'A purpose kept in Main.'}])
     c=Client('open',desktop_root,path);c.initialize()
     for session,protocol,count in (('transport','app-server-connection','9'),('desktop-thread','app-server','9')):
         attached=c.call('swegca/agent/attach/resume',{'provider':'codex','instance':'desktop-fixture',

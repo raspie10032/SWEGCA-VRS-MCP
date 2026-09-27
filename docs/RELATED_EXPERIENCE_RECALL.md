@@ -86,3 +86,30 @@ measurements/related-cognition-core-20260927.txt에 보존한다.
 선택된 부모 원경험에 실제로 연결된 관측 하나를 찾는 기능이다. 전체 요구의 자동
 추출/목록화, 현재 명제와 관측의 일반적인 의미 적합성을 증명하지 않는다. 실제 GUI
 에이전트의 사용 및 전체 대규모 자원/지연·압축 유지 평가는 여전히 남아 있다.
+
+## 에이전트 입력 전달 전 관측 Replay 연결
+
+2026-09-27. 기본 native Replay 응답의 `relatedAvailable`은 기존 적격 관계
+Recall에서 계산한 현재 전송 메타데이터다. 저장된 과거 판정의 일부가 아니며,
+관측의 실제 payload는 이 확인 과정에서 읽지 않는다.
+
+프록시는 부모 원경험을 받은 뒤 이 값이 true이면 같은 receipt/inputOriginal로
+기존 `vrs_replay related=true`를 호출한다. 임의 scope나 후보 주소를 만들지 않고,
+기존 코어가 선택한 관측 하나를 Replay/대조/필요시 Re-evidence한 결과를 받는다.
+이 과정은 첫 사용자 입력 Déjà vu/Recall 이후다. 에이전트의 도구 선택을 기다리지
+않고 전달하지만 전체 입력→Recall 1ms 달성을 주장하지 않는다.
+
+전달 자료에는 부모 판정과 `relatedExperience`의 판정을 각각 담는다.
+관측의 relatedFrom과 부모 original, 현재 inputOriginal, grantsAuthority=false,
+부모 판정 불변 표시를 확인한다. 어긋난 응답이나 조회 실패를 정상 전달로 바꾸지
+않는다. 텍스트/JSON은 UTF-8을 확인해 content로 전달하고 바이너리는 hex를
+유지한다. 현재 사용자 입력 배열은 별도 참고 자료 뒤에 그대로 보존된다.
+
+검증: wire157 / 실제 stdio6724 checks. 실제 wrapper→host→proxy→VRS와
+시험 backend를 연결해, backend가 related 도구를 호출하기 전에 Main의 정확한
+반박 도구 원경험 주소와 원문이 입력에 포함되는지 검사했다. 잘못된 입력/부모
+주소, 권한 표시, 부모 판정 변경 주장, 잘못된 UTF-8은 거부된다.
+
+VRS/프록시 설치 파일과 manifest를 갱신했다. 실제 backend 초기화·MCP 목록·
+같은 cgroup/공유 I/O·정상 종료를 확인했고 모델 호출은 0이다. 현재 사용자 GUI의
+실제 대화와 일반 의미 이해를 검증한 것은 아니다.

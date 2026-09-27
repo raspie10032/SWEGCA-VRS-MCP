@@ -1130,7 +1130,16 @@ private:
         return prefix;
     }
     void replay_payload(std::string_view id,const ReplayedInput& replayed,const InputCognition* cognition=nullptr){
-        payload_result(id,replay_prefix(replayed,cognition),evidence_payload(replayed.original()).content);
+        auto prefix=replay_prefix(replayed,cognition);
+        if(cognition&&!context().native_session.empty())related_availability(prefix,replayed);
+        payload_result(id,prefix,evidence_payload(replayed.original()).content);
+    }
+    void related_availability(std::pmr::string& prefix,const ReplayedInput& parent){
+        const auto references=runtime_.related(parent);
+        constexpr std::string_view content_field=",\"contentHex\":\"";
+        prefix.resize(prefix.size()-content_field.size());
+        prefix+=",\"relatedAvailable\":";prefix+=references.familiar()?"true":"false";
+        prefix+=content_field;
     }
     std::pmr::string scoped_replay_prefix(const Context::ScopedCognition& scoped){
         const auto& cognition=*scoped.cognition;
@@ -1282,6 +1291,7 @@ private:
             prefix.resize(prefix.size()-content_field.size());
             prefix+=",\"restored\":true,\"historical\":false,\"revision\":\"";
             prefix+=hex(*state.restored->revision,memory_);prefix+='"';prefix+=content_field;
+            related_availability(prefix,state.restored->cognition->replayed);
             payload_result(id,prefix,evidence_payload(state.restored->cognition->replayed.original()).content);return;
         }
         if(!context().received||integer(p.at("receipt"))!=context().receipt)throw std::invalid_argument("expired receipt");

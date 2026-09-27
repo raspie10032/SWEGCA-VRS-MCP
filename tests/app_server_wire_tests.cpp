@@ -188,6 +188,25 @@ int main(){
   CHECK(parsed.at("content").string()=="hi\n"&&!parsed.find("contentHex"));
   CHECK(parsed.at("assessment").at("status").scalar=="0");
   CHECK(parsed.at("receipt").string()=="17");
+  const std::string observation=R"({"related":true,"parentCognitionUnchanged":true,"relatedFrom":{"block":"c","digest":"d","offset":"3","bytes":"4"},"original":{"block":"e","digest":"f","offset":"5","bytes":"6"},"media":"text/plain","grantsAuthority":false,"assessment":{"inputOriginal":{"block":"a","digest":"b","offset":"1","bytes":"2"},"agreement":3,"status":2},"contentHex":"6e6f"})";
+  auto linked=parse_json(observation,memory);
+  const auto combined=replay_context(parse_json(packet,memory),ack,memory,&linked);
+  const auto both=parse_json(combined.substr(combined.find('\n')+1),memory);
+  CHECK(both.at("relatedExperience").at("content").string()=="no");
+  CHECK(both.at("relatedExperience").at("assessment").at("status").scalar=="2");
+  CHECK(both.at("assessment").at("status").scalar=="0");
+  for(const auto key:{"grantsAuthority","related","parentCognitionUnchanged"}){
+   linked=parse_json(observation,memory);
+   auto& value=mutable_field(linked,key);value.scalar=value.scalar=="true"?"false":"true";
+   rejects([&]{(void)replay_context(parse_json(packet,memory),ack,memory,&linked);});
+  }
+  linked=parse_json(observation,memory);mutable_field(mutable_field(linked,"relatedFrom"),"digest").scalar="foreign";
+  rejects([&]{(void)replay_context(parse_json(packet,memory),ack,memory,&linked);});
+  linked=parse_json(observation,memory);
+  mutable_field(mutable_field(mutable_field(linked,"assessment"),"inputOriginal"),"digest").scalar="foreign";
+  rejects([&]{(void)replay_context(parse_json(packet,memory),ack,memory,&linked);});
+  linked=parse_json(observation,memory);mutable_field(linked,"contentHex").scalar="ff";
+  rejects([&]{(void)replay_context(parse_json(packet,memory),ack,memory,&linked);});
   auto forged=parse_json(packet,memory);forged.keys.emplace_back("receipt");
   forged.values.emplace_back(&memory);forged.values.back().kind=Json::Kind::string;
   forged.values.back().scalar="999";
