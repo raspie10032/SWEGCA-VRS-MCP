@@ -570,13 +570,14 @@ InputMatch ExperienceRouter::selected_input(const InputRecall& recalled, std::si
         throw std::logic_error("Recall original address changed");
     return selected;
 }
-std::optional<std::size_t> ExperienceRouter::select_replay(const InputRecall& recalled) const {
+std::optional<std::size_t> ExperienceRouter::select_replay(const InputRecall& recalled,const DigestBytes* connection) const {
     if(recalled.issuer_!=issuer_) throw std::invalid_argument("Recall belongs to a different input route");
     std::optional<std::size_t> selected;
     ReplayCandidate best;
     // Reduce the same core candidates, reusing only complete sealed page
     // reductions. Current head strength is applied at this receipt's boundary.
     for(const auto& context:recalled.contexts_){
+        if(connection&&context.recalled.recalled_head.identity!=*connection)continue;
         const auto consider=[&](std::size_t relative,const ReplayCandidate& candidate){
             switch(prefer_replay(selected ? &best : nullptr,candidate)){
             case ReplayPreference::invalid: throw std::logic_error("invalid Recall candidate metadata");
@@ -592,6 +593,30 @@ std::optional<std::size_t> ExperienceRouter::select_replay(const InputRecall& re
         }
     }
     return selected;
+}
+ReplayConnectionPage ExperienceRouter::select_replay_connections(const InputRecall& recalled,
+    std::size_t limit,const DigestBytes* after) const {
+    if(recalled.issuer_!=issuer_)throw std::invalid_argument("Recall belongs to a different input route");
+    if(!limit)throw std::invalid_argument("connection page limit must be positive");
+    // Address order is pagination only. Every selection inside a connection
+    // still uses the existing SWEGCA prefer_replay reduction, including pages.
+    std::pmr::set<DigestBytes> identities(&memory_);
+    bool more=false;
+    for(const auto& context:recalled.contexts_){
+        const auto& identity=context.recalled.recalled_head.identity;
+        if(after&&identity<=*after)continue;
+        identities.insert(identity);
+        if(identities.size()>limit){identities.erase(std::prev(identities.end()));more=true;}
+    }
+    ReplayConnectionPage result(memory_);
+    result.entries.reserve(identities.size());
+    for(const auto& identity:identities){
+        const auto selected=select_replay(recalled,&identity);
+        if(!selected)throw std::logic_error("recorded connection has no Replay candidate");
+        result.entries.push_back({identity,*selected});
+    }
+    if(more)result.next=*identities.rbegin();
+    return result;
 }
 ReplayedInput ExperienceRouter::replay(const InputRecall& recalled,std::size_t candidate) const {
     const auto selected=selected_input(recalled,candidate);

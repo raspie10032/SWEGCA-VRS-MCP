@@ -229,6 +229,10 @@ InputCognition Runtime::restore_cognition(const ExperienceLocation& input,const 
 std::optional<std::size_t> Runtime::select_replay(const InputRecall& recalled) const {
     return require_session().router.select_replay(recalled);
 }
+ReplayConnectionPage Runtime::select_replay_connections(const InputRecall& recalled,
+    std::size_t limit,const DigestBytes* after) const {
+    return require_session().router.select_replay_connections(recalled,limit,after);
+}
 ReplayedInput Runtime::replay(const InputRecall& recalled,std::size_t candidate) const {
     auto replayed=require_session().router.replay(recalled,candidate);
     require_session().runtime.save_replay_position(replayed.position());

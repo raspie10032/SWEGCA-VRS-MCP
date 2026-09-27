@@ -213,6 +213,15 @@ private:
     std::pmr::vector<Address> addresses_;
 };
 
+// A bounded page of distinct recorded connections, not a completeness claim
+// about requirements absent from experience. Cursor belongs to this receipt.
+struct ReplayConnectionPage {
+    struct Entry { architecture::DigestBytes connection; std::size_t candidate; };
+    explicit ReplayConnectionPage(std::pmr::memory_resource& memory):entries(&memory){}
+    std::pmr::vector<Entry> entries;
+    std::optional<architecture::DigestBytes> next;
+};
+
 // Issued only after a successful selected original read. No caller can supply
 // a made-up prior outcome/head or manufacture a pre-Replay receipt.
 class ReplayedInput final {
@@ -333,7 +342,9 @@ public:
     // original. No scope name, log scan or payload read is needed to Recall.
     [[nodiscard]] InputRecall related(const ReplayedInput&) const;
     // Only receipt metadata is considered here; one original is read later.
-    [[nodiscard]] std::optional<std::size_t> select_replay(const InputRecall&) const;
+    [[nodiscard]] std::optional<std::size_t> select_replay(const InputRecall&, const architecture::DigestBytes* connection=nullptr) const;
+    [[nodiscard]] ReplayConnectionPage select_replay_connections(const InputRecall&, std::size_t limit,
+        const architecture::DigestBytes* after=nullptr) const;
     [[nodiscard]] ReplayedInput replay(const InputRecall& recalled, std::size_t candidate) const;
     // Reissue a temporary Replay after restart from authenticated input and
     // ancestor head. Boundary comes from the owner, never supplied JSON counts.

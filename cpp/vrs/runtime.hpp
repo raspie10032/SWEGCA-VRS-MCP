@@ -92,6 +92,8 @@ public:
     [[nodiscard]] InputCognition restore_cognition(const ExperienceLocation& input,const ReplayRecovery&,
         std::uint64_t seed,std::uint64_t step) const;
     [[nodiscard]] std::optional<std::size_t> select_replay(const InputRecall&) const;
+    [[nodiscard]] ReplayConnectionPage select_replay_connections(const InputRecall&, std::size_t limit,
+        const architecture::DigestBytes* after=nullptr) const;
     [[nodiscard]] ReplayedInput replay(const InputRecall&, std::size_t candidate) const;
     [[nodiscard]] EvidencePayloadSlice read_payload_slice(const InputRecall&, std::size_t candidate,
         std::uint64_t offset, std::uint64_t count) const;

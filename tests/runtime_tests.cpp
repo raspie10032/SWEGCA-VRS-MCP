@@ -538,6 +538,13 @@ int main(){
     const auto cold_bytes=memory.used();
     const auto selection_reads=reads;
     fail_read=true;CHECK(host.select_replay(recalled)==30);
+    {
+     const auto connections=host.select_replay_connections(recalled,2);
+     CHECK(connections.entries.size()==1&&!connections.next);
+     CHECK(connections.entries.front().candidate==30);
+     CHECK(reads==selection_reads&&fail_read);
+    }
+
     CHECK(reads==selection_reads&&fail_read); // Complete page selection needs no I/O.
     throws<std::system_error>([&]{(void)host.replay(recalled,15);});
     CHECK(memory.used()==cold_bytes);
@@ -754,6 +761,23 @@ int main(){
     CHECK(match.original!=unrelated&&match.original!=input&&match.original!=general);
    }
    CHECK(saw_positive&&saw_negative&&saw_uncertain);
+   const auto reads_before_page=reads,writes_before_page=writes;
+   const auto full=host.select_replay_connections(linked,8);
+   CHECK(full.entries.size()==3&&!full.next);
+   std::optional<DigestBytes> cursor;std::size_t index=0;
+   do{
+    const auto page=host.select_replay_connections(linked,1,cursor?&*cursor:nullptr);
+    CHECK(page.entries.size()==1);
+    CHECK(page.entries[0].connection==full.entries[index].connection);
+    CHECK(page.entries[0].candidate==full.entries[index].candidate);
+    CHECK(linked.matches()[page.entries[0].candidate].recalled.recalled_head.identity==page.entries[0].connection);
+    ++index;cursor=page.next;
+   }while(cursor);
+   CHECK(index==3&&reads==reads_before_page&&writes==writes_before_page);
+   const auto end=host.select_replay_connections(linked,1,&full.entries.back().connection);
+   CHECK(end.entries.empty()&&!end.next);
+   throws<std::invalid_argument>([&]{(void)host.select_replay_connections(linked,0);});
+
    const auto observed_head=host.session().find(second.refinement.connection())->head();
    auto cognition=host.cognize(linked,7,4);
    CHECK(cognition&&cognition->replayed.location()==negative);
@@ -763,6 +787,7 @@ int main(){
    const auto saved_writes=writes;(void)host.cognize(linked,7,4);CHECK(writes==saved_writes);
    host.attach_session(id(244),"other-route");host.select_session(id(244));
    throws<std::invalid_argument>([&]{(void)host.related(parent);});
+   throws<std::invalid_argument>([&]{(void)host.select_replay_connections(linked,1);});
    host.select_session(id(241));host.end_session();CHECK(host.work(7,5)==1);
   }
   {
@@ -773,6 +798,12 @@ int main(){
    auto parent=host.replay(recalled,0);CHECK(parent.location()==input);
    const auto before_reads=reads,before_writes=writes;
    auto linked=host.related(parent);CHECK(!linked.temporary()&&linked.seed_only()&&linked.matches().size()==3);
+   const auto main_page=host.select_replay_connections(linked,2);
+   CHECK(main_page.entries.size()==2&&main_page.next);
+   const auto main_tail=host.select_replay_connections(linked,2,&*main_page.next);
+   CHECK(main_tail.entries.size()==1&&!main_tail.next);
+   CHECK(main_page.entries.back().connection<main_tail.entries.front().connection);
+
    CHECK(linked.lookup_key()==input.digest&&reads==before_reads&&writes==before_writes);
    const auto main_head=host.main().head();
    auto selected=host.cognize(linked,7,5);CHECK(selected&&selected->replayed.location()==negative);
