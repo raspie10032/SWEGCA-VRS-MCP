@@ -175,9 +175,9 @@ private:
     void result(std::string_view id,std::string_view body){std::cout<<"{\"jsonrpc\":\"2.0\",\"id\":"<<id<<",\"result\":"<<body<<"}\n"<<std::flush;if(!std::cout)throw std::runtime_error("MCP output disconnected");}
     void error(std::string_view id,int code,std::string_view message){std::cout<<"{\"jsonrpc\":\"2.0\",\"id\":"<<id<<",\"error\":{\"code\":"<<code<<",\"message\":"<<quote_json(message,memory_)<<"}}\n"<<std::flush;}
     void clear_replay(){
-        context().replayed.reset();context().cognition.reset();context().cognition_done=false;context().cognition_saved=false;
+        context().replayed.reset();context().cognition.reset();context().cognition_done=false;
     }
-    void clear(){clear_replay();context().cognition_parameters.reset();context().received.reset();context().recovered_cognition.reset();context().recovered_receipt=0;}
+    void clear(){clear_replay();context().cognition_saved=false;context().cognition_parameters.reset();context().received.reset();context().recovered_cognition.reset();context().recovered_receipt=0;}
     const ReplayedInput* selected_replay() const {
         if(context().replayed)return &*context().replayed;
         return context().cognition ? &context().cognition->replayed : nullptr;
@@ -186,7 +186,8 @@ private:
         auto& state=context();
         if(state.cognition&&state.cognition->assessment().remembered_head().identity==recorded.refinement.connection()){
             state.cognition_parameters=std::pair{recorded.refinement.seed(),recorded.refinement.current_step()};
-            state.cognition_done=false;state.cognition_saved=false;
+            // Preserve the immutable input-time receipt; refresh only the live comparison.
+            state.cognition_done=false;
         }
     }
     void complete_cognition(){
@@ -396,7 +397,7 @@ private:
             if(delivery==AgentDeliveryRoute::reuse){
                 std::pmr::string body("{\"duplicate\":true,\"original\":",&memory_);
                 body+=address(found->second.original,memory_);body+=",\"receipt\":";
-                if(state.received && state.cognition_done && state.received->recorded.original==found->second.original){
+                if(state.received && state.received->recorded.original==found->second.original){
                     complete_cognition();
                     body+="\""+std::to_string(state.receipt)+"\"";
                     cognition_body(body);
@@ -412,8 +413,6 @@ private:
                         body+=encode_json(metadata.at("memory"),memory_);
                         state.recovered_cognition.emplace(std::move(*saved));
                         state.recovered_receipt=ticket;next_receipt_=ticket;
-                    }else if(state.received && state.received->recorded.original==found->second.original){
-                        complete_cognition();body+='"';body+=std::to_string(state.receipt);body+='"';cognition_body(body);
                     }else body+="null,\"memory\":{\"completed\":false,\"original\":null}";
                 }else body+="null";
                 body+='}';return body;
@@ -442,10 +441,15 @@ private:
                     return runtime_.observe(request_connection,original,observation,seed,step);
                 }();
                 slot->second.original=recorded.original;committed=true;
+                invalidate_cognition(recorded);
                 if(request_original){slot->second.context=request_original->digest;binding->recorded(*response);}
                 slot->second.fingerprint=agent_delivery_identity(sequence,observed,event.native_bytes());
                 return "{\"original\":"+address(recorded.original,memory_)+",\"refinement\":"+refinement(recorded.refinement,memory_)+"}";
-            } catch(...) {if(!committed)state.deliveries.erase(slot);throw;}
+            } catch(...) {
+                if(!committed)state.deliveries.erase(slot);
+                state.cognition_done=false;
+                throw;
+            }
 
         }
         if(method=="swegca/candidates"){

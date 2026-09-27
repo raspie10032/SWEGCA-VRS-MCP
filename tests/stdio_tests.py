@@ -679,9 +679,21 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     check('error' in app_response(1,None)[1])
     reply_raw,r1=app_response(1,0);r1=r1['result']
     check(r1['refinement']['status']==0)
-    _,r2=app_event(2,'turn/start',{'input':app_input},1)
+    r2_raw,r2=app_event(2,'turn/start',{'input':app_input},1)
     r2=r2['result'];check(r2['candidateCount']=='1')
+    def response_packet(receipt):
+        return c.call('tools/call',{'name':'vrs_replay','arguments':{'receipt':receipt}})['result']['structuredContent']
+    before_response=response_packet(r2['receipt'])
+    check(before_response['assessment']['currentOriginalCount']=='1')
     _,r3=app_response(3,2);r3=r3['result']
+    retried_input=resend_native(r2_raw,2)['result']
+    check(retried_input['receipt']==r2['receipt'] and retried_input['memory']['completed'])
+    after_response=response_packet(r2['receipt'])
+    check(after_response['original']==before_response['original'])
+    check(after_response['assessment']['currentOriginalCount']=='2' and after_response['assessment']['step']=='3')
+    check(after_response['assessment']['agreement']==1 and after_response['assessment']['status']==0)
+    check(not after_response['assessment']['reEvidencePerformed'] and not after_response['grantsAuthority'])
+    check(response_packet(r2['receipt'])==after_response)
     check('error' in app_response(3,0)[1]) # Same wire ID/body, wrong original lineage.
     check(app_response(3,2)[1]['result']['duplicate'])
     check('error' in app_response(4,1)[1]) # A response cannot masquerade as a request.
@@ -691,6 +703,8 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     c=Client('open',response_root,path);c.initialize()
     check(c.call('swegca/agent/attach/resume',app_binding)['result']['identity']==response_id)
     check(c.call('swegca/select',{'identity':response_id})['result']=={})
+    historic=resend_native(r2_raw,2)['result']
+    check(response_packet(historic['receipt'])==before_response)
     check('error' in app_response(3,0)[1])
     check(app_response(3,2)[1]['result']=={'duplicate':True,'original':r3['original'],'receipt':None})
     _,r5=app_response(5,4,reply_id=2);r5=r5['result']
