@@ -1089,3 +1089,21 @@ experience-page 6,074개, Runtime 1,893개, connection 15,836개, 새 MCP subpro
 3,771개 검사 통과. CPU 6,7/max2 빌드를 유지했다. 이 변경은 후보 보관의 페이지
 증폭을 제거한 것으로, 후보 수/집계/인덱스 자체의 대규모 선형 비용이나 전체
 프로세스 4GB·입력→Recall 1ms·설치 앱 검증 완료를 뜻하지 않는다.
+
+
+셔플 후 diversity 집계의 고유 키 저장을 기존 최솟값 규칙에 맞춰 제한했다.
+기존 의미는 source/context distinct와 producer distinct의 min, 축별로도 같은
+min이다. 이제 해당 producer 수만큼 고유 키를 발견하면 정확한 최솟값이 확정되므로
+그 개수 조회의 추가 삽입만 종료한다. 모든 경험의 셔플, admission, 그룹별
+support/refute 합산과 수치 순서는 그대로 끝까지 수행한다. producer 키와 읽기
+scratch도 admission 종료 시 해제한다. 새 임계값·샘플링·판정 생략은 없다.
+
+512개 source/context 그룹·1개 producer·1,536개 원경험 사례에서 수정 전 실행의
+할당 요청 3,619회가 2,084회로 감소했다. 전체 refinement digest는 전후 모두
+204791c6592fd0be66426d2c8473bc3c24a41f76b638e174ff342a2ab4047eb4다.
+그룹/생산자 수가 함께 커지는 기존 사례의 peak_extra 170,366바이트는 변하지
+않았으므로 전체 peak memory 개선으로 확대하지 않는다. connection 15,875개,
+Main graph 4,221개, 새 MCP subprocess 3,771개 검사 통과. 실패 주입 시 owner
+불변과 재시도, 기존 8축 producer 제한·중복·기권/만료·suffix digest 회귀를
+포함한다. CPU 6,7/max2 빌드 유지. seen/group/producer의 본래 cardinality 저장,
+전체 Main 인덱스의 규모 제한과 전체 4GB/1ms 목표는 아직 해결되지 않았다.

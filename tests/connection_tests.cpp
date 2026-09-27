@@ -642,6 +642,33 @@ int main(int argc, char** argv) {
         }
     }
     {
+        Originals diverse_originals;FailingMemory upstream;MemoryBudget diverse_memory(8<<20,&upstream);
+        Connection diverse(id(10),0.75,rules,diverse_memory);
+        for(unsigned group=0;group<512;++group)
+            for(unsigned repeat=0;repeat<3;++repeat)
+                diverse.append(diverse_originals.sample(id(10),group%4,group,
+                    repeat<group%3?EvidenceOutcome::refute:EvidenceOutcome::support,false,true));
+        const auto before=upstream.until_failure;
+        const auto report=diverse.evaluate(991,5);
+        CHECK(report.evidence().revision==1536&&report.samples().size()==1536);
+        CHECK(report.evidence().source_diversity==1&&report.evidence().context_diversity==1);
+        for(unsigned axis=0;axis<4;++axis)CHECK(report.evidence().axis_source_diversity[axis]==1);
+        const auto allocations=before-upstream.until_failure;
+        // Before bounded cardinality bookkeeping this fixture used 3,619
+        // allocation requests. The unchanged digest includes every sample,
+        // admission outcome, tally, judgment and strength projection.
+        CHECK(allocations<2500);
+        const auto digest=refinement_digest(report);
+        constexpr std::string_view expected="204791c6592fd0be66426d2c8473bc3c24a41f76b638e174ff342a2ab4047eb4";
+        constexpr char digits[]="0123456789abcdef";
+        for(std::size_t i=0;i<digest.size();++i){
+            const auto value=std::to_integer<unsigned>(digest[i]);
+            CHECK(digits[value>>4]==expected[2*i]&&digits[value&15]==expected[2*i+1]);
+        }
+        std::printf("DIVERSITY allocations=%zu digest=",allocations);
+        print_digest(digest);std::printf("\n");
+    }
+    {
         Originals suffix_originals;MemoryBudget suffix_memory(8<<20);
         Connection source(id(10),0.75,rules,suffix_memory);
         for(unsigned n=0;n<300;++n)

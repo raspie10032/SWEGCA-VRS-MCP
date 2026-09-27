@@ -136,7 +136,7 @@ ConnectionRefinement Connection::prepare_refinement(std::uint64_t seed,std::uint
     shuffle(report.indices_, seed);
 
     static_assert(max_axes<=8);
-    std::pmr::unordered_map<Digest,std::uint8_t,DigestHash> producers(&memory_);
+    std::size_t producer_count=0;
     std::array<std::uint32_t,max_axes> axis_producers{};
     using GroupIndex=std::pmr::unordered_map<GroupKey,GroupCounts,GroupHash>;
     GroupIndex group_index(&memory_);
@@ -148,8 +148,9 @@ ConnectionRefinement Connection::prepare_refinement(std::uint64_t seed,std::uint
     // All accumulators are fresh for this shuffled batch. A previous cycle's
     // tally is neither an input nor retained on the connection.
     auto& tally = report.evidence_;
-    auto reader=experiences_.reader();
     {
+        std::pmr::unordered_map<Digest,std::uint8_t,DigestHash> producers(&memory_);
+        auto reader=experiences_.reader();
         DigestSet seen(&memory_);
         for (std::size_t ordinal=0;ordinal<report.indices_.size();++ordinal) {
             const auto& value = reader[begin+report.indices_[ordinal]].value();
@@ -174,7 +175,8 @@ ConnectionRefinement Connection::prepare_refinement(std::uint64_t seed,std::uint
             tally.recent_sum += recent_value;
             ++tally.revision;
         }
-    } // Admission is complete; duplicate-address storage is no longer needed.
+        producer_count=producers.size();
+    } // Admission scratch and producer keys are no longer needed.
     // The original accumulator sums groups in first-observed order per axis.
     // Retain that numerical order, independently of hash-container order.
     for (const auto* entry : groups) {
@@ -186,17 +188,23 @@ ConnectionRefinement Connection::prepare_refinement(std::uint64_t seed,std::uint
     // These keys come only from applied observations. Reuse one set after
     // admission instead of holding both source/context sets alongside `seen`.
     DigestSet sources(&memory_);
-    for(const auto* entry:groups)sources.insert(entry->first.source);
-    tally.source_diversity = static_cast<std::uint32_t>(std::min(sources.size(), producers.size()));
-    sources.clear();
-    for(const auto* entry:groups)sources.insert(entry->first.context);
-    tally.context_diversity = static_cast<std::uint32_t>(std::min(sources.size(), producers.size()));
-    for (std::uint32_t axis = 0; axis < rules_.axis_count(); ++axis) {
+    // The existing diversity value is min(distinct keys, producer count).
+    // Once that exact value is known, additional distinct-key storage cannot
+    // change it. This does not truncate admission, shuffle, or evidence sums.
+    const auto distinct=[&](std::size_t limit,bool context,std::uint32_t axis=max_axes){
         sources.clear();
-        for(const auto* entry:groups)
-            if(entry->first.axis==axis)sources.insert(entry->first.source);
-        tally.axis_source_diversity[axis] = static_cast<std::uint32_t>(
-            std::min(sources.size(),static_cast<std::size_t>(axis_producers[axis])));
+        if(!limit)return std::uint32_t{0};
+        for(const auto* entry:groups){
+            if(axis!=max_axes&&entry->first.axis!=axis)continue;
+            sources.insert(context?entry->first.context:entry->first.source);
+            if(sources.size()==limit)break;
+        }
+        return static_cast<std::uint32_t>(sources.size());
+    };
+    tally.source_diversity = distinct(producer_count,false);
+    tally.context_diversity = distinct(producer_count,true);
+    for (std::uint32_t axis = 0; axis < rules_.axis_count(); ++axis) {
+        tally.axis_source_diversity[axis] = distinct(axis_producers[axis],false,axis);
     }
     report.result_ = verify_connection(rules_, tally, strength_);
     if (report.result_.strength().valid()) report.after_revision_ = revision + 1;
