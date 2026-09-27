@@ -373,7 +373,27 @@ InputRecall ExperienceRouter::recall_cue(const DigestBytes& cue, RecallScope sco
         result.temporary_ = true;
         const auto& references=kind==FamiliarityKey::context
             ?temporary_.contexts_.at(*continued_context_):temporary_.cues_.at(cue);
-        for (const auto& reference : references) append(temporary_, reference);
+        for(std::size_t first=0;first<references.size();){
+            const auto& reference=references[first];
+            auto last=first+1;
+            while(last<references.size()&&references[last].connection==reference.connection&&
+                references[last-1].original_index!=std::numeric_limits<std::size_t>::max()&&
+                references[last].original_index==references[last-1].original_index+1)++last;
+            const auto* owner=temporary_.find(reference.connection);
+            if(!owner)throw std::logic_error("cue refers to an unavailable connection");
+            const auto& connection=owner->state();
+            const auto begin=reference.original_index;
+            const auto end=references[last-1].original_index+1;
+            if(!end)throw std::overflow_error("Recall original range overflow");
+            const auto directory=connection.snapshot_directory_bytes(begin,end);
+            if(directory>std::numeric_limits<std::size_t>::max()-sizeof(InputRecall::Context))
+                throw std::overflow_error("Recall snapshot cost overflow");
+            if(recall_range_receipt(last-first,sizeof(InputRecall::Context)+directory,sizeof(InputRecall::Address)))
+                result.append_range({&temporary_,owner,owner->snapshot()},connection.experiences().size(),
+                    connection,memory_,begin,end);
+            else for(auto index=first;index<last;++index)append(temporary_,references[index]);
+            first=last;
+        }
     } else if (merged_main_) {
         // Context portals are Main-owned and shared by all session routers.
         // Exact cue and portal ranges have the same original-address form.

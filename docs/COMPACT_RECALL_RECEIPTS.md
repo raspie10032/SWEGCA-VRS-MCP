@@ -146,3 +146,36 @@ zero after all receipts and owners are destroyed.
 
 Native verification after issuer lifetime binding: runtime lifecycle 107, session
 runtime 502, persistent Main 219, and stdio subprocess 918 checks passed.
+
+## Temporary exact/context ranges
+
+Temporary VRS exact-cue and recorded-context Recall now group adjacent references
+only when both connection identity and consecutive original index agree. The
+existing core `recall_range_receipt` cost decision selects a sealed sequence
+snapshot for a sufficiently long run; short/sparse runs retain individual pins.
+No new relevance judge, candidate ranking or automatic truth decision was added.
+Original candidate order and count are preserved, including gaps in one
+connection and changes between connections. Main fallback and the existing
+continuation route retain their behavior.
+
+The range keeps the same remembered head and post-Recall observation boundary
+as individual references. Later appends do not change its original count or
+addresses. Selected Replay still authenticates exactly its original, and
+Re-evidence still uses only newly appended observations after the captured
+boundary. An unrelated input inside the same connection is not included merely
+because its neighbors match.
+
+A source regression writes 193 originals with one different cue at index 64.
+Recall returns all 192 matching addresses in order, with no pread/pwrite, using
+672 additional tracked PMR bytes. After another append, the moved receipt still
+selects the prior last original, and Re-evidence reports only the single new
+original with an insufficient agreement. This measures receipt metadata, not
+source graph residency, original payload memory or the whole 4GB requirement.
+Existing sparse and cross-connection context tests also remain active.
+
+Verification: session runtime 1,100 and runtime lifecycle 186 checks passed.
+This is a resource/provenance improvement to the implemented four-stage APIs,
+not completion of autonomous semantic comparison or agent context injection.
+
+Rebuilt MCP integration: framing 29, JSON both paths 13,279, wrapper 33 and
+stdio subprocess 2,560 checks passed after this change.

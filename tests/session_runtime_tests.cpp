@@ -342,6 +342,42 @@ int main() {
         }
     }
     CHECK(memory.used()==0);
+    {
+        auto store=SessionStore::create(root,id(220),"ranges",262144,memory);
+        SessionRuntime live(store,memory,8192);live.define_connection(id(221),1.0,policy);
+        ExperienceRouter route(live,memory);
+        const std::string other="different cue inside the same connection";
+        EvidenceObservation observation;observation.hypothesis=id(221);observation.source=id(11);
+        observation.producer=id(12);observation.context=id(13);observation.outcome=EvidenceOutcome::insufficient;
+        std::vector<ExperienceLocation> expected;
+        const auto record=[&](unsigned n,std::string_view text){
+            observation.observed_at=n;
+            return live.observe(id(221),{n,n,"ranges","fixture","text/plain",std::as_bytes(std::span(text))},observation,n,n).original;
+        };
+        for(unsigned n=0;n<193;++n){
+            const auto location=record(n,n==64?std::string_view(other):std::string_view(payload));
+            if(n!=64)expected.push_back(location);
+        }
+        const auto used=memory.used(),before_reads=reads,before_writes=writes;
+        auto receipt=route.input("text/plain",std::as_bytes(std::span(payload)));
+        const auto cost=memory.used()-used;
+        CHECK(cost<2048);CHECK(reads==before_reads&&writes==before_writes);
+        CHECK(receipt.temporary()&&receipt.matches().size()==192);
+        for(std::size_t n=0;n<expected.size();++n){
+            const auto match=receipt.matches()[n];
+            CHECK(match.original==expected[n]);CHECK(match.original_index==(n<64?n:n+1));
+            CHECK(match.current_observations==193);
+        }
+        auto moved=std::move(receipt);CHECK(receipt.matches().empty());
+        const auto next=record(193,payload);
+        CHECK(moved.matches().size()==192&&moved.matches()[191].original==expected.back());
+        auto replayed=route.replay(moved,191);CHECK(replayed.location()==expected.back());
+        const auto assessment=route.re_evidence(replayed,7,193);
+        CHECK(assessment.agreement()==ReplayAgreement::insufficient);
+        CHECK(assessment.current_originals().size()==1&&assessment.current_originals()[0]==next);
+        std::printf("192-candidate temporary receipt: %zu tracked bytes\n",cost);
+    }
+    CHECK(memory.used()==0);
     fs::remove_all(root);
     std::printf("session runtime tests: %u checks passed\n",checks);
 }
