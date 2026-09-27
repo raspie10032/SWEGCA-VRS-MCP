@@ -6,6 +6,7 @@
 #include <map>
 #include <vector>
 #include <stdexcept>
+#include <limits>
 
 namespace swegca::vrs {
 // Main-owned address regions. Entries retain their existing graph connections,
@@ -58,19 +59,43 @@ public:
             const auto region=regions_.empty()?regions_.end():std::prev(regions_.upper_bound(begin->first));
             const auto next=region==regions_.end()?regions_.end():std::next(region);
             const auto end=next==regions_.end()?pending.end():pending.lower_bound(next->first);
-            std::pmr::vector<Key> keys(&memory_);
-            if(region!=regions_.end())for(const auto& [id,entry]:region->second.entries){(void)entry;keys.push_back(id);}
-            for(auto it=begin;it!=end;++it)keys.push_back(it->first);
-            std::sort(keys.begin(),keys.end());keys.erase(std::unique(keys.begin(),keys.end()),keys.end());
-            if(region==regions_.end()||keys.size()>capacity_){
+            // Both maps are already ordered. Walk their distinct union rather
+            // than copying every digest into a second, batch-sized directory.
+            const Entries* existing=region==regions_.end()?nullptr:&region->second.entries;
+            const auto visit=[&](auto&& consume){
+                auto incoming=begin;
+                const auto old_end=existing?existing->end():typename Entries::const_iterator{};
+                auto old=existing?existing->begin():old_end;
+                while(incoming!=end||old!=old_end){
+                    if(old==old_end){consume(incoming->first);++incoming;}
+                    else if(incoming==end){consume(old->first);++old;}
+                    else if(old->first<incoming->first){consume(old->first);++old;}
+                    else {
+                        consume(incoming->first);
+                        if(old->first==incoming->first)++old;
+                        ++incoming;
+                    }
+                }
+            };
+            std::size_t count=0;
+            visit([&](const Key&){
+                if(count==std::numeric_limits<std::size_t>::max())
+                    throw std::length_error("connection region count overflow");
+                ++count;
+            });
+            if(region==regions_.end()||count>capacity_){
                 const Key lower=region==regions_.end()?Key{}:region->first;
                 if(region!=regions_.end())plan.replaced_.push_back(lower);
-                for(std::size_t offset=0;offset<keys.size();){
-                    const auto boundary=architecture::kernel::region_partition_end(offset,keys.size(),capacity_);
-                    if(!boundary)throw std::logic_error("core rejected connection partition");
-                    plan.regions_.try_emplace(offset?keys[offset]:lower,memory_);
-                    offset=*boundary;
-                }
+                std::size_t offset=0,next_boundary=0;
+                visit([&](const Key& key){
+                    if(offset==next_boundary){
+                        const auto boundary=architecture::kernel::region_partition_end(offset,count,capacity_);
+                        if(!boundary)throw std::logic_error("core rejected connection partition");
+                        plan.regions_.try_emplace(offset?key:lower,memory_);
+                        next_boundary=*boundary;
+                    }
+                    ++offset;
+                });
             }
             begin=end;
         }

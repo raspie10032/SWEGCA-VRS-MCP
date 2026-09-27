@@ -51,5 +51,30 @@ int main(){
   for(unsigned n=1;n<=90;++n)CHECK(regions.find(key(n))->value==n+2000);
  }
  CHECK(memory.used()==0);
+ {
+  // A large first publication may reserve only the region directory. A
+  // second digest array for all 32K pending connections cannot fit here.
+  ConnectionRegions<Value> regions(memory,256);ConnectionRegions<Value>::Entries pending(&memory);
+  for(unsigned n=0;n<32768;++n)pending.try_emplace(key(n*2),n);
+  const auto reserved=memory.limit()-memory.used()-32768;
+  auto* held=memory.allocate(reserved);
+  auto plan=regions.prepare(pending);
+  failing.remaining=0;regions.commit(plan,pending);failing.remaining=SIZE_MAX;
+  memory.deallocate(held,reserved);
+  CHECK(pending.empty()&&regions.region_count()==128&&regions.largest_region()==256);
+  for(unsigned n=0;n<32768;++n)CHECK(regions.find(key(n*2))->value==n);
+  CHECK(!regions.find(key(1))&&!regions.find(key(65536)));
+  // Interleave new keys with replacements on both sides of existing region
+  // boundaries. Duplicate keys count once and existing values stay stable.
+  const auto* retained=regions.find(key(40000));
+  for(unsigned n=0;n<1024;++n)pending.try_emplace(key(n),n+100000);
+  auto split=regions.prepare(pending);
+  failing.remaining=0;regions.commit(split,pending);failing.remaining=SIZE_MAX;
+  CHECK(pending.empty()&&regions.largest_region()<=256);
+  CHECK(regions.find(key(40000))==retained);
+  for(unsigned n=0;n<1024;++n)CHECK(regions.find(key(n))->value==n+100000);
+  for(unsigned n=512;n<32768;++n)CHECK(regions.find(key(n*2))->value==n);
+ }
+ CHECK(memory.used()==0);
  std::printf("connection region tests: %u checks passed\n",checks);
 }

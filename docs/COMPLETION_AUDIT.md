@@ -487,3 +487,12 @@ desktop-exact-string-allocation.jsonl의 빈 Main/새 임시 세션 각 5회 측
 1MiB 5회 모두 1ms 초과다. 이번 변경은 입증된 메모리 감소로 채택하며,
 전체 지연 향상이나 1ms 완료는 주장하지 않는다. 작은 단일 decoder 시간보다
 실제 다중 프로세스 경로를 계속 기준으로 삼는다.
+
+Main의 ConnectionRegions 준비 과정에서 기존/신규 연결 키 전체를 벡터에 복사하고
+정렬하던 과정을 제거했다. 정렬된 두 map의 고유 키를 순차 병합하여 개수를 세고,
+두 번째 순회에서 기존 SWEGCA region_partition_end의 경계대로 노드만 준비한다.
+32,768개 신규 연결은 추가 32KiB 예산으로 128개 지역 발행에 성공했다.
+지역 66,255개 및 Main 그래프 4,700개 검사 통과(할당 실패 지점 913개).
+기존 원경험·검증 보고서·강도·주소와 영속 발행 후 무할당 commit을 유지했다.
+MainGraph의 Entry/ExperienceSequence 및 cue/context 색인 자체는 아직 전체 상주하며,
+디스크 적재·퇴거와 전체 4GB 운용 완료로 해석하지 않는다.
