@@ -29,7 +29,7 @@ struct GroupHash {
         return (DigestHash{}(key.source) * 131 + DigestHash{}(key.context)) * 131 + key.axis;
     }
 };
-struct Group { GroupKey key; std::uint32_t supports = 0, refutes = 0; };
+struct GroupCounts { std::uint32_t supports = 0, refutes = 0; };
 using DigestSet = std::pmr::unordered_set<Digest, DigestHash>;
 
 // Explicit Fisher-Yates and unbiased bounded draws make the traversal stable
@@ -121,8 +121,11 @@ ConnectionRefinement Connection::prepare_refinement(std::uint64_t seed, std::uin
     shuffle(report.samples_, seed);
 
     DigestSet seen(&memory_), sources(&memory_), contexts(&memory_), producers(&memory_);
-    std::pmr::unordered_map<GroupKey, std::size_t, GroupHash> group_index(&memory_);
-    std::pmr::vector<Group> groups(&memory_);
+    using GroupIndex=std::pmr::unordered_map<GroupKey,GroupCounts,GroupHash>;
+    GroupIndex group_index(&memory_);
+    // Rehash preserves node addresses. Keep first-observed order without
+    // duplicating source/context/axis keys in the ordered sequence.
+    std::pmr::vector<const GroupIndex::value_type*> groups(&memory_);
     std::pmr::vector<std::uint8_t> recent(&memory_);
     recent.resize(std::min<std::size_t>(rules_.recent_window(), experiences_.size()));
     // All accumulators are fresh for this shuffled batch. A previous cycle's
@@ -138,9 +141,9 @@ ConnectionRefinement Connection::prepare_refinement(std::uint64_t seed, std::uin
         contexts.insert(value.context);
         producers.insert(value.producer);
         const GroupKey key{value.source, value.context, value.axis};
-        const auto [where, inserted] = group_index.try_emplace(key, groups.size());
-        if (inserted) groups.push_back({key});
-        auto& group = groups[where->second];
+        const auto [where, inserted] = group_index.try_emplace(key);
+        if (inserted) groups.push_back(&*where);
+        auto& group = where->second;
         if (value.outcome == EvidenceOutcome::support) ++group.supports;
         else ++group.refutes;
         const auto recent_value = std::uint8_t(value.outcome == EvidenceOutcome::support);
@@ -153,10 +156,11 @@ ConnectionRefinement Connection::prepare_refinement(std::uint64_t seed, std::uin
     }
     // The original accumulator sums groups in first-observed order per axis.
     // Retain that numerical order, independently of hash-container order.
-    for (const auto& group : groups) {
+    for (const auto* entry : groups) {
+        const auto& [key,group]=*entry;
         const auto effective = normalize_evidence_group(group.supports, group.refutes);
-        tally.axis_support[group.key.axis] += effective.support;
-        tally.axis_refute[group.key.axis] += effective.refute;
+        tally.axis_support[key.axis] += effective.support;
+        tally.axis_refute[key.axis] += effective.refute;
     }
     tally.source_diversity = static_cast<std::uint32_t>(std::min(sources.size(), producers.size()));
     tally.context_diversity = static_cast<std::uint32_t>(std::min(contexts.size(), producers.size()));

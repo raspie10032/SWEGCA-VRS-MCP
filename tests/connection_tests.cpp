@@ -621,5 +621,25 @@ int main(int argc, char** argv) {
         CHECK(overflowing.revision() == before);
     }
     CHECK(memory.used() == 0);
+    {
+        Originals grouped_originals;MemoryBudget grouped_memory(8<<20);
+        Connection grouped(id(10),0.75,rules,grouped_memory);
+        for(unsigned group=0;group<512;++group)
+            for(unsigned repeat=0;repeat<3;++repeat)
+                grouped.append(grouped_originals.sample(id(10),group%4,group,
+                    repeat<group%3?EvidenceOutcome::refute:EvidenceOutcome::support));
+        const auto resident=grouped_memory.used();
+        const auto report=grouped.evaluate(991,5);
+        CHECK(report.samples().size()==1536&&report.evidence().revision==1536);
+        std::printf("GROUP_MEMORY resident=%zu peak_extra=%zu digest=",resident,grouped_memory.peak_reserved()-resident);
+        const auto digest=refinement_digest(report);
+        print_digest(digest);std::printf("\n");
+        constexpr std::string_view expected="c9360c43c9471740ad940712378edf1dc615987479e492782fbb5bb6d81d8332";
+        constexpr char digits[]="0123456789abcdef";
+        for(std::size_t i=0;i<digest.size();++i){
+            const auto value=std::to_integer<unsigned>(digest[i]);
+            CHECK(digits[value>>4]==expected[2*i]&&digits[value&15]==expected[2*i+1]);
+        }
+    }
     std::printf("PASS: %u connection checks\n", checks);
 }
