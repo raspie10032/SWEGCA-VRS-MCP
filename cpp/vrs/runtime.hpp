@@ -192,7 +192,7 @@ private:
     std::pmr::map<architecture::DigestBytes,Active> sessions_;
     Active* active_=nullptr;
     std::optional<Work> work_;
-    std::uint64_t page_attempt_ = 0;
+    std::uint64_t page_attempt_ = 0,page_generation_=0;
     architecture::DigestBytes page_cursor_{};
     std::size_t page_index_=0;
     bool small_page_pass_=false,page_pass_complete_=false;

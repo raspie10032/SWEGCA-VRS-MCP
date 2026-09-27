@@ -317,6 +317,13 @@ bool Runtime::maintain_memory() {
         catch(...){page_work_.reset();throw;}
         page_work_.reset();
     }
+    // A completed/partial traversal belongs to one published Main generation.
+    // New merges must get a fresh pass before the idle host can block on input.
+    const auto generation=main_.graph().generation();
+    if(page_generation_!=generation){
+        page_generation_=generation;page_pass_complete_=false;small_page_pass_=false;
+        page_cursor_={};page_index_=0;
+    }
     if(page_pass_complete_){
         page_pass_complete_=false;small_page_pass_=false;page_cursor_={};page_index_=0;return false;
     }

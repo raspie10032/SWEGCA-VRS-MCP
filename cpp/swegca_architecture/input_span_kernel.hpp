@@ -2,6 +2,14 @@
 #include <string_view>
 
 namespace swegca::architecture::kernel {
+// Position overlap only, after source/quote authentication. Subtraction avoids
+// endpoint overflow; an overlapping observation is not semantic entailment.
+[[nodiscard]] constexpr bool input_spans_overlap(std::size_t item_a,std::size_t begin_a,std::size_t size_a,
+    std::size_t item_b,std::size_t begin_b,std::size_t size_b) noexcept {
+    if(item_a!=item_b||!size_a||!size_b)return false;
+    return begin_a<=begin_b?begin_b-begin_a<size_a:begin_a-begin_b<size_b;
+}
+
 // A possible structural boundary, not a sentence/requirement judgment.
 // Returned slices partition the unchanged bytes. Quotes and code are kept
 // intact, including an unmatched opening delimiter through the input end.

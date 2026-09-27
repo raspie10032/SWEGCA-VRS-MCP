@@ -182,6 +182,54 @@ int main(){
   auto response=wire.prepare(reply,RpcSender::server,44);CHECK(response.request_sequence()==0);
  }
  {
+  const auto native=parse_json(R"({"method":"turn/start","params":{"input":[{"type":"image","url":"local"},{"type":"text","text":"A 유지.\nB 수정.\nC 확인.\nD 보류."}]}})",memory);
+  const auto original=parse_json(R"({"block":"a","digest":"b","offset":"1","bytes":"2"})",memory);
+  const auto parent=parse_json("{\"media\":\"application/json\",\"original\":"+encode_json(original,memory)+
+      ",\"content\":"+quote_json(encode_json(native,memory),memory)+"}",memory);
+  auto observations=parse_json("[]",memory);
+  const auto add=[&](RequirementAnchor anchor,bool correct_parent=true,bool correct_scope=true){
+   std::pmr::string encoded(&memory);append_requirement(encoded,anchor);
+   const auto address=correct_parent?encode_json(original,memory):std::pmr::string(R"({"block":"other","digest":"b","offset":"1","bytes":"2"})",&memory);
+   const auto scope=correct_scope?"{\"requirement\":"+encoded+"}":std::pmr::string("{}",&memory);
+   const auto report="{\"method\":\"item/completed\",\"params\":{\"item\":{\"type\":\"mcpToolCall\",\"status\":\"completed\","
+       "\"result\":{\"structuredContent\":{\"swegcaObservation\":{\"inputOriginal\":"+address+
+       ",\"scope\":"+quote_json(scope,memory)+",\"requirement\":"+encoded+"}}}}}}";
+   observations.values.push_back(parse_json("{\"media\":\"application/json\",\"content\":"+quote_json(report,memory)+"}",memory));
+  };
+  const auto words=native.at("params").at("input").values[1].at("text").string();
+  add({1,words.find("B"),"B"});add({1,0,"A"});add({1,words.find("C"),"C"});
+  add({1,words.find("D"),"D"},false);add({1,words.find("D"),"D"},true,false);
+  add({1,0,"wrong quote"});
+  std::pmr::string context("{}",&memory);
+  append_recalled_requirement_coverage(context,parent,&observations,memory,8192);
+  const auto parsed=parse_json(context,memory);const auto& coverage=parsed.at("recalledRequirementCoverage");
+  CHECK(same_context_address(coverage.at("inputOriginal"),original));
+  CHECK(coverage.at("semanticVerified").scalar=="false"&&coverage.at("requirementsComplete").scalar=="false");
+  CHECK(coverage.at("grantsAuthority").scalar=="false"&&coverage.at("nonTextItems").string()=="1");
+  const auto& candidates=coverage.at("candidates").values;CHECK(candidates.size()==4);
+  CHECK(candidates[0].at("relatedExperienceIndices").values[0].string()=="1");
+  CHECK(candidates[1].at("relatedExperienceIndices").values[0].string()=="0");
+  CHECK(candidates[2].at("relatedExperienceIndices").values[0].string()=="2");
+  CHECK(candidates[3].at("relatedExperienceIndices").values.empty());
+  CHECK(coverage.at("unboundObservationIndices").values.size()==3);
+  CHECK(coverage.at("observationsInspected").string()=="6"&&coverage.at("observationsLimited").scalar=="false");
+  CHECK(coverage.at("next").kind==Json::Kind::null);
+  for(const auto& item:candidates)CHECK(requirement_matches(requirement_anchor(item.at("requirement")),native));
+  context="{}";append_recalled_requirement_coverage(context,parent,nullptr,memory,8192);
+  const auto empty=parse_json(context,memory);
+  CHECK(empty.at("recalledRequirementCoverage").at("candidates").values.size()==4);
+  for(const auto& item:empty.at("recalledRequirementCoverage").at("candidates").values)
+   CHECK(item.at("relatedExperienceIndices").values.empty());
+  context="{}";append_recalled_requirement_coverage(context,parent,&observations,memory,1);
+  const auto limited=parse_json(context,memory).at("recalledRequirementCoverage").at("byteLimited").scalar;
+  CHECK(limited=="true");
+  using swegca::architecture::kernel::input_spans_overlap;
+  CHECK(input_spans_overlap(1,0,8,1,7,2));
+  CHECK(!input_spans_overlap(1,0,8,1,8,2)&&!input_spans_overlap(1,0,8,0,7,2));
+  CHECK(!input_spans_overlap(1,0,0,1,0,2));
+  CHECK(input_spans_overlap(1,SIZE_MAX-1,2,1,SIZE_MAX,1));
+ }
+ {
   const auto native=parse_json(R"({"method":"turn/steer","params":{"input":[{"type":"image","url":"local"},{"type":"text","text":"팰월드는 유지\r\nComfyUI만 중지\n"},{"type":"text","text":"if ready, do not remove A."}]}})",memory);
   const auto source=parse_json(R"({"original":{"block":"a","digest":"b","offset":"1","bytes":"2"}})",memory);
   std::pmr::string candidates("{}",&memory);

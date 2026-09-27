@@ -274,7 +274,7 @@ int main(int argc,char** argv){
                                     coverage.emplace(parse_json(report,memory));
                                 }
                             }
-                            auto context=replay_context(std::move(packet),body,memory,observation?&*observation:nullptr,coverage?&*coverage:nullptr);
+                            auto context=replay_context(std::move(packet),body,memory,observation?&*observation:nullptr,coverage?&*coverage:nullptr,std::min<std::size_t>(65536,rpc_frame/8));
                             append_input_candidates(context,plan.event().fields(),body,memory,8,std::min<std::size_t>(65536,rpc_frame/8));
                             pump.include_context(plan,context,rpc_frame);
                         }else{

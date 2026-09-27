@@ -1495,6 +1495,31 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     check(related_call(main_recovered['receipt'])['result']['structuredContent']==main_related)
     check(c.call('swegca/agent/cognition',main_query)['result']['revision']==main_related_journal['revision'])
     c.close()
+    # Actual anchored observations for the automatic recalled-requirement table.
+    coverage_root=root/'anchored-coverage';coverage_root.mkdir()
+    c=Client('create',coverage_root,path);c.initialize()
+    coverage_binding={**producer_binding,'instance':'anchored-coverage'}
+    producer_owner=c.call('swegca/agent/attach',coverage_binding)['result']['identity']
+    check(c.call('swegca/select',{'identity':producer_owner})['result']=={})
+    producer_seq=0
+    coverage_prompt='Keep A.\nChange B.\nVerify C.\nLeave D unverified.'
+    coverage_anchor={'textIndex':'0','byteOffset':'0','quote':'Keep A.'}
+    coverage_parent,coverage_positive=producer_trial(coverage_prompt,0,'support',
+        lambda v:v.update(scope=anchored_scope(coverage_anchor),requirement=coverage_anchor))
+    coverage_expected=[coverage_positive['original']]
+    for phrase,outcome in (('Change B.','refute'),('Verify C.','insufficient')):
+        coverage_anchor={'textIndex':'0','byteOffset':str(coverage_prompt.encode().index(phrase.encode())),'quote':phrase}
+        _,saved=producer_frame('server',{'method':'item/completed','params':{
+            'threadId':'producer-thread','turnId':'producer-turn-0','item':{
+            'type':'mcpToolCall','id':'coverage-'+phrase,'server':'coverage-producer','tool':'verify','status':'completed',
+            'result':{'content':[],'structuredContent':{'swegcaObservation':{
+                'inputOriginal':coverage_parent['original'],'outcome':outcome,
+                'scope':anchored_scope(coverage_anchor),'requirement':coverage_anchor,'axis':'0',
+                'confidence':1.0,'hasExpiry':False,'expiresAt':'0'}}}}}})
+        coverage_expected.append(saved['original'])
+    check(c.call('swegca/end')['result']=={})
+    check(c.call('swegca/work',{'seed':'7','step':str(producer_seq)})['result']['merged']=='1')
+    c.close()
     # Per-connection metadata pages retain distinct scoped outcomes. Listing
     # neither replays originals nor claims all natural-language requirements.
     pages_root=root/'related-connection-pages';pages_root.mkdir()
@@ -2431,10 +2456,12 @@ for line in sys.stdin:
     observed=json.loads(linked['content'])['params']['item']['result']['structuredContent']['swegcaObservation']
     check(observed['outcome']=='refute' and observed['scope']=='archived requirement outcome')
     check(forwarded['params']['input'][1:]==[{'type':'text','text':'A purpose kept in Main.'}])
-    for run,limit,byte_budget,expected_count in ((0,8,65536,3),(1,1,65536,1),(2,8,0,0)):
+    for run,limit,byte_budget,expected_count in ((0,8,65536,3),(1,1,65536,1),(2,8,0,0),(3,8,65536,3),(4,8,0,0)):
+        selected_prompt=coverage_prompt if run>=3 else 'Keep A, change B, verify C.'
+        selected_root=coverage_root if run>=3 else pages_root
         auto_proxy.write_text(json.dumps({**json.loads(desktop_proxy.read_text()),'frameBytes':'16384',
             'instance':'multi-observation-'+str(run),'relatedConnections':str(limit),'relatedContextBytes':str(byte_budget)}))
-        auto_wrapper.write_text(json.dumps({**json.loads(wrapper_config.read_text()),'root':str(pages_root),
+        auto_wrapper.write_text(json.dumps({**json.loads(wrapper_config.read_text()),'root':str(selected_root),
             'resourceConfig':str(auto_resources),'proxyConfig':str(auto_proxy)}))
         desktop=subprocess.Popen([str(exe.parent/'swegca-codex-wrapper'),'app-server'],
             env=dict(os.environ,SWEGCA_DESKTOP_CONFIG=str(auto_wrapper)),stdin=subprocess.PIPE,
@@ -2445,7 +2472,7 @@ for line in sys.stdin:
             desktop_send({'id':rpc+1,'method':'thread/start','params':{}})
             check(desktop_read()['method']=='thread/started');check(desktop_read()=={'id':rpc+1,'result':{}})
             desktop_send({'id':rpc+2,'method':'turn/start','params':{'threadId':'desktop-thread',
-                'input':[{'type':'text','text':'Keep A, change B, verify C.'}]}})
+                'input':[{'type':'text','text':selected_prompt}]}})
             check(desktop_read()=={'id':rpc+2,'result':{}})
             desktop.stdin.close();check(desktop.wait(timeout=10)==0)
             check(desktop.stdout.read()==b'' and desktop.stderr.read()==b'')
@@ -2453,10 +2480,10 @@ for line in sys.stdin:
             if desktop.poll() is None:desktop.terminate();desktop.wait(timeout=10)
         forwarded=next(json.loads(line) for line in captured_inputs.read_text().splitlines() if json.loads(line).get('id')==rpc+2)
         bundle=json.loads(forwarded['params']['input'][0]['text'].split('\n',1)[1])
-        check(forwarded['params']['input'][1:]==[{'type':'text','text':'Keep A, change B, verify C.'}])
-        check(bundle['original']==page_input['original'])
+        check(forwarded['params']['input'][1:]==[{'type':'text','text':selected_prompt}])
+        check(bundle['original']==(coverage_parent['original'] if run>=3 else page_input['original']))
         check(len(bundle['relatedExperiences'])==expected_count)
-        coverage=bundle['relatedCoverage'];check(coverage['limited']==(run!=0))
+        coverage=bundle['relatedCoverage'];check(coverage['limited']==(run in (1,2,4)))
         check(not coverage['mixedTiers'] and all(not x['temporary'] for x in coverage['connections']))
         check(not coverage['requirementsComplete'] and not coverage['grantsAuthority'])
         check(len(coverage['deliveredConnections'])==expected_count)
@@ -2464,10 +2491,30 @@ for line in sys.stdin:
         check([x['original'] for x in coverage['deliveredExperiences']]==[x['original'] for x in bundle['relatedExperiences']])
         check(all(x['matchesListedOriginal'] for x in coverage['deliveredExperiences']))
         check((coverage['next'] is not None)==(run==1))
-        if run==0:
-            check({x['original']['digest'] for x in bundle['relatedExperiences']}=={x['digest'] for x in multi_expected})
+        if run in (0,3):
+            check({x['original']['digest'] for x in bundle['relatedExperiences']}=={x['digest'] for x in (coverage_expected if run==3 else multi_expected)})
             check({json.loads(x['content'])['params']['item']['result']['structuredContent']['swegcaObservation']['outcome']
                 for x in bundle['relatedExperiences']}=={'support','refute','insufficient'})
+        recalled_coverage=bundle['recalledRequirementCoverage']
+        check(recalled_coverage['inputOriginal']==bundle['original'])
+        check(recalled_coverage['inputOriginal']!=bundle['inputCandidates']['inputOriginal'])
+        check(not recalled_coverage['semanticVerified'] and not recalled_coverage['requirementsComplete'])
+        check(not recalled_coverage['grantsAuthority'] and not recalled_coverage['byteLimited'])
+        if run>=3:
+            rows=recalled_coverage['candidates']
+            check(len(rows)==4 and ''.join(row['requirement']['quote'] for row in rows)==coverage_prompt)
+            check(rows[3]['relatedExperienceIndices']==[])
+            check(recalled_coverage['unboundObservationIndices']==[])
+            for row in rows[:3]:
+                indices=row['relatedExperienceIndices']
+                check(len(indices)==(1 if run==3 else 0))
+                for index in indices:
+                    observation=json.loads(bundle['relatedExperiences'][int(index)]['content'])['params']['item']['result']['structuredContent']['swegcaObservation']
+                    check(observation['inputOriginal']==coverage_parent['original'])
+                    check(row['requirement']['quote'].strip()==observation['requirement']['quote'])
+        else:
+            check(all(row['relatedExperienceIndices']==[] for row in recalled_coverage['candidates']))
+            check(len(recalled_coverage['unboundObservationIndices'])==expected_count)
     # Actual desktop transport: a successful turn/start response establishes
     # the exact predecessor; steer keeps its raw text and unverified candidates.
     steer_capture=root/'steer-backend-inputs.jsonl'

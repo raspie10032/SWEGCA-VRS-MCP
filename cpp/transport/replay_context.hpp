@@ -1,5 +1,6 @@
 #pragma once
 #include "transport/json.hpp"
+#include "transport/requirement_coverage.hpp"
 #include <charconv>
 #include <cstdint>
 #include <stdexcept>
@@ -44,7 +45,7 @@ inline std::pmr::string input_context(const Json& acknowledged,std::pmr::memory_
 // This binds a representation to that input and preserves the core's verdict;
 // it never invents evidence or gives recalled text instruction authority.
 inline std::pmr::string replay_context(Json packet,const Json& acknowledged,std::pmr::memory_resource& memory,
-    Json* observation=nullptr,const Json* coverage=nullptr){
+    Json* observation=nullptr,const Json* coverage=nullptr,std::size_t requirement_byte_budget=65536){
     const auto receipt=context_receipt(acknowledged);
     const auto& assessment=packet.at("assessment");
     const auto& authority=packet.at("grantsAuthority");
@@ -137,6 +138,7 @@ inline std::pmr::string replay_context(Json packet,const Json& acknowledged,std:
     if(coverage){context+=",\"relatedCoverage\":";append_json(context,*coverage);
         context.pop_back();context+=",\"deliveredExperiences\":";context+=delivered;context+='}';}
     context+='}';
+    append_recalled_requirement_coverage(context,packet,observation,memory,requirement_byte_budget);
     return context;
 }
 } // namespace swegca::transport

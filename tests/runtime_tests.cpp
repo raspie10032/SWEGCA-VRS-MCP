@@ -569,6 +569,22 @@ int main(){
   }
  }
  {
+  // Exhausting an empty Main must not hide a merge arriving before the final
+  // idle callback: that callback otherwise returns false and blocks forever.
+  const auto path=root/"pressure-generation";fs::create_directory(path);
+  auto cfg=config;cfg.memory_target_bytes=1;
+  auto host=Runtime::create(path,cfg,memory);
+  host.start_session(id(230),"generation-source"); // live session supplies RAM pressure
+  CHECK(host.maintain_memory()); // empty large-segment pass
+  CHECK(host.maintain_memory()); // empty shared-page pass; completion pending
+  for(unsigned n=0;n<31;++n)(void)host.retain({n,n,"generation-source","user","text/plain",content},7,n);
+  host.end_session();CHECK(host.work(7,31)==1);
+  CHECK(host.maintain_memory()); // new generation must restart, not report done
+  unsigned steps=0;
+  while(host.maintain_memory()){CHECK(++steps<5000);std::this_thread::sleep_for(std::chrono::milliseconds(1));}
+  CHECK(fs::exists(path/"metadata-pages")&&!fs::is_empty(path/"metadata-pages"));
+ }
+ {
   const auto path=root/"singleton-pressure";fs::create_directory(path);
   auto cfg=config;cfg.memory_target_bytes=1;
   std::array<ExperienceLocation,64> originals;
