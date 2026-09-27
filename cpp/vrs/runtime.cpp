@@ -60,6 +60,7 @@ Runtime::Runtime(const std::filesystem::path& root,const RuntimeConfig& config,M
 Runtime::Active::Active(SessionRuntime& session,const DigestBytes& id,MemoryBudget& memory,const PersistentMainGraph& main)
     :identity(id),runtime(session),router(runtime,memory) {
     router.mount_main(main); indexed_main=main.head();
+    if(const auto position=runtime.read_replay_position())router.restore_position(*position);
 }
 Runtime::~Runtime() { discard_work(); }
 void Runtime::discard_work() noexcept {
@@ -199,6 +200,7 @@ InputCognition Runtime::restore_temporary_cognition(const ExperienceLocation& in
     auto compared=compare_replay(replayed,seed,step);
     std::optional<ReEvidenceResult> verified;
     if(requires_re_evidence(compared.agreement()))verified.emplace(re_evidence(replayed,compared,seed,step));
+    require_session().runtime.save_replay_position(replayed.position());
     return {original_index,std::move(replayed),std::move(compared),std::move(verified)};
 }
 InputCognition Runtime::restore_main_cognition(const ExperienceLocation& input,
@@ -211,6 +213,7 @@ InputCognition Runtime::restore_main_cognition(const ExperienceLocation& input,
     auto compared=compare_replay(replayed,seed,step);
     std::optional<ReEvidenceResult> verified;
     if(requires_re_evidence(compared.agreement()))verified.emplace(re_evidence(replayed,compared,seed,step));
+    require_session().runtime.save_replay_position(replayed.position());
     return {original_index,std::move(replayed),std::move(compared),std::move(verified)};
 }
 InputCognition Runtime::restore_cognition(const ExperienceLocation& input,const ReplayRecovery& saved,
@@ -220,13 +223,16 @@ InputCognition Runtime::restore_cognition(const ExperienceLocation& input,const 
     auto compared=compare_replay(replayed,seed,step);
     std::optional<ReEvidenceResult> verified;
     if(requires_re_evidence(compared.agreement()))verified.emplace(re_evidence(replayed,compared,seed,step));
+    require_session().runtime.save_replay_position(replayed.position());
     return {saved.original_index,std::move(replayed),std::move(compared),std::move(verified)};
 }
 std::optional<std::size_t> Runtime::select_replay(const InputRecall& recalled) const {
     return require_session().router.select_replay(recalled);
 }
 ReplayedInput Runtime::replay(const InputRecall& recalled,std::size_t candidate) const {
-    return require_session().router.replay(recalled,candidate);
+    auto replayed=require_session().router.replay(recalled,candidate);
+    require_session().runtime.save_replay_position(replayed.position());
+    return replayed;
 }
 EvidencePayloadSlice Runtime::read_payload_slice(const InputRecall& recalled,std::size_t candidate,
     std::uint64_t offset,std::uint64_t count) const {

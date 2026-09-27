@@ -387,7 +387,7 @@ int main(){
   for(unsigned n=1;n<=16;++n)remembered=observe(n,EvidenceOutcome::support);
   auto recalled=host.input("text/plain",content);
   for(unsigned n=17;n<=32;++n)(void)observe(n,EvidenceOutcome::refute);
-  const auto w=writes;
+  const auto head=host.session().find(id(212))->head();
   const auto strength=host.session().find(id(212))->state().strength();
   auto cognition=host.cognize(recalled,7,32);
   CHECK(cognition&&cognition->candidate==15&&cognition->replayed.location()==remembered);
@@ -395,7 +395,8 @@ int main(){
   CHECK(cognition->reverified.has_value());
   CHECK(cognition->assessment().agreement()==ReplayAgreement::contradicts);
   CHECK(cognition->assessment().current_originals().size()==16);
-  CHECK(writes==w&&host.session().find(id(212))->state().strength()==strength);
+  CHECK(host.session().find(id(212))->head()==head&&host.session().find(id(212))->state().strength()==strength);
+  CHECK(host.session().read_replay_position()->original==remembered);
  }
  {
   const auto path=root/"natural-dialogue";fs::create_directory(path);
@@ -646,8 +647,14 @@ int main(){
    throws<StorageLimit>([&]{host.start_session(id(236),"over-quota-denied");});
    host.resume_session(id(235));auto recalled=host.input("text/plain",content);
    CHECK(recalled.matches().size()==31&&host.select_replay(recalled)==30);
-   auto replayed=host.replay(recalled,15);
-   const auto restored=evidence_payload(replayed.original()).content;
+   // An advancing Replay now commits its continuation position. At the hard
+   // storage limit it must report that failure, while archive reads remain
+   // available and must not relax the quota or pretend persistence succeeded.
+   const auto original=recalled.matches()[15].original;
+   throws<StorageLimit>([&]{(void)host.replay(recalled,15);});
+   CHECK(host.storage().used()==host.storage().limit());
+   auto archived=host.read_cognition_original(id(234),original);
+   const auto restored=evidence_payload(archived).content;
    CHECK(restored.size()==content.size()&&std::equal(restored.begin(),restored.end(),content.begin()));
   }
   --recovered_config.storage_bytes;
@@ -747,10 +754,13 @@ int main(){
     CHECK(match.original!=unrelated&&match.original!=input&&match.original!=general);
    }
    CHECK(saw_positive&&saw_negative&&saw_uncertain);
+   const auto observed_head=host.session().find(second.refinement.connection())->head();
    auto cognition=host.cognize(linked,7,4);
    CHECK(cognition&&cognition->replayed.location()==negative);
    CHECK(evidence_payload(cognition->replayed.original()).content.size()==content.size());
-   CHECK(writes==before_writes); // Recall/Replay never creates another observation.
+   CHECK(host.session().find(second.refinement.connection())->head()==observed_head);
+   CHECK(host.session().read_replay_position()->original==negative);
+   const auto saved_writes=writes;(void)host.cognize(linked,7,4);CHECK(writes==saved_writes);
    host.attach_session(id(244),"other-route");host.select_session(id(244));
    throws<std::invalid_argument>([&]{(void)host.related(parent);});
    host.select_session(id(241));host.end_session();CHECK(host.work(7,5)==1);
@@ -764,8 +774,9 @@ int main(){
    const auto before_reads=reads,before_writes=writes;
    auto linked=host.related(parent);CHECK(!linked.temporary()&&linked.seed_only()&&linked.matches().size()==3);
    CHECK(linked.lookup_key()==input.digest&&reads==before_reads&&writes==before_writes);
+   const auto main_head=host.main().head();
    auto selected=host.cognize(linked,7,5);CHECK(selected&&selected->replayed.location()==negative);
-   CHECK(writes==before_writes);
+   CHECK(host.main().head()==main_head&&host.session().read_replay_position()->original==negative);
    // Local general dialogue cannot hide eligible observations in Main.
    host.define_connection(id(251));EvidenceObservation value;
    value.hypothesis=id(251);value.context=input.digest;value.source=id(21);value.producer=id(22);value.observed_at=6;
@@ -855,6 +866,57 @@ int main(){
   // An authenticated nonzero local boundary excludes its old observations.
   auto boundary=host.restore_main_cognition(input,"contents",connection,remembered,local_head,7,selected,7,26);
   CHECK(boundary.comparison.observation_boundary()==8&&boundary.assessment().current_originals().empty());
+ }
+ for(bool merged:{false,true}){
+  const auto path=root/(merged?"position-main":"position-temporary");fs::create_directory(path);
+  const auto consumer=merged?id(82):id(81);
+  const std::string followup="continue the previous result",extra="unselected newer event";
+  ExperienceLocation chosen;ReplayPosition saved;
+  {
+   auto host=Runtime::create(path,config,memory);host.start_session(id(81),"position-source");
+   auto input=host.receive({0,0,"position-source","user","text/plain",content},7,0).recorded.original;
+   EvidenceObservation value;value.source=id(83);value.producer=id(84);value.observed_at=1;value.outcome=EvidenceOutcome::refute;
+   chosen=host.observe_input_scope(input,"result",{1,1,"position-source","tool","text/plain",content},value,7,1).original;
+   if(merged){host.end_session();CHECK(host.work(7,1)==1);host.start_session(consumer,"position-consumer");}
+   auto parent=host.replay(host.input("text/plain",content),0);
+   auto related=host.related(parent);auto cognition=host.cognize(related,7,1);
+   CHECK(cognition&&cognition->replayed.location()==chosen);
+   saved=*host.session().read_replay_position();CHECK(saved.original==chosen&&saved.source==id(81));
+   const auto w=writes;const auto bytes=host.storage().used();
+   (void)host.cognize(related,7,1);CHECK(writes==w&&host.storage().used()==bytes);
+   const auto r=reads;
+   auto continued=host.input("text/plain",std::as_bytes(std::span(followup)));
+   CHECK(reads==r&&writes==w);
+   CHECK(continued.matches()[*host.select_replay(continued)].original==chosen);
+   // Fail publishing a different completed Replay. The durable old cursor
+   // survives; this owner must not continue after a failed metadata write.
+   const auto name=merged?"position-consumer":"position-source";
+   (void)host.retain({2,2,name,"tool","text/plain",std::as_bytes(std::span(extra))},7,2);
+   auto newer=host.input("text/plain",std::as_bytes(std::span(extra)));
+   fail_write=true;throws<std::system_error>([&]{(void)host.replay(newer,0);});
+   CHECK(!fail_write&&!host.session().usable());
+  }
+  {
+   auto host=Runtime::open(path,config,memory);host.resume_session(consumer);
+   CHECK(host.session().read_replay_position()==saved);
+   const auto r=reads,w=writes;
+   auto continued=host.input("text/plain",std::as_bytes(std::span(followup)));
+   CHECK(reads==r&&writes==w);
+   CHECK(continued.matches()[*host.select_replay(continued)].original==chosen);
+   CHECK(host.work(7,2)==0); // Reopening did not end or merge the consumer.
+  }
+  // A valid derived record is insufficient: the referenced source and index
+  // must belong to the verified connection. Preserve originals during probes.
+  for(unsigned attack=0;attack<2;++attack){
+   {auto store=SessionStore::open(path,consumer,memory);auto wrong=saved;
+    if(attack==0)wrong.source=id(250);else wrong.original_index=UINT64_MAX;
+    store.save_replay_position(wrong);}
+   {auto host=Runtime::open(path,config,memory);
+    throws<std::invalid_argument>([&]{host.resume_session(consumer);});CHECK(host.attached_sessions()==0);}
+   {auto store=SessionStore::open(path,consumer,memory);store.save_replay_position(saved);}
+  }
+  {auto host=Runtime::open(path,config,memory);host.resume_session(consumer);
+   CHECK(host.session().read_replay_position()==saved);}
  }
  for(bool main:{false,true}){
   for(unsigned route=0;route<3;++route){

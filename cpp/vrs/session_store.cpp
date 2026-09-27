@@ -335,6 +335,85 @@ DigestBytes cognition_head_id(const DigestBytes& session,const ExperienceLocatio
     return hash.finish();
 }
 }
+namespace {
+constexpr std::string_view position_source="swegca-replay-position";
+constexpr std::string_view position_media="application/vnd.swegca.replay-position-v1";
+using PositionBytes=std::array<std::byte,160>;
+PositionBytes encode_position(const ReplayPosition& position){
+    if(!named_digest(position.source)||!named_digest(position.connection)||!head_address_valid(position.original))
+        throw std::invalid_argument("invalid Replay position");
+    PositionBytes bytes{};std::memcpy(bytes.data(),"SWGCRPL1",8);
+    const auto copy=[&](unsigned at,const DigestBytes& value){std::copy(value.begin(),value.end(),bytes.begin()+at);};
+    copy(8,position.source);copy(40,position.connection);copy(72,position.original.block);
+    put(bytes,104,position.original.offset);put(bytes,112,position.original.bytes);
+    copy(120,position.original.digest);put(bytes,152,position.original_index);return bytes;
+}
+DigestBytes position_id(const DigestBytes& owner,std::span<const std::byte> bytes){
+    Sha256 hash;hash.update("SWEGCA Replay position v1");hash.update(owner);hash.update(bytes);return hash.finish();
+}
+ReplayPosition read_position_file(const std::filesystem::path& path,const DigestBytes& owner,
+    std::string_view session,MemoryBudget& memory,StorageBudget* storage){
+    auto block=ExperienceBlock::open_reader(path,storage);
+    auto record=block.read(block.location_at(ExperienceBlock::header_bytes),memory.limit(),memory);
+    const auto view=record.view();const auto extent=block.inspect();
+    if(view.session!=session||view.source!=position_source||view.media_type!=position_media||
+        view.sequence||view.observed_at_ns||view.sender!=ExperienceSender::unspecified||
+        view.content.size()!=PositionBytes{}.size()||std::memcmp(view.content.data(),"SWGCRPL1",8)||
+        extent.complete_records!=1||extent.unfinished_bytes||block.identity()!=position_id(owner,view.content))
+        throw std::runtime_error("invalid saved Replay position");
+    ReplayPosition result;
+    const auto copy=[&](unsigned at,DigestBytes& value){std::copy_n(view.content.begin()+at,32,value.begin());};
+    copy(8,result.source);copy(40,result.connection);copy(72,result.original.block);
+    result.original.offset=get(view.content,104);result.original.bytes=get(view.content,112);
+    copy(120,result.original.digest);result.original_index=get(view.content,152);
+    (void)encode_position(result);return result;
+}
+}
+std::optional<ReplayPosition> SessionStore::read_replay_position() const {
+    if(!usable_)throw std::logic_error("session requires recovery");
+    if(!replay_position_loaded_){
+        const auto path=directory_/"replay-position.block";
+        if(std::filesystem::exists(path))replay_position_=read_position_file(path,identity_,name_,memory_,storage_);
+        replay_position_loaded_=true;
+    }
+    return replay_position_;
+}
+void SessionStore::save_replay_position(const ReplayPosition& position){
+    require(SessionOperation::append);
+    const auto bytes=encode_position(position);
+    if(read_replay_position()==position)return;
+    const auto directory=directory_/"replay-positions";
+    const auto id=position_id(identity_,bytes);const auto key=hex(id);
+    const auto sealed=directory/(key+".block");
+    try{
+        (void)std::filesystem::create_directory(directory);sync_directory(directory_);
+        const auto vacant=[&](std::string_view prefix){
+            std::uint64_t attempt=0;
+            auto path=directory/(std::string(prefix)+"-0.block");
+            while(std::filesystem::exists(path)){
+                if(attempt==UINT64_MAX)throw std::overflow_error("Replay position publication attempts exhausted");
+                path=directory/(std::string(prefix)+"-"+std::to_string(++attempt)+".block");
+            }
+            return path;
+        };
+        if(!std::filesystem::exists(sealed)){
+            const auto staging=vacant("staging-"+key);
+            const auto fixed=ExperienceBlock::header_bytes+ExperienceBlock::record_overhead+
+                position_source.size()+position_media.size()+bytes.size();
+            if(name_.size()>UINT64_MAX-fixed)throw std::length_error("Replay position session name overflow");
+            auto block=ExperienceBlock::create(staging,id,fixed+name_.size(),storage_);
+            (void)block.append({0,0,name_,position_source,position_media,bytes});
+            if(::link(staging.c_str(),sealed.c_str())<0)io_error("seal Replay position");
+            sync_directory(directory);
+        }else if(read_position_file(sealed,identity_,name_,memory_,storage_)!=position)
+            throw std::runtime_error("Replay position identity conflict");
+        const auto staging=vacant("current");
+        if(::link(sealed.c_str(),staging.c_str())<0)io_error("stage Replay position");
+        if(::rename(staging.c_str(),(directory_/"replay-position.block").c_str())<0)io_error("publish Replay position");
+        sync_directory(directory);sync_directory(directory_);
+        replay_position_=position;replay_position_loaded_=true;
+    }catch(...){usable_=false;throw;}
+}
 DigestBytes SessionStore::inventory() const {
     Sha256 hash;
     hash.update("SWEGCA ended session inventory v1"); hash.update(identity_);
@@ -379,6 +458,11 @@ DigestBytes SessionStore::inventory() const {
         for(const auto& [name,digest]:records){
             hash.update(latest?"SWEGCA ended cognition latest v1":"SWEGCA ended cognition v1");hash.update(name);hash.update(digest);
         }
+    }
+    const auto position=directory_/"replay-position.block";
+    if(std::filesystem::exists(position)){
+        const auto saved=read_position_file(position,identity_,name_,memory_,storage_);
+        hash.update("SWEGCA ended Replay position v1");hash.update(encode_position(saved));
     }
     return hash.finish();
 }

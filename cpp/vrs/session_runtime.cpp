@@ -258,6 +258,33 @@ void ExperienceRouter::mount_main(const PersistentMainGraph& graph) {
     // published head; receipts still pin their original generation separately.
     merged_main_=&graph;merged_head_=graph.head();
 }
+void ExperienceRouter::restore_position(const ReplayPosition& saved){
+    if(saved.original_index>std::numeric_limits<std::size_t>::max())
+        throw std::invalid_argument("Replay position index overflow");
+    const auto index=static_cast<std::size_t>(saved.original_index);
+    if(saved.source==temporary_.store_.identity()){
+        const auto* owner=temporary_.find(saved.connection);
+        if(!owner||index>=owner->state().experiences().size()||owner->state().read_experience(index).original()!=saved.original)
+            throw std::invalid_argument("saved temporary Replay position has no original");
+        auto original=temporary_.replay(saved.connection,index);
+        if(original.location()!=saved.original)throw std::logic_error("saved Replay original changed");
+        const auto evidence=decode_evidence(owner->rules(),original);
+        if(evidence.value().hypothesis!=saved.connection)throw std::invalid_argument("saved Replay connection mismatch");
+        continuation_=saved.connection;continued_context_=evidence.value().context;
+        return;
+    }
+    require_main_current();
+    if(!merged_main_)throw std::invalid_argument("saved Replay Main unavailable");
+    const auto& graph=merged_main_->graph();const auto* owner=graph.find(saved.connection);
+    if(!owner||index>=owner->experiences().size()||owner->read_experience(index).original()!=saved.original||
+        graph.original_source(saved.connection,index).store->identity()!=saved.source)
+        throw std::invalid_argument("saved Main Replay provenance mismatch");
+    auto original=graph.replay(saved.connection,index);
+    if(original.location()!=saved.original)throw std::logic_error("saved Main Replay original changed");
+    const auto evidence=decode_evidence(graph.rules_,original);
+    if(evidence.value().hypothesis!=saved.connection)throw std::invalid_argument("saved Main Replay connection mismatch");
+    continuation_=saved.connection;continued_context_=evidence.value().context;
+}
 
 void InputRecall::append(const RecallMatch& match, std::size_t index, std::size_t boundary,
     std::shared_ptr<const ExperienceEvidence> experience) {

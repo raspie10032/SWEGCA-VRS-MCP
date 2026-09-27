@@ -62,6 +62,8 @@ public:
     void save_cognition(const ExperienceLocation& input,std::span<const std::byte> metadata) {
         require_usable();store_.save_cognition(input,metadata);
     }
+    void save_replay_position(const ReplayPosition& position){require_usable();store_.save_replay_position(position);}
+    [[nodiscard]] std::optional<ReplayPosition> read_replay_position() const {require_usable();return store_.read_replay_position();}
     [[nodiscard]] std::optional<StoredExperience> read_cognition(const ExperienceLocation& input) const {
         require_usable();return store_.read_cognition(input);
     }
@@ -223,6 +225,9 @@ public:
     [[nodiscard]] std::size_t original_index() const noexcept { return match_.original_index; }
     [[nodiscard]] bool from_merged_main() const noexcept { return match_.recalled.main_graph != nullptr; }
     [[nodiscard]] bool has_input_key() const noexcept { return input_key_; }
+    [[nodiscard]] ReplayPosition position() const noexcept {
+        return {source_identity_,match_.recalled.recalled_head.identity,location(),match_.original_index};
+    }
     [[nodiscard]] const ExperienceLocation& observation_head() const noexcept {
         return match_.recalled.main_graph?match_.recalled.observation_head:match_.recalled.recalled_head.record;
     }
@@ -313,6 +318,9 @@ public:
     // Atomically refresh the query index of one durable merged Main. Sources
     // need not retain their SessionRuntime caches. Graph/store owners outlive us.
     void mount_main(const PersistentMainGraph& graph);
+    // Startup only: authenticate the exact saved source/address before using
+    // its connection and context as the next natural-input familiarity key.
+    void restore_position(const ReplayPosition&);
     [[nodiscard]] RecallCandidates recall(const architecture::DigestBytes& identity) const;
     // Immediate natural-input entry: exact/continued familiarity, then Recall.
     // No disk, recording, shuffle or LLM precedes Recall. SHA-256 cue work is

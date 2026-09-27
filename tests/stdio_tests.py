@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Real subprocess transport/lifecycle checks; no client app or service is changed."""
-import json, os, pathlib, select, socket, subprocess, sys, tempfile, time
+import json, os, pathlib, select, shutil, socket, subprocess, sys, tempfile, time
 exe=pathlib.Path(sys.argv[1]).resolve()
 checks=0
 mode_prefix="limited-" if "--limited" in sys.argv[2:] else ""
@@ -1442,6 +1442,30 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     recovered=c.call('swegca/agent/event',{'sequence':'0','observedAt':'0','seed':'7','step':'0',
         'sender':'client','native':json.dumps(bound_frame)})['result']
     check(bound_query(recovered)==from_main)
+    # Fresh differently worded input after resume must retain the live cursor;
+    # do not resend a historical event to reconstruct it after the restart.
+    def continuation_event(sequence,text):
+        return c.call('swegca/agent/event',{'sequence':str(sequence),
+            'observedAt':str(sequence),'seed':'7','step':str(sequence),
+            'sender':'client','native':json.dumps({'id':sequence+10,'method':'turn/start',
+                'params':{'threadId':'bound-consumer','input':[{'type':'text','text':text}]}})})['result']
+    live_followup=continuation_event(1,'Continue from that observation, please.')
+    check(live_followup['memory']['original'] is not None)
+    # Snapshot the quiescent acknowledged state. Both branches now receive
+    # identical next input, with all intervening experience held equal.
+    resumed_root=root/'bound-continuation-resume'
+    subprocess.run(['cp','-a',str(bound_root),str(resumed_root)],check=True)
+    next_text='Keep going with the preceding experience.'
+    uninterrupted=continuation_event(2,next_text)
+    c.close()
+    shutil.rmtree(bound_root);resumed_root.rename(bound_root)
+    c=Client('open',bound_root,path);c.initialize()
+    check(c.call('swegca/agent/attach/resume',consumer_binding)['result']['nextSequence']=='2')
+    check(c.call('swegca/select',{'identity':bound_consumer})['result']=={})
+    reopened_followup=continuation_event(2,next_text)
+    check(reopened_followup['memory']==uninterrupted['memory'])
+    check(reopened_followup['temporary']==uninterrupted['temporary'])
+    check(reopened_followup['candidates']==uninterrupted['candidates'])
     c.close()
     # Turn notifications keep the exact originating input, including after
     # restart and with overlapping turns. They are not evidence of success.

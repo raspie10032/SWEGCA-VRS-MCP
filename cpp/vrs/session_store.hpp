@@ -2,6 +2,7 @@
 
 #include "swegca_architecture/session_kernel.hpp"
 #include "vrs/evidence_experience.hpp"
+#include "vrs/replay_position.hpp"
 
 #include <map>
 #include <optional>
@@ -35,6 +36,8 @@ public:
     // Immutable derived cognition metadata, keyed by the committed input.
     // It is not another observation and does not enter connection refinement.
     void save_cognition(const ExperienceLocation&, std::span<const std::byte> metadata);
+    void save_replay_position(const ReplayPosition&);
+    [[nodiscard]] std::optional<ReplayPosition> read_replay_position() const;
     [[nodiscard]] std::optional<StoredExperience> read_cognition(const ExperienceLocation&) const;
     // Later core assessments are immutable revisions, never replacements of
     // the input-time record. The returned content digest selects that revision.
@@ -96,6 +99,8 @@ private:
         std::optional<architecture::DigestBytes>,bool latest=false,std::optional<architecture::DigestBytes> channel={}) const;
 
     std::filesystem::path root_, directory_;
+    mutable std::optional<ReplayPosition> replay_position_;
+    mutable bool replay_position_loaded_=false;
     architecture::DigestBytes identity_;
     MemoryBudget& memory_;
     StorageBudget* storage_;
