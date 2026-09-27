@@ -102,6 +102,7 @@ int main() {
     }
     CHECK(memory.used()==0);
     ExperienceLocation head, support_head;
+    ConnectionHead support_snapshot,append_snapshot,origin_snapshot;
     std::uint64_t expected_revision = 0;
     double expected_strength = 0;
     {
@@ -109,12 +110,15 @@ int main() {
         {
             auto connection = PersistentConnection::create(session, id(50), 0.999, policy, memory, 4096);
             CHECK(connection.state().strength() == 0.999 && connection.state().revision() == 0);
+            origin_snapshot=connection.snapshot();
             observations(session, connection, EvidenceOutcome::support, true);
+            append_snapshot=connection.snapshot();
             const auto result = connection.refine(12345, 10);
             CHECK(result.result().verification().judgment().status() == EvidenceStatus::accept);
             CHECK(connection.state().strength() == 0.999 * 1.01);
             CHECK(connection.state().revision() == 49);
             support_head = head = connection.head();
+            support_snapshot=connection.snapshot();
         }
         {
             auto connection = PersistentConnection::recover(session, head, memory, 4096);
@@ -129,6 +133,16 @@ int main() {
             CHECK(expected_revision == 98);
             CHECK(same_bits(expected_strength, (0.999 * 1.01) * 0.995));
             head = connection.head();
+            const auto check_history=[&](const ConnectionHead& expected){
+                const auto old=connection.historical_snapshot(expected.record);
+                CHECK(old.identity==expected.identity&&old.record==expected.record);
+                CHECK(old.ordinal==expected.ordinal&&old.revision==expected.revision);
+                CHECK(old.observations==expected.observations&&same_bits(old.strength,expected.strength));
+            };
+            check_history(connection.snapshot());check_history(support_snapshot);
+            check_history(append_snapshot);check_history(origin_snapshot);
+            expect_throw<std::invalid_argument>([&]{(void)connection.historical_snapshot({});});
+            CHECK(connection.state().revision()==expected_revision&&same_bits(connection.state().strength(),expected_strength));
         }
     }
     CHECK(memory.used() == 0);
@@ -136,6 +150,9 @@ int main() {
         auto session = SessionStore::open(root, id(1), memory);
         auto connection = PersistentConnection::recover(session, head, memory, 4096);
         CHECK(connection.state().revision() == expected_revision);
+        const auto old=connection.historical_snapshot(support_snapshot.record);
+        CHECK(old.observations==support_snapshot.observations&&old.ordinal==support_snapshot.ordinal);
+        CHECK(old.revision==support_snapshot.revision&&same_bits(old.strength,support_snapshot.strength));
         CHECK(same_bits(connection.state().strength(), expected_strength));
         CHECK(connection.state().experiences().size() == 96);
         CHECK(same_location(connection.head(), head));

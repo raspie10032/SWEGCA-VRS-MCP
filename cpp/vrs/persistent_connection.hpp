@@ -34,6 +34,9 @@ public:
     [[nodiscard]] const architecture::EvidencePolicy& policy() const noexcept { return policy_; }
     [[nodiscard]] const architecture::kernel::EvidenceRules& rules() const noexcept { return *rules_; }
     [[nodiscard]] architecture::kernel::ConnectionHead snapshot() const noexcept;
+    // Recover an ancestor boundary from this already core-verified owner.
+    // Reads connection records only; never trusts caller-supplied counts/strength.
+    [[nodiscard]] architecture::kernel::ConnectionHead historical_snapshot(const ExperienceLocation&) const;
     // Addresses are ordered newest to oldest. Verification reads only the
     // linked connection records and never treats a greater number as ancestry.
     [[nodiscard]] bool contains_history(std::span<const ExperienceLocation> addresses) const;

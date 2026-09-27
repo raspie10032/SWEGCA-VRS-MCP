@@ -110,3 +110,20 @@ historical scoped Replay는 저장 JSON의 source/selectedOriginal만으로 원�
 
 검증: CPU 6,7 / make -j2 빌드 성공. Runtime 1899 checks, stdio 5233 checks 통과.
 재시작 후 정상 원문 조회와 잘못된 scope/연결/원경험/출처/빈 이름 거부를 확인했다.
+
+## 과거 임시 연결의 관측 경계
+
+`PersistentConnection::historical_snapshot`은 이미 SWEGCA로 검증되어 복구된
+현재 연결에서 부모 기록을 따라 요청한 과거 head를 찾는다. append 기록을
+거슬러 갈 때 관측 수를 되돌리고 refine 기록에서는 실제 이전 강도를 읽는다.
+연결 identity, ordinal, revision, strength 일치를 확인하며 다른 계보의 주소는
+거부한다. 새 증거 판정이나 현재 연결 변경은 하지 않는다. 원경험 본문 전체를
+다시 Replay하지 않으며 하나의 read cursor로 연결 기록만 읽는다.
+
+historical scoped Replay가 임시 연결을 사용했던 경우 이 경로로 rememberedHead를
+확인하고 저장 observationBoundary와 관측 수를 대조한다. Main의 과거 head 복구와
+새 router 소유 비교 receipt 발행은 아직 연결되지 않았다. 따라서 이 단계 역시
+재시작 후 자동 live 대조 완성으로 해석하지 않는다.
+
+검증: persistent connection 93 checks 및 stdio 5230 checks 통과.
+과거 append/refine/origin/current 경계, 비계보 주소 거부, 재시작 후 경계와 현재 상태 불변을 확인했다.

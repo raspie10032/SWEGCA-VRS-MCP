@@ -928,6 +928,18 @@ private:
                 std::pmr::string prefix(saved.at("replayPrefix").string(),&memory_);
                 constexpr std::string_view content_field=",\"contentHex\":\"";
                 if(!prefix.ends_with(content_field))throw std::invalid_argument("invalid recorded scope Replay prefix");
+                // Complete only the empty payload field to inspect the sealed
+                // checkpoint. Its recorded verdict is not comparison authority.
+                const auto checkpoint=parse_json(prefix+"\"}",memory_);
+                const auto& tier=checkpoint.at("temporary");
+                if(tier.kind!=Json::Kind::boolean)throw std::invalid_argument("invalid recorded scope tier");
+                if(tier.scalar=="true"){
+                    const auto* owner=runtime_.session().find(digest(saved.at("scopeConnection").string()));
+                    if(!owner)throw std::invalid_argument("recorded scope owner disappeared");
+                    const auto old=owner->historical_snapshot(record_address(checkpoint.at("assessment").at("rememberedHead")));
+                    if(old.observations!=integer(saved.at("observationBoundary")))
+                        throw std::invalid_argument("recorded scope observation boundary mismatch");
+                }
                 prefix.resize(prefix.size()-content_field.size());
                 prefix+=",\"historical\":true,\"revision\":\"";
                 prefix+=hex(Sha256::of(record->view().content),memory_);prefix+='"';prefix+=content_field;

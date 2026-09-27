@@ -293,6 +293,28 @@ ConnectionHead PersistentConnection::snapshot() const noexcept {
     return {state_->identity(), head_, state_->revision(), ordinal_, state_->experiences().size(), state_->strength()};
 }
 
+ConnectionHead PersistentConnection::historical_snapshot(const ExperienceLocation& target) const {
+    auto result=snapshot();
+    auto reader=session_.read_cursor();
+    for (;;) {
+        if(result.record==target)return result;
+        const auto event=read_event(reader,result.record);
+        if(event.identity!=result.identity||event.ordinal!=result.ordinal||event.after!=result.revision)
+            throw std::runtime_error("historical connection lineage mismatch");
+        if(event.kind==EventKind::create||result.ordinal==0)
+            throw std::invalid_argument("requested head is not an ancestor of this connection");
+        if(event.kind==EventKind::append){
+            if(result.observations==0)throw std::runtime_error("historical observation count underflow");
+            --result.observations;
+        }else if(event.kind==EventKind::refine){
+            if(!same_bits(result.strength,event.next_strength))
+                throw std::runtime_error("historical connection strength mismatch");
+            result.strength=event.previous_strength;
+        }
+        result.record=event.parent;result.revision=event.before;--result.ordinal;
+    }
+}
+
 bool PersistentConnection::verifies_extension(SessionStore& session, const ConnectionHead& candidate,
     const ExperienceLocation& previous) {
     auto cursor = candidate.record;
