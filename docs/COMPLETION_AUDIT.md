@@ -978,3 +978,13 @@ revision을 읽는다. 대체된 SessionRuntime의 미사용 읽기 중계는 �
 내용 일치, 타 활성 세션 입력 유지, unknown source/위조 주소/복수 locator 거절,
 닫힌 세션 입력 route 미생성을 포함해 stdio 3,725개 검사 통과. 조회는 쓰기나
 새 판단을 수행하지 않는다. 최신 revision 자동 탐색과 수동 후보 전체 이력은 남는다.
+
+
+native 세션의 수동 후보 전체 Replay 대조도 revision 저장에 연결했다. 이미
+인증된 선택 원경험에 기존 core compare/Re-evidence를 적용한 실제 응답을 원입력,
+sourceSession, selectedOriginal, seed/step과 함께 저장한다. 저장 성공 뒤 반환하는
+revision으로 종료·병합·재시작 후 정확히 조회한다. 자동 선택 상태를 바꾸거나
+저장 성공을 support/refute로 승격하지 않으며 충돌일 때만 Re-evidence를 유지한다.
+동일 수동 대조 재시도의 결과/용량 불변, 초기 대조와 독립 보존, 부분 읽기 이후
+대조 거절, 재시작 후 기록 일치를 포함해 stdio 3,755개 검사 통과. 기존 64KiB
+metadata 상한과 큰 currentOriginals 목록 처리, 최신 revision 자동 탐색은 남는다.

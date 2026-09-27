@@ -691,6 +691,7 @@ private:
             for(const auto& original:checked.current_originals()){if(!first)body+=',';first=false;body+=address(original,memory_);}
             body+="]}";
             auto& state=context();
+            std::optional<DigestBytes> published;
             if(state.cognition&&replayed==&state.cognition->replayed){
                 // Publish the successful explicit comparison to the same live
                 // receipt only after response construction has succeeded.
@@ -701,7 +702,20 @@ private:
                 state.cognition_parameters=std::pair{seed,step};state.cognition_done=true;
                 state.cognition_snapshot_saved=false;
                 complete_cognition();
+                if(!state.native_session.empty())published=state.cognition_revision;
+            }else if(!state.native_session.empty()){
+                // Persist the actual comparison of the explicitly selected,
+                // authenticated Replay without replacing automatic selection.
+                auto metadata=std::pmr::string("{\"inputOriginal\":",&memory_)+address(state.received->recorded.original,memory_);
+                metadata+=",\"seed\":\"";metadata+=std::to_string(seed);
+                metadata+="\",\"step\":\"";metadata+=std::to_string(step);
+                metadata+="\",\"sourceSession\":\"";metadata+=hex(replayed->source_identity(),memory_);
+                metadata+="\",\"selectedOriginal\":";metadata+=address(replayed->location(),memory_);
+                metadata+=",\"comparison\":";metadata+=body;metadata+='}';
+                published=runtime_.save_cognition_revision(state.received->recorded.original,
+                    std::as_bytes(std::span(metadata)));
             }
+            if(published){body.pop_back();body+=",\"revision\":\"";body+=hex(*published,memory_);body+="\"}";}
             return body;
         }
         throw std::invalid_argument("unknown tool");

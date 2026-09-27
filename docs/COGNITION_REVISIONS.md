@@ -3,8 +3,9 @@
 The native Main host persists the initial input-time cognition at its existing
 input key. Later successful automatic comparisons and explicit Re-evidence of
 the current automatic Replay publish immutable revisions through Runtime,
-SessionRuntime and SessionStore. Partial payloads and manually selected raw
-Replay objects do not manufacture a completed automatic cognition record.
+SessionRuntime and SessionStore. Partial payloads never authorize comparison. A manually selected full Replay
+can now persist its successful core comparison as a revision without replacing
+the automatic cognition selection.
 
 Each revision is bound to the committed input extent, original digest, session
 identity and SHA-256 of the metadata. It includes inputOriginal, seed, step,
@@ -60,3 +61,21 @@ Ended-session regression additionally verifies queries before and after Main
 merge, after restart without session attachment, rejection of unknown sources
 and forged addresses, and continued input to an unrelated selected session.
 The closed session does not gain an input route from these reads.
+
+## Explicitly selected full Replay
+
+For a native session, vrs_re_evidence on an authenticated manually selected
+Replay persists inputOriginal, seed, step, sourceSession, selectedOriginal and
+`comparison`. The latter is the complete core comparison response (including
+currentOriginals), before adding the returned `revision` field. Re-evidence
+still runs only for a core-verified conflict; an insufficient comparison is
+recorded as insufficient. No new evidence verdict is inferred from persistence.
+Automatic explicit comparisons also return their saved revision digest.
+
+The same agent/cognition query retrieves a manual revision by digest, including
+after session end, Main merge and restart. Repeated identical calls reuse the
+same record. A failed or partial Replay cannot publish a manual comparison.
+These records use the existing 64KiB cognition metadata bound; large comparison
+address lists and automatic latest-revision navigation remain limitations.
+Generic host fixtures outside native session bindings still do not automatically
+persist cognition, as before this change.

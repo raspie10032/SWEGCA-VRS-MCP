@@ -780,6 +780,19 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     response_replay=c.call('tools/call',{'name':'vrs_replay','arguments':{
         'receipt':continued['receipt'],'candidate':selected['index']}})['result']['structuredContent']
     check(bytes.fromhex(response_replay['contentHex'])==reply_raw.encode())
+    manual_arguments={'receipt':continued['receipt'],'seed':'13','step':'7'}
+    manual=c.call('tools/call',{'name':'vrs_re_evidence','arguments':manual_arguments})['result']['structuredContent']
+    manual_revision=manual['revision']
+    manual_record=cognition_record(7,manual_revision)['result']['record']
+    check(manual_record['inputOriginal']==continued['original'] and manual_record['selectedOriginal']==r1['original'])
+    check(manual_record['sourceSession']==response_id and manual_record['seed']=='13' and manual_record['step']=='7')
+    check(manual_record['comparison']=={k:v for k,v in manual.items() if k!='revision'})
+    check(not manual['reEvidencePerformed'])
+    before_manual_retry=sum(p.stat().st_size for p in response_root.rglob('*') if p.is_file())
+    check(c.call('tools/call',{'name':'vrs_re_evidence','arguments':manual_arguments})['result']['structuredContent']==manual)
+    check(sum(p.stat().st_size for p in response_root.rglob('*') if p.is_file())==before_manual_retry)
+    check(partial(continued['receipt'],0,1)['structuredContent']['partial'])
+    check(c.call('tools/call',{'name':'vrs_re_evidence','arguments':manual_arguments})['result']['isError'])
     check(c.call('swegca/work',{'seed':'7','step':'7'})['result']['merged']=='0')
     check(c.call('swegca/end')['result']=={})
     def archived_cognition(revision=updated_revision, source=response_id, original=r2['original']):
@@ -802,6 +815,7 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     check(archived_cognition()['result']['record']==updated_cognition)
     check(archived_cognition(None)['result']['record']==initial_cognition['record'])
     check(archived_cognition(explicit_revision,original=r4['original'])['result']['record']==explicit_record)
+    check(archived_cognition(manual_revision,original=continued['original'])['result']['record']==manual_record)
     check('error' in c.call('swegca/select',{'identity':response_id}))
     c.close()
     # Response routing follows the sealed connection, even when its identity
