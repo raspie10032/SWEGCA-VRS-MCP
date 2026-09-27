@@ -197,6 +197,7 @@ int main(int argc,char** argv){
                     const auto found=bindings.find(plan.event().session());
                     if(found==bindings.end())throw std::runtime_error("unbound native session");
                     AgentEventCommit commit(found->second,pump.parameters(plan,seed,step),"proxy/event/"+std::to_string(++serial),memory);
+                    SWEGCA_INGRESS_STAGE("proxy_rpc_ready");
                     while(commit.stage()!=AgentEventCommit::Stage::complete)commit.accept(stream.exchange(commit.request()));
                     return true;
                 },bind_thread);

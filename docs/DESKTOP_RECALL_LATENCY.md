@@ -139,3 +139,46 @@ All 1MiB samples remain above 1ms and the full latency requirement is unresolved
 Verification: agent-event 219, Wire 74, Pump 92, stdio process 2,560 checks passed.
 Event checks cover allocation failure/retry, exact eager-encoding equivalence,
 repeated access without extra allocation and moves before/after materialization.
+
+## Stage diagnosis
+
+Optional `--stages` uses separate `swegca-vrs-stages-probe` and
+`swegca-proxy-stages-probe` executables. Production preprocessing removes every
+stage marker. All timestamps are CLOCK_MONOTONIC; labels contain no native
+content or identifiers. Marker writes add diagnostic overhead to subsequent
+intervals, so these numbers locate costs rather than replace uninstrumented
+acceptance measurements.
+
+```
+taskset -c 6,7 make -j2 build/swegca-vrs-stages-probe build/swegca-proxy-stages-probe
+taskset -c 6,7 python3 benchmarks/desktop_recall_latency.py build 5 --stages
+```
+
+The collector requires all seven stage labels exactly once and in timestamp
+order before Recall. Setup/prior-response markers are excluded by the current
+write-start timestamp. This fixture has one outstanding input request; the
+collector rejects ambiguous labels instead of assigning concurrent events by
+guess. EOF still terminates transport without ending a VRS session.
+
+Raw offsets: `benchmarks/results/desktop-recall-stages.jsonl`. For 1MiB,
+median total was 5.471252ms. Median individual intervals (not additive medians):
+
+| Interval | Median ms | Included work |
+| --- | ---: | --- |
+| stdin write start → proxy frame | 0.290233 | desktop relay and complete native framing |
+| proxy frame → adapted | 0.543765 | JSON parsing, event adaptation and ownership |
+| adapted → RPC ready | 1.220012 | preflight, parameters, commit/envelope construction |
+| RPC ready → host frame | 0.683466 | RPC send and complete VRS framing |
+| host frame → RPC parsed | 0.726407 | outer JSON parse |
+| RPC parsed → native adapted | 0.644786 | dispatch, session selection, native parsing/adaptation |
+| native adapted → cue ready | 0.937178 | routing/preflight and cue encoding |
+| cue ready → Recall | 0.452844 | runtime entry, cue digest and Déjà vu |
+
+The largest measured intervals direct the next work toward RPC construction and
+cue encoding while preserving exact bytes, input validation and SWEGCA routing.
+No claim of 1ms attainment, actual GUI integration or complete graph operation
+follows from this diagnosis.
+
+Production verification after adding probes: framing 29, JSON 38, wrapper 33,
+stdio subprocess 2,560 checks passed. `nm` confirmed both production VRS and
+proxy lack the ingress-stage and Recall probe symbols.

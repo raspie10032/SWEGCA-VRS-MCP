@@ -1,5 +1,6 @@
 #include "transport/json.hpp"
 #include "transport/stdio_frames.hpp"
+#include "transport/ingress_probe.hpp"
 #include "transport/agent_event.hpp"
 #include "transport/app_server_requests.hpp"
 #include "swegca_architecture/input_cue.hpp"
@@ -46,8 +47,10 @@ class Server {
 public:
     Server(Runtime& runtime,MemoryBudget& memory,std::uint64_t frame):runtime_(runtime),memory_(memory),frame_(frame),contexts_(&memory){}
     void message(std::string_view line){
+        SWEGCA_INGRESS_STAGE("host_frame");
         Json request(&memory_);
         try{request=parse_json(line,memory_);}catch(const std::bad_alloc&){throw;}catch(const std::exception&){error("null",-32700,"invalid JSON");return;}
+        SWEGCA_INGRESS_STAGE("host_rpc_parsed");
         if(request.kind!=Json::Kind::object||!request.find("jsonrpc")||request.at("jsonrpc").kind!=Json::Kind::string||request.at("jsonrpc").scalar!="2.0"||!request.find("method")||request.at("method").kind!=Json::Kind::string){error("null",-32600,"invalid JSON-RPC request");return;}
         const Json* id=request.find("id");std::pmr::string encoded_id("null",&memory_);
         if(id&&(id->kind==Json::Kind::string||id->kind==Json::Kind::number))encoded_id=encode_json(*id,memory_);
@@ -261,6 +264,7 @@ private:
                     adapt_codex_hook(p.at("native").string(),memory_));
             }
             const auto& event=response?response->event():*parsed_event;
+            SWEGCA_INGRESS_STAGE("host_native_adapted");
             if(event.session()!=state.native_session)throw std::invalid_argument("native session mismatch");
             if(sender==ExperienceSender::server&&event.kind()==swegca::architecture::kernel::AgentEventKind::input)
                 throw std::invalid_argument("input must originate from client");
@@ -302,6 +306,7 @@ private:
                 if(route==AgentEventRoute::recall_then_record){
                     if(next_receipt_==std::numeric_limits<std::uint64_t>::max())throw std::overflow_error("receipt sequence exhausted");
                     const auto prompt=event.cue_content();
+                    SWEGCA_INGRESS_STAGE("host_cue_ready");
                     clear();state.receipt=++next_receipt_;
                     state.received.emplace(runtime_.receive_envelope(event.cue_media(),std::as_bytes(std::span(prompt)),original,seed,step));
                     slot->second.original=state.received->recorded.original;committed=true;

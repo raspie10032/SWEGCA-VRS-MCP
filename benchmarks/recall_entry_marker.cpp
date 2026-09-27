@@ -1,6 +1,12 @@
 #include <cstdio>
 #include <ctime>
 #include <unistd.h>
+extern "C" void swegca_ingress_stage_probe(const char* name) noexcept {
+    timespec time{};if(::clock_gettime(CLOCK_MONOTONIC,&time))return;
+    char text[128];const auto n=std::snprintf(text,sizeof(text),"SWEGCA_STAGE_NS %s %llu\n",name,
+        static_cast<unsigned long long>(time.tv_sec)*1000000000ULL+time.tv_nsec);
+    if(n>0&&static_cast<std::size_t>(n)<sizeof(text))(void)::write(STDERR_FILENO,text,static_cast<std::size_t>(n));
+}
 // Linked only into the diagnostic executable. Timestamp precedes marker I/O;
 // no user content, source path or model call is involved.
 extern "C" void swegca_recall_entry_probe() noexcept {

@@ -1,6 +1,7 @@
 #pragma once
 #include "transport/app_server_wire.hpp"
 #include "transport/socket_frames.hpp"
+#include "transport/ingress_probe.hpp"
 
 namespace swegca::transport {
 // Serialized, readiness-driven duplex pump. The callback must confirm the
@@ -42,7 +43,9 @@ public:
             const auto state=reader.poll();
             if(state==SocketFrames::State::pending)return State::idle;
             if(state==SocketFrames::State::end)return State::end;
+            SWEGCA_INGRESS_STAGE("proxy_frame");
             stage.delivery.emplace(wire_.prepare(reader.frame(),sender,observed,std::forward<Bind>(bind)));
+            SWEGCA_INGRESS_STAGE("proxy_adapted");
             ingress_=sender;reader.consumed();
         }
         if(!stage.ingested){

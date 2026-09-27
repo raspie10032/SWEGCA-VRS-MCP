@@ -3,6 +3,7 @@
 import json,os,pathlib,select,subprocess,sys,tempfile,time
 build=pathlib.Path(sys.argv[1]).resolve()
 count=int(sys.argv[2]) if len(sys.argv)>2 else 5
+stages=len(sys.argv)>3 and sys.argv[3]=='--stages'
 if not 1<=count<=100:raise ValueError('sample count must be 1..100')
 with tempfile.TemporaryDirectory(prefix='swegca-desktop-latency-') as directory:
     base=pathlib.Path(directory);root=base/'state';root.mkdir()
@@ -24,7 +25,7 @@ for line in sys.stdin:
     if 'id' in v:print(json.dumps({'id':v['id'],'result':{}}),flush=True)
 ''');backend.chmod(0o700)
     config=base/'wrapper.json';config.write_text(json.dumps(dict(backend=str(backend),host=str(build/'swegca-desktop-host'),
-        proxy=str(build/'swegca-app-server-proxy'),vrs=str(build/'swegca-vrs-ingress-probe'),mode='ensure',root=str(root),
+        proxy=str(build/('swegca-proxy-stages-probe' if stages else 'swegca-app-server-proxy')),vrs=str(build/('swegca-vrs-stages-probe' if stages else 'swegca-vrs-ingress-probe')),mode='ensure',root=str(root),
         resourceConfig=str(resources),proxyConfig=str(proxy))))
     process=subprocess.Popen([str(build/'swegca-codex-wrapper'),'-c','features.code_mode_host=true','app-server',
         '--analytics-default-enabled'],env=dict(os.environ,SWEGCA_DESKTOP_CONFIG=str(config)),
@@ -51,20 +52,43 @@ for line in sys.stdin:
         assert json.loads(line(process.stdout))['id']==2
         serial=2
         for size in (128,4096,65536,1048576):
-            samples=[];native_bytes=0
+            samples=[];native_bytes=0;stage_samples=[]
             for _ in range(count):
                 serial+=1
                 began,native_bytes=send(dict(id=serial,method='turn/start',params=dict(threadId='fixture',input=[dict(type='text',text='x'*size)])))
-                marker=line(process.stderr).decode().strip().split()
-                if len(marker)!=2 or marker[0]!='SWEGCA_RECALL_NS':raise RuntimeError('invalid Recall marker')
+                points={}
+                while True:
+                    marker=line(process.stderr).decode().strip().split()
+                    if stages and len(marker)==3 and marker[0]=='SWEGCA_STAGE_NS':
+                        stamp=int(marker[2])
+                        if stamp>=began:
+                            if marker[1] in points:raise RuntimeError('ambiguous stage marker')
+                            points[marker[1]]=stamp-began
+                        continue
+                    if len(marker)!=2 or marker[0]!='SWEGCA_RECALL_NS':raise RuntimeError('invalid Recall marker')
+                    break
                 elapsed=int(marker[1])-began
+                if stages:
+                    expected=['proxy_frame','proxy_adapted','proxy_rpc_ready','host_frame','host_rpc_parsed','host_native_adapted','host_cue_ready']
+                    if set(points)!=set(expected):raise RuntimeError('missing or unexpected ingress stage')
+                    times=[0]+[points[key] for key in expected]+[elapsed]
+                    if times!=sorted(times):raise RuntimeError('out-of-order ingress timestamps')
+                    points['recall']=elapsed;stage_samples.append(points)
                 assert elapsed>=0 and json.loads(line(process.stdout))['id']==serial
                 samples.append(elapsed)
             ordered=sorted(samples)
-            print(json.dumps(dict(boundary='desktop stdin write start -> core Recall entry',scenario='empty-main/new-temporary-session',
+            result=dict(boundary='desktop stdin write start -> core Recall entry',scenario='empty-main/new-temporary-session',
                 promptBytes=size,nativeBytes=native_bytes,samplesNs=samples,medianNs=ordered[len(ordered)//2],
-                maxNs=max(samples),atLeast1ms=sum(n>=1000000 for n in samples))),flush=True)
+                maxNs=max(samples),atLeast1ms=sum(n>=1000000 for n in samples))
+            if stages:result['stageOffsetsNs']=stage_samples
+            print(json.dumps(result),flush=True)
         process.stdin.close()
-        assert process.wait(timeout=10)==0 and process.stdout.read()==b'' and process.stderr.read()==b''
+        assert process.wait(timeout=10)==0 and process.stdout.read()==b''
+        trailing=process.stderr.read()
+        if stages:
+            for tail in trailing.decode().splitlines():
+                fields=tail.split()
+                assert len(fields)==3 and fields[0]=='SWEGCA_STAGE_NS' and fields[2].isdigit()
+        else:assert trailing==b''
     finally:
         if process.poll() is None:process.terminate();process.wait(timeout=10)
