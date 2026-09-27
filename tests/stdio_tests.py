@@ -1403,6 +1403,46 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     check(related_call(main_recovered['receipt'])['result']['structuredContent']==main_related)
     check(c.call('swegca/agent/cognition',main_query)['result']['revision']==main_related_journal['revision'])
     c.close()
+    # Regression: a weakened refutation must remain the related observation
+    # even when its ordinary turn response retained a higher connection strength.
+    bound_root=root/'bound-observation-selection';bound_root.mkdir()
+    c=Client('create',bound_root,path);c.initialize()
+    bound_binding={**producer_binding,'instance':'bound-observation-selection'}
+    producer_owner=c.call('swegca/agent/attach',bound_binding)['result']['identity']
+    check(c.call('swegca/select',{'identity':producer_owner})['result']=={})
+    producer_seq=0;bound_pairs=[]
+    for n in range(8):
+        bound_input,bound_report=producer_trial('A purpose kept in Main.',n,'refute',
+            lambda v:v.update(scope='archived requirement outcome'))
+        bound_pairs.append((bound_input,bound_report))
+    def bound_query(current):
+        return c.call('swegca/agent/replay',{'receipt':current['receipt'],
+            'inputOriginal':current['original'],'related':True})['result']['structuredContent']
+    selected_bound=bound_query(bound_input)
+    check(selected_bound['relatedFrom']==bound_pairs[-2][0]['original'])
+    check(selected_bound['original']==bound_pairs[-2][1]['original'])
+    check(json.loads(bytes.fromhex(selected_bound['contentHex']))['params']['item']['result']['structuredContent']['swegcaObservation']['outcome']=='refute')
+    check(c.call('swegca/end')['result']=={})
+    check(c.call('swegca/work',{'seed':'7','step':'100'})['result']['merged']=='1')
+    consumer_binding={**bound_binding,'session':'bound-consumer'}
+    bound_consumer=c.call('swegca/agent/attach',consumer_binding)['result']['identity']
+    check(c.call('swegca/select',{'identity':bound_consumer})['result']=={})
+    producer_seq=0
+    bound_frame={'id':1,'method':'turn/start','params':{'threadId':'bound-consumer',
+        'input':[{'type':'text','text':'A purpose kept in Main.'}]}}
+    _,consumer_input=producer_frame('client',bound_frame)
+    from_main=bound_query(consumer_input)
+    check(from_main['relatedFrom']==bound_input['original'] and from_main['original']==bound_report['original'])
+    journal=c.call('swegca/agent/cognition',{'identity':bound_consumer,'inputOriginal':consumer_input['original'],
+        'related':True,'latest':True})['result']
+    check(journal['record']['recovery']['seedOnly'])
+    c.close();c=Client('open',bound_root,path);c.initialize()
+    check(c.call('swegca/agent/attach/resume',consumer_binding)['result']['nextSequence']=='1')
+    check(c.call('swegca/select',{'identity':bound_consumer})['result']=={})
+    recovered=c.call('swegca/agent/event',{'sequence':'0','observedAt':'0','seed':'7','step':'0',
+        'sender':'client','native':json.dumps(bound_frame)})['result']
+    check(bound_query(recovered)==from_main)
+    c.close()
     # Turn notifications keep the exact originating input, including after
     # restart and with overlapping turns. They are not evidence of success.
     turns_root=root/'native-turns';turns_root.mkdir()

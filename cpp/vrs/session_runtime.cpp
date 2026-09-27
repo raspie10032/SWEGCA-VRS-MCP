@@ -318,9 +318,15 @@ InputRecall ExperienceRouter::related(const ReplayedInput& parent) const {
     const auto key=parent.location().digest;
     const auto local=temporary_.contexts_.find(key);
     const bool found=local!=temporary_.contexts_.end()&&!local->second.empty();
-    const auto tier=recall_scope(temporary_.usable(),found);
-    if(tier==RecallScope::temporary||tier==RecallScope::unavailable)
-        return recall_cue(parent.input_cue(),tier,familiarity_key(false,false,found),&key);
+    auto tier=recall_scope(temporary_.usable(),found);
+    if(tier==RecallScope::temporary||tier==RecallScope::unavailable){
+        // The sealed input-key marker identifies an explicitly bound input
+        // or observation. General dialogue remains in the context graph but
+        // is not evidence for this observation lookup, regardless of strength.
+        auto result=recall_cue(parent.input_cue(),tier,familiarity_key(false,false,found),&key,true);
+        tier=recall_scope(temporary_.usable(),result.familiar());
+        if(tier==RecallScope::temporary)return result;
+    }
     require_main_current();
     bool main_found=false;
     if(merged_main_){
@@ -330,7 +336,7 @@ InputRecall ExperienceRouter::related(const ReplayedInput& parent) const {
         const auto position=session->contexts_.find(key);
         if(position!=session->contexts_.end()&&!position->second.empty()){main_found=true;break;}
     }
-    return recall_cue(parent.input_cue(),tier,familiarity_key(false,false,main_found),&key);
+    return recall_cue(parent.input_cue(),tier,familiarity_key(false,false,main_found),&key,true);
 }
 InputRecall ExperienceRouter::input(std::string_view media, std::span<const std::byte> content) const {
     // Deja vu: natural bytes reach the core cue primitive immediately. This
@@ -458,6 +464,20 @@ InputRecall ExperienceRouter::recall_cue(const DigestBytes& cue, RecallScope sco
                 const auto* active = temporary_.find(identity);
                 const auto boundary=active ? active->state().experiences().size() : 0;
                 const auto* connection=merged_main_->graph().find(identity);
+                if(seed_only){
+                    // Apply the same core eligibility to Main ranges as to
+                    // temporary references. Only metadata is inspected here.
+                    for(auto first=begin;first<end;){
+                        if(!context_reference_eligible(connection->read_experience(first).has_input_key(),true)){
+                            ++first;continue;
+                        }
+                        auto last=first+1;
+                        while(last<end&&context_reference_eligible(connection->read_experience(last).has_input_key(),true))++last;
+                        result.append_range(match,boundary,*connection,memory_,first,last);
+                        first=last;
+                    }
+                    continue;
+                }
                 // Keep sparse pins compact, but long runs from multiple
                 // connections/regions share bounded segment snapshots too.
                 const auto directory=connection->snapshot_directory_bytes(begin,end);
@@ -473,7 +493,12 @@ InputRecall ExperienceRouter::recall_cue(const DigestBytes& cue, RecallScope sco
         for(const auto* session:mounted_){
             const auto found=session->contexts_.find(*context);
             if(found!=session->contexts_.end())
-                for(const auto& reference:found->second)append(*session,reference);
+                for(const auto& reference:found->second){
+                    const auto* connection=session->find(reference.connection);
+                    if(!connection)throw std::logic_error("context refers to an unavailable connection");
+                    if(context_reference_eligible(connection->state().read_experience(reference.original_index).has_input_key(),seed_only))
+                        append(*session,reference);
+                }
         }
     } else {
         const auto found = main_cues_.find(cue);
@@ -552,13 +577,14 @@ ReplayedInput ExperienceRouter::replay(const InputRecall& recalled,std::size_t c
         ?merged_main_->graph().rules_:selected.recalled.connection->rules();
     // The selected original is already in hand. Read its sealed context through
     // the evidence decoder instead of loading its metadata page once more.
-    const auto context=decode_evidence(rules,original).value().context;
+    const auto evidence=decode_evidence(rules,original);
+    const auto context=evidence.value().context;
     continuation_=identity;
     continued_context_=context;
     const auto source_identity=selected.recalled.main_graph
         ? merged_main_->graph().original_source(identity,selected.original_index).store->identity()
         : selected.recalled.session->store_.identity();
-    return ReplayedInput(std::move(original),selected,issuer_,recalled.cue_,source_identity);
+    return ReplayedInput(std::move(original),selected,issuer_,recalled.cue_,source_identity,evidence.has_input_key());
 }
 ReplayedInput ExperienceRouter::restore_temporary_replay(const ExperienceLocation& input,
     std::string_view scope,const DigestBytes& connection,const ExperienceLocation& remembered_head,
@@ -585,7 +611,7 @@ ReplayedInput ExperienceRouter::restore_temporary_replay(const ExperienceLocatio
     InputMatch match{{&temporary_,owner,old,nullptr},original_index,
         static_cast<std::size_t>(old.observations),original,selected_value.value().observed_at};
     continuation_=connection;continued_context_=selected_value.value().context;
-    return ReplayedInput(std::move(selected),match,issuer_,cue,temporary_.store_.identity());
+    return ReplayedInput(std::move(selected),match,issuer_,cue,temporary_.store_.identity(),selected_value.has_input_key());
 }
 
 ReplayedInput ExperienceRouter::restore_main_replay(const ExperienceLocation& input,
@@ -617,7 +643,7 @@ ReplayedInput ExperienceRouter::restore_main_replay(const ExperienceLocation& in
     InputMatch match{{nullptr,nullptr,old,merged_main_,observation_head},original_index,boundary,
         original,selected_value.value().observed_at};
     continuation_=connection;continued_context_=selected_value.value().context;
-    return ReplayedInput(std::move(selected),match,issuer_,cue,source);
+    return ReplayedInput(std::move(selected),match,issuer_,cue,source,selected_value.has_input_key());
 }
 
 ReplayedInput ExperienceRouter::restore_replay(const ExperienceLocation& input,const ReplayRecovery& saved) const {
@@ -661,7 +687,7 @@ ReplayedInput ExperienceRouter::restore_replay(const ExperienceLocation& input,c
         saved.temporary?nullptr:merged_main_,saved.observation_head},saved.original_index,boundary,
         saved.original,selected_value.value().observed_at};
     continuation_=saved.connection;continued_context_=selected_value.value().context;
-    return ReplayedInput(std::move(selected),match,issuer_,saved.input_cue,source);
+    return ReplayedInput(std::move(selected),match,issuer_,saved.input_cue,source,selected_value.has_input_key());
 }
 
 EvidencePayloadSlice ExperienceRouter::read_payload_slice(const InputRecall& recalled,std::size_t candidate,

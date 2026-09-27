@@ -711,7 +711,7 @@ int main(){
  }
  {
   const auto path=root/"related-observations";fs::create_directory(path);
-  ExperienceLocation input,positive,negative;
+  ExperienceLocation input,positive,negative,uncertain,general;
   {
    auto host=Runtime::create(path,config,memory);host.start_session(id(241),"related");
    input=host.receive({0,0,"related","user","text/plain",content},7,0).recorded.original;
@@ -725,6 +725,13 @@ int main(){
    value.observed_at=2;value.outcome=EvidenceOutcome::refute;
    auto second=host.observe_input_scope(input,"permissions",{2,2,"related","tool","text/plain",content},value,7,2);
    negative=second.original;
+   value.observed_at=1;value.outcome=EvidenceOutcome::insufficient;
+   uncertain=host.observe_input_scope(input,"unmeasured",{3,1,"related","tool","text/plain",content},value,7,2).original;
+   host.define_connection(id(250));value.hypothesis=id(250);value.context=input.digest;value.observed_at=5;
+   const std::string response="general turn response";
+   general=host.observe(id(250),{4,5,"related","server","text/plain",std::as_bytes(std::span(response))},value,7,5).original;
+   CHECK(!decode_evidence(host.session().find(id(250))->rules(),host.session().read_original(general)).has_input_key());
+   value.hypothesis={};value.context={};value.outcome=EvidenceOutcome::refute;
    const std::string other_text="a different purpose";const auto other_bytes=std::as_bytes(std::span(other_text));
    const auto other=host.receive({3,3,"related","user","text/plain",other_bytes},7,3).recorded.original;
    value.observed_at=4;
@@ -732,13 +739,14 @@ int main(){
    const auto before_reads=reads,before_writes=writes;
    auto linked=host.related(parent);
    CHECK(linked.temporary()&&linked.key_kind()==FamiliarityKey::context&&linked.lookup_key()==input.digest);
-   CHECK(linked.matches().size()==2&&reads==before_reads&&writes==before_writes);
-   bool saw_positive=false,saw_negative=false;
+   CHECK(linked.seed_only()&&linked.matches().size()==3&&reads==before_reads&&writes==before_writes);
+   bool saw_positive=false,saw_negative=false,saw_uncertain=false;
    for(const auto match:linked.matches()){
     saw_positive|=match.original==positive;saw_negative|=match.original==negative;
-    CHECK(match.original!=unrelated&&match.original!=input);
+    saw_uncertain|=match.original==uncertain;
+    CHECK(match.original!=unrelated&&match.original!=input&&match.original!=general);
    }
-   CHECK(saw_positive&&saw_negative);
+   CHECK(saw_positive&&saw_negative&&saw_uncertain);
    auto cognition=host.cognize(linked,7,4);
    CHECK(cognition&&cognition->replayed.location()==negative);
    CHECK(evidence_payload(cognition->replayed.original()).content.size()==content.size());
@@ -754,10 +762,16 @@ int main(){
    CHECK(recalled.matches().size()==1);
    auto parent=host.replay(recalled,0);CHECK(parent.location()==input);
    const auto before_reads=reads,before_writes=writes;
-   auto linked=host.related(parent);CHECK(!linked.temporary()&&linked.matches().size()==2);
+   auto linked=host.related(parent);CHECK(!linked.temporary()&&linked.seed_only()&&linked.matches().size()==3);
    CHECK(linked.lookup_key()==input.digest&&reads==before_reads&&writes==before_writes);
    auto selected=host.cognize(linked,7,5);CHECK(selected&&selected->replayed.location()==negative);
    CHECK(writes==before_writes);
+   // Local general dialogue cannot hide eligible observations in Main.
+   host.define_connection(id(251));EvidenceObservation value;
+   value.hypothesis=id(251);value.context=input.digest;value.source=id(21);value.producer=id(22);value.observed_at=6;
+   (void)host.observe(id(251),{0,6,"related-main","server","text/plain",content},value,7,6);
+   auto fallback=host.related(parent);CHECK(!fallback.temporary()&&fallback.matches().size()==3);
+   CHECK(host.cognize(fallback,7,6)->replayed.location()==negative);
   }
  }
  {

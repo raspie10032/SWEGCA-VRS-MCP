@@ -222,6 +222,7 @@ public:
     [[nodiscard]] const architecture::DigestBytes& source_identity() const noexcept { return source_identity_; }
     [[nodiscard]] std::size_t original_index() const noexcept { return match_.original_index; }
     [[nodiscard]] bool from_merged_main() const noexcept { return match_.recalled.main_graph != nullptr; }
+    [[nodiscard]] bool has_input_key() const noexcept { return input_key_; }
     [[nodiscard]] const ExperienceLocation& observation_head() const noexcept {
         return match_.recalled.main_graph?match_.recalled.observation_head:match_.recalled.recalled_head.record;
     }
@@ -230,13 +231,14 @@ public:
 private:
     friend class ExperienceRouter;
     ReplayedInput(StoredExperience original, InputMatch match, std::shared_ptr<const std::byte> issuer,
-        architecture::DigestBytes cue, architecture::DigestBytes source_identity)
-        : original_(std::move(original)), match_(match), issuer_(std::move(issuer)), input_cue_(cue), source_identity_(source_identity) {}
+        architecture::DigestBytes cue, architecture::DigestBytes source_identity, bool input_key)
+        : original_(std::move(original)), match_(match), issuer_(std::move(issuer)), input_cue_(cue), source_identity_(source_identity), input_key_(input_key) {}
     StoredExperience original_;
     InputMatch match_;
     std::shared_ptr<const std::byte> issuer_;
     architecture::DigestBytes input_cue_;
     architecture::DigestBytes source_identity_;
+    bool input_key_;
 };
 
 class ReEvidenceResult final {

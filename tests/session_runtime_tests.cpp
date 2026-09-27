@@ -328,6 +328,9 @@ int main() {
         EvidenceObservation value;value.hypothesis=id(11);value.source=id(21);value.producer=id(22);
         value.context=parent.digest;value.observed_at=1;value.outcome=EvidenceOutcome::refute;
         const auto main_child=archive.observe(id(11),input("related-prior",1),value,7,1,id(11)).original;
+        archive.define_connection(id(13),1,policy);value.hypothesis=id(13);value.observed_at=2;value.outcome=EvidenceOutcome::insufficient;
+        auto generic=input("related-prior",2);generic.media_type="text/plain";
+        const auto general=archive.observe(id(13),generic,value,7,2).original;
         archive.end();archive.publish_originals();
         auto live_store=SessionStore::create(area,id(2),"related-live",65536,memory);
         SessionRuntime live(live_store,memory,8192);ExperienceRouter route(live,memory);route.mount_main(archive);
@@ -338,6 +341,12 @@ int main() {
         auto main_related=route.related(played);
         CHECK(!main_related.temporary()&&main_related.matches().size()==1&&reads==before);
         CHECK(route.replay(main_related,0).location()==main_child);
+        CHECK(archive.read_original(general).location()==general);
+        live.define_connection(id(14),1,policy);value.hypothesis=id(14);
+        generic=input("related-live",2);generic.media_type="text/plain";
+        (void)live.observe(id(14),generic,value,7,2);
+        auto fallback=route.related(played);CHECK(!fallback.temporary()&&fallback.matches().size()==1);
+        CHECK(route.replay(fallback,0).location()==main_child);
         live.define_connection(id(12),1,policy);
         value.hypothesis=id(12);value.observed_at=2;value.outcome=EvidenceOutcome::support;
         const auto local_child=live.observe(id(12),input("related-live",2),value,7,2,id(12)).original;

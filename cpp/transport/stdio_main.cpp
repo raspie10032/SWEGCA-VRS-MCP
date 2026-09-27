@@ -1172,10 +1172,15 @@ private:
                 if(record_address(metadata.at("relatedFrom"))!=parent.location())
                     throw std::invalid_argument("related parent original mismatch");
                 const auto coordinates=recovery_coordinates(metadata);
-                if(coordinates.key_kind!=kernel::FamiliarityKey::context||coordinates.seed_only||
+                if(coordinates.key_kind!=kernel::FamiliarityKey::context||
                     coordinates.lookup_key!=parent.location().digest||coordinates.input_cue!=parent.input_cue())
                     throw std::invalid_argument("related recovery link mismatch");
+                // The stored selection must still belong to this observation
+                // route. An archived general-dialogue reference is not promoted
+                // to an observation by restoring its journal.
                 auto prepared=restore_saved_cognition(input,metadata);
+                if(!kernel::context_reference_eligible(prepared.cognition->replayed.has_input_key(),true))
+                    throw std::invalid_argument("saved related original is not an input-bound observation");
                 prepared.related_from=parent.location();state.related.emplace(std::move(prepared));
             }else{
                 auto recalled=runtime_.related(parent);
