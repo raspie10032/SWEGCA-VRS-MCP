@@ -355,6 +355,11 @@ InputRecall ExperienceRouter::related(const ReplayedInput& parent,const DigestBy
         tier=recall_scope(temporary_.usable(),result.familiar());
         if(tier==RecallScope::temporary)return result;
     }
+    return related_main(parent,connection);
+}
+InputRecall ExperienceRouter::related_main(const ReplayedInput& parent,const DigestBytes* connection) const {
+    const auto key=parent.location().digest;
+    const auto tier=recall_scope(temporary_.usable(),false);
     require_main_current();
     bool main_found=false;
     if(merged_main_){
@@ -365,6 +370,45 @@ InputRecall ExperienceRouter::related(const ReplayedInput& parent,const DigestBy
         if(position!=session->contexts_.end()&&!position->second.empty()){main_found=true;break;}
     }
     return recall_cue(parent.input_cue(),tier,familiarity_key(false,false,main_found),&key,true,connection);
+}
+RelatedConnectionPage ExperienceRouter::related_connections(const ReplayedInput& parent,
+    std::size_t limit,const DigestBytes* after) const {
+    if(!limit)throw std::invalid_argument("connection page limit must be positive");
+    auto primary=related(parent);
+    std::optional<InputRecall> secondary;
+    if(primary.temporary())secondary.emplace(related_main(parent,nullptr));
+    // A bounded ordered set gives pagination only, never semantic priority.
+    std::pmr::set<DigestBytes> identities(&memory_);bool more=false;
+    const auto gather=[&](const InputRecall& recalled){
+        for(const auto& context:recalled.contexts_){
+            const auto& identity=context.recalled.recalled_head.identity;
+            if(after&&identity<=*after)continue;
+            identities.insert(identity);
+            if(identities.size()>limit){identities.erase(std::prev(identities.end()));more=true;}
+        }
+    };
+    gather(primary);if(secondary)gather(*secondary);
+    RelatedConnectionPage result(memory_);
+    Sha256 snapshot;snapshot.update("SWEGCA related connection tiers v1");
+    snapshot.update(parent.location().digest);
+    snapshot.update(select_replay_connections(primary,1).snapshot);
+    if(secondary)snapshot.update(select_replay_connections(*secondary,1).snapshot);
+    result.snapshot=snapshot.finish();result.entries.reserve(identities.size());
+    bool any_temporary=false,any_main=false;
+    for(const auto& identity:identities){
+        auto candidate=select_replay(primary,&identity);
+        const auto* chosen=&primary;
+        if(secondary&&recall_scope(true,candidate.has_value())!=RecallScope::temporary){
+            candidate=select_replay(*secondary,&identity);chosen=&*secondary;
+        }
+        if(!candidate)throw std::logic_error("listed connection has no eligible experience");
+        const bool temporary=chosen->temporary();
+        any_temporary|=temporary;any_main|=!temporary;
+        result.entries.push_back({identity,chosen->matches()[*candidate].original,temporary});
+    }
+    result.temporary=any_temporary&&!any_main;result.mixed_tiers=any_temporary&&any_main;
+    if(more)result.next=*identities.rbegin();
+    return result;
 }
 InputRecall ExperienceRouter::input(std::string_view media, std::span<const std::byte> content) const {
     // Deja vu: natural bytes reach the core cue primitive immediately. This

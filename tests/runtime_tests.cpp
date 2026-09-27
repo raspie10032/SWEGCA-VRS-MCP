@@ -841,6 +841,31 @@ int main(){
    CHECK(reads==read_boundary&&writes==write_boundary);
    CHECK(route.replay(main_only,0).location()==negative);
    CHECK(route.replay(local_only,0).location()==local_observation);
+   const auto listing_reads=reads,listing_writes=writes;
+   const auto combined=route.related_connections(routed_parent,8);
+   CHECK(combined.entries.size()==3&&!combined.next&&combined.mixed_tiers&&!combined.temporary);
+   bool saw_local=false,saw_main=false;
+   for(const auto& entry:combined.entries){
+    if(entry.connection==contents_connection){CHECK(entry.temporary&&entry.original==local_observation);saw_local=true;}
+    if(entry.connection==permissions_connection){CHECK(!entry.temporary&&entry.original==negative);saw_main=true;}
+   }
+   CHECK(saw_local&&saw_main);
+   std::optional<DigestBytes> after;std::size_t page_index=0;
+   do{
+    const auto page=route.related_connections(routed_parent,1,after?&*after:nullptr);
+    CHECK(page.snapshot==combined.snapshot&&page.entries.size()==1&&!page.mixed_tiers);
+    CHECK(page.entries[0].connection==combined.entries[page_index].connection);
+    CHECK(page.entries[0].original==combined.entries[page_index].original);
+    CHECK(page.entries[0].temporary==combined.entries[page_index].temporary);
+    ++page_index;after=page.next;
+   }while(after);
+   CHECK(page_index==3&&reads==listing_reads&&writes==listing_writes);
+   CHECK(route.related_connections(routed_parent,1,&combined.entries.back().connection).entries.empty());
+   throws<std::invalid_argument>([&]{(void)route.related_connections(routed_parent,0);});
+   value.observed_at=8;
+   (void)local.observe(contents_connection,{2,8,"related-main","tool","text/plain",content},value,7,8,contents_connection);
+   CHECK(route.related_connections(routed_parent,8).snapshot!=combined.snapshot);
+
 
   }
  }

@@ -38,3 +38,33 @@ connection을 지정하지 않은 목록/기본 related 경로는 기존 계층 
 자동 전달이 Main의 빠진 연결까지 발견하려면 연결 목록의 계층별 페이지를
 조합해야 한다. 이 변경만으로 관련 요구 전체 전달이 완성됐다고 하지 않는다.
 현재 설치본에는 이번 변경을 아직 반영하지 않았다.
+
+## 연결 목록 조합 구현 및 설치
+
+후속 구현으로 Runtime/ExperienceRouter::related_connections가 임시와 Main의
+적격 연결 목록을 조합한다. 같은 연결은 core recall_scope에 따라 임시 우선,
+임시에 없는 연결은 Main 선택이다. 원경험 선택은 기존 prefer_replay를 사용한다.
+connection을 지정하지 않은 단일 related Replay는 기존 동작을 유지하지만,
+자동 다중 전달은 새 목록과 연결별 Replay를 사용한다.
+
+출력 각 연결에 temporary를 추가했다. 최상위 temporary는 이 페이지의 모든
+항목이 임시일 때 true이며, 두 계층이 섞였으면 mixedTiers=true다. 빈 페이지는
+둘 다 false다. relatedCoverage에도 같은 메타데이터가 전달된다. 이는 경험이
+어디서 왔는지의 표시이며 요구 완료나 실행 권한이 아니다.
+
+두 계층의 Recall 메타데이터로 snapshot을 계산하고 모든 페이지에서 같은
+snapshot을 유지한다. 변경된 목록의 기존 snapshot은 기존 MCP 검증이 거부한다.
+정렬된 연결 ID는 페이지 순서뿐이며 의미 우선순위가 아니다. 추가 ID 집합은
+페이지 limit 이내로 유지한다. Recall 메타데이터 자체와 스캔 시간은 전체 관련
+경험 규모에 의존하므로 이 변경은 대규모 메모리/5ms 조건의 완료 증거가 아니다.
+
+검증: runtime 2137 checks, stdio 7240 checks. 실제 Main과 임시를 함께 연결한
+라우터에서 A 중복 제거/임시 선택, Main B/C 포함, 한 항목 페이지와 전체 페이지
+일치, 원문 I/O 없음, 뒤에 온 임시 관측에 의한 snapshot 변경을 확인했다.
+실제 transport/자동 전달 fixture는 각각 임시 또는 Main 단일 계층의 필드 전달을
+확인했다. 상위 실제 에이전트의 혼합 계층 입력 생성 검증은 계속 남아 있다.
+
+설치본 VRS 바이너리까지 원자 교체했다. 전체 executable manifest 해시 검증,
+실행 중 설치 프로세스 부재, 기존 설정 byte 동일성을 확인했다. 설치된 실제
+backend smoke에서 같은 소유자/소켓/I/O 그룹, memory.max=3999997952,
+swap=0, CPU6-7, modelCalls=0, 정상 종료와 socket 정리를 확인했다.

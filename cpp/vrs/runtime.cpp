@@ -176,6 +176,9 @@ InputRecall Runtime::input_scope(const InputRecall& parent,std::string_view scop
 InputRecall Runtime::related(const ReplayedInput& parent,const DigestBytes* connection) const {
     return require_session().router.related(parent,connection);
 }
+RelatedConnectionPage Runtime::related_connections(const ReplayedInput& parent,std::size_t limit,const DigestBytes* after) const {
+    return require_session().router.related_connections(parent,limit,after);
+}
 std::optional<InputCognition> Runtime::cognize(const InputRecall& recalled,
     std::uint64_t seed,std::uint64_t step) const {
     const auto candidate=select_replay(recalled);

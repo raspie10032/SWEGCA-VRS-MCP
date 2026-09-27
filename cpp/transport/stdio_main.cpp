@@ -1242,20 +1242,21 @@ private:
         std::optional<DigestBytes> after;
         if(const auto* field=request.find("after"))after=digest(field->string());
         if(after&&!request.find("snapshot"))throw std::invalid_argument("continuation requires snapshot");
-        auto recalled=runtime_.related(parent);
-        auto page=runtime_.select_replay_connections(recalled,limit,after?&*after:nullptr);
+        auto page=runtime_.related_connections(parent,limit,after?&*after:nullptr);
         if(const auto* expected=request.find("snapshot");expected&&digest(expected->string())!=page.snapshot)
             throw std::invalid_argument("related connections changed; restart listing");
         std::pmr::string body("{\"relatedFrom\":",&memory_);body+=address(parent.location(),memory_);
         body+=",\"inputOriginal\":";body+=address(input,memory_);
         body+=",\"grantsAuthority\":false,\"requirementsComplete\":false,\"selectionOnly\":true,\"snapshot\":\"";
-        body+=hex(page.snapshot,memory_);body+="\",\"temporary\":";body+=recalled.temporary()?"true":"false";
+        body+=hex(page.snapshot,memory_);body+="\",\"temporary\":";body+=page.temporary?"true":"false";
+        body+=",\"mixedTiers\":";body+=page.mixed_tiers?"true":"false";
         body+=",\"connections\":[";bool first=true;
         for(const auto& entry:page.entries){
             if(!first)body+=',';
             first=false;
             body+="{\"connection\":\"";body+=hex(entry.connection,memory_);
-            body+="\",\"original\":";body+=address(recalled.matches()[entry.candidate].original,memory_);body+='}';
+            body+="\",\"original\":";body+=address(entry.original,memory_);
+            body+=",\"temporary\":";body+=entry.temporary?"true":"false";body+='}';
         }
         body+="],\"next\":";
         if(page.next){body+='"';body+=hex(*page.next,memory_);body+='"';}else body+="null";

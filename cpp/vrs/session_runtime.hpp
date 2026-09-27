@@ -223,6 +223,17 @@ struct ReplayConnectionPage {
     std::optional<architecture::DigestBytes> next;
 };
 
+// Cross-tier discovery uses per-connection core routing; entries carry their
+// own source tier because one page can contain both temporary and Main data.
+struct RelatedConnectionPage {
+    struct Entry { architecture::DigestBytes connection; ExperienceLocation original; bool temporary; };
+    explicit RelatedConnectionPage(std::pmr::memory_resource& memory):entries(&memory){}
+    architecture::DigestBytes snapshot{};
+    std::pmr::vector<Entry> entries;
+    std::optional<architecture::DigestBytes> next;
+    bool temporary=false,mixed_tiers=false;
+};
+
 // Issued only after a successful selected original read. No caller can supply
 // a made-up prior outcome/head or manufacture a pre-Replay receipt.
 class ReplayedInput final {
@@ -345,6 +356,8 @@ public:
     // alone. Other temporary observations cannot hide its Main evidence.
     [[nodiscard]] InputRecall related(const ReplayedInput&, const architecture::DigestBytes* connection=nullptr) const;
     // Only receipt metadata is considered here; one original is read later.
+    [[nodiscard]] RelatedConnectionPage related_connections(const ReplayedInput&,std::size_t limit,
+        const architecture::DigestBytes* after=nullptr) const;
     [[nodiscard]] std::optional<std::size_t> select_replay(const InputRecall&, const architecture::DigestBytes* connection=nullptr) const;
     [[nodiscard]] ReplayConnectionPage select_replay_connections(const InputRecall&, std::size_t limit,
         const architecture::DigestBytes* after=nullptr) const;
@@ -396,6 +409,7 @@ private:
     // Replay. It holds an experience key, never copied dialogue text or a verdict.
     mutable std::optional<architecture::DigestBytes> continuation_;
     mutable std::optional<architecture::DigestBytes> continued_context_;
+    [[nodiscard]] InputRecall related_main(const ReplayedInput&,const architecture::DigestBytes* connection) const;
     [[nodiscard]] InputRecall recall_cue(const architecture::DigestBytes& cue,
         architecture::kernel::RecallScope scope, architecture::kernel::FamiliarityKey kind,
         const architecture::DigestBytes* context = nullptr, bool seed_only = false,

@@ -1486,6 +1486,7 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     check(whole['selectionOnly'] and not whole['requirementsComplete'] and not whole['grantsAuthority'])
     check(whole['relatedFrom']==page_parent['original'] and whole['inputOriginal']==page_input['original'])
     check(len(whole['connections'])==3 and whole['next'] is None)
+    check(whole['temporary'] and not whole['mixedTiers'] and all(x['temporary'] for x in whole['connections']))
     check({x['original']['digest'] for x in whole['connections']}=={
         page_positive['original']['digest'],page_negative['original']['digest'],page_uncertain['original']['digest']})
     first=pages(page_input,{'limit':'1'})['result']['structuredContent']
@@ -1577,6 +1578,7 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     check(from_main['relatedFrom']==bound_input['original'] and from_main['original']==bound_report['original'])
     main_page=pages(consumer_input,{'limit':'1'})['result']['structuredContent']
     check(not main_page['temporary'] and main_page['next'] is None)
+    check(not main_page['mixedTiers'] and not main_page['connections'][0]['temporary'])
     check(main_page['connections'][0]['original']==from_main['original'])
     main_connection=main_page['connections'][0]['connection']
     chosen_main=connection_replay(consumer_input,main_connection)['result']['structuredContent']
@@ -2376,6 +2378,7 @@ for line in sys.stdin:
         check(bundle['original']==page_input['original'])
         check(len(bundle['relatedExperiences'])==expected_count)
         coverage=bundle['relatedCoverage'];check(coverage['limited']==(run!=0))
+        check(not coverage['mixedTiers'] and all(not x['temporary'] for x in coverage['connections']))
         check(not coverage['requirementsComplete'] and not coverage['grantsAuthority'])
         check(len(coverage['deliveredConnections'])==expected_count)
         check((coverage['next'] is not None)==(run==1))
