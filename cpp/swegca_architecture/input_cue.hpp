@@ -6,8 +6,11 @@ namespace swegca::architecture {
 
 // The recorded dialogue context key. Computed at session setup, never an
 // extra name hash before each Recall. This is identity, not semantic evidence.
-[[nodiscard]] inline DigestBytes input_session_context(std::string_view session) {
-    Sha256 digest;digest.update("SWEGCA input session v1");digest.update(session);return digest.finish();
+[[nodiscard]] inline DigestBytes input_session_context(const DigestBytes& owner,std::string_view session) {
+    // The fixed-width owner binds provider/instance/session provenance. Equal
+    // display names from independent stores do not imply shared dialogue.
+    Sha256 digest;digest.update("SWEGCA input session v2");digest.update(owner);
+    digest.update(session);return digest.finish();
 }
 
 // Content addressing only: an exact cue carries no support/refutation verdict.

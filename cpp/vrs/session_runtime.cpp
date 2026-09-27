@@ -116,7 +116,7 @@ RecordedRefinement SessionRuntime::retain_input(const OriginalExperienceView& or
     observation.hypothesis = identity;
     Sha256 source; source.update("SWEGCA input source v1"); source.update(original.source);
     observation.source = observation.producer = source.finish();
-    observation.context = input_session_context(original.session);
+    observation.context = input_session_context(store_.identity(),original.session);
     observation.observed_at = original.observed_at_ns;
     return observe(identity, original, observation, seed, step, input_key);
 }
@@ -170,7 +170,7 @@ ExperienceRouter::ExperienceRouter(SessionRuntime& temporary, MemoryBudget& memo
     : temporary_(temporary), memory_(memory),
       issuer_(std::allocate_shared<std::byte>(std::pmr::polymorphic_allocator<std::byte>(&memory))),
       mounted_(&memory), main_(&memory), main_cues_(&memory),
-      session_context_(input_session_context(temporary.store_.name())) {}
+      session_context_(input_session_context(temporary.store_.identity(),temporary.store_.name())) {}
 void ExperienceRouter::mount_main(const SessionRuntime& session) {
     if (merged_main_) throw std::logic_error("cannot mix merged Main with session candidates");
     if (!main_session_readable(session.phase(), session.usable()))

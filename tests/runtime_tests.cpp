@@ -425,6 +425,29 @@ int main(){
   }
  }
  {
+  const auto path=root/"same-name-contexts";fs::create_directory(path);
+  const std::string a="owner A first",a2="owner A second",b="owner B first",fresh="continue this dialogue";
+  ExperienceLocation address_a,address_a2,address_b;
+  {
+   auto host=Runtime::create(path,config,memory);host.start_session(id(230),"same-name");
+   address_a=host.retain({0,0,"same-name","user","text/plain",std::as_bytes(std::span(a))},7,0).original;
+   address_a2=host.retain({1,1,"same-name","user","text/plain",std::as_bytes(std::span(a2))},7,1).original;
+   host.end_session();CHECK(host.work(7,1)==1);
+   host.start_session(id(231),"same-name");
+   address_b=host.retain({0,0,"same-name","user","text/plain",std::as_bytes(std::span(b))},7,0).original;
+   host.end_session();CHECK(host.work(7,1)==1);
+   host.start_session(id(232),"reader");
+  }
+  {
+   auto host=Runtime::open(path,config,memory);host.resume_session(id(232));
+   CHECK(host.replay(host.input("text/plain",std::as_bytes(std::span(a))),0).location()==address_a);
+   auto related=host.input("text/plain",std::as_bytes(std::span(fresh)));
+   CHECK(!related.temporary()&&related.matches().size()==2);
+   for(const auto& match:related.matches())CHECK(match.original==address_a||match.original==address_a2);
+   CHECK(host.replay(host.input("text/plain",std::as_bytes(std::span(b))),0).location()==address_b);
+  }
+ }
+ {
   const auto path=root/"targeted-end";fs::create_directory(path);
   auto host=Runtime::create(path,config,memory);
   host.start_session(id(20),"selected");
