@@ -179,12 +179,16 @@ std::optional<InputCognition> Runtime::cognize(const InputRecall& recalled,
     std::uint64_t seed,std::uint64_t step) const {
     const auto candidate=select_replay(recalled);
     if(!candidate)return std::nullopt;
-    auto original=replay(recalled,*candidate);
+    return cognize_selected(recalled,*candidate,seed,step);
+}
+InputCognition Runtime::cognize_selected(const InputRecall& recalled,std::size_t candidate,
+    std::uint64_t seed,std::uint64_t step) const {
+    auto original=replay(recalled,candidate);
     auto compared=compare_replay(original,seed,step);
     std::optional<ReEvidenceResult> reverified;
     if(architecture::kernel::requires_re_evidence(compared.agreement()))
         reverified.emplace(re_evidence(original,compared,seed,step));
-    return InputCognition{*candidate,std::move(original),std::move(compared),std::move(reverified)};
+    return InputCognition{candidate,std::move(original),std::move(compared),std::move(reverified)};
 }
 InputCognition Runtime::restore_temporary_cognition(const ExperienceLocation& input,
     std::string_view scope,const DigestBytes& connection,const ExperienceLocation& remembered_head,std::size_t original_index,

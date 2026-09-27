@@ -39,4 +39,10 @@ namespace swegca::architecture {
     digest.update(length);digest.update(scope);return digest.finish();
 }
 
+// Separate provenance domain from producer-declared scopes and the parent
+// cognition journal. A producer cannot name a scope that aliases this channel.
+[[nodiscard]] inline DigestBytes related_cognition_channel(const DigestBytes& input) {
+    Sha256 digest;digest.update("SWEGCA related cognition v1");digest.update(input);return digest.finish();
+}
+
 }  // namespace swegca::architecture

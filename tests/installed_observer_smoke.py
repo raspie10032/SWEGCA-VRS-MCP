@@ -90,6 +90,7 @@ with tempfile.TemporaryFile() as errors:
         query_schema = matches[0]['tools']['vrs_replay']['inputSchema']
         assert set(query_schema['required']) == {'receipt', 'inputOriginal'}
         assert query_schema['additionalProperties'] is False
+        assert query_schema['properties']['related']['type'] == 'boolean'
         observer_tool = matches[0]['tools']['observe_file_content_equality']
         schema = observer_tool['inputSchema']
         anchor = schema['properties']['requirement']
@@ -115,7 +116,7 @@ with tempfile.TemporaryFile() as errors:
         process.stdin.close()
         assert process.wait(timeout=20) == 0
         assert not query_path.exists() and not query_path.parent.exists()
-        print(json.dumps({'observerRegistered': True, 'queryToolRegistered': True, 'sameOwnedQueryEndpoint': True, 'queryEndpointCleaned': True, 'requirementSchemaRegistered': True, 'sameAggregateGroup': True, 'sameSharedTransfer': True,
+        print(json.dumps({'observerRegistered': True, 'queryToolRegistered': True, 'relatedReplayRegistered': True, 'sameOwnedQueryEndpoint': True, 'queryEndpointCleaned': True, 'requirementSchemaRegistered': True, 'sameAggregateGroup': True, 'sameSharedTransfer': True,
                           'verifiedProcesses': sorted(profiles), 'memoryMax': expected,
                           'swapMax': 0, 'cpus': '6-7', 'modelCalls': 0, 'exitCode': 0}))
     finally:

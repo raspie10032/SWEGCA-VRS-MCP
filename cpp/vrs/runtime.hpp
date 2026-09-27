@@ -78,6 +78,10 @@ public:
     [[nodiscard]] InputRecall related(const ReplayedInput&) const;
     [[nodiscard]] std::optional<InputCognition> cognize(const InputRecall&, std::uint64_t seed,
         std::uint64_t step) const;
+    // Compose the same Replay/comparison after a caller has already reduced
+    // the receipt with select_replay; do not repeat the candidate traversal.
+    [[nodiscard]] InputCognition cognize_selected(const InputRecall&, std::size_t candidate,
+        std::uint64_t seed,std::uint64_t step) const;
     [[nodiscard]] InputCognition restore_temporary_cognition(const ExperienceLocation& input,
         std::string_view scope,const architecture::DigestBytes& connection,const ExperienceLocation& remembered_head,std::size_t original_index,
         const ExperienceLocation& original,std::uint64_t seed,std::uint64_t step) const;

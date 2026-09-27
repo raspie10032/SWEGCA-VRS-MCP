@@ -1,3 +1,4 @@
+#include "swegca_architecture/input_cue.hpp"
 #include "swegca_architecture/portal_range_kernel.hpp"
 #include "swegca_architecture/evidence_rules.hpp"
 #include "swegca_architecture/evidence_observation_kernel.hpp"
@@ -95,6 +96,9 @@ int main(){
   });
  }
 
+ measure("related_cognition_channel",[&](std::size_t i){
+  auto channel=related_cognition_channel(recovery_keys[0][i&63]);consume(channel);
+ });
  std::array<PortalRange,64> portal_ranges{};
  for(std::size_t i=0;i<portal_ranges.size();++i)portal_ranges[i]={recovery_keys[0][i/8],i*2,i*2+1};
  measure("portal_range_order",[&](std::size_t i){

@@ -1260,6 +1260,128 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     check(not measured_recall['temporary'] and measured_recall['original']==observed_originals[-1][2])
     check(json.loads(bytes.fromhex(measured_recall['contentHex']))==observed_originals[-1][1])
     c.close()
+    # Discover a recorded requirement outcome through the replayed input's
+    # experience links, without knowing its scope string. Its comparison has
+    # its own durable channel and cannot replace the parent cognition.
+    related_root=root/'related-query';related_root.mkdir()
+    related_config_path=root/'related-query-config.json'
+    related_config_path.write_text(json.dumps(dict(config,frameBytes='16384')))
+    c=Client('create',related_root,related_config_path,query_socket=query_socket);c.initialize()
+    producer_binding={'provider':'codex','instance':'related-query','session':'producer-thread','protocol':'app-server'}
+    producer_owner=c.call('swegca/agent/attach',producer_binding)['result']['identity']
+    check(c.call('swegca/select',{'identity':producer_owner})['result']=={})
+    producer_seq=0;related_targets=[]
+    for n in range(8):
+        turn='producer-turn-'+str(producer_seq)
+        received,reported=producer_trial('Preserve the requested result.',n,'support',
+            lambda v:v.update(scope='measured content requirement'))
+        related_targets.append((received['original'],turn))
+        if n==0:
+            check(c.call('tools/call',{'name':'vrs_replay','arguments':{
+                'receipt':received['receipt'],'related':True}})['result']['isError'])
+    check(reported['refinement']['status']==1 and reported['refinement']['strength']>1)
+    related_sequence=producer_seq
+    related_frame={'id':producer_seq+1,'method':'turn/start','params':{'threadId':'producer-thread',
+        'input':[{'type':'text','text':'Preserve the requested result.'}]}}
+    _,related_input=producer_frame('client',related_frame)
+    related_parent_query={'identity':producer_owner,'inputOriginal':related_input['original'],'latest':True}
+    check('structuredContent' in c.call('tools/call',{'name':'vrs_re_evidence','arguments':{'receipt':related_input['receipt'],'seed':'7','step':str(related_sequence)}})['result'])
+    related_parent_reply=c.call('swegca/agent/cognition',related_parent_query)
+    assert 'result' in related_parent_reply,related_parent_reply
+    related_parent_before=related_parent_reply['result']['record']
+    def related_call(receipt):
+        return c.call('swegca/agent/replay',{'receipt':receipt,'inputOriginal':related_input['original'],'related':True})
+    discovered=related_call(related_input['receipt'])['result']['structuredContent']
+    check(discovered['related'] and discovered['parentCognitionUnchanged'])
+    check(discovered['relatedFrom']==related_targets[-1][0])
+    check(discovered['original']==reported['original'])
+    related_mcp_requests=[{'jsonrpc':'2.0','id':1,'method':'initialize','params':{'protocolVersion':'2025-06-18',
+        'capabilities':{},'clientInfo':{'name':'related-test','version':'1'}}},
+        {'jsonrpc':'2.0','method':'notifications/initialized'},
+        {'jsonrpc':'2.0','id':2,'method':'tools/call','params':{'name':'vrs_replay','arguments':{
+            'receipt':related_input['receipt'],'inputOriginal':related_input['original'],'related':True}}}]
+    related_mcp=subprocess.run([str(exe.parent/'swegca-content-observer'),'16777216','625000000','1048576'],
+        input=b''.join(json.dumps(item).encode()+b'\n' for item in related_mcp_requests),
+        env={**os.environ,'SWEGCA_QUERY_SOCKET':str(query_socket)},capture_output=True,timeout=10,check=True)
+    check(related_mcp.stderr==b'')
+    related_mcp_reply=json.loads(related_mcp.stdout.splitlines()[-1])
+    assert 'result' in related_mcp_reply,related_mcp_reply
+    check(related_mcp_reply['result']['structuredContent']==discovered)
+    check(json.loads(bytes.fromhex(discovered['contentHex']))['params']['item']['result']['structuredContent']['swegcaObservation']['scope']=='measured content requirement')
+    stable_bytes=sum(p.stat().st_size for p in related_root.rglob('*.block'))
+    check(related_call(related_input['receipt'])['result']['structuredContent']==discovered)
+    check(sum(p.stat().st_size for p in related_root.rglob('*.block'))==stable_bytes)
+    check(c.call('swegca/agent/cognition',related_parent_query)['result']['record']==related_parent_before)
+    for fields in ({'scope':'measured content requirement'},{'candidate':'0'},{'related':'true'}):
+        check('error' in c.call('swegca/agent/replay',{'receipt':related_input['receipt'],
+            'inputOriginal':related_input['original'],'related':True,**fields}))
+    # New independent counterevidence arrives without a new input; comparison
+    # and its revision must be saved before each observation ACK.
+    for n,(target,turn) in enumerate(related_targets):
+        producer_frame('server',{'method':'item/completed','params':{'threadId':'producer-thread','turnId':turn,
+            'item':{'type':'mcpToolCall','id':'related-counter-'+str(n),'server':'related-counter-'+str(n),
+                'tool':'verify','status':'completed','result':{'content':[],
+                    'structuredContent':{'swegcaObservation':{'inputOriginal':target,'scope':'measured content requirement',
+                        'axis':'0','outcome':'refute','confidence':1.0,'hasExpiry':False,'expiresAt':'0'}}}}}})
+    related_journal=c.call('swegca/agent/cognition',{**related_parent_query,'related':True})['result']
+    check(related_journal['revision']==related_journal['liveRevision'])
+    related_assessment=json.loads(related_journal['record']['replayPrefix']+'"}')['assessment']
+    check(related_assessment['status']==2 and related_assessment['reEvidencePerformed'])
+    check(related_journal['record']['relatedFrom']==discovered['relatedFrom'])
+    contradicted=related_call(related_input['receipt'])['result']['structuredContent']
+    check(contradicted['original']==discovered['original'] and contradicted['revision']!=discovered['revision'])
+    check(contradicted['assessment']['status']==2 and contradicted['assessment']['reEvidencePerformed'])
+    check(contradicted['assessment']['currentOriginalCount']=='8')
+    check(contradicted['revision']==related_journal['revision'])
+    check(c.call('swegca/agent/cognition',related_parent_query)['result']['record']==related_parent_before)
+    c.close();c=Client('open',related_root,related_config_path,query_socket=query_socket);c.initialize()
+    check(c.call('swegca/agent/attach/resume',producer_binding)['result']['nextSequence']==str(producer_seq))
+    check(c.call('swegca/select',{'identity':producer_owner})['result']=={})
+    recovered_related=c.call('swegca/agent/event',{'sequence':str(related_sequence),'observedAt':str(related_sequence),
+        'seed':'7','step':str(related_sequence),'sender':'client','native':json.dumps(related_frame)})['result']
+    restored_related=related_call(recovered_related['receipt'])['result']['structuredContent']
+    check(restored_related==contradicted)
+    stable_bytes=sum(p.stat().st_size for p in related_root.rglob('*.block'))
+    check(related_call(recovered_related['receipt'])['result']['structuredContent']==restored_related)
+    check(sum(p.stat().st_size for p in related_root.rglob('*.block'))==stable_bytes)
+    check(c.call('swegca/agent/cognition',related_parent_query)['result']['record']==related_parent_before)
+    check(c.call('swegca/work',{'seed':'7','step':str(producer_seq)})['result']['merged']=='0')
+    c.close()
+    # The same related query must select published Main observations and
+    # restore that Main reference after another process restart.
+    related_main_root=root/'related-main-query';related_main_root.mkdir()
+    c=Client('create',related_main_root,path);c.initialize()
+    producer_binding={'provider':'codex','instance':'related-main-query','session':'producer-thread','protocol':'app-server'}
+    producer_owner=c.call('swegca/agent/attach',producer_binding)['result']['identity']
+    check(c.call('swegca/select',{'identity':producer_owner})['result']=={})
+    producer_seq=0
+    for n in range(8):
+        main_input,main_report=producer_trial('A purpose kept in Main.',n,'support',
+            lambda v:v.update(scope='archived requirement outcome'))
+    check(main_report['refinement']['status']==1)
+    check(c.call('swegca/end')['result']=={})
+    check(c.call('swegca/work',{'seed':'7','step':'100'})['result']['merged']=='1')
+    main_binding={**producer_binding,'session':'related-main-consumer'}
+    producer_owner=c.call('swegca/agent/attach',main_binding)['result']['identity']
+    check(c.call('swegca/select',{'identity':producer_owner})['result']=={})
+    producer_seq=0
+    related_main_frame={'id':1,'method':'turn/start','params':{'threadId':'related-main-consumer',
+        'input':[{'type':'text','text':'A purpose kept in Main.'}]}}
+    _,related_input=producer_frame('client',related_main_frame)
+    check(not related_input['temporary'])
+    main_related=related_call(related_input['receipt'])['result']['structuredContent']
+    check(main_related['relatedFrom']==main_input['original'] and main_related['original']==main_report['original'])
+    main_query={'identity':producer_owner,'inputOriginal':related_input['original'],'related':True,'latest':True}
+    main_related_journal=c.call('swegca/agent/cognition',main_query)['result']
+    check(not main_related_journal['record']['recovery']['temporary'])
+    c.close();c=Client('open',related_main_root,path);c.initialize()
+    check(c.call('swegca/agent/attach/resume',main_binding)['result']['nextSequence']=='1')
+    check(c.call('swegca/select',{'identity':producer_owner})['result']=={})
+    main_recovered=c.call('swegca/agent/event',{'sequence':'0','observedAt':'0','seed':'7','step':'0',
+        'sender':'client','native':json.dumps(related_main_frame)})['result']
+    check(related_call(main_recovered['receipt'])['result']['structuredContent']==main_related)
+    check(c.call('swegca/agent/cognition',main_query)['result']['revision']==main_related_journal['revision'])
+    c.close()
     # Turn notifications keep the exact originating input, including after
     # restart and with overlapping turns. They are not evidence of success.
     turns_root=root/'native-turns';turns_root.mkdir()
