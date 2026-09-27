@@ -183,3 +183,23 @@ StorageBudget의 VRS 사용량 계수 상태를 공유 소유하고, 페이지�
 참조하지 않는다. Budget당 계수/제어 블록 하나, 페이지당 공유 핸들 비용이 추가된다.
 이 변경은 늦은 파괴를 안전하게 하며, 만료된 Recall에 새 읽기/판정 권한을 부여하지
 않는다. 경험/디렉터리 MemoryBudget의 기존 수명 계약도 그대로다.
+
+## Failed append ownership
+
+A newly created derived page now owns its ExperienceBlock immediately after the
+header is created, before reserving/appending the record. If record reservation
+fails, stack unwinding runs the same core `discard_metadata_page` predicate and
+same-inode, sole-link, exact-extent checks as normal page destruction. Successful
+unlink closes the descriptor and releases only that page's original counter.
+No original block is removed, no session ends, and no Main merge is scheduled.
+
+Regression: with a storage budget of exactly one block header, the header write
+succeeds and the page record reservation throws StorageLimit. Previously the
+header file and its charge remained. Three failures now leave no page file and
+zero page-budget usage while preserving original storage. The pre-fix test failed
+at this condition; page suite after the fix passes 1,658 checks.
+
+This only covers failures after a valid header has been returned and before an
+unexpected physical extent exists. Header-creation I/O failure, partial record
+writes, process termination and restart orphan reconciliation remain unfinished.
+Unexpected extents, shared links and replaced names remain conservatively kept.

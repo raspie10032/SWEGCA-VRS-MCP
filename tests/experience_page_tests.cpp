@@ -28,6 +28,18 @@ int main(){
    values.push_back(record_evidence(original,rules,{n,n,"session","test","text/plain",{}},value,n%2?std::optional(id(6)):std::nullopt));
   }
   {
+   // A page header fits but its record does not. Every retry must release
+   // its private header and quota; originals and their owning budget survive.
+   StorageBudget small(ExperienceBlock::header_bytes);
+   const auto original_bytes=storage.used();
+   for(unsigned attempt=0;attempt<3;++attempt){
+    const auto destination=root/("quota-page-"+std::to_string(attempt));
+    rejects<StorageLimit>([&]{(void)ExperiencePage::create(destination,id(70),values,memory,&small);});
+    CHECK(small.used()==0&&!std::filesystem::exists(destination));
+    CHECK(storage.used()==original_bytes&&std::filesystem::exists(root/"original"));
+   }
+  }
+  {
    for(unsigned owners=0;owners<4;++owners)for(bool complete:{false,true})for(bool backed:{false,true}){
     const auto decision=metadata_release(complete,owners,backed);
     CHECK(decision==(!complete||owners!=1?MetadataRelease::retain:

@@ -70,8 +70,12 @@ ExperiencePage ExperiencePage::create(const std::filesystem::path& path,
     auto owned_path=path; // allocate before creating the file
     auto block=ExperienceBlock::create(path,identity,ExperienceBlock::header_bytes+
         ExperienceBlock::record_overhead+session.size()+source.size()+media.size()+bytes.size(),storage);
-    const auto location=block.append({0,0,session,source,media,bytes});
-    return ExperiencePage(std::move(block),location,values.size(),std::move(owned_path),storage);
+    // Own the private header before append can reject its reservation. The
+    // same inode/sole-link/core disposal checks apply during stack unwinding.
+    // Partial writes with an unexpected extent remain conservatively retained.
+    ExperiencePage page(std::move(block),{},values.size(),std::move(owned_path),storage);
+    page.location_=page.block_.append({0,0,session,source,media,bytes});
+    return page;
 }
 ExperienceEvidence ExperiencePage::read(std::size_t index,
     const architecture::kernel::EvidenceRules& rules,MemoryBudget& memory) const {
