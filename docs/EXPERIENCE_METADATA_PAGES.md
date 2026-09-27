@@ -222,3 +222,22 @@ already leaked reserved storage; after it, every case removes only the private
 page and restores baseline usage. Page tests pass 1,671 checks. This supersedes
 the partial-record limitation above for exceptions observed by the live owner.
 Header-creation failures and process-death/restart cleanup remain unresolved.
+
+## Derived header creation failures
+
+ExperienceBlock creation shares one implementation; its ordinary public creator
+always retains failed original files. Only the friend ExperiencePage selects
+cleanup for a new derived header. On exception, the open descriptor must match
+the named regular inode, have one link and at most header_bytes of physical data.
+The existing core discard predicate must approve and unlink must succeed before
+the retained header reservation is returned. Failed exclusive open cannot remove
+an existing path; a replaced/shared/oversized file remains untouched and charged.
+Failures before reservation retention use the ordinary reservation destructor,
+so the header is never refunded twice. The original exception is propagated.
+
+Injected header writes failing at 0/1/17/79 bytes, header fdatasync and directory
+fsync all restore baseline usage and remove the derived file. The same short
+write through the ordinary original creator leaves its partial original and full
+header charge intact. Page suite: 1,686 checks. These are live-owner exception
+paths; process death before cleanup and durable deletion/restart reconciliation
+remain separate unfinished work.

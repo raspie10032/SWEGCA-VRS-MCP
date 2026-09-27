@@ -73,7 +73,7 @@ $(BUILD)/main-graph-tests: tests/main_graph_tests.cpp $(VRS_SOURCES) $(CORE_SOUR
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< $(VRS_SOURCES) $(CORE_SOURCES) -Wl,--wrap=pread -Wl,--wrap=pwrite -o $@
 
 $(BUILD)/persistent-main-tests: tests/persistent_main_tests.cpp $(VRS_SOURCES) $(CORE_SOURCES) $(CORE_HEADERS) $(VRS_HEADERS) | $(BUILD)
-	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< $(VRS_SOURCES) $(CORE_SOURCES) -Wl,--wrap=pread -Wl,--wrap=pwrite -Wl,--wrap=fdatasync -o $@
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< $(VRS_SOURCES) $(CORE_SOURCES) -Wl,--wrap=pread -Wl,--wrap=pwrite -Wl,--wrap=fdatasync -Wl,--wrap=fsync -o $@
 
 $(BUILD)/main-sources-tests: tests/main_sources_tests.cpp $(VRS_SOURCES) $(CORE_SOURCES) $(CORE_HEADERS) $(VRS_HEADERS) | $(BUILD)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< $(VRS_SOURCES) $(CORE_SOURCES) -Wl,--wrap=pread -o $@
@@ -225,7 +225,7 @@ $(BUILD)/json-parse-memory-bench: benchmarks/json_parse_memory.cpp cpp/transport
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< cpp/transport/json.cpp -o $@
 
 $(BUILD)/experience-page-tests: tests/experience_page_tests.cpp cpp/vrs/experience_page.cpp cpp/vrs/experience_page.hpp cpp/vrs/evidence_experience.cpp cpp/vrs/experience_block.cpp $(CORE_SOURCES) $(CORE_HEADERS) $(VRS_HEADERS) | $(BUILD)
-	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< cpp/vrs/experience_page.cpp cpp/vrs/evidence_experience.cpp cpp/vrs/experience_block.cpp $(CORE_SOURCES) -Wl,--wrap=pwrite -Wl,--wrap=fdatasync -o $@
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< cpp/vrs/experience_page.cpp cpp/vrs/evidence_experience.cpp cpp/vrs/experience_block.cpp $(CORE_SOURCES) -Wl,--wrap=pwrite -Wl,--wrap=fdatasync -Wl,--wrap=fsync -o $@
 
 check: $(BUILD)/experience-page-tests
 

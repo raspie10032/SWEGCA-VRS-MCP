@@ -51,6 +51,7 @@ public:
 private:
     friend class ConnectionCatalog;
     friend class ExperiencePage;
+    friend class ExperienceBlock;
     // Page handles may outlive this owner. Reclaim only their original counter,
     // never a raw pointer to a destroyed or replaced StorageBudget.
     void reclaim_removed(std::uint64_t bytes) noexcept { reclaim_removed(used_,bytes); }

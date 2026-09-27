@@ -9,10 +9,13 @@
 using namespace swegca::vrs;
 using namespace swegca::architecture;
 using namespace swegca::architecture::kernel;
-static std::int64_t body_write_remaining=-1;
+static std::int64_t body_write_remaining=-1,header_write_remaining=-1;
+static bool fail_header_sync=false,fail_directory_sync=false;
 static bool fail_body_sync=false,body_written=false;
 extern "C" ssize_t __real_pwrite(int,const void*,size_t,off_t);
 extern "C" int __real_fdatasync(int);
+extern "C" int __real_fsync(int);
+extern "C" int __wrap_fsync(int fd){if(fail_directory_sync){errno=EIO;return -1;}return __real_fsync(fd);}
 extern "C" ssize_t __wrap_pwrite(int fd,const void* bytes,size_t count,off_t offset){
  if(offset>=static_cast<off_t>(ExperienceBlock::header_bytes)){
   if(body_write_remaining==0){errno=EIO;return -1;}
@@ -21,10 +24,14 @@ extern "C" ssize_t __wrap_pwrite(int fd,const void* bytes,size_t count,off_t off
   if(result>0){body_written=true;if(body_write_remaining>0)body_write_remaining-=result;}
   return result;
  }
- return __real_pwrite(fd,bytes,count,offset);
+ if(header_write_remaining==0){errno=EIO;return -1;}
+ if(header_write_remaining>0)count=std::min(count,static_cast<size_t>(header_write_remaining));
+ const auto result=__real_pwrite(fd,bytes,count,offset);
+ if(result>0&&header_write_remaining>0)header_write_remaining-=result;
+ return result;
 }
 extern "C" int __wrap_fdatasync(int fd){
- if(fail_body_sync&&body_written){errno=EIO;return -1;}
+ if(fail_header_sync||(fail_body_sync&&body_written)){errno=EIO;return -1;}
  return __real_fdatasync(fd);
 }
 static std::atomic<unsigned> checks=0;
@@ -70,6 +77,27 @@ int main(){
    fail_body_sync=false;
    CHECK(storage.used()==before&&!std::filesystem::exists(root/"failed-sync"));
    CHECK(std::filesystem::exists(root/"original"));
+  }
+  {
+   const auto before=storage.used();
+   for(const std::int64_t allowed:{0,1,17,79}){
+    header_write_remaining=allowed;
+    rejects<std::system_error>([&]{(void)ExperiencePage::create(root/"failed-header",id(73),values,memory,&storage);});
+    header_write_remaining=-1;
+    CHECK(storage.used()==before&&!std::filesystem::exists(root/"failed-header"));
+   }
+   for(bool directory:{false,true}){
+    fail_header_sync=!directory;fail_directory_sync=directory;
+    rejects<std::system_error>([&]{(void)ExperiencePage::create(root/"failed-header-sync",id(74),values,memory,&storage);});
+    fail_header_sync=false;fail_directory_sync=false;
+    CHECK(storage.used()==before&&!std::filesystem::exists(root/"failed-header-sync"));
+   }
+   // Original creation keeps its pre-existing conservative recovery contract.
+   StorageBudget original_budget(4096);header_write_remaining=1;
+   rejects<std::system_error>([&]{(void)ExperienceBlock::create(root/"original-failed-header",id(75),4096,&original_budget);});
+   header_write_remaining=-1;
+   CHECK(std::filesystem::file_size(root/"original-failed-header")==1);
+   CHECK(original_budget.used()==ExperienceBlock::header_bytes);
   }
   {
    for(unsigned owners=0;owners<4;++owners)for(bool complete:{false,true})for(bool backed:{false,true}){

@@ -76,8 +76,8 @@ ExperiencePage ExperiencePage::create(const std::filesystem::path& path,
         put(out,238,sealed.has_input_key(),1);digest(out,240,sealed.cue());
     }
     auto owned_path=path; // allocate before creating the file
-    auto block=ExperienceBlock::create(path,identity,ExperienceBlock::header_bytes+
-        ExperienceBlock::record_overhead+session.size()+source.size()+media.size()+bytes.size(),storage);
+    auto block=ExperienceBlock::create_impl(path,identity,ExperienceBlock::header_bytes+
+        ExperienceBlock::record_overhead+session.size()+source.size()+media.size()+bytes.size(),storage,true);
     // Own the private header before append can reject its reservation. The
     // same inode/sole-link/core disposal checks apply during stack unwinding.
     // Failed private append reservations are reclaimed with their owned file.

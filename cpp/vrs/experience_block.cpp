@@ -1,6 +1,7 @@
 #include "vrs/experience_block.hpp"
 
 #include "swegca_architecture/sha256.hpp"
+#include "swegca_architecture/metadata_residency_kernel.hpp"
 
 #include <algorithm>
 #include <array>
@@ -168,11 +169,17 @@ ExperienceBlock::~ExperienceBlock() { if (fd_ >= 0) ::close(fd_); }
 
 ExperienceBlock ExperienceBlock::create(const std::filesystem::path& path,
     const DigestBytes& identity, std::uint64_t capacity, StorageBudget* storage) {
+    return create_impl(path,identity,capacity,storage,false);
+}
+ExperienceBlock ExperienceBlock::create_impl(const std::filesystem::path& path,
+    const DigestBytes& identity,std::uint64_t capacity,StorageBudget* storage,bool derived) {
     if (identity == architecture::zero_digest_bytes || capacity < header_bytes + record_overhead ||
         capacity > static_cast<std::uint64_t>(std::numeric_limits<off_t>::max()))
         throw std::invalid_argument("invalid experience block identity or capacity");
     StorageBudget::Reservation charge(storage, header_bytes);
     ExperienceBlock block; block.storage_ = storage;
+    bool retained=false;
+    try {
     block.fd_ = ::open(path.c_str(), O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0600);
     if (block.fd_ < 0) io_error("create experience block");
     if (::flock(block.fd_, LOCK_EX | LOCK_NB) < 0) io_error("lock new experience block");
@@ -184,7 +191,7 @@ ExperienceBlock ExperienceBlock::create(const std::filesystem::path& path,
     put_u64(header, 40, capacity);
     const auto digest = Sha256::of(std::span<const std::byte>(header).first(48));
     std::copy(digest.begin(), digest.end(), header.begin() + 48);
-    charge.retain();
+    charge.retain();retained=true;
     write_exact(block.fd_, header, 0, block.storage_);
     sync_data(block.fd_);
     const auto parent = path.has_parent_path() ? path.parent_path() : std::filesystem::path(".");
@@ -197,6 +204,22 @@ ExperienceBlock ExperienceBlock::create(const std::filesystem::path& path,
     if (result < 0) { errno = saved_errno; io_error("sync experience block directory"); }
     block.writable_ = true;
     return block;
+    } catch(...) {
+        if(derived&&block.fd_>=0){
+            struct stat owned{},named{};
+            if(::fstat(block.fd_,&owned)==0&&::lstat(path.c_str(),&named)==0){
+                const bool same=S_ISREG(named.st_mode)&&owned.st_dev==named.st_dev&&
+                    owned.st_ino==named.st_ino&&owned.st_size>=0&&
+                    static_cast<std::uint64_t>(owned.st_size)<=header_bytes;
+                if(architecture::kernel::discard_metadata_page(same,owned.st_nlink==1)&&
+                    ::unlink(path.c_str())==0){
+                    ::close(block.fd_);block.fd_=-1;
+                    if(retained&&storage)storage->reclaim_removed(header_bytes);
+                }
+            }
+        }
+        throw;
+    }
 }
 
 ExperienceBlock ExperienceBlock::open(const std::filesystem::path& path, bool writer, StorageBudget* storage) {
