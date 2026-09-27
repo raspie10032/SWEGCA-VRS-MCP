@@ -71,6 +71,33 @@ int main(){
    CHECK(sequence[127].original()==values[127].original());
    CHECK(!std::filesystem::exists(root/"tail")&&!std::filesystem::exists(root/"pinned")&&!std::filesystem::exists(root/"unused"));
   }
+  CHECK(!std::filesystem::exists(root/"segment"));
+  for(bool same:{false,true})for(bool sole:{false,true})CHECK(discard_metadata_page(same,sole)==(same&&sole));
+  {
+   const auto baseline=storage.used();
+   {
+    auto a=ExperiencePage::create(root/"owned-a",id(30),values,memory,&storage);
+    auto b=ExperiencePage::create(root/"owned-b",id(31),values,memory,&storage);
+    const auto bytes=std::filesystem::file_size(root/"owned-a");
+    CHECK(storage.used()==baseline+2*bytes);
+    a=std::move(b);CHECK(!std::filesystem::exists(root/"owned-a"));
+    CHECK(storage.used()==baseline+bytes);
+    CHECK(a.read(0,rules,memory).original()==values[0].original());
+   }
+   CHECK(!std::filesystem::exists(root/"owned-b")&&storage.used()==baseline);
+  }
+  {
+   auto page=ExperiencePage::create(root/"shared",id(32),values,memory,&storage);
+   std::filesystem::create_hard_link(root/"shared",root/"alias");
+  }
+  CHECK(std::filesystem::exists(root/"shared")&&std::filesystem::exists(root/"alias"));
+  {
+   auto page=ExperiencePage::create(root/"replaced",id(33),values,memory,&storage);
+   std::filesystem::rename(root/"replaced",root/"renamed");
+   std::filesystem::create_symlink(root/"original",root/"replaced");
+  }
+  CHECK(std::filesystem::is_symlink(root/"replaced")&&std::filesystem::exists(root/"renamed"));
+  CHECK(std::filesystem::exists(root/"original"));
   rejects<std::invalid_argument>([&]{(void)ExperiencePage::create(root/"empty",id(7),{},memory);});
   CHECK(!std::filesystem::exists(root/"empty"));
   auto page=ExperiencePage::create(root/"page",id(8),values,memory,&storage);CHECK(page.size()==256);

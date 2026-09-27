@@ -13,8 +13,9 @@ public:
         MemoryBudget&, StorageBudget* = nullptr);
     ExperiencePage(const ExperiencePage&)=delete;
     ExperiencePage& operator=(const ExperiencePage&)=delete;
-    ExperiencePage(ExperiencePage&&) noexcept=default;
-    ExperiencePage& operator=(ExperiencePage&&) noexcept=default;
+    ExperiencePage(ExperiencePage&&) noexcept;
+    ExperiencePage& operator=(ExperiencePage&&) noexcept;
+    ~ExperiencePage();
     [[nodiscard]] std::size_t size() const noexcept{return count_;}
     [[nodiscard]] ExperienceEvidence read(std::size_t,
         const architecture::kernel::EvidenceRules&,MemoryBudget&) const;
@@ -23,10 +24,13 @@ public:
 private:
     [[nodiscard]] ExperienceEvidence decode(std::size_t,
         const architecture::kernel::EvidenceRules&,const StoredExperience&) const;
-    ExperiencePage(ExperienceBlock block,ExperienceLocation location,std::size_t count)
-        :block_(std::move(block)),location_(location),count_(count){}
+    void discard() noexcept;
+    ExperiencePage(ExperienceBlock block,ExperienceLocation location,std::size_t count,
+        std::filesystem::path path)
+        :block_(std::move(block)),location_(location),count_(count),path_(std::move(path)){}
     ExperienceBlock block_;
     ExperienceLocation location_;
     std::size_t count_;
+    std::filesystem::path path_;
 };
 } // namespace swegca::vrs

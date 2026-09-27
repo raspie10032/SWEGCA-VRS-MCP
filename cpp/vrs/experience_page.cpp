@@ -1,4 +1,7 @@
 #include "vrs/experience_page.hpp"
+#include "swegca_architecture/metadata_residency_kernel.hpp"
+#include <sys/stat.h>
+#include <unistd.h>
 #include <algorithm>
 #include <bit>
 #include <stdexcept>
@@ -23,6 +26,29 @@ architecture::DigestBytes digest(std::span<const std::byte> bytes,std::size_t of
     architecture::DigestBytes value;std::copy_n(bytes.begin()+offset,value.size(),value.begin());return value;
 }
 }
+ExperiencePage::ExperiencePage(ExperiencePage&& other) noexcept
+    :block_(std::move(other.block_)),location_(other.location_),count_(other.count_),path_(std::move(other.path_)){}
+ExperiencePage& ExperiencePage::operator=(ExperiencePage&& other) noexcept {
+    if(this!=&other){
+        discard();block_=std::move(other.block_);location_=other.location_;
+        count_=other.count_;path_=std::move(other.path_);
+    }
+    return *this;
+}
+ExperiencePage::~ExperiencePage(){discard();}
+void ExperiencePage::discard() noexcept {
+    if(block_.fd_<0)return;
+    struct stat owned{},named{};
+    if(::fstat(block_.fd_,&owned)<0||::lstat(path_.c_str(),&named)<0)return;
+    const bool same=S_ISREG(named.st_mode)&&owned.st_dev==named.st_dev&&owned.st_ino==named.st_ino&&
+        owned.st_size>=0&&static_cast<std::uint64_t>(owned.st_size)==block_.end_;
+    if(!architecture::kernel::discard_metadata_page(same,owned.st_nlink==1)||owned.st_size<0)return;
+    // Runtime owns the directory exclusively. A replaced name, hard link or
+    // failed unlink remains conservatively charged for cold reconciliation.
+    if(::unlink(path_.c_str())<0)return;
+    ::close(block_.fd_);block_.fd_=-1;
+    if(block_.storage_)block_.storage_->reclaim_removed(static_cast<std::uint64_t>(owned.st_size));
+}
 ExperiencePage ExperiencePage::create(const std::filesystem::path& path,
     const architecture::DigestBytes& identity,std::span<const ExperienceEvidence> values,
     MemoryBudget& memory,StorageBudget* storage){
@@ -41,10 +67,11 @@ ExperiencePage ExperiencePage::create(const std::filesystem::path& path,
         put(out,236,static_cast<unsigned>(value.outcome),1);put(out,237,value.has_expiry,1);
         put(out,238,sealed.has_input_key(),1);digest(out,240,sealed.cue());
     }
+    auto owned_path=path; // allocate before creating the file
     auto block=ExperienceBlock::create(path,identity,ExperienceBlock::header_bytes+
         ExperienceBlock::record_overhead+session.size()+source.size()+media.size()+bytes.size(),storage);
     const auto location=block.append({0,0,session,source,media,bytes});
-    return ExperiencePage(std::move(block),location,values.size());
+    return ExperiencePage(std::move(block),location,values.size(),std::move(owned_path));
 }
 ExperienceEvidence ExperiencePage::read(std::size_t index,
     const architecture::kernel::EvidenceRules& rules,MemoryBudget& memory) const {

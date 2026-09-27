@@ -49,6 +49,7 @@ public:
     };
 private:
     friend class ConnectionCatalog;
+    friend class ExperiencePage;
     // Only the catalog's confirmed removed inode path may return disk bytes.
     void reclaim_removed(std::uint64_t bytes) noexcept {
         auto current=used_.load(std::memory_order_relaxed);

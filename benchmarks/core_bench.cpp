@@ -69,7 +69,11 @@ template<class Fn> void measure(const char* name,Fn fn) {
 __attribute__((noinline)) MetadataRelease measured_metadata(bool complete,std::size_t owners,bool backed) noexcept {
  return metadata_release(complete,owners,backed);
 }
+__attribute__((noinline)) bool measured_page_discard(bool owned,bool sole) noexcept {
+ return discard_metadata_page(owned,sole);
+}
 int main(){
+ measure("discard_metadata_page",[&](std::size_t i){auto result=measured_page_discard(i%2,i%3!=0);consume(result);});
  measure("metadata_release",[&](std::size_t i){auto result=measured_metadata(i%2,i%3,i%5!=0);consume(result);});
  std::array<EvidenceTally,64> fixtures{};
  for(std::size_t i=0;i<fixtures.size();++i){
