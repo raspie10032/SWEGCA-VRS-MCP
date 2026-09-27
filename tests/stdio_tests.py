@@ -191,6 +191,15 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     check(automatic_after['assessment']['agreement']==3 and automatic_after['assessment']['reEvidencePerformed'])
     check(automatic_after['assessment']['currentOriginalCount']=='8' and automatic_after['assessment']['step']=='1')
     check(c.call('tools/call',{'name':'vrs_replay','arguments':{'receipt':receipt}})['result']['structuredContent']==automatic_after)
+    refreshed=c.call('tools/call',{'name':'vrs_re_evidence','arguments':{'receipt':receipt,'seed':'19','step':'2'}})['result']['structuredContent']
+    exported=c.call('tools/call',{'name':'vrs_replay','arguments':{'receipt':receipt}})['result']['structuredContent']
+    check(exported['original']==automatic_after['original'] and exported['assessment']['step']=='2')
+    for field in ('agreement','status','reEvidencePerformed','currentHead','rememberedHead'):
+        check(exported['assessment'][field]==refreshed[field])
+    check(exported['assessment']['currentOriginalCount']==str(len(refreshed['currentOriginals'])))
+    bad_refresh=c.call('tools/call',{'name':'vrs_re_evidence','arguments':{'receipt':receipt,'seed':'bad','step':'3'}})
+    check(bad_refresh['result']['isError'])
+    check(c.call('tools/call',{'name':'vrs_replay','arguments':{'receipt':receipt}})['result']['structuredContent']==exported)
     check(c.call('tools/call',{'name':'vrs_replay','arguments':{'receipt':receipt,'candidate':'0'}})['result']['structuredContent']['original']==support_original)
     checked=c.call('tools/call',{'name':'vrs_re_evidence','arguments':{'receipt':receipt,'seed':'7','step':'0'}})['result']['structuredContent']
     check(checked['status']==2 and checked['agreement']==3)

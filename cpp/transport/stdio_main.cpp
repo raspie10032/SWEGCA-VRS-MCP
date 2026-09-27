@@ -635,7 +635,18 @@ private:
             body+=",\"currentHead\":";body+=address(checked.current_head().record,memory_);
             body+=",\"currentOriginals\":[";bool first=true;
             for(const auto& original:checked.current_originals()){if(!first)body+=',';first=false;body+=address(original,memory_);}
-            body+="]}";return body;
+            body+="]}";
+            auto& state=context();
+            if(state.cognition&&replayed==&state.cognition->replayed){
+                // Publish the successful explicit comparison to the same live
+                // receipt only after response construction has succeeded.
+                // Already persisted input-time cognition remains historical.
+                InputCognition refreshed{state.cognition->candidate,std::move(state.cognition->replayed),
+                    std::move(compared),std::move(verified)};
+                state.cognition.reset();state.cognition.emplace(std::move(refreshed));
+                state.cognition_parameters=std::pair{seed,step};state.cognition_done=true;
+            }
+            return body;
         }
         throw std::invalid_argument("unknown tool");
     }
