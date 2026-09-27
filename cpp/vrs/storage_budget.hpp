@@ -15,9 +15,15 @@ public:
 // across writers. Existing physical bytes must be accounted before reopening
 // writers; hard-linked originals must be counted only once by that owner.
 class StorageBudget final {
+    friend class Runtime;
+    struct Recovery {};
+    // Runtime may inventory an over-budget root during cold recovery. All
+    // reservations still fail until verified derived files have been reclaimed.
+    StorageBudget(std::uint64_t limit,std::uint64_t existing_bytes,std::uint64_t bytes_per_second,Recovery)
+        :limit_(limit),used_(std::make_shared<std::atomic<std::uint64_t>>(existing_bytes)),transfer_(bytes_per_second) {}
 public:
     explicit StorageBudget(std::uint64_t limit, std::uint64_t existing_bytes=0, std::uint64_t bytes_per_second=625000000)
-        :limit_(limit),used_(std::make_shared<std::atomic<std::uint64_t>>(existing_bytes)),transfer_(bytes_per_second) {
+        :StorageBudget(limit,existing_bytes,bytes_per_second,Recovery{}) {
         if(existing_bytes>limit)throw StorageLimit();
     }
     StorageBudget(const StorageBudget&)=delete;
@@ -34,7 +40,7 @@ public:
             if(!owner_)return;
             auto current=owner_->used_->load(std::memory_order_relaxed);
             do {
-                if(bytes>owner_->limit_-current)throw StorageLimit();
+                if(current>owner_->limit_||bytes>owner_->limit_-current)throw StorageLimit();
             } while(!owner_->used_->compare_exchange_weak(current,current+bytes,std::memory_order_relaxed));
         }
         Reservation(const Reservation&)=delete;

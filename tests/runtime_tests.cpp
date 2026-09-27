@@ -600,16 +600,38 @@ int main(){
    (void)original.append({0,0,"s","x","text/plain",content});
   }
   const auto before=stored_bytes(path,memory);
+  auto recovered_config=config;recovered_config.storage_bytes=before-orphan_bytes;
   {
-   auto host=Runtime::open(path,config,memory);
+   const auto prior_writes=writes;
+   auto host=Runtime::open(path,recovered_config,memory);
+   CHECK(writes==prior_writes);
    CHECK(!fs::exists(orphan)&&fs::exists(partial)&&fs::exists(original_path));
    CHECK(host.storage().used()==before-orphan_bytes);
+   CHECK(host.storage().used()==host.storage().limit());
+   throws<StorageLimit>([&]{host.start_session(id(236),"over-quota-denied");});
    host.resume_session(id(235));auto recalled=host.input("text/plain",content);
    CHECK(recalled.matches().size()==31&&host.select_replay(recalled)==30);
    auto replayed=host.replay(recalled,15);
    const auto restored=evidence_payload(replayed.original()).content;
    CHECK(restored.size()==content.size()&&std::equal(restored.begin(),restored.end(),content.begin()));
   }
+  --recovered_config.storage_bytes;
+  const auto used=stored_bytes(path,memory);const auto prior_writes=writes;
+  throws<StorageLimit>([&]{(void)Runtime::open(path,recovered_config,memory);});
+  CHECK(writes==prior_writes&&stored_bytes(path,memory)==used);
+  CHECK(fs::exists(partial)&&fs::exists(original_path));
+ }
+ {
+  // Recovery admission must not turn unsigned remaining-space subtraction
+  // into permission to write when existing bytes already exceed the limit.
+  throws<StorageLimit>([]{StorageBudget ordinary(1,2);});
+  const auto path=root/"over-quota-create";fs::create_directory(path);
+  const auto marker=path/"retained-original";
+  {const auto fd=::open(marker.c_str(),O_CREAT|O_EXCL|O_WRONLY,0600);CHECK(fd>=0);CHECK(::ftruncate(fd,64)==0);CHECK(::close(fd)==0);}
+  auto tiny=config;tiny.storage_bytes=1;
+  const auto prior_writes=writes;
+  throws<StorageLimit>([&]{(void)Runtime::create(path,tiny,memory);});
+  CHECK(writes==prior_writes&&stored_bytes(path,memory)==64&&fs::file_size(marker)==64);
  }
  {
   const auto path=root/"inventory-many";fs::create_directory(path);
