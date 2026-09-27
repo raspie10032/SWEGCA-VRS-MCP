@@ -1,5 +1,18 @@
 # 전체 목표 대비 현재 구성 감사
 
+## 최신 상태: 소유 VRS 에이전트 조회 연결 및 설치
+
+- 기존 호스트에 receipt+inputOriginal로 native 세션을 확인하는 제한된 조회 경로를
+  연결했다. 다른 세션 선택 중에도 대상의 기존 Replay를 수행하고 원래 선택을 복원한다.
+- 호스트 소유 private Unix 소켓과 C++ MCP 조회 어댑터를 연결했다. 별도 Main이나
+  외부 판정기는 없으며 관측 추가/세션 종료/Main 병합 API는 노출하지 않는다.
+- 실제 stdio5903 / 관측기129 / wrapper41 checks 통과. MCP→소유 VRS 실제 왕복,
+  두 세션 선택 복원, 거부/부분 요청, scoped/복구 및 desktop fixture 경로를 확인했다.
+- 설치본을 갱신했고 실제 backend에 vrs_replay 등록과 동일 소유 소켓/정리를 확인했다.
+  기존 원경험·식별자·자원 설정 보존, 4프로세스 같은 cgroup/공유 I/O, 모델 호출0.
+- 현재 GUI의 실제 사용, 일반 자연어 의미 처리/전체 요구 충족, 대규모 자원/1ms는
+  여전히 미완료다. AGENT_QUERY_BRIDGE.md에 경계와 프레임 한도를 기록했다.
+
 ## 최신 상태: 입력별 조회 영수증 전달과 주소 대조
 
 - 첫 입력 참조/선택 Replay 문맥에 실제 acknowledgment의 receipt를 전달한다.

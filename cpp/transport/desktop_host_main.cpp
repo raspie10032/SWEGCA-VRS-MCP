@@ -15,11 +15,28 @@
 #include <stdexcept>
 #include <string>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
 #include <thread>
 #include <unistd.h>
 extern char** environ;
 namespace {
+struct QueryDirectory {
+    char directory[sizeof("/tmp/swegca-query-XXXXXX")]="/tmp/swegca-query-XXXXXX";
+    std::string socket;
+    QueryDirectory(){
+        if(!::mkdtemp(directory))throw std::runtime_error("private query directory failed");
+        try{
+            socket=std::string(directory)+"/owner.sock";
+            if(::setenv("SWEGCA_QUERY_SOCKET",socket.c_str(),1))throw std::runtime_error("query environment failed");
+        }catch(...){::rmdir(directory);throw;}
+    }
+    ~QueryDirectory(){
+        struct stat file{};
+        if(!::lstat(socket.c_str(),&file)&&S_ISSOCK(file.st_mode)&&file.st_uid==::geteuid())::unlink(socket.c_str());
+        ::rmdir(directory);
+    }
+};
 volatile std::sig_atomic_t interrupted=0;
 volatile std::sig_atomic_t children_changed=1;
 void child_changed(int){children_changed=1;}
@@ -142,6 +159,7 @@ int main(int argc,char** argv){
         sigset_t child_signals;::sigemptyset(&child_signals);::sigaddset(&child_signals,SIGCHLD);
         require(::sigprocmask(SIG_UNBLOCK,&child_signals,nullptr)==0,"child notification unblock failed");
         auto client=pair(),server=pair(),vrs=pair(),ready=pair(true);
+        QueryDirectory query_directory;
         Child backend,store,proxy;
         backend.start(argv+7,{{server[0].value,0},{server[0].value,1}});
         char* store_args[]{argv[2],argv[3],argv[4],argv[5],nullptr};

@@ -14,8 +14,11 @@ def identity(n):
     return bytes([n]+[0]*31).hex()
 
 class Client:
-    def __init__(self,mode,root,config):
-        self.p=subprocess.Popen([str(exe),mode_prefix+mode,str(root),str(config)],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+    def __init__(self,mode,root,config,query_socket=None):
+        env=os.environ.copy()
+        env.pop('SWEGCA_QUERY_SOCKET',None)
+        if query_socket:env['SWEGCA_QUERY_SOCKET']=str(query_socket)
+        self.p=subprocess.Popen([str(exe),mode_prefix+mode,str(root),str(config)],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,env=env)
         self.serial=0
     def raw(self,data):
         self.p.stdin.write(data);self.p.stdin.flush()
@@ -573,7 +576,9 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     c.close()
     # Native envelope preserves all fields while the prompt alone keys Recall.
     native_root=root/'native';native_root.mkdir()
-    c=Client('create',native_root,path);c.initialize()
+    query_dir=root/'query';query_dir.mkdir(mode=0o700)
+    query_socket=query_dir/'owner.sock'
+    c=Client('create',native_root,path,query_socket=query_socket);c.initialize()
     binding={'provider':'codex','instance':'desktop-local','session':'native-session'}
     native_id=c.call('swegca/agent/attach',binding)['result']['identity']
     check(c.call('swegca/select',{'identity':native_id})['result']=={})
@@ -602,6 +607,52 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     check(native_checkpoint['rememberedHead']==native_checkpoint['observationHead'])
     automatic_played=c.call('tools/call',{'name':'vrs_replay','arguments':{'receipt':n1['receipt']}})['result']['structuredContent']
     check('structuredContent' in recheck(n1['receipt']))
+    # The private adapter channel selects the receipt's native owner, without
+    # changing the primary stream's active session or exposing host mutations.
+    def agent_query(params,method='swegca/agent/replay'):
+        with socket.socket(socket.AF_UNIX,socket.SOCK_STREAM) as peer:
+            peer.settimeout(5);peer.connect(str(query_socket))
+            peer.sendall(json.dumps({'jsonrpc':'2.0','id':71,'method':method,'params':params}).encode()+b'\n')
+            data=bytearray()
+            while not data.endswith(b'\n'):
+                part=peer.recv(4096)
+                if not part:break
+                data.extend(part)
+            return json.loads(data) if data else None
+    query_args={'receipt':n1['receipt'],'inputOriginal':n1['original']}
+    query_baseline=c.call('tools/call',{'name':'vrs_replay','arguments':query_args})['result']['structuredContent']
+    check(query_socket.stat().st_mode&0o777==0o600)
+    check(agent_query(query_args)['result']['structuredContent']==query_baseline)
+    observer_requests=[{'jsonrpc':'2.0','id':1,'method':'initialize','params':{'protocolVersion':'2025-06-18',
+        'capabilities':{},'clientInfo':{'name':'owner-query-test','version':'1'}}},
+        {'jsonrpc':'2.0','method':'notifications/initialized'},
+        {'jsonrpc':'2.0','id':2,'method':'tools/list'},
+        {'jsonrpc':'2.0','id':3,'method':'tools/call','params':{'name':'vrs_replay','arguments':query_args}}]
+    observer_env={**os.environ,'SWEGCA_QUERY_SOCKET':str(query_socket)}
+    observation_query=subprocess.run([str(exe.parent/'swegca-content-observer'),'16777216','625000000','1048576'],
+        input=b''.join(json.dumps(item).encode()+b'\n' for item in observer_requests),
+        env=observer_env,capture_output=True,timeout=10,check=True)
+    observer_replies=[json.loads(line) for line in observation_query.stdout.splitlines()]
+    check(observation_query.stderr==b'')
+    check({tool['name'] for tool in observer_replies[1]['result']['tools']}=={'vrs_replay','observe_file_content_equality'})
+    check(observer_replies[-1]['id']==3 and observer_replies[-1]['result']['structuredContent']==query_baseline)
+    check('error' in agent_query({**query_args,'inputOriginal':n0['original']}))
+    check('error' in agent_query({**query_args,'seed':'1'}))
+    check(agent_query({},'swegca/end') is None)
+    second_owner=identity(232)
+    check(c.call('swegca/attach',{'identity':second_owner,'name':'query-selection'})['result']=={})
+    check(c.call('swegca/select',{'identity':second_owner})['result']=={})
+    selected_first=c.call('swegca/receive',event('query-selection'))['result']
+    selected_second=c.call('swegca/receive',event('query-selection',sequence='1'))['result']
+    check(agent_query(query_args)['result']['structuredContent']==query_baseline)
+    selected_replay=c.call('tools/call',{'name':'vrs_replay','arguments':{
+        'receipt':selected_second['receipt'],'inputOriginal':selected_second['original']}})['result']
+    check(selected_replay['structuredContent']['original']==selected_first['original'])
+    # A stalled/partial side request must not block the native stream.
+    with socket.socket(socket.AF_UNIX,socket.SOCK_STREAM) as stalled:
+        stalled.connect(str(query_socket));stalled.sendall(b'{')
+        check(c.call('ping')['result']=={})
+    check(c.call('swegca/select',{'identity':native_id})['result']=={})
     # A lost response may be retried with the same event; no new refinement.
     same=resend_native(raw1,1)['result']
     check(same=={'duplicate':True,'original':n1['original'],'receipt':n1['receipt'],'memory':n1['memory']})
@@ -622,6 +673,7 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     check(c.call('swegca/work',{'seed':'7','step':'6'})['result']['merged']=='0')
     live_native_originals=[c.call('swegca/agent/original',{'identity':native_id,'sequence':str(n)})['result'] for n in (0,2,5)]
     c.close()
+    check(not query_socket.exists())
     c=Client('open',native_root,path);c.initialize()
     check(c.call('swegca/agent/attach/resume',binding)['result']['identity']==native_id)
     check(c.call('swegca/select',{'identity':native_id})['result']=={})
@@ -637,6 +689,7 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     recovered_play=c.call('tools/call',{'name':'vrs_replay','arguments':{'receipt':recovered1['receipt']}})['result'];assert 'structuredContent' in recovered_play, recovered_play
     restored_play=recovered_play['structuredContent']
     check(restored_play['restored'] and not restored_play['historical'])
+    check(c.call('swegca/agent/replay',{'receipt':recovered1['receipt'],'inputOriginal':recovered1['original']})['result']['structuredContent']==restored_play)
     check(c.call('tools/call',{'name':'vrs_replay','arguments':{'receipt':recovered1['receipt'],
         'inputOriginal':recovered1['original']}})['result']['structuredContent']==restored_play)
     check(c.call('tools/call',{'name':'vrs_replay','arguments':{'receipt':recovered1['receipt'],
@@ -970,6 +1023,7 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
         'receipt':received['receipt'],'scope':anchored_scope(anchor)}})['result']['structuredContent']
     check(replayed_anchor['scope']==anchored_scope(anchor))
     check(replayed_anchor['original']==restored_anchor['original'])
+    check(c.call('swegca/agent/replay',{'receipt':received['receipt'],'inputOriginal':received['original'],'scope':anchored_scope(anchor)})['result']['structuredContent']==replayed_anchor)
     check(c.call('tools/call',{'name':'vrs_replay','arguments':{'receipt':received['receipt'],
         'inputOriginal':received['original'],'scope':anchored_scope(anchor)}})['result']['structuredContent']==replayed_anchor)
     check(c.call('tools/call',{'name':'vrs_replay','arguments':{'receipt':received['receipt'],
@@ -1734,6 +1788,19 @@ for line in sys.stdin:
 """
     backend_code=backend_code.replace("    value=json.loads(line)",
         "    value=json.loads(line)\n    with open("+repr(str(captured_inputs))+",'a') as capture:capture.write(line)")
+    captured_queries=root/'backend-queries.jsonl'
+    query_backend="""    if value.get('method') in ('turn/start','turn/steer'):
+        context=json.loads(value['params']['input'][0]['text'].split('\\n',1)[1])
+        if 'assessment' in context:
+            import os,subprocess
+            requests=[{'jsonrpc':'2.0','id':1,'method':'initialize','params':{'protocolVersion':'2025-06-18','capabilities':{},'clientInfo':{'name':'desktop-query-fixture','version':'1'}}},
+                {'jsonrpc':'2.0','method':'notifications/initialized'},
+                {'jsonrpc':'2.0','id':2,'method':'tools/call','params':{'name':'vrs_replay','arguments':{'receipt':context['receipt'],'inputOriginal':context['assessment']['inputOriginal']}}}]
+            response=subprocess.run([OBSERVER,'16777216','625000000','1048576'],input=''.join(json.dumps(r)+'\\n' for r in requests),text=True,capture_output=True,timeout=10,check=True)
+            with open(QUERY_FILE,'a') as output:output.write(json.dumps({'socket':os.environ['SWEGCA_QUERY_SOCKET'],'reply':json.loads(response.stdout.splitlines()[-1])})+'\\n')
+"""
+    query_backend=query_backend.replace('OBSERVER',repr(str(exe.parent/'swegca-content-observer'))).replace('QUERY_FILE',repr(str(captured_queries)))
+    backend_code=backend_code.replace("    if 'id' in value:",query_backend+"    if 'id' in value:")
     desktop_backend=root/'fixture backend'
     desktop_backend.write_text('#!'+sys.executable+'\n'+backend_code);desktop_backend.chmod(0o700)
     wrapper_config=root/'wrapper.json'
@@ -1836,6 +1903,12 @@ for line in sys.stdin:
     native_initial=dict(initial_input,params=dict(initial_input['params'],input=desktop_input))
     check(json.loads(memory_packet['content'])==native_initial)
     check(memory_packet['original']==first_input_reference['inputOriginal'])
+    backend_queries=[json.loads(line) for line in captured_queries.read_text().splitlines()]
+    check(len(backend_queries)==1)
+    check(backend_queries[0]['reply']['result']['structuredContent']['original']==memory_packet['original'])
+    check(backend_queries[0]['reply']['result']['structuredContent']['assessment']['inputOriginal']==memory_packet['assessment']['inputOriginal'])
+    check(not pathlib.Path(backend_queries[0]['socket']).exists())
+    check(not pathlib.Path(backend_queries[0]['socket']).parent.exists())
     check(int(first_input_reference['receipt'])>0 and int(memory_packet['receipt'])>0)
     c=Client('open',desktop_root,path);c.initialize()
     for session,protocol,count in (('transport','app-server-connection','9'),('desktop-thread','app-server','9')):

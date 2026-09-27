@@ -1,3 +1,4 @@
+#include "transport/agent_query_client.hpp"
 #include "transport/json.hpp"
 #include "transport/requirement_anchor.hpp"
 #include "transport/stdio_frames.hpp"
@@ -149,9 +150,19 @@ int main(int argc,char** argv){
                 }
                 if(method=="ping"){result(encoded_id,"{}");continue;}
                 if(!ready)throw std::invalid_argument("initialization not completed");
-                if(method=="tools/list"){result(encoded_id,listing);continue;}
+                if(method=="tools/list"){
+                    if(agent_query_endpoint()){
+                        std::pmr::string available(listing.substr(0,listing.size()-2),&memory);
+                        available+=',';available+=agent_replay_tool;available+="]}";result(encoded_id,available);
+                    }else result(encoded_id,listing);
+                    continue;
+                }
                 if(method!="tools/call"){error(encoded_id,-32601,"unknown method");continue;}
                 const auto& p=request.at("params");
+                if(p.at("name").string()=="vrs_replay"){
+                    const auto response=query_agent_replay(encoded_id,p.at("arguments"),memory);
+                    std::cout<<response<<'\n'<<std::flush;continue;
+                }
                 if(p.at("name").string()!="observe_file_content_equality")throw std::invalid_argument("unknown tool");
                 tool_result(encoded_id,measure(p.at("arguments"),limit,memory,transfer));
             }catch(const std::bad_alloc&){throw;}catch(const std::exception& e){if(id)error(encoded_id,-32602,e.what());}

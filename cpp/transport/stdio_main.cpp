@@ -1,3 +1,4 @@
+#include "transport/agent_query_socket.hpp"
 #include "transport/requirement_anchor.hpp"
 #include "transport/json.hpp"
 #include "transport/stdio_frames.hpp"
@@ -102,13 +103,44 @@ public:
                     else {auto body=call(name,p.at("arguments"));tool_result(encoded_id,body);}
                 }catch(const std::exception& e){result(encoded_id,"{\"content\":[{\"type\":\"text\",\"text\":"+quote_json(e.what(),memory_)+"}],\"isError\":true}");}return;
             }
+            if(method=="swegca/agent/replay"){
+                agent_replay_result(encoded_id,request.at("params"));return;
+            }
             if(method.starts_with("swegca/")){auto body=host(method,request.at("params"),line,native_source);result(encoded_id,body);return;}
             error(encoded_id,-32601,"unknown method");
         }catch(const std::invalid_argument& e){if(id)error(encoded_id,-32602,e.what());}
         catch(const std::exception& e){if(id)error(encoded_id,-32000,e.what());}
     }
     void framing_error(){error("null",-32700,"invalid or oversized MCP frame");}
+    std::pmr::string agent_query(std::string_view line){
+        // This listener accepts only the narrow owner query, never initialize,
+        // raw host mutations, session management or evidence producers.
+        const auto request=parse_json(line,memory_);
+        if(request.at("method").string()!="swegca/agent/replay")
+            throw std::invalid_argument("query method unavailable");
+        class Buffer final:public std::streambuf {
+        public:
+            Buffer(MemoryBudget& memory,std::size_t limit):bytes(&memory),limit_(limit){}
+            std::pmr::string bytes;
+        protected:
+            std::streamsize xsputn(const char* data,std::streamsize count) override{
+                if(count<0||static_cast<std::size_t>(count)>limit_-bytes.size())
+                    throw std::length_error("query reply exceeds frame limit");
+                bytes.append(data,static_cast<std::size_t>(count));return count;
+            }
+            int_type overflow(int_type value) override{
+                if(traits_type::eq_int_type(value,traits_type::eof()))return traits_type::not_eof(value);
+                const char byte=traits_type::to_char_type(value);xsputn(&byte,1);return value;
+            }
+        private:std::size_t limit_;
+        } buffer(memory_,frame_);
+        std::ostream stream(&buffer);stream.exceptions(std::ios::badbit|std::ios::failbit);
+        auto* previous=output_;output_=&stream;
+        try{message(line);}catch(...){output_=previous;throw;}
+        output_=previous;return std::move(buffer.bytes);
+    }
 private:
+    std::ostream* output_=&std::cout;
     Runtime& runtime_;MemoryBudget& memory_;std::uint64_t frame_;bool initialized_=false,ready_=false;
     AutomaticWork automatic_;
     bool work_requested_=false;
@@ -166,6 +198,37 @@ private:
     Context& context() const {
         if(!selected_)throw std::invalid_argument("no selected session");
         return *selected_;
+    }
+    // Narrow owner-side query entry for agent adapters. The caller cannot
+    // select a session, inject evidence, end a session or drive Main work.
+    // Resolve the live receipt together with its sealed input before changing
+    // selection, then restore the transport owner's selection on every exit.
+    void agent_replay_result(std::string_view id,const Json& p){
+        if(p.kind!=Json::Kind::object)throw std::invalid_argument("expected replay arguments");
+        for(const auto& key:p.keys)
+            if(key!="receipt"&&key!="inputOriginal"&&key!="scope")
+                throw std::invalid_argument("unsupported agent replay argument");
+        const auto receipt=integer(p.at("receipt"));
+        const auto input=record_address(p.at("inputOriginal"));
+        if(!receipt)throw std::invalid_argument("invalid agent receipt");
+        auto previous=contexts_.end(),target=contexts_.end();
+        for(auto it=contexts_.begin();it!=contexts_.end();++it){
+            auto& state=it->second;
+            if(&state==selected_)previous=it;
+            if(state.native_session.empty()||!state.native_ready)continue;
+            if(state.recovered_cognition&&state.recovered_receipt==receipt){
+                const auto metadata=parse_json(content_text(*state.recovered_cognition),memory_);
+                if(record_address(metadata.at("inputOriginal"))==input)target=it;
+            }else if(state.received&&state.receipt==receipt&&state.received->recorded.original==input){
+                target=it;
+            }
+        }
+        if(target==contexts_.end())throw std::invalid_argument("agent replay input or receipt unavailable");
+        if(previous==contexts_.end())throw std::invalid_argument("no active transport selection");
+        select_context(target->first);
+        try{replay_result(id,p);}
+        catch(...){select_context(previous->first);throw;}
+        select_context(previous->first);
     }
     // Derive turn provenance only from authenticated request/response pairs.
     // This runs for output notifications, never before input Recall. The cache
@@ -322,22 +385,22 @@ private:
         if(select){runtime_.select_session(identity);selected_=&it->second;}
     }
     void payload_result(std::string_view id,std::string_view prefix,std::span<const std::byte> bytes){
-        std::cout<<"{\"jsonrpc\":\"2.0\",\"id\":"<<id<<",\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"";
-        write_json_string_content(std::cout,prefix);write_json_hex(std::cout,bytes);
-        std::cout<<"\\\"}\"}],\"structuredContent\":"<<prefix;
-        write_json_hex(std::cout,bytes);std::cout<<"\"}}}\n"<<std::flush;
-        if(!std::cout)throw std::runtime_error("MCP output disconnected");
+        (*output_)<<"{\"jsonrpc\":\"2.0\",\"id\":"<<id<<",\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"";
+        write_json_string_content((*output_),prefix);write_json_hex((*output_),bytes);
+        (*output_)<<"\\\"}\"}],\"structuredContent\":"<<prefix;
+        write_json_hex((*output_),bytes);(*output_)<<"\"}}}\n"<<std::flush;
+        if(!(*output_))throw std::runtime_error("MCP output disconnected");
     }
     void tool_result(std::string_view id,std::string_view body){
         // The verified result is already materialized. Emit its two required
         // MCP representations without allocating escaped/combined duplicates.
-        std::cout<<"{\"jsonrpc\":\"2.0\",\"id\":"<<id<<",\"result\":{\"content\":[{\"type\":\"text\",\"text\":";
-        write_json_string(std::cout,body);
-        std::cout<<"}],\"structuredContent\":"<<body<<"}}\n"<<std::flush;
-        if(!std::cout)throw std::runtime_error("MCP output disconnected");
+        (*output_)<<"{\"jsonrpc\":\"2.0\",\"id\":"<<id<<",\"result\":{\"content\":[{\"type\":\"text\",\"text\":";
+        write_json_string((*output_),body);
+        (*output_)<<"}],\"structuredContent\":"<<body<<"}}\n"<<std::flush;
+        if(!(*output_))throw std::runtime_error("MCP output disconnected");
     }
-    void result(std::string_view id,std::string_view body){std::cout<<"{\"jsonrpc\":\"2.0\",\"id\":"<<id<<",\"result\":"<<body<<"}\n"<<std::flush;if(!std::cout)throw std::runtime_error("MCP output disconnected");}
-    void error(std::string_view id,int code,std::string_view message){std::cout<<"{\"jsonrpc\":\"2.0\",\"id\":"<<id<<",\"error\":{\"code\":"<<code<<",\"message\":"<<quote_json(message,memory_)<<"}}\n"<<std::flush;}
+    void result(std::string_view id,std::string_view body){(*output_)<<"{\"jsonrpc\":\"2.0\",\"id\":"<<id<<",\"result\":"<<body<<"}\n"<<std::flush;if(!(*output_))throw std::runtime_error("MCP output disconnected");}
+    void error(std::string_view id,int code,std::string_view message){(*output_)<<"{\"jsonrpc\":\"2.0\",\"id\":"<<id<<",\"error\":{\"code\":"<<code<<",\"message\":"<<quote_json(message,memory_)<<"}}\n"<<std::flush;}
     void clear_replay(){
         context().replayed.reset();context().cognition.reset();context().cognition_done=false;
     }
@@ -1236,11 +1299,15 @@ int main(int argc,char** argv){
         }
         auto runtime=mode=="ensure"?Runtime::ensure(argv[2],settings,memory):mode=="create"?Runtime::create(argv[2],settings,memory):Runtime::open(argv[2],settings,memory);
         Server server(runtime,memory,frame,automatic);StdioFrames frames(STDIN_FILENO,frame,memory);bool eof=false;
+        AgentQuerySocket queries(std::getenv(AgentQuerySocket::environment),memory);
         while(!eof){
             bool background_failure=false;
             try{
                 auto line=server.automatic_work()?frames.next(eof,[&]{
-                    try{return server.advance_work();}catch(...){background_failure=true;throw;}
+                    try{
+                        queries.poll([&](std::string_view query){return server.agent_query(query);});
+                        const bool work=server.advance_work();return queries.enabled()||work;
+                    }catch(...){background_failure=true;throw;}
                 }):frames.next(eof);
                 if(!eof)server.message(line);
             }catch(const std::bad_alloc&){std::cerr<<"VRS memory budget exhausted\n";return 2;}

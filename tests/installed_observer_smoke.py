@@ -42,9 +42,11 @@ def scan():
             cpus = next(line.split(':', 1)[1].strip() for line in (proc / 'status').read_text().splitlines() if line.startswith('Cpus_allowed_list:'))
             shared_owner = next((part.split(b'=', 1)[1].decode() for part in (proc / 'environ').read_bytes().split(b'\0')
                                  if part.startswith(b'SWEGCA_IO_OWNER=')), None)
+            query_endpoint = next((part.split(b'=', 1)[1].decode() for part in (proc / 'environ').read_bytes().split(b'\0')
+                                   if part.startswith(b'SWEGCA_QUERY_SOCKET=')), None)
             profiles[executable.name] = {'group': group, 'memoryMax': int((root / 'memory.max').read_text()),
                                         'swapMax': int((root / 'memory.swap.max').read_text()), 'cpus': cpus,
-                                        'pid': proc.name, 'sharedOwner': shared_owner}
+                                        'pid': proc.name, 'sharedOwner': shared_owner, 'queryEndpoint': query_endpoint}
         except (OSError, RuntimeError, StopIteration):
             continue
 
@@ -84,6 +86,10 @@ with tempfile.TemporaryFile() as errors:
         scan()
         matches = [entry for entry in status.get('data', []) if entry.get('name') == server]
         assert len(matches) == 1 and 'observe_file_content_equality' in matches[0].get('tools', {})
+        assert 'vrs_replay' in matches[0]['tools'], 'owning VRS query tool not registered'
+        query_schema = matches[0]['tools']['vrs_replay']['inputSchema']
+        assert set(query_schema['required']) == {'receipt', 'inputOriginal'}
+        assert query_schema['additionalProperties'] is False
         observer_tool = matches[0]['tools']['observe_file_content_equality']
         schema = observer_tool['inputSchema']
         anchor = schema['properties']['requirement']
@@ -94,6 +100,11 @@ with tempfile.TemporaryFile() as errors:
         assert len({value['group'] for value in profiles.values()}) == 1, 'observer escaped aggregate group'
         owner = profiles['swegca-vrs-mcp']['sharedOwner']
         assert owner and profiles['swegca-content-observer']['sharedOwner'] == owner
+        query_endpoint = profiles['swegca-vrs-mcp']['queryEndpoint']
+        assert query_endpoint and profiles['swegca-content-observer']['queryEndpoint'] == query_endpoint
+        query_path = Path(query_endpoint)
+        assert query_path.is_socket() and query_path.stat().st_mode & 0o777 == 0o600
+        assert query_path.parent.stat().st_mode & 0o777 == 0o700
         owner_pid, descriptor = owner.split(':')
         assert owner_pid == profiles['swegca-desktop-host']['pid']
         assert 'memfd:swegca-transfer' in os.readlink(f'/proc/{owner_pid}/fd/{descriptor}')
@@ -103,7 +114,8 @@ with tempfile.TemporaryFile() as errors:
             assert value['memoryMax'] == expected and value['swapMax'] == 0 and value['cpus'] == '6-7'
         process.stdin.close()
         assert process.wait(timeout=20) == 0
-        print(json.dumps({'observerRegistered': True, 'requirementSchemaRegistered': True, 'sameAggregateGroup': True, 'sameSharedTransfer': True,
+        assert not query_path.exists() and not query_path.parent.exists()
+        print(json.dumps({'observerRegistered': True, 'queryToolRegistered': True, 'sameOwnedQueryEndpoint': True, 'queryEndpointCleaned': True, 'requirementSchemaRegistered': True, 'sameAggregateGroup': True, 'sameSharedTransfer': True,
                           'verifiedProcesses': sorted(profiles), 'memoryMax': expected,
                           'swapMax': 0, 'cpus': '6-7', 'modelCalls': 0, 'exitCode': 0}))
     finally:
