@@ -106,34 +106,35 @@ MainGraph::PreparedMerge MainGraph::prepare_merge(const SessionRuntime& source, 
     }
     {
         Sha256 hash; hash.update("SWEGCA Main merge result v1"); hash.update(policy_digest_);
-        for (const auto& [id, candidate] : pending) {
-            hash.update(id); hash.update(refinement_digest(*candidate.report));
+        for (const auto& [identity, candidate] : pending) {
+            hash.update(identity); hash.update(refinement_digest(*candidate.report));
+            const auto* previous=connections_.find(identity);
+            const auto first_added=previous?previous->connection.experiences().size():0;
             DigestBytes originals{};
             auto reader=candidate.connection.experience_reader();
-            for (std::size_t index=0;index<reader.size();++index)
-                originals = extend_experience_digest(originals, reader[index].original());
+            for (std::size_t index=0;index<reader.size();++index){
+                // One authenticated metadata read supplies both the ordered
+                // result digest and the new context/cue portal references.
+                const auto value=reader[index];
+                originals=extend_experience_digest(originals,value.original());
+                if(index<first_added)continue;
+                const auto add=[&](auto& lookup,const DigestBytes& cue){
+                    auto& ranges=lookup[cue];
+                    const PortalReference key{identity,index};const auto after=ranges.upper_bound(key);
+                    if(after!=ranges.begin()){
+                        const auto prior=std::prev(after);
+                        if(prior->first.first==identity&&prior->second==index){prior->second=index+1;return;}
+                    }
+                    ranges.emplace(key,index+1);
+                };
+                add(prepared.contexts_,value.value().context);
+                add(prepared.cues_,value.cue());
+            }
             hash.update(originals);
         }
-        prepared.result_ = hash.finish();
+        prepared.result_=hash.finish();
     }
     prepared.regions_.emplace(connections_.prepare(pending));
-    for(const auto& [identity,candidate]:pending){
-        const auto* previous=connections_.find(identity);
-        auto values=candidate.connection.experience_reader();
-        for(std::size_t index=previous?previous->connection.experiences().size():0;index<values.size();++index){
-            const auto add=[&](auto& lookup,const DigestBytes& cue){
-                auto& ranges=lookup[cue];
-                const PortalReference key{identity,index};const auto after=ranges.upper_bound(key);
-                if(after!=ranges.begin()){
-                    const auto prior=std::prev(after);
-                    if(prior->first.first==identity&&prior->second==index){prior->second=index+1;return;}
-                }
-                ranges.emplace(key,index+1);
-            };
-            add(prepared.contexts_,values[index].value().context);
-            add(prepared.cues_,values[index].cue());
-        }
-    }
     return prepared;
 }
 bool MainGraph::commit_merge(PreparedMerge&& prepared) {
