@@ -71,7 +71,7 @@ int main(int argc,char** argv){
         if(is_server(argc,argv)){
             auto host=path(config,"host");not_self(host);
             const auto mode=config.at("mode").string();
-            if(mode!="create"&&mode!="open"&&mode!="limited-create"&&mode!="limited-open")throw std::invalid_argument("invalid VRS mode");
+            if(mode!="create"&&mode!="open"&&mode!="limited-create"&&mode!="limited-open"&&mode!="ensure"&&mode!="limited-ensure")throw std::invalid_argument("invalid VRS mode");
             owned={host,path(config,"proxy"),path(config,"vrs"),std::string(mode),path(config,"root"),
                    path(config,"resourceConfig"),path(config,"proxyConfig"),backend};
         }else owned={backend};

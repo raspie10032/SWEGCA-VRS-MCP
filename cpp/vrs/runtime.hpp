@@ -27,6 +27,7 @@ struct RuntimeConfig {
 class Runtime final {
 public:
     static Runtime create(const std::filesystem::path&, const RuntimeConfig&, MemoryBudget&);
+    static Runtime ensure(const std::filesystem::path&, const RuntimeConfig&, MemoryBudget&);
     static Runtime open(const std::filesystem::path&, const RuntimeConfig&, MemoryBudget&);
     Runtime(const Runtime&) = delete;
     Runtime& operator=(const Runtime&) = delete;
@@ -84,7 +85,7 @@ private:
         ExperienceRouter router;
         ExperienceLocation indexed_main;
     };
-    Runtime(const std::filesystem::path&, const RuntimeConfig&, MemoryBudget&, bool create);
+    Runtime(const std::filesystem::path&, const RuntimeConfig&, MemoryBudget&, bool create, bool discover=false);
     [[nodiscard]] Active& require_session();
     [[nodiscard]] const Active& require_session() const;
     void require_active() const;

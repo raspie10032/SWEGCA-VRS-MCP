@@ -345,5 +345,17 @@ int main(){
   }
   CHECK(bounded.used()==0);
  }
+ {
+  const auto path=root/"ensure";fs::create_directory(path);
+  {auto host=Runtime::ensure(path,config,memory);host.start_session(id(201),"retained");(void)host.retain({0,1,"retained","fixture","text/plain",content},7,0);}
+  {auto host=Runtime::ensure(path,config,memory);host.resume_session(id(201));CHECK(host.input("text/plain",content).matches().size()==1);
+   throws<std::system_error>([&]{(void)Runtime::ensure(path,config,memory);});}
+  // An interrupted initialization is preserved and never recreated.
+  const auto broken=root/"ensure-broken";fs::create_directories(broken/"graph");
+  const auto before=writes;
+  throws<std::system_error>([&]{(void)Runtime::ensure(broken,config,memory);});CHECK(writes==before);
+  const auto foreign=root/"ensure-foreign";fs::create_directories(foreign/"sessions");
+  throws<std::runtime_error>([&]{(void)Runtime::ensure(foreign,config,memory);});CHECK(!fs::exists(foreign/"graph"));
+ }
  CHECK(memory.used()==0);fs::remove_all(root);std::printf("runtime lifecycle tests: %u checks passed\n",checks);
 }

@@ -141,10 +141,10 @@ int main(int argc,char** argv){
         const auto attach=[&](const Json& session,bool connection_scope){
             const auto name=session.at("session").string();
             const auto mode=session.at("mode").string();
-            if(mode!="attach"&&mode!="resume")throw std::invalid_argument("invalid binding mode");
+            if(mode!="attach"&&mode!="resume"&&mode!="ensure")throw std::invalid_argument("invalid binding mode");
             if(bindings.contains(name))throw std::invalid_argument("duplicate session binding");
             const auto params="{\"provider\":\"codex\",\"protocol\":"+quote_json(connection_scope?"app-server-connection":"app-server",memory)+",\"instance\":"+quote_json(config.at("instance").string(),memory)+",\"session\":"+quote_json(name,memory)+"}";
-            const auto attached=call(stream,"proxy/attach/"+std::to_string(++serial),mode=="attach"?"swegca/agent/attach":"swegca/agent/attach/resume",params,memory);
+            const auto attached=call(stream,"proxy/attach/"+std::to_string(++serial),mode=="ensure"?"swegca/agent/attach/ensure":mode=="attach"?"swegca/agent/attach":"swegca/agent/attach/resume",params,memory);
             const auto& body=attached.at("result");
             const auto next=number(body.at("nextSequence").string());
             if(connection_scope)pump.attach_connection(name,next);else pump.attach(name,next);

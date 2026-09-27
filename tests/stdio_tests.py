@@ -749,7 +749,7 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     desktop_proxy=root/'desktop-proxy.json'
     desktop_proxy.write_text(json.dumps({'memoryBytes':str(8<<20),'frameBytes':'4096',
         'pendingRequests':'8','sessionCapacity':'2','seed':'7','step':'0','instance':'desktop-fixture',
-        'connectionSession':{'session':'transport','mode':'attach'},'sessions':[]}))
+        'connectionSession':{'session':'transport','mode':'ensure'},'sessions':[]}))
     backend_code="""import sys,json
 for line in sys.stdin:
     value=json.loads(line)
@@ -762,7 +762,7 @@ for line in sys.stdin:
     desktop_backend.write_text('#!'+sys.executable+'\n'+backend_code);desktop_backend.chmod(0o700)
     wrapper_config=root/'wrapper.json'
     wrapper_config.write_text(json.dumps({'backend':str(desktop_backend),'host':str(exe.parent/'swegca-desktop-host'),
-        'proxy':str(exe.parent/'swegca-app-server-proxy'),'vrs':str(exe),'mode':'create','root':str(desktop_root),
+        'proxy':str(exe.parent/'swegca-app-server-proxy'),'vrs':str(exe),'mode':'ensure','root':str(desktop_root),
         'resourceConfig':str(path),'proxyConfig':str(desktop_proxy)}))
     desktop=subprocess.Popen([str(exe.parent/'swegca-codex-wrapper'),'-c','features.code_mode_host=true',
         'app-server','--analytics-default-enabled'],env=dict(os.environ,SWEGCA_DESKTOP_CONFIG=str(wrapper_config)),
@@ -784,8 +784,19 @@ for line in sys.stdin:
         check(desktop.stdout.read()==b'' and desktop.stderr.read()==b'')
     finally:
         if desktop.poll() is None:desktop.terminate();desktop.wait(timeout=10)
+    # Relaunch using exactly the same wrapper/proxy settings and storage root.
+    desktop=subprocess.Popen([str(exe.parent/'swegca-codex-wrapper'),'-c','features.code_mode_host=true',
+        'app-server','--analytics-default-enabled'],env=dict(os.environ,SWEGCA_DESKTOP_CONFIG=str(wrapper_config)),
+        stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,bufsize=0)
+    try:
+        desktop_send({'id':904,'method':'initialize','params':{}})
+        check(desktop_read()=={'id':904,'result':{}})
+        desktop.stdin.close();check(desktop.wait(timeout=10)==0)
+        check(desktop.stdout.read()==b'' and desktop.stderr.read()==b'')
+    finally:
+        if desktop.poll() is None:desktop.terminate();desktop.wait(timeout=10)
     c=Client('open',desktop_root,path);c.initialize()
-    for session,protocol,count in (('transport','app-server-connection','5'),('desktop-thread','app-server','3')):
+    for session,protocol,count in (('transport','app-server-connection','7'),('desktop-thread','app-server','3')):
         attached=c.call('swegca/agent/attach/resume',{'provider':'codex','instance':'desktop-fixture',
             'session':session,'protocol':protocol})['result']
         check(attached['nextSequence']==count)

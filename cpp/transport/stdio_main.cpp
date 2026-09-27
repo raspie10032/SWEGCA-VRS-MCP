@@ -421,11 +421,11 @@ private:
 }
 int main(int argc,char** argv){
     try{
-        if(argc!=4)throw std::invalid_argument("usage: swegca-vrs-mcp create|open ROOT CONFIG.json");
+        if(argc!=4)throw std::invalid_argument("usage: swegca-vrs-mcp create|open|ensure ROOT CONFIG.json");
         std::string_view mode=argv[1];
         const bool limited=mode.starts_with("limited-"),bounded=mode.starts_with("bounded-");
         if(limited||bounded)mode.remove_prefix(8);
-        if(mode!="create"&&mode!="open")throw std::invalid_argument("mode must be create/open or limited-create/limited-open");
+        if(mode!="create"&&mode!="open"&&mode!="ensure")throw std::invalid_argument("mode must be create/open/ensure with optional limited prefix");
         MemoryBudget config_memory(1<<20);std::ifstream file(argv[3]);if(!file)throw std::runtime_error("cannot open configuration");
         std::pmr::string text(&config_memory);char c;while(file.get(c)){if(text.size()==65536)throw std::length_error("configuration too large");text+=c;}
         auto config=parse_json(text,config_memory);const auto ram=integer(config.at("memoryBytes"));const auto frame=integer(config.at("frameBytes"));
@@ -446,7 +446,7 @@ int main(int argc,char** argv){
         settings.io_bytes_per_second=integer(config.at("ioBytesPerSecond"));
         settings.storage_bytes=integer(config.at("storageBytes"));
         settings.merge_workers=static_cast<std::uint32_t>(workers);
-        auto runtime=mode=="create"?Runtime::create(argv[2],settings,memory):Runtime::open(argv[2],settings,memory);
+        auto runtime=mode=="ensure"?Runtime::ensure(argv[2],settings,memory):mode=="create"?Runtime::create(argv[2],settings,memory):Runtime::open(argv[2],settings,memory);
         Server server(runtime,memory);bool eof=false;
         while(!eof){try{auto line=read_frame(std::cin,frame,memory,eof);if(!eof)server.message(line);}catch(const std::bad_alloc&){std::cerr<<"VRS memory budget exhausted\n";return 2;}catch(const std::exception&){server.framing_error();}if(!std::cout)return 2;}
         return 0;

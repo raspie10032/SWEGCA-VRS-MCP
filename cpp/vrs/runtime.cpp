@@ -8,15 +8,29 @@ extern "C" void swegca_background_work_probe(bool running) noexcept;
 namespace swegca::vrs {
 using namespace architecture;
 using namespace architecture::kernel;
+namespace {
+// Called only after StorageRoot has acquired exclusive ownership. A partially
+// initialized or nonempty unrecognized root is never treated as a fresh store.
+bool create_missing_main(const std::filesystem::path& root){
+    if(std::filesystem::is_empty(root))return true;
+    const auto status=std::filesystem::symlink_status(root/"graph");
+    if(status.type()!=std::filesystem::file_type::directory)
+        throw std::runtime_error("nonempty VRS root lacks a valid Main directory");
+    return false;
+}
+}
+Runtime Runtime::ensure(const std::filesystem::path& root,const RuntimeConfig& config,MemoryBudget& memory) {
+    return Runtime(root,config,memory,false,true);
+}
 Runtime Runtime::create(const std::filesystem::path& root,const RuntimeConfig& config,MemoryBudget& memory) {
     return Runtime(root,config,memory,true);
 }
 Runtime Runtime::open(const std::filesystem::path& root,const RuntimeConfig& config,MemoryBudget& memory) {
     return Runtime(root,config,memory,false);
 }
-Runtime::Runtime(const std::filesystem::path& root,const RuntimeConfig& config,MemoryBudget& memory,bool create)
+Runtime::Runtime(const std::filesystem::path& root,const RuntimeConfig& config,MemoryBudget& memory,bool create,bool discover)
     :root_(root),config_(config),memory_(memory),storage_root_(root),storage_(config.storage_bytes,stored_bytes(root,memory),config.io_bytes_per_second),sources_(root,memory,config.read_limit,&storage_,config.merge_workers),
-    main_(create ? PersistentMainGraph::create(root/"graph",config.main_identity,memory,config.initial_strength,config.policy,config.main_block_capacity,config.merge_workers,&storage_)
+    main_((discover?create_missing_main(root):create) ? PersistentMainGraph::create(root/"graph",config.main_identity,memory,config.initial_strength,config.policy,config.main_block_capacity,config.merge_workers,&storage_)
                  : PersistentMainGraph::open(root/"graph",config.main_identity,memory,config.initial_strength,config.policy,sources_,config.merge_workers,&storage_)),sessions_(&memory) {
     sources_.release_caches();
 }

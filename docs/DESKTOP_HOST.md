@@ -65,3 +65,25 @@ proxy, real VRS and synthetic backend. No actual app override was installed.
 Remaining deployment work includes concrete persistent configuration, root and
 session lifecycle setup, installation and live validation. Backend environment
 is inherited unchanged. Model/account operations were not exercised.
+
+## Persistent first start and restart
+
+Wrapper/VRS mode `ensure` (also `limited-ensure`) now supports one persistent
+configuration across launches. The root directory must be provisioned first.
+Runtime acquires the existing StorageRoot exclusive lock before deciding:
+create Main only if the root is empty; otherwise require an existing graph
+directory and perform normal validated open. A nonempty unknown root, partial
+Main, lock conflict, configuration mismatch or corruption is an error, never
+a reason to recreate/overwrite storage. Directory discovery is startup only.
+
+Proxy connectionSession and configured sessions also accept mode `ensure`,
+using the host's existing attach/ensure lifecycle rules. Ended sessions remain
+ineligible for new native events. Successful reconnection recovers recorded
+sequence and outstanding requests without ending or merging experiences.
+
+Verification: Runtime lifecycle 186 checks (including exclusive locking,
+create/reopen, partial initialization and foreign-root preservation), wrapper
+33 checks, real subprocess 2,389 checks. The desktop fixture is launched twice
+with the exact same wrapper/proxy settings: its connection advances from five
+to seven originals while the thread's three originals remain; no Main merge.
+Live installation, root provisioning and explicit end handling still remain.
