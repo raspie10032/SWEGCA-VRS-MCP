@@ -109,8 +109,9 @@ MainGraph::PreparedMerge MainGraph::prepare_merge(const SessionRuntime& source, 
         for (const auto& [id, candidate] : pending) {
             hash.update(id); hash.update(refinement_digest(*candidate.report));
             DigestBytes originals{};
-            for (const auto& value : candidate.connection.experiences())
-                originals = extend_experience_digest(originals, value.original());
+            auto reader=candidate.connection.experience_reader();
+            for (std::size_t index=0;index<reader.size();++index)
+                originals = extend_experience_digest(originals, reader[index].original());
             hash.update(originals);
         }
         prepared.result_ = hash.finish();

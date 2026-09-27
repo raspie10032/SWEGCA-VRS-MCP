@@ -63,6 +63,35 @@ class ExperienceSequence final {
         Backing* backing=nullptr;
     };
 public:
+    // Traversal scratch owned by one worker. Cold reads do not promote every
+    // shuffled segment into the shared resident graph. References last until
+    // the next access; the source and its budget must outlive this reader.
+    class Reader final {
+        friend class ExperienceSequence;
+        explicit Reader(const ExperienceSequence& source)
+            :source_(source),cache_(&source.memory_){}
+        const ExperienceSequence& source_;
+        std::pmr::vector<ExperienceEvidence> cache_;
+        std::size_t cached_chunk_=SIZE_MAX;
+    public:
+        Reader(const Reader&)=delete;
+        Reader& operator=(const Reader&)=delete;
+        [[nodiscard]] std::size_t size() const noexcept{return source_.size_;}
+        [[nodiscard]] const ExperienceEvidence& operator[](std::size_t index){
+            if(index>=source_.size_)throw std::out_of_range("experience traversal index");
+            const auto number=chunk_index(index);const auto& chunk=source_.chunks_[number];
+            if(const auto* data=chunk->data.load(std::memory_order_acquire))return data[chunk_offset(index)];
+            if(cached_chunk_!=number){
+                cached_chunk_=SIZE_MAX;
+                {decltype(cache_) empty(&source_.memory_);cache_.swap(empty);}
+                cache_=chunk->backing->page.load(chunk->backing->rules,source_.memory_);
+                if(cache_.size()!=chunk->used)throw std::runtime_error("experience traversal count changed");
+                cached_chunk_=number;
+            }
+            return cache_[chunk_offset(index)];
+        }
+    };
+    [[nodiscard]] Reader reader() const{return Reader(*this);}
     // Owner captures a sealed segment, worker writes only a private backing,
     // owner publishes after joining. The extra shared owner protects hot data.
     class PagePreparation final {

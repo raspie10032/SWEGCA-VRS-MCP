@@ -71,6 +71,7 @@ public:
     [[nodiscard]] ExperienceSequence::Snapshot snapshot_experiences(MemoryBudget& memory,std::size_t begin,std::size_t end) const { return experiences_.snapshot(memory,begin,end); }
     [[nodiscard]] std::size_t snapshot_directory_bytes(std::size_t begin,std::size_t end) const { return experiences_.snapshot_directory_bytes(begin,end); }
     [[nodiscard]] ExperienceSequence::View experiences() const noexcept { return experiences_.view(); }
+    [[nodiscard]] ExperienceSequence::Reader experience_reader() const {return experiences_.reader();}
 
 private:
     friend class PersistentConnection;

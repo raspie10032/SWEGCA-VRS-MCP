@@ -113,6 +113,21 @@ int main(){
   CHECK(graph.page_out(id(10),15,root/"must-not-create",id(181)));
   CHECK(!std::filesystem::exists(root/"must-not-create"));
   CHECK(graph.replay(id(10),15).location()==paged_original);
+  const auto expected_report=refinement_digest(graph.find(id(10))->evaluate(19,100000));
+  CHECK(graph.page_out(id(10),15,root/"must-not-create",id(181)));
+  const auto cold_memory=graph_memory.used();
+  {
+   const auto cold_report=graph.find(id(10))->evaluate(19,100000);
+   CHECK(refinement_digest(cold_report)==expected_report);
+  }
+  CHECK(graph_memory.used()==cold_memory);
+  CHECK(!graph.page_out(id(10),15,root/"must-not-create",id(181)));
+  auto follow_store=SessionStore::create(root,id(5),"cold-follow",65536,source_memory);
+  SessionRuntime follow(follow_store,source_memory,8192);follow.define_connection(id(10),0.75,policy);
+  fill(follow,"cold-follow",10,7000,16,EvidenceOutcome::support);follow.end();follow.publish_originals();
+  {auto prepared=graph.prepare_merge(follow,19,100000);}
+  CHECK(graph_memory.used()==cold_memory);
+  CHECK(!graph.page_out(id(10),15,root/"must-not-create",id(181)));
   std::printf("Main allocation failure points: %u\n",failures);
  }
  CHECK(graph_memory.used()==0&&source_memory.used()==0);

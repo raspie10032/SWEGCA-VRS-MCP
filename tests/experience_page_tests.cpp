@@ -88,6 +88,24 @@ int main(){
    CHECK(sequence[127].original()==values[127].original());
    CHECK(!std::filesystem::exists(root/"tail")&&!std::filesystem::exists(root/"pinned")&&!std::filesystem::exists(root/"unused"));
   }
+  {
+   ExperienceSequence sequence(memory);
+   for(const auto& value:values){sequence.prepare_append();sequence.commit_append(value);}
+   CHECK(sequence.page_out(63,root/"read-64",id(40),rules,&storage));
+   CHECK(sequence.page_out(127,root/"read-128",id(41),rules,&storage));
+   const auto cold=memory.used();
+   {
+    auto reader=sequence.reader();
+    for(unsigned n=0;n<12;++n){
+     const auto index=n%2?63:127;
+     CHECK(reader[index].original()==values[index].original());
+     CHECK(memory.used()<=cold+128*sizeof(ExperienceEvidence));
+    }
+   }
+   CHECK(memory.used()==cold);
+   CHECK(!sequence.page_out(63,root/"unused",id(42),rules,&storage));
+   CHECK(!sequence.page_out(127,root/"unused",id(43),rules,&storage));
+  }
   CHECK(!std::filesystem::exists(root/"segment"));
   CHECK(!metadata_pressure(9,10,false)&&!metadata_pressure(10,10,false));
   CHECK(metadata_pressure(11,10,false)&&!metadata_pressure(11,10,true));

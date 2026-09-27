@@ -76,13 +76,14 @@ void Connection::inherit_experiences(const Connection& previous) {
         throw std::logic_error("invalid Main experience inheritance");
     // Preserve the original per-experience core admission check. Sharing only
     // replaces physical metadata copies, never the later full shuffled tally.
+    auto reader=previous.experience_reader();
     if(&memory_==&previous.memory_) {
-        for(const auto& value:previous.experiences())validate_experience(value);
+        for(std::size_t i=0;i<reader.size();++i)validate_experience(reader[i]);
         experiences_.share_prefix(previous.experiences_);
         revision_=experiences_.size();
     } else {
         // Separate budget lifetimes cannot own each other's segments.
-        for(const auto& value:previous.experiences())append(value);
+        for(std::size_t i=0;i<reader.size();++i)append(reader[i]);
     }
 }
 
@@ -127,8 +128,9 @@ ConnectionRefinement Connection::prepare_refinement(std::uint64_t seed, std::uin
     // All accumulators are fresh for this shuffled batch. A previous cycle's
     // tally is neither an input nor retained on the connection.
     auto& tally = report.evidence_;
+    auto reader=experiences_.reader();
     for (auto& sample : report.samples_) {
-        const auto& value = experiences_[sample.experience_index].value();
+        const auto& value = reader[sample.experience_index].value();
         sample.use = admit_observation(rules_, identity_, value, current_step, seen.contains(value.address));
         if (sample.use != ObservationUse::applied) continue;
         seen.insert(value.address);
@@ -162,8 +164,9 @@ ConnectionRefinement Connection::prepare_refinement(std::uint64_t seed, std::uin
         sources.clear();
         producers.clear();
         for (const auto& sample : report.samples_) {
-            const auto& value = experiences_[sample.experience_index].value();
-            if (sample.use == ObservationUse::applied && value.axis == axis) {
+            if(sample.use!=ObservationUse::applied)continue;
+            const auto& value = reader[sample.experience_index].value();
+            if (value.axis == axis) {
                 sources.insert(value.source);
                 producers.insert(value.producer);
             }
