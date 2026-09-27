@@ -236,3 +236,41 @@ Verification: CPU 6,7, make -j2; stdio 5624 checks passed. Checks cover exact
 and continuation lookup keys, temporary and Main boundaries, immutable boundary
 across new evidence, manually selected original index, and restart preservation.
 This does not measure large-input latency or prove live general recovery.
+
+## General recovery: owner-side reconstruction
+
+`Runtime::restore_cognition(input, ReplayRecovery, seed, step)` now reconstructs
+one selected Replay and recomputes its comparison. It does not ingest a saved
+verdict. The caller supplies coordinates obtained from its sealed cognition
+record; the runtime validates them against current Main-owned experience:
+
+- the sealed input's explicit cue must match the recorded input cue;
+- the selected connection must have the named historical head/root;
+- the original index must precede that historical observation count and name
+  exactly the recorded original;
+- the SWEGCA route membership element verifies exact cue, continuation connection
+  or context membership (including the context seed eligibility condition);
+- the observation boundary comes from the actual historical local head, or zero
+  for an absent local head at Main Recall, and must equal the checkpoint count;
+- the original source session must match the actual storage owner.
+
+Only after these checks does the router read the selected original and issue a
+current router-owned Replay receipt. Comparison uses the existing shuffled
+observation/core path; Re-evidence occurs only on a core-reported conflict.
+Restoration neither appends observations nor updates connection strength/Main.
+Continuation/context are advanced from that selected original as in ordinary
+Replay. No work was inserted before input Recall.
+
+The transport's general historical receipt still uses its archive export path.
+Connecting this owner-side method to transport cache invalidation, eager
+comparison refresh and immutable revision publication remains required. Therefore
+general desktop restart recovery is still incomplete. Scoped recovery remains
+on its existing live route; this section does not replace that implementation.
+
+Verification: Runtime 2008 checks, stdio regression 5629 checks, CPU 6,7 and
+make -j2. Runtime cases cover temporary exact/continuation/context and Main
+exact/continuation reconstruction across restart, late counterevidence and
+conflict-only Re-evidence, corrupt coordinate rejection and unchanged heads.
+The context fixture uses actual receive, since retain alone does not establish
+an explicit user-input key. Main context traversal and transport restart
+integration are not claimed by these cases.

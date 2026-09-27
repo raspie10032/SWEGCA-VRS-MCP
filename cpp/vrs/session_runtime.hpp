@@ -15,6 +15,15 @@ struct RecordedRefinement {
     architecture::DigestBytes context;
 };
 
+// Coordinates from a sealed cognition record, never a stored verdict.
+struct ReplayRecovery {
+    bool temporary=false,seed_only=false;
+    architecture::kernel::FamiliarityKey key_kind=architecture::kernel::FamiliarityKey::missing;
+    architecture::DigestBytes input_cue{},lookup_key{},connection{},source{};
+    ExperienceLocation remembered_head{},observation_head{},original{};
+    std::size_t original_index=0,observation_boundary=0;
+};
+
 struct CueReference {
     architecture::DigestBytes connection;
     std::size_t original_index = 0;
@@ -320,6 +329,7 @@ public:
     [[nodiscard]] ReplayedInput restore_main_replay(const ExperienceLocation& input,
         std::string_view scope,const architecture::DigestBytes& connection,const ExperienceLocation& remembered_head,
         const ExperienceLocation& observation_head,std::size_t original_index,const ExperienceLocation& original) const;
+    [[nodiscard]] ReplayedInput restore_replay(const ExperienceLocation& input,const ReplayRecovery&) const;
     // Partial original access preserves Recall provenance but does not issue a
     // Replay receipt or update the continuation key.
     [[nodiscard]] EvidencePayloadSlice read_payload_slice(const InputRecall&, std::size_t candidate,

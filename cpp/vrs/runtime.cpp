@@ -204,6 +204,15 @@ InputCognition Runtime::restore_main_cognition(const ExperienceLocation& input,
     if(requires_re_evidence(compared.agreement()))verified.emplace(re_evidence(replayed,compared,seed,step));
     return {original_index,std::move(replayed),std::move(compared),std::move(verified)};
 }
+InputCognition Runtime::restore_cognition(const ExperienceLocation& input,const ReplayRecovery& saved,
+    std::uint64_t seed,std::uint64_t step) const {
+    require_active();
+    auto replayed=require_session().router.restore_replay(input,saved);
+    auto compared=compare_replay(replayed,seed,step);
+    std::optional<ReEvidenceResult> verified;
+    if(requires_re_evidence(compared.agreement()))verified.emplace(re_evidence(replayed,compared,seed,step));
+    return {saved.original_index,std::move(replayed),std::move(compared),std::move(verified)};
+}
 std::optional<std::size_t> Runtime::select_replay(const InputRecall& recalled) const {
     return require_session().router.select_replay(recalled);
 }

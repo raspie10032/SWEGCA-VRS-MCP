@@ -783,5 +783,56 @@ int main(){
   auto boundary=host.restore_main_cognition(input,"contents",connection,remembered,local_head,7,selected,7,26);
   CHECK(boundary.comparison.observation_boundary()==8&&boundary.assessment().current_originals().empty());
  }
+ for(bool main:{false,true}){
+  for(unsigned route=0;route<3;++route){
+   // Context seed is session-local; Main is tested through exact/continuation.
+   if(main&&route==2)continue;
+   const auto path=root/("general-restore-"+std::to_string(main)+"-"+std::to_string(route));fs::create_directory(path);
+   ReplayRecovery saved;ExperienceLocation input;DigestBytes claim;
+   const std::string new_text="a new utterance following the selected memory";
+   const auto new_bytes=std::as_bytes(std::span(new_text));
+   auto observe=[&](Runtime& host,unsigned n,EvidenceOutcome outcome){
+    const auto parent=host.receive({2*n,2*n,"general","user","text/plain",content},7,2*n).recorded.original;
+    EvidenceObservation value;value.source=id(n+20);value.producer=id(n+60);value.observed_at=2*n+1;value.outcome=outcome;
+    const auto recorded=host.observe_input(parent,{2*n+1,2*n+1,"general","tool","text/plain",content},value,7,2*n+1);
+    claim=recorded.refinement.connection();
+   };
+   {
+    auto host=Runtime::create(path,config,memory);host.start_session(id(230),"general");
+    for(unsigned n=1;n<=8;++n)observe(host,n,EvidenceOutcome::support);
+    if(main){host.end_session();CHECK(host.work(7,18)==1);host.start_session(id(231),"general");}
+    if(route==1){const auto recalled=host.input("text/plain",content);CHECK(host.cognize(recalled,7,18).has_value());}
+    auto received=host.receive({20,20,"general","user","text/plain",route?new_bytes:content},7,20);
+    input=received.recorded.original;
+    auto cognition=host.cognize(received.recalled,7,20);CHECK(cognition.has_value());
+    saved.temporary=received.recalled.temporary();saved.seed_only=received.recalled.seed_only();
+    saved.key_kind=received.recalled.key_kind();saved.lookup_key=received.recalled.lookup_key();
+    CHECK(saved.key_kind==(route==0?FamiliarityKey::exact:route==1?FamiliarityKey::continuation:FamiliarityKey::context));
+    CHECK(saved.temporary!=main);
+    saved.input_cue=cognition->replayed.input_cue();saved.connection=cognition->assessment().remembered_head().identity;
+    saved.source=cognition->replayed.source_identity();saved.original=cognition->replayed.location();
+    saved.original_index=cognition->replayed.original_index();saved.remembered_head=cognition->assessment().remembered_head().record;
+    saved.observation_head=cognition->replayed.observation_head();saved.observation_boundary=cognition->comparison.observation_boundary();
+   }
+   auto host=Runtime::open(path,config,memory);host.resume_session(main?id(231):id(230));
+   auto restored=host.restore_cognition(input,saved,7,20);
+   CHECK(restored.replayed.location()==saved.original&&restored.replayed.source_identity()==saved.source);
+   CHECK(restored.comparison.observation_boundary()==saved.observation_boundary);
+   CHECK(!restored.reverified);
+   for(unsigned n=11;n<=18;++n)observe(host,n,EvidenceOutcome::refute);
+   const auto head=host.session().find(claim)->head();const auto main_head=host.main().head();
+   auto updated=host.restore_cognition(input,saved,7,37);
+   CHECK(updated.replayed.location()==saved.original&&updated.comparison.observation_boundary()==saved.observation_boundary);
+   if(route!=2)CHECK(updated.reverified.has_value()&&updated.assessment().agreement()==ReplayAgreement::contradicts);
+   CHECK(host.session().find(claim)->head()==head&&host.main().head()==main_head);
+   auto bad=saved;bad.input_cue=id(252);throws<std::invalid_argument>([&]{(void)host.restore_cognition(input,bad,7,37);});
+   bad=saved;bad.source=id(252);throws<std::invalid_argument>([&]{(void)host.restore_cognition(input,bad,7,37);});
+   bad=saved;bad.lookup_key=id(252);throws<std::invalid_argument>([&]{(void)host.restore_cognition(input,bad,7,37);});
+   bad=saved;bad.observation_boundary++;throws<std::invalid_argument>([&]{(void)host.restore_cognition(input,bad,7,37);});
+   bad=saved;bad.original_index++;throws<std::invalid_argument>([&]{(void)host.restore_cognition(input,bad,7,37);});
+   bad=saved;bad.remembered_head={};throws<std::invalid_argument>([&]{(void)host.restore_cognition(input,bad,7,37);});
+   bad=saved;bad.key_kind=FamiliarityKey::missing;throws<std::invalid_argument>([&]{(void)host.restore_cognition(input,bad,7,37);});
+  }
+ }
  CHECK(memory.used()==0);fs::remove_all(root);std::printf("runtime lifecycle tests: %u checks passed\n",checks);
 }

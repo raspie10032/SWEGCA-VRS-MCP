@@ -44,6 +44,22 @@ enum class ReplayPreference { invalid, keep, replace };
 [[nodiscard]] constexpr bool context_reference_eligible(bool has_input_key,bool seed_only) noexcept {
     return !seed_only || has_input_key;
 }
+// Authenticate membership of one already selected reference in the recorded
+// lookup. This grants no truth verdict and does not run candidate selection.
+[[nodiscard]] inline bool restored_reference_matches(FamiliarityKey kind,
+    const Digest& input,const Digest& lookup,const Digest& connection,
+    const Digest& reference_cue,const Digest& context,bool has_input_key,bool seed_only) noexcept {
+    if(!named_digest(input)||!named_digest(lookup)||!named_digest(connection))return false;
+    switch(kind){
+    case FamiliarityKey::exact:
+        return !seed_only&&input==lookup&&reference_cue==lookup;
+    case FamiliarityKey::continuation:
+        return !seed_only&&connection==lookup;
+    case FamiliarityKey::context:
+        return context==lookup&&context_reference_eligible(has_input_key,seed_only);
+    default:return false;
+    }
+}
 // Receipt representation only. No candidate or evidence is discarded. Compare
 // bounded snapshot metadata with individual address pins without multiplication
 // overflow; the caller accounts for its own VRS storage representation.

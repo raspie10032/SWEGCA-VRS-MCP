@@ -1,5 +1,19 @@
 # 전체 목표 대비 현재 구성 감사
 
+## 최신 상태: 일반 Replay의 Runtime 복구 및 재대조
+
+- Runtime::restore_cognition과 라우터 복구 함수를 추가했다. 입력 cue, 실제 과거
+  연결 head/Main root, 원경험 인덱스/주소/출처, 로컬 관측 head/경계를 인증한다.
+- 고정 크기 SWEGCA 경로 소자로 exact/continuation/context 참조 소속을 확인한다.
+  실제 선택 원경험을 읽어 현재 라우터 영수증을 만든 뒤 기존 코어로 대조하고,
+  충돌 때만 Re-evidence한다. 저장 verdict, 경험 추가, 연결 강도 재갱신은 없다.
+- CPU 6,7 / make -j2 빌드, Runtime 2008 checks, stdio 5629 checks 통과.
+  임시 exact/continuation/context와 Main exact/continuation 재시작, 후속 반증,
+  잘못된 키/출처/경계/인덱스/head 거부 및 상태 비중복 갱신을 확인했다.
+- 일반 transport historical receipt를 이 Runtime 경로로 잇고 후속 관측 대조와
+  불변 개정 저장을 재개하는 작업은 남아 있다. 일반 데스크톱 복구 완료가 아니다.
+  설치 바이너리는 미갱신이며 의미 적합성·전체 자원·지연 요구도 미완료다.
+
 ## 최신 상태: 일반 회상 대조 복구용 좌표 보존
 
 - 일반 입력의 자동 cognition과 수동 Replay 대조 개정에 당시 tier, familiarity

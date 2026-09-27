@@ -592,6 +592,50 @@ ReplayedInput ExperienceRouter::restore_main_replay(const ExperienceLocation& in
     return ReplayedInput(std::move(selected),match,issuer_,cue,source);
 }
 
+ReplayedInput ExperienceRouter::restore_replay(const ExperienceLocation& input,const ReplayRecovery& saved) const {
+    if(!temporary_.usable())throw std::invalid_argument("Replay restoration unavailable");
+    if(!saved.temporary){require_main_current();if(!merged_main_)throw std::invalid_argument("Main unavailable");}
+    const auto* local=temporary_.find(saved.connection);
+    if(saved.temporary&&!local)throw std::invalid_argument("restored connection unavailable");
+    const auto* connection=saved.temporary?&local->state():merged_main_->graph().find(saved.connection);
+    if(!connection)throw std::invalid_argument("restored Main connection unavailable");
+    const auto& rules=saved.temporary?local->rules():merged_main_->graph().rules_;
+    const auto stored_input=temporary_.read_original(input);
+    const auto parent=decode_evidence(rules,stored_input);
+    if(parent.cue()!=saved.input_cue||!parent.has_input_key())throw std::invalid_argument("restored input cue mismatch");
+    const auto old=saved.temporary?local->historical_snapshot(saved.remembered_head):
+        merged_main_->historical_snapshot(saved.connection,saved.remembered_head);
+    if(saved.original_index>=old.observations)throw std::invalid_argument("original beyond remembered boundary");
+    const auto reference=connection->read_experience(saved.original_index);
+    if(reference.original()!=saved.original||reference.value().hypothesis!=saved.connection||
+        !restored_reference_matches(saved.key_kind,saved.input_cue,saved.lookup_key,saved.connection,
+            reference.cue(),reference.value().context,reference.has_input_key(),saved.seed_only))
+        throw std::invalid_argument("original does not belong to recorded Recall");
+    std::size_t boundary=old.observations;
+    if(saved.temporary){
+        if(saved.observation_head!=saved.remembered_head)throw std::invalid_argument("temporary observation head mismatch");
+    }else{
+        boundary=0;
+        if(saved.observation_head!=ExperienceLocation{}){
+            if(!local)throw std::invalid_argument("local observation history disappeared");
+            boundary=local->historical_snapshot(saved.observation_head).observations;
+        }
+    }
+    if(boundary!=saved.observation_boundary)throw std::invalid_argument("recorded observation boundary mismatch");
+    const auto source=saved.temporary?temporary_.store_.identity():
+        merged_main_->graph().original_source(saved.connection,saved.original_index).store->identity();
+    if(source!=saved.source)throw std::invalid_argument("restored source mismatch");
+    auto selected=saved.temporary?temporary_.replay(saved.connection,saved.original_index):
+        merged_main_->graph().replay(saved.connection,saved.original_index);
+    if(selected.location()!=saved.original)throw std::logic_error("restored Replay changed");
+    const auto selected_value=decode_evidence(rules,selected);
+    InputMatch match{{saved.temporary?&temporary_:nullptr,saved.temporary?local:nullptr,old,
+        saved.temporary?nullptr:merged_main_,saved.observation_head},saved.original_index,boundary,
+        saved.original,selected_value.value().observed_at};
+    continuation_=saved.connection;continued_context_=selected_value.value().context;
+    return ReplayedInput(std::move(selected),match,issuer_,saved.input_cue,source);
+}
+
 EvidencePayloadSlice ExperienceRouter::read_payload_slice(const InputRecall& recalled,std::size_t candidate,
     std::uint64_t offset,std::uint64_t count) const {
     const auto selected=selected_input(recalled,candidate);
