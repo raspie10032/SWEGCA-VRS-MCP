@@ -320,6 +320,33 @@ int main() {
     }
     CHECK(memory.used()==0);
     {
+        const auto area=root/"related-mounted-main";fs::create_directory(area);
+        auto archive_store=SessionStore::create(area,id(1),"related-prior",65536,memory);
+        SessionRuntime archive(archive_store,memory,8192);
+        const auto parent=archive.retain_input(input("related-prior",0),1,policy,7,0).original;
+        archive.define_connection(id(11),1,policy);
+        EvidenceObservation value;value.hypothesis=id(11);value.source=id(21);value.producer=id(22);
+        value.context=parent.digest;value.observed_at=1;value.outcome=EvidenceOutcome::refute;
+        const auto main_child=archive.observe(id(11),input("related-prior",1),value,7,1,id(11)).original;
+        archive.end();archive.publish_originals();
+        auto live_store=SessionStore::create(area,id(2),"related-live",65536,memory);
+        SessionRuntime live(live_store,memory,8192);ExperienceRouter route(live,memory);route.mount_main(archive);
+        auto recalled=route.input("application/octet-stream",std::as_bytes(std::span(payload)));
+        CHECK(recalled.matches().size()==1);
+        auto played=route.replay(recalled,0);CHECK(played.location()==parent);
+        const auto before=reads;
+        auto main_related=route.related(played);
+        CHECK(!main_related.temporary()&&main_related.matches().size()==1&&reads==before);
+        CHECK(route.replay(main_related,0).location()==main_child);
+        live.define_connection(id(12),1,policy);
+        value.hypothesis=id(12);value.observed_at=2;value.outcome=EvidenceOutcome::support;
+        const auto local_child=live.observe(id(12),input("related-live",2),value,7,2,id(12)).original;
+        auto local_related=route.related(played);
+        CHECK(local_related.temporary()&&local_related.matches().size()==1);
+        CHECK(route.replay(local_related,0).location()==local_child);
+    }
+    CHECK(memory.used()==0);
+    {
         auto archive_store=SessionStore::open(root,id(1),memory);
         SessionRuntime archive(archive_store,memory,8192);
         const auto remembered_head=archive.find(id(10))->head();

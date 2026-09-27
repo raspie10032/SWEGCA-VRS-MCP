@@ -318,6 +318,9 @@ public:
     // Exact producer-declared scope under an authenticated input receipt.
     // A missing scope never falls back to unrelated dialogue/continuation.
     [[nodiscard]] InputRecall input_scope(const InputRecall&, std::string_view scope) const;
+    // Follow sealed observation-context links from one already replayed
+    // original. No scope name, log scan or payload read is needed to Recall.
+    [[nodiscard]] InputRecall related(const ReplayedInput&) const;
     // Only receipt metadata is considered here; one original is read later.
     [[nodiscard]] std::optional<std::size_t> select_replay(const InputRecall&) const;
     [[nodiscard]] ReplayedInput replay(const InputRecall& recalled, std::size_t candidate) const;

@@ -710,6 +710,57 @@ int main(){
   throws<std::invalid_argument>([&]{(void)host.read_scoped_cognition_original(input,"",connection,id(240),selected);});
  }
  {
+  const auto path=root/"related-observations";fs::create_directory(path);
+  ExperienceLocation input,positive,negative;
+  {
+   auto host=Runtime::create(path,config,memory);host.start_session(id(241),"related");
+   input=host.receive({0,0,"related","user","text/plain",content},7,0).recorded.original;
+   auto parent_receipt=host.input("text/plain",content);
+   auto parent=host.replay(parent_receipt,0);CHECK(parent.location()==input);
+   auto absent=host.related(parent);CHECK(!absent.familiar()&&absent.matches().empty());
+   EvidenceObservation value;value.source=id(242);value.producer=id(243);
+   value.observed_at=1;value.outcome=EvidenceOutcome::support;
+   auto first=host.observe_input_scope(input,"contents",{1,1,"related","tool","text/plain",content},value,7,1);
+   positive=first.original;
+   value.observed_at=2;value.outcome=EvidenceOutcome::refute;
+   auto second=host.observe_input_scope(input,"permissions",{2,2,"related","tool","text/plain",content},value,7,2);
+   negative=second.original;
+   const std::string other_text="a different purpose";const auto other_bytes=std::as_bytes(std::span(other_text));
+   const auto other=host.receive({3,3,"related","user","text/plain",other_bytes},7,3).recorded.original;
+   value.observed_at=4;
+   const auto unrelated=host.observe_input_scope(other,"contents",{4,4,"related","tool","text/plain",content},value,7,4).original;
+   const auto before_reads=reads,before_writes=writes;
+   auto linked=host.related(parent);
+   CHECK(linked.temporary()&&linked.key_kind()==FamiliarityKey::context&&linked.lookup_key()==input.digest);
+   CHECK(linked.matches().size()==2&&reads==before_reads&&writes==before_writes);
+   bool saw_positive=false,saw_negative=false;
+   for(const auto match:linked.matches()){
+    saw_positive|=match.original==positive;saw_negative|=match.original==negative;
+    CHECK(match.original!=unrelated&&match.original!=input);
+   }
+   CHECK(saw_positive&&saw_negative);
+   auto cognition=host.cognize(linked,7,4);
+   CHECK(cognition&&cognition->replayed.location()==negative);
+   CHECK(evidence_payload(cognition->replayed.original()).content.size()==content.size());
+   CHECK(writes==before_writes); // Recall/Replay never creates another observation.
+   host.attach_session(id(244),"other-route");host.select_session(id(244));
+   throws<std::invalid_argument>([&]{(void)host.related(parent);});
+   host.select_session(id(241));host.end_session();CHECK(host.work(7,5)==1);
+  }
+  {
+   auto host=Runtime::open(path,config,memory);host.start_session(id(245),"related-main");
+   auto recalled=host.input("text/plain",content);CHECK(!recalled.temporary());
+   // Scoped results have distinct cues, so the parent input remains the exact match.
+   CHECK(recalled.matches().size()==1);
+   auto parent=host.replay(recalled,0);CHECK(parent.location()==input);
+   const auto before_reads=reads,before_writes=writes;
+   auto linked=host.related(parent);CHECK(!linked.temporary()&&linked.matches().size()==2);
+   CHECK(linked.lookup_key()==input.digest&&reads==before_reads&&writes==before_writes);
+   auto selected=host.cognize(linked,7,5);CHECK(selected&&selected->replayed.location()==negative);
+   CHECK(writes==before_writes);
+  }
+ }
+ {
   const auto path=root/"scope-live-restore";fs::create_directory(path);
   ExperienceLocation input,selected,head;DigestBytes connection;
   const auto observe=[&](Runtime& host,unsigned n,EvidenceOutcome outcome){

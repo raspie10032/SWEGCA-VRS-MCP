@@ -310,6 +310,28 @@ InputRecall ExperienceRouter::input_scope(const InputRecall& parent,std::string_
     }
     return recall_cue(cue,tier,familiarity_key(main_exact,false));
 }
+InputRecall ExperienceRouter::related(const ReplayedInput& parent) const {
+    if(parent.issuer_!=issuer_)throw std::invalid_argument("related Recall requires this route's Replay");
+    // Context links were recorded with the observations and checked during
+    // recovery. A familiar original's address locates its outcomes; it does
+    // not turn any outcome into a judgment about the whole current input.
+    const auto key=parent.location().digest;
+    const auto local=temporary_.contexts_.find(key);
+    const bool found=local!=temporary_.contexts_.end()&&!local->second.empty();
+    const auto tier=recall_scope(temporary_.usable(),found);
+    if(tier==RecallScope::temporary||tier==RecallScope::unavailable)
+        return recall_cue(parent.input_cue(),tier,familiarity_key(false,false,found),&key);
+    require_main_current();
+    bool main_found=false;
+    if(merged_main_){
+        const auto& index=merged_main_->graph().contexts_;
+        const auto position=index.find(key);main_found=position!=index.end()&&!position->second.empty();
+    }else for(const auto* session:mounted_){
+        const auto position=session->contexts_.find(key);
+        if(position!=session->contexts_.end()&&!position->second.empty()){main_found=true;break;}
+    }
+    return recall_cue(parent.input_cue(),tier,familiarity_key(false,false,main_found),&key);
+}
 InputRecall ExperienceRouter::input(std::string_view media, std::span<const std::byte> content) const {
     // Deja vu: natural bytes reach the core cue primitive immediately. This
     // anonymous exact familiarity signal is not a truth/semantic judgment.
@@ -447,6 +469,12 @@ InputRecall ExperienceRouter::recall_cue(const DigestBytes& cue, RecallScope sco
                 else for(auto index=begin;index<end;++index)
                     result.append(match,index,boundary,connection->pin_experience(index));
             }
+    } else if(kind==FamiliarityKey::context){
+        for(const auto* session:mounted_){
+            const auto found=session->contexts_.find(*context);
+            if(found!=session->contexts_.end())
+                for(const auto& reference:found->second)append(*session,reference);
+        }
     } else {
         const auto found = main_cues_.find(cue);
         if (found != main_cues_.end())
