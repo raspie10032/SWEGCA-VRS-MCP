@@ -133,6 +133,25 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     replay=c.call('tools/call',{'name':'vrs_replay','arguments':{'receipt':binary['receipt'],'candidate':'0'}})['result']['structuredContent']
     check(replay['contentHex']=='00ff80fe0a')
     check(c.call('swegca/end')['result']=={});c.close()
+    retained_root=root/'retained-assessment';retained_root.mkdir()
+    c=Client('create',retained_root,path);c.initialize()
+    check(c.call('swegca/start',{'identity':identity(30),'name':'retained-assessment'})['result']=={})
+    retained_first=c.call('swegca/receive',event('retained-assessment'))['result']
+    retained_input=c.call('swegca/receive',event('retained-assessment',sequence='1'))['result']
+    def retained_packet():
+        return c.call('tools/call',{'name':'vrs_replay','arguments':{'receipt':retained_input['receipt']}})['result']['structuredContent']
+    prior_packet=retained_packet();check(prior_packet['assessment']['currentOriginalCount']=='1')
+    check('result' in c.call('swegca/retain',event('retained-assessment',sequence='2',step='1')))
+    updated_packet=retained_packet()
+    check(updated_packet['original']==retained_first['original'])
+    check(updated_packet['assessment']['currentOriginalCount']=='2' and updated_packet['assessment']['step']=='1')
+    check(updated_packet['assessment']['agreement']==1 and updated_packet['assessment']['status']==0)
+    check(not updated_packet['assessment']['reEvidencePerformed'] and not updated_packet['grantsAuthority'])
+    check('result' in c.call('swegca/retain',event('retained-assessment',sequence='3',step='2',content='unrelated content')))
+    check(retained_packet()==updated_packet)
+    check('error' in c.call('swegca/retain',event('retained-assessment',source='',sequence='4')))
+    check(c.call('tools/call',{'name':'vrs_replay','arguments':{'receipt':retained_input['receipt']}})['result']['isError'])
+    c.close()
     # Recorded observations go through the same server/runtime/core route.
     observed_root=root/'observed';observed_root.mkdir()
     c=Client('create',observed_root,path);c.initialize()

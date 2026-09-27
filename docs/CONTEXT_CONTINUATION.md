@@ -118,3 +118,10 @@ Main 조회에서 정확 cue가 없고, 성공한 Replay의 context가 **서로 
 reEvidencePerformed=true를 반환한다. 관측의 최신 step=1과 원경험 수 8,
 반복 출력 일치, 잘못된 outcome 요청이 기존 결과를 바꾸지 않음을 검사한다.
 일반 자연어의 support/refute 도출 구현을 이 수정으로 달성했다고 주장하지 않는다.
+
+일반 호스트 `retain`도 같은 기록 후 갱신 함수를 사용한다. 성공한 refinement의
+연결 ID/seed/step을 사용하므로 다른 연결의 경험은 기존 대조를 바꾸지 않는다.
+현재 연결에 미판정 경험을 더 보존한 사례에서 currentOriginalCount는 1→2로
+갱신되지만 agreement=insufficient, status=abstain, 재검증 없음, 권한 없음이 유지된다.
+불완전한 출처로 기록이 실패해 세션이 unusable이 된 뒤에는 오래된 자동 결과를
+내보내지 않고 Replay 오류를 반환하는 것도 실제 프로세스 검사로 확인했다.

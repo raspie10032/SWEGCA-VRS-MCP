@@ -182,6 +182,13 @@ private:
         if(context().replayed)return &*context().replayed;
         return context().cognition ? &context().cognition->replayed : nullptr;
     }
+    void invalidate_cognition(const RecordedRefinement& recorded){
+        auto& state=context();
+        if(state.cognition&&state.cognition->assessment().remembered_head().identity==recorded.refinement.connection()){
+            state.cognition_parameters=std::pair{recorded.refinement.seed(),recorded.refinement.current_step()};
+            state.cognition_done=false;state.cognition_saved=false;
+        }
+    }
     void complete_cognition(){
         auto& state=context();
         if(!state.cognition_done){
@@ -499,8 +506,15 @@ private:
             if(method=="swegca/retain"){
                 // Session events use the same SWEGCA admission, shuffle and
                 // refinement path without replacing the current input/Replay.
-                auto recorded=runtime_.retain({sequence,observed,session,source,media,content},seed,step);
-                return "{\"original\":"+address(recorded.original,memory_)+",\"refinement\":"+refinement(recorded.refinement,memory_)+"}";
+                try {
+                    auto recorded=runtime_.retain({sequence,observed,session,source,media,content},seed,step);
+                    invalidate_cognition(recorded);
+                    return "{\"original\":"+address(recorded.original,memory_)+",\"refinement\":"+refinement(recorded.refinement,memory_)+"}";
+                }catch(...){
+                    // A partial record can make the session unusable. Force
+                    // validation before any old automatic result is exported.
+                    context().cognition_done=false;context().cognition_saved=false;throw;
+                }
             }
             if(method=="swegca/observe"){
                 using namespace swegca::architecture::kernel;
@@ -524,7 +538,7 @@ private:
                 // Never allow the cached assessment to bypass that failure.
                 if(affects_cognition){state.cognition_done=false;state.cognition_saved=false;}
                 auto recorded=runtime_.observe(value.hypothesis,{sequence,observed,session,source,media,content},value,seed,step);
-                if(affects_cognition)state.cognition_parameters=std::pair{seed,step};
+                invalidate_cognition(recorded);
                 return "{\"original\":"+address(recorded.original,memory_)+",\"refinement\":"+refinement(recorded.refinement,memory_)+"}";
             }
             if(next_receipt_==std::numeric_limits<std::uint64_t>::max())throw std::overflow_error("receipt sequence exhausted");
