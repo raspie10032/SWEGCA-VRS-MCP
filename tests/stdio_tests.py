@@ -1710,6 +1710,19 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
 
     check(c.call('swegca/work',{'seed':'7','step':'0'})['result']['merged']=='0')
     c.close()
+    # Explicit end permits Main merge; the original correction receipt remains
+    # addressable by original after reopening without a live session binding.
+    c=Client('open',turns_root,path);c.initialize()
+    check(c.call('swegca/agent/attach/resume',turns_binding)['result']['nextSequence']=='18')
+    check(c.call('swegca/select',{'identity':turns_id})['result']=={})
+    check(c.call('swegca/end')['result']=={})
+    check(c.call('swegca/work',{'seed':'7','step':'0'})['result']['merged']=='1')
+    c.close()
+    c=Client('open',turns_root,path);c.initialize()
+    merged_steer=c.call('swegca/agent/cognition',{'identity':turns_id,'inputOriginal':steer['original']})['result']['record']
+    check(merged_steer['inputRelations']==steer['inputRelations'])
+    check(c.call('swegca/work',{'seed':'7','step':'0'})['result']['merged']=='0')
+    c.close()
     # Responses bind to an earlier committed request original, not a selected
     # session guess or a volatile pending map. The relation survives restart.
     response_root=root/'app-responses';response_root.mkdir()

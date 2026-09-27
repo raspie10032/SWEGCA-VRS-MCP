@@ -123,3 +123,23 @@ replacementVerified는 false다. 고유 문자열 위치가 의미적 선행 요
 테스트 backend 사이의 고유 위치 및 미확정 전달을 확인했다.
 실제 GUI/모델 사용, Main 병합 후 이 관계 복구, 범용 자연어 정정 의미 검증은
 이 변경의 검증 범위에 포함되지 않는다. 설치본 반영은 아직이다.
+
+### Main 병합 보존과 설치본 반영 확인
+
+후속 검증에서 명시적 세션 종료 후 Main work의 merged=1을 확인하고 프로세스를
+재시작했다. live session 재연결 없이 identity+inputOriginal로 최초 cognition을
+조회해 inputRelations 전체가 종료 전 값과 동일함을 확인했다. 이 검증은
+보존된 계보의 주소 조회이며, 새 문장의 자동 의미 회상/정정 승인 증거는 아니다.
+
+2026-09-27 소스 6c34f5f의 VRS/proxy를 다시 빌드하고 실제 subprocess 회귀검증
+7229 checks를 통과했다(비동기 polling에 따라 검사 횟수는 변동).
+설치 prefix /home/raspie/.local/share/swegca-vrs/desktop의 전체 실행 파일 해시와
+설치 프로세스 부재를 확인한 후 두 바이너리와 manifest를 원자 교체했다.
+resource/desktop/proxy 설정은 byte 동일성을 확인했다. 이 설치에는 앞선
+측정 보고서 일관성 검증, 인용 정정 후보, 선행 위치 연결 변경이 포함된다.
+
+설치본 backend inventory smoke: VRS/host/proxy/observer의 같은 cgroup,
+공유 I/O 소유자, 소유 VRS 조회 socket, 관련 Replay 및 requirement schema 등록,
+종료 후 socket 정리를 확인했다. memory.max=3999997952, swap=0, CPU6-7,
+modelCalls=0, exitCode=0. GUI 세션 사용/실제 모델 목적 유지/대규모 Main 5ms는
+이 설치 확인으로 검증됐다고 주장하지 않는다.
