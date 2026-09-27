@@ -172,6 +172,12 @@ bool MainGraph::commit_impl(PreparedMerge& prepared, MergeSink sink, void* conte
     ++generation_;
     return true;
 }
+bool MainGraph::page_out(const DigestBytes& connection,std::size_t index,
+    const std::filesystem::path& path,const DigestBytes& page,StorageBudget* storage) const {
+    const auto* found=connections_.find(connection);
+    if(!found)throw std::out_of_range("Main page-out connection");
+    return found->connection.page_out(index,path,page,storage);
+}
 const Connection* MainGraph::find(const DigestBytes& identity) const noexcept {
     const auto found = connections_.find(identity);
     return !found ? nullptr : &found->connection;

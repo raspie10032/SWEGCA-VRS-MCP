@@ -1,5 +1,8 @@
 #pragma once
-#include "vrs/evidence_experience.hpp"
+#include "vrs/experience_page.hpp"
+#include "swegca_architecture/metadata_residency_kernel.hpp"
+#include <atomic>
+#include <mutex>
 #include <algorithm>
 #include <bit>
 #include <iterator>
@@ -20,15 +23,42 @@ class ExperienceSequence final {
         return index<255?index-((std::size_t{1}<<chunk_index(index))-1):(index-255)%256;
     }
     struct Chunk {
+        struct Backing {
+            Backing(ExperiencePage value,const architecture::kernel::EvidenceRules& policy)
+                :page(std::move(value)),rules(policy){}
+            ExperiencePage page;
+            architecture::kernel::EvidenceRules rules;
+            mutable std::mutex load_mutex;
+        };
         Chunk(MemoryBudget& budget,std::size_t count):memory(budget),capacity(count),
             data(static_cast<ExperienceEvidence*>(memory.allocate(count*sizeof(ExperienceEvidence),alignof(ExperienceEvidence)))) {}
         Chunk(const Chunk&)=delete;
         Chunk& operator=(const Chunk&)=delete;
-        Chunk(Chunk&& other) noexcept:memory(other.memory),capacity(other.capacity),used(other.used),data(std::exchange(other.data,nullptr)) {}
-        ~Chunk(){if(data){std::destroy_n(data,used);memory.deallocate(data,capacity*sizeof(ExperienceEvidence),alignof(ExperienceEvidence));}}
+        ~Chunk(){
+            release();
+            if(backing){std::destroy_at(backing);memory.deallocate(backing,sizeof(Backing),alignof(Backing));}
+        }
+        void release() noexcept{
+            if(auto* value=data.exchange(nullptr)){
+                std::destroy_n(value,used);
+                memory.deallocate(value,capacity*sizeof(ExperienceEvidence),alignof(ExperienceEvidence));
+            }
+        }
+        ExperienceEvidence* resident() const {
+            if(auto* value=data.load(std::memory_order_acquire))return value;
+            std::lock_guard lock(backing->load_mutex);
+            if(auto* value=data.load(std::memory_order_relaxed))return value;
+            auto restored=backing->page.load(backing->rules,memory);
+            if(restored.size()!=used)throw std::runtime_error("experience page count changed");
+            auto* value=static_cast<ExperienceEvidence*>(memory.allocate(capacity*sizeof(ExperienceEvidence),alignof(ExperienceEvidence)));
+            std::uninitialized_copy(restored.begin(),restored.end(),value);
+            data.store(value,std::memory_order_release);
+            return value;
+        }
         MemoryBudget& memory;
         std::size_t capacity,used=0;
-        ExperienceEvidence* data;
+        mutable std::atomic<ExperienceEvidence*> data;
+        Backing* backing=nullptr;
     };
 public:
     [[nodiscard]] std::size_t snapshot_directory_bytes(std::size_t begin,std::size_t end) const {
@@ -49,7 +79,7 @@ public:
         [[nodiscard]] const ExperienceEvidence& operator[](std::size_t index) const {
             if(index>=count_)throw std::out_of_range("experience snapshot index");
             index+=begin_;
-            return chunks_[chunk_index(index)-first_chunk_]->data[chunk_offset(index)];
+            return chunks_[chunk_index(index)-first_chunk_]->resident()[chunk_offset(index)];
         }
     private:
         friend class ExperienceSequence;
@@ -74,15 +104,15 @@ public:
             using iterator_category=std::forward_iterator_tag;
             const ExperienceSequence* owner=nullptr;
             std::size_t index=0;
-            reference operator*() const noexcept{return (*owner)[index];}
-            pointer operator->() const noexcept{return &(*owner)[index];}
+            reference operator*() const{return (*owner)[index];}
+            pointer operator->() const{return &(*owner)[index];}
             Iterator& operator++() noexcept{++index;return *this;}
             Iterator operator++(int) noexcept{auto old=*this;++*this;return old;}
             bool operator==(const Iterator&) const noexcept=default;
         };
         [[nodiscard]] std::size_t size() const noexcept{return count_;}
         [[nodiscard]] bool empty() const noexcept{return !count_;}
-        [[nodiscard]] const ExperienceEvidence& operator[](std::size_t index) const noexcept{return (*owner_)[offset_+index];}
+        [[nodiscard]] const ExperienceEvidence& operator[](std::size_t index) const{return (*owner_)[offset_+index];}
         [[nodiscard]] Iterator begin() const noexcept{return {owner_,offset_};}
         [[nodiscard]] Iterator end() const noexcept{return {owner_,offset_+count_};}
         [[nodiscard]] View subspan(std::size_t offset) const {
@@ -109,10 +139,33 @@ public:
     [[nodiscard]] Snapshot snapshot(MemoryBudget& directory_memory) const{return Snapshot(*this,directory_memory,0,size_);}
     [[nodiscard]] Snapshot snapshot(MemoryBudget& memory,std::size_t begin,std::size_t end) const {return Snapshot(*this,memory,begin,end);}
     [[nodiscard]] View view() const noexcept{return View(this,0,size_);}
-    [[nodiscard]] const ExperienceEvidence& operator[](std::size_t index) const noexcept{
+    [[nodiscard]] const ExperienceEvidence& operator[](std::size_t index) const{
         // 1,2,4,...,128 entries, then fixed 256-entry segments. Singleton
         // connections reserve one value, and shuffled access remains direct.
-        return chunks_[chunk_index(index)]->data[chunk_offset(index)];
+        return chunks_[chunk_index(index)]->resident()[chunk_offset(index)];
+    }
+    // Serialized owner operation, outside input and merge preparation. Borrowed
+    // views must not be used concurrently. Explicit pins/snapshots prevent eviction.
+    [[nodiscard]] bool page_out(std::size_t index,const std::filesystem::path& path,
+        const architecture::DigestBytes& identity,const architecture::kernel::EvidenceRules& rules,
+        StorageBudget* storage=nullptr) const {
+        if(index>=size_)throw std::out_of_range("experience page-out index");
+        const auto& chunk=chunks_[chunk_index(index)];
+        using architecture::kernel::MetadataRelease;
+        const auto action=architecture::kernel::metadata_release(chunk->used==chunk->capacity,
+            chunk.use_count(),chunk->backing!=nullptr);
+        if(action==MetadataRelease::retain)return false;
+        if(!chunk->data.load(std::memory_order_acquire))return false;
+        if(action==MetadataRelease::persist_then_release){
+            using Backing=Chunk::Backing;
+            auto* backing=static_cast<Backing*>(memory_.allocate(sizeof(Backing),alignof(Backing)));
+            try {
+                std::construct_at(backing,ExperiencePage::create(path,identity,
+                    std::span<const ExperienceEvidence>(chunk->resident(),chunk->used),memory_,storage),rules);
+            }catch(...){memory_.deallocate(backing,sizeof(Backing),alignof(Backing));throw;}
+            chunk->backing=backing;
+        }
+        chunk->release();return true;
     }
     // Full segments are immutable. The incomplete tail is copied eagerly so
     // neither sequence can change a shared segment or relocate its own values.
@@ -124,7 +177,7 @@ public:
             if(segment->used==segment->capacity)prepared.push_back(segment);
             else {
                 auto copy=make_chunk(segment->capacity);
-                for(std::size_t i=0;i<segment->used;++i){std::construct_at(copy->data+i,segment->data[i]);++copy->used;}
+                for(std::size_t i=0;i<segment->used;++i){std::construct_at(copy->resident()+i,segment->resident()[i]);++copy->used;}
                 prepared.push_back(std::move(copy));
             }
         }
@@ -139,7 +192,7 @@ public:
     }
     void commit_append(const ExperienceEvidence& value) noexcept{
         static_assert(std::is_nothrow_copy_constructible_v<ExperienceEvidence>);
-        auto& chunk=*chunks_.back();std::construct_at(chunk.data+chunk.used,value);++chunk.used;++size_;
+        auto& chunk=*chunks_.back();std::construct_at(chunk.data.load(std::memory_order_relaxed)+chunk.used,value);++chunk.used;++size_;
     }
 private:
     MemoryBudget& memory_;

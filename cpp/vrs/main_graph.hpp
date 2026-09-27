@@ -30,6 +30,9 @@ public:
     [[nodiscard]] StoredExperience replay(const architecture::DigestBytes& identity, std::size_t index) const;
     [[nodiscard]] EvidencePayloadSlice read_payload_slice(const architecture::DigestBytes&, std::size_t index,
         std::uint64_t offset, std::uint64_t count) const;
+    // Serialized cache placement; never changes the graph generation or strength.
+    [[nodiscard]] bool page_out(const architecture::DigestBytes& connection,std::size_t index,
+        const std::filesystem::path& path,const architecture::DigestBytes& page,StorageBudget* storage=nullptr) const;
     [[nodiscard]] std::uint64_t generation() const noexcept { return generation_; }
     [[nodiscard]] bool has_source(const architecture::DigestBytes& identity) const noexcept { return merged_.contains(identity); }
     [[nodiscard]] std::size_t region_count() const noexcept { return connections_.region_count(); }

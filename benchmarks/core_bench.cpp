@@ -7,6 +7,7 @@
 #include "swegca_architecture/memory_promotion_kernel.hpp"
 #include "swegca_architecture/memory_transaction_stage_kernel.hpp"
 #include "vrs/verification.hpp"
+#include "swegca_architecture/metadata_residency_kernel.hpp"
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -65,7 +66,11 @@ template<class Fn> void measure(const char* name,Fn fn) {
  std::sort(samples.begin(),samples.end());
  std::cout<<name<<",median_ns="<<samples[15]<<",p95_block_mean_ns="<<samples[29]<<",min_ns="<<samples.front()<<'\n';
 }
+__attribute__((noinline)) MetadataRelease measured_metadata(bool complete,std::size_t owners,bool backed) noexcept {
+ return metadata_release(complete,owners,backed);
+}
 int main(){
+ measure("metadata_release",[&](std::size_t i){auto result=measured_metadata(i%2,i%3,i%5!=0);consume(result);});
  std::array<EvidenceTally,64> fixtures{};
  for(std::size_t i=0;i<fixtures.size();++i){
   auto& t=fixtures[i];t.source_diversity=4;t.context_diversity=6;t.revision=i+1;

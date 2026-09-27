@@ -533,3 +533,16 @@ ExperiencePage 제한 크기 메타데이터 저장 단위를 추가했다. 검�
 80,000바이트 단일 읽기 및 200,000바이트 전체 load 예산, 선택 밖 손상 거부를 확인했다.
 중요한 미완료 경계: 현재 Main/ExperienceSequence 퇴거·적재에는 아직 연결하지 않았다.
 다음 단계는 실제 구간 캐시 연결, 핀 수명, 영속 주소 소유권과 자원 회수다.
+
+ExperiencePage를 ExperienceSequence의 봉인 구간 및 MainGraph의 명시적 page_out
+호출에 연결했다. SWEGCA metadata_release가 완전 봉인/단독 소유/기존 backing
+조건으로 유지·저장 후 해제·재해제를 결정한다. 핀/스냅샷/다른 연결이 공유한 구간과
+부분 tail은 보호한다. 읽기 시 전체 체크섬/admission을 통과해 복원하고 동시 독자는
+한 번만 적재 결과를 발행한다. Main 세대·강도·원주소는 바뀌지 않는다.
+
+페이지/구간 1,595개, Main 4,713개, 세션 런타임 1,151개, 비동기 91개 검사 통과.
+Main 퇴거 후 같은 원경험 Replay 및 backing 재사용, 적재 OOM 재시도, 공유/핀 보호와
+동시 적재를 확인했다. 신규 자원 분기 단독 중앙값 1.78751ns 및 기존 코어 ns 측정은
+benchmarks/results/core-metadata-residency.txt에 보존했다.
+남은 연결: Runtime/서비스의 자동 예산 대응, 재시작 페이지 주소 복구와 공간 회수,
+단일 대형 연결의 bounded 셔플. 이번 명시적 구간 경로를 전체 페이징 완료로 보지 않는다.

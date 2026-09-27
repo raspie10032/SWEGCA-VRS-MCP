@@ -1,4 +1,6 @@
 #include "vrs/experience_page.hpp"
+#include "vrs/experience_sequence.hpp"
+#include <thread>
 #include "swegca_architecture/evidence_rules.hpp"
 #include <cstdio>
 #include <cstdlib>
@@ -7,7 +9,7 @@
 using namespace swegca::vrs;
 using namespace swegca::architecture;
 using namespace swegca::architecture::kernel;
-static unsigned checks=0;
+static std::atomic<unsigned> checks=0;
 #define CHECK(x) do{++checks;if(!(x)){std::fprintf(stderr,"FAIL %d: %s\n",__LINE__,#x);std::abort();}}while(false)
 template<class E,class F>void rejects(F f){bool caught=false;try{f();}catch(const E&){caught=true;}CHECK(caught);}
 DigestBytes id(unsigned n){DigestBytes value{};value[0]=std::byte(n);return value;}
@@ -24,6 +26,50 @@ int main(){
    value.observed_at=n;value.expires_at=n+100;value.has_expiry=n%2;value.axis=n%2;
    value.producer_confidence=n/255.;value.outcome=static_cast<EvidenceOutcome>(n%3);
    values.push_back(record_evidence(original,rules,{n,n,"session","test","text/plain",{}},value,n%2?std::optional(id(6)):std::nullopt));
+  }
+  {
+   for(unsigned owners=0;owners<4;++owners)for(bool complete:{false,true})for(bool backed:{false,true}){
+    const auto decision=metadata_release(complete,owners,backed);
+    CHECK(decision==(!complete||owners!=1?MetadataRelease::retain:
+        backed?MetadataRelease::release:MetadataRelease::persist_then_release));
+   }
+   ExperienceSequence sequence(memory);
+   for(const auto& value:values){sequence.prepare_append();sequence.commit_append(value);}
+   // Index 127 belongs to the full 128-value segment; index 255 is an active tail.
+   CHECK(!sequence.page_out(255,root/"tail",id(20),rules,&storage));
+   {
+    auto pin=sequence.pin(127);
+    CHECK(!sequence.page_out(127,root/"pinned",id(21),rules,&storage));
+    CHECK(pin->original()==values[127].original());
+   }
+   const auto before=memory.used();
+   CHECK(sequence.page_out(127,root/"segment",id(22),rules,&storage));
+   const auto cold=memory.used();CHECK(cold<before);
+   CHECK(!sequence.page_out(127,root/"unused",id(23),rules,&storage));
+   const auto held_bytes=memory.limit()-memory.used();auto* held=memory.allocate(held_bytes);
+   rejects<std::bad_alloc>([&]{(void)sequence[127];});
+   memory.deallocate(held,held_bytes);CHECK(memory.used()==cold);
+   // Readers may restore the same shared segment concurrently; publish once.
+   std::thread first([&]{CHECK(sequence[127].original()==values[127].original());});
+   std::thread second([&]{CHECK(sequence[254].original()==values[254].original());});
+   first.join();second.join();
+   CHECK(memory.used()>cold);
+   const auto written=storage.used();
+   CHECK(sequence.page_out(127,root/"unused",id(23),rules,&storage));
+   CHECK(storage.used()==written&&memory.used()==cold);
+   {
+    auto snapshot=sequence.snapshot(memory,127,255);
+    CHECK(!sequence.page_out(127,root/"unused",id(23),rules,&storage));
+    CHECK(snapshot[0].original()==values[127].original());
+    CHECK(snapshot[127].original()==values[254].original());
+    CHECK(!sequence.page_out(127,root/"unused",id(23),rules,&storage));
+   }
+   CHECK(sequence.page_out(127,root/"unused",id(23),rules,&storage));
+   ExperienceSequence copy(memory);copy.share_prefix(sequence);
+   CHECK(!sequence.page_out(127,root/"unused",id(23),rules,&storage));
+   CHECK(copy[127].original()==values[127].original());
+   CHECK(sequence[127].original()==values[127].original());
+   CHECK(!std::filesystem::exists(root/"tail")&&!std::filesystem::exists(root/"pinned")&&!std::filesystem::exists(root/"unused"));
   }
   rejects<std::invalid_argument>([&]{(void)ExperiencePage::create(root/"empty",id(7),{},memory);});
   CHECK(!std::filesystem::exists(root/"empty"));
@@ -60,5 +106,5 @@ int main(){
   CHECK(decode_evidence(rules,original.read(values[0].original(),4096,memory)).original()==values[0].original());
  }
  CHECK(memory.used()==0);std::filesystem::remove_all(root);
- std::printf("experience page tests: %u checks passed\n",checks);
+ std::printf("experience page tests: %u checks passed\n",checks.load());
 }

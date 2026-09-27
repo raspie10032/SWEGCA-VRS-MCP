@@ -1,0 +1,17 @@
+metadata_release,median_ns=1.78751,p95_block_mean_ns=1.89102,min_ns=1.11581
+judge_1_axis,median_ns=24.8446,p95_block_mean_ns=35.2428,min_ns=21.2021
+judge_4_axes,median_ns=47.816,p95_block_mean_ns=78.5288,min_ns=45.0757
+judge_8_axes,median_ns=83.562,p95_block_mean_ns=124.121,min_ns=79.1521
+observation_admission,median_ns=2.29193,p95_block_mean_ns=3.80684,min_ns=2.26142
+evidence_group_normalization,median_ns=1.40122,p95_block_mean_ns=1.72341,min_ns=1.23372
+session_transition,median_ns=1.31771,p95_block_mean_ns=2.20663,min_ns=1.31281
+context_reference_eligibility,median_ns=0.78421,p95_block_mean_ns=1.00591,min_ns=0.76341
+familiarity_key,median_ns=0.76481,p95_block_mean_ns=1.09861,min_ns=0.76381
+replay_candidate_selection,median_ns=3.39814,p95_block_mean_ns=6.05216,min_ns=2.84593
+head_publication,median_ns=5.67465,p95_block_mean_ns=7.99528,min_ns=5.29305
+replay_evidence_comparison,median_ns=2.83123,p95_block_mean_ns=4.38134,min_ns=2.55232
+promotion_eligibility,median_ns=1.18441,p95_block_mean_ns=1.73692,min_ns=1.12331
+promotion_decision,median_ns=1.26401,p95_block_mean_ns=1.97972,min_ns=1.19421
+connection_strength,median_ns=1.29881,p95_block_mean_ns=2.25712,min_ns=1.25041
+connection_verification_4_axes,median_ns=58.0311,p95_block_mean_ns=70.2143,min_ns=51.5816
+transaction_transition,median_ns=1.53141,p95_block_mean_ns=1.74982,min_ns=1.52692

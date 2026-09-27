@@ -75,6 +75,10 @@ public:
 private:
     friend class PersistentConnection;
     friend class MainGraph;
+    [[nodiscard]] bool page_out(std::size_t index,const std::filesystem::path& path,
+        const architecture::DigestBytes& identity,StorageBudget* storage) const {
+        return experiences_.page_out(index,path,identity,rules_,storage);
+    }
     void inherit_experiences(const Connection&);
     void validate_experience(const ExperienceEvidence&) const;
     void prepare_append(const ExperienceEvidence& experience);
