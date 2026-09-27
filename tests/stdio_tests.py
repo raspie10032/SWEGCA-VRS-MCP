@@ -1440,6 +1440,22 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     for invalid in ({'limit':'0'},{'limit':'65'},{'limit':'1','after':first['next']},
         {'limit':'1','after':first['next'],'snapshot':identity(250)}):
         check('error' in pages(page_input,invalid))
+    def connection_replay(current,connection):
+        return c.call('swegca/agent/replay',{'receipt':current['receipt'],'inputOriginal':current['original'],
+            'related':True,'connection':connection})
+    connection_results={}
+    for entry in whole['connections']:
+        value=connection_replay(page_input,entry['connection'])['result']['structuredContent']
+        check(value['original']==entry['original'] and value['relatedConnection']==entry['connection'])
+        check(value['relatedFrom']==page_parent['original'] and value['parentCognitionUnchanged'])
+        connection_results[entry['connection']]=value
+    for connection,value in connection_results.items():
+        check(connection_replay(page_input,connection)['result']['structuredContent']==value)
+        journal=c.call('swegca/agent/cognition',{'identity':producer_owner,'inputOriginal':page_input['original'],
+            'related':True,'connection':connection,'latest':True})['result']
+        check(journal['record']['selectedOriginal']==value['original'])
+        check(journal['record']['relatedConnection']==connection and journal['revision']==value['revision'])
+    check('error' in connection_replay(page_input,identity(250)))
     c.close();c=Client('open',pages_root,path);c.initialize()
     check(c.call('swegca/agent/attach/resume',pages_binding)['result']['nextSequence']==str(producer_seq))
     check(c.call('swegca/select',{'identity':producer_owner})['result']=={})
@@ -1447,9 +1463,22 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
         'seed':'7','step':str(page_sequence),'sender':'client','native':json.dumps(page_frame)})['result']
     restored_pages=pages(restored_page_input,{'limit':'64'})['result']['structuredContent']
     check(restored_pages==whole)
+    for connection,value in connection_results.items():
+        restored=connection_replay(restored_page_input,connection)['result']['structuredContent']
+        check(restored==value)
+
     page_observation('D','support')
     check('error' in pages(restored_page_input,{'limit':'2','after':first['next'],'snapshot':first['snapshot']}))
     check(len(pages(restored_page_input,{'limit':'64'})['result']['structuredContent']['connections'])==4)
+    for connection,value in connection_results.items():
+        check(connection_replay(restored_page_input,connection)['result']['structuredContent']==value)
+    page_observation('B','support')
+    for connection,value in connection_results.items():
+        current=connection_replay(restored_page_input,connection)['result']['structuredContent']
+        check(current['original']==value['original'])
+        if(value['original']==page_negative['original']):check(current['revision']!=value['revision'])
+        else:check(current==value)
+
     c.close()
     # Regression: a weakened refutation must remain the related observation
     # even when its ordinary turn response retained a higher connection strength.
@@ -1484,6 +1513,10 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     main_page=pages(consumer_input,{'limit':'1'})['result']['structuredContent']
     check(not main_page['temporary'] and main_page['next'] is None)
     check(main_page['connections'][0]['original']==from_main['original'])
+    main_connection=main_page['connections'][0]['connection']
+    chosen_main=connection_replay(consumer_input,main_connection)['result']['structuredContent']
+    check(chosen_main['original']==from_main['original'] and chosen_main['relatedConnection']==main_connection)
+
 
     journal=c.call('swegca/agent/cognition',{'identity':bound_consumer,'inputOriginal':consumer_input['original'],
         'related':True,'latest':True})['result']
@@ -1494,6 +1527,8 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     recovered=c.call('swegca/agent/event',{'sequence':'0','observedAt':'0','seed':'7','step':'0',
         'sender':'client','native':json.dumps(bound_frame)})['result']
     check(bound_query(recovered)==from_main)
+    check(connection_replay(recovered,main_connection)['result']['structuredContent']==chosen_main)
+
     # Fresh differently worded input after resume must retain the live cursor;
     # do not resend a historical event to reconstruct it after the restart.
     def continuation_event(sequence,text):

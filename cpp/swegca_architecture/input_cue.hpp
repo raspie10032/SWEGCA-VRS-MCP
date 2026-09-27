@@ -45,4 +45,11 @@ namespace swegca::architecture {
     Sha256 digest;digest.update("SWEGCA related cognition v1");digest.update(input);return digest.finish();
 }
 
+// A connection's comparison cannot overwrite another related requirement.
+[[nodiscard]] inline DigestBytes related_connection_cognition_channel(const DigestBytes& input,
+    const DigestBytes& connection) {
+    Sha256 digest;digest.update("SWEGCA related connection cognition v1");
+    digest.update(input);digest.update(connection);return digest.finish();
+}
+
 }  // namespace swegca::architecture

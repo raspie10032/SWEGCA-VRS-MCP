@@ -91,7 +91,7 @@ public:
         std::uint64_t seed,std::uint64_t step) const;
     [[nodiscard]] InputCognition restore_cognition(const ExperienceLocation& input,const ReplayRecovery&,
         std::uint64_t seed,std::uint64_t step) const;
-    [[nodiscard]] std::optional<std::size_t> select_replay(const InputRecall&) const;
+    [[nodiscard]] std::optional<std::size_t> select_replay(const InputRecall&, const architecture::DigestBytes* connection=nullptr) const;
     [[nodiscard]] ReplayConnectionPage select_replay_connections(const InputRecall&, std::size_t limit,
         const architecture::DigestBytes* after=nullptr) const;
     [[nodiscard]] ReplayedInput replay(const InputRecall&, std::size_t candidate) const;

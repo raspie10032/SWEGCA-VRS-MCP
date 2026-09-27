@@ -63,3 +63,29 @@ requirementsComplete=false, grantsAuthority=false를 명시한다. 원경험 본
 
 다음 작업은 연결별 원경험 Replay·비교의 저장/복구와 프록시의 다중 항목 전달이다.
 프록시/관측기 query bridge 스키마와 설치본에는 이 페이지 API를 아직 연결하지 않았다.
+
+## 연결별 Replay와 비교 기록
+
+`related:true, connection:"<목록의 연결 digest>"`로 그 연결 내 코어 선택을 요청한다.
+receipt/inputOriginal이 필수이며 connections 목록/scope/candidate/byte range와 혼용할 수 없다.
+임의 원경험 주소를 읽는 기능이 아니다. 현재 부모 원경험의 적격 related Recall 안에서
+지정 연결을 찾고 기존 SWEGCA prefer_replay, Replay, 비교, 충돌 시 재검증을 수행한다.
+
+비교 기록은 코어의 별도 provenance domain `related_connection_cognition_channel`로
+입력과 연결에 결속한다. 기본 related/부모/scoped 기록과 충돌하지 않는다. 기존
+숫자 판정식은 변경하지 않았다. 메모리는 한 related 비교 캐시만 유지하고, 연결을
+바꿀 때 기록을 완료한 뒤 해당 연결 기록을 복원한다. 원문 선택을 새 후보로 바꾸지
+않고 기존 비교 경계 이후의 관측을 대조한다. journal에는 relatedConnection이 있으며
+복구 시 requested connection, recovery connection, 기록 필드, 부모 주소를 검증한다.
+
+`swegca/agent/cognition`도 related:true, connection으로 독립 기록을 조회한다.
+선택되어 있지 않은 연결의 기록을 현재 캐시의 liveRevision으로 잘못 표시하지 않는다.
+
+검증: Runtime2108 / 실제 stdio6991 통과. 세 연결의 원경험·revision을 번갈아 조회,
+독립 journal, 없는 연결 거부, 임시/Main 재시작 복구를 확인했다. 별개 D 관측은
+A/B/C 기록을 바꾸지 않으며 B에 후속 관측을 추가하면 B의 revision만 갱신되고
+선택 원경험과 A/C 기록은 유지된다. 원경험 출처와 기권/반박을 전체 목적 통과로
+승격하는 경로를 추가하지 않았다.
+
+다음: query bridge 스키마와 프록시 다중 전달/분량 제한·미전달 표시. 설치본은 아직 이전
+검증 버전이며 이번 연결별 Replay와 페이지 기능을 설치하지 않았다.
