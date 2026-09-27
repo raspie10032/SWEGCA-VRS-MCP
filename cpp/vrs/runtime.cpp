@@ -173,8 +173,8 @@ InputRecall Runtime::input(std::string_view media,std::span<const std::byte> con
 InputRecall Runtime::input_scope(const InputRecall& parent,std::string_view scope) const {
     return require_session().router.input_scope(parent,scope);
 }
-InputRecall Runtime::related(const ReplayedInput& parent) const {
-    return require_session().router.related(parent);
+InputRecall Runtime::related(const ReplayedInput& parent,const DigestBytes* connection) const {
+    return require_session().router.related(parent,connection);
 }
 std::optional<InputCognition> Runtime::cognize(const InputRecall& recalled,
     std::uint64_t seed,std::uint64_t step) const {

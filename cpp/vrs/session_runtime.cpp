@@ -338,7 +338,7 @@ InputRecall ExperienceRouter::input_scope(const InputRecall& parent,std::string_
     }
     return recall_cue(cue,tier,familiarity_key(main_exact,false));
 }
-InputRecall ExperienceRouter::related(const ReplayedInput& parent) const {
+InputRecall ExperienceRouter::related(const ReplayedInput& parent,const DigestBytes* connection) const {
     if(parent.issuer_!=issuer_)throw std::invalid_argument("related Recall requires this route's Replay");
     // Context links were recorded with the observations and checked during
     // recovery. A familiar original's address locates its outcomes; it does
@@ -351,7 +351,7 @@ InputRecall ExperienceRouter::related(const ReplayedInput& parent) const {
         // The sealed input-key marker identifies an explicitly bound input
         // or observation. General dialogue remains in the context graph but
         // is not evidence for this observation lookup, regardless of strength.
-        auto result=recall_cue(parent.input_cue(),tier,familiarity_key(false,false,found),&key,true);
+        auto result=recall_cue(parent.input_cue(),tier,familiarity_key(false,false,found),&key,true,connection);
         tier=recall_scope(temporary_.usable(),result.familiar());
         if(tier==RecallScope::temporary)return result;
     }
@@ -364,7 +364,7 @@ InputRecall ExperienceRouter::related(const ReplayedInput& parent) const {
         const auto position=session->contexts_.find(key);
         if(position!=session->contexts_.end()&&!position->second.empty()){main_found=true;break;}
     }
-    return recall_cue(parent.input_cue(),tier,familiarity_key(false,false,main_found),&key,true);
+    return recall_cue(parent.input_cue(),tier,familiarity_key(false,false,main_found),&key,true,connection);
 }
 InputRecall ExperienceRouter::input(std::string_view media, std::span<const std::byte> content) const {
     // Deja vu: natural bytes reach the core cue primitive immediately. This
@@ -415,7 +415,7 @@ InputRecall ExperienceRouter::input(std::string_view media, std::span<const std:
     return recall_cue(cue, scope, main_kind, continued_context_?&*continued_context_:nullptr);
 }
 InputRecall ExperienceRouter::recall_cue(const DigestBytes& cue, RecallScope scope, FamiliarityKey kind,
-    const DigestBytes* context, bool seed_only) const {
+    const DigestBytes* context, bool seed_only,const DigestBytes* selected_connection) const {
 #ifdef SWEGCA_RECALL_ENTRY_PROBE
     swegca_recall_entry_probe();
 #endif
@@ -457,6 +457,7 @@ InputRecall ExperienceRouter::recall_cue(const DigestBytes& cue, RecallScope sco
             ?temporary_.contexts_.at(*context):temporary_.cues_.at(cue);
         for(std::size_t first=0;first<references.size();){
             const auto& reference=references[first];
+            if(selected_connection&&reference.connection!=*selected_connection){++first;continue;}
             const auto* owner=temporary_.find(reference.connection);
             if(!owner)throw std::logic_error("cue refers to an unavailable connection");
             const auto& connection=owner->state();
@@ -488,6 +489,7 @@ InputRecall ExperienceRouter::recall_cue(const DigestBytes& cue, RecallScope sco
         if (found != index.end())
             for (const auto& [first, end] : found->second) {
                 const auto& [identity, begin]=first;
+                if(selected_connection&&identity!=*selected_connection)continue;
                 const auto match = merged_match(identity);
                 const auto* active = temporary_.find(identity);
                 const auto boundary=active ? active->state().experiences().size() : 0;
@@ -522,6 +524,7 @@ InputRecall ExperienceRouter::recall_cue(const DigestBytes& cue, RecallScope sco
             const auto found=session->contexts_.find(*context);
             if(found!=session->contexts_.end())
                 for(const auto& reference:found->second){
+                    if(selected_connection&&reference.connection!=*selected_connection)continue;
                     const auto* connection=session->find(reference.connection);
                     if(!connection)throw std::logic_error("context refers to an unavailable connection");
                     if(context_reference_eligible(connection->state().read_experience(reference.original_index).has_input_key(),seed_only))

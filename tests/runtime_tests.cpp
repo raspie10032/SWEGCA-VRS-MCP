@@ -814,6 +814,34 @@ int main(){
    (void)host.observe(id(251),{0,6,"related-main","server","text/plain",content},value,7,6);
    auto fallback=host.related(parent);CHECK(!fallback.temporary()&&fallback.matches().size()==3);
    CHECK(host.cognize(fallback,7,6)->replayed.location()==negative);
+   DigestBytes contents_connection{},permissions_connection{};
+   for(const auto match:linked.matches()){
+    if(match.original==positive)contents_connection=match.recalled.recalled_head.identity;
+    if(match.original==negative)permissions_connection=match.recalled.recalled_head.identity;
+   }
+   const auto local_path=path/"connection-fallback";fs::create_directory(local_path);
+   auto local_store=SessionStore::create(local_path,id(253),"related-main",65536,memory);
+   SessionRuntime local(local_store,memory,8192);
+   ExperienceRouter route(local,memory);route.mount_main(host.main());
+   auto parent_candidates=route.input("text/plain",content);
+   auto routed_parent=route.replay(parent_candidates,0);CHECK(routed_parent.location()==input);
+   local.define_connection(contents_connection,1.0,policy);
+   value.hypothesis=contents_connection;value.context=input.digest;value.observed_at=7;value.outcome=EvidenceOutcome::insufficient;
+   const auto local_observation=local.observe(contents_connection,
+       {1,7,"related-main","tool","text/plain",content},value,7,7,contents_connection).original;
+   const auto read_boundary=reads,write_boundary=writes;
+   auto local_only=route.related(routed_parent,&contents_connection);
+   CHECK(local_only.temporary()&&local_only.matches().size()==1);
+   CHECK(local_only.matches()[0].original==local_observation);
+   auto main_only=route.related(routed_parent,&permissions_connection);
+   CHECK(!main_only.temporary()&&main_only.matches().size()==1);
+   CHECK(main_only.matches()[0].original==negative);
+   const auto unknown_connection=id(252);
+   CHECK(route.related(routed_parent,&unknown_connection).matches().empty());
+   CHECK(reads==read_boundary&&writes==write_boundary);
+   CHECK(route.replay(main_only,0).location()==negative);
+   CHECK(route.replay(local_only,0).location()==local_observation);
+
   }
  }
  {

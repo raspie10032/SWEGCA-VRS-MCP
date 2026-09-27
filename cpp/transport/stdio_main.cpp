@@ -1289,7 +1289,7 @@ private:
                     throw std::invalid_argument("saved related original is not an input-bound observation");
                 prepared.related_from=parent.location();prepared.related_connection=connection;state.related.emplace(std::move(prepared));
             }else{
-                auto recalled=runtime_.related(parent);
+                auto recalled=runtime_.related(parent,connection?&*connection:nullptr);
                 const auto candidate=runtime_.select_replay(recalled,connection?&*connection:nullptr);
                 if(!candidate)throw std::invalid_argument("selected original has no related observation");
                 parameters=current_parameters(recalled.matches()[*candidate].recalled.recalled_head.identity,parameters);

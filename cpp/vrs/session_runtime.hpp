@@ -341,7 +341,9 @@ public:
     [[nodiscard]] InputRecall input_scope(const InputRecall&, std::string_view scope) const;
     // Follow sealed observation-context links from one already replayed
     // original. No scope name, log scan or payload read is needed to Recall.
-    [[nodiscard]] InputRecall related(const ReplayedInput&) const;
+    // With a connection, core temporary/Main routing applies to that connection
+    // alone. Other temporary observations cannot hide its Main evidence.
+    [[nodiscard]] InputRecall related(const ReplayedInput&, const architecture::DigestBytes* connection=nullptr) const;
     // Only receipt metadata is considered here; one original is read later.
     [[nodiscard]] std::optional<std::size_t> select_replay(const InputRecall&, const architecture::DigestBytes* connection=nullptr) const;
     [[nodiscard]] ReplayConnectionPage select_replay_connections(const InputRecall&, std::size_t limit,
@@ -396,7 +398,8 @@ private:
     mutable std::optional<architecture::DigestBytes> continued_context_;
     [[nodiscard]] InputRecall recall_cue(const architecture::DigestBytes& cue,
         architecture::kernel::RecallScope scope, architecture::kernel::FamiliarityKey kind,
-        const architecture::DigestBytes* context = nullptr, bool seed_only = false) const;
+        const architecture::DigestBytes* context = nullptr, bool seed_only = false,
+        const architecture::DigestBytes* connection = nullptr) const;
 };
 
 }  // namespace swegca::vrs
