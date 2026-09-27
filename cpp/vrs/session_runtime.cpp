@@ -505,7 +505,10 @@ ReplayedInput ExperienceRouter::replay(const InputRecall& recalled,std::size_t c
         :selected.recalled.connection->state().experiences()[selected.original_index];
     continuation_=identity;
     continued_context_=experience.value().context;
-    return ReplayedInput(std::move(original),selected,issuer_,recalled.cue_);
+    const auto source_identity=selected.recalled.main_graph
+        ? merged_main_->graph().original_source(identity,selected.original_index).store->identity()
+        : selected.recalled.session->store_.identity();
+    return ReplayedInput(std::move(original),selected,issuer_,recalled.cue_,source_identity);
 }
 EvidencePayloadSlice ExperienceRouter::read_payload_slice(const InputRecall& recalled,std::size_t candidate,
     std::uint64_t offset,std::uint64_t count) const {

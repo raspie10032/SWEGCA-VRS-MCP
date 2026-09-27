@@ -80,6 +80,9 @@ public:
     [[nodiscard]] ReplayComparison compare_replay(const ReplayedInput&, std::uint64_t seed, std::uint64_t step) const;
     [[nodiscard]] ReEvidenceResult re_evidence(const ReplayedInput&, const ReplayComparison&,
         std::uint64_t seed, std::uint64_t step) const;
+    void save_cognition(const ExperienceLocation&, std::span<const std::byte> metadata);
+    [[nodiscard]] StoredExperience read_cognition_original(const architecture::DigestBytes& source,
+        const ExperienceLocation&) const;
     void define_connection(const architecture::DigestBytes&);
     [[nodiscard]] RecordedRefinement observe(const architecture::DigestBytes&, const OriginalExperienceView&,
         const architecture::kernel::EvidenceObservation&, std::uint64_t seed, std::uint64_t step);

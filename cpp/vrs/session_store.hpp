@@ -32,6 +32,10 @@ public:
     [[nodiscard]] StoredExperience read(const ExperienceLocation& location, std::uint64_t limit) const;
     [[nodiscard]] EvidencePayloadSlice read_payload_slice(const architecture::kernel::EvidenceRules&,
         const ExperienceLocation&, std::uint64_t limit, std::uint64_t offset, std::uint64_t count) const;
+    // Immutable derived cognition metadata, keyed by the committed input.
+    // It is not another observation and does not enter connection refinement.
+    void save_cognition(const ExperienceLocation&, std::span<const std::byte> metadata);
+    [[nodiscard]] std::optional<StoredExperience> read_cognition(const ExperienceLocation&) const;
     void end();
     void publish_originals();
 

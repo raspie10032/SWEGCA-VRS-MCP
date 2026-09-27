@@ -1,6 +1,7 @@
 #include "vrs/session_store.hpp"
 
 #include "swegca_architecture/sha256.hpp"
+#include "swegca_architecture/head_publication_kernel.hpp"
 
 #include <algorithm>
 #include <array>
@@ -296,6 +297,25 @@ void SessionStore::recorded(const ExperienceLocation& location) noexcept {
     ++records_; ++current_records_;
 }
 
+namespace {
+constexpr std::string_view cognition_source="swegca-cognition";
+constexpr std::string_view cognition_media="application/vnd.swegca.cognition-v1";
+constexpr std::size_t cognition_limit=65536;
+DigestBytes cognition_id(const DigestBytes& session,const ExperienceLocation& input) {
+    if(!head_address_valid(input))throw std::invalid_argument("invalid cognition input address");
+    Sha256 hash;hash.update("SWEGCA input cognition v1");hash.update(session);
+    hash.update(input.block);hash.update(input.digest);
+    std::array<std::byte,16> extent{};put(extent,0,input.offset);put(extent,8,input.bytes);
+    hash.update(extent);return hash.finish();
+}
+void validate_cognition(const StoredExperience& record,std::string_view session) {
+    const auto view=record.view();
+    if(view.session!=session || view.source!=cognition_source || view.media_type!=cognition_media ||
+       view.sequence || view.observed_at_ns || view.content.empty() || view.content.size()>cognition_limit ||
+       view.sender!=ExperienceSender::unspecified)
+        throw std::runtime_error("invalid cognition metadata record");
+}
+}
 DigestBytes SessionStore::inventory() const {
     Sha256 hash;
     hash.update("SWEGCA ended session inventory v1"); hash.update(identity_);
@@ -318,7 +338,75 @@ DigestBytes SessionStore::inventory() const {
         hash.update("SWEGCA session catalog reference v1");
         hash.update(pointer.identity()); hash.update(location.digest);
     }
+    const auto cognition=directory_/"cognition";
+    if(std::filesystem::exists(cognition)){
+        std::pmr::map<std::pmr::string,DigestBytes,std::less<>> records(&memory_);
+        for(const auto& entry:std::filesystem::directory_iterator(cognition)){
+            const auto filename=entry.path().filename().string();
+            if(filename.starts_with("staging-"))continue;
+            auto block=ExperienceBlock::open_reader(entry.path(),storage_);
+            if(filename!=hex(block.identity())+".block")throw std::runtime_error("invalid cognition filename");
+            const auto read_limit=std::min<std::uint64_t>(memory_.limit(),ExperienceBlock::record_overhead+
+                name_.size()+cognition_source.size()+cognition_media.size()+cognition_limit);
+            auto record=block.read(block.location_at(ExperienceBlock::header_bytes),read_limit,memory_);
+            validate_cognition(record,name_);
+            const auto extent=block.inspect();
+            if(extent.complete_records!=1 || extent.unfinished_bytes)throw std::runtime_error("invalid cognition extent");
+            records.emplace(std::pmr::string(filename,&memory_),record.location().digest);
+        }
+        for(const auto& [name,digest]:records){
+            hash.update("SWEGCA ended cognition v1");hash.update(name);hash.update(digest);
+        }
+    }
     return hash.finish();
+}
+
+std::optional<StoredExperience> SessionStore::read_cognition(const ExperienceLocation& input) const {
+    if(!usable_)throw std::logic_error("session unavailable");
+    if(!blocks_.contains(input.block))throw std::invalid_argument("cognition input belongs to another session");
+    const auto identity=cognition_id(identity_,input);
+    const auto path=directory_/"cognition"/(hex(identity)+".block");
+    if(!std::filesystem::exists(path))return std::nullopt;
+    auto block=ExperienceBlock::open_reader(path,storage_);
+    if(block.identity()!=identity)throw std::runtime_error("cognition identity mismatch");
+    const auto read_limit=std::min<std::uint64_t>(memory_.limit(),ExperienceBlock::record_overhead+
+        name_.size()+cognition_source.size()+cognition_media.size()+cognition_limit);
+    auto record=block.read(block.location_at(ExperienceBlock::header_bytes),read_limit,memory_);
+    const auto extent=block.inspect();
+    if(extent.complete_records!=1 || extent.unfinished_bytes)
+        throw std::runtime_error("invalid cognition record extent");
+    validate_cognition(record,name_);return record;
+}
+void SessionStore::save_cognition(const ExperienceLocation& input,std::span<const std::byte> metadata) {
+    require(SessionOperation::append);
+    if(metadata.empty() || metadata.size()>cognition_limit)throw std::length_error("cognition metadata limit");
+    // Bind to an actual committed record boundary, without rereading its body.
+    auto cursor=read_cursor();
+    if(cursor.reader(input).location_at(input.offset)!=input)
+        throw std::invalid_argument("cognition input is not the committed record");
+    const auto prior=read_cognition(input);
+    if(prior){
+        if(!std::ranges::equal(prior->view().content,metadata))throw std::invalid_argument("conflicting immutable cognition");
+        return;
+    }
+    const auto identity=cognition_id(identity_,input);
+    const auto directory=directory_/"cognition";
+    try {
+        if(std::filesystem::create_directory(directory))sync_directory(directory_);
+        const auto name=hex(identity);
+        auto staging=directory/("staging-"+name+"-0.block");
+        std::uint64_t attempt=0;
+        while(std::filesystem::exists(staging)){
+            if(attempt==UINT64_MAX)throw std::overflow_error("cognition attempts exhausted");
+            staging=directory/("staging-"+name+"-"+std::to_string(++attempt)+".block");
+        }
+        const auto capacity=ExperienceBlock::header_bytes+ExperienceBlock::record_overhead+
+            name_.size()+cognition_source.size()+cognition_media.size()+metadata.size();
+        auto block=ExperienceBlock::create(staging,identity,capacity,storage_);
+        (void)block.append({0,0,name_,cognition_source,cognition_media,metadata});
+        if(::link(staging.c_str(),(directory/(name+".block")).c_str())<0)io_error("publish cognition metadata");
+        sync_directory(directory);
+    }catch(...){usable_=false;throw;}
 }
 
 void SessionStore::end() {

@@ -509,3 +509,36 @@ This change does not persist the derived context frame or socket send progress.
 Lossless restart, application execution confirmation, and distinguishing a new
 backend from a surviving backend remain unfinished. It does not use the World
 memory transaction rollback kernel to infer network delivery.
+
+## Durable completed cognition for native inputs
+
+Before acknowledging a completed native input, the host now seals immutable
+cognition metadata using SessionStore/ExperienceBlock. The key binds the session
+identity and the complete input original address. Metadata contains the selected
+original address, its source session identity, and the exact original core
+assessment/export metadata. It contains no copied original payload and adds no
+observation or connection-strength update. Empty-candidate completion is also
+recorded. The existing storage/transfer and PMR budgets apply. A metadata record
+is limited to 64KiB; records are published only after their checksummed block is
+synced, then its final name is linked and the directory synced. Incomplete
+staging files remain uncommitted. An ended session's inventory covers committed
+cognition records in deterministic order.
+
+On a verified duplicate native input, a completed live cognition may be reused.
+Otherwise the host reads that input's immutable cognition record and issues a
+new process-local historical export receipt. Default vrs_replay uses the stored
+source identity and exact selected address to read that one authenticated
+original, preserving the original assessment and uncertainty. It does not
+reselect, rerun comparison, refine, or scan a conversation log. Explicit
+candidate/range requests and Re-evidence using this historical receipt are
+rejected: historical assessment is not a current comparison authority. A later
+new input clears the historical export slot; it does not remove persisted data.
+
+If interruption occurred before completed cognition was published and no live
+Recall survives, the host still returns completed=false. It does not reconstruct
+an earlier observation boundary from today's graph. Socket transmission and
+remote execution are not established by this receipt. The proxy still does not
+automatically resend recovered pending requests; fresh-backend versus surviving-
+backend continuity is still unfinished. This is completion recovery, not a
+claim of exactly-once remote execution or full crash recovery. Metadata currently
+uses one immutable file per input; large-scale packing/paging remains unproven.

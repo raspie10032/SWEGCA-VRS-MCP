@@ -27,6 +27,12 @@ DigestBytes digest(std::string_view text){
 }
 std::pmr::string hex(std::span<const std::byte> data,MemoryBudget& memory){constexpr char digits[]="0123456789abcdef";std::pmr::string s(&memory);for(auto v:data){unsigned n=std::to_integer<unsigned>(v);s+=digits[n>>4];s+=digits[n&15];}return s;}
 std::pmr::string address(const ExperienceLocation& a,MemoryBudget& m){return "{\"block\":\""+hex(a.block,m)+"\",\"offset\":\""+std::to_string(a.offset).c_str()+"\",\"bytes\":\""+std::to_string(a.bytes).c_str()+"\",\"digest\":\""+hex(a.digest,m)+"\"}";}
+ExperienceLocation record_address(const Json& value){
+    return {digest(value.at("block").string()),integer(value.at("offset")),integer(value.at("bytes")),digest(value.at("digest").string())};
+}
+std::string_view content_text(const StoredExperience& record){
+    const auto bytes=record.view().content;return {reinterpret_cast<const char*>(bytes.data()),bytes.size()};
+}
 std::pmr::string decimal(double value,MemoryBudget& memory){
     std::array<char,64> buffer{};auto result=std::to_chars(buffer.data(),buffer.data()+buffer.size(),value,std::chars_format::general,std::numeric_limits<double>::max_digits10);
     if(result.ec!=std::errc{})throw std::runtime_error("cannot encode numeric result");
@@ -101,7 +107,9 @@ private:
         std::optional<ReceivedInput> received;
         std::optional<ReplayedInput> replayed;
         std::optional<InputCognition> cognition;
-        bool cognition_done=false;
+        bool cognition_done=false,cognition_saved=false;
+        std::optional<StoredExperience> recovered_cognition;
+        std::uint64_t recovered_receipt=0;
     };
     std::uint64_t next_receipt_=0;
     std::pmr::map<DigestBytes,Context> contexts_;
@@ -149,23 +157,37 @@ private:
     void result(std::string_view id,std::string_view body){std::cout<<"{\"jsonrpc\":\"2.0\",\"id\":"<<id<<",\"result\":"<<body<<"}\n"<<std::flush;if(!std::cout)throw std::runtime_error("MCP output disconnected");}
     void error(std::string_view id,int code,std::string_view message){std::cout<<"{\"jsonrpc\":\"2.0\",\"id\":"<<id<<",\"error\":{\"code\":"<<code<<",\"message\":"<<quote_json(message,memory_)<<"}}\n"<<std::flush;}
     void clear_replay(){
-        context().replayed.reset();context().cognition.reset();context().cognition_done=false;
+        context().replayed.reset();context().cognition.reset();context().cognition_done=false;context().cognition_saved=false;
     }
-    void clear(){clear_replay();context().received.reset();}
+    void clear(){clear_replay();context().received.reset();context().recovered_cognition.reset();context().recovered_receipt=0;}
     const ReplayedInput* selected_replay() const {
         if(context().replayed)return &*context().replayed;
         return context().cognition ? &context().cognition->replayed : nullptr;
     }
     void complete_cognition(){
         auto& state=context();
-        if(state.cognition_done)return;
-        if(!state.received)throw std::logic_error("input receipt required before cognition");
-        const auto& recorded=state.received->recorded.refinement;
-        auto cognition=runtime_.cognize(state.received->recalled,recorded.seed(),recorded.current_step());
-        state.replayed.reset();state.cognition.reset();
-        if(cognition)state.cognition.emplace(std::move(*cognition));
-        state.cognition_done=true;
+        if(!state.cognition_done){
+            if(!state.received)throw std::logic_error("input receipt required before cognition");
+            const auto& recorded=state.received->recorded.refinement;
+            auto cognition=runtime_.cognize(state.received->recalled,recorded.seed(),recorded.current_step());
+            state.replayed.reset();state.cognition.reset();
+            if(cognition)state.cognition.emplace(std::move(*cognition));
+            state.cognition_done=true;
+        }
+        if(!state.native_session.empty() && !state.cognition_saved){
+            auto metadata=std::pmr::string("{\"inputOriginal\":",&memory_)+address(state.received->recorded.original,memory_);
+            cognition_body(metadata);
+            if(state.cognition){
+                metadata+=",\"sourceSession\":\"";metadata+=hex(state.cognition->replayed.source_identity(),memory_);
+                metadata+="\",\"selectedOriginal\":";metadata+=address(state.cognition->replayed.location(),memory_);
+                metadata+=",\"replayPrefix\":";metadata+=quote_json(replay_prefix(state.cognition->replayed,&*state.cognition),memory_);
+            }else metadata+=",\"sourceSession\":null,\"selectedOriginal\":null,\"replayPrefix\":null";
+            metadata+='}';
+            runtime_.save_cognition(state.received->recorded.original,std::as_bytes(std::span(metadata)));
+            state.cognition_saved=true;
+        }
     }
+
     void cognition_body(std::pmr::string& body) const {
         body+=",\"memory\":{\"completed\":";body+=context().cognition_done?"true":"false";
         const auto& cognition=context().cognition;
@@ -324,15 +346,26 @@ private:
             if(delivery==AgentDeliveryRoute::reuse){
                 std::pmr::string body("{\"duplicate\":true,\"original\":",&memory_);
                 body+=address(found->second.original,memory_);body+=",\"receipt\":";
-                if(state.received && state.received->recorded.original==found->second.original){
+                if(state.received && state.cognition_done && state.received->recorded.original==found->second.original){
                     complete_cognition();
                     body+="\""+std::to_string(state.receipt)+"\"";
                     cognition_body(body);
-                }else{
-                    body+="null";
-                    if(route==AgentEventRoute::recall_then_record)
-                        body+=",\"memory\":{\"completed\":false,\"original\":null}";
-                }
+                }else if(route==AgentEventRoute::recall_then_record){
+                    auto saved=runtime_.session().read_cognition(found->second.original);
+                    if(saved){
+                        if(next_receipt_==UINT64_MAX)throw std::overflow_error("receipt sequence exhausted");
+                        const auto metadata=parse_json(content_text(*saved),memory_);
+                        if(record_address(metadata.at("inputOriginal"))!=found->second.original)
+                            throw std::runtime_error("saved cognition input mismatch");
+                        const auto ticket=next_receipt_+1;
+                        body+='"';body+=std::to_string(ticket);body+="\",\"memory\":";
+                        body+=encode_json(metadata.at("memory"),memory_);
+                        state.recovered_cognition.emplace(std::move(*saved));
+                        state.recovered_receipt=ticket;next_receipt_=ticket;
+                    }else if(state.received && state.received->recorded.original==found->second.original){
+                        complete_cognition();body+='"';body+=std::to_string(state.receipt);body+='"';cognition_body(body);
+                    }else body+="null,\"memory\":{\"completed\":false,\"original\":null}";
+                }else body+="null";
                 body+='}';return body;
             }
             // Reserve the index node before mutating durable experience state.
@@ -447,7 +480,7 @@ private:
             body+=",\"refinement\":";body+=refinement(context().received->recorded.refinement,memory_);
             cognition_body(body);body+='}';return body;
     }
-    void replay_payload(std::string_view id,const ReplayedInput& replayed,const InputCognition* cognition=nullptr){
+    std::pmr::string replay_prefix(const ReplayedInput& replayed,const InputCognition* cognition=nullptr){
         const auto value=evidence_payload(replayed.original());
         auto prefix="{\"original\":"+address(replayed.location(),memory_)+
             ",\"media\":"+quote_json(value.media_type,memory_)+",\"source\":"+quote_json(value.source,memory_)+
@@ -467,9 +500,23 @@ private:
             prefix+="\",\"reEvidencePerformed\":";prefix+=cognition->reverified?"true":"false";prefix+='}';
         }else prefix+="null";
         prefix+=",\"contentHex\":\"";
-        payload_result(id,prefix,value.content);
+        return prefix;
+    }
+    void replay_payload(std::string_view id,const ReplayedInput& replayed,const InputCognition* cognition=nullptr){
+        payload_result(id,replay_prefix(replayed,cognition),evidence_payload(replayed.original()).content);
     }
     void replay_result(std::string_view id,const Json& p){
+        if(context().recovered_cognition && integer(p.at("receipt"))==context().recovered_receipt){
+            if(p.find("candidate") || p.find("offset") || p.find("count"))
+                throw std::invalid_argument("historical cognition permits only its recorded original");
+            const auto metadata=parse_json(content_text(*context().recovered_cognition),memory_);
+            if(metadata.at("selectedOriginal").kind==Json::Kind::null)
+                throw std::invalid_argument("recorded cognition had no Replay candidate");
+            const auto location=record_address(metadata.at("selectedOriginal"));
+            auto original=runtime_.read_cognition_original(digest(metadata.at("sourceSession").string()),location);
+            payload_result(id,metadata.at("replayPrefix").string(),evidence_payload(original).content);
+            return;
+        }
         if(!context().received||integer(p.at("receipt"))!=context().receipt)throw std::invalid_argument("expired receipt");
         const auto* explicit_candidate=p.find("candidate");
         // The automatic route already authenticated and compared this original.

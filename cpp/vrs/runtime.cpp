@@ -159,6 +159,17 @@ ReEvidenceResult Runtime::re_evidence(const ReplayedInput& replayed,const Replay
     std::uint64_t seed,std::uint64_t step) const {
     return require_session().router.re_evidence(replayed,compared,seed,step);
 }
+void Runtime::save_cognition(const ExperienceLocation& input,std::span<const std::byte> metadata) {
+    require_active();require_session().runtime.save_cognition(input,metadata);
+}
+StoredExperience Runtime::read_cognition_original(const DigestBytes& source,const ExperienceLocation& original) const {
+    const auto found=sources_.sources_.find(source);
+    if(found==sources_.sources_.end() || !found->second.store || !found->second.store->usable())
+        throw std::invalid_argument("recorded cognition source unavailable");
+    // Source stores already belong to this Main. No directory search or graph
+    // reselection, and no reconstruction of a current Re-evidence authority.
+    return found->second.store->read(original,config_.read_limit);
+}
 void Runtime::define_connection(const DigestBytes& identity) {
     require_active();active_->runtime.define_connection(identity,config_.initial_strength,config_.policy);
 }

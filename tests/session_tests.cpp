@@ -227,6 +227,64 @@ int main() {
         expect_throw<std::runtime_error>([&] { (void)SessionStore::open(root, id(8), memory); });
     }
     CHECK(memory.used() == 0);
+    {
+        ExperienceLocation input;
+        const std::string metadata=R"({"memory":{"completed":true,"original":null}})";
+        StorageBudget storage(1<<20);
+        {
+            auto session=SessionStore::create(root,id(9),"cognition",1024,memory,&storage);
+            input=session.append({0,0,"cognition","user","text/plain",bytes(raw)});
+            CHECK(!session.read_cognition(input));
+            auto forged=input;forged.digest=id(99);
+            expect_throw<std::invalid_argument>([&]{session.save_cognition(forged,bytes(metadata));});
+            CHECK(!session.read_cognition(forged));
+            const auto count=session.original_count(),before=storage.used();
+            session.save_cognition(input,bytes(metadata));
+            CHECK(storage.used()>before && session.original_count()==count);
+            const auto used=storage.used();
+            session.save_cognition(input,bytes(metadata));
+            CHECK(storage.used()==used && session.original_count()==count);
+            CHECK(text(session.read_cognition(input)->view().content)==metadata);
+            expect_throw<std::invalid_argument>([&]{session.save_cognition(input,bytes("different"));});
+            expect_throw<std::length_error>([&]{session.save_cognition(input,bytes(std::string(65537,'x')));});
+            auto foreign=input;foreign.block=id(99);
+            expect_throw<std::invalid_argument>([&]{session.save_cognition(foreign,bytes(metadata));});
+            CHECK(session.usable());
+        }
+        {
+            auto session=SessionStore::open(root,id(9),memory,&storage);
+            CHECK(text(session.read_cognition(input)->view().content)==metadata);
+            // An interrupted staging write is not a committed receipt.
+            const auto directory=session_path(root,9)/"cognition";
+            std::ofstream(directory/"staging-interrupted.block")<<"incomplete";
+            session.end();
+            expect_throw<std::logic_error>([&]{session.save_cognition(input,bytes(metadata));});
+        }
+        {
+            auto session=SessionStore::open(root,id(9),memory,&storage);
+            CHECK(session.phase()==SessionPhase::ended);
+            CHECK(text(session.read_cognition(input)->view().content)==metadata);
+            session.publish_originals();
+        }
+        // Removing a committed receipt cannot silently alter an ended session.
+        for(const auto& entry:fs::directory_iterator(session_path(root,9)/"cognition"))
+            if(!entry.path().filename().string().starts_with("staging-"))fs::remove(entry.path());
+        expect_throw<std::runtime_error>([&]{(void)SessionStore::open(root,id(9),memory);});
+    }
+    CHECK(memory.used()==0);
+    {
+        ExperienceLocation input;
+        {
+            auto session=SessionStore::create(root,id(10),"corrupt-cognition",1024,memory);
+            input=session.append({0,0,"corrupt-cognition","user","text/plain",bytes(raw)});
+            session.save_cognition(input,bytes("immutable result"));
+        }
+        for(const auto& entry:fs::directory_iterator(session_path(root,10)/"cognition"))
+            if(!entry.path().filename().string().starts_with("staging-"))fs::resize_file(entry.path(),81);
+        auto session=SessionStore::open(root,id(10),memory);
+        expect_throw<std::runtime_error>([&]{(void)session.read_cognition(input);});
+    }
+    CHECK(memory.used()==0);
     fs::remove_all(root);
     std::printf("PASS: %u session checks\n", checks);
 }

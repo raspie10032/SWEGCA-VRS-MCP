@@ -46,6 +46,12 @@ public:
     void visit_deliveries(std::string_view session,std::string_view source,std::string_view media,
         void*,void (*)(void*,const OriginalDelivery&)) const;
     [[nodiscard]] StoredExperience read_original(const ExperienceLocation&) const;
+    void save_cognition(const ExperienceLocation& input,std::span<const std::byte> metadata) {
+        require_usable();store_.save_cognition(input,metadata);
+    }
+    [[nodiscard]] std::optional<StoredExperience> read_cognition(const ExperienceLocation& input) const {
+        require_usable();return store_.read_cognition(input);
+    }
     void end();
     void publish_originals();
     [[nodiscard]] bool usable() const noexcept { return usable_ && store_.usable() && catalog_.usable(); }
@@ -184,17 +190,19 @@ public:
     ReplayedInput& operator=(const ReplayedInput&) = delete;
     ReplayedInput(ReplayedInput&&) noexcept = default;
     [[nodiscard]] const StoredExperience& original() const noexcept { return original_; }
+    [[nodiscard]] const architecture::DigestBytes& source_identity() const noexcept { return source_identity_; }
     [[nodiscard]] const ExperienceLocation& location() const noexcept { return original_.location(); }
     [[nodiscard]] const architecture::DigestBytes& input_cue() const noexcept { return input_cue_; }
 private:
     friend class ExperienceRouter;
     ReplayedInput(StoredExperience original, InputMatch match, std::shared_ptr<const std::byte> issuer,
-        architecture::DigestBytes cue)
-        : original_(std::move(original)), match_(match), issuer_(std::move(issuer)), input_cue_(cue) {}
+        architecture::DigestBytes cue, architecture::DigestBytes source_identity)
+        : original_(std::move(original)), match_(match), issuer_(std::move(issuer)), input_cue_(cue), source_identity_(source_identity) {}
     StoredExperience original_;
     InputMatch match_;
     std::shared_ptr<const std::byte> issuer_;
     architecture::DigestBytes input_cue_;
+    architecture::DigestBytes source_identity_;
 };
 
 class ReEvidenceResult final {

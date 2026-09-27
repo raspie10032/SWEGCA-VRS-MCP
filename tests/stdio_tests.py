@@ -385,11 +385,13 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     check(n0['memory']=={'completed':True,'original':None})
     check(n1['memory']['completed'] and n1['memory']['original']==n0['original'])
     check(n1['memory']['agreement']==1 and n1['memory']['reEvidencePerformed'] is False)
+    automatic_played=c.call('tools/call',{'name':'vrs_replay','arguments':{'receipt':n1['receipt']}})['result']['structuredContent']
     check('structuredContent' in recheck(n1['receipt']))
     # A lost response may be retried with the same event; no new refinement.
     same=resend_native(raw1,1)['result']
     check(same=={'duplicate':True,'original':n1['original'],'receipt':n1['receipt'],'memory':n1['memory']})
-    check(resend_native(raw0,0)['result']=={'duplicate':True,'original':n0['original'],'receipt':None,'memory':{'completed':False,'original':None}})
+    recovered0=resend_native(raw0,0)['result']
+    check(recovered0['duplicate'] and recovered0['original']==n0['original'] and recovered0['memory']==n0['memory'] and recovered0['receipt'] is not None)
     check('error' in resend_native(raw1+' ',1))
     check('error' in resend_native(raw1,1,observed=9))
     check('error' in native_event('Stop',8)[1])
@@ -407,10 +409,18 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     c=Client('open',native_root,path);c.initialize()
     check(c.call('swegca/agent/attach/resume',binding)['result']['identity']==native_id)
     check(c.call('swegca/select',{'identity':native_id})['result']=={})
-    # No process-local delivery cache survives this restart. The committed
-    # originals alone identify retries without adding observations or strength.
-    check(resend_native(raw0,0)['result']=={'duplicate':True,'original':n0['original'],'receipt':None,'memory':{'completed':False,'original':None}})
-    check(resend_native(raw1,1)['result']=={'duplicate':True,'original':n1['original'],'receipt':None,'memory':{'completed':False,'original':None}})
+    # No process-local cache survives restart. The immutable cognition metadata
+    # restores the original result without adding observations or strength.
+    recovered0=resend_native(raw0,0)['result']
+    check(recovered0['duplicate'] and recovered0['original']==n0['original'] and recovered0['memory']==n0['memory'] and recovered0['receipt'] is not None)
+    before_recovery=sum(p.stat().st_size for p in native_root.rglob('*') if p.is_file())
+    recovered1=resend_native(raw1,1)['result']
+    check(recovered1['duplicate'] and recovered1['original']==n1['original'] and recovered1['memory']==n1['memory'])
+    recovered_play=c.call('tools/call',{'name':'vrs_replay','arguments':{'receipt':recovered1['receipt']}})['result'];assert 'structuredContent' in recovered_play, recovered_play
+    check(recovered_play['structuredContent']==automatic_played)
+    check(recheck(recovered1['receipt'])['isError']) # historical judgment is not a new comparison authority
+    check(c.call('tools/call',{'name':'vrs_replay','arguments':{'receipt':recovered1['receipt'],'candidate':'0'}})['result']['isError'])
+    check(sum(p.stat().st_size for p in native_root.rglob('*') if p.is_file())==before_recovery)
     check('error' in resend_native(raw1+' ',1))
     _,n2=native_event('UserPromptSubmit',6,prompt=text)
     n2=n2['result'];check(n2['candidateCount']=='2')
@@ -422,11 +432,19 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     second_id=c.call('swegca/agent/attach',second_binding)['result']['identity']
     check(second_id!=native_id)
     check(c.call('swegca/select',{'identity':second_id})['result']=={})
-    _,main_native=native_event('UserPromptSubmit',0,prompt=text)
+    main_raw,main_native=native_event('UserPromptSubmit',0,prompt=text)
     main_native=main_native['result']
     check(not main_native['temporary'] and main_native['candidateCount']=='3')
+    main_automatic=c.call('tools/call',{'name':'vrs_replay','arguments':{'receipt':main_native['receipt']}})['result']['structuredContent']
     check(bytes.fromhex(replay_receipt(main_native['receipt'])['structuredContent']['contentHex'])==raw0.encode())
     check(c.call('swegca/work',{'seed':'7','step':'0'})['result']['merged']=='0')
+    c.close()
+    c=Client('open',native_root,path);c.initialize()
+    check(c.call('swegca/agent/attach/resume',second_binding)['result']['identity']==second_id)
+    check(c.call('swegca/select',{'identity':second_id})['result']=={})
+    main_recovered=resend_native(main_raw,0)['result']
+    check(main_recovered['memory']==main_native['memory'])
+    check(c.call('tools/call',{'name':'vrs_replay','arguments':{'receipt':main_recovered['receipt']}})['result']['structuredContent']==main_automatic)
     c.close()
     # Commit the first event, deliberately leave its response unread, then kill
     # the transport. Resuming must identify its original from committed storage.
@@ -446,7 +464,7 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     check(c.call('swegca/agent/attach/resume',binding)['result']['identity']==lost_id)
     check(c.call('swegca/select',{'identity':lost_id})['result']=={})
     before_retry=sum(p.stat().st_size for p in lost_root.rglob('*') if p.is_file())
-    recovered=resend_native(lost_raw,0)['result'];check(recovered['duplicate'] and recovered['receipt'] is None)
+    recovered=resend_native(lost_raw,0)['result'];check(recovered['duplicate'] and recovered['receipt'] is not None and recovered['memory']=={'completed':True,'original':None})
     check(sum(p.stat().st_size for p in lost_root.rglob('*') if p.is_file())==before_retry)
     _,after_loss=native_event('UserPromptSubmit',1,prompt=text)
     after_loss=after_loss['result'];check(after_loss['candidateCount']=='1')
