@@ -51,11 +51,12 @@ public:
         return parsed_.at("prompt").string();
     }
     [[nodiscard]] std::string_view cue_media() const noexcept{
-        return app_server_?"application/vnd.swegca.codex-input-v1":"text/plain";
+        return app_server_&&!plain_text_input()?"application/vnd.swegca.codex-input-v1":"text/plain";
     }
     [[nodiscard]] std::string_view cue_content() const{
         if(kind_!=architecture::kernel::AgentEventKind::input)throw std::invalid_argument("event has no input cue");
         if(!app_server_)return *prompt();
+        if(const auto* text=plain_text_input())return text->scalar;
         // The exclusive event owner materializes the exact same encoded cue
         // only when VRS consumes it. Transport-only owners never need a copy.
         // An input array encodes to at least "[]"; empty means not built yet.
@@ -64,6 +65,20 @@ public:
     }
     [[nodiscard]] const Json& fields() const noexcept{return parsed_;}
 private:
+    // Syntax adaptation only: an exact single text item has the same cue as a
+    // hook prompt. Extra fields or items remain structured; native bytes are
+    // always retained. Resolve against the owned tree so moves keep views valid.
+    [[nodiscard]] const Json* plain_text_input() const noexcept{
+        if(!app_server_||kind_!=architecture::kernel::AgentEventKind::input)return nullptr;
+        const auto* params=parsed_.find("params");
+        const auto* input=params?params->find("input"):nullptr;
+        if(!input||input->kind!=Json::Kind::array||input->values.size()!=1)return nullptr;
+        const auto& item=input->values.front();
+        if(item.kind!=Json::Kind::object||item.keys.size()!=2)return nullptr;
+        const auto* type=item.find("type");const auto* text=item.find("text");
+        return type&&type->kind==Json::Kind::string&&type->scalar=="text"&&
+            text&&text->kind==Json::Kind::string?text:nullptr;
+    }
     friend class AppServerRequests;
     friend class AppServerWire;
     static AgentEvent from_app_server(std::string_view,Json,std::pmr::memory_resource&);

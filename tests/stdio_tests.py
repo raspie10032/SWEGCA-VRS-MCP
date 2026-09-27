@@ -666,6 +666,31 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     check(c.call('swegca/end')['result']=={})
     check(c.call('swegca/work',{'seed':'7','step':'6'})['result']['merged']=='1')
     c.close()
+    # Hook text and an exact single app-server text share a natural cue. Main
+    # publishes only after explicit end; selected Replay keeps the hook bytes.
+    shared_root=root/'shared-text-cue';shared_root.mkdir()
+    c=Client('create',shared_root,path);c.initialize()
+    shared_hook=c.call('swegca/agent/attach',binding)['result']['identity']
+    check(c.call('swegca/select',{'identity':shared_hook})['result']=={})
+    shared_raw,shared=native_event('UserPromptSubmit',0,prompt=text,unknown={'keep':True})
+    shared=shared['result']
+    check(c.call('swegca/work',{'seed':'7','step':'0'})['result']['merged']=='0')
+    check(c.call('swegca/end')['result']=={})
+    check(c.call('swegca/work',{'seed':'7','step':'0'})['result']['merged']=='1')
+    c.close()
+    c=Client('open',shared_root,path);c.initialize()
+    shared_app=c.call('swegca/agent/attach',app_binding)['result']['identity']
+    check(c.call('swegca/select',{'identity':shared_app})['result']=={})
+    _,shared_reply=app_event(0,'turn/start',{'input':[{'type':'text','text':text}]},81)
+    shared_reply=shared_reply['result']
+    check(not shared_reply['temporary'] and shared_reply['candidateCount']=='1')
+    check(shared_reply['memory']['completed'] and shared_reply['memory']['original']==shared['original'])
+    shared_play=replay_receipt(shared_reply['receipt'])['structuredContent']
+    check(shared_play['original']==shared['original'] and bytes.fromhex(shared_play['contentHex'])==shared_raw.encode())
+    _,shared_again=app_event(1,'turn/start',{'input':[{'type':'text','text':text}]},82)
+    check(shared_again['result']['temporary'] and shared_again['result']['candidateCount']=='1')
+    check(shared_again['result']['memory']['original']==shared_reply['original'])
+    c.close()
     # Responses bind to an earlier committed request original, not a selected
     # session guess or a volatile pending map. The relation survives restart.
     response_root=root/'app-responses';response_root.mkdir()

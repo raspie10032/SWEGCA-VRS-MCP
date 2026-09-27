@@ -40,6 +40,28 @@ int main(){
   auto moved=std::move(event);CHECK(moved.native_bytes()==raw && moved.prompt().has_value());
  }
  CHECK(memory.used()==0);
+ // Pure text is agent-neutral without allocating another cue or normalizing
+ // bytes. Unknown item fields and additional input items must not collapse.
+ for(const auto literal:{R"("")",R"("한글\n\u0000🙂")",R"("  keep spaces  ")"}){
+  const std::string raw=std::string(R"({"id":1,"method":"turn/start","params":{"threadId":"t","input":[{"type":"text","text":)")+literal+"}]}}";
+  const std::string hook=std::string(R"({"session_id":"s","hook_event_name":"UserPromptSubmit","prompt":)")+literal+"}";
+  auto event=adapt_codex_app_server(raw,memory);auto prompt=adapt_codex_hook(hook,memory);
+  const auto reserved=memory.limit()-memory.used();auto* held=memory.allocate(reserved);
+  CHECK(event.cue_media()==prompt.cue_media()&&event.cue_content()==prompt.cue_content());
+  CHECK(event.native_bytes()==raw);
+  auto moved=std::move(event);
+  CHECK(moved.cue_media()=="text/plain"&&moved.cue_content()==prompt.cue_content());
+  memory.deallocate(held,reserved);
+ }
+ for(const auto input:{R"([{"type":"text","text":"x","extra":true}])",
+     R"([{"type":"text","text":"x"},{"type":"text","text":""}])",
+     R"([{"type":"image","url":"never-fetch://asset"}])",R"([])"}){
+  const std::string raw=std::string(R"({"id":1,"method":"turn/start","params":{"threadId":"t","input":)")+input+"}}";
+  auto event=adapt_codex_app_server(raw,memory);
+  CHECK(event.cue_media()=="application/vnd.swegca.codex-input-v1");
+  CHECK(event.cue_content()==input&&event.native_bytes()==raw);
+ }
+ CHECK(memory.used()==0);
  for(const auto name:{"SessionStart","SessionEnd","Stop","Interrupt","PreCompact","PostCompact","SubagentStart","SubagentStop","PostToolUse","NewFutureEvent","explicit_end"}){
   const std::string raw="{\"session_id\":\"parent\",\"hook_event_name\":\""+std::string(name)+"\",\"reason\":\"other\",\"agent_id\":\"child\",\"transcript_path\":\"/never/read\"}";
   auto event=adapt_codex_hook(raw,memory);

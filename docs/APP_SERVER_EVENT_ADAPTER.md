@@ -13,12 +13,22 @@ No fake hook wrapper or invented UserPromptSubmit event is produced.
 
 `adapt_codex_app_server` preserves the exact native JSON. Known turn/start and
 turn/steer requests produce input facts for the existing SWEGCA event router.
-The complete input array is encoded as an exact structured lookup cue, with its
+An array containing exactly one object with only `type:"text"` and `text` uses
+the parsed text bytes and `text/plain`, matching a hook prompt. Empty text is
+valid; no whitespace or Unicode normalization is applied. The cue borrows the
+owned parsed string without another allocation. The original JSON is unchanged.
+All other input arrays are encoded as an exact structured lookup cue, with their
 own media domain. This preserves boundaries between text items and all image,
 audio, skill, mention and unknown fields. It does not concatenate selected text
 or fetch files/URLs. Request IDs, turn IDs and outer request metadata stay in the
 original event but do not change the input-array lookup cue. Whitespace is
 normalized for this cue; JSON property reordering is not semantic normalization.
+
+Previously sealed structured cues are not rewritten. Response association uses
+the authenticated request's sealed connection, so it does not depend on the
+current adapter recomputing the same cue. Cross-protocol regression verifies
+explicit hook-session end, Main merge, restart, app-server lookup of that hook
+original, then temporary-first lookup of the new app-server original.
 
 Other method envelopes with explicit params.threadId are retained as content.
 Item deltas and completions, turn completion and thread archival do not authorize
