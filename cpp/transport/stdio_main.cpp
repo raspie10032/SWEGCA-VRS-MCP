@@ -268,7 +268,9 @@ private:
             if(const auto* declared=fields.find("scope")){
                 scope=declared->string();if(scope->empty())return std::nullopt;
             }
-            if(const auto* proposed=fields.find("requirement")){
+            const auto* proposed=fields.find("requirement");
+            if(!requirement_scope_matches(proposed,scope,memory_))return std::nullopt;
+            if(proposed){
                 if(!scope)return std::nullopt;
                 const auto anchor=requirement_anchor(*proposed);
                 const auto stored=runtime_.session().read_original(input);

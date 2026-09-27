@@ -3,6 +3,7 @@
 #include "swegca_architecture/content_observation_kernel.hpp"
 #include <charconv>
 #include <cstdint>
+#include <optional>
 #include <stdexcept>
 
 namespace swegca::transport {
@@ -30,6 +31,25 @@ inline void append_requirement(std::pmr::string& out,const RequirementAnchor& an
     out+="{\"textIndex\":\"";out+=std::to_string(anchor.text_index);
     out+="\",\"byteOffset\":\"";out+=std::to_string(anchor.byte_offset);
     out+="\",\"quote\":";append_json_string(out,anchor.quote);out+='}';
+}
+// A scoped connection is keyed by the entire declared scope. Its embedded
+// requirement must therefore be the same claim that ingress authenticates.
+// Otherwise a producer could pool different quoted requirements in one scope,
+// or add evidence to an anchored scope without authenticating its anchor.
+inline bool requirement_scope_matches(const Json* proposed,
+    std::optional<std::string_view> scope,std::pmr::memory_resource& memory){
+    if(!scope)return !proposed;
+    Json declared(&memory);
+    try { declared=parse_json(*scope,memory); }
+    catch(const std::invalid_argument&){return !proposed;}
+    const auto* embedded=declared.find("requirement");
+    if(!proposed)return !embedded;
+    if(!embedded)return false;
+    std::pmr::string outer(&memory),inner(&memory);
+    append_requirement(outer,requirement_anchor(*proposed));
+    append_requirement(inner,requirement_anchor(*embedded));
+    using namespace swegca::architecture::kernel;
+    return observe_content_equality(true,true,outer==inner)==EvidenceOutcome::support;
 }
 inline bool requirement_matches(const RequirementAnchor& anchor,const Json& native){
     const auto* method=native.find("method");

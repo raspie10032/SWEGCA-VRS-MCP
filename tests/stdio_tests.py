@@ -836,8 +836,11 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     # as insufficient parent observations, never positive scoped evidence.
     anchored_prompt='파일 내용 유지. 권한도 유지.'
     anchor={'textIndex':'0','byteOffset':str(len('파일 '.encode())), 'quote':'내용 유지'}
+    def anchored_scope(anchor):
+        return json.dumps({'predicate':'anchored byte comparison','requirement':anchor},
+            ensure_ascii=False,separators=(',',':'))
     received,linked=producer_trial(anchored_prompt,0,'support',
-        lambda v:v.update(scope='anchored byte comparison',requirement=anchor))
+        lambda v:v.update(scope=anchored_scope(anchor),requirement=anchor))
     check(linked['refinement']['connection']!=received['refinement']['connection'])
     check(received['refinement']['status']==0)
     for bad in ({**anchor,'quote':'삭제해'}, {**anchor,'byteOffset':'3'},
@@ -845,7 +848,7 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
                 {**anchor,'quote':''}, {**anchor,'quote':None},
                 {**anchor,'byteOffset':'-1'}, {**anchor,'extra':True}):
         received,rejected=producer_trial(anchored_prompt,1,'support',
-            lambda v:v.update(scope='anchored byte comparison',requirement=bad))
+            lambda v:v.update(scope=anchored_scope(bad),requirement=bad))
         check(rejected['refinement']['connection']==received['refinement']['connection'])
         check(rejected['refinement']['status']==0 and rejected['refinement']['strength']==1)
     received,rejected=producer_trial(anchored_prompt,1,'support',lambda v:v.update(requirement=anchor))
@@ -853,9 +856,32 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     check(rejected['refinement']['status']==0)
     for text_index,valid in (('1',True),('0',False)):
         received,result=producer_trial(anchored_prompt,2,'support',
-            lambda v:v.update(scope='multiple text anchor',requirement={**anchor,'textIndex':text_index}),
+            lambda v:v.update(scope=anchored_scope({**anchor,'textIndex':text_index}),requirement={**anchor,'textIndex':text_index}),
             items=[{'type':'text','text':'앞선 별도 내용'}, {'type':'text','text':anchored_prompt}])
         check((result['refinement']['connection']!=received['refinement']['connection'])==valid)
+    # Two real spans of the same user input must not share a connection merely
+    # because a producer reuses a scope label. The full declared scope carries
+    # the exact authenticated anchor; removing the outer claim cannot bypass it.
+    other_anchor={'textIndex':'0','byteOffset':str(len('파일 내용 유지. '.encode())),
+        'quote':'권한도 유지'}
+    first_connection=linked['refinement']['connection']
+    for mutate in (
+        lambda v:v.update(scope=anchored_scope(anchor),requirement=other_anchor),
+        lambda v:v.update(scope=anchored_scope(anchor)),
+        lambda v:v.update(scope='anchored byte comparison',requirement=anchor),
+        lambda v:v.update(scope=json.dumps({'requirement':None}),requirement=anchor),
+    ):
+        received,rejected=producer_trial(anchored_prompt,3,'support',mutate)
+        check(rejected['refinement']['connection']==received['refinement']['connection'])
+        check(rejected['refinement']['status']==0)
+    received,second=producer_trial(anchored_prompt,4,'refute',
+        lambda v:v.update(scope=anchored_scope(other_anchor),requirement=other_anchor))
+    check(second['refinement']['connection']!=first_connection)
+    check(second['refinement']['connection']!=received['refinement']['connection'])
+    _,again=producer_trial(anchored_prompt,5,'support',
+        lambda v:v.update(scope=anchored_scope(anchor),requirement=anchor))
+    check(again['refinement']['connection']==first_connection)
+    check(again['refinement']['revision']=='4')
     # Two measured subclaims of one compound request have independent core
     # connections. Neither is evidence that the entire request was fulfilled.
     compound='Move the file, preserve its contents and permissions.'
@@ -926,6 +952,16 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
         restored=c.call('swegca/agent/original',{'identity':producer_owner,'sequence':str(n)})['result']
         check(restored['original']==original and json.loads(restored['native'])==frame)
         check(restored['context']==measured_input['original']['digest'])
+    # Authenticated anchor scopes keep their identity and selected originals
+    # across a process restart; the other user requirement remains separate.
+    received,restored_anchor=producer_trial(anchored_prompt,6,'support',
+        lambda v:v.update(scope=anchored_scope(anchor),requirement=anchor))
+    check(restored_anchor['refinement']['connection']==first_connection)
+    check(restored_anchor['refinement']['revision']=='6')
+    replayed_anchor=c.call('tools/call',{'name':'vrs_replay','arguments':{
+        'receipt':received['receipt'],'scope':anchored_scope(anchor)}})['result']['structuredContent']
+    check(replayed_anchor['scope']==anchored_scope(anchor))
+    check(replayed_anchor['original']==restored_anchor['original'])
     # Resume must retain both scoped histories and all native sequence numbers.
     # An exact parent Recall still contains only its input originals.
     scoped_input_sequence=producer_seq
