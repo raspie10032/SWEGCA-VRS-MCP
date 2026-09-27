@@ -315,6 +315,13 @@ ConnectionHead PersistentConnection::historical_snapshot(const ExperienceLocatio
     }
 }
 
+std::pair<std::uint64_t,std::uint64_t> PersistentConnection::latest_refinement_parameters() const {
+    const auto event=read_event(session_,head_);
+    if(event.identity!=state_->identity()||event.ordinal!=ordinal_||event.after!=state_->revision()||event.kind!=EventKind::refine)
+        throw std::logic_error("current connection has no completed refinement");
+    return {event.seed,event.step};
+}
+
 bool PersistentConnection::verifies_extension(SessionStore& session, const ConnectionHead& candidate,
     const ExperienceLocation& previous) {
     auto cursor = candidate.record;

@@ -526,6 +526,34 @@ ReplayedInput ExperienceRouter::replay(const InputRecall& recalled,std::size_t c
         : selected.recalled.session->store_.identity();
     return ReplayedInput(std::move(original),selected,issuer_,recalled.cue_,source_identity);
 }
+ReplayedInput ExperienceRouter::restore_temporary_replay(const ExperienceLocation& input,
+    std::string_view scope,const DigestBytes& connection,const ExperienceLocation& remembered_head,
+    std::size_t original_index,const ExperienceLocation& original) const {
+    if(!temporary_.usable()||scope.empty())throw std::invalid_argument("temporary Replay restoration unavailable");
+    const auto stored_input=temporary_.read_original(input);
+    // The input's recorded hypothesis is decoded by the same owner policy as
+    // its connection; no text-derived verdict or historical JSON is admitted.
+    const auto* owner=temporary_.find(connection);
+    if(!owner)throw std::invalid_argument("temporary scoped connection unavailable");
+    const auto parent=decode_evidence(owner->rules(),stored_input);
+    const auto cue=input_observation_scope(parent.value().hypothesis,scope);
+    if(connection!=cue)throw std::invalid_argument("restored scope connection mismatch");
+    const auto old=owner->historical_snapshot(remembered_head);
+    if(original_index>=old.observations)
+        throw std::invalid_argument("selected original lies beyond remembered boundary");
+    const auto evidence=owner->state().read_experience(original_index);
+    if(evidence.original()!=original||evidence.value().hypothesis!=cue||
+       !evidence.has_input_key()||evidence.cue()!=cue)
+        throw std::invalid_argument("restored original does not belong to scoped Recall");
+    auto selected=temporary_.replay(connection,original_index);
+    if(selected.location()!=original)throw std::logic_error("restored Replay original changed");
+    const auto selected_value=decode_evidence(owner->rules(),selected);
+    InputMatch match{{&temporary_,owner,old,nullptr},original_index,
+        static_cast<std::size_t>(old.observations),original,selected_value.value().observed_at};
+    continuation_=connection;continued_context_=selected_value.value().context;
+    return ReplayedInput(std::move(selected),match,issuer_,cue,temporary_.store_.identity());
+}
+
 EvidencePayloadSlice ExperienceRouter::read_payload_slice(const InputRecall& recalled,std::size_t candidate,
     std::uint64_t offset,std::uint64_t count) const {
     const auto selected=selected_input(recalled,candidate);

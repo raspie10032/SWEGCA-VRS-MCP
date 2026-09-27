@@ -205,6 +205,7 @@ public:
     ReplayedInput(ReplayedInput&&) noexcept = default;
     [[nodiscard]] const StoredExperience& original() const noexcept { return original_; }
     [[nodiscard]] const architecture::DigestBytes& source_identity() const noexcept { return source_identity_; }
+    [[nodiscard]] std::size_t original_index() const noexcept { return match_.original_index; }
     [[nodiscard]] const ExperienceLocation& location() const noexcept { return original_.location(); }
     [[nodiscard]] const architecture::DigestBytes& input_cue() const noexcept { return input_cue_; }
 private:
@@ -302,6 +303,11 @@ public:
     // Only receipt metadata is considered here; one original is read later.
     [[nodiscard]] std::optional<std::size_t> select_replay(const InputRecall&) const;
     [[nodiscard]] ReplayedInput replay(const InputRecall& recalled, std::size_t candidate) const;
+    // Reissue a temporary Replay after restart from authenticated input and
+    // ancestor head. Boundary comes from the owner, never supplied JSON counts.
+    [[nodiscard]] ReplayedInput restore_temporary_replay(const ExperienceLocation& input,
+        std::string_view scope,const architecture::DigestBytes& connection,const ExperienceLocation& remembered_head,
+        std::size_t original_index,const ExperienceLocation& original) const;
     // Partial original access preserves Recall provenance but does not issue a
     // Replay receipt or update the continuation key.
     [[nodiscard]] EvidencePayloadSlice read_payload_slice(const InputRecall&, std::size_t candidate,

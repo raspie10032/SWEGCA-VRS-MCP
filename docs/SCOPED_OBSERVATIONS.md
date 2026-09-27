@@ -127,3 +127,31 @@ historical scoped Replay가 임시 연결을 사용했던 경우 이 경로로 r
 
 검증: persistent connection 93 checks 및 stdio 5230 checks 통과.
 과거 append/refine/origin/current 경계, 비계보 주소 거부, 재시작 후 경계와 현재 상태 불변을 확인했다.
+
+## 임시 scoped 대조의 재시작 후 재개
+
+이전 절의 임시 복구 제한을 해소했다. 새 개정 기록은 선택 원경험의 `originalIndex`도
+보존한다. 재시작 후 과거 입력 receipt로 `vrs_replay(scope)`를 호출하면 임시 연결은
+단순 historical 내보내기 대신 다음 경로로 실시간 대조를 재개한다.
+
+1. 현재 세션의 봉인된 입력을 동일 코어 증거 디코더로 읽고 scope 연결을 확인한다.
+2. 현재 소유 연결의 실제 부모 계보에서 rememberedHead와 관측 경계를 확인한다.
+3. 인덱스가 당시 경계 안에 있고 원경험 주소·가설·입력 키가 일치하는지 확인한다.
+4. 선택 원경험 하나만 Replay하고 현재 라우터 소유 receipt를 발행한다.
+5. 현재 연결의 마지막 완료된 refine 기록에서 seed/step을 읽어, 당시 경계 이후의
+   실제 관측만 대조한다. 코어가 충돌을 판정한 경우에만 Re-evidence를 수행한다.
+6. scoped 개정을 저장하며 부모 cognition 기록은 덮어쓰지 않는다. 이후 새 반증은
+   기존 실시간 이벤트 경로에서 응답 전에 대조·저장한다.
+
+복구 결과에는 `restored:true, historical:false`가 붙는다. 이 필드는 저장 개정에
+포함하지 않아 동일 비교의 저장 주소를 바꾸지 않는다. scoped 캐시가 자체 입력
+주소를 소유하므로 다른 live 입력 또는 재시작으로 received 캐시가 없어도 정확한
+입력에 결과를 저장한다. 관측·강도 갱신은 복구 과정에서 중복 수행하지 않는다.
+Main에서 선택했던 과거 scoped Replay는 아직 historical 내보내기이며 실시간
+receipt 복구가 미완료다. 새 자연 입력의 Main 조회는 기존 경로로 계속 처리된다.
+
+검증: Runtime 1910 checks, stdio 5251 checks 통과. Runtime에서는 재시작·선택 원경험
+유지·8개 새 반증·충돌 시 Re-evidence·강도/경험 미중복·잘못된 scope/head/index 거부를
+확인했다. stdio에서는 복구 요청 전 도착한 반증의 포함, 복구 후 이벤트 응답 이전
+대조 개정 저장, 부모 기록 불변, 명시적 종료/병합 후 해당 개정의 보존을 확인했다.
+CPU 6,7 / make -j2만 사용했다. GUI 설치 및 Main 과거 receipt의 live 복구 증거는 아니다.

@@ -113,8 +113,9 @@ private:
     bool work_requested_=false;
     struct Context {
         struct ScopedCognition {
-            ScopedCognition(std::string_view name,InputCognition value,std::pair<std::uint64_t,std::uint64_t> params,MemoryBudget& memory)
-                :scope(name,&memory),cognition(std::move(value)),parameters(params){}
+            ScopedCognition(const ExperienceLocation& input_value,std::string_view name,InputCognition value,std::pair<std::uint64_t,std::uint64_t> params,MemoryBudget& memory)
+                :input(input_value),scope(name,&memory),cognition(std::move(value)),parameters(params){}
+            ExperienceLocation input;
             std::pmr::string scope;
             std::optional<InputCognition> cognition;
             std::pair<std::uint64_t,std::uint64_t> parameters;
@@ -346,7 +347,7 @@ private:
             scoped->cognition.reset();scoped->cognition.emplace(std::move(refreshed));scoped->dirty=false;
         }
         if(!scoped->saved){
-            const auto& input=context().received->recorded.original;
+            const auto& input=scoped->input;
             const auto& cognition=*scoped->cognition;
             auto metadata=std::pmr::string("{\"inputOriginal\":",&memory_)+address(input,memory_);
             metadata+=",\"scope\":";metadata+=quote_json(scoped->scope,memory_);
@@ -355,6 +356,7 @@ private:
             metadata+="\",\"seed\":\"";metadata+=std::to_string(seed);metadata+="\",\"step\":\"";metadata+=std::to_string(step);
             metadata+="\",\"sourceSession\":\"";metadata+=hex(cognition.replayed.source_identity(),memory_);
             metadata+="\",\"selectedOriginal\":";metadata+=address(cognition.replayed.location(),memory_);
+            metadata+=",\"originalIndex\":\"";metadata+=std::to_string(cognition.replayed.original_index());metadata+='"';
             metadata+=",\"replayPrefix\":";metadata+=quote_json(scoped_replay_prefix(*scoped),memory_);metadata+='}';
             scoped->revision=runtime_.save_cognition_revision(input,std::as_bytes(std::span(metadata)),
                 input_observation_scope(input.digest,scoped->scope));
@@ -517,8 +519,7 @@ private:
                 throw std::invalid_argument("cognition scope binding mismatch");
             const bool live=!scope&&state&&state->received&&state->received->recorded.original==input&&
                 state->cognition_done&&state->cognition_snapshot_saved&&state->cognition_revision;
-            const bool scoped_live=scope&&state&&state->received&&state->received->recorded.original==input&&
-                state->scoped&&state->scoped->scope==*scope&&!state->scoped->dirty&&state->scoped->saved&&state->scoped->revision;
+            const bool scoped_live=scope&&state&&state->scoped&&state->scoped->input==input&&state->scoped->scope==*scope&&!state->scoped->dirty&&state->scoped->saved&&state->scoped->revision;
             auto body=std::pmr::string("{\"revision\":",&memory_)+(revision?quote_json(hex(*revision,memory_),memory_):"null")+
                 ",\"liveRevision\":"+(scoped_live?quote_json(hex(*state->scoped->revision,memory_),memory_):
                     live?quote_json(hex(*state->cognition_revision,memory_),memory_):"null")+
@@ -875,7 +876,7 @@ private:
             body+=",\"refinement\":";body+=refinement(context().received->recorded.refinement,memory_);
             cognition_body(body);body+='}';return body;
     }
-    std::pmr::string replay_prefix(const ReplayedInput& replayed,const InputCognition* cognition=nullptr){
+    std::pmr::string replay_prefix(const ReplayedInput& replayed,const InputCognition* cognition=nullptr,const ExperienceLocation* input=nullptr){
         const auto value=evidence_payload(replayed.original());
         auto prefix="{\"original\":"+address(replayed.location(),memory_)+
             ",\"media\":"+quote_json(value.media_type,memory_)+",\"source\":"+quote_json(value.source,memory_)+
@@ -888,7 +889,7 @@ private:
             prefix+=",\"status\":";prefix+=std::to_string(static_cast<unsigned>(judgment.status()));
             prefix+=",\"reason\":";prefix+=std::to_string(static_cast<unsigned>(judgment.reason()));
             prefix+=",\"step\":\"";prefix+=std::to_string(assessment.verification().current_step());
-            prefix+="\",\"inputOriginal\":";prefix+=address(context().received->recorded.original,memory_);
+            prefix+="\",\"inputOriginal\":";prefix+=address(input?*input:context().received->recorded.original,memory_);
             prefix+=",\"rememberedHead\":";prefix+=address(assessment.remembered_head().record,memory_);
             prefix+=",\"currentHead\":";prefix+=address(assessment.current_head().record,memory_);
             prefix+=",\"currentOriginalCount\":\"";prefix+=std::to_string(assessment.current_originals().size());
@@ -902,7 +903,7 @@ private:
     }
     std::pmr::string scoped_replay_prefix(const Context::ScopedCognition& scoped){
         const auto& cognition=*scoped.cognition;
-        auto prefix=replay_prefix(cognition.replayed,&cognition);
+        auto prefix=replay_prefix(cognition.replayed,&cognition,&scoped.input);
         constexpr std::string_view content_field=",\"contentHex\":\"";
         prefix.resize(prefix.size()-content_field.size());
         prefix+=",\"scope\":";prefix+=quote_json(scoped.scope,memory_);
@@ -922,9 +923,6 @@ private:
                 const auto saved=parse_json(content_text(*record),memory_);
                 if(record_address(saved.at("inputOriginal"))!=input||saved.at("scope").string()!=name)
                     throw std::invalid_argument("recorded scope cognition binding mismatch");
-                auto original=runtime_.read_scoped_cognition_original(input,name,
-                    digest(saved.at("scopeConnection").string()),digest(saved.at("sourceSession").string()),
-                    record_address(saved.at("selectedOriginal")));
                 std::pmr::string prefix(saved.at("replayPrefix").string(),&memory_);
                 constexpr std::string_view content_field=",\"contentHex\":\"";
                 if(!prefix.ends_with(content_field))throw std::invalid_argument("invalid recorded scope Replay prefix");
@@ -936,10 +934,30 @@ private:
                 if(tier.scalar=="true"){
                     const auto* owner=runtime_.session().find(digest(saved.at("scopeConnection").string()));
                     if(!owner)throw std::invalid_argument("recorded scope owner disappeared");
-                    const auto old=owner->historical_snapshot(record_address(checkpoint.at("assessment").at("rememberedHead")));
-                    if(old.observations!=integer(saved.at("observationBoundary")))
-                        throw std::invalid_argument("recorded scope observation boundary mismatch");
+                    auto& state=context();
+                    if(!state.scoped||state.scoped->input!=input||state.scoped->scope!=name){
+                        const auto parameters=owner->latest_refinement_parameters();
+                        auto cognition=runtime_.restore_temporary_cognition(input,name,digest(saved.at("scopeConnection").string()),
+                            record_address(checkpoint.at("assessment").at("rememberedHead")),
+                            integer(saved.at("originalIndex")),record_address(saved.at("selectedOriginal")),
+                            parameters.first,parameters.second);
+                        if(cognition.comparison.observation_boundary()!=integer(saved.at("observationBoundary")))
+                            throw std::invalid_argument("recorded scope observation boundary mismatch");
+                        if(cognition.replayed.source_identity()!=digest(saved.at("sourceSession").string()))
+                            throw std::invalid_argument("restored scoped source mismatch");
+                        Context::ScopedCognition prepared{input,name,std::move(cognition),parameters,memory_};
+                        prepared.temporary=true;state.scoped.emplace(std::move(prepared));
+                    }
+                    complete_scoped_cognition();
+                    auto live=scoped_replay_prefix(*state.scoped);
+                    live.resize(live.size()-content_field.size());
+                    live+=",\"restored\":true,\"historical\":false,\"revision\":\"";
+                    live+=hex(*state.scoped->revision,memory_);live+='"';live+=content_field;
+                    payload_result(id,live,evidence_payload(state.scoped->cognition->replayed.original()).content);return;
                 }
+                auto original=runtime_.read_scoped_cognition_original(input,name,
+                    digest(saved.at("scopeConnection").string()),digest(saved.at("sourceSession").string()),
+                    record_address(saved.at("selectedOriginal")));
                 prefix.resize(prefix.size()-content_field.size());
                 prefix+=",\"historical\":true,\"revision\":\"";
                 prefix+=hex(Sha256::of(record->view().content),memory_);prefix+='"';prefix+=content_field;
@@ -958,12 +976,12 @@ private:
                 throw std::invalid_argument("scope cannot be combined with candidate or byte range");
             const auto name=scope->string();
             auto& state=context();
-            if(!state.scoped||state.scoped->scope!=name){
+            if(!state.scoped||state.scoped->input!=state.received->recorded.original||state.scoped->scope!=name){
                 auto recalled=runtime_.input_scope(state.received->recalled,name);
                 const auto& recorded=state.received->recorded.refinement;
                 auto cognition=runtime_.cognize(recalled,recorded.seed(),recorded.current_step());
                 if(!cognition)throw std::invalid_argument("scope has no Recall candidate");
-                Context::ScopedCognition prepared{name,std::move(*cognition),{recorded.seed(),recorded.current_step()},memory_};
+                Context::ScopedCognition prepared{state.received->recorded.original,name,std::move(*cognition),{recorded.seed(),recorded.current_step()},memory_};
                 prepared.temporary=recalled.temporary();state.scoped.emplace(std::move(prepared));
             }
             complete_scoped_cognition();

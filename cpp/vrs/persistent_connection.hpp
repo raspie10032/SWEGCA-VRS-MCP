@@ -37,6 +37,7 @@ public:
     // Recover an ancestor boundary from this already core-verified owner.
     // Reads connection records only; never trusts caller-supplied counts/strength.
     [[nodiscard]] architecture::kernel::ConnectionHead historical_snapshot(const ExperienceLocation&) const;
+    [[nodiscard]] std::pair<std::uint64_t,std::uint64_t> latest_refinement_parameters() const;
     // Addresses are ordered newest to oldest. Verification reads only the
     // linked connection records and never treats a greater number as ancestry.
     [[nodiscard]] bool contains_history(std::span<const ExperienceLocation> addresses) const;

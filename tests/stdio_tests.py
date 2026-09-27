@@ -773,7 +773,9 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
         n=producer_seq
         p={'sequence':str(n),'observedAt':str(n),'seed':'7','step':str(n),'sender':sender,'native':json.dumps(frame)}
         if request is not None:p['requestSequence']=str(request)
-        result=c.call('swegca/agent/event',p)['result'];producer_seq+=1
+        response=c.call('swegca/agent/event',p)
+        assert 'result' in response,response
+        result=response['result'];producer_seq+=1
         return n,result
     def producer_trial(prompt,n,outcome,mutate=None):
         seq,received=producer_frame('client',{'id':producer_seq+1,'method':'turn/start',
@@ -958,13 +960,27 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     scoped_recovered=c.call('swegca/agent/cognition',scope_query)['result']
     check(scoped_recovered['record']==scoped_after_event['record'] and scoped_recovered['revision']==scoped_after_event['revision'])
     check(scoped_recovered['liveRevision'] is None)
+    # Evidence may arrive after restart before anyone restores a comparison.
+    # Resume must use the owner's latest actual refinement parameters.
+    check(c.call('swegca/select',{'identity':producer_owner})['result']=={})
+    _,before_restore=producer_frame('server',scoped_counter)
     old_input=c.call('swegca/agent/original',{'identity':producer_owner,'sequence':str(scoped_input_sequence)})['result']
     historical=c.call('swegca/agent/event',{'sequence':str(scoped_input_sequence),'observedAt':old_input['observedAt'],
         'seed':'7','step':str(scoped_input_sequence),'sender':'client','native':old_input['native']})['result']
     archived_scope=scoped_replay(historical['receipt'],'byte content unchanged')['structuredContent']
-    check(archived_scope['historical'] and archived_scope['revision']==scoped_after_event['revision'])
-    check(archived_scope['original']==refreshed_scope['original'] and archived_scope['assessment']==refreshed_scope['assessment'])
+    check(not archived_scope['historical'] and archived_scope['restored'] and archived_scope['revision']!=scoped_after_event['revision'])
+    check(archived_scope['original']==refreshed_scope['original'] and archived_scope['assessment']['currentOriginalCount']=='9')
+    check(archived_scope['assessment']['status']==2 and archived_scope['assessment']['reEvidencePerformed'])
     check(archived_scope['contentHex']==refreshed_scope['contentHex'])
+    check(c.call('swegca/agent/cognition',scope_query)['result']['liveRevision']==archived_scope['revision'])
+    # A real late observation refreshes restored comparison before its ACK;
+    # no new input and no second Replay request is needed.
+    _,after_restart=producer_frame('server',scoped_counter)
+    scoped_after_event=c.call('swegca/agent/cognition',scope_query)['result']
+    after_restart_assessment=json.loads(scoped_after_event['record']['replayPrefix']+'"}')['assessment']
+    check(scoped_after_event['liveRevision']==scoped_after_event['revision'])
+    check(scoped_after_event['record']['selectedOriginal']==archived_scope['original'])
+    check(after_restart_assessment['currentOriginalCount']=='10' and after_restart_assessment['reEvidencePerformed'])
     recovered_cognition=c.call('swegca/agent/cognition',{'identity':producer_owner,'sequence':str(current_input_sequence),'latest':True})['result']
     check(recovered_cognition['revision']==refreshed['revision'] and recovered_cognition['record']==refreshed['record'])
     check(c.call('swegca/work',{'seed':'7','step':'0'})['result']['merged']=='0')
@@ -1008,7 +1024,7 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     compound_replay=c.call('tools/call',{'name':'vrs_replay','arguments':{'receipt':compound_main['receipt']}})['result']['structuredContent']
     check(compound_replay['assessment']['status']==0 and compound_replay['assessment']['agreement']==1)
     main_scope=scoped_replay(compound_main['receipt'],'byte content unchanged')['structuredContent']
-    check(not main_scope['temporary'] and main_scope['original']==scoped_counter_record['original'])
+    check(not main_scope['temporary'] and main_scope['original']==after_restart['original'])
     check(json.loads(bytes.fromhex(main_scope['contentHex']))==scoped_counter)
     check(scoped_replay(scoped_receipt,'byte content unchanged')['isError'])
     # The actual measured experience is retrievable through Main by its scope,

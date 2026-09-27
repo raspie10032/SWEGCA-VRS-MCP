@@ -708,5 +708,38 @@ int main(){
   throws<std::invalid_argument>([&]{(void)host.read_scoped_cognition_original(input,"content",connection,id(244),selected);});
   throws<std::invalid_argument>([&]{(void)host.read_scoped_cognition_original(input,"",connection,id(240),selected);});
  }
+ {
+  const auto path=root/"scope-live-restore";fs::create_directory(path);
+  ExperienceLocation input,selected,head;DigestBytes connection;
+  const auto observe=[&](Runtime& host,unsigned n,EvidenceOutcome outcome){
+   const auto parent=host.retain({n,n,"restore","user","text/plain",content},7,n).original;
+   EvidenceObservation value;value.source=id(n+20);value.producer=id(n+60);
+   value.observed_at=n;value.outcome=outcome;
+   auto recorded=host.observe_input_scope(parent,"contents",{n,n,"restore","tool","text/plain",content},value,7,n);
+   input=parent;connection=recorded.refinement.connection();return recorded.original;
+  };
+  {
+   auto host=Runtime::create(path,config,memory);host.start_session(id(245),"restore");
+   for(unsigned n=1;n<=8;++n)selected=observe(host,n,EvidenceOutcome::support);
+   head=host.session().find(connection)->head();
+  }
+  const auto remembered_input=input;
+  auto host=Runtime::open(path,config,memory);host.resume_session(id(245));
+  auto initially=host.restore_temporary_cognition(remembered_input,"contents",connection,head,7,selected,7,8);
+  CHECK(initially.replayed.location()==selected&&initially.comparison.observation_boundary()==8);
+  CHECK(initially.assessment().current_originals().empty()&&!initially.reverified);
+  for(unsigned n=9;n<=16;++n)(void)observe(host,n,EvidenceOutcome::refute);
+  const auto before=host.session().find(connection)->snapshot();
+  auto restored=host.restore_temporary_cognition(remembered_input,"contents",connection,head,7,selected,7,16);
+  CHECK(restored.replayed.location()==selected&&restored.reverified.has_value());
+  CHECK(restored.assessment().current_originals().size()==8&&restored.comparison.observation_boundary()==8);
+  CHECK(restored.assessment().verification().result().verification().judgment().status()==EvidenceStatus::reject);
+  CHECK(host.session().find(connection)->snapshot().record==before.record);
+  throws<std::invalid_argument>([&]{(void)host.restore_temporary_cognition(remembered_input,"other",connection,head,7,selected,7,16);});
+  throws<std::invalid_argument>([&]{(void)host.restore_temporary_cognition(remembered_input,"contents",connection,head,8,selected,7,16);});
+  throws<std::invalid_argument>([&]{(void)host.restore_temporary_cognition(remembered_input,"contents",connection,head,6,selected,7,16);});
+  throws<std::invalid_argument>([&]{(void)host.restore_temporary_cognition(remembered_input,"contents",connection,{},7,selected,7,16);});
+  CHECK(host.session().find(connection)->snapshot().record==before.record);
+ }
  CHECK(memory.used()==0);fs::remove_all(root);std::printf("runtime lifecycle tests: %u checks passed\n",checks);
 }
