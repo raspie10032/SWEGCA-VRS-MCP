@@ -54,6 +54,14 @@ public:
     [[nodiscard]] std::optional<StoredExperience> read_cognition(const ExperienceLocation& input) const {
         require_usable();return store_.read_cognition(input);
     }
+    [[nodiscard]] architecture::DigestBytes save_cognition_revision(const ExperienceLocation& input,
+        std::span<const std::byte> metadata) {
+        require_usable();return store_.save_cognition_revision(input,metadata);
+    }
+    [[nodiscard]] std::optional<StoredExperience> read_cognition_revision(const ExperienceLocation& input,
+        const architecture::DigestBytes& revision) const {
+        require_usable();return store_.read_cognition_revision(input,revision);
+    }
     void end();
     void publish_originals();
     [[nodiscard]] bool usable() const noexcept { return usable_ && store_.usable() && catalog_.usable(); }

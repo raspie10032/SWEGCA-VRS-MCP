@@ -197,6 +197,9 @@ ReEvidenceResult Runtime::re_evidence(const ReplayedInput& replayed,const Replay
 void Runtime::save_cognition(const ExperienceLocation& input,std::span<const std::byte> metadata) {
     require_active();require_session().runtime.save_cognition(input,metadata);
 }
+DigestBytes Runtime::save_cognition_revision(const ExperienceLocation& input,std::span<const std::byte> metadata) {
+    require_active();return require_session().runtime.save_cognition_revision(input,metadata);
+}
 StoredExperience Runtime::read_cognition_original(const DigestBytes& source,const ExperienceLocation& original) const {
     const auto found=sources_.sources_.find(source);
     if(found==sources_.sources_.end() || !found->second.store || !found->second.store->usable())

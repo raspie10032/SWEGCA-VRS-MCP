@@ -730,17 +730,43 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     check(response_packet(r2['receipt'])==after_response)
     check(partial(r2['receipt'],0,1)['structuredContent']['partial'])
     check(response_packet(r2['receipt'])==after_response)
+    def cognition_record(sequence, revision=None):
+        params={'identity':response_id,'sequence':str(sequence)}
+        if revision is not None:params['revision']=revision
+        return c.call('swegca/agent/cognition',params)
+    initial_cognition=cognition_record(2)['result']
+    updated_revision=initial_cognition['liveRevision']
+    check(updated_revision is not None and initial_cognition['revision'] is None)
+    updated_cognition=cognition_record(2,updated_revision)['result']['record']
+    check(updated_cognition['inputOriginal']==r2['original'])
+    check(updated_cognition['seed']=='7' and updated_cognition['step']=='3')
+    saved_packet=json.loads(updated_cognition['replayPrefix']+after_response['contentHex']+'"}')
+    check(saved_packet==after_response)
+    check(json.loads(initial_cognition['record']['replayPrefix']+before_response['contentHex']+'"}')==before_response)
+    check('error' in cognition_record(0,updated_revision))
+    check('error' in cognition_record(2,identity(250)))
+    revision_bytes=sum(p.stat().st_size for p in response_root.rglob('*') if p.is_file())
+    check(response_packet(r2['receipt'])==after_response)
+    check(sum(p.stat().st_size for p in response_root.rglob('*') if p.is_file())==revision_bytes)
     check('error' in app_response(3,0)[1]) # Same wire ID/body, wrong original lineage.
     check(app_response(3,2)[1]['result']['duplicate'])
     check('error' in app_response(4,1)[1]) # A response cannot masquerade as a request.
     _,r4=app_event(4,'turn/start',{'input':app_input},2)
     r4=r4['result'];check(r4['candidateCount']=='2')
+    check('structuredContent' in c.call('tools/call',{'name':'vrs_re_evidence','arguments':{
+        'receipt':r4['receipt'],'seed':'19','step':'5'}})['result'])
+    explicit_revision=cognition_record(4)['result']['liveRevision']
+    explicit_record=cognition_record(4,explicit_revision)['result']['record']
+    check(explicit_revision is not None and explicit_record['seed']=='19' and explicit_record['step']=='5')
+    check(json.loads(explicit_record['replayPrefix']+'"}')['assessment']['step']=='5')
     c.close()
     c=Client('open',response_root,path);c.initialize()
     check(c.call('swegca/agent/attach/resume',app_binding)['result']['identity']==response_id)
     check(c.call('swegca/select',{'identity':response_id})['result']=={})
     historic=resend_native(r2_raw,2)['result']
     check(response_packet(historic['receipt'])==before_response)
+    check(cognition_record(2,updated_revision)['result']['record']==updated_cognition)
+    check(cognition_record(4,explicit_revision)['result']['record']==explicit_record)
     check('error' in app_response(3,0)[1])
     check(app_response(3,2)[1]['result']=={'duplicate':True,'original':r3['original'],'receipt':None})
     _,r5=app_response(5,4,reply_id=2);r5=r5['result']

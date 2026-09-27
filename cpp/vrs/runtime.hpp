@@ -84,6 +84,8 @@ public:
     [[nodiscard]] ReEvidenceResult re_evidence(const ReplayedInput&, const ReplayComparison&,
         std::uint64_t seed, std::uint64_t step) const;
     void save_cognition(const ExperienceLocation&, std::span<const std::byte> metadata);
+    [[nodiscard]] architecture::DigestBytes save_cognition_revision(const ExperienceLocation&,
+        std::span<const std::byte> metadata);
     [[nodiscard]] StoredExperience read_cognition_original(const architecture::DigestBytes& source,
         const ExperienceLocation&) const;
     // Explicit owner maintenance outside input and while no merge job exists.

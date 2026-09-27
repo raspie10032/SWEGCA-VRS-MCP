@@ -128,6 +128,8 @@ private:
         // This identity is bookkeeping, never a substitute for a full Replay.
         std::optional<DigestBytes> cognition_connection;
         bool cognition_done=false,cognition_saved=false;
+        bool cognition_snapshot_saved=false;
+        std::optional<DigestBytes> cognition_revision;
         std::optional<std::pair<std::uint64_t,std::uint64_t>> cognition_parameters;
         std::optional<StoredExperience> recovered_cognition;
         std::uint64_t recovered_receipt=0;
@@ -180,7 +182,7 @@ private:
     void clear_replay(){
         context().replayed.reset();context().cognition.reset();context().cognition_done=false;
     }
-    void clear(){clear_replay();context().cognition_connection.reset();context().cognition_saved=false;context().cognition_parameters.reset();context().received.reset();context().recovered_cognition.reset();context().recovered_receipt=0;}
+    void clear(){clear_replay();context().cognition_connection.reset();context().cognition_saved=false;context().cognition_snapshot_saved=false;context().cognition_revision.reset();context().cognition_parameters.reset();context().received.reset();context().recovered_cognition.reset();context().recovered_receipt=0;}
     const ReplayedInput* selected_replay() const {
         if(context().replayed)return &*context().replayed;
         return context().cognition ? &context().cognition->replayed : nullptr;
@@ -218,9 +220,14 @@ private:
             state.cognition_connection.reset();
             if(state.cognition)state.cognition_connection=state.cognition->assessment().remembered_head().identity;
             state.cognition_done=true;
+            state.cognition_snapshot_saved=false;
         }
-        if(!state.native_session.empty() && !state.cognition_saved){
+        if(!state.native_session.empty() && !state.cognition_snapshot_saved){
             auto metadata=std::pmr::string("{\"inputOriginal\":",&memory_)+address(state.received->recorded.original,memory_);
+            const auto& recorded=state.received->recorded.refinement;
+            const auto parameters=state.cognition_parameters.value_or(std::pair{recorded.seed(),recorded.current_step()});
+            metadata+=",\"seed\":\"";metadata+=std::to_string(parameters.first);
+            metadata+="\",\"step\":\"";metadata+=std::to_string(parameters.second);metadata+='"';
             cognition_body(metadata);
             if(state.cognition){
                 metadata+=",\"sourceSession\":\"";metadata+=hex(state.cognition->replayed.source_identity(),memory_);
@@ -228,8 +235,12 @@ private:
                 metadata+=",\"replayPrefix\":";metadata+=quote_json(replay_prefix(state.cognition->replayed,&*state.cognition),memory_);
             }else metadata+=",\"sourceSession\":null,\"selectedOriginal\":null,\"replayPrefix\":null";
             metadata+='}';
-            runtime_.save_cognition(state.received->recorded.original,std::as_bytes(std::span(metadata)));
-            state.cognition_saved=true;
+            if(!state.cognition_saved){
+                runtime_.save_cognition(state.received->recorded.original,std::as_bytes(std::span(metadata)));
+                state.cognition_saved=true;
+            }else state.cognition_revision=runtime_.save_cognition_revision(
+                state.received->recorded.original,std::as_bytes(std::span(metadata)));
+            state.cognition_snapshot_saved=true;
         }
     }
 
@@ -295,6 +306,27 @@ private:
                 throw std::invalid_argument("noncontiguous stored native sequence");
             state.native_ready=true;
             return "{\"identity\":\""+hex(identity,memory_)+"\",\"nextSequence\":\""+std::to_string(state.deliveries.size()).c_str()+"\"}";
+        }
+        if(method=="swegca/agent/cognition"){
+            select_context(digest(p.at("identity").string()));
+            const auto& state=context();
+            if(state.native_session.empty()||!state.native_ready)
+                throw std::invalid_argument("native session binding required");
+            const auto found=state.deliveries.find(integer(p.at("sequence")));
+            if(found==state.deliveries.end())throw std::invalid_argument("native delivery not recorded");
+            const auto* requested=p.find("revision");
+            const auto revision=requested?std::optional<DigestBytes>(digest(requested->string())):std::nullopt;
+            const auto stored=revision?runtime_.session().read_cognition_revision(found->second.original,*revision):
+                runtime_.session().read_cognition(found->second.original);
+            if(!stored)throw std::invalid_argument("cognition record not found");
+            const auto metadata=parse_json(content_text(*stored),memory_);
+            if(record_address(metadata.at("inputOriginal"))!=found->second.original)
+                throw std::runtime_error("cognition input binding mismatch");
+            const bool live=state.received&&state.received->recorded.original==found->second.original&&
+                state.cognition_done&&state.cognition_snapshot_saved&&state.cognition_revision;
+            return std::pmr::string("{\"revision\":",&memory_)+(revision?quote_json(hex(*revision,memory_),memory_):"null")+
+                ",\"liveRevision\":"+(live?quote_json(hex(*state.cognition_revision,memory_),memory_):"null")+
+                ",\"record\":"+std::pmr::string(content_text(*stored),&memory_)+"}";
         }
         if(method=="swegca/agent/original"){
             select_context(digest(p.at("identity").string()));
@@ -610,7 +642,8 @@ private:
         // Default full Replay completes core comparison even when a preceding
         // explicit/partial read cleared cognition. Partial bytes alone never
         // count as an authenticated full Replay for comparison.
-        if(!explicit_candidate&&!p.find("offset")&&!p.find("count")&&!context().cognition_done)
+        if(!explicit_candidate&&!p.find("offset")&&!p.find("count")&&
+           (!context().cognition_done||(!context().native_session.empty()&&!context().cognition_snapshot_saved)))
             complete_cognition();
         // Otherwise export the already compared receipt without another read.
         if(!explicit_candidate && !p.find("offset") && !p.find("count") && context().cognition){
@@ -659,6 +692,8 @@ private:
                     std::move(compared),std::move(verified)};
                 state.cognition.reset();state.cognition.emplace(std::move(refreshed));
                 state.cognition_parameters=std::pair{seed,step};state.cognition_done=true;
+                state.cognition_snapshot_saved=false;
+                complete_cognition();
             }
             return body;
         }

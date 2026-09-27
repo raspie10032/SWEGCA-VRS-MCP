@@ -951,3 +951,18 @@ Re-evidence 불가, 재시작 과거 패킷 불변성을 포함해 stdio 3,608�
 위조 주소·잘못된 revision·빈/과대 결과·종료 후 쓰기 거절을 포함해 세션 394개와
 실제 stdio 3,608개가 통과했다. 이 단계는 저장 계층 구현이며, Host의 갱신 대조
 발행과 revision 조회 경로 연결은 다음 구현으로 남아 있다.
+
+
+revision 저장을 실제 native Host의 자동 대조 갱신과 현재 자동 Replay의 명시적
+재검증에 연결했다. Runtime/SessionRuntime은 기존 활성 세션·usable 조건을
+확인한 뒤 SessionStore로 발행한다. metadata에 seed/step도 보존한다. 최초
+입력 기록은 덮어쓰지 않고, snapshot 저장 완료 뒤에만 완료 플래그를 세운다.
+미저장 snapshot은 기본 전체 Replay 재시도 시 저장 경로를 다시 거친다.
+Main-owner swegca/agent/cognition 조회는 명시한 identity·sequence에 최초 기록
+또는 지정 revision을 반환한다. 현재 입력의 저장된 liveRevision도 반환하여
+호출자가 재시작 후 같은 결과를 정확히 조회할 수 있다. 입력 결합과 해시를
+검증하며 조회 자체는 새 판단이나 Re-evidence 권한을 생성하지 않는다.
+실제 stdio 3,653개 통과: 자동 응답의 seed7/step3, 명시적 seed19/step5 기록,
+재시작 양쪽 revision 일치, 최초 Replay 불변, 다른 입력·잘못된 digest 거절,
+반복 조회 파일 용량 불변을 확인했다. 최신 revision의 재시작 자동 탐색,
+종료 세션의 호스트 조회 경로와 모든 수동 후보 대조 영속화는 아직 남는다.
