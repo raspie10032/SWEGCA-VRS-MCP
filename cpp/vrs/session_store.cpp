@@ -327,6 +327,13 @@ void validate_cognition(const StoredExperience& record,std::string_view session)
        view.sender!=ExperienceSender::unspecified)
         throw std::runtime_error("invalid cognition metadata record");
 }
+DigestBytes cognition_head_id(const DigestBytes& session,const ExperienceLocation& input,
+    std::optional<DigestBytes> channel) {
+    const auto parent=cognition_id(session,input);
+    if(!channel)return parent;
+    Sha256 hash;hash.update("SWEGCA cognition channel head v1");hash.update(parent);hash.update(*channel);
+    return hash.finish();
+}
 }
 DigestBytes SessionStore::inventory() const {
     Sha256 hash;
@@ -383,14 +390,14 @@ std::optional<StoredExperience> SessionStore::read_cognition_revision(const Expe
     const DigestBytes& revision) const {
     return read_cognition_record(input,revision);
 }
-std::optional<StoredExperience> SessionStore::read_latest_cognition(const ExperienceLocation& input) const {
-    return read_cognition_record(input,std::nullopt,true);
+std::optional<StoredExperience> SessionStore::read_latest_cognition(const ExperienceLocation& input,std::optional<DigestBytes> channel) const {
+    return read_cognition_record(input,std::nullopt,true,channel);
 }
 std::optional<StoredExperience> SessionStore::read_cognition_record(const ExperienceLocation& input,
-    std::optional<DigestBytes> revision,bool latest) const {
+    std::optional<DigestBytes> revision,bool latest,std::optional<DigestBytes> channel) const {
     if(!usable_)throw std::logic_error("session unavailable");
     if(!blocks_.contains(input.block))throw std::invalid_argument("cognition input belongs to another session");
-    const auto identity=cognition_id(identity_,input,revision);
+    const auto identity=latest?cognition_head_id(identity_,input,channel):cognition_id(identity_,input,revision);
     const auto path=directory_/(latest?"cognition-latest":"cognition")/(hex(identity)+".block");
     if(!std::filesystem::exists(path))return std::nullopt;
     auto block=ExperienceBlock::open_reader(path,storage_);
@@ -410,18 +417,18 @@ std::optional<StoredExperience> SessionStore::read_cognition_record(const Experi
 void SessionStore::save_cognition(const ExperienceLocation& input,std::span<const std::byte> metadata) {
     save_cognition_record(input,metadata,std::nullopt);
 }
-DigestBytes SessionStore::save_cognition_revision(const ExperienceLocation& input,std::span<const std::byte> metadata) {
+DigestBytes SessionStore::save_cognition_revision(const ExperienceLocation& input,std::span<const std::byte> metadata,std::optional<DigestBytes> channel) {
     require(SessionOperation::append);
     if(metadata.empty()||metadata.size()>cognition_content_limit(name_,memory_))throw std::length_error("cognition metadata limit");
     const auto revision=Sha256::of(metadata);
     save_cognition_record(input,metadata,revision);
     const auto directory=directory_/"cognition-latest";
-    const auto key=hex(cognition_id(identity_,input));
+    const auto key=hex(cognition_head_id(identity_,input,channel));
     const auto current=directory/(key+".block");
     const auto sealed=directory_/"cognition"/(hex(cognition_id(identity_,input,revision))+".block");
     bool unchanged=false;
     if(std::filesystem::exists(current)){
-        (void)read_latest_cognition(input);
+        (void)read_latest_cognition(input,channel);
         unchanged=same_file(current,sealed);
     }
     try{

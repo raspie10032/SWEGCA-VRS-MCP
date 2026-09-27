@@ -86,11 +86,12 @@ public:
         std::uint64_t seed, std::uint64_t step) const;
     void save_cognition(const ExperienceLocation&, std::span<const std::byte> metadata);
     [[nodiscard]] architecture::DigestBytes save_cognition_revision(const ExperienceLocation&,
-        std::span<const std::byte> metadata);
+        std::span<const std::byte> metadata,std::optional<architecture::DigestBytes> channel={});
     [[nodiscard]] StoredExperience read_cognition_original(const architecture::DigestBytes& source,
         const ExperienceLocation&) const;
     [[nodiscard]] std::optional<StoredExperience> read_cognition_record(const architecture::DigestBytes& source,
-        const ExperienceLocation&,std::optional<architecture::DigestBytes> revision={},bool latest=false) const;
+        const ExperienceLocation&,std::optional<architecture::DigestBytes> revision={},bool latest=false,
+        std::optional<architecture::DigestBytes> channel={}) const;
     // Explicit owner maintenance outside input and while no merge job exists.
     // Original stores remain authoritative; this only releases sealed metadata.
     [[nodiscard]] bool page_out_main(const architecture::DigestBytes&,std::size_t original_index);

@@ -296,6 +296,15 @@ int main() {
             CHECK(storage.used()==before_republish);
             CHECK(text(session.read_latest_cognition(input)->view().content)==updated);
             CHECK(text(session.read_cognition_revision(input,revision)->view().content)==updated);
+            (void)session.save_cognition_revision(input,bytes("scope A"),id(70));
+            (void)session.save_cognition_revision(input,bytes("scope B"),id(71));
+            const auto scoped_used=storage.used();
+            (void)session.save_cognition_revision(input,bytes("scope A"),id(70));
+            CHECK(storage.used()==scoped_used&&session.original_count()==count);
+            CHECK(text(session.read_latest_cognition(input,id(70))->view().content)=="scope A");
+            CHECK(text(session.read_latest_cognition(input,id(71))->view().content)=="scope B");
+            CHECK(!session.read_latest_cognition(input,id(72)));
+            CHECK(text(session.read_latest_cognition(input)->view().content)==updated);
             CHECK(text(session.read_cognition(input)->view().content)==metadata);
             CHECK(!session.read_cognition_revision(forged,revision));
             CHECK(!session.read_cognition_revision(input,id(99)));
@@ -313,6 +322,8 @@ int main() {
             CHECK(text(session.read_cognition(input)->view().content)==metadata);
             CHECK(text(session.read_cognition_revision(input,revision)->view().content)==updated);
             CHECK(text(session.read_cognition_revision(input,later)->view().content)=="later core assessment");
+            CHECK(text(session.read_latest_cognition(input,id(70))->view().content)=="scope A");
+            CHECK(text(session.read_latest_cognition(input,id(71))->view().content)=="scope B");
             CHECK(text(session.read_latest_cognition(input)->view().content)==updated);
             CHECK(text(session.read_cognition_revision(input,wide_revision)->view().content)==wide);
             // An interrupted staging write is not a committed receipt.
@@ -326,6 +337,7 @@ int main() {
         {
             auto session=SessionStore::open(root,id(9),memory,&storage);
             CHECK(session.phase()==SessionPhase::ended);
+            CHECK(text(session.read_latest_cognition(input,id(70))->view().content)=="scope A");
             CHECK(text(session.read_cognition(input)->view().content)==metadata);
             CHECK(text(session.read_latest_cognition(input)->view().content)==updated);
             CHECK(text(session.read_cognition_revision(input,revision)->view().content)==updated);
@@ -358,8 +370,10 @@ int main() {
         expect_throw<std::runtime_error>([&]{(void)session.read_cognition(input);});
     }
     CHECK(memory.used()==0);
-    for(unsigned mode=0;mode<3;++mode){
+    for(unsigned mode=0;mode<6;++mode){
         const auto owner=id(11+mode);
+        const auto fault=mode%3;
+        const auto channel=mode>=3?std::optional<DigestBytes>(id(80)):std::nullopt;
         ExperienceLocation input;DigestBytes prior;
         const auto next=Sha256::of(bytes("new assessment"));
         StorageBudget storage(1<<20);std::uint64_t used=0;
@@ -367,18 +381,20 @@ int main() {
             auto session=SessionStore::create(root,owner,"publication-fault",1024,memory,&storage);
             input=session.append({0,0,"publication-fault","user","text/plain",bytes(raw)});
             session.save_cognition(input,bytes("initial assessment"));
-            prior=session.save_cognition_revision(input,bytes("prior assessment"));
+            if(channel)(void)session.save_cognition_revision(input,bytes("parent unchanged"));
+            prior=session.save_cognition_revision(input,bytes("prior assessment"),channel);
             // The first record-directory sync creates the staged block header;
             // the second follows linking the completed canonical record.
-            if(mode==0)fail_latest_rename=true;else if(mode==1)fail_latest_sync=true;else fail_cognition_sync=2;
-            expect_throw<std::system_error>([&]{(void)session.save_cognition_revision(input,bytes("new assessment"));});
+            if(fault==0)fail_latest_rename=true;else if(fault==1)fail_latest_sync=true;else fail_cognition_sync=2;
+            expect_throw<std::system_error>([&]{(void)session.save_cognition_revision(input,bytes("new assessment"),channel);});
             CHECK(!fail_latest_rename&&!fail_latest_sync&&!fail_cognition_sync&&!session.usable());
-            expect_throw<std::logic_error>([&]{(void)session.save_cognition_revision(input,bytes("new assessment"));});
+            expect_throw<std::logic_error>([&]{(void)session.save_cognition_revision(input,bytes("new assessment"),channel);});
             used=storage.used();
         }
         {
             auto session=SessionStore::open(root,owner,memory,&storage);
-            CHECK(text(session.read_latest_cognition(input)->view().content)==(mode==1?"new assessment":"prior assessment"));
+            CHECK(text(session.read_latest_cognition(input,channel)->view().content)==(fault==1?"new assessment":"prior assessment"));
+            if(channel)CHECK(text(session.read_latest_cognition(input)->view().content)=="parent unchanged");
             CHECK(text(session.read_cognition(input)->view().content)=="initial assessment");
             CHECK(text(session.read_cognition_revision(input,prior)->view().content)=="prior assessment");
             const auto sealed=session.read_cognition_revision(input,next);
@@ -387,17 +403,18 @@ int main() {
             // Even when rename succeeded before failure, retry must sync the
             // existing alias before acknowledging durable publication.
             fail_latest_sync=true;
-            expect_throw<std::system_error>([&]{(void)session.save_cognition_revision(input,bytes("new assessment"));});
+            expect_throw<std::system_error>([&]{(void)session.save_cognition_revision(input,bytes("new assessment"),channel);});
             CHECK(!fail_latest_sync&&!session.usable()&&storage.used()==used);
         }
         {
             auto session=SessionStore::open(root,owner,memory,&storage);
             const auto calls=latest_sync_calls;
             const auto record_calls=cognition_sync_calls;
-            CHECK(session.save_cognition_revision(input,bytes("new assessment"))==next);
+            CHECK(session.save_cognition_revision(input,bytes("new assessment"),channel)==next);
             CHECK(latest_sync_calls==calls+1&&storage.used()==used);
             CHECK(cognition_sync_calls==record_calls+1);
-            CHECK(text(session.read_latest_cognition(input)->view().content)=="new assessment");
+            CHECK(text(session.read_latest_cognition(input,channel)->view().content)=="new assessment");
+            if(channel)CHECK(text(session.read_latest_cognition(input)->view().content)=="parent unchanged");
             session.end();
         }
         CHECK(memory.used()==0);

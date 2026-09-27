@@ -876,6 +876,7 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
         check(restored['context']==measured_input['original']['digest'])
     # Resume must retain both scoped histories and all native sequence numbers.
     # An exact parent Recall still contains only its input originals.
+    scoped_input_sequence=producer_seq
     received,result=producer_trial(compound,8,'support',lambda v:v.update(scope='byte content unchanged'))
     check(received['refinement']['status']==0 and received['refinement']['strength']==1)
     check(received['candidateCount']=='16')
@@ -884,10 +885,26 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     def scoped_replay(receipt,scope,**extra):
         return c.call('tools/call',{'name':'vrs_replay','arguments':{'receipt':receipt,'scope':scope,**extra}})['result']
     scoped_receipt=received['receipt']
+    scoped_input_original=received['original']
+    scope_query={'identity':producer_owner,'inputOriginal':scoped_input_original,
+        'scope':'byte content unchanged','latest':True}
+    parent_record_before=c.call('swegca/agent/cognition',{'identity':producer_owner,
+        'inputOriginal':scoped_input_original,'latest':True})['result']
     parent_before=c.call('tools/call',{'name':'vrs_replay','arguments':{'receipt':scoped_receipt}})['result']['structuredContent']
     selected_scope=scoped_replay(scoped_receipt,'byte content unchanged')['structuredContent']
     check(selected_scope['original']==result['original'] and selected_scope['temporary'])
     check(selected_scope['scope']=='byte content unchanged' and selected_scope['parentCognitionUnchanged'])
+    scoped_initial=c.call('swegca/agent/cognition',scope_query)['result']
+    check(scoped_initial['revision']==scoped_initial['liveRevision']==selected_scope['revision'])
+    check(scoped_initial['record']['observationBoundary']=='9')
+    before_scope_repeat=sum(p.stat().st_size for p in producers_root.rglob('*.block'))
+    check(scoped_replay(scoped_receipt,'byte content unchanged')['structuredContent']==selected_scope)
+    check(sum(p.stat().st_size for p in producers_root.rglob('*.block'))==before_scope_repeat)
+    check('error' in c.call('swegca/agent/cognition',{**scope_query,'scope':'different scope'}))
+    check('error' in c.call('swegca/agent/cognition',{'identity':producer_owner,'inputOriginal':scoped_input_original,
+        'revision':scoped_initial['revision']}))
+    check('error' in c.call('swegca/agent/cognition',{'identity':producer_owner,'inputOriginal':scoped_input_original,
+        'scope':'different scope','revision':scoped_initial['revision']}))
     for bad_scope in ('','unknown scope',None):
         check(scoped_replay(scoped_receipt,bad_scope)['isError'])
     check(scoped_replay(scoped_receipt,'byte content unchanged',candidate='0')['isError'])
@@ -903,12 +920,21 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
                         'scope':'byte content unchanged','outcome':'refute','confidence':1.0,
                         'hasExpiry':False,'expiresAt':'0'}}}}}}
         _,scoped_counter_record=producer_frame('server',scoped_counter)
+    # This is a read-only journal lookup before another scoped Replay. The
+    # late-conflict comparison must already have been persisted before ACK.
+    scoped_after_event=c.call('swegca/agent/cognition',scope_query)['result']
+    saved_scope_assessment=json.loads(scoped_after_event['record']['replayPrefix']+'"}')['assessment']
+    check(saved_scope_assessment['agreement']==3 and saved_scope_assessment['reEvidencePerformed'])
+    check(scoped_after_event['revision']!=scoped_initial['revision'])
     refreshed_scope=scoped_replay(scoped_receipt,'byte content unchanged')['structuredContent']
+    check(refreshed_scope['revision']==scoped_after_event['revision'])
     check(refreshed_scope['original']==selected_scope['original'])
     check(refreshed_scope['assessment']['agreement']==3 and refreshed_scope['assessment']['status']==2)
     check(refreshed_scope['assessment']['reEvidencePerformed'] and refreshed_scope['assessment']['currentOriginalCount']=='8')
     parent_after=c.call('tools/call',{'name':'vrs_replay','arguments':{'receipt':scoped_receipt}})['result']['structuredContent']
     check(parent_after==parent_before)
+    check(c.call('swegca/agent/cognition',{'identity':producer_owner,
+        'inputOriginal':scoped_input_original,'latest':True})['result']==parent_record_before)
     current_input_sequence=producer_seq
     _,recalled=producer_frame('client',{'id':producer_seq+1,'method':'turn/start',
         'params':{'threadId':'producer-thread','input':[{'type':'text','text':'claim support'}]}})
@@ -929,6 +955,16 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     c.close()
     c=Client('open',producers_root,path);c.initialize()
     check(c.call('swegca/agent/attach/resume',producer_binding)['result']['nextSequence']==str(producer_seq))
+    scoped_recovered=c.call('swegca/agent/cognition',scope_query)['result']
+    check(scoped_recovered['record']==scoped_after_event['record'] and scoped_recovered['revision']==scoped_after_event['revision'])
+    check(scoped_recovered['liveRevision'] is None)
+    old_input=c.call('swegca/agent/original',{'identity':producer_owner,'sequence':str(scoped_input_sequence)})['result']
+    historical=c.call('swegca/agent/event',{'sequence':str(scoped_input_sequence),'observedAt':old_input['observedAt'],
+        'seed':'7','step':str(scoped_input_sequence),'sender':'client','native':old_input['native']})['result']
+    archived_scope=scoped_replay(historical['receipt'],'byte content unchanged')['structuredContent']
+    check(archived_scope['historical'] and archived_scope['revision']==scoped_after_event['revision'])
+    check(archived_scope['original']==refreshed_scope['original'] and archived_scope['assessment']==refreshed_scope['assessment'])
+    check(archived_scope['contentHex']==refreshed_scope['contentHex'])
     recovered_cognition=c.call('swegca/agent/cognition',{'identity':producer_owner,'sequence':str(current_input_sequence),'latest':True})['result']
     check(recovered_cognition['revision']==refreshed['revision'] and recovered_cognition['record']==refreshed['record'])
     check(c.call('swegca/work',{'seed':'7','step':'0'})['result']['merged']=='0')
@@ -941,6 +977,9 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     archived=c.call('swegca/agent/cognition',{'identity':producer_owner,
         'inputOriginal':recalled['original'],'latest':True})['result']
     check(archived['record']==refreshed['record'] and archived['revision']==refreshed['revision'])
+    ended_scope=c.call('swegca/agent/cognition',scope_query)['result']
+    check(ended_scope['record']==scoped_after_event['record'] and ended_scope['revision']==scoped_after_event['revision'])
+    check(ended_scope['liveRevision'] is None)
     consumer_binding=dict(producer_binding,session='consumer-thread')
     consumer=c.call('swegca/agent/attach',consumer_binding)['result']['identity']
     check(c.call('swegca/select',{'identity':consumer})['result']=={})

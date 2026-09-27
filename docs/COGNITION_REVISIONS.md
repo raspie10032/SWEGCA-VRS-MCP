@@ -1,5 +1,58 @@
 # Immutable cognition revisions
 
+## Scoped comparison revisions (2026-09-27)
+
+Scoped Replay now saves its selected original, source session, exact scope,
+scope connection, observation boundary, seed/step and complete exported
+assessment prefix. These are derived records, not new evidence samples.
+The existing immutable revision blocks are reused. A domain-separated channel
+head in `cognition-latest` keeps each `(inputOriginal, scope)` latest pointer
+separate from the parent's latest pointer. Publication uses the existing sealed
+block, hard-link, rename and directory-sync sequence; ended inventory includes
+all channel heads under its existing canonical filename checks.
+
+Example Main-owner query:
+
+```json
+{"jsonrpc":"2.0","id":1,"method":"swegca/agent/cognition","params":{"identity":"<source session>","inputOriginal":{"block":"<block>","offset":"<offset>","bytes":"<bytes>","digest":"<digest>"},"scope":"byte content unchanged","latest":true}}
+```
+
+An explicit `revision` can replace `latest:true`. Scope queries require one of
+these selectors. The reader validates the stored scope as well as the input
+binding; a scoped revision cannot be read as a parent revision or as another
+scope. `liveRevision` is present only for the corresponding completed, saved
+in-memory scoped comparison. Merely reading a saved record does not create a
+live comparison or Re-evidence receipt.
+
+The first successful scoped Replay persists before replying. Later admitted
+native counterevidence refreshes and persists its scoped comparison before ACK.
+A failed save does not set the saved flag. Repeated queries of an unchanged
+saved comparison do not republish or add observations. Parent cognition and its
+latest pointer are not changed by these scoped publications.
+
+After restarting an active native session, retransmitting its original input
+obtains the existing historical receipt. `vrs_replay` with that receipt and
+`scope` exports the stored latest scoped assessment and its exact selected
+original, marked `historical:true`, with its revision digest. It reads the
+authenticated original, not a fresh candidate or the present filesystem state.
+Ended sources support the owner query above before/after Main merge without
+reattaching an input route.
+
+**Remaining boundary:** a saved scoped comparison is an archived result.
+Automatic reconstruction of a live route-issued comparison from its stored
+observation boundary, and automatic continuation against further evidence after
+process restart, are not implemented here. Stored JSON is not treated as a
+new authority-bearing receipt. Natural-language scope interpretation, installed
+desktop use and full resource/latency gates remain incomplete.
+
+Verification: CPU 6,7 / make -j2; **5232 stdio checks**, **512 session checks**.
+The stdio test reads the scoped journal *before* another scoped Replay to prove
+late-conflict persistence before ACK, verifies immutable repeated reads, scope
+mismatch rejection, unchanged parent latest, restart/historical export and
+ended/Main reads. Storage tests cover independent channel heads, reuse without
+new samples, restart/end inventory, failed rename, failed record/directory sync,
+and explicit retry through reopen without altering the parent channel.
+
 The native Main host persists the initial input-time cognition at its existing
 input key. Later successful automatic comparisons and explicit Re-evidence of
 the current automatic Replay publish immutable revisions through Runtime,

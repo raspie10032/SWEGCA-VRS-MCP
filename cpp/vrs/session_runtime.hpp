@@ -57,8 +57,12 @@ public:
         require_usable();return store_.read_cognition(input);
     }
     [[nodiscard]] architecture::DigestBytes save_cognition_revision(const ExperienceLocation& input,
-        std::span<const std::byte> metadata) {
-        require_usable();return store_.save_cognition_revision(input,metadata);
+        std::span<const std::byte> metadata,std::optional<architecture::DigestBytes> channel={}) {
+        require_usable();return store_.save_cognition_revision(input,metadata,channel);
+    }
+    [[nodiscard]] std::optional<StoredExperience> read_latest_cognition(const ExperienceLocation& input,
+        std::optional<architecture::DigestBytes> channel={}) const {
+        require_usable();return store_.read_latest_cognition(input,channel);
     }
     void end();
     void publish_originals();
@@ -251,6 +255,7 @@ public:
     ReplayComparison(ReplayComparison&&) noexcept = default;
     [[nodiscard]] const ReEvidenceResult& evidence() const noexcept { return evidence_; }
     [[nodiscard]] architecture::kernel::ReplayAgreement agreement() const noexcept { return evidence_.agreement(); }
+    [[nodiscard]] std::size_t observation_boundary() const noexcept { return boundary_; }
 private:
     friend class ExperienceRouter;
     ReplayComparison(ReEvidenceResult evidence, std::shared_ptr<const std::byte> issuer, std::size_t boundary)

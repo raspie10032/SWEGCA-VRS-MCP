@@ -201,8 +201,8 @@ ReEvidenceResult Runtime::re_evidence(const ReplayedInput& replayed,const Replay
 void Runtime::save_cognition(const ExperienceLocation& input,std::span<const std::byte> metadata) {
     require_active();require_session().runtime.save_cognition(input,metadata);
 }
-DigestBytes Runtime::save_cognition_revision(const ExperienceLocation& input,std::span<const std::byte> metadata) {
-    require_active();return require_session().runtime.save_cognition_revision(input,metadata);
+DigestBytes Runtime::save_cognition_revision(const ExperienceLocation& input,std::span<const std::byte> metadata,std::optional<DigestBytes> channel) {
+    require_active();return require_session().runtime.save_cognition_revision(input,metadata,channel);
 }
 StoredExperience Runtime::read_cognition_original(const DigestBytes& source,const ExperienceLocation& original) const {
     const auto found=sources_.sources_.find(source);
@@ -213,14 +213,14 @@ StoredExperience Runtime::read_cognition_original(const DigestBytes& source,cons
     return found->second.store->read(original,config_.read_limit);
 }
 std::optional<StoredExperience> Runtime::read_cognition_record(const DigestBytes& source,
-    const ExperienceLocation& input,std::optional<DigestBytes> revision,bool latest) const {
+    const ExperienceLocation& input,std::optional<DigestBytes> revision,bool latest,std::optional<DigestBytes> channel) const {
     if(latest&&revision)throw std::invalid_argument("choose latest or revision");
     const auto found=sources_.sources_.find(source);
     if(found==sources_.sources_.end()||!found->second.store||!found->second.store->usable())
         throw std::invalid_argument("recorded cognition source unavailable");
     // Read a Main-owned immutable record without acquiring an input route or
     // changing the currently selected session, including after publication.
-    if(latest)return found->second.store->read_latest_cognition(input);
+    if(latest)return found->second.store->read_latest_cognition(input,channel);
     return revision?found->second.store->read_cognition_revision(input,*revision):
         found->second.store->read_cognition(input);
 }
