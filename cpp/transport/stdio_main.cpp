@@ -234,7 +234,7 @@ private:
         }
         body+=']';
     }
-    std::pmr::string host(std::string_view method,const Json& p){
+    std::pmr::string host(std::string_view method,Json& p){
         if(method=="swegca/agent/attach"||method=="swegca/agent/attach/resume"||method=="swegca/agent/attach/ensure"){
             const auto provider=p.at("provider").string();
             if(provider!="codex")throw std::invalid_argument("native provider adapter unavailable");
@@ -326,8 +326,12 @@ private:
                 const auto cue=input?request_event.cue_content():request_event.native_bytes();
                 request_connection=input_cue(input?request_event.cue_media():"application/json",std::as_bytes(std::span(cue)));
             }else{
-                parsed_event.emplace(state.connection_scope?adapt_codex_app_server_connection(p.at("native").string(),state.native_session,memory_):state.app_server?adapt_codex_app_server(p.at("native").string(),memory_):
-                    adapt_codex_hook(p.at("native").string(),memory_));
+                auto& native=p.at("native");
+                (void)native.string();
+                if(state.app_server)
+                    parsed_event.emplace(adapt_owned_codex_app_server(std::move(native.scalar),memory_,
+                        state.connection_scope?std::string_view(state.native_session):std::string_view{}));
+                else parsed_event.emplace(adapt_codex_hook(native.string(),memory_));
             }
             const auto& event=response?response->event():*parsed_event;
             SWEGCA_INGRESS_STAGE("host_native_adapted");

@@ -70,6 +70,7 @@ private:
     static AgentEvent from_app_server_connection(std::string_view,Json,std::string_view,std::pmr::memory_resource&);
     friend AgentEvent adapt_codex_app_server_connection(std::string_view,std::string_view,std::pmr::memory_resource&);
     friend AgentEvent adapt_codex_app_server(std::string_view,std::pmr::memory_resource&);
+    friend AgentEvent adapt_owned_codex_app_server(std::pmr::string,std::pmr::memory_resource&,std::string_view);
     friend AgentEvent adapt_codex_hook(std::string_view,std::pmr::memory_resource&);
     AgentEvent(std::string_view native,Json parsed,architecture::kernel::AgentEventKind kind,
         std::pmr::memory_resource& memory):native_(native,&memory),parsed_(std::move(parsed)),kind_(kind),cue_(&memory),bound_session_(&memory){}
@@ -161,5 +162,17 @@ inline AgentEvent adapt_codex_app_server_connection(std::string_view bytes,std::
 }
 inline AgentEvent adapt_codex_app_server(std::string_view bytes,std::pmr::memory_resource& memory){
     return AgentEvent::from_app_server(bytes,parse_json(bytes,memory),memory);
+}
+// The transport already owns the native frame in this same budget. Transfer it
+// only after the ordinary syntax and binding checks; retain exact wire bytes.
+inline AgentEvent adapt_owned_codex_app_server(std::pmr::string bytes,
+    std::pmr::memory_resource& memory,std::string_view connection={}){
+    if(bytes.get_allocator().resource()!=&memory)
+        throw std::invalid_argument("native frame allocator mismatch");
+    auto parsed=parse_json(bytes,memory);
+    auto event=connection.empty()?AgentEvent::from_app_server({},std::move(parsed),memory):
+        AgentEvent::from_app_server_connection({},std::move(parsed),connection,memory);
+    event.native_=std::move(bytes);
+    return event;
 }
 } // namespace swegca::transport

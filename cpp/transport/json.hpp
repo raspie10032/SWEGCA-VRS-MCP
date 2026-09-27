@@ -17,6 +17,9 @@ struct Json {
     std::pmr::vector<std::pmr::string> keys;
     [[nodiscard]] const Json* find(std::string_view key) const noexcept;
     [[nodiscard]] const Json& at(std::string_view key) const;
+    [[nodiscard]] Json& at(std::string_view key) {
+        return const_cast<Json&>(static_cast<const Json&>(*this).at(key));
+    }
     [[nodiscard]] std::string_view string() const;
 };
 [[nodiscard]] Json parse_json(std::string_view text,std::pmr::memory_resource&,std::size_t max_depth=64);

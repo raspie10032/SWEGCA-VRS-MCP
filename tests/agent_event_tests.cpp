@@ -140,5 +140,54 @@ int main(){
   rejects([&]{(void)adapt_codex_app_server_connection(raw,"connection",memory);});
  }
  CHECK(memory.used()==0);
+ // Owned frames preserve byte identity and the borrowed adapter's semantics.
+ for(const bool connection:{false,true}){
+  const std::string raw=connection?
+   R"( {"id":1,"method":"initialize","params":{"unknown":"keep"}} )":
+   R"( {"id":1,"method":"turn/start","params":{"threadId":"t","input":[{"type":"text","text":"hello"}],"unknown":"keep"}} )";
+  {
+   std::pmr::string frame(raw,&memory);const auto* address=frame.data();
+   auto event=adapt_owned_codex_app_server(std::move(frame),memory,connection?"peer":"");
+   auto borrowed=connection?adapt_codex_app_server_connection(raw,"peer",memory):adapt_codex_app_server(raw,memory);
+   CHECK(event.native_bytes().data()==address);
+   CHECK(event.native_bytes()==raw&&event.session()==borrowed.session());
+   CHECK(event.kind()==borrowed.kind());
+   if(!connection)CHECK(event.cue_content()==borrowed.cue_content());
+   auto moved=std::move(event);
+   CHECK(moved.native_bytes().data()==address&&moved.native_bytes()==raw);
+   CHECK(moved.fields().at("params").at("unknown").string()=="keep");
+  }
+  CHECK(memory.used()==0);
+ }
+ {
+  swegca::vrs::MemoryBudget other(1<<20);
+  rejects([&]{(void)adapt_owned_codex_app_server(std::pmr::string("{}", &other),memory);});
+  CHECK(other.used()==0&&memory.used()==0);
+ }
+ for(const auto raw:{"{",R"({"id":1,"method":"turn/start","params":{"threadId":"t","input":3}})"}){
+  rejects([&]{(void)adapt_owned_codex_app_server(std::pmr::string(raw,&memory),memory);});
+  CHECK(memory.used()==0);
+ }
+ {
+  const std::string raw=R"({"id":1,"method":"turn/start","params":{"threadId":"t","input":[{"type":"text","text":")"+
+      std::string(1<<20,'x')+R"("}]}})";
+  swegca::vrs::MemoryBudget borrowed_memory(8<<20),owned_memory(8<<20);
+  std::size_t borrowed_used=0,owned_used=0;
+  {
+   std::pmr::string frame(raw,&borrowed_memory);
+   auto event=adapt_codex_app_server(frame,borrowed_memory);
+   CHECK(event.native_bytes()==raw);
+   borrowed_used=borrowed_memory.used();
+  }
+  {
+   std::pmr::string frame(raw,&owned_memory);const auto* address=frame.data();
+   auto event=adapt_owned_codex_app_server(std::move(frame),owned_memory);
+   CHECK(event.native_bytes()==raw&&event.native_bytes().data()==address);
+   owned_used=owned_memory.used();
+  }
+  CHECK(borrowed_memory.used()==0&&owned_memory.used()==0);
+  CHECK(borrowed_used>=owned_used+raw.size());
+  CHECK(owned_memory.peak_reserved()<=borrowed_memory.peak_reserved());
+ }
  std::printf("agent event tests: %u checks passed\n",checks);
 }
