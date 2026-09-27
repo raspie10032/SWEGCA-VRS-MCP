@@ -84,3 +84,33 @@ Verification: 29 dedicated framing checks cover exact limits, empty frames,
 oversize draining followed by valid messages, truncated EOF, invalid descriptor,
 and 1/4095/4096/4097/65536-byte writer chunks crossing staging boundaries.
 The actual stdio process suite also passed all 2,560 checks after replacement.
+
+## Structured event parameters
+
+AppServerWire and Pump now return owned JSON fields to AgentEventCommit. The
+commit owner adds the authenticated session identity and serializes once. This
+removes the previous parameters stringify → parse → stringify cycle and an
+extra full parameter-string copy in envelope construction. There is no legacy
+string-parameter overload. Native bytes, sender, sequence, observed time, seed,
+step and optional request sequence retain their wire representation. The host
+still independently parses and validates its received envelope/native event.
+SWEGCA routing, receipts and evidence validation are unchanged.
+
+Raw `desktop-recall-structured-parameters.jsonl` was collected while the test
+binary was compiling on the same two CPUs; it is retained as a diagnostic sample,
+not used for the direct comparison. A second run after that build and all tests
+finished is `desktop-recall-structured-parameters-no-build.jsonl`:
+
+| Prompt bytes | Prior median ms | Structured median ms | Structured maximum ms |
+| --- | ---: | ---: | ---: |
+| 128 | 0.014400 | 0.016000 | 0.041030 |
+| 4096 | 0.038430 | 0.032160 | 0.051761 |
+| 65536 | 0.501295 | 0.429134 | 0.496725 |
+| 1048576 | 8.075066 | 6.537251 | 6.732564 |
+
+All five 1MiB samples remain above 1ms. Small-input variation prevents claiming
+uniform speedup. No new conclusion about actual GUI or large Main follows.
+Verification: Wire 74 checks, Pump 92 checks, stdio subprocess 2,560 checks.
+Pump checks include large native content with Unicode/escapes/all control bytes,
+malformed field shapes, duplicate fields, owner identity rejection, preserved
+request bytes on failed acknowledgements and authenticated completion receipts.

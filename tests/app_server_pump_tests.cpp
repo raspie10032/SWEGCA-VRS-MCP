@@ -11,11 +11,21 @@ template<class F>void rejects(F f){bool failed=false;try{f();}catch(const std::e
 void send_frame(int fd,std::string_view text){auto framed=std::string(text)+"\n";std::string_view rest=framed;while(!rest.empty()){const auto n=::send(fd,rest.data(),rest.size(),MSG_NOSIGNAL);CHECK(n>0);rest.remove_prefix(static_cast<std::size_t>(n));}}
 void commit_checks(swegca::vrs::MemoryBudget& memory){
  const std::string identity(64,'a');
- rejects([&]{AgentEventCommit invalid("bad","{}","x",memory);});
- rejects([&]{AgentEventCommit invalid(identity,"[]","x",memory);});
- rejects([&]{AgentEventCommit invalid(identity,"{}","",memory);});
- rejects([&]{AgentEventCommit invalid(identity,R"({"identity":"other"})","x",memory);});
- AgentEventCommit commit(identity,"{\n\"sequence\":\"0\",\"native\":\"line\\nnext\"\n}","x",memory);
+ rejects([&]{AgentEventCommit invalid("bad",parse_json("{}",memory),"x",memory);});
+ rejects([&]{AgentEventCommit invalid(identity,parse_json("[]",memory),"x",memory);});
+ rejects([&]{AgentEventCommit invalid(identity,parse_json("{}",memory),"",memory);});
+ rejects([&]{AgentEventCommit invalid(identity,parse_json(R"({"identity":"other"})",memory),"x",memory);});
+ rejects([&]{auto malformed=parse_json("{}",memory);malformed.keys.emplace_back("native");AgentEventCommit invalid(identity,std::move(malformed),"x",memory);});
+ rejects([&]{auto duplicate=parse_json(R"({"native":"a"})",memory);duplicate.keys.emplace_back("native");Json extra(&memory);extra.kind=Json::Kind::string;duplicate.values.push_back(std::move(extra));AgentEventCommit invalid(identity,std::move(duplicate),"x",memory);});
+ {
+  std::string native(65536,'x');native+="한글🙂\"\\";for(char c=0;c<32;++c)native+=c;
+  auto fields=parse_json(R"({"native":""})",memory);fields.values[0].scalar=native;
+  AgentEventCommit large(identity,std::move(fields),"large",memory);
+  const auto decoded=parse_json(large.request(),memory);
+  CHECK(decoded.at("params").at("native").string()==native);
+  CHECK(decoded.at("params").at("identity").string()==identity);
+ }
+ AgentEventCommit commit(identity,parse_json("{\n\"sequence\":\"0\",\"native\":\"line\\nnext\"\n}",memory),"x",memory);
  const std::string pending(commit.request());
  CHECK(parse_json(pending,memory).at("params").at("identity").string()==identity);
  rejects([&]{(void)commit.reply();});
@@ -66,7 +76,7 @@ int main(int argc,char** argv){
     send_frame(sender==RpcSender::client?client[1]:server[1],raw);
     unsigned calls=0;
     const auto ingest=[&](const AppServerWire::Delivery& plan){
-     ++calls;std::cout<<"{\"session\":"<<quote_json(plan.event().session(),memory)<<",\"parameters\":"<<pump.parameters(plan,7,0)<<"}\n"<<std::flush;
+     ++calls;std::cout<<"{\"session\":"<<quote_json(plan.event().session(),memory)<<",\"parameters\":"<<encode_json(pump.parameters(plan,7,0),memory)<<"}\n"<<std::flush;
      AgentEventCommit commit(bindings.at(plan.event().session()).string(),pump.parameters(plan,7,0),std::to_string(++rpc_serial),memory);
      while(commit.stage()!=AgentEventCommit::Stage::complete){
       std::cout<<commit.request()<<"\n"<<std::flush;
@@ -85,13 +95,13 @@ int main(int argc,char** argv){
    CHECK(pump.pending_requests()==0);
   }else{
    unsigned calls=0;std::string attempted;
-   const auto rejected=[&](const AppServerWire::Delivery& plan){++calls;attempted=pump.parameters(plan,7,0);return false;};
+   const auto rejected=[&](const AppServerWire::Delivery& plan){++calls;attempted=encode_json(pump.parameters(plan,7,0),memory);return false;};
    CHECK(pump.step(RpcSender::client,42,rejected)==State::idle&&calls==0);
    send_frame(client[1],a);send_frame(server[1],b);
    CHECK(pump.step(RpcSender::client,42,rejected)==State::waiting_for_record&&calls==1);
    CHECK(server_out.poll()==SocketFrames::State::pending);
    CHECK(pump.step(RpcSender::server,43,rejected)==State::waiting_for_record&&calls==1);
-   const auto accepted=[&](const AppServerWire::Delivery& plan){++calls;CHECK(std::string_view(pump.parameters(plan,7,0))==attempted);return true;};
+   const auto accepted=[&](const AppServerWire::Delivery& plan){++calls;CHECK(std::string_view(encode_json(pump.parameters(plan,7,0),memory))==attempted);return true;};
    CHECK(pump.step(RpcSender::client,999,accepted)==State::forwarding&&calls==2);
    CHECK(pump.step(RpcSender::client,1000,accepted)==State::forwarded&&calls==2);
    CHECK(server_out.poll()==SocketFrames::State::frame&&server_out.frame()==a);server_out.consumed();

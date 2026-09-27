@@ -12,14 +12,16 @@ namespace swegca::transport {
 class AgentEventCommit final {
 public:
     enum class Stage { event, complete };
-    AgentEventCommit(std::string_view identity,std::string_view parameters,
+    AgentEventCommit(std::string_view identity,Json parsed,
         std::string_view id,std::pmr::memory_resource& memory)
         :memory_(memory),event_id_(id,&memory),event_(&memory),reply_(&memory){
         hex(identity);
         if(id.empty())throw std::invalid_argument("commit request ID required");
-        auto parsed=parse_json(parameters,memory);
-        if(parsed.kind!=Json::Kind::object)
+        if(parsed.kind!=Json::Kind::object||parsed.keys.size()!=parsed.values.size())
             throw std::invalid_argument("event parameters must be an object");
+        for(std::size_t i=0;i<parsed.keys.size();++i)
+            for(std::size_t j=0;j<i;++j)if(parsed.keys[i]==parsed.keys[j])
+                throw std::invalid_argument("duplicate event parameter");
         if(parsed.find("identity"))throw std::invalid_argument("event target belongs to transport owner");
         Json target(&memory);target.kind=Json::Kind::string;target.scalar=identity;
         parsed.keys.emplace_back("identity");parsed.values.push_back(std::move(target));
@@ -70,8 +72,9 @@ private:
         return result;
     }
     std::pmr::string envelope(std::string_view id,std::string_view method,std::string_view params){
-        return "{\"jsonrpc\":\"2.0\",\"id\":"+quote_json(id,memory_)+",\"method\":"+
-            quote_json(method,memory_)+",\"params\":"+std::pmr::string(params,&memory_)+"}";
+        auto result="{\"jsonrpc\":\"2.0\",\"id\":"+quote_json(id,memory_)+",\"method\":"+
+            quote_json(method,memory_)+",\"params\":";
+        result.append(params);result+='}';return result;
     }
     std::pmr::memory_resource& memory_;
     std::pmr::string event_id_,event_,reply_;

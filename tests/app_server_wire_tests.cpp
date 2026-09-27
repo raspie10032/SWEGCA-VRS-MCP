@@ -19,7 +19,7 @@ int main(){
   rejects([&]{(void)wire.prepare(a,RpcSender::server,0);});
   auto input=wire.prepare(a,RpcSender::client,42);
   CHECK(input.event().session()=="a"&&input.sequence()==0&&input.observed_at()==42&&!input.request_sequence());
-  auto params=parse_json(wire.parameters(input,7,2),memory);
+  auto params=wire.parameters(input,7,2);
   CHECK(params.at("native").string()==a&&params.at("sequence").string()=="0"&&params.at("observedAt").string()=="42");
   CHECK(!params.find("requestSequence"));
   rejects([&]{(void)wire.forward(input);});CHECK(wire.pending_requests()==0);
@@ -33,7 +33,7 @@ int main(){
   CHECK(response_a.event().session()=="a"&&response_b.event().session()=="b");
   CHECK(response_a.sequence()==1&&response_b.sequence()==5);
   CHECK(response_a.request_sequence()==0&&response_b.request_sequence()==4);
-  auto response_params=parse_json(wire.parameters(response_b,8,3),memory);
+  auto response_params=wire.parameters(response_b,8,3);
   CHECK(response_params.at("requestSequence").string()=="4"&&response_params.at("native").string()==reply);
   rejects([&]{(void)wire.forward(response_a);});
   wire.recorded(response_b);CHECK(wire.pending_requests()==1&&wire.forward(response_b)==reply);

@@ -178,15 +178,20 @@ public:
         else {delivery.newline_=true;::close(delivery.socket_);delivery.socket_=-1;identity_->active[lane]=0;}
         return delivery.newline_;
     }
-    [[nodiscard]] std::pmr::string parameters(const Delivery& delivery,std::uint64_t seed,std::uint64_t step) const{
+    [[nodiscard]] Json parameters(const Delivery& delivery,std::uint64_t seed,std::uint64_t step) const{
         validate(delivery);
-        auto body=std::pmr::string("{\"sequence\":\"",&memory_)+std::to_string(delivery.sequence_).c_str()+
-            "\",\"observedAt\":\""+std::to_string(delivery.observed_).c_str()+"\",\"seed\":\""+
-            std::to_string(seed).c_str()+"\",\"step\":\""+std::to_string(step).c_str()+"\",\"native\":"+
-            quote_json(delivery.event().native_bytes(),memory_);
-        body+=delivery.sender_==RpcSender::client?",\"sender\":\"client\"":",\"sender\":\"server\"";
-        if(const auto sequence=delivery.request_sequence()){body+=",\"requestSequence\":\"";body+=std::to_string(*sequence);body+='"';}
-        body+='}';return body;
+        Json body(&memory_);body.kind=Json::Kind::object;
+        const auto add=[&](std::string_view name,std::string_view value){
+            Json field(&memory_);field.kind=Json::Kind::string;field.scalar=value;
+            body.keys.emplace_back(name);body.values.push_back(std::move(field));
+        };
+        add("sequence",std::to_string(delivery.sequence_));
+        add("observedAt",std::to_string(delivery.observed_));
+        add("seed",std::to_string(seed));add("step",std::to_string(step));
+        add("native",delivery.event().native_bytes());
+        add("sender",delivery.sender_==RpcSender::client?"client":"server");
+        if(const auto sequence=delivery.request_sequence())add("requestSequence",std::to_string(*sequence));
+        return body;
     }
     [[nodiscard]] std::size_t pending_requests() const noexcept{return requests_.pending();}
     // Recovery caller must supply an authenticated committed request and its
