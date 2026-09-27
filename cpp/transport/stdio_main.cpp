@@ -922,7 +922,9 @@ private:
                 const auto saved=parse_json(content_text(*record),memory_);
                 if(record_address(saved.at("inputOriginal"))!=input||saved.at("scope").string()!=name)
                     throw std::invalid_argument("recorded scope cognition binding mismatch");
-                auto original=runtime_.read_cognition_original(digest(saved.at("sourceSession").string()),record_address(saved.at("selectedOriginal")));
+                auto original=runtime_.read_scoped_cognition_original(input,name,
+                    digest(saved.at("scopeConnection").string()),digest(saved.at("sourceSession").string()),
+                    record_address(saved.at("selectedOriginal")));
                 std::pmr::string prefix(saved.at("replayPrefix").string(),&memory_);
                 constexpr std::string_view content_field=",\"contentHex\":\"";
                 if(!prefix.ends_with(content_field))throw std::invalid_argument("invalid recorded scope Replay prefix");

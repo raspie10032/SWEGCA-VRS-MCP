@@ -212,6 +212,20 @@ StoredExperience Runtime::read_cognition_original(const DigestBytes& source,cons
     // reselection, and no reconstruction of a current Re-evidence authority.
     return found->second.store->read(original,config_.read_limit);
 }
+StoredExperience Runtime::read_scoped_cognition_original(const ExperienceLocation& input,std::string_view scope,const DigestBytes& connection,
+    const DigestBytes& source,const ExperienceLocation& original) const {
+    if(scope.empty())throw std::invalid_argument("recorded scope requires a name");
+    const auto rules=make_evidence_rules(config_.policy);
+    const auto parent=require_session().runtime.read_original(input);
+    const auto parent_evidence=decode_evidence(rules,parent);
+    const auto expected=input_observation_scope(parent_evidence.value().hypothesis,scope);
+    if(connection!=expected)throw std::invalid_argument("recorded scope connection mismatch");
+    auto selected=read_cognition_original(source,original);
+    const auto evidence=decode_evidence(rules,selected);
+    if(evidence.value().hypothesis!=expected||!evidence.has_input_key()||evidence.cue()!=expected)
+        throw std::invalid_argument("recorded scope original mismatch");
+    return selected;
+}
 std::optional<StoredExperience> Runtime::read_cognition_record(const DigestBytes& source,
     const ExperienceLocation& input,std::optional<DigestBytes> revision,bool latest,std::optional<DigestBytes> channel) const {
     if(latest&&revision)throw std::invalid_argument("choose latest or revision");

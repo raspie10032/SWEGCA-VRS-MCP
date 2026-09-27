@@ -689,5 +689,24 @@ int main(){
   CHECK(singleton_budget.used()==0);
   std::printf("inventory 512 inode peak: %zu bytes\n",shared_budget.peak_reserved());
  }
+ {
+  const auto path=root/"scope-original-binding";fs::create_directory(path);
+  ExperienceLocation input,selected;DigestBytes connection;
+  {
+   auto host=Runtime::create(path,config,memory);host.start_session(id(240),"scope");
+   input=host.retain({0,0,"scope","user","text/plain",content},7,0).original;
+   EvidenceObservation value;value.source=id(241);value.producer=id(242);
+   value.observed_at=1;value.outcome=EvidenceOutcome::support;
+   auto result=host.observe_input_scope(input,"content",{1,1,"scope","tool","text/plain",content},value,7,1);
+   selected=result.original;connection=result.refinement.connection();
+  }
+  auto host=Runtime::open(path,config,memory);host.resume_session(id(240));
+  CHECK(host.read_scoped_cognition_original(input,"content",connection,id(240),selected).location()==selected);
+  throws<std::invalid_argument>([&]{(void)host.read_scoped_cognition_original(input,"permissions",connection,id(240),selected);});
+  throws<std::invalid_argument>([&]{(void)host.read_scoped_cognition_original(input,"content",id(243),id(240),selected);});
+  throws<std::invalid_argument>([&]{(void)host.read_scoped_cognition_original(input,"content",connection,id(240),input);});
+  throws<std::invalid_argument>([&]{(void)host.read_scoped_cognition_original(input,"content",connection,id(244),selected);});
+  throws<std::invalid_argument>([&]{(void)host.read_scoped_cognition_original(input,"",connection,id(240),selected);});
+ }
  CHECK(memory.used()==0);fs::remove_all(root);std::printf("runtime lifecycle tests: %u checks passed\n",checks);
 }

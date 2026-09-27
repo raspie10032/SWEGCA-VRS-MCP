@@ -96,3 +96,17 @@ CPU 6,7 / make -j2 재빌드 후 stdio **5176 checks passed**. 임시 scoped 조
 부모 결과 불변, Main scoped 조회, 실제 파일 상태를 변경해도 원래 측정 원문을 반환,
 다른 세션의 오래된 receipt 거부를 확인했다. 이 검증은 큰 Main의 시간/메모리
 성능이나 자연어에서 scope를 자동 해석하는 기능을 증명하지 않는다.
+
+## 복구 조회의 실제 원경험 결속 검증
+
+historical scoped Replay는 저장 JSON의 source/selectedOriginal만으로 원문을
+내보내지 않는다. Runtime이 현재 세션의 봉인된 입력을 해독해 부모 가설을 얻고,
+동일 `input_observation_scope`로 계산한 연결과 저장 scopeConnection을 비교한다.
+선택 원경험도 Main 소유 저장소에서 읽어 SWEGCA 증거 디코더로 검증한 뒤,
+가설·명시적 입력 키·cue가 모두 그 scoped 연결과 일치해야 내보낸다.
+이는 출처 결속 검증이다. scope 이름의 의미 적합성이나 보고 내용의 사실성을
+증명하지 않으며, 저장 verdict를 현재 판단 권한으로 복원하지 않는다.
+관측 경계를 복원하여 재시작 후 새 반증을 자동 대조하는 기능은 아직 미완료다.
+
+검증: CPU 6,7 / make -j2 빌드 성공. Runtime 1899 checks, stdio 5233 checks 통과.
+재시작 후 정상 원문 조회와 잘못된 scope/연결/원경험/출처/빈 이름 거부를 확인했다.

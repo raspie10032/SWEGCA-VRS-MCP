@@ -89,6 +89,12 @@ public:
         std::span<const std::byte> metadata,std::optional<architecture::DigestBytes> channel={});
     [[nodiscard]] StoredExperience read_cognition_original(const architecture::DigestBytes& source,
         const ExperienceLocation&) const;
+    // Authenticate both originals and their exact scoped connection. This is
+    // archive provenance validation, not a restored comparison authority.
+    [[nodiscard]] StoredExperience read_scoped_cognition_original(
+        const ExperienceLocation& input,
+        std::string_view scope, const architecture::DigestBytes& connection,
+        const architecture::DigestBytes& source, const ExperienceLocation& original) const;
     [[nodiscard]] std::optional<StoredExperience> read_cognition_record(const architecture::DigestBytes& source,
         const ExperienceLocation&,std::optional<architecture::DigestBytes> revision={},bool latest=false,
         std::optional<architecture::DigestBytes> channel={}) const;
