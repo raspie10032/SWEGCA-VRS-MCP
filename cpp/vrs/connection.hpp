@@ -80,6 +80,9 @@ private:
         return experiences_.page_out(index,path,identity,rules_,storage);
     }
     [[nodiscard]] bool page_candidate(std::size_t& index) const noexcept{return experiences_.page_candidate(index);}
+    [[nodiscard]] std::optional<ExperienceSequence::PagePreparation> prepare_page(std::size_t index) const {
+        return experiences_.prepare_page(index,rules_);
+    }
     void inherit_experiences(const Connection&);
     void validate_experience(const ExperienceEvidence&) const;
     void prepare_append(const ExperienceEvidence& experience);

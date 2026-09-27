@@ -63,6 +63,52 @@ class ExperienceSequence final {
         Backing* backing=nullptr;
     };
 public:
+    // Owner captures a sealed segment, worker writes only a private backing,
+    // owner publishes after joining. The extra shared owner protects hot data.
+    class PagePreparation final {
+        friend class ExperienceSequence;
+        PagePreparation(std::shared_ptr<Chunk> chunk,const architecture::kernel::EvidenceRules& rules)
+            :chunk_(std::move(chunk)),rules_(rules){}
+        std::shared_ptr<Chunk> chunk_;
+        architecture::kernel::EvidenceRules rules_;
+        Chunk::Backing* prepared_=nullptr;
+    public:
+        PagePreparation(const PagePreparation&)=delete;
+        PagePreparation& operator=(const PagePreparation&)=delete;
+        PagePreparation(PagePreparation&& other) noexcept
+            :chunk_(std::move(other.chunk_)),rules_(other.rules_),prepared_(std::exchange(other.prepared_,nullptr)){}
+        ~PagePreparation(){
+            if(prepared_){std::destroy_at(prepared_);chunk_->memory.deallocate(prepared_,sizeof(Chunk::Backing),alignof(Chunk::Backing));}
+        }
+        void write(const std::filesystem::path& path,const architecture::DigestBytes& identity,StorageBudget* storage){
+            if(!chunk_||prepared_)throw std::logic_error("invalid page preparation");
+            auto* storage_ptr=static_cast<Chunk::Backing*>(chunk_->memory.allocate(sizeof(Chunk::Backing),alignof(Chunk::Backing)));
+            try {
+                std::construct_at(storage_ptr,ExperiencePage::create(path,identity,
+                    std::span<const ExperienceEvidence>(chunk_->data.load(),chunk_->used),chunk_->memory,storage),rules_);
+            }catch(...){chunk_->memory.deallocate(storage_ptr,sizeof(Chunk::Backing),alignof(Chunk::Backing));throw;}
+            prepared_=storage_ptr;
+        }
+        // Serialized owner call only, after worker join and outside Main prepare.
+        bool commit(){
+            if(!chunk_||!prepared_||chunk_->backing)throw std::logic_error("invalid page publication");
+            chunk_->backing=std::exchange(prepared_,nullptr);
+            const auto action=architecture::kernel::metadata_release(true,chunk_.use_count()-1,true);
+            const bool release=action==architecture::kernel::MetadataRelease::release;
+            if(release)chunk_->release();
+            chunk_.reset();return release;
+        }
+    };
+    [[nodiscard]] std::optional<PagePreparation> prepare_page(std::size_t index,
+        const architecture::kernel::EvidenceRules& rules) const {
+        if(index>=size_)throw std::out_of_range("experience page prepare index");
+        const auto& chunk=chunks_[chunk_index(index)];
+        const auto action=architecture::kernel::metadata_release(chunk->used==chunk->capacity,
+            chunk.use_count(),chunk->backing!=nullptr);
+        if(action==architecture::kernel::MetadataRelease::retain||!chunk->data.load())return std::nullopt;
+        if(action==architecture::kernel::MetadataRelease::release){chunk->release();return std::nullopt;}
+        return PagePreparation(chunk,rules);
+    }
     [[nodiscard]] std::size_t snapshot_directory_bytes(std::size_t begin,std::size_t end) const {
         if(begin>end||end>size_)throw std::out_of_range("experience snapshot range");
         return begin==end?0:(chunk_index(end-1)-chunk_index(begin)+1)*sizeof(std::shared_ptr<Chunk>);

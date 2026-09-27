@@ -187,6 +187,17 @@ StoredExperience Runtime::read_cognition_original(const DigestBytes& source,cons
     return found->second.store->read(original,config_.read_limit);
 }
 bool Runtime::maintain_memory() {
+    if(page_work_){
+        if(!page_work_->done.load(std::memory_order_acquire))return true;
+        if(work_)return false; // no metadata release while Main preparation reads it
+        page_work_->thread.join();
+        try {
+            if(page_work_->failure)std::rethrow_exception(page_work_->failure);
+            (void)page_work_->prepared.commit();
+        }catch(const std::bad_alloc&){page_work_.reset();return false;}
+        catch(...){page_work_.reset();throw;}
+        page_work_.reset();
+    }
     const auto target=config_.memory_target_bytes?config_.memory_target_bytes:memory_.limit()-memory_.limit()/4;
     if(!metadata_pressure(memory_.used(),target,work_.has_value()))return false;
     const auto& graph=main_.graph();
@@ -206,8 +217,21 @@ bool Runtime::maintain_memory() {
         return false;
     }
     if(candidate){
-        try {(void)page_out_main(*key,index);}
-        catch(const std::bad_alloc&){return false;} // leave originals intact; no allocation retry loop
+        try {
+            auto prepared=graph.prepare_page(*key,index);
+            if(prepared){
+                auto [path,identity]=page_destination(*key,index);
+                page_work_.emplace(std::move(*prepared));
+                page_work_->thread=std::jthread([this,path=std::move(path),identity]{
+                    auto& job=*page_work_;
+                    try {job.prepared.write(path,identity,&storage_);}
+                    catch(...){job.failure=std::current_exception();}
+                    job.done.store(true,std::memory_order_release);
+                });
+                return true;
+            }
+        }catch(const std::bad_alloc&){page_work_.reset();return false;}
+        catch(...){page_work_.reset();throw;}
     }
     return metadata_pressure(memory_.used(),target,false);
 }
@@ -216,6 +240,10 @@ bool Runtime::page_out_main(const DigestBytes& connection,std::size_t index) {
     const auto& graph=main_.graph();
     const auto* found=graph.find(connection);
     if(!found||index>=found->experiences().size())throw std::out_of_range("Main page-out original");
+    const auto [path,identity]=page_destination(connection,index);
+    return graph.page_out(connection,index,path,identity,&storage_);
+}
+std::pair<std::filesystem::path,DigestBytes> Runtime::page_destination(const DigestBytes& connection,std::size_t index) {
     const auto directory=root_/"metadata-pages";
     const auto status=std::filesystem::symlink_status(directory);
     if(status.type()==std::filesystem::file_type::not_found)std::filesystem::create_directory(directory);
@@ -230,7 +258,7 @@ bool Runtime::page_out_main(const DigestBytes& connection,std::size_t index) {
         for(const auto byte:identity){const auto n=std::to_integer<unsigned>(byte);name+=digits[n>>4];name+=digits[n&15];}
         name+=".block";const auto path=directory/name;
         if(std::filesystem::symlink_status(path).type()!=std::filesystem::file_type::not_found)continue;
-        return graph.page_out(connection,index,path,identity,&storage_);
+        return {path,identity};
     }
 }
 void Runtime::define_connection(const DigestBytes& identity) {

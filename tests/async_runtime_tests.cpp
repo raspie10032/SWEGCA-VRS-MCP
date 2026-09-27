@@ -142,6 +142,46 @@ int main(){
   upstream.release();CHECK(finish(runtime)==2);
   CHECK(runtime.main().graph().generation()==2);
  }
+ {
+  const auto path=root/"async-pages";std::filesystem::create_directory(path);
+  auto cfg=config;cfg.memory_target_bytes=1;
+  auto runtime=Runtime::create(path,cfg,memory);runtime.start_session(id(230),"page-source");
+  ExperienceLocation selected;
+  for(unsigned n=0;n<31;++n){
+   auto value=runtime.retain({n,n,"page-source","user","text/plain",bytes},7,n).original;
+   if(n==15)selected=value;
+  }
+  runtime.end_session();CHECK(runtime.work(7,31)==1);runtime.start_session(id(231),"page-reader");
+  fail_spawn=true;
+  throws<std::system_error>([&]{for(unsigned n=0;n<40;++n)(void)runtime.maintain_memory();});
+  CHECK(!fail_spawn);
+  CHECK(runtime.replay(runtime.input("text/plain",bytes),15).location()==selected);
+  upstream.fail=true;
+  unsigned failed_attempts=0;
+  while(runtime.maintain_memory()){CHECK(++failed_attempts<5000);std::this_thread::sleep_for(std::chrono::milliseconds(1));}
+  upstream.fail=false;
+  CHECK(runtime.replay(runtime.input("text/plain",bytes),15).location()==selected);
+  upstream.hold=true;upstream.entered=false;
+  const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(5);
+  while(!upstream.entered.load()&&std::chrono::steady_clock::now()<deadline){
+   (void)runtime.maintain_memory();std::this_thread::yield();
+  }
+  CHECK(upstream.entered.load());
+  // The page worker is blocked in its allocation. Owner Recall/Replay must not join it.
+  {
+   auto recalled=runtime.input("text/plain",bytes);
+   CHECK(recalled.matches().size()==31&&!recalled.temporary());
+   CHECK(runtime.replay(recalled,15).location()==selected);
+   CHECK(runtime.maintain_memory());
+   upstream.release();
+   unsigned attempts=0;
+   while(runtime.maintain_memory()){CHECK(++attempts<5000);std::this_thread::sleep_for(std::chrono::milliseconds(1));}
+   CHECK(runtime.replay(recalled,15).location()==selected); // new pin survives publication
+  }
+  unsigned attempts=0;
+  while(runtime.maintain_memory()){CHECK(++attempts<5000);std::this_thread::sleep_for(std::chrono::milliseconds(1));}
+  CHECK(runtime.replay(runtime.input("text/plain",bytes),15).location()==selected);
+ }
  CHECK(memory.used()==0);std::filesystem::remove_all(root);
  std::printf("async runtime tests: %u checks passed\n",checks);
 }

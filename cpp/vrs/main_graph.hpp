@@ -34,6 +34,11 @@ public:
     [[nodiscard]] bool page_out(const architecture::DigestBytes& connection,std::size_t index,
         const std::filesystem::path& path,const architecture::DigestBytes& page,StorageBudget* storage=nullptr) const;
     [[nodiscard]] std::uint64_t generation() const noexcept { return generation_; }
+    [[nodiscard]] std::optional<ExperienceSequence::PagePreparation> prepare_page(const architecture::DigestBytes& key,std::size_t index) const {
+        const auto* entry=connections_.find(key);
+        if(!entry)throw std::out_of_range("Main page prepare connection");
+        return entry->connection.prepare_page(index);
+    }
     [[nodiscard]] std::optional<architecture::DigestBytes> next_connection(const architecture::DigestBytes& lower) const noexcept {
         return connections_.next_key(lower);
     }

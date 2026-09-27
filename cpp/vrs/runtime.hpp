@@ -123,6 +123,8 @@ private:
     void attach(const architecture::DigestBytes&, std::string_view, bool resume);
     void refresh_main();
     bool launch_next();
+    [[nodiscard]] std::pair<std::filesystem::path,architecture::DigestBytes> page_destination(
+        const architecture::DigestBytes&,std::size_t);
     void discard_work() noexcept;
     struct Work {
         Work(std::pmr::vector<architecture::DigestBytes>&& ids, std::uint64_t seed, std::uint64_t step)
@@ -151,5 +153,13 @@ private:
     std::uint64_t page_attempt_ = 0;
     architecture::DigestBytes page_cursor_{};
     std::size_t page_index_=0;
+    struct PageWork {
+        explicit PageWork(ExperienceSequence::PagePreparation&& value):prepared(std::move(value)){}
+        ExperienceSequence::PagePreparation prepared;
+        std::exception_ptr failure;
+        std::atomic<bool> done{false};
+        std::jthread thread; // joins before prepared and its segment pin are destroyed
+    };
+    std::optional<PageWork> page_work_;
 };
 } // namespace swegca::vrs

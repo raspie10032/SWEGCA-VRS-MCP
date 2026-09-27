@@ -505,7 +505,7 @@ int main(){
    if(n==15)expected=value;
   }
   host.end_session();CHECK(host.work(7,31)==1);host.start_session(id(241),"pressure-reader");
-  const auto drain=[&]{unsigned steps=0;while(host.maintain_memory()){CHECK(++steps<40);}return steps;};
+  const auto drain=[&]{unsigned steps=0;while(host.maintain_memory()){CHECK(++steps<5000);std::this_thread::sleep_for(std::chrono::milliseconds(1));}return steps;};
   {
    auto pinned=host.input("text/plain",content);const auto bytes=host.storage().used();
    CHECK(drain()>0);CHECK(host.storage().used()==bytes);
