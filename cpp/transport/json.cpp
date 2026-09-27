@@ -63,10 +63,11 @@ void utf8(std::string_view text) {
 }
 class Parser {
 public:
-    Parser(std::string_view text,std::pmr::memory_resource& memory,std::size_t depth):text_(text),memory_(memory),depth_(depth){utf8(text);}
+    Parser(std::string_view text,std::pmr::memory_resource& memory,std::size_t depth,std::span<const std::string_view> path={},JsonMemberSource* source=nullptr):text_(text),memory_(memory),depth_(depth),path_(path),source_(source){utf8(text);}
     Json parse(){auto result=value(0);space();if(pos_!=text_.size())invalid();return result;}
 private:
     std::string_view text_;std::pmr::memory_resource& memory_;std::size_t depth_,pos_=0;
+    std::span<const std::string_view> path_;JsonMemberSource* source_;
     char peek()const{return pos_<text_.size()?text_[pos_]:'\0';}
     char take(){if(pos_==text_.size())invalid();return text_[pos_++];}
     void space(){while(peek()==' '||peek()=='\t'||peek()=='\r'||peek()=='\n')++pos_;}
@@ -111,7 +112,13 @@ private:
         pos_=start;out.reserve(size);(void)string_body<false>(out);
         return out;
     }
-    Json value(std::size_t depth){
+    Json value(std::size_t depth,bool matched=true){
+        space();const auto start=pos_;
+        auto out=value_body(depth,matched);
+        if(source_&&matched&&depth==path_.size())*source_={start,pos_-start};
+        return out;
+    }
+    Json value_body(std::size_t depth,bool matched){
         if(depth>depth_)throw std::length_error("JSON nesting limit");
         space();Json out(&memory_);
         const auto c=peek();
@@ -120,7 +127,7 @@ private:
             ++pos_;const bool object=c=='{';out.kind=object?Json::Kind::object:Json::Kind::array;space();
             const char close=object?'}':']';if(eat(close))return out;
             for(;;){space();if(object){auto key=string();for(const auto& k:out.keys)if(k==key)throw std::invalid_argument("duplicate JSON member");space();if(!eat(':'))invalid();out.keys.push_back(std::move(key));}
-                out.values.push_back(value(depth+1));space();if(eat(close))return out;if(!eat(','))invalid();}
+                out.values.push_back(value(depth+1,matched&&object&&depth<path_.size()&&out.keys.back()==path_[depth]));space();if(eat(close))return out;if(!eat(','))invalid();}
         }
         for(std::string_view literal:{"null","true","false"})if(text_.substr(pos_,literal.size())==literal){pos_+=literal.size();out.kind=literal=="null"?Json::Kind::null:Json::Kind::boolean;out.scalar=literal;return out;}
         const auto start=pos_;eat('-');
@@ -211,6 +218,16 @@ void write_json_hex(std::ostream& out,std::span<const std::byte> content){
         for(std::size_t i=0;i<count;++i){const auto c=std::to_integer<unsigned>(content[i]);buffer[2*i]=digits[c>>4];buffer[2*i+1]=digits[c&15];}
         out.write(buffer.data(),static_cast<std::streamsize>(count*2));content=content.subspan(count);
     }
+}
+std::string_view JsonMemberSource::bytes(std::string_view input) const {
+    if(!size||offset>input.size()||size>input.size()-offset)
+        throw std::invalid_argument("missing or invalid JSON source range");
+    return input.substr(offset,size);
+}
+Json parse_json_member(std::string_view text,std::pmr::memory_resource& memory,
+    std::span<const std::string_view> path,JsonMemberSource& source,std::size_t depth){
+    source={};JsonMemberSource pending;
+    auto result=Parser(text,memory,depth,path,&pending).parse();source=pending;return result;
 }
 Json parse_json(std::string_view text,std::pmr::memory_resource& memory,std::size_t depth){return Parser(text,memory,depth).parse();}
 std::pmr::string encode_json(const Json& value,std::pmr::memory_resource& memory){std::pmr::string out(&memory);out.reserve(encoded_size(value));encode(out,value);return out;}

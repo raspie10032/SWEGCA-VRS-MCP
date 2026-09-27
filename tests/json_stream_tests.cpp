@@ -12,6 +12,21 @@ unsigned checks=0;
 #define CHECK(x) do{++checks;if(!(x)){std::fprintf(stderr,"FAIL %d\n",__LINE__);std::abort();}}while(false)
 int main(){
  swegca::vrs::MemoryBudget memory(4<<20);
+ {
+  constexpr std::string_view path[]{"params","native"};JsonMemberSource source;
+  const std::string wire=R"( {"other":{"native":0},"params":{"native": { "unknown":"\u0041", "x":[1,true] }}} )";
+  auto value=parse_json_member(wire,memory,path,source);
+  CHECK(source.bytes(wire)==R"({ "unknown":"\u0041", "x":[1,true] })");
+  CHECK(value.at("params").at("native").at("unknown").string()=="A");
+  auto moved=std::move(value);CHECK(moved.at("params").at("native").kind==Json::Kind::object);
+  CHECK(source.bytes(wire).front()=='{');
+  bool rejected=false;try{(void)source.bytes("{}");}catch(const std::invalid_argument&){rejected=true;}CHECK(rejected);
+  for(const auto bad:{R"({"params":{"native":{},"native":{}}})",R"({"params":{"native":{}}} trailing)"}){
+   rejected=false;try{(void)parse_json_member(bad,memory,path,source);}catch(const std::invalid_argument&){rejected=true;}
+   CHECK(rejected&&source.size==0);
+  }
+  (void)parse_json_member(R"({"params":[{"native":{}}]})",memory,path,source);CHECK(source.size==0);
+ }
  std::string controls;for(char c=0;c<32;++c)controls+=c;
  for(const auto& text:{std::string{},controls,std::string("한글🙂 quote\" slash\\ tail"),std::string(1<<20,'a')}){
   const auto expected=quote_json(text,memory);

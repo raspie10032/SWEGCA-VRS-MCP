@@ -29,6 +29,36 @@ void commit_checks(swegca::vrs::MemoryBudget& memory){
   const std::string encoded(large.request());native.assign("changed");native.shrink_to_fit();
   CHECK(large.request()==encoded);
  }
+ {
+  const std::string raw=R"({ "id":1,"method":"turn/start","params":{"threadId":"a","input":[{"type":"text","text":"\u0041"}]},"unknown":true })";
+  for(const auto& native:{raw," "+raw,raw+"\n"}){
+   auto event=adapt_codex_app_server(native,memory);
+   AgentEventCommit direct(identity,parse_json("{}",memory),event,"direct",memory);
+   constexpr std::string_view path[]{"params","native"};JsonMemberSource source;
+   auto parsed=parse_json_member(direct.request(),memory,path,source);
+   auto& subtree=parsed.at("params").at("native");
+   CHECK(direct.request().find('\n')==std::string_view::npos);
+   if(native==raw){
+    CHECK(subtree.kind==Json::Kind::object&&source.bytes(direct.request())==raw);
+    auto adapted=adapt_parsed_codex_app_server(source.bytes(direct.request()),std::move(subtree),memory);
+    CHECK(adapted.native_bytes()==raw&&adapted.cue_content()==event.cue_content());
+   }else CHECK(subtree.string()==native);
+  }
+ }
+ {
+  // Native depth 64 remains supported through string transport; embedding
+  // adds two levels and must never silently lower the accepted depth limit.
+  for(const unsigned nested:{61U,63U}){
+   const auto raw=std::string(R"({"method":"item/completed","params":{"threadId":"a"},"deep":)")+
+       std::string(nested,'[')+"0"+std::string(nested,']')+"}";
+   auto event=adapt_codex_app_server(raw,memory);
+   AgentEventCommit direct(identity,parse_json("{}",memory),event,"deep",memory);
+   auto parsed=parse_json(direct.request(),memory);
+   const auto& native=parsed.at("params").at("native");
+   CHECK(native.kind==(nested==61?Json::Kind::object:Json::Kind::string));
+   if(nested==63)CHECK(native.string()==raw);
+  }
+ }
  AgentEventCommit commit(identity,parse_json(R"({"sequence":"0"})",memory),"line\nnext","x",memory);
  const std::string pending(commit.request());
  CHECK(parse_json(pending,memory).at("params").at("identity").string()==identity);

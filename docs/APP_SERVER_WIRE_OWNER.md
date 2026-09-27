@@ -201,7 +201,7 @@ above 2. The VRS descriptor is the dedicated stdin/stdout channel of a fresh VRS
 MCP process, not a second reader on another client's connection. No listening
 port, backend replacement or running desktop configuration is installed by this
 executable. Startup initializes protocol 2025-06-18, requires host-input version
-14, sends initialized, and attaches or resumes the configured native sessions.
+15, sends initialized, and attaches or resumes the configured native sessions.
 Only then does stdout emit `ready`. Stdout/stderr carry status, not native content.
 
 Example configuration (all resource integers are decimal strings):

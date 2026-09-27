@@ -68,7 +68,9 @@ public:
     void message(std::string_view line){
         SWEGCA_INGRESS_STAGE("host_frame");
         Json request(&memory_);
-        try{request=parse_json(line,memory_);}catch(const std::bad_alloc&){throw;}catch(const std::exception&){error("null",-32700,"invalid JSON");return;}
+        JsonMemberSource native_source;
+        constexpr std::string_view native_path[]{"params","native"};
+        try{request=parse_json_member(line,memory_,native_path,native_source);}catch(const std::bad_alloc&){throw;}catch(const std::exception&){error("null",-32700,"invalid JSON");return;}
         SWEGCA_INGRESS_STAGE("host_rpc_parsed");
         if(request.kind!=Json::Kind::object||!request.find("jsonrpc")||request.at("jsonrpc").kind!=Json::Kind::string||request.at("jsonrpc").scalar!="2.0"||!request.find("method")||request.at("method").kind!=Json::Kind::string){error("null",-32600,"invalid JSON-RPC request");return;}
         const Json* id=request.find("id");std::pmr::string encoded_id("null",&memory_);
@@ -83,7 +85,7 @@ public:
                 const auto& p=request.at("params");(void)p.at("protocolVersion").string();
                 if(p.at("capabilities").kind!=Json::Kind::object||p.at("clientInfo").kind!=Json::Kind::object)throw std::invalid_argument("invalid initialize parameters");
                 initialized_=true;
-                auto body=std::pmr::string(R"({"protocolVersion":"2025-06-18","capabilities":{"tools":{},"experimental":{"swegcaHostInput":{"version":"14","frameBytes":")",&memory_);
+                auto body=std::pmr::string(R"({"protocolVersion":"2025-06-18","capabilities":{"tools":{},"experimental":{"swegcaHostInput":{"version":"15","frameBytes":")",&memory_);
                 body+=std::to_string(frame_);body+=R"("}}},"serverInfo":{"name":"swegca-vrs-cpp","version":"0.1"}})";
                 result(encoded_id,body);return;
             }
@@ -99,7 +101,7 @@ public:
                     else {auto body=call(name,p.at("arguments"));tool_result(encoded_id,body);}
                 }catch(const std::exception& e){result(encoded_id,"{\"content\":[{\"type\":\"text\",\"text\":"+quote_json(e.what(),memory_)+"}],\"isError\":true}");}return;
             }
-            if(method.starts_with("swegca/")){auto body=host(method,request.at("params"));result(encoded_id,body);return;}
+            if(method.starts_with("swegca/")){auto body=host(method,request.at("params"),line,native_source);result(encoded_id,body);return;}
             error(encoded_id,-32601,"unknown method");
         }catch(const std::invalid_argument& e){if(id)error(encoded_id,-32602,e.what());}
         catch(const std::exception& e){if(id)error(encoded_id,-32000,e.what());}
@@ -235,7 +237,7 @@ private:
         }
         body+=']';
     }
-    std::pmr::string host(std::string_view method,Json& p){
+    std::pmr::string host(std::string_view method,Json& p,std::string_view frame,const JsonMemberSource& source){
         if(method=="swegca/agent/attach"||method=="swegca/agent/attach/resume"||method=="swegca/agent/attach/ensure"){
             const auto provider=p.at("provider").string();
             if(provider!="codex")throw std::invalid_argument("native provider adapter unavailable");
@@ -321,18 +323,25 @@ private:
                 auto request_event=state.connection_scope?adapt_codex_app_server_connection(bytes,state.native_session,memory_):adapt_codex_app_server(bytes,memory_);
                 if(request_event.session()!=state.native_session)throw std::invalid_argument("request session mismatch");
                 binding.emplace(memory_,1);binding->track(RpcSender::client,request_event);
-                response.emplace(binding->bind(p.at("native").string(),RpcSender::server));
+                response.emplace(binding->bind(p.at("native").kind==Json::Kind::object?source.bytes(frame):p.at("native").string(),RpcSender::server));
                 request_original=stored.location();
                 const bool input=request_event.kind()==swegca::architecture::kernel::AgentEventKind::input;
                 const auto cue=input?request_event.cue_content():request_event.native_bytes();
                 request_connection=input_cue(input?request_event.cue_media():"application/json",std::as_bytes(std::span(cue)));
             }else{
                 auto& native=p.at("native");
-                (void)native.string();
-                if(state.app_server)
-                    parsed_event.emplace(adapt_owned_codex_app_server(std::move(native.scalar),memory_,
+                if(native.kind==Json::Kind::object){
+                    const auto bytes=source.bytes(frame);
+                    if(state.app_server)parsed_event.emplace(adapt_parsed_codex_app_server(bytes,std::move(native),memory_,
                         state.connection_scope?std::string_view(state.native_session):std::string_view{}));
-                else parsed_event.emplace(adapt_codex_hook(native.string(),memory_));
+                    else parsed_event.emplace(adapt_codex_hook(bytes,memory_));
+                }else{
+                    (void)native.string();
+                    if(state.app_server)
+                        parsed_event.emplace(adapt_owned_codex_app_server(std::move(native.scalar),memory_,
+                            state.connection_scope?std::string_view(state.native_session):std::string_view{}));
+                    else parsed_event.emplace(adapt_codex_hook(native.string(),memory_));
+                }
             }
             const auto& event=response?response->event():*parsed_event;
             SWEGCA_INGRESS_STAGE("host_native_adapted");

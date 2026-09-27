@@ -22,6 +22,14 @@ struct Json {
     }
     [[nodiscard]] std::string_view string() const;
 };
+// Source range for one selected object-member path; no per-node metadata.
+// Offsets refer only to the unchanged input used for this successful parse.
+struct JsonMemberSource {
+    std::size_t offset=0,size=0;
+    [[nodiscard]] std::string_view bytes(std::string_view input) const;
+};
+[[nodiscard]] Json parse_json_member(std::string_view text,std::pmr::memory_resource&,
+    std::span<const std::string_view> path,JsonMemberSource&,std::size_t max_depth=64);
 [[nodiscard]] Json parse_json(std::string_view text,std::pmr::memory_resource&,std::size_t max_depth=64);
 [[nodiscard]] std::pmr::string encode_json(const Json&,std::pmr::memory_resource&);
 // Append directly to an exclusively owned destination. The caller must discard

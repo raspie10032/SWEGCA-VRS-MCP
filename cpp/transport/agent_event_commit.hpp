@@ -1,5 +1,5 @@
 #pragma once
-#include "transport/json.hpp"
+#include "transport/agent_event.hpp"
 #include <charconv>
 #include <cstdint>
 #include <limits>
@@ -16,6 +16,23 @@ public:
     // its complete encoding and never retains a view into the caller's event.
     AgentEventCommit(std::string_view identity,Json parsed,std::string_view native,
         std::string_view id,std::pmr::memory_resource& memory)
+        :AgentEventCommit(identity,std::move(parsed),native,id,memory,false){}
+    AgentEventCommit(std::string_view identity,Json parsed,const AgentEvent& event,
+        std::string_view id,std::pmr::memory_resource& memory)
+        :AgentEventCommit(identity,std::move(parsed),event.native_bytes(),id,memory,inline_native(event)){}
+private:
+    static bool shallow(const Json& value,std::size_t depth=0){
+        if(depth>62)return false;
+        for(const auto& child:value.values)if(!shallow(child,depth+1))return false;
+        return true;
+    }
+    static bool inline_native(const AgentEvent& event){
+        const auto bytes=event.native_bytes();
+        return !bytes.empty()&&bytes.front()=='{'&&bytes.back()=='}'&&
+            bytes.find_first_of("\r\n")==std::string_view::npos&&shallow(event.fields());
+    }
+    AgentEventCommit(std::string_view identity,Json parsed,std::string_view native,
+        std::string_view id,std::pmr::memory_resource& memory,bool embed)
         :memory_(memory),event_id_(id,&memory),event_(&memory),reply_(&memory){
         hex(identity);
         if(id.empty())throw std::invalid_argument("commit request ID required");
@@ -32,8 +49,15 @@ public:
         event_="{\"jsonrpc\":\"2.0\",\"id\":"+quote_json(event_id_,memory_)+
             ",\"method\":\"swegca/agent/event\",\"params\":";
         append_json(event_,parsed);event_.pop_back();
-        event_+=",\"native\":";append_json_string(event_,native,2);event_+="}}";
+        event_+=",\"native\":";
+        if(embed){
+            if(event_.size()>event_.max_size()-2||native.size()>event_.max_size()-2-event_.size())
+                throw std::length_error("native frame size overflow");
+            event_.reserve(event_.size()+native.size()+2);event_.append(native);
+        }else append_json_string(event_,native,2);
+        event_+="}}";
     }
+public:
     AgentEventCommit(const AgentEventCommit&)=delete;
     AgentEventCommit& operator=(const AgentEventCommit&)=delete;
     [[nodiscard]] Stage stage() const noexcept{return stage_;}

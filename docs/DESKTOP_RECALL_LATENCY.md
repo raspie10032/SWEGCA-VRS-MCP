@@ -319,3 +319,22 @@ stdio subprocess 2,560 checks passed. Pump additionally rejects native override
 and invalid UTF-8 and proves an encoded request remains intact after the source
 string is replaced and shrunk. Actual app installation, aggregate RAM, large
 Main operation and full four-stage cognition remain separate unfinished work.
+
+## Native object transport (protocol 15)
+
+The eligible AgentEvent constructor embeds original native JSON bytes directly.
+The host captures only `params.native` source offsets during its outer parse,
+then reuses the parsed app-server subtree. There is no source metadata on each
+Json node. Raw strings, padded/multiline events and native depth 63/64 retain
+string transport. Unknown fields, whitespace and escape spelling are retained
+in original storage and delivery fingerprints. Responses still use the existing
+request-correlation parser; this is not a universal zero-copy transport claim.
+
+`desktop-recall-inline-native.jsonl`: 15 samples per size, CPU 6/7, no concurrent
+build launched by this task. Median 128B 0.031900ms, 4KiB 0.034690ms, 64KiB
+0.197572ms, 1MiB 3.113912ms (maximum 4.518176ms). All fifteen 1MiB inputs exceed
+1ms. This is empty Main/new temporary session with a synthetic backend, not
+installed desktop or loaded graph evidence. There is no matched baseline in
+this run, so it does not establish a latency improvement. The separate
+`desktop-recall-inline-native.json` five-sample exploratory run overlapped a
+compiler and is retained only as raw diagnostic data, not a comparison.

@@ -71,6 +71,7 @@ private:
     friend AgentEvent adapt_codex_app_server_connection(std::string_view,std::string_view,std::pmr::memory_resource&);
     friend AgentEvent adapt_codex_app_server(std::string_view,std::pmr::memory_resource&);
     friend AgentEvent adapt_owned_codex_app_server(std::pmr::string,std::pmr::memory_resource&,std::string_view);
+    friend AgentEvent adapt_parsed_codex_app_server(std::string_view,Json,std::pmr::memory_resource&,std::string_view);
     friend AgentEvent adapt_codex_hook(std::string_view,std::pmr::memory_resource&);
     AgentEvent(std::string_view native,Json parsed,architecture::kernel::AgentEventKind kind,
         std::pmr::memory_resource& memory):native_(native,&memory),parsed_(std::move(parsed)),kind_(kind),cue_(&memory),bound_session_(&memory){}
@@ -162,6 +163,15 @@ inline AgentEvent adapt_codex_app_server_connection(std::string_view bytes,std::
 }
 inline AgentEvent adapt_codex_app_server(std::string_view bytes,std::pmr::memory_resource& memory){
     return AgentEvent::from_app_server(bytes,parse_json(bytes,memory),memory);
+}
+// Caller supplies the subtree and exact source from the same successful parse.
+// This internal transport entry preserves ordinary event/binding validation.
+inline AgentEvent adapt_parsed_codex_app_server(std::string_view bytes,Json parsed,
+    std::pmr::memory_resource& memory,std::string_view connection={}){
+    if(parsed.scalar.get_allocator().resource()!=&memory)
+        throw std::invalid_argument("native tree allocator mismatch");
+    return connection.empty()?AgentEvent::from_app_server(bytes,std::move(parsed),memory):
+        AgentEvent::from_app_server_connection(bytes,std::move(parsed),connection,memory);
 }
 // The transport already owns the native frame in this same budget. Transfer it
 // only after the ordinary syntax and binding checks; retain exact wire bytes.

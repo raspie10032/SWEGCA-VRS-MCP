@@ -37,7 +37,7 @@ class Client:
         check('error' in self.call('tools/list'))
         initialized=self.call('initialize',{'protocolVersion':'2025-06-18','capabilities':{},'clientInfo':{'name':'test','version':'1'}})['result']
         check(initialized['protocolVersion']=='2025-06-18')
-        check(initialized['capabilities']['experimental']['swegcaHostInput']['version']=='14')
+        check(initialized['capabilities']['experimental']['swegcaHostInput']['version']=='15')
         self.notice('notifications/initialized')
         tools=self.call('tools/list')['result']['tools']
         check([t['name'] for t in tools]==['vrs_replay','vrs_re_evidence'])
@@ -590,7 +590,15 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
         envelope={'method':method,'params':{'threadId':'thread-x',**params}}
         if request_id is not None:envelope['id']=request_id
         raw=json.dumps(envelope,ensure_ascii=False)
-        return raw,resend_native(raw,seq)
+        # Embed exact native source, including whitespace and escaped unknown
+        # data. Later string retries and Replay must preserve these same bytes.
+        raw=raw[:-1]+r', "wireUnknown": "\u0041\\tail" }'
+        c.serial+=1
+        prefix=json.dumps({'jsonrpc':'2.0','id':c.serial,'method':'swegca/agent/event',
+            'params':{'sequence':str(seq),'observedAt':str(seq),'seed':'7','step':str(seq)}})
+        frame=prefix[:-2]+',"native":'+raw+'}}'
+        reply=c.raw(frame.encode()+b'\n');check(reply['id']==c.serial)
+        return raw,reply
     app_raw,a0=app_event(0,'turn/start',{'input':app_input,'unknown':True},1)
     a0=a0['result'];check(a0['candidateCount']=='0')
     _,a1=app_event(1,'turn/steer',{'input':app_input,'expectedTurnId':'turn-x'},2)

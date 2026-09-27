@@ -10,7 +10,7 @@ Host protocol version 6 adds:
   session string. Instance is provided by the host owner.
 - `swegca/agent/attach/resume`: same binding, explicitly resumes its durable store.
 - `swegca/select`: selects that returned identity on the serialized owner.
-- `swegca/agent/event`: native (exact JSON string), sequence, observedAt, seed,
+- `swegca/agent/event`: native (exact JSON string, or object in host protocol 15), sequence, observedAt, seed,
   step, optional candidateLimit. The event session must match the selected
   native binding before any record/receipt mutation.
 
@@ -160,3 +160,21 @@ work/poll and work operate only on published ended sources. EOF, idle, turn
 completion and native SessionEnd notifications still do not substitute for
 this explicit host operation. Desktop wiring of the actual user end action
 remains separate unfinished work.
+
+## Host protocol 15: exact native object transport
+
+The proxy embeds eligible validated AgentEvent bytes directly as `params.native`.
+The host parses the enclosing request once, captures only this member's source
+range, and moves the parsed subtree into the app-server adapter. Ordinary event
+and session validation still run. No per-node source metadata is allocated.
+Original storage and delivery fingerprints consume the exact source slice, not
+JSON re-encoding. Unknown fields, interior spaces and escape spelling survive.
+
+Embedding requires object delimiters at the exact native byte boundaries, no
+literal CR/LF, and native depth at most 62 (the enclosing request adds two).
+Padded, multiline and deeper native events retain exact string transport. The
+ordinary standalone depth limit remains 64. Arbitrary raw-string commit callers
+also retain string transport. Response correlation and hook adaptation still
+parse their native source; the reused subtree optimization covers app-server
+requests/notifications, including user input. This changes transport only, not
+SWEGCA decisions, lifecycle authority or original experience identity.

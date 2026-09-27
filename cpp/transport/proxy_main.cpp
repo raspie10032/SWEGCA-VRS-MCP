@@ -104,7 +104,7 @@ int main(int argc,char** argv){
         VrsStream stream(vrs,rpc_frame,memory);
         const auto initialized=call(stream,"proxy/initialize","initialize",R"({"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"swegca-app-server-proxy","version":"0.1"}})",memory);
         const auto& result=initialized.at("result");
-        if(result.at("protocolVersion").string()!="2025-06-18"||result.at("capabilities").at("experimental").at("swegcaHostInput").at("version").string()!="14")
+        if(result.at("protocolVersion").string()!="2025-06-18"||result.at("capabilities").at("experimental").at("swegcaHostInput").at("version").string()!="15")
             throw std::runtime_error("unsupported VRS host protocol");
         if(number(result.at("capabilities").at("experimental").at("swegcaHostInput").at("frameBytes").string())<rpc_frame)
             throw std::runtime_error("VRS host frame budget smaller than proxy RPC budget");
@@ -203,7 +203,7 @@ int main(int argc,char** argv){
                     if(serial==UINT64_MAX)throw std::overflow_error("proxy request IDs exhausted");
                     const auto found=bindings.find(plan.event().session());
                     if(found==bindings.end())throw std::runtime_error("unbound native session");
-                    AgentEventCommit commit(found->second,pump.metadata(plan,seed,step),plan.event().native_bytes(),"proxy/event/"+std::to_string(++serial),memory);
+                    AgentEventCommit commit(found->second,pump.metadata(plan,seed,step),plan.event(),"proxy/event/"+std::to_string(++serial),memory);
                     SWEGCA_INGRESS_STAGE("proxy_rpc_ready");
                     while(commit.stage()!=AgentEventCommit::Stage::complete)commit.accept(stream.exchange(commit.request()));
                     if(plan.event().kind()==swegca::architecture::kernel::AgentEventKind::input){
