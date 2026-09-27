@@ -149,6 +149,29 @@ private:
     std::pmr::string turn_key(std::string_view thread,std::string_view turn){
         std::pmr::string key(std::to_string(thread.size()),&memory_);key+=':';key+=thread;key+=turn;return key;
     }
+    std::optional<std::pmr::string> acknowledged_turn_key(const AgentEvent& request,const Json& reply){
+        if(reply.find("method"))return std::nullopt;
+        const auto* result=reply.find("result");
+        if(!result||result->kind!=Json::Kind::object)return std::nullopt;
+        const auto method=request.native_name();
+        const Json* id=nullptr;
+        if(method=="turn/start"){
+            const auto* turn=result->find("turn");
+            if(turn&&turn->kind==Json::Kind::object)id=turn->find("id");
+        }else if(method=="turn/steer")id=result->find("turnId");
+        if(!id||id->kind!=Json::Kind::string||id->scalar.empty())return std::nullopt;
+        const auto& params=request.fields().at("params");
+        if(method=="turn/steer"){
+            const auto* expected=params.find("expectedTurnId");
+            if(!expected||expected->kind!=Json::Kind::string||expected->scalar!=id->scalar)return std::nullopt;
+        }
+        return turn_key(params.at("threadId").string(),id->scalar);
+    }
+    void remember_turn_input(Context& state,std::string_view key,const Context::Delivery& input){
+        auto& inputs=state.turn_inputs.try_emplace(std::pmr::string(key,&memory_)).first->second;
+        const auto duplicate=std::find_if(inputs.begin(),inputs.end(),[&](const auto& prior){return prior.original==input.original;});
+        if(duplicate==inputs.end())inputs.push_back(input);
+    }
     std::optional<Context::Delivery> turn_input(Context& state,std::string_view thread,std::string_view turn,std::optional<ExperienceLocation> requested){
         for(auto it=state.deliveries.lower_bound(state.indexed_turn_deliveries);it!=state.deliveries.end();++it){
             const auto& delivered=it->second;
@@ -172,18 +195,11 @@ private:
                         const std::string_view request_bytes(reinterpret_cast<const char*>(request_payload.content.data()),request_payload.content.size());
                         auto event=state.connection_scope?adapt_codex_app_server_connection(request_bytes,state.native_session,memory_):
                             adapt_codex_app_server(request_bytes,memory_);
-                        const auto method=event.native_name();
-                        const auto* selected_id=method=="turn/start"?id:method=="turn/steer"?steer_id:nullptr;
-                        if(!selected_id||selected_id->kind!=Json::Kind::string||selected_id->scalar.empty())break;
-                        if(method=="turn/steer"){
-                            const auto* expected=event.fields().at("params").find("expectedTurnId");
-                            if(!expected||expected->kind!=Json::Kind::string||expected->scalar!=selected_id->scalar)break;
-                        }
+                        const auto key=acknowledged_turn_key(event,fields);
+                        if(!key)break;
                         AppServerRequests requests(memory_,1);requests.track(RpcSender::client,event);
                         (void)requests.bind(bytes,RpcSender::server);
-                        auto& inputs=state.turn_inputs.try_emplace(turn_key(event.fields().at("params").at("threadId").string(),selected_id->scalar)).first->second;
-                        const auto duplicate=std::find_if(inputs.begin(),inputs.end(),[&](const auto& prior){return prior.original==input.original;});
-                        if(duplicate==inputs.end())inputs.push_back(input);
+                        remember_turn_input(state,*key,input);
                         break;
                     }
                 }
@@ -475,6 +491,8 @@ private:
             std::optional<AppServerRequests::Response> response;
             std::optional<ExperienceLocation> request_original;
             DigestBytes request_connection{};
+            std::optional<std::pmr::string> committed_turn_key;
+            std::optional<Context::Delivery> committed_turn_input;
             ExperienceSender sender=ExperienceSender::unspecified;
             if(const auto* incoming=p.find("sender")){
                 if(!state.app_server)throw std::invalid_argument("sender requires app-server binding");
@@ -503,6 +521,10 @@ private:
                 // Bind to the connection admitted with the sealed original,
                 // not a newly reconstructed key from its transport envelope.
                 request_connection=request->second.connection;
+                if(sender==ExperienceSender::server&&original.sender==ExperienceSender::client){
+                    committed_turn_key=acknowledged_turn_key(request_event,response->event().fields());
+                    if(committed_turn_key)committed_turn_input=request->second;
+                }
             }else{
                 auto& native=p.at("native");
                 if(native.kind==Json::Kind::object){
@@ -601,6 +623,7 @@ private:
                     slot->second.context=state.received->recorded.context;
                     slot->second.connection=state.received->recorded.refinement.connection();committed=true;
                     slot->second.fingerprint=agent_delivery_identity(sequence,observed,event.native_bytes());
+                    if(state.indexed_turn_deliveries==sequence)++state.indexed_turn_deliveries;
                     complete_cognition();
                     return received_body(limit);
                 }
@@ -625,6 +648,10 @@ private:
                 invalidate_cognition(recorded);
                 if(binding)binding->recorded(*response);
                 slot->second.fingerprint=agent_delivery_identity(sequence,observed,event.native_bytes());
+                // Publish only after the real response has been recorded. A
+                // failed publication leaves the recovery cursor behind it.
+                if(committed_turn_key)remember_turn_input(state,*committed_turn_key,*committed_turn_input);
+                if(state.indexed_turn_deliveries==sequence)++state.indexed_turn_deliveries;
                 // Finish live comparison and durable revision before acknowledging
                 // the observation. Only the core's conflict opens Re-evidence.
                 if(admitted_tool_observation&&state.received&&!state.cognition_done)complete_cognition();
