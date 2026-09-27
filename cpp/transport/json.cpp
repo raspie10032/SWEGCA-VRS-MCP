@@ -49,8 +49,15 @@ private:
     std::pmr::string string(){
         if(take()!='"')invalid();
         std::pmr::string out(&memory_);
-        for(;;){const char c=take();if(c=='"')return out;if(static_cast<unsigned char>(c)<32)invalid();
-            if(c!='\\'){out+=c;continue;}
+        for(;;){
+            const auto begin=pos_;
+            while(pos_<text_.size()){
+                const auto c=static_cast<unsigned char>(text_[pos_]);
+                if(c=='"'||c=='\\'||c<32)break;
+                ++pos_;
+            }
+            out.append(text_.substr(begin,pos_-begin));
+            const char c=take();if(c=='"')return out;if(static_cast<unsigned char>(c)<32)invalid();
             switch(take()){
             case '"':out+='"';break;case '\\':out+='\\';break;case '/':out+='/';break;
             case 'b':out+='\b';break;case 'f':out+='\f';break;case 'n':out+='\n';break;case 'r':out+='\r';break;case 't':out+='\t';break;
@@ -79,7 +86,16 @@ private:
 };
 void quote(std::pmr::string& out,std::string_view text){
     utf8(text);constexpr char digits[]="0123456789abcdef";out+='"';
-    for(unsigned char c:text){if(c=='"'||c=='\\'){out+='\\';out+=char(c);}else if(c<32){out+="\\u00";out+=digits[c>>4];out+=digits[c&15];}else out+=char(c);}out+='"';
+    std::size_t begin=0;
+    for(std::size_t i=0;i<text.size();++i){
+        const auto c=static_cast<unsigned char>(text[i]);
+        if(c!='"'&&c!='\\'&&c>=32)continue;
+        out.append(text.substr(begin,i-begin));
+        if(c=='"'||c=='\\'){out+='\\';out+=char(c);}
+        else{out+="\\u00";out+=digits[c>>4];out+=digits[c&15];}
+        begin=i+1;
+    }
+    out.append(text.substr(begin));out+='"';
 }
 void encode(std::pmr::string& out,const Json& value){
     switch(value.kind){

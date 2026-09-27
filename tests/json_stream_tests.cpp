@@ -11,10 +11,19 @@ int main(){
  std::string controls;for(char c=0;c<32;++c)controls+=c;
  for(const auto& text:{std::string{},controls,std::string("한글🙂 quote\" slash\\ tail"),std::string(1<<20,'a')}){
   const auto expected=quote_json(text,memory);
+  CHECK(parse_json(expected,memory).string()==text);
   const auto used=memory.used();std::ostringstream out;
   write_json_string(out,text);CHECK(std::string_view(out.str())==std::string_view(expected));CHECK(memory.used()==used);
  }
  CHECK(memory.used()==0);
+ for(const auto raw:{"\"plain\\n끝\\uD83D\\uDE42tail\"","\"\\\"\\\\\\/\\b\\f\\n\\r\\t\""}){
+  const auto parsed=parse_json(raw,memory);
+  CHECK(parse_json(encode_json(parsed,memory),memory).string()==parsed.string());
+ }
+ for(const auto raw:{"\"unterminated","\"raw\ncontrol\"","\"bad\\q\"","\"\\uD800\"","\"\\uDC00\"","\"\\uD800\\u0000\"","\"tail\\"}){
+  bool rejected=false;try{(void)parse_json(raw,memory);}catch(const std::invalid_argument&){rejected=true;}
+  CHECK(rejected);
+ }
  for(const auto& invalid:{std::string("\xc0\x80",2),std::string("\xed\xa0\x80",3),std::string("\xf0\x90",2)}){
   std::ostringstream out;bool failed=false;
   try{write_json_string(out,invalid);}catch(const std::invalid_argument&){failed=true;}

@@ -442,6 +442,10 @@ private:
 };
 }
 int main(int argc,char** argv){
+    // Every response explicitly flushes at its message boundary. Input must
+    // not flush stdout once per byte while receiving a native event frame.
+    std::ios::sync_with_stdio(false);
+    std::cin.tie(nullptr);
     try{
         if(argc!=4)throw std::invalid_argument("usage: swegca-vrs-mcp create|open|ensure ROOT CONFIG.json");
         std::string_view mode=argv[1];

@@ -141,7 +141,7 @@ bench: $(BUILD)/core-bench
 clean:
 	rm -f $(BUILD)/background-recall-bench
 	rm -f $(BUILD)/async-runtime-tests
-	rm -f $(BUILD)/json-stream-tests $(BUILD)/swegca-codex-wrapper $(BUILD)/swegca-desktop-host $(BUILD)/parallel-recovery-tests $(BUILD)/recall-scale-bench $(BUILD)/resource-profile-probe $(BUILD)/sha256-vectors $(BUILD)/sha256-vectors-scalar $(BUILD)/input-recall-bench $(BUILD)/transfer-budget-tests $(BUILD)/parallel-main-tests $(BUILD)/swegca-vrs-mcp $(BUILD)/runtime-tests $(BUILD)/main-sources-tests $(BUILD)/core-tests $(BUILD)/core-bench $(BUILD)/vrs-tests $(BUILD)/experience-block-tests $(BUILD)/memory-budget-tests $(BUILD)/connection-tests $(BUILD)/session-tests $(BUILD)/persistent-connection-tests $(BUILD)/catalog-tests $(BUILD)/session-runtime-tests $(BUILD)/main-graph-tests $(BUILD)/persistent-main-tests
+	rm -f $(BUILD)/swegca-vrs-ingress-probe $(BUILD)/json-stream-tests $(BUILD)/swegca-codex-wrapper $(BUILD)/swegca-desktop-host $(BUILD)/parallel-recovery-tests $(BUILD)/recall-scale-bench $(BUILD)/resource-profile-probe $(BUILD)/sha256-vectors $(BUILD)/sha256-vectors-scalar $(BUILD)/input-recall-bench $(BUILD)/transfer-budget-tests $(BUILD)/parallel-main-tests $(BUILD)/swegca-vrs-mcp $(BUILD)/runtime-tests $(BUILD)/main-sources-tests $(BUILD)/core-tests $(BUILD)/core-bench $(BUILD)/vrs-tests $(BUILD)/experience-block-tests $(BUILD)/memory-budget-tests $(BUILD)/connection-tests $(BUILD)/session-tests $(BUILD)/persistent-connection-tests $(BUILD)/catalog-tests $(BUILD)/session-runtime-tests $(BUILD)/main-graph-tests $(BUILD)/persistent-main-tests
 
 $(BUILD)/agent-event-tests: tests/agent_event_tests.cpp cpp/transport/agent_event.hpp cpp/transport/json.cpp cpp/transport/json.hpp $(CORE_SOURCES) $(CORE_HEADERS) $(VRS_HEADERS) | $(BUILD)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< cpp/transport/json.cpp $(CORE_SOURCES) -o $@
@@ -196,3 +196,6 @@ $(BUILD)/swegca-codex-wrapper: cpp/transport/codex_wrapper_main.cpp cpp/transpor
 
 $(BUILD)/json-stream-tests: tests/json_stream_tests.cpp cpp/transport/json.cpp cpp/transport/json.hpp cpp/vrs/memory_budget.hpp | $(BUILD)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< cpp/transport/json.cpp -o $@
+
+$(BUILD)/swegca-vrs-ingress-probe: cpp/transport/stdio_main.cpp benchmarks/recall_entry_marker.cpp $(wildcard cpp/transport/*.hpp) cpp/transport/json.cpp $(VRS_SOURCES) $(CORE_SOURCES) $(CORE_HEADERS) $(VRS_HEADERS) | $(BUILD)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) -DSWEGCA_RECALL_ENTRY_PROBE $(INCLUDES) $< benchmarks/recall_entry_marker.cpp cpp/transport/json.cpp $(VRS_SOURCES) $(CORE_SOURCES) -o $@
