@@ -91,6 +91,7 @@ struct InputMatch {
     std::size_t original_index = 0;
     std::size_t current_observations = 0;
     ExperienceLocation original;
+    std::uint64_t observed_at = 0;
 };
 
 class ExperienceRouter;
@@ -160,10 +161,10 @@ private:
         const auto relative=index-found->begin;
         if (found->sequence) {
             return {found->recalled, found->sequence->original_begin()+relative, found->current_observations,
-                (*found->sequence)[relative].original()};
+                (*found->sequence)[relative].original(), (*found->sequence)[relative].value().observed_at};
         }
         const auto& address = addresses_.at(found->address_begin+relative);
-        return {found->recalled, address.original_index, found->current_observations, address.experience->original()};
+        return {found->recalled, address.original_index, found->current_observations, address.experience->original(), address.experience->value().observed_at};
     }
     architecture::DigestBytes cue_{};
     std::shared_ptr<const std::byte> issuer_;
@@ -271,6 +272,8 @@ public:
     // No disk, recording, shuffle or LLM precedes Recall. SHA-256 cue work is
     // part of Deja vu and is included in any input-to-Recall timing.
     [[nodiscard]] InputRecall input(std::string_view media, std::span<const std::byte> content) const;
+    // Only receipt metadata is considered here; one original is read later.
+    [[nodiscard]] std::optional<std::size_t> select_replay(const InputRecall&) const;
     [[nodiscard]] ReplayedInput replay(const InputRecall& recalled, std::size_t candidate) const;
     // Partial original access preserves Recall provenance but does not issue a
     // Replay receipt or update the continuation key.

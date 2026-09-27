@@ -129,6 +129,9 @@ InputRecall Runtime::input(std::string_view media,std::span<const std::byte> con
     // No closure, pending merge or storage work is placed before Deja vu.
     return require_session().router.input(media,content);
 }
+std::optional<std::size_t> Runtime::select_replay(const InputRecall& recalled) const {
+    return require_session().router.select_replay(recalled);
+}
 ReplayedInput Runtime::replay(const InputRecall& recalled,std::size_t candidate) const {
     return require_session().router.replay(recalled,candidate);
 }

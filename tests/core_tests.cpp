@@ -2,6 +2,7 @@
 #include "swegca_architecture/memory_promotion_kernel.hpp"
 #include "swegca_architecture/memory_transaction_stage_kernel.hpp"
 #include "vrs/verification.hpp"
+#include "swegca_architecture/recall_route_kernel.hpp"
 #include <array>
 #include <cfenv>
 #include <cstdio>
@@ -32,6 +33,33 @@ int main(){
  static_assert(!std::is_aggregate_v<EvidenceJudgment>);
  static_assert(noexcept(judge_evidence(std::declval<const EvidenceRules&>(),std::declval<const EvidenceTally&>())));
  CHECK(std::fegetround()==FE_TONEAREST);
+ {
+  Digest identity{};identity[0]=std::byte{1};
+  ReplayCandidate current{1.0,10,identity,{identity,0,64,identity}};
+  auto candidate=current;
+  const auto allocation_before=allocations;
+  CHECK(prefer_replay(nullptr,current)==ReplayPreference::replace);
+  CHECK(prefer_replay(&current,candidate)==ReplayPreference::keep);
+  candidate.strength=0.5;candidate.observed_at=100;
+  CHECK(prefer_replay(&current,candidate)==ReplayPreference::keep);
+  candidate.strength=1.5;candidate.observed_at=0;
+  CHECK(prefer_replay(&current,candidate)==ReplayPreference::replace);
+  candidate=current;candidate.observed_at=11;
+  CHECK(prefer_replay(&current,candidate)==ReplayPreference::replace);
+  CHECK(prefer_replay(&candidate,current)==ReplayPreference::keep);
+  candidate=current;candidate.original.offset=64;
+  CHECK(prefer_replay(&current,candidate)==ReplayPreference::keep);
+  CHECK(prefer_replay(&candidate,current)==ReplayPreference::replace);
+  candidate=current;candidate.strength=std::numeric_limits<double>::quiet_NaN();
+  CHECK(prefer_replay(&current,candidate)==ReplayPreference::invalid);
+  CHECK(prefer_replay(&candidate,current)==ReplayPreference::invalid);
+  candidate=current;candidate.original.bytes=0;
+  CHECK(prefer_replay(nullptr,candidate)==ReplayPreference::invalid);
+  candidate=current;candidate.connection={};
+  CHECK(prefer_replay(nullptr,candidate)==ReplayPreference::invalid);
+  CHECK(allocations==allocation_before);
+ }
+
  const auto rules=make_evidence_rules(EvidencePolicy{});
  const auto accepted=judge_evidence(rules,tally());
  const auto rejected=judge_evidence(rules,tally(0,100));

@@ -86,7 +86,8 @@ int main() {
         old.end();
         throws<std::logic_error>([&] { router.mount_main(old); });
         old.publish_originals(); router.mount_main(old); router.mount_main(old);
-        CHECK(!router.input("text/plain",std::as_bytes(std::span(followup))).familiar());
+        auto missing=router.input("text/plain",std::as_bytes(std::span(followup)));
+        CHECK(!missing.familiar());CHECK(!router.select_replay(missing));
         const auto reads_before=reads, writes_before=writes;
         const auto recall_memory_before=memory.used();
         auto natural=router.input("application/octet-stream",std::as_bytes(std::span(payload)));
@@ -103,6 +104,9 @@ int main() {
             CHECK(match.current_observations==0);
         }
         CHECK(match_index==16);
+        CHECK(router.select_replay(natural)==15);
+        CHECK(reads==reads_before && writes==writes_before);
+        CHECK(memory.used()==recall_memory_before+recall_bytes);
         throws<std::out_of_range>([&]{(void)natural.matches()[16];});
         CHECK(router.replay(natural,0).location()==first);
         CHECK(reads>reads_before && writes==writes_before);
@@ -393,6 +397,7 @@ int main() {
         const auto used=memory.used(),before_reads=reads,before_writes=writes;
         auto receipt=route.input("text/plain",std::as_bytes(std::span(payload)));
         const auto cost=memory.used()-used;
+        CHECK(route.select_replay(receipt)==191);
         CHECK(cost<2048);CHECK(reads==before_reads&&writes==before_writes);
         CHECK(receipt.temporary()&&receipt.matches().size()==192);
         for(std::size_t n=0;n<expected.size();++n){
@@ -402,6 +407,8 @@ int main() {
         }
         auto moved=std::move(receipt);CHECK(receipt.matches().empty());
         const auto next=record(193,payload);
+        CHECK(route.select_replay(moved)==191);
+        throws<std::invalid_argument>([&]{(void)route.select_replay(receipt);});
         CHECK(moved.matches().size()==192&&moved.matches()[191].original==expected.back());
         auto replayed=route.replay(moved,191);CHECK(replayed.location()==expected.back());
         const auto comparison=route.compare_replay(replayed,7,193);
@@ -409,6 +416,38 @@ int main() {
         CHECK(assessment.agreement()==ReplayAgreement::insufficient);
         CHECK(assessment.current_originals().size()==1&&assessment.current_originals()[0]==next);
         std::printf("192-candidate temporary receipt: %zu tracked bytes\n",cost);
+    }
+    CHECK(memory.used()==0);
+    {
+        // Outcome status cannot hide a negative experience from Replay.
+        ExperienceLocation expected;
+        {
+            auto store=SessionStore::create(root,id(230),"selection",65536,memory);
+            SessionRuntime live(store,memory,8192);ExperienceRouter route(live,memory);
+            for(unsigned key=231;key<=233;++key)live.define_connection(id(key),key==231?1.0:2.0,policy);
+            const auto record=[&](unsigned key,unsigned step,EvidenceOutcome outcome){
+                EvidenceObservation value;value.hypothesis=id(key);value.source=id(1);
+                value.context=id(2);value.producer=id(3);value.observed_at=step;value.outcome=outcome;
+                return live.observe(id(key),input("selection",step),value,7,step).original;
+            };
+            (void)record(231,100,EvidenceOutcome::support);
+            expected=record(232,90,EvidenceOutcome::refute);
+            (void)record(233,80,EvidenceOutcome::insufficient);
+            auto receipt=route.input("application/octet-stream",std::as_bytes(std::span(payload)));
+            const auto before_reads=reads,before_writes=writes,used=memory.used();
+            CHECK(route.select_replay(receipt)==1);
+            CHECK(reads==before_reads&&writes==before_writes&&memory.used()==used);
+            CHECK(route.replay(receipt,*route.select_replay(receipt)).location()==expected);
+            (void)record(233,90,EvidenceOutcome::insufficient);
+            auto tied=route.input("application/octet-stream",std::as_bytes(std::span(payload)));
+            CHECK(tied.matches()[*route.select_replay(tied)].original==expected);
+        }
+        {
+            auto store=SessionStore::open(root,id(230),memory);
+            SessionRuntime live(store,memory,8192);ExperienceRouter route(live,memory);
+            auto restored=route.input("application/octet-stream",std::as_bytes(std::span(payload)));
+            CHECK(restored.matches()[*route.select_replay(restored)].original==expected);
+        }
     }
     CHECK(memory.used()==0);
     fs::remove_all(root);

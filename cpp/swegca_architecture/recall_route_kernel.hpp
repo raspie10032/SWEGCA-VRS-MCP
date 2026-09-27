@@ -1,6 +1,8 @@
 #pragma once
 
 #include "swegca_architecture/session_kernel.hpp"
+#include "swegca_architecture/head_publication_kernel.hpp"
+#include <tuple>
 #include <cstddef>
 
 namespace swegca::architecture::kernel {
@@ -10,6 +12,33 @@ enum class RecallScope { unavailable, temporary, main };
 // A current exact cue precedes the continued memory key within one tier.
 // Both are familiarity cues only, not evidence of current truth.
 enum class FamiliarityKey { missing, exact, continuation, context };
+// Scheduling one original for Replay, not judging its truth. Every outcome
+// remains accessible. Strength is the stored connection confidence; recency
+// breaks equal-confidence ties. Exact ties use canonical identity/address so
+// map insertion order and recovery do not change the choice.
+struct ReplayCandidate {
+    double strength = 0;
+    std::uint64_t observed_at = 0;
+    Digest connection{};
+    RecordAddress original;
+};
+enum class ReplayPreference { invalid, keep, replace };
+[[nodiscard]] inline ReplayPreference prefer_replay(const ReplayCandidate* current,
+    const ReplayCandidate& candidate) noexcept {
+    const auto valid=[](const ReplayCandidate& value) {
+        return finite_count(value.strength) && named_digest(value.connection) && head_address_valid(value.original);
+    };
+    if(!valid(candidate) || (current && !valid(*current))) return ReplayPreference::invalid;
+    if(!current) return ReplayPreference::replace;
+    if(candidate.strength!=current->strength)
+        return candidate.strength>current->strength ? ReplayPreference::replace : ReplayPreference::keep;
+    if(candidate.observed_at!=current->observed_at)
+        return candidate.observed_at>current->observed_at ? ReplayPreference::replace : ReplayPreference::keep;
+    const auto key=[](const ReplayCandidate& value) {
+        return std::tie(value.connection,value.original.block,value.original.offset,value.original.bytes,value.original.digest);
+    };
+    return key(candidate)<key(*current) ? ReplayPreference::replace : ReplayPreference::keep;
+}
 // Receipt representation only. No candidate or evidence is discarded. Compare
 // bounded snapshot metadata with individual address pins without multiplication
 // overflow; the caller accounts for its own VRS storage representation.

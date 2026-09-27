@@ -459,6 +459,22 @@ InputMatch ExperienceRouter::selected_input(const InputRecall& recalled, std::si
         throw std::logic_error("Recall original address changed");
     return selected;
 }
+std::optional<std::size_t> ExperienceRouter::select_replay(const InputRecall& recalled) const {
+    if(recalled.issuer_!=issuer_) throw std::invalid_argument("Recall belongs to a different input route");
+    std::optional<std::size_t> selected;
+    ReplayCandidate best;
+    for(std::size_t index=0;index<recalled.matches().size();++index){
+        const auto match=recalled.matches()[index];
+        const ReplayCandidate candidate{match.recalled.recalled_head.strength,match.observed_at,
+            match.recalled.recalled_head.identity,match.original};
+        switch(prefer_replay(selected ? &best : nullptr,candidate)){
+        case ReplayPreference::invalid: throw std::logic_error("invalid Recall candidate metadata");
+        case ReplayPreference::keep: break;
+        case ReplayPreference::replace: best=candidate;selected=index;break;
+        }
+    }
+    return selected;
+}
 ReplayedInput ExperienceRouter::replay(const InputRecall& recalled,std::size_t candidate) const {
     const auto selected=selected_input(recalled,candidate);
     const auto identity=selected.recalled.recalled_head.identity;

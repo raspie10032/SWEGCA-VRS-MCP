@@ -68,11 +68,14 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     def event(name,source='user',**extra):
         fields={'sequence':'0','observedAt':'0','seed':'7','step':'0','session':name,'source':source,'media':'text/plain','content':text};fields.update(extra);return fields
     first=c.call('swegca/receive',event('one'))['result'];check(first['candidates']==[])
+    check(c.call('tools/call',{'name':'vrs_replay','arguments':{'receipt':first['receipt']}})['result']['isError'])
     second=c.call('swegca/receive',event('one','assistant',sequence='1'))['result'];check(len(second['candidates'])==1)
     check(c.call('tools/call',{'name':'vrs_replay','arguments':{'receipt':first['receipt'],'candidate':'0'}})['result']['isError'])
     replay=c.call('tools/call',{'name':'vrs_replay','arguments':{'receipt':second['receipt'],'candidate':'0'}})['result']
     check(bytes.fromhex(replay['structuredContent']['contentHex'])==text.encode())
     check(replay['structuredContent']['original']==first['original'])
+    automatic=c.call('tools/call',{'name':'vrs_replay','arguments':{'receipt':second['receipt']}})['result']
+    check(automatic['structuredContent']==replay['structuredContent'])
     compared=c.call('tools/call',{'name':'vrs_re_evidence','arguments':{'receipt':second['receipt'],'seed':'7','step':'0'}})['result']['structuredContent']
     check(compared['status']==0)
     check(compared['reEvidencePerformed'] is False)

@@ -46,6 +46,9 @@ __attribute__((noinline)) ReplayAgreement measured_replay(const EvidenceRules& r
  const Digest& hypothesis,const EvidenceJudgment& current,std::uint64_t step) noexcept {
  return compare_replay_evidence(rules,original,hypothesis,current,step);
 }
+__attribute__((noinline)) ReplayPreference measured_selection(const ReplayCandidate* current,const ReplayCandidate& candidate) noexcept {
+ return prefer_replay(current,candidate);
+}
 template<class Fn> void measure(const char* name,Fn fn) {
  constexpr std::size_t iterations=100000;
  for(std::size_t i=0;i<iterations;++i)fn(i);
@@ -84,6 +87,12 @@ int main(){
  ConnectionHead current;current.identity=hypothesis;current.record={hypothesis,80,300,hypothesis};current.revision=2;current.ordinal=2;current.observations=1;current.strength=0.5;
  std::array<ConnectionHead,64> versions{};
  for(std::size_t i=0;i<versions.size();++i){versions[i]=current;versions[i].ordinal=3+i;versions[i].revision=3+i;versions[i].record.offset=400+300*i;versions[i].strength=0.51+0.001*i;}
+ ReplayCandidate selected{1.0,10,hypothesis,current.record};
+ std::array<ReplayCandidate,64> candidates{};
+ for(std::size_t i=0;i<candidates.size();++i){
+  candidates[i]={0.9+0.1*(i%3),i%16,hypothesis,versions[i].record};
+ }
+ measure("replay_candidate_selection",[&](std::size_t i){auto result=measured_selection(i%7?&selected:nullptr,candidates[i&63]);consume(result);});
  measure("head_publication",[&](std::size_t i){auto result=measured_publication(i%7?&current:nullptr,i%7?current.record:RecordAddress{},versions[i&63],i%3!=0);consume(result);});
  std::array<EvidenceJudgment,64> decisions{};
  for(std::size_t i=0;i<64;++i)decisions[i]=judge_evidence(r,fixtures[i]);
