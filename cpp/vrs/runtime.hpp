@@ -57,6 +57,8 @@ public:
     void select_session(const architecture::DigestBytes&);
     [[nodiscard]] std::size_t attached_sessions() const noexcept { return sessions_.size(); }
     void end_session();
+    // Explicitly close one attached session without changing another selection.
+    void end_session(const architecture::DigestBytes&);
     [[nodiscard]] const StorageBudget& storage() const noexcept { return storage_; }
     [[nodiscard]] bool has_session() const noexcept { return active_!=nullptr; }
     [[nodiscard]] const SessionRuntime& session() const;

@@ -99,17 +99,22 @@ const SessionRuntime& Runtime::attached_session(const DigestBytes& identity) con
     return found->second.runtime;
 }
 void Runtime::end_session() {
-    auto& runtime=require_session().runtime;
+    end_session(require_session().identity);
+}
+void Runtime::end_session(const DigestBytes& requested) {
+    const auto found=sessions_.find(requested);
+    if(found==sessions_.end())throw std::invalid_argument("session not attached");
+    auto& runtime=found->second.runtime;
     if(runtime.phase()==SessionPhase::active)runtime.end();
     if(runtime.phase()==SessionPhase::ended)runtime.publish_originals();
     if(!main_session_readable(runtime.phase(),runtime.usable()))
         throw std::logic_error("session closure requires recovery before handoff");
-    // Publication is the durable queue entry. Invalidate the input route, then
+    // Publication is the durable queue entry. Invalidate this session route, then
     // hand the already verified cache back to its stable Main-owned store.
     // Consolidation remains deferred until work(); no history replay is needed.
-    const auto identity=active_->identity;
-    active_=nullptr;
-    sessions_.erase(identity);
+    const auto identity=found->first;
+    if(active_==&found->second)active_=nullptr;
+    sessions_.erase(found);
     sources_.release_session(identity,true);
 }
 ReceivedInput Runtime::receive_envelope(std::string_view media,std::span<const std::byte> content,

@@ -424,5 +424,30 @@ int main(){
    auto cognition=host.cognize(recalled,7,4);CHECK(cognition&&cognition->replayed.location()==previous);
   }
  }
+ {
+  const auto path=root/"targeted-end";fs::create_directory(path);
+  auto host=Runtime::create(path,config,memory);
+  host.start_session(id(20),"selected");
+  const auto kept=host.retain({0,0,"selected","user","text/plain",content},7,0).original;
+  auto recall=host.input("text/plain",content);
+  host.attach_session(id(21),"other");
+  const auto before=writes;
+  throws<std::invalid_argument>([&]{host.end_session(id(22));});
+  CHECK(writes==before && host.has_session() && host.attached_sessions()==2);
+  CHECK(host.replay(recall,0).location()==kept);
+  host.end_session(id(21));
+  CHECK(host.has_session() && host.attached_sessions()==1);
+  CHECK(host.replay(recall,0).location()==kept);
+  CHECK(host.work(7,0)==0); // only the empty ended source is eligible
+  host.attach_session(id(22),"failed-end");
+  fail_write=true;
+  throws<std::system_error>([&]{host.end_session(id(22));});
+  CHECK(host.has_session() && host.attached_sessions()==2);
+  CHECK(host.replay(recall,0).location()==kept);
+  CHECK(host.retain({1,1,"selected","user","text/plain",content},7,0).original!=kept);
+  host.end_session(id(20));CHECK(!host.has_session());
+  host.attach_session(id(23),"unselected");
+  host.end_session(id(23));CHECK(!host.has_session());
+ }
  CHECK(memory.used()==0);fs::remove_all(root);std::printf("runtime lifecycle tests: %u checks passed\n",checks);
 }

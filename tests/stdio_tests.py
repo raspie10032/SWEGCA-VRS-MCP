@@ -362,6 +362,34 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     check(c.call('swegca/end')['result']=={})
     check(c.call('swegca/work',{'seed':'7','step':'0'})['result']['merged']=='1')
     c.close()
+    # Explicit end targets never inherit the last-selected agent session.
+    targeted_root=root/'targeted-end';targeted_root.mkdir()
+    c=Client('create',targeted_root,path);c.initialize()
+    check(c.call('swegca/start',{'identity':identity(20),'name':'end-a'})['result']=={})
+    ta0=c.call('swegca/receive',event('end-a',content='a'))['result']
+    ta1=c.call('swegca/receive',event('end-a',content='a',sequence='1'))['result']
+    check(replay_receipt(ta1['receipt'])['structuredContent']['original']==ta0['original'])
+    check(c.call('swegca/attach',{'identity':identity(21),'name':'end-b'})['result']=={})
+    select_session(21)
+    c.call('swegca/receive',event('end-b',content='b'))
+    select_session(20)
+    for bad in (identity(250),'invalid',None):
+        check('error' in c.call('swegca/end',{'identity':bad}))
+        check('structuredContent' in recheck(ta1['receipt']))
+    check(c.call('swegca/end',{'identity':identity(21)})['result']=={})
+    check('structuredContent' in recheck(ta1['receipt']))
+    check('error' in c.call('swegca/select',{'identity':identity(21)}))
+    check('error' in c.call('swegca/end',{'identity':identity(21)}))
+    check('structuredContent' in recheck(ta1['receipt']))
+    check(c.call('swegca/work',{'seed':'7','step':'0'})['result']['merged']=='1')
+    ta2=c.call('swegca/receive',event('end-a',content='a',sequence='2'))['result']
+    check(ta2['temporary'] and ta2['candidateCount']=='2')
+    check(c.call('swegca/attach',{'identity':identity(22),'name':'end-unselected'})['result']=={})
+    check(c.call('swegca/end',{'identity':identity(20)})['result']=={})
+    check('error' in c.call('swegca/end')) # no selected session
+    check(c.call('swegca/end',{'identity':identity(22)})['result']=={})
+    check(c.call('swegca/work',{'seed':'7','step':'0'})['result']['merged']=='1')
+    c.close()
     # Native envelope preserves all fields while the prompt alone keys Recall.
     native_root=root/'native';native_root.mkdir()
     c=Client('create',native_root,path);c.initialize()

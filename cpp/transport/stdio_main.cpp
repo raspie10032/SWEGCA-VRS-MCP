@@ -415,9 +415,19 @@ private:
             return std::pmr::string("{}",&memory_);
         }
         if(method=="swegca/end"){
-            clear();runtime_.end_session();
-            for(auto it=contexts_.begin();it!=contexts_.end();++it)
-                if(&it->second==selected_){selected_=nullptr;contexts_.erase(it);break;}
+            auto target=contexts_.end();
+            if(const auto* identity=p.find("identity"))target=contexts_.find(digest(identity->string()));
+            else {
+                (void)context();
+                for(auto it=contexts_.begin();it!=contexts_.end();++it)
+                    if(&it->second==selected_){target=it;break;}
+            }
+            if(target==contexts_.end())throw std::invalid_argument("end target session not attached");
+            // End the named owner, never whichever session last received input.
+            // Do not invalidate another session's Recall/Replay on this path.
+            runtime_.end_session(target->first);
+            if(&target->second==selected_)selected_=nullptr;
+            contexts_.erase(target);
             return std::pmr::string("{}",&memory_);
         }
         if(method=="swegca/work"){const auto count=runtime_.work(integer(p.at("seed")),integer(p.at("step")));return std::pmr::string("{\"merged\":\"",&memory_)+std::to_string(count).c_str()+"\"}";}

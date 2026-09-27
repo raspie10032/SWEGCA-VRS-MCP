@@ -139,3 +139,24 @@ are outside that PMR counter; this is not a 256KiB process-RSS claim.
 
 Streaming change verification: Runtime 180 checks, physical block 424 checks,
 MCP subprocess 1,767 checks in this run (async polling affects the counter).
+
+## Explicit end by session identity
+
+The host accepts `swegca/end` with optional `identity`. When supplied, the
+identity must name an attached session; invalid, malformed, or already detached
+targets fail without falling back to the currently selected session. With no
+identity, the selected-session behavior remains, and no selection is an error.
+
+Runtime::end_session(identity) runs the existing SWEGCA session end/publication
+transitions for that owner alone. Closing an unselected attached session does
+not select it, invalidate another session's Recall/Replay, or close that other
+session. A failed close also leaves the other selection intact. Transport
+context is erased only after the targeted Runtime close succeeds. Named close
+works with no selected session as long as its target is attached.
+
+The close publishes the original/graph source into the existing durable work
+queue. It does not itself run work or schedule a merge. Existing work/start,
+work/poll and work operate only on published ended sources. EOF, idle, turn
+completion and native SessionEnd notifications still do not substitute for
+this explicit host operation. Desktop wiring of the actual user end action
+remains separate unfinished work.
