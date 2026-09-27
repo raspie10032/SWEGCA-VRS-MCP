@@ -52,6 +52,7 @@ for line in sys.stdin:
         assert json.loads(line(process.stdout))['id']==2
         serial=2
         for size in (128,4096,65536,1048576):
+            prior_turn_requests=serial-2
             samples=[];native_bytes=0;stage_samples=[]
             for _ in range(count):
                 serial+=1
@@ -77,7 +78,8 @@ for line in sys.stdin:
                 assert elapsed>=0 and json.loads(line(process.stdout))['id']==serial
                 samples.append(elapsed)
             ordered=sorted(samples)
-            result=dict(boundary='desktop stdin write start -> core Recall entry',scenario='empty-main/new-temporary-session',
+            result=dict(boundary='desktop stdin write start -> core Recall entry',scenario='empty-main/one-accumulating-temporary-session',
+                priorTurnRequests=prior_turn_requests,sameTextWithinBatch=True,
                 promptBytes=size,nativeBytes=native_bytes,samplesNs=samples,medianNs=ordered[len(ordered)//2],
                 maxNs=max(samples),atLeast1ms=sum(n>=1000000 for n in samples))
             if stages:result['stageOffsetsNs']=stage_samples

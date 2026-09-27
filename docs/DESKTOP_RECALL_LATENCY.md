@@ -390,3 +390,48 @@ All 25 1MiB samples exceed 1ms; final maximum was 4.029881ms. These shared-machi
 synthetic empty-Main runs show an observed improvement, not a worst-case or
 installed-desktop guarantee. Real stdio subprocess suite passed 3,370 checks,
 including desktop lifecycle, native input preservation, resume and EOF handling.
+
+
+## Plain-text cue follow-up and rejected framing trials
+
+After 4e39866, exact single text items borrow their decoded text directly for
+input_cue. Freshly built probes were measured on CPU 6/7, with no concurrent
+compilation by this task: 25 uninstrumented samples and 15 stage samples per
+size. This measures desktop stdin write start through core Recall entry in the
+wrapper/relay/proxy/host chain with a synthetic backend. Main remains empty;
+one temporary session accumulates all requests and responses. Each size batch
+repeats identical text. It is not a fresh session per sample, nor a cold/loaded
+Main or installed desktop measurement. The script now explicitly reports this
+scenario and the number of preceding turn requests. Older raw files' label
+`empty-main/new-temporary-session` describes the initial state only.
+
+| Prompt bytes | Current code median ms | Socket memchr trial ms | 16KiB host buffer trial ms |
+| --- | ---: | ---: | ---: |
+| 128 | 0.009520 | 0.018850 | 0.009521 |
+| 4096 | 0.016010 | 0.015890 | 0.016481 |
+| 65536 | 0.114031 | 0.124722 | 0.117562 |
+| 1048576 | 1.555556 | 1.567506 | 1.597097 |
+
+Every 1MiB sample in all three runs exceeds 1ms. Baseline maximum was 2.726488ms.
+These shared-machine sequential samples do not establish a uniform speedup.
+The socket-only memchr trial and 16KiB host staging trial both passed relevant
+checks but lacked demonstrated end-to-end benefit; both changes were reverted.
+No larger staging allocation or new socket draining loop remains.
+
+Raw files use desktop-plain-text-{recall,stages}.jsonl,
+desktop-socket-scan-{recall,stages}.jsonl and
+desktop-stdio-buffer-{recall,stages}.jsonl in benchmarks/results. The latter two
+pairs are rejected experiments. Baseline 1MiB stage medians were 264.782us from
+write start to proxy frame, 537.576us from RPC ready to host frame, and 450.404us
+from cue ready to Recall. Medians of separate stages cannot be added to obtain
+the total median. Host frame includes transport/scheduling and allocation, not
+just read syscalls; the final stage includes cue digest and routing, not just
+SHA compression. These remain concrete profiling targets without relaxing the
+input boundary or omitting source bytes.
+
+After restoring production framing, desktop-plain-text-restored.jsonl recorded
+25 samples per size with corrected scenario metadata. Medians were 0.009650,
+0.017631, 0.124271 and 1.569026ms for 128B, 4KiB, 64KiB and 1MiB respectively.
+All 25 1MiB inputs still failed the 1ms target (maximum 2.684528ms). The actual
+stdio subprocess regression passed 3,573 checks after restoration. Frame checks
+had passed 35 and socket checks 64 during the trials. No core logic changed.
