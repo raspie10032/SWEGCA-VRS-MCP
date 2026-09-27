@@ -12,6 +12,36 @@ struct RefinementSample {
     architecture::kernel::ObservationUse use = architecture::kernel::ObservationUse::invalid;
 };
 
+// A logical sample still contains the exact index and admission result. Store
+// the two columns separately to avoid per-sample struct alignment padding.
+class RefinementSamples final {
+    friend class ConnectionRefinement;
+    RefinementSamples(std::span<const std::uint32_t> indices,
+        std::span<const architecture::kernel::ObservationUse> uses) noexcept:indices_(indices),uses_(uses){}
+    std::span<const std::uint32_t> indices_;
+    std::span<const architecture::kernel::ObservationUse> uses_;
+public:
+    struct Iterator {
+        using value_type=RefinementSample;
+        using difference_type=std::ptrdiff_t;
+        using reference=RefinementSample;
+        using pointer=void;
+        using iterator_category=std::input_iterator_tag;
+        const std::uint32_t* index;
+        const architecture::kernel::ObservationUse* use;
+        reference operator*() const noexcept{return {*index,*use};}
+        Iterator& operator++() noexcept{++index;++use;return *this;}
+        Iterator operator++(int) noexcept{auto before=*this;++*this;return before;}
+        bool operator==(const Iterator&) const noexcept=default;
+    };
+    [[nodiscard]] std::size_t size() const noexcept{return indices_.size();}
+    [[nodiscard]] bool empty() const noexcept{return indices_.empty();}
+    [[nodiscard]] RefinementSample operator[](std::size_t index) const noexcept{return {indices_[index],uses_[index]};}
+    [[nodiscard]] Iterator begin() const noexcept{return {indices_.data(),uses_.data()};}
+    [[nodiscard]] Iterator end() const noexcept{return {indices_.empty()?indices_.data():indices_.data()+indices_.size(),
+        uses_.empty()?uses_.data():uses_.data()+uses_.size()};}
+};
+
 // Owns the complete shuffled traversal and per-experience admission outcomes.
 // It grants no World/memory/action authority. Its indices refer to the owner's
 // append-only experience sequence at before_revision().
@@ -28,16 +58,17 @@ public:
     [[nodiscard]] std::uint64_t current_step() const noexcept { return current_step_; }
     [[nodiscard]] const architecture::kernel::EvidenceTally& evidence() const noexcept { return evidence_; }
     [[nodiscard]] const ConnectionVerification& result() const noexcept { return result_; }
-    [[nodiscard]] std::span<const RefinementSample> samples() const noexcept { return samples_; }
+    [[nodiscard]] RefinementSamples samples() const noexcept { return {indices_,uses_}; }
 
 private:
     friend class Connection;
-    explicit ConnectionRefinement(MemoryBudget& memory) : samples_(&memory) {}
+    explicit ConnectionRefinement(MemoryBudget& memory) : indices_(&memory),uses_(&memory) {}
     architecture::DigestBytes connection_{};
     std::uint64_t before_revision_ = 0, after_revision_ = 0, seed_ = 0, current_step_ = 0;
     architecture::kernel::EvidenceTally evidence_;
     ConnectionVerification result_;
-    std::pmr::vector<RefinementSample> samples_;
+    std::pmr::vector<std::uint32_t> indices_;
+    std::pmr::vector<architecture::kernel::ObservationUse> uses_;
 };
 
 // Canonical digest of the complete recorded shuffle/core result.

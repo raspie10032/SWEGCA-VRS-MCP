@@ -35,7 +35,7 @@ using DigestSet = std::pmr::unordered_set<Digest, DigestHash>;
 // Explicit Fisher-Yates and unbiased bounded draws make the traversal stable
 // across standard-library shuffle implementations. This is data movement;
 // only SWEGCA's observation and judgment kernels decide its interpretation.
-void shuffle(std::span<RefinementSample> values, std::uint64_t seed) {
+void shuffle(std::span<std::uint32_t> values, std::uint64_t seed) {
     std::mt19937_64 random(seed);
     for (std::size_t count = values.size(); count > 1; --count) {
         const auto bound = static_cast<std::uint64_t>(count);
@@ -115,10 +115,11 @@ ConnectionRefinement Connection::prepare_refinement(std::uint64_t seed, std::uin
     report.before_revision_ = report.after_revision_ = revision_;
     report.seed_ = seed;
     report.current_step_ = current_step;
-    report.samples_.resize(experiences_.size());
+    report.indices_.resize(experiences_.size());
+    report.uses_.resize(experiences_.size());
     for (std::size_t i = 0; i < experiences_.size(); ++i)
-        report.samples_[i].experience_index = static_cast<std::uint32_t>(i);
-    shuffle(report.samples_, seed);
+        report.indices_[i] = static_cast<std::uint32_t>(i);
+    shuffle(report.indices_, seed);
 
     DigestSet seen(&memory_), sources(&memory_), contexts(&memory_), producers(&memory_);
     using GroupIndex=std::pmr::unordered_map<GroupKey,GroupCounts,GroupHash>;
@@ -132,10 +133,11 @@ ConnectionRefinement Connection::prepare_refinement(std::uint64_t seed, std::uin
     // tally is neither an input nor retained on the connection.
     auto& tally = report.evidence_;
     auto reader=experiences_.reader();
-    for (auto& sample : report.samples_) {
-        const auto& value = reader[sample.experience_index].value();
-        sample.use = admit_observation(rules_, identity_, value, current_step, seen.contains(value.address));
-        if (sample.use != ObservationUse::applied) continue;
+    for (std::size_t ordinal=0;ordinal<report.indices_.size();++ordinal) {
+        const auto& value = reader[report.indices_[ordinal]].value();
+        auto& use=report.uses_[ordinal];
+        use = admit_observation(rules_, identity_, value, current_step, seen.contains(value.address));
+        if (use != ObservationUse::applied) continue;
         seen.insert(value.address);
         sources.insert(value.source);
         contexts.insert(value.context);
@@ -167,7 +169,7 @@ ConnectionRefinement Connection::prepare_refinement(std::uint64_t seed, std::uin
     for (std::uint32_t axis = 0; axis < rules_.axis_count(); ++axis) {
         sources.clear();
         producers.clear();
-        for (const auto& sample : report.samples_) {
+        for (const auto sample : report.samples()) {
             if(sample.use!=ObservationUse::applied)continue;
             const auto& value = reader[sample.experience_index].value();
             if (value.axis == axis) {

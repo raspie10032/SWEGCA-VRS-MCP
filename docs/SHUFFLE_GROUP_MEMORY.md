@@ -19,3 +19,18 @@ benchmarks/results/group-memory-{before,after}.txt. RSS/전체 프로세스 메�
 255,310→220,494바이트(34,816바이트, 약 13.6% 감소)였다. 결과 digest는 전후
 c9360c43c9471740ad940712378edf1dc615987479e492782fbb5bb6d81d8332로 같다.
 연결 검사 15,967개(실패 주입 246지점), Main 4,719개(실패 주입 914지점) 통과.
+
+## 표본 열 분리
+
+ConnectionRefinement는 셔플된 uint32 경험 번호와 ObservationUse를 별도 PMR 배열로
+보존한다. 기존 {uint32, uint8} 구조체 배열의 정렬 여백을 없앴다. samples()는
+동일한 두 값을 반환하는 읽기 뷰이며 size/index/순회 인터페이스를 제공한다.
+연속 구조체 span은 더 이상 노출하지 않는다. 실제 Fisher–Yates는 같은 번호를
+같은 순서로 교환하고 admission은 해당 순번에 기록한다.
+
+canonical digest의 표본당 두 little-endian uint64 인코딩은 변경하지 않았다.
+모든 기존 digest 벡터와 512그룹/1,536표본의 digest가 유지됐다. 해당 측정의 최대
+추가 예약량은 직전 220,494→215,886바이트로 4,608바이트 감소했다. 표본당 3바이트의
+여백 제거와 일치한다. 결과는 sample-columns-memory.txt에 보존했다.
+연결 15,971개(실패 주입 247지점), 영속 연결 77개 검사 통과.
+표본 저장은 여전히 O(n)이며 디스크 기반 표본 또는 전체 4GB 운용 완성은 아니다.
