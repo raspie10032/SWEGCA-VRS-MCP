@@ -55,7 +55,12 @@ public:
     }
     [[nodiscard]] std::string_view cue_content() const{
         if(kind_!=architecture::kernel::AgentEventKind::input)throw std::invalid_argument("event has no input cue");
-        return app_server_?std::string_view(cue_):*prompt();
+        if(!app_server_)return *prompt();
+        // The exclusive event owner materializes the exact same encoded cue
+        // only when VRS consumes it. Transport-only owners never need a copy.
+        // An input array encodes to at least "[]"; empty means not built yet.
+        if(cue_.empty())cue_=encode_json(parsed_.at("params").at("input"),*cue_.get_allocator().resource());
+        return cue_;
     }
     [[nodiscard]] const Json& fields() const noexcept{return parsed_;}
 private:
@@ -72,7 +77,7 @@ private:
     Json parsed_;
     architecture::kernel::AgentEventKind kind_;
     bool app_server_=false;
-    std::pmr::string cue_;
+    mutable std::pmr::string cue_;
     std::pmr::string bound_session_;
 };
 
@@ -130,7 +135,6 @@ inline AgentEvent AgentEvent::from_app_server(std::string_view bytes,Json parsed
         kind=AgentEventKind::input;
     }
     AgentEvent event(bytes,std::move(parsed),kind,memory);event.app_server_=true;
-    if(kind==AgentEventKind::input)event.cue_=encode_json(event.parsed_.at("params").at("input"),memory);
     return event;
 }
 // Connection identity comes from the transport owner. Never manufacture a

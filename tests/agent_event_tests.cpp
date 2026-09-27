@@ -65,11 +65,25 @@ int main(){
   CHECK(event.native_bytes()==raw && event.session()=="t" && event.native_name()=="turn/start");
   CHECK(event.kind()==AgentEventKind::input && !event.prompt());
   CHECK(event.cue_media()=="application/vnd.swegca.codex-input-v1");
+  // Syntax adaptation already validated input. An unused cue owns no encoded
+  // copy; allocation failure at first consumption must leave a retry possible.
+  const auto reserved=memory.limit()-memory.used();auto* held=memory.allocate(reserved);
+  bool exhausted=false;try{(void)event.cue_content();}catch(const std::bad_alloc&){exhausted=true;}
+  CHECK(exhausted&&event.native_bytes()==raw&&event.session()=="t");
+  memory.deallocate(held,reserved);
+  const auto expected=encode_json(event.fields().at("params").at("input"),memory);
+  CHECK(event.cue_content()==expected);
+  const auto used=memory.used();const auto* data=event.cue_content().data();
+  CHECK(event.cue_content().data()==data&&memory.used()==used);
   auto input=parse_json(event.cue_content(),memory);
   CHECK(input.values.size()==2 && input.values[1].at("url").string()=="never-fetch://asset");
   auto moved=std::move(event);CHECK(moved.native_bytes()==raw && moved.cue_content().size()>0);
  }
  CHECK(memory.used()==0);
+ {
+  auto event=adapt_codex_app_server(R"({"id":1,"method":"turn/start","params":{"threadId":"t","input":[]}})",memory);
+  auto moved=std::move(event);CHECK(moved.cue_content()=="[]");
+ }
  for(const auto method:{"item/started","item/agentMessage/delta","item/completed","turn/completed","thread/closed","thread/archived","future/event"}){
   const std::string raw="{\"method\":\""+std::string(method)+"\",\"params\":{\"threadId\":\"t\",\"unknown\":true}}";
   auto event=adapt_codex_app_server(raw,memory);

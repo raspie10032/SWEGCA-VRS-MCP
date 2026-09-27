@@ -301,8 +301,8 @@ private:
             try {
                 if(route==AgentEventRoute::recall_then_record){
                     if(next_receipt_==std::numeric_limits<std::uint64_t>::max())throw std::overflow_error("receipt sequence exhausted");
-                    clear();state.receipt=++next_receipt_;
                     const auto prompt=event.cue_content();
+                    clear();state.receipt=++next_receipt_;
                     state.received.emplace(runtime_.receive_envelope(event.cue_media(),std::as_bytes(std::span(prompt)),original,seed,step));
                     slot->second.original=state.received->recorded.original;committed=true;
                     slot->second.fingerprint=agent_delivery_identity(sequence,observed,event.native_bytes());

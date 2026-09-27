@@ -114,3 +114,28 @@ Verification: Wire 74 checks, Pump 92 checks, stdio subprocess 2,560 checks.
 Pump checks include large native content with Unicode/escapes/all control bytes,
 malformed field shapes, duplicate fields, owner identity rejection, preserved
 request bytes on failed acknowledgements and authenticated completion receipts.
+
+## Materialize cue only when consumed
+
+AgentEvent still parses and validates the complete native input immediately,
+but no longer eagerly serializes its input array into a cue string. The exclusive
+event owner constructs that same encoding once at `cue_content()` consumption.
+The proxy does not consume a cue, so it avoids one full serialization/allocation.
+VRS constructs it before clearing prior Recall/Replay state, then uses unchanged
+media, key encoding and core routing. No cross-thread cache or shared global
+state was added. Failed allocation leaves the cache empty and retryable.
+
+`desktop-recall-consumed-cue.jsonl` contains the five-sample sequential result:
+
+| Prompt bytes | Prior median ms | Deferred cue median ms | Maximum ms |
+| --- | ---: | ---: | ---: |
+| 128 | 0.016000 | 0.011730 | 0.029470 |
+| 4096 | 0.032160 | 0.038030 | 0.044710 |
+| 65536 | 0.429134 | 0.345294 | 0.429034 |
+| 1048576 | 6.537251 | 5.406102 | 6.389420 |
+
+The 4KiB median increased in this small sample; no uniform speedup is claimed.
+All 1MiB samples remain above 1ms and the full latency requirement is unresolved.
+Verification: agent-event 219, Wire 74, Pump 92, stdio process 2,560 checks passed.
+Event checks cover allocation failure/retry, exact eager-encoding equivalence,
+repeated access without extra allocation and moves before/after materialization.
