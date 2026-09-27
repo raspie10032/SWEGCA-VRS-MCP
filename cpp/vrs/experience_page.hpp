@@ -23,6 +23,10 @@ public:
         const architecture::kernel::EvidenceRules&,MemoryBudget&) const;
 private:
     friend class ExperienceSequence;
+    friend class Runtime;
+    // Cold recovery only, after exclusive root ownership and Main recovery.
+    static void reclaim_orphans(const std::filesystem::path&,
+        const architecture::kernel::EvidenceRules&,MemoryBudget&,StorageBudget&);
     // Constructs into unpublished raw segment storage; destroys the prefix on
     // failure. No partially authenticated/decoded segment reaches a reader.
     void restore_into(ExperienceEvidence*,std::size_t,

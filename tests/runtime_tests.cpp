@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <unistd.h>
+#include <sys/wait.h>
 using namespace swegca::architecture;
 using namespace swegca::architecture::kernel;
 using namespace swegca::vrs;
@@ -566,8 +567,49 @@ int main(){
    retained.emplace(host.input("text/plain",content));
   }
   CHECK(!fs::is_empty(path/"metadata-pages"));
+  {
+   auto reopened=Runtime::open(path,config,memory);
+   CHECK(!fs::is_empty(path/"metadata-pages")); // The old page handle is still locked.
+  }
   // Expired receipts are never used for a read, but their destruction is safe.
   retained.reset();CHECK(fs::is_empty(path/"metadata-pages"));
+ }
+ {
+  const auto path=root/"crash-pages";fs::create_directory(path);
+  const auto child=::fork();CHECK(child>=0);
+  if(child==0){
+   try {
+    auto host=Runtime::create(path,config,memory);host.start_session(id(234),"crash-source");
+    for(unsigned n=0;n<31;++n)(void)host.retain({n,n,"crash-source","user","text/plain",content},7,n);
+    host.end_session();(void)host.work(7,31);host.start_session(id(235),"crash-reader");
+    if(!host.page_out_main(input_cue("text/plain",content),15))::_exit(2);
+    ::_exit(0); // No destructors: leave the completed derived page behind.
+   }catch(...){::_exit(3);}
+  }
+  int status=0;CHECK(::waitpid(child,&status,0)==child&&WIFEXITED(status)&&WEXITSTATUS(status)==0);
+  const auto directory=path/"metadata-pages";CHECK(!fs::is_empty(directory));
+  const auto orphan=fs::directory_iterator(directory)->path();
+  const auto orphan_bytes=fs::file_size(orphan);
+  const auto partial=directory/(std::string(64,'f')+".block");
+  {const auto fd=::open(partial.c_str(),O_CREAT|O_EXCL|O_WRONLY,0600);CHECK(fd>=0);CHECK(::write(fd,"x",1)==1);CHECK(::close(fd)==0);}
+  const auto original_path=directory/(std::string(64,'e')+".block");
+  {
+   DigestBytes identity;identity.fill(std::byte{0xee});
+   auto original=ExperienceBlock::create(original_path,identity,
+       ExperienceBlock::header_bytes+ExperienceBlock::record_overhead+1+1+10+content.size());
+   (void)original.append({0,0,"s","x","text/plain",content});
+  }
+  const auto before=stored_bytes(path,memory);
+  {
+   auto host=Runtime::open(path,config,memory);
+   CHECK(!fs::exists(orphan)&&fs::exists(partial)&&fs::exists(original_path));
+   CHECK(host.storage().used()==before-orphan_bytes);
+   host.resume_session(id(235));auto recalled=host.input("text/plain",content);
+   CHECK(recalled.matches().size()==31&&host.select_replay(recalled)==30);
+   auto replayed=host.replay(recalled,15);
+   const auto restored=evidence_payload(replayed.original()).content;
+   CHECK(restored.size()==content.size()&&std::equal(restored.begin(),restored.end(),content.begin()));
+  }
  }
  {
   const auto path=root/"inventory-many";fs::create_directory(path);

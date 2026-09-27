@@ -1,6 +1,9 @@
 #include "vrs/experience_page.hpp"
 #include "swegca_architecture/metadata_residency_kernel.hpp"
 #include <sys/stat.h>
+#include <sys/file.h>
+#include <fcntl.h>
+#include <system_error>
 #include <unistd.h>
 #include <algorithm>
 #include <bit>
@@ -56,6 +59,61 @@ void ExperiencePage::discard() noexcept {
     if(::unlink(path_.c_str())<0)return;
     ::close(block_.fd_);block_.fd_=-1;
     if(charge_)StorageBudget::reclaim_removed(charge_,failed_append?block_.capacity_:physical);
+}
+void ExperiencePage::reclaim_orphans(const std::filesystem::path& directory,
+    const architecture::kernel::EvidenceRules& rules,MemoryBudget& memory,StorageBudget& storage) {
+    if(!std::filesystem::exists(directory))return;
+    const auto status=std::filesystem::symlink_status(directory);
+    if(!std::filesystem::is_directory(status))throw std::runtime_error("invalid metadata page directory");
+    bool removed=false;
+    for(const auto& item:std::filesystem::directory_iterator(directory)) {
+        const auto name=item.path().filename().string();
+        if(name.size()!=70||!name.ends_with(".block"))continue;
+        architecture::DigestBytes identity{};bool canonical=true;
+        for(std::size_t n=0;n<64;++n){
+            const auto c=name[n];
+            if(!((c>='0'&&c<='9')||(c>='a'&&c<='f'))){canonical=false;break;}
+            const auto digit=c<='9'?c-'0':c-'a'+10;
+            identity[n/2]|=std::byte(digit<<(n%2?0:4));
+        }
+        if(!canonical)continue;
+        struct stat named{};
+        if(::lstat(item.path().c_str(),&named)<0)throw std::system_error(errno,std::generic_category(),"inspect metadata orphan");
+        if(!S_ISREG(named.st_mode)||named.st_nlink!=1)continue;
+        try {
+            auto block=ExperienceBlock::open_reader(item.path(),&storage);
+            // Retained Replay snapshots can outlive Runtime. Their page's
+            // original writer lock prevents treating that page as an orphan.
+            if(::flock(block.fd_,LOCK_EX|LOCK_NB)<0){
+                if(errno==EWOULDBLOCK||errno==EAGAIN)continue;
+                throw std::system_error(errno,std::generic_category(),"lock metadata orphan");
+            }
+            if(block.identity()!=identity)continue;
+            const auto location=block.location_at(ExperienceBlock::header_bytes);
+            constexpr auto maximum=ExperienceBlock::record_overhead+session.size()+source.size()+media.size()+header+entry*capacity;
+            if(location.bytes>maximum||block.capacity()!=ExperienceBlock::header_bytes+location.bytes)continue;
+            auto stored=block.read(location,maximum,memory);
+            const auto content=stored.view().content;
+            if(content.size()<header)continue;
+            const auto count=get(content,8);
+            if(!count||count>capacity)continue;
+            // No path is owned until the complete derived record is verified.
+            // A failed decode can never delete an original or unknown file.
+            ExperiencePage page(std::move(block),location,count,{},&storage);
+            for(std::size_t n=0;n<count;++n)(void)page.decode(n,rules,stored);
+            page.block_.end_=ExperienceBlock::header_bytes+location.bytes;
+            page.path_=item.path();
+            const auto before=storage.used();page.discard();
+            removed=removed||storage.used()<before;
+        } catch(const std::system_error&) { throw; }
+          catch(const std::runtime_error&) { /* Unknown/corrupt files remain charged. */ }
+    }
+    if(removed){
+        const int fd=::open(directory.c_str(),O_RDONLY|O_DIRECTORY|O_CLOEXEC|O_NOFOLLOW);
+        if(fd<0)throw std::system_error(errno,std::generic_category(),"open metadata cleanup directory");
+        const auto result=::fsync(fd);const auto error=errno;::close(fd);
+        if(result<0)throw std::system_error(error,std::generic_category(),"sync metadata cleanup directory");
+    }
 }
 ExperiencePage ExperiencePage::create(const std::filesystem::path& path,
     const architecture::DigestBytes& identity,std::span<const ExperienceEvidence> values,

@@ -51,6 +51,7 @@ Runtime::Runtime(const std::filesystem::path& root,const RuntimeConfig& config,M
     main_((discover?create_missing_main(root):create) ? PersistentMainGraph::create(root/"graph",config.main_identity,memory,config.initial_strength,config.policy,config.main_block_capacity,config.merge_workers,&storage_)
                  : PersistentMainGraph::open(root/"graph",config.main_identity,memory,config.initial_strength,config.policy,sources_,config.merge_workers,&storage_)),sessions_(&memory) {
     sources_.release_caches();
+    ExperiencePage::reclaim_orphans(root_/"metadata-pages",make_evidence_rules(config.policy),memory_,storage_);
 }
 Runtime::Active::Active(SessionRuntime& session,const DigestBytes& id,MemoryBudget& memory,const PersistentMainGraph& main)
     :identity(id),runtime(session),router(runtime,memory) {
