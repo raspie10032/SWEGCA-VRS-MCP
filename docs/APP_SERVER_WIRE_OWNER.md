@@ -193,7 +193,7 @@ Verification after this integration: 87 combined pump/acknowledgement checks and
 `make build/swegca-app-server-proxy` now builds the actual stream-owner process:
 
 ```
-swegca-app-server-proxy CLIENT_FD SERVER_FD VRS_FD CONFIG
+swegca-app-server-proxy CLIENT_FD SERVER_FD VRS_FD CONFIG --new-peer|--resume-peer
 ```
 
 The launcher must supply three distinct, exclusive connected stream descriptors
@@ -201,7 +201,7 @@ above 2. The VRS descriptor is the dedicated stdin/stdout channel of a fresh VRS
 MCP process, not a second reader on another client's connection. No listening
 port, backend replacement or running desktop configuration is installed by this
 executable. Startup initializes protocol 2025-06-18, requires host-input version
-10, sends initialized, and attaches or resumes the configured native sessions.
+14, sends initialized, and attaches or resumes the configured native sessions.
 Only then does stdout emit `ready`. Stdout/stderr carry status, not native content.
 
 Example configuration (all resource integers are decimal strings):
@@ -218,9 +218,11 @@ Example configuration (all resource integers are decimal strings):
 }
 ```
 
-Use `resume` only for an existing retained VRS session. A resumed sequence comes
-from authenticated VRS history, but outstanding wire request direction/IDs are
-not reconstructed yet: an unmatched resumed reply is rejected, not guessed.
+Use session mode `resume` only for an existing retained VRS session. This is
+independent of RPC peer continuity. The launcher must also specify `--new-peer`
+for a newly created peer or `--resume-peer` for the same retained RPC peer
+lifetime. Only the latter reconstructs pending request bindings. Missing or
+unknown continuity arguments fail before stream use.
 The configured seed/step pass directly to existing refinement. The process does
 not derive evidence validity or expiry from wall-clock transport timestamps.
 
@@ -455,13 +457,13 @@ check after installing recovered requests and before issuing the VRS event RPC.
 The check examines the RPC ID, not a full-envelope hash ahead of Recall.
 Existing exact-registration/retry semantics after a successful VRS ack remain.
 
-Verification: Wire 66, duplex pump 88, actual subprocess 2,453 checks passed.
-A real fixture stores pending client ID 88, restarts with no preattached thread,
-and sends thread/resume with ID 88. Lifecycle discovery recovers the pending
-request, rejects the conflicting resume with zero native forwarding, and a
-fresh VRS reopen proves nextSequence remains 1 and the original address/bytes
-are unchanged. Main merges remain zero. Allocation failure after a legitimate
-ack still retries registration without repeating the ingestion callback.
+Earlier verification: Wire 66, duplex pump 88, actual subprocess 2,453 checks.
+The former ID 88 desktop fixture expected a recovered-ID conflict even though
+its launcher spawned a new backend. That continuity assumption was incorrect;
+the current fresh-peer test and correction are described below. Pre-ingestion
+conflict checks still apply to requests outstanding in the same peer lifetime.
+Allocation failure after a legitimate ack still retries registration without
+repeating the ingestion callback.
 
 ## Host protocol 14: separate native and RPC frame budgets
 
@@ -538,7 +540,40 @@ If interruption occurred before completed cognition was published and no live
 Recall survives, the host still returns completed=false. It does not reconstruct
 an earlier observation boundary from today's graph. Socket transmission and
 remote execution are not established by this receipt. The proxy still does not
-automatically resend recovered pending requests; fresh-backend versus surviving-
-backend continuity is still unfinished. This is completion recovery, not a
+automatically resend recovered pending requests. The following section adds
+explicit fresh/continued peer selection; durable peer-generation provenance
+across multiple lifetimes is still unfinished. This is completion recovery, not a
 claim of exactly-once remote execution or full crash recovery. Metadata currently
 uses one immutable file per input; large-scale packing/paging remains unproven.
+
+
+## Explicit RPC peer continuity
+
+The proxy now requires a launcher-supplied `--new-peer` or `--resume-peer`.
+`route_agent_request_recovery` in the SWEGCA core maps the known peer fact to a
+fresh RPC table or pending-request reconstruction. Unknown modes are rejected.
+The desktop host always passes `--new-peer` because it has just successfully
+spawned that backend itself. Neither idle time nor EOF is used to infer this.
+
+A new peer still attaches the same VRS sessions and resumes their recorded
+sequence, graph and cognition. It does not install the previous peer's pending
+RPC IDs in its live table. This applies to both configured connection sessions
+and dynamically discovered threads. Old requests remain original experiences
+with unknown outcomes; no synthetic completion, cancellation, retransmission,
+end or merge is recorded. A new request using an old numeric ID has its own
+original sequence and its reply binds only to that new original.
+
+`--resume-peer` preserves reconstruction for an owner continuing the same RPC
+peer lifetime. This is an explicit owner contract, not automatic proof obtained
+from VRS session identity. Durable peer-generation markers/filtering across
+multiple mixed lifetimes are not implemented. Do not use that mode to infer
+continuity merely because a conversation ID or storage root is unchanged.
+
+The earlier desktop ID-conflict fixture wrongly treated a newly launched peer
+as a continued peer. It now verifies that fresh ID 88 succeeds and the old
+unfinished original remains intact. A second fixture leaves global ID 904
+unanswered, restarts the actual C++ desktop launcher, and reuses 904 for
+initialize; the reply links to the new initialize, never the old request.
+The existing continued-peer fixture still restores client/server ID 77 and
+dynamic ID 78. Actual process checks: 2,747 passed; request table checks: 38
+passed; core fresh/continued/invalid routes have compile-time assertions.

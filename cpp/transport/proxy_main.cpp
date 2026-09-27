@@ -67,7 +67,13 @@ Json call(VrsStream& stream,std::string_view id,std::string_view method,std::str
 }
 int main(int argc,char** argv){
     try{
-        if(argc!=5)throw std::invalid_argument("usage: swegca-app-server-proxy CLIENT_FD SERVER_FD VRS_FD CONFIG");
+        if(argc!=6)throw std::invalid_argument("usage: swegca-app-server-proxy CLIENT_FD SERVER_FD VRS_FD CONFIG --new-peer|--resume-peer");
+        using namespace swegca::architecture::kernel;
+        const std::string_view peer_mode=argv[5];
+        if(peer_mode!="--new-peer" && peer_mode!="--resume-peer")throw std::invalid_argument("explicit peer continuity required");
+        const auto recovery=route_agent_request_recovery(peer_mode=="--new-peer"
+            ? AgentPeerContinuity::fresh : AgentPeerContinuity::continued);
+        if(recovery==AgentRequestRecovery::invalid)throw std::invalid_argument("invalid peer continuity");
         const int client=descriptor(argv[1]),server=descriptor(argv[2]),vrs=descriptor(argv[3]);
         if(client==server||client==vrs||server==vrs)throw std::invalid_argument("distinct exclusive streams required");
         swegca::vrs::MemoryBudget config_memory(1<<20);std::ifstream file(argv[4]);
@@ -160,7 +166,7 @@ int main(int argc,char** argv){
             const auto next=number(body.at("nextSequence").string());
             if(connection_scope)pump.attach_connection(name,next);else pump.attach(name,next);
             bindings.try_emplace(std::pmr::string(name,&memory),body.at("identity").string());
-            if(next)recover(body.at("identity").string(),name,connection_scope,next);
+            if(next && recovery==AgentRequestRecovery::restore_pending)recover(body.at("identity").string(),name,connection_scope,next);
         };
         if(connection)attach(*connection,true);
         for(const auto& session:sessions.values)attach(session,false);
@@ -175,7 +181,7 @@ int main(int argc,char** argv){
             const auto identity=body.at("identity").string();
             const auto [where,inserted]=bindings.try_emplace(std::pmr::string(name,&memory),identity);
             if(!inserted&&where->second!=identity)throw std::runtime_error("changed native thread binding");
-            if(next)pending_recovery.emplace(Recovery{std::pmr::string(identity,&memory),std::pmr::string(name,&memory),next});
+            if(next && recovery==AgentRequestRecovery::restore_pending)pending_recovery.emplace(Recovery{std::pmr::string(identity,&memory),std::pmr::string(name,&memory),next});
             return next;
         };
         std::cout<<"ready\n"<<std::flush;

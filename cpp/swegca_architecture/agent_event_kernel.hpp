@@ -29,6 +29,18 @@ enum class AgentRequestTransmission { recorded, stream_written, recovered_unknow
     return state==AgentRequestTransmission::stream_written ||
            state==AgentRequestTransmission::recovered_unknown;
 }
+// The process owner supplies peer continuity as a fact. New peers do not own
+// old RPC IDs; retaining experiences never implies retaining those bindings.
+// Unknown continuity cannot authorize either path.
+enum class AgentPeerContinuity { fresh, continued };
+enum class AgentRequestRecovery { invalid, fresh_table, restore_pending };
+[[nodiscard]] constexpr AgentRequestRecovery route_agent_request_recovery(AgentPeerContinuity peer) noexcept {
+    switch(peer){
+    case AgentPeerContinuity::fresh:return AgentRequestRecovery::fresh_table;
+    case AgentPeerContinuity::continued:return AgentRequestRecovery::restore_pending;
+    default:return AgentRequestRecovery::invalid;
+    }
+}
 // Delivery identity is transport provenance, never evidence support. A replayed
 // delivery acknowledges the committed original without a second refinement.
 enum class AgentDeliveryRoute { append, reuse, reject };

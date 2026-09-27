@@ -579,7 +579,7 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     vrs_process=subprocess.Popen([str(exe),'create',str(proxy_root),str(transport_path)],
         stdin=vrs_side,stdout=vrs_side,stderr=subprocess.PIPE)
     proxy_process=subprocess.Popen([str(exe.parent/'swegca-app-server-proxy'),
-        str(client_proxy.fileno()),str(server_proxy.fileno()),str(vrs_proxy.fileno()),str(proxy_config)],
+        str(client_proxy.fileno()),str(server_proxy.fileno()),str(vrs_proxy.fileno()),str(proxy_config),"--new-peer"],
         pass_fds=(client_proxy.fileno(),server_proxy.fileno(),vrs_proxy.fileno()),
         stdout=subprocess.PIPE,stderr=subprocess.PIPE)
     for endpoint in (client_proxy,server_proxy,vrs_side,vrs_proxy):endpoint.close()
@@ -706,7 +706,7 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     vrs_process=subprocess.Popen([str(exe),'open',str(proxy_root),str(transport_path)],
         stdin=vrs_side,stdout=vrs_side,stderr=subprocess.PIPE)
     proxy_process=subprocess.Popen([str(exe.parent/'swegca-app-server-proxy'),
-        str(client_proxy.fileno()),str(server_proxy.fileno()),str(vrs_proxy.fileno()),str(proxy_config)],
+        str(client_proxy.fileno()),str(server_proxy.fileno()),str(vrs_proxy.fileno()),str(proxy_config),"--resume-peer"],
         pass_fds=(client_proxy.fileno(),server_proxy.fileno(),vrs_proxy.fileno()),
         stdout=subprocess.PIPE,stderr=subprocess.PIPE)
     for endpoint in (client_proxy,server_proxy,vrs_side,vrs_proxy):endpoint.close()
@@ -799,6 +799,11 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
         check(c.call('swegca/select',{'identity':attached['identity']})['result']=={})
         check(c.call('swegca/end')['result']=={})
     check(c.call('swegca/work',{'seed':'7','step':'0'})['result']['merged']=='2');c.close()
+    for mode in ([],['--guess-peer']):
+        missing_mode=subprocess.run([str(exe.parent/'swegca-app-server-proxy'),'3','4','5','/does/not/exist',*mode],
+            capture_output=True,timeout=10)
+        check(missing_mode.returncode==1 and missing_mode.stdout==b'')
+        check(b'peer' in missing_mode.stderr)
     # Desktop-style stdio: launcher owns backend, proxy and real VRS processes.
     desktop_root=root/'desktop-host';desktop_root.mkdir()
     desktop_proxy=root/'desktop-proxy.json'
@@ -811,6 +816,9 @@ for line in sys.stdin:
     value=json.loads(line)
     if value.get('method')=='thread/start':
         print(json.dumps({'method':'thread/started','params':{'thread':{'id':'desktop-thread'}}}),flush=True)
+    if value.get('method')=='fixture/pending':
+        print(json.dumps({'method':'fixture/received','params':{}}),flush=True)
+        continue
     if 'id' in value:
         print(json.dumps({'id':value['id'],'result':{}}),flush=True)
 """
@@ -841,6 +849,8 @@ for line in sys.stdin:
         check(desktop_read()=={'id':902,'result':{}})
         desktop_send({'id':903,'method':'turn/start','params':{'threadId':'desktop-thread','input':desktop_input}})
         check(desktop_read()=={'id':903,'result':{}})
+        desktop_send({'id':904,'method':'fixture/pending','params':{}})
+        check(desktop_read()['method']=='fixture/received') # delivered but unanswered at shutdown
         desktop.stdin.close();check(desktop.wait(timeout=10)==0)
         check(desktop.stdout.read()==b'' and desktop.stderr.read()==b'')
     finally:
@@ -877,10 +887,17 @@ for line in sys.stdin:
     check(memory_packet['grantsAuthority'] is False and memory_packet['assessment']['status']==0)
     check(json.loads(memory_packet['content'])==initial_input)
     c=Client('open',desktop_root,path);c.initialize()
-    for session,protocol,count in (('transport','app-server-connection','7'),('desktop-thread','app-server','9')):
+    for session,protocol,count in (('transport','app-server-connection','9'),('desktop-thread','app-server','9')):
         attached=c.call('swegca/agent/attach/resume',{'provider':'codex','instance':'desktop-fixture',
             'session':session,'protocol':protocol})['result']
         check(attached['nextSequence']==count)
+        if session=='transport':
+            old=c.call('swegca/agent/original',{'identity':attached['identity'],'sequence':'5'})['result']
+            new=c.call('swegca/agent/original',{'identity':attached['identity'],'sequence':'7'})['result']
+            response=c.call('swegca/agent/original',{'identity':attached['identity'],'sequence':'8'})['result']
+            check(json.loads(old['native'])['id']==json.loads(new['native'])['id']==904)
+            check(json.loads(old['native'])['method']=='fixture/pending')
+            check(response['context']==new['original']['digest'] and response['context']!=old['original']['digest'])
     stored_input=c.call('swegca/agent/original',{'identity':attached['identity'],'sequence':'7'})['result']
     check(json.loads(stored_input['native'])['params']['input']==desktop_followup)
     check(stored_input['original']==memory_packet['assessment']['inputOriginal'])
@@ -902,7 +919,7 @@ for line in sys.stdin:
     finally:
         if desktop.poll() is None:desktop.kill();desktop.wait(timeout=10)
         desktop.stdin.close();desktop.stdout.close();desktop.stderr.close()
-    # A recovered pending ID conflict must be rejected before storing resume.
+    # A newly spawned backend owns a fresh RPC ID space while VRS experience survives.
     collision_root=root/'resume-id-conflict';collision_root.mkdir()
     c=Client('create',collision_root,path);c.initialize()
     collision_binding={'provider':'codex','instance':'collision-fixture','session':'prior','protocol':'app-server'}
@@ -918,11 +935,14 @@ for line in sys.stdin:
         str(exe),'open',str(collision_root),str(transport_path),str(collision_config),sys.executable,'-u','-c',backend_code],
         input=(json.dumps({'id':88,'method':'thread/resume','params':{'threadId':'prior'}})+'\n').encode(),
         capture_output=True,timeout=10)
-    check(collision.returncode==1 and collision.stdout==b'')
-    check(b'live request ID already in use' in collision.stderr)
+    check(collision.returncode==0 and json.loads(collision.stdout)=={'id':88,'result':{}})
+    check(collision.stderr==b'')
     c=Client('open',collision_root,path);c.initialize()
     restored=c.call('swegca/agent/attach/resume',collision_binding)['result']
-    check(restored['nextSequence']=='1')
+    check(restored['nextSequence']=='3')
+    fresh_request=c.call('swegca/agent/original',{'identity':restored['identity'],'sequence':'1'})['result']
+    fresh_response=c.call('swegca/agent/original',{'identity':restored['identity'],'sequence':'2'})['result']
+    check(fresh_response['context']==fresh_request['original']['digest'] and fresh_response['context']!=pending_saved['digest'])
     original=c.call('swegca/agent/original',{'identity':restored['identity'],'sequence':'0'})['result']
     check(original['original']==pending_saved and original['native']==pending_native)
     check(c.call('swegca/work',{'seed':'7','step':'0'})['result']['merged']=='0');c.close()

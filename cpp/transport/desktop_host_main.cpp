@@ -95,7 +95,10 @@ int main(int argc,char** argv){
         char* store_args[]{argv[2],argv[3],argv[4],argv[5],nullptr};
         store.start(store_args,{{vrs[0].value,0},{vrs[0].value,1}});
         char a[]="3",b[]="4",c[]="5";
-        char* proxy_args[]{argv[1],a,b,c,argv[6],nullptr};
+        // This owner has just spawned the peer; old in-flight RPC IDs belong
+        // to an earlier backend. VRS session experience is still resumed.
+        char peer_mode[]="--new-peer";
+        char* proxy_args[]{argv[1],a,b,c,argv[6],peer_mode,nullptr};
         proxy.start(proxy_args,{{client[1].value,3},{server[1].value,4},{vrs[1].value,5},{ready[1].value,1}});
         client[1].close();server[0].close();server[1].close();vrs[0].close();vrs[1].close();ready[1].close();
         std::string handshake;

@@ -79,7 +79,9 @@ a reason to recreate/overwrite storage. Directory discovery is startup only.
 Proxy connectionSession and configured sessions also accept mode `ensure`,
 using the host's existing attach/ensure lifecycle rules. Ended sessions remain
 ineligible for new native events. Successful reconnection recovers recorded
-sequence and outstanding requests without ending or merging experiences.
+sequence without ending or merging experiences. Because this launcher creates
+a new backend, old pending RPC bindings are not installed in the fresh peer's
+table (see Explicit peer lifetime below).
 
 Verification: Runtime lifecycle 186 checks (including exclusive locking,
 create/reopen, partial initialization and foreign-root preservation), wrapper
@@ -94,9 +96,9 @@ The installed backend's generated ThreadResumeParams schema requires threadId;
 ThreadResumeResponse returns thread. The transport now treats a client
 thread/resume request with an ID and nonempty threadId as lifecycle input.
 It may ensure/restore that session before forwarding the request, even when
-no thread/started notification arrives. The same deferred pending-request
-reconstruction used for lifecycle discovery runs after Wire attachment and
-before the resume request is acknowledged. User turn/start/steer still cannot
+no thread/started notification arrives. Deferred pending-request reconstruction
+runs only when the proxy owner explicitly declares a continued RPC peer. This
+desktop launcher declares a new peer while retaining the VRS session. User turn/start/steer still cannot
 trigger discovery. Server-origin resume and malformed resume requests fail;
 they cannot fall back to the connection-only content route.
 
@@ -126,3 +128,18 @@ reopen yields nine thread originals. Unit checks also cover a status notificatio
 as the first message and reject an unknown user input even with free session
 capacity. This is native envelope capture, not semantic verification of the
 returned history or live desktop installation.
+
+
+## Explicit peer lifetime
+
+After spawning a backend, the host passes `--new-peer` to the proxy. Backend
+RPC IDs may restart even though VRS conversation state continues. The proxy
+therefore resumes experience sequence and memory but uses a fresh live RPC ID
+table. This changes neither the backend's argv nor the stored old experiences.
+No additional user setting is required for this launcher.
+
+Actual subprocess tests leave one old request unanswered and reuse its ID after
+relaunch, for both the connection session and a dynamically rediscovered thread.
+The new reply references the new request original. The old request stays stored,
+and no Main merge occurs. This is not proof of remote exactly-once execution or
+automatic reconnect to a surviving backend.

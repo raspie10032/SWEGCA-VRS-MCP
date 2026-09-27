@@ -4,6 +4,9 @@
 #include <cstdlib>
 using namespace swegca::transport;
 using namespace swegca::architecture::kernel;
+static_assert(route_agent_request_recovery(AgentPeerContinuity::fresh)==AgentRequestRecovery::fresh_table);
+static_assert(route_agent_request_recovery(AgentPeerContinuity::continued)==AgentRequestRecovery::restore_pending);
+static_assert(route_agent_request_recovery(static_cast<AgentPeerContinuity>(99))==AgentRequestRecovery::invalid);
 static unsigned checks=0;
 #define CHECK(x) do{++checks;if(!(x)){std::fprintf(stderr,"FAIL %d: %s\n",__LINE__,#x);std::abort();}}while(false)
 template<class F>void rejects(F f){bool failed=false;try{f();}catch(const std::exception&){failed=true;}CHECK(failed);}
