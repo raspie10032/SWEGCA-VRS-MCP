@@ -242,6 +242,19 @@ int main(){
   const auto multi_packet=parse_json(multi_context.substr(multi_context.find('\n')+1),memory);
   CHECK(multi_packet.at("relatedExperiences").values.size()==2);
   CHECK(multi_packet.at("relatedExperiences").values[1].at("content").string()=="no");
+  auto delivery_items=parse_json("["+observation+"]",memory);
+  auto& item=delivery_items.values[0];
+  item.keys.emplace_back("relatedConnection");item.values.push_back(parse_json("\"connection-a\"",memory));
+  auto delivery_coverage=parse_json(R"({"inputOriginal":{"block":"a","digest":"b","offset":"1","bytes":"2"},"relatedFrom":{"block":"c","digest":"d","offset":"3","bytes":"4"},"deliveredConnections":["connection-a"],"connections":[{"connection":"connection-a","original":{"block":"new","digest":"new","offset":"9","bytes":"10"}}]})",memory);
+  const auto retained_context=replay_context(parse_json(packet,memory),ack,memory,&delivery_items,&delivery_coverage);
+  const auto retained_packet=parse_json(retained_context.substr(retained_context.find('\n')+1),memory);
+  const auto& delivery=retained_packet.at("relatedCoverage").at("deliveredExperiences").values[0];
+  CHECK(same_context_address(delivery.at("original"),item.at("original")));
+  CHECK(delivery.at("matchesListedOriginal").scalar=="false");
+  // Count and identity mismatches cannot turn a skipped item into a delivery.
+  mutable_field(delivery_coverage,"deliveredConnections").values.clear();
+  rejects([&]{auto fresh=parse_json("["+observation+"]",memory);(void)replay_context(parse_json(packet,memory),ack,memory,&fresh,&delivery_coverage);});
+
   multiple=parse_json("["+observation+","+observation+"]",memory);
   mutable_field(mutable_field(multiple.values[1],"relatedFrom"),"digest").scalar="foreign";
   rejects([&]{(void)replay_context(parse_json(packet,memory),ack,memory,&multiple);});

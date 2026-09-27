@@ -100,3 +100,27 @@ benchmarks/results/related-pages-reduction-20260927.jsonl에 보존했다.
 동일한지, hard storage limit에서 31개 경험 중 같은 마지막 원경험을 선택하는지,
 기존 혼합 계층/페이지/변경된 snapshot 검증을 포함한다. 이번 최적화 소스는
 로컬 커밋으로 보존하며 설치본은 앞선 a955320 기능 버전을 유지한다.
+
+## 실제 전달 원경험의 주소 보존
+
+relatedCoverage.connections는 현재 목록 후보이고, 저장된 cognition을 복구한
+related Replay는 이전에 선택한 원경험을 유지할 수 있다. 연결 ID가 같다고
+현재 목록의 주소를 실제 전달 주소로 해석하면 안 된다.
+
+replay_context는 검증된 actual Replay로부터 deliveredExperiences를 구성한다.
+각 항목에 connection/original/matchesListedOriginal을 기록한다. 마지막 boolean은
+원경험 주소의 일치만 나타내며 의미 적합성/요구 충족/신뢰 판정이 아니다.
+목록과 Replay가 다를 때도 선택 계보를 바꾸거나 최신 후보로 대체하지 않는다.
+전달 개수/선언 ID/목록에 없는 연결/중복 전달을 검증하고 일치하지 않으면 거부한다.
+예산 때문에 전달하지 않은 항목은 실제 전달 배열에 포함되지 않는다.
+원문 읽기나 후보 선택은 추가하지 않으며 기존 실제 Replay를 표현한다.
+
+wire204/stdio7299 checks 통과. 실제 프로세스에서 후속 B 관측으로 목록 후보가
+변경돼도 저장된 Replay는 이전 B 원경험을 유지하는 경우를 확인했다. 그 주소가
+다른 경우의 표현은 wire 검증, 기본/개수 제한/바이트0 자동 전달은 실제
+wrapper/host/proxy/VRS 경로에서 확인했다. 모든 자연어 요구의 충분성 검증은
+계속 미완료이며 requirementsComplete=false 규칙은 유지된다.
+
+proxy 설치본 원자 교체, 전체 manifest 해시 검증, 기존 설정 동일성 확인.
+설치 backend smoke는 같은 소유자/조회 socket/자원 그룹/I/O owner와
+modelCalls0/exit0을 확인했다. 실제 GUI에서 목적 유지 평가를 수행한 증거는 아니다.

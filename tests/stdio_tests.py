@@ -1543,11 +1543,15 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     check(len(pages(restored_page_input,{'limit':'64'})['result']['structuredContent']['connections'])==4)
     for connection,value in connection_results.items():
         check(connection_replay(restored_page_input,connection)['result']['structuredContent']==value)
-    page_observation('B','support')
+    newer_b=page_observation('B','support')
+    latest_listing=pages(restored_page_input,{'limit':'64'})['result']['structuredContent']
     for connection,value in connection_results.items():
         current=connection_replay(restored_page_input,connection)['result']['structuredContent']
         check(current['original']==value['original'])
-        if(value['original']==page_negative['original']):check(current['revision']!=value['revision'])
+        if(value['original']==page_negative['original']):
+            check(current['revision']!=value['revision'])
+            listed_b=next(x for x in latest_listing['connections'] if x['connection']==connection)
+            check(listed_b['original']==newer_b['original'] and listed_b['original']!=current['original'])
         else:check(current==value)
 
     producer_frame('server',{'id':99,'result':{'turn':{'id':'multi-latest-turn'}}},page_sequence)
@@ -2397,6 +2401,9 @@ for line in sys.stdin:
         check(not coverage['mixedTiers'] and all(not x['temporary'] for x in coverage['connections']))
         check(not coverage['requirementsComplete'] and not coverage['grantsAuthority'])
         check(len(coverage['deliveredConnections'])==expected_count)
+        check(len(coverage['deliveredExperiences'])==expected_count)
+        check([x['original'] for x in coverage['deliveredExperiences']]==[x['original'] for x in bundle['relatedExperiences']])
+        check(all(x['matchesListedOriginal'] for x in coverage['deliveredExperiences']))
         check((coverage['next'] is not None)==(run==1))
         if run==0:
             check({x['original']['digest'] for x in bundle['relatedExperiences']}=={x['digest'] for x in multi_expected})

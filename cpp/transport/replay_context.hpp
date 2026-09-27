@@ -70,6 +70,39 @@ inline std::pmr::string replay_context(Json packet,const Json& acknowledged,std:
     if(coverage&&(!same_context_address(coverage->at("inputOriginal"),acknowledged.at("original"))||
         !same_context_address(coverage->at("relatedFrom"),packet.at("original"))))
         throw std::invalid_argument("connection coverage provenance mismatch");
+    // A saved cognition can preserve an older selected original after the
+    // listing advances. Report the original actually delivered, not merely the
+    // current candidate's connection ID. This is provenance, not satisfaction.
+    std::pmr::string delivered("[",&memory);
+    if(coverage){
+        if(!observation||observation->kind!=Json::Kind::array||coverage->find("deliveredExperiences"))
+            throw std::invalid_argument("coverage requires an unannotated observation array");
+        const auto& declared=coverage->at("deliveredConnections");
+        const auto& listed=coverage->at("connections");
+        if(declared.kind!=Json::Kind::array||listed.kind!=Json::Kind::array||
+            declared.values.size()!=observation->values.size())
+            throw std::invalid_argument("delivered connection count mismatch");
+        for(std::size_t i=0;i<observation->values.size();++i){
+            const auto& item=observation->values[i];
+            const auto connection=item.at("relatedConnection").string();
+            if(declared.values[i].string()!=connection)throw std::invalid_argument("delivered connection mismatch");
+            for(std::size_t j=0;j<i;++j)
+                if(declared.values[j].string()==connection)throw std::invalid_argument("duplicate delivered connection");
+            const Json* candidate=nullptr;
+            for(const auto& entry:listed.values)if(entry.at("connection").string()==connection){
+                if(candidate)throw std::invalid_argument("duplicate listed connection");
+                candidate=&entry;
+            }
+            if(!candidate)throw std::invalid_argument("delivered connection absent from listing");
+            if(i)delivered+=',';
+            delivered+="{\"connection\":";append_json_string(delivered,connection);
+            delivered+=",\"original\":";append_json(delivered,item.at("original"));
+            delivered+=",\"matchesListedOriginal\":";
+            delivered+=same_context_address(item.at("original"),candidate->at("original"))?"true":"false";
+            delivered+='}';
+        }
+    }
+    delivered+=']';
     const auto decode=[&](Json& packet){
     const auto media=packet.at("media").string();
     if(media=="application/json"||media.starts_with("text/")){
@@ -101,7 +134,8 @@ inline std::pmr::string replay_context(Json packet,const Json& acknowledged,std:
     append_json(context,packet);
     context.pop_back();context+=",\"receipt\":";append_json_string(context,receipt);
     if(observation){context+=observation->kind==Json::Kind::array?",\"relatedExperiences\":":",\"relatedExperience\":";append_json(context,*observation);}
-    if(coverage){context+=",\"relatedCoverage\":";append_json(context,*coverage);}
+    if(coverage){context+=",\"relatedCoverage\":";append_json(context,*coverage);
+        context.pop_back();context+=",\"deliveredExperiences\":";context+=delivered;context+='}';}
     context+='}';
     return context;
 }
