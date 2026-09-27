@@ -722,6 +722,26 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     check(c.call('swegca/end')['result']=={})
     check(c.call('swegca/work',{'seed':'7','step':'7'})['result']['merged']=='1')
     c.close()
+    # Response routing follows the sealed connection, even when its identity
+    # is not a digest reconstructed from this adapter's current input encoding.
+    sealed_root=root/'sealed-request-connection';sealed_root.mkdir()
+    c=Client('create',sealed_root,path);c.initialize()
+    check(c.call('swegca/start',{'identity':response_id,'name':'thread-x'})['result']=={})
+    check(c.call('swegca/define',{'identity':identity(251)})['result']=={})
+    sealed_request=json.dumps({'id':71,'method':'turn/start','params':{'threadId':'thread-x','input':app_input}})
+    params=event('thread-x','codex/app-server',media='application/json',content=sealed_request)
+    params['observation']={'hypothesis':identity(251),'source':identity(252),'context':identity(253),
+        'producer':identity(254),'expiresAt':'0','hasExpiry':False,'confidence':1.0,'axis':'0','outcome':'insufficient'}
+    sealed_original=c.call('swegca/observe',params)['result']['original'];c.close()
+    c=Client('open',sealed_root,path);c.initialize()
+    check(c.call('swegca/agent/attach/resume',app_binding)['result']['identity']==response_id)
+    check(c.call('swegca/select',{'identity':response_id})['result']=={})
+    _,sealed_response=app_response(1,0,reply_id=71)
+    check('result' in sealed_response)
+    check(sealed_response['result']['refinement']['revision']=='4')
+    relation=c.call('swegca/agent/original',{'identity':response_id,'sequence':'1'})['result']
+    check(relation['context']==sealed_original['digest'])
+    c.close()
     # The C++ wire owner chooses thread and requestSequence automatically. Only
     # acknowledge its plan after the real VRS process confirms ingestion.
     transport_path=root/'transport-resources.json'

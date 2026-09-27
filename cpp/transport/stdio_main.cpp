@@ -112,7 +112,7 @@ private:
     AutomaticWork automatic_;
     bool work_requested_=false;
     struct Context {
-        struct Delivery { DigestBytes fingerprint; ExperienceLocation original; DigestBytes context{}; ExperienceSender sender=ExperienceSender::unspecified; };
+        struct Delivery { DigestBytes fingerprint; ExperienceLocation original; DigestBytes context{}; ExperienceSender sender=ExperienceSender::unspecified; DigestBytes connection{}; };
         Context(MemoryBudget& memory,std::string_view native,bool app,bool connection):deliveries(&memory),native_session(native,&memory),app_server(app),connection_scope(connection){}
         std::pmr::map<std::uint64_t,Delivery> deliveries;
         bool native_ready=false;
@@ -281,7 +281,7 @@ private:
                 [](void* opaque,const OriginalDelivery& delivery){
                 auto& target=*static_cast<Context*>(opaque);
                 const auto [at,inserted]=target.deliveries.try_emplace(delivery.sequence(),
-                    Context::Delivery{delivery.fingerprint(),delivery.original(),delivery.context(),delivery.sender()});
+                    Context::Delivery{delivery.fingerprint(),delivery.original(),delivery.context(),delivery.sender(),delivery.connection()});
                 if(!inserted && (at->second.fingerprint!=delivery.fingerprint() || at->second.original!=delivery.original()))
                     throw std::invalid_argument("conflicting stored native sequence");
             });
@@ -348,9 +348,9 @@ private:
                 binding.emplace(memory_,1);binding->track(RpcSender::client,request_event);
                 response.emplace(binding->bind(p.at("native").kind==Json::Kind::object?source.bytes(frame):p.at("native").string(),RpcSender::server));
                 request_original=stored.location();
-                const bool input=request_event.kind()==swegca::architecture::kernel::AgentEventKind::input;
-                const auto cue=input?request_event.cue_content():request_event.native_bytes();
-                request_connection=input_cue(input?request_event.cue_media():"application/json",std::as_bytes(std::span(cue)));
+                // Bind to the connection admitted with the sealed original,
+                // not a newly reconstructed key from its transport envelope.
+                request_connection=request->second.connection;
             }else{
                 auto& native=p.at("native");
                 if(native.kind==Json::Kind::object){
@@ -427,7 +427,8 @@ private:
                     SWEGCA_INGRESS_STAGE("host_cue_ready");
                     clear();state.receipt=++next_receipt_;
                     state.received.emplace(runtime_.receive_envelope(event.cue_media(),std::as_bytes(std::span(prompt)),original,seed,step));
-                    slot->second.original=state.received->recorded.original;committed=true;
+                    slot->second.original=state.received->recorded.original;
+                    slot->second.connection=state.received->recorded.refinement.connection();committed=true;
                     slot->second.fingerprint=agent_delivery_identity(sequence,observed,event.native_bytes());
                     complete_cognition();
                     return received_body(limit);
@@ -440,7 +441,8 @@ private:
                     observation.source=observation.producer=source.finish();
                     return runtime_.observe(request_connection,original,observation,seed,step);
                 }();
-                slot->second.original=recorded.original;committed=true;
+                slot->second.original=recorded.original;
+                slot->second.connection=recorded.refinement.connection();committed=true;
                 invalidate_cognition(recorded);
                 if(request_original){slot->second.context=request_original->digest;binding->recorded(*response);}
                 slot->second.fingerprint=agent_delivery_identity(sequence,observed,event.native_bytes());

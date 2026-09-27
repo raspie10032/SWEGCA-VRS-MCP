@@ -857,3 +857,16 @@ Runtime에서 cold 페이지 후보 선택 pread 0회·상주량 불변과 같�
 Runtime 1,879개, 페이지 5,753개 통과. 같은 변경의 Main cold 셔플과 할당 실패
 회귀는 4,220개 통과했다. hot/부분 페이지 순회와 페이지 수에 비례하는 디렉터리
 비용은 남으며 전체 Main 규모의 1ms/4GB 보장은 아직 아니다.
+
+응답의 연결 ID를 요청 JSON으로 다시 계산하던 경로를 봉인된 경험의 hypothesis로
+교체했다. OriginalDelivery는 전체 원문 인증 및 core 관측 admission 이후 기존
+봉인 connection ID도 전달한다. native 인덱스는 기록 성공 시 refinement.connection을,
+재시작 시 이 인증된 connection을 보관한다. 응답은 그 ID에 기존 observe를 수행한다.
+원문 읽기·세션·RPC ID·송수신 방향·요청 원주소 관계 검사는 유지하며 요청 cue의
+재직렬화/재해시만 제거했다. 저장 형식 변경·이관·과거 경험 수정은 없다.
+회귀 fixture는 현재 어댑터가 재계산할 키와 다른 connection에 유효한 요청을
+봉인하고 재시작한다. 수정 전 응답 저장 실패를 재현했고, 수정 후 같은 연결의
+revision 4와 요청 원주소 digest 관계를 확인했다. 일반 실시간 요청·응답 및
+재시작 검사를 포함해 stdio 3,468개, 원경험 블록 452개 통과했다.
+native delivery 인덱스마다 connection 32바이트가 추가되며 기존 PMR 예산에
+계수된다. 일반 자연어 의미 처리·전체 그래프·자원/지연 조건은 계속 미완료다.

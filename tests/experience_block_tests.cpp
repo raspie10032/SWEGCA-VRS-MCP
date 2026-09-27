@@ -322,6 +322,7 @@ int main() {
             CHECK(evidence_payload(stored).sender==input.sender);
             const auto delivery=read_delivery(rules,block,saved.original(),8<<20,input.session,input.source,input.media_type);
             CHECK(delivery.sender()==input.sender);
+            CHECK(delivery.connection()==value.hypothesis);
             const auto expected=decode_evidence(rules,stored);
             largest_read=0;
             const auto streamed=read_evidence(rules,block,saved.original(),8<<20);

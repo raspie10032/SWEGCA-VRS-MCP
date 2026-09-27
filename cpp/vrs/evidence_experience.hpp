@@ -81,6 +81,7 @@ private:
 // and SWEGCA observation admission. Does not retain the original payload.
 class OriginalDelivery final {
 public:
+    [[nodiscard]] const architecture::DigestBytes& connection() const noexcept{return connection_;}
     [[nodiscard]] ExperienceSender sender() const noexcept{return sender_;}
     [[nodiscard]] const ExperienceLocation& original() const noexcept{return original_;}
     [[nodiscard]] std::uint64_t sequence() const noexcept{return sequence_;}
@@ -90,11 +91,11 @@ private:
     friend OriginalDelivery read_delivery(const architecture::kernel::EvidenceRules&,
         const ExperienceBlock&,const ExperienceLocation&,std::uint64_t,
         std::string_view,std::string_view,std::string_view);
-    OriginalDelivery(ExperienceLocation original,std::uint64_t sequence,architecture::DigestBytes fingerprint,architecture::DigestBytes context,ExperienceSender sender)
-        :original_(original),sequence_(sequence),fingerprint_(fingerprint),context_(context),sender_(sender){}
+    OriginalDelivery(ExperienceLocation original,std::uint64_t sequence,architecture::DigestBytes fingerprint,architecture::DigestBytes context,ExperienceSender sender,architecture::DigestBytes connection)
+        :original_(original),sequence_(sequence),fingerprint_(fingerprint),context_(context),connection_(connection),sender_(sender){}
     ExperienceLocation original_;
     std::uint64_t sequence_;
-    architecture::DigestBytes fingerprint_,context_;
+    architecture::DigestBytes fingerprint_,context_,connection_;
     ExperienceSender sender_;
 };
 [[nodiscard]] OriginalDelivery read_delivery(const architecture::kernel::EvidenceRules&,

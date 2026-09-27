@@ -232,7 +232,7 @@ OriginalDelivery read_delivery(const EvidenceRules& rules,const ExperienceBlock&
     Digest fingerprint{};std::uint64_t sequence=0;ExperienceSender sender{};
     const auto evidence=EvidenceReader::read(rules,block,location,limit,nullptr,0,0,nullptr,
         &fingerprint,&sequence,session,source,media,&sender);
-    return OriginalDelivery(location,sequence,fingerprint,evidence.value().context,sender);
+    return OriginalDelivery(location,sequence,fingerprint,evidence.value().context,sender,evidence.value().hypothesis);
 }
 
 OriginalExperienceView evidence_payload(const StoredExperience& stored) { return parse_payload(stored); }
