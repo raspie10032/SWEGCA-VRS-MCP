@@ -166,9 +166,25 @@ void SessionRuntime::visit_deliveries(std::string_view session,std::string_view 
     for(const auto& [identity,head]:catalog_.heads()){
         (void)head;
         const auto* connection=find(identity);
-        for(const auto& evidence:connection->state().experiences()){
-            auto delivery=cursor.read_delivery(connection->rules(),evidence.original(),read_limit_,source,media);
-            consume(context,delivery);
+        const auto experiences=connection->state().experiences();
+        for(std::size_t index=0;index<experiences.size();++index){
+            const auto& evidence=experiences[index];
+            // Non-transport producer outcomes are authenticated and core-checked
+            // as well, but never consume a native delivery sequence number.
+            bool source_matches=false;
+            auto delivery=cursor.read_delivery(connection->rules(),evidence.original(),read_limit_,source,media,&source_matches);
+            if(source_matches){consume(context,delivery);continue;}
+            // Only an outcome bound to an earlier native original in this
+            // connection may be skipped. Unrelated ingress remains an error.
+            bool bound=false;
+            for(auto prior=index;prior>0;){
+                const auto& target=experiences[--prior];
+                if(target.original().digest!=evidence.value().context)continue;
+                if(target.cue()!=evidence.cue())break;
+                (void)cursor.read_delivery(connection->rules(),target.original(),read_limit_,source,media);
+                bound=true;break;
+            }
+            if(!bound)throw std::invalid_argument("native session contains unbound original");
         }
     }
 }

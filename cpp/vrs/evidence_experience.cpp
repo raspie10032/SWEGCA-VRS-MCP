@@ -125,7 +125,7 @@ public:
         std::pmr::vector<std::byte>* payload = nullptr, std::uint64_t offset = 0,
         std::uint64_t count = 0, std::uint64_t* total = nullptr,
         Digest* fingerprint = nullptr,std::uint64_t* sequence = nullptr,
-        std::string_view session = {},std::string_view source = {},std::string_view media = {},ExperienceSender* sender = nullptr) {
+        std::string_view session = {},std::string_view source = {},std::string_view media = {},ExperienceSender* sender = nullptr,bool* source_matches = nullptr) {
         struct Decoder {
             std::array<std::byte,prefix_bytes> prefix;
             architecture::Sha256 cue;
@@ -137,16 +137,21 @@ public:
             std::uint64_t sequence = 0;
             architecture::Sha256 delivery_hash;
             std::string_view session,source,media;
+            bool filter_source=false,source_matches=true;
         } decoder{{}, {}, {}, payload, offset, count,0,0,false,
-            fingerprint!=nullptr,0,{},session,source,media};
+            fingerprint!=nullptr,0,{},session,source,media,source_matches!=nullptr,true};
         const auto consume=[](void* opaque, unsigned field, std::span<const std::byte> data,
                               std::uint64_t position, std::uint64_t length) {
             auto& state=*static_cast<Decoder*>(opaque);
             if(field<2){
                 if(state.delivery){
                     const auto expected=field==0?state.session:state.source;
-                    if(length!=expected.size() || text(data)!=expected.substr(static_cast<std::size_t>(position),data.size()))
-                        throw std::invalid_argument("native session contains unbound original");
+                    const bool matches=position<=expected.size() && length==expected.size() &&
+                        text(data)==expected.substr(static_cast<std::size_t>(position),data.size());
+                    if(!matches){
+                        if(field==1&&state.filter_source)state.source_matches=false;
+                        else throw std::invalid_argument("native session contains unbound original");
+                    }
                 }
                 return;
             }
@@ -176,7 +181,7 @@ public:
                 position+=header;
             }
             if(!state.input_key)state.cue.update(data);
-            if(state.delivery){
+            if(state.delivery&&state.source_matches){
                 const auto media_begin=state.payload_begin-get(state.prefix,160);
                 if(get(state.prefix,160)!=state.media.size())throw std::invalid_argument("native payload media mismatch");
                 if(position<state.payload_begin){
@@ -205,6 +210,7 @@ public:
         if(!decoder.seen)throw std::invalid_argument("missing SWEGCA observation encoding");
         const auto value=decode_observation(rules,decoder.prefix,location,observed);
         if(total)*total=decoder.total;
+        if(source_matches)*source_matches=decoder.source_matches;
         if(fingerprint)*fingerprint=decoder.delivery_hash.finish();
         if(sequence)*sequence=decoder.sequence;
         if(sender)*sender=static_cast<ExperienceSender>(get(decoder.prefix,159,1));
@@ -228,10 +234,10 @@ EvidencePayloadSlice read_evidence_slice(const EvidenceRules& rules,const Experi
 
 OriginalDelivery read_delivery(const EvidenceRules& rules,const ExperienceBlock& block,
     const ExperienceLocation& location,std::uint64_t limit,std::string_view session,
-    std::string_view source,std::string_view media) {
+    std::string_view source,std::string_view media,bool* source_matches) {
     Digest fingerprint{};std::uint64_t sequence=0;ExperienceSender sender{};
     const auto evidence=EvidenceReader::read(rules,block,location,limit,nullptr,0,0,nullptr,
-        &fingerprint,&sequence,session,source,media,&sender);
+        &fingerprint,&sequence,session,source,media,&sender,source_matches);
     return OriginalDelivery(location,sequence,fingerprint,evidence.value().context,sender,evidence.value().hypothesis);
 }
 

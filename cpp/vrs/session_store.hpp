@@ -67,7 +67,7 @@ private:
         [[nodiscard]] ExperienceEvidence read_evidence(const architecture::kernel::EvidenceRules&,
             const ExperienceLocation&, std::uint64_t limit);
         [[nodiscard]] OriginalDelivery read_delivery(const architecture::kernel::EvidenceRules&,
-            const ExperienceLocation&,std::uint64_t,std::string_view source,std::string_view media);
+            const ExperienceLocation&,std::uint64_t,std::string_view source,std::string_view media,bool* source_matches = nullptr);
         [[nodiscard]] std::string_view name() const noexcept { return store_.name(); }
     private:
         friend class SessionStore;

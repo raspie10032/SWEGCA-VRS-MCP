@@ -90,7 +90,7 @@ public:
 private:
     friend OriginalDelivery read_delivery(const architecture::kernel::EvidenceRules&,
         const ExperienceBlock&,const ExperienceLocation&,std::uint64_t,
-        std::string_view,std::string_view,std::string_view);
+        std::string_view,std::string_view,std::string_view,bool*);
     OriginalDelivery(ExperienceLocation original,std::uint64_t sequence,architecture::DigestBytes fingerprint,architecture::DigestBytes context,ExperienceSender sender,architecture::DigestBytes connection)
         :original_(original),sequence_(sequence),fingerprint_(fingerprint),context_(context),connection_(connection),sender_(sender){}
     ExperienceLocation original_;
@@ -100,7 +100,7 @@ private:
 };
 [[nodiscard]] OriginalDelivery read_delivery(const architecture::kernel::EvidenceRules&,
     const ExperienceBlock&,const ExperienceLocation&,std::uint64_t limit,
-    std::string_view session,std::string_view source,std::string_view media);
+    std::string_view session,std::string_view source,std::string_view media,bool* source_matches = nullptr);
 
 // Zero-copy access to the exact original media type/payload. The StoredExperience
 // must outlive the view. No evidence verdict is inferred by this read.

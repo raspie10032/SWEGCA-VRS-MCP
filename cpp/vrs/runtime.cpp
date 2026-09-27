@@ -299,6 +299,21 @@ RecordedRefinement Runtime::observe(const DigestBytes& identity,const OriginalEx
 RecordedRefinement Runtime::retain(const OriginalExperienceView& original,std::uint64_t seed,std::uint64_t step) {
     require_active();return active_->runtime.retain_input(original,config_.initial_strength,config_.policy,seed,step);
 }
+RecordedRefinement Runtime::observe_input(const ExperienceLocation& input,const OriginalExperienceView& original,
+    const EvidenceObservation& observation,std::uint64_t seed,std::uint64_t step) {
+    require_active();
+    if(named_digest(observation.hypothesis)||named_digest(observation.context))
+        throw std::invalid_argument("input observation cannot override hypothesis or context");
+    const auto stored=active_->runtime.read_original(input);
+    const auto rules=make_evidence_rules(config_.policy);
+    const auto evidence=decode_evidence(rules,stored);
+    auto bound=observation;
+    bound.hypothesis=evidence.value().hypothesis;
+    bound.context=input.digest;
+    // The original's cue links the outcome back to that exact natural input;
+    // recording different result text must not disconnect future Recall.
+    return active_->runtime.observe(bound.hypothesis,original,bound,seed,step,evidence.cue());
+}
 std::size_t Runtime::work(std::uint64_t seed,std::uint64_t step) {
     if(work_)throw std::logic_error("background Main preparation already scheduled");
     const auto count=sources_.merge_published(main_,seed,step);

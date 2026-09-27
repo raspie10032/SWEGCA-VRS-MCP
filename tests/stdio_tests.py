@@ -503,6 +503,64 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     check(c.call('swegca/end',{'identity':identity(22)})['result']=={})
     check(c.call('swegca/work',{'seed':'7','step':'0'})['result']['merged']=='1')
     c.close()
+    # Actual producer outcomes bind to sealed natural inputs without guessing
+    # a hypothesis digest or turning the prose itself into support/refutation.
+    linked_root=root/'input-observations';linked_root.mkdir()
+    c=Client('create',linked_root,path);c.initialize()
+    check(c.call('swegca/start',{'identity':identity(31),'name':'input-observations'})['result']=={})
+    linked=[];outcomes=[];last_strength=1.0
+    def bound_observation(target,n,outcome='support',session='input-observations'):
+        p=event(session,'test-runner',sequence=str(100+n),content='recorded result '+str(n))
+        p['inputOriginal']=target
+        p['observation']={'source':identity(100+n),'producer':identity(150+n),
+            'expiresAt':'0','hasExpiry':False,'confidence':1.0,'axis':'0','outcome':outcome}
+        return p
+    for n in range(8):
+        received=c.call('swegca/receive',event('input-observations',sequence=str(n)))['result']
+        linked.append(received['original'])
+        incoming=bound_observation(linked[-1],n)
+        observed=c.call('swegca/observe',incoming)['result'];outcomes.append(observed['original'])
+        check(int(observed['refinement']['revision'])==int(received['refinement']['revision'])+2)
+        last_strength=observed['refinement']['strength']
+    check(last_strength>1.0 and observed['refinement']['status']==1)
+    # Neither a forged address nor a supplied hypothesis/context can redirect it.
+    bad=bound_observation(linked[0],8);bad['inputOriginal']={**linked[0],'digest':identity(250)}
+    check('error' in c.call('swegca/observe',bad))
+    for key in ('hypothesis','context'):
+        bad=bound_observation(linked[0],8);bad['observation'][key]=identity(250)
+        check('error' in c.call('swegca/observe',bad))
+    check(c.call('swegca/attach',{'identity':identity(32),'name':'other-owner'})['result']=={})
+    check(c.call('swegca/select',{'identity':identity(32)})['result']=={})
+    check('error' in c.call('swegca/observe',bound_observation(linked[0],8,session='other-owner')))
+    c.close()
+    c=Client('open',linked_root,path);c.initialize()
+    check(c.call('swegca/resume',{'identity':identity(31)})['result']=={})
+    recovered=c.call('swegca/receive',event('input-observations',sequence='9'))['result']
+    check(recovered['candidateCount']=='16')
+    check(all(o in [x['original'] for x in recovered['candidates']] for o in outcomes))
+    # Same-session native observations have their own source; they cannot forge
+    # transport deliveries or consume native sequence numbers across recovery.
+    bind={'provider':'codex','instance':'bound-test','session':'bound-native'}
+    native_owner=c.call('swegca/agent/attach',bind)['result']['identity']
+    check(c.call('swegca/select',{'identity':native_owner})['result']=={})
+    native_params={'sequence':'0','observedAt':'0','seed':'7','step':'0',
+        'native':json.dumps({'session_id':'bound-native','hook_event_name':'UserPromptSubmit','prompt':text})}
+    native_input=c.call('swegca/agent/event',native_params)['result']
+    incoming=bound_observation(native_input['original'],0,session='bound-native')
+    check('result' in c.call('swegca/observe',incoming))
+    for n,outcome in enumerate(('refute','insufficient'),1):
+        check('result' in c.call('swegca/observe',bound_observation(native_input['original'],n,outcome,session='bound-native')))
+    incoming['source']='codex/hook'
+    check('error' in c.call('swegca/observe',incoming))
+    c.close()
+    c=Client('open',linked_root,path);c.initialize()
+    check(c.call('swegca/agent/attach/resume',bind)['result']['nextSequence']=='1')
+    check(c.call('swegca/select',{'identity':native_owner})['result']=={})
+    native_params['sequence']='1'
+    native_result=c.call('swegca/agent/event',native_params)['result']
+    check(native_result['candidateCount']=='4')
+    check(c.call('swegca/work',{'seed':'7','step':'0'})['result']['merged']=='0')
+    c.close()
     # Native envelope preserves all fields while the prompt alone keys Recall.
     native_root=root/'native';native_root.mkdir()
     c=Client('create',native_root,path);c.initialize()

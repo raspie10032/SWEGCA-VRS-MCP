@@ -250,8 +250,8 @@ ExperienceEvidence SessionStore::append_evidence(const EvidenceRules& rules,
 }
 
 OriginalDelivery SessionStore::ReadCursor::read_delivery(const EvidenceRules& rules,
-    const ExperienceLocation& location,std::uint64_t limit,std::string_view source,std::string_view media) {
-    return swegca::vrs::read_delivery(rules,reader(location),location,limit,store_.name(),source,media);
+    const ExperienceLocation& location,std::uint64_t limit,std::string_view source,std::string_view media,bool* source_matches) {
+    return swegca::vrs::read_delivery(rules,reader(location),location,limit,store_.name(),source,media,source_matches);
 }
 
 ExperienceBlock& SessionStore::ReadCursor::reader(const ExperienceLocation& location) {

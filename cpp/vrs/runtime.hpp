@@ -99,6 +99,10 @@ public:
     void define_connection(const architecture::DigestBytes&);
     [[nodiscard]] RecordedRefinement observe(const architecture::DigestBytes&, const OriginalExperienceView&,
         const architecture::kernel::EvidenceObservation&, std::uint64_t seed, std::uint64_t step);
+    // Bind an actual recorded outcome to its sealed input. Callers supply no
+    // hypothesis/context override; this does not interpret prose as evidence.
+    [[nodiscard]] RecordedRefinement observe_input(const ExperienceLocation&, const OriginalExperienceView&,
+        const architecture::kernel::EvidenceObservation&, std::uint64_t seed, std::uint64_t step);
     [[nodiscard]] RecordedRefinement retain(const OriginalExperienceView&, std::uint64_t seed, std::uint64_t step);
     // Drain only published ended sources and refresh the current query index.
     // Never called from input(). Failures leave durable work available to retry.

@@ -554,10 +554,14 @@ private:
         }
         if(method=="swegca/define"){runtime_.define_connection(digest(p.at("identity").string()));return std::pmr::string("{}",&memory_);}
         if(method=="swegca/receive"||method=="swegca/observe"||method=="swegca/retain"){
-            if(!context().native_session.empty())throw std::invalid_argument("native session requires agent event ingress");
+            if(!context().native_session.empty()&&!(method=="swegca/observe"&&p.find("inputOriginal")))
+                throw std::invalid_argument("native session requires agent event ingress");
             const auto page_limit=method=="swegca/receive"?candidate_limit(p):64;
             const auto sequence=integer(p.at("sequence")),observed=integer(p.at("observedAt")),seed=integer(p.at("seed")),step=integer(p.at("step"));
             const auto session=p.at("session").string(),source=p.at("source").string(),media=p.at("media").string();
+            if(!context().native_session.empty()&&(!context().native_ready||
+                session!=context().native_session||source==context().native_source()))
+                throw std::invalid_argument("bound observation requires its own producer source and native session");
             std::pmr::vector<std::byte> binary(&memory_);std::span<const std::byte> content;
             const auto* text=p.find("content");const auto* encoded=p.find("contentHex");
             if(bool(text)==bool(encoded))throw std::invalid_argument("exactly one content encoding is required");
@@ -580,8 +584,22 @@ private:
             if(method=="swegca/observe"){
                 using namespace swegca::architecture::kernel;
                 const auto& fields=p.at("observation");EvidenceObservation value;
-                value.hypothesis=digest(fields.at("hypothesis").string());
-                value.source=digest(fields.at("source").string());value.context=digest(fields.at("context").string());value.producer=digest(fields.at("producer").string());
+                const auto* input_original=p.find("inputOriginal");
+                if(input_original){
+                    if(fields.find("hypothesis")||fields.find("context"))
+                        throw std::invalid_argument("inputOriginal supplies hypothesis and context");
+                    if(!context().native_session.empty()){
+                        const auto stored=runtime_.session().read_original(record_address(*input_original));
+                        const auto input=evidence_payload(stored);
+                        if(input.source!=context().native_source()||input.session!=context().native_session||
+                            input.media_type!="application/json")
+                            throw std::invalid_argument("observation target must be a native original");
+                    }
+                }else{
+                    value.hypothesis=digest(fields.at("hypothesis").string());
+                    value.context=digest(fields.at("context").string());
+                }
+                value.source=digest(fields.at("source").string());value.producer=digest(fields.at("producer").string());
                 value.observed_at=observed;value.expires_at=integer(fields.at("expiresAt"));value.producer_confidence=real(fields.at("confidence"));
                 const auto axis=integer(fields.at("axis"));if(axis>UINT32_MAX)throw std::invalid_argument("axis overflow");value.axis=static_cast<std::uint32_t>(axis);
                 const auto& expiry=fields.at("hasExpiry");if(expiry.kind!=Json::Kind::boolean)throw std::invalid_argument("hasExpiry must be boolean");value.has_expiry=expiry.scalar=="true";
@@ -597,8 +615,11 @@ private:
                     *state.cognition_connection==value.hypothesis;
                 // A failed write may poison the session after a durable prefix.
                 // Never allow the cached assessment to bypass that failure.
-                if(affects_cognition){state.cognition_done=false;state.cognition_saved=false;}
-                auto recorded=runtime_.observe(value.hypothesis,{sequence,observed,session,source,media,content},value,seed,step);
+                if(affects_cognition||input_original){state.cognition_done=false;state.cognition_saved=false;}
+                const OriginalExperienceView original{sequence,observed,session,source,media,content};
+                auto recorded=input_original?
+                    runtime_.observe_input(record_address(*input_original),original,value,seed,step):
+                    runtime_.observe(value.hypothesis,original,value,seed,step);
                 invalidate_cognition(recorded);
                 return "{\"original\":"+address(recorded.original,memory_)+",\"refinement\":"+refinement(recorded.refinement,memory_)+"}";
             }

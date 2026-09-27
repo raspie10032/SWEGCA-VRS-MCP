@@ -1151,3 +1151,18 @@ probe 통과. 기존 앱 재시작/설치·모델 호출·Claude 통신은 없�
 초기화했다. client 2/server 2 프레임의 정확한 원문 4개를 VRS 재개 후 확인했고
 Main 병합은 0이었다. 모델 생성 요청은 0회, 기존 GUI 설정은 변경하지 않았다.
 이는 실제 백엔드 초기 통신 증거로 한정하며 자연어 의미 대조 완성으로 해석하지 않는다.
+
+## 2026-09-27: 자연 입력 원경험과 관측 결합
+
+- `observe_input`이 활성 세션의 봉인 원경험을 읽어 hypothesis/cue를 가져오며,
+  참조 digest를 context로 보존한다. `swegca/observe(inputOriginal=...)`는 호출자의
+  hypothesis/context 덮어쓰기를 거부한다. 기존 직접 관측 방식도 유지한다.
+- 네이티브 입력 뒤 support/refute/insufficient 생산자 관측을 같은 임시 VRS에 보존한다.
+  운송 source 사칭을 거부하며 네이티브 sequence와 producer sequence를 혼동하지 않는다.
+- 재시작 후 입력 cue로 관측까지 Recall되며, 잘못된 digest/다른 세션 주소/관련 없는
+  네이티브 저장소/연결값 덮어쓰기를 거부한다. Main은 여전히 explicit end 전 merged=0.
+- 검증: CPU 6,7 / make -j2 빌드, 실제 stdio subprocess 회귀 **4007 checks passed**.
+  자연 입력 8개에 각 관측을 결합해 셔플→코어 승인→강화까지 확인했다. 네이티브 세션의
+  세 관측 outcome 기록 및 재시작 순번 복원도 확인했다.
+- 한계: 자동 자연어 의미 검증과 자동 producer 관측 생성은 미완료다. 이 결과를 1번
+  기술 한계 전체 해소나 현재 데스크톱의 실제 생산자 통합 완료로 보고하지 않는다.

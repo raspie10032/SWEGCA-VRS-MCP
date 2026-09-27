@@ -145,3 +145,29 @@ application/json 및 text/* 원문은 UTF-8 텍스트로 표시하고 나머지 
 시험 백엔드까지의 연결을 확인했으며 실제 Codex 앱 설치/대화 품질 검증은 하지
 않았다. 전달 표현 자체의 별도 영속 receipt, 중단된 전달의 완전한 재개 및 전체
 프로세스 합산 자원 상한 검증은 남아 있다.
+
+## 입력 원경험에 결합된 관측 (2026-09-27)
+
+`Runtime::observe_input` 및 기존 `swegca/observe`의 선택적 `inputOriginal`로
+생산자가 기록한 관측을 실제 입력 원경험에 결합한다. `inputOriginal`은 receive 또는
+native event 응답의 원경험 주소 전체다. 이 방식에서는 observation의 hypothesis와
+context를 지정하지 않는다. 활성 세션에서 주소와 내용을 인증하고, 저장된 hypothesis와
+cue를 사용하며 context는 참조한 원경험의 digest로 결합한다. 따라서 결과 본문이 입력
+본문과 달라도 같은 자연 입력의 Recall 후보에 관측이 남는다. 호출자가 주장한 outcome,
+source, producer, confidence를 진실로 인증하는 기능은 아니다. 그 값은 원문과 함께
+보존되고 기존 셔플와 SWEGCA 관측 수용/3상 경로를 거친다.
+
+네이티브 세션에서도 이 관측 경로를 허용한다. session은 실제 native session과 같고,
+source는 native transport source와 달라야 한다. 대상은 그 세션의 네이티브 원경험이어야
+하며 임의 관측을 다시 대상 삼아 운송 계보를 만들 수 없다. 관측은 native delivery
+sequence를 소비하지 않는다. 재시작에서는 모든 원경험을 스트림 인증하고, 다른 source의
+관측은 같은 연결의 앞선 네이티브 원경험 digest와 cue를 참조하는지 검사한 뒤 delivery
+색인에서만 제외한다. 관계 없는 ingress와 훼손된 원경험은 계속 거부한다.
+이 참조 검사는 복구 시 수행하며 입력→Recall 앞에 추가하지 않는다. 현재 앞선 주소
+탐색은 연결 내 역순 검사이므로 오래된 입력을 가리키는 관측이 많으면 복구 비용이 커질
+수 있다. 대규모 복구의 상수 시간 성능을 주장하지 않는다.
+
+이 구현은 자연어의 자동 명제 추출, 동의어·상충 문장 의미 대응, 실제 에이전트 도구
+결과로부터 관측을 자동 생산하는 기능의 완료가 아니다. 현재 실제 producer가 제공하는
+관측이 없는 자연어는 계속 insufficient다. 다음 구현은 이 결합 경로에 실제 관측
+생산자를 연결하는 부분이며, 외부 LLM 판정이나 키워드 참/거짓 규칙을 추가하지 않는다.
