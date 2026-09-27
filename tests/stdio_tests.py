@@ -1504,6 +1504,17 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
         if(value['original']==page_negative['original']):check(current['revision']!=value['revision'])
         else:check(current==value)
 
+    producer_frame('server',{'id':99,'result':{'turn':{'id':'multi-latest-turn'}}},page_sequence)
+    multi_expected=[]
+    for scope,outcome in (('A','support'),('B','refute'),('C','insufficient')):
+        _,saved=producer_frame('server',{'method':'item/completed','params':{'threadId':'producer-thread',
+            'turnId':'multi-latest-turn','item':{'type':'mcpToolCall','id':'multi-'+scope,'server':'multi-producer',
+            'tool':'verify','status':'completed','result':{'content':[],'structuredContent':{'swegcaObservation':{
+            'inputOriginal':page_input['original'],'outcome':outcome,'scope':scope,'axis':'0','confidence':1.0,
+            'hasExpiry':False,'expiresAt':'0'}}}}}})
+        multi_expected.append(saved['original'])
+    check(c.call('swegca/end')['result']=={})
+    check(c.call('swegca/work',{'seed':'7','step':str(producer_seq)})['result']['merged']=='1')
     c.close()
     # Regression: a weakened refutation must remain the related observation
     # even when its ordinary turn response retained a higher connection strength.
@@ -2259,7 +2270,8 @@ for line in sys.stdin:
         if desktop.poll() is None:desktop.terminate();desktop.wait(timeout=10)
     forwarded=next(json.loads(line) for line in captured_inputs.read_text().splitlines() if json.loads(line).get('id')==932)
     injected_observation=json.loads(forwarded['params']['input'][0]['text'].split('\n',1)[1])
-    linked=injected_observation['relatedExperience']
+    linked=injected_observation['relatedExperiences'][0]
+    check(not injected_observation['relatedCoverage']['limited'])
     check(injected_observation['original']==bound_input['original'])
     check(linked['original']==bound_report['original'] and linked['relatedFrom']==injected_observation['original'])
     check(linked['assessment']['inputOriginal']==injected_observation['assessment']['inputOriginal'])
@@ -2267,6 +2279,39 @@ for line in sys.stdin:
     observed=json.loads(linked['content'])['params']['item']['result']['structuredContent']['swegcaObservation']
     check(observed['outcome']=='refute' and observed['scope']=='archived requirement outcome')
     check(forwarded['params']['input'][1:]==[{'type':'text','text':'A purpose kept in Main.'}])
+    for run,limit,byte_budget,expected_count in ((0,8,65536,3),(1,1,65536,1),(2,8,0,0)):
+        auto_proxy.write_text(json.dumps({**json.loads(desktop_proxy.read_text()),'frameBytes':'16384',
+            'instance':'multi-observation-'+str(run),'relatedConnections':str(limit),'relatedContextBytes':str(byte_budget)}))
+        auto_wrapper.write_text(json.dumps({**json.loads(wrapper_config.read_text()),'root':str(pages_root),
+            'resourceConfig':str(auto_resources),'proxyConfig':str(auto_proxy)}))
+        desktop=subprocess.Popen([str(exe.parent/'swegca-codex-wrapper'),'app-server'],
+            env=dict(os.environ,SWEGCA_DESKTOP_CONFIG=str(auto_wrapper)),stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,stderr=subprocess.PIPE,bufsize=0)
+        rpc=940+run*10
+        try:
+            desktop_send({'id':rpc,'method':'initialize','params':{}});check(desktop_read()=={'id':rpc,'result':{}})
+            desktop_send({'id':rpc+1,'method':'thread/start','params':{}})
+            check(desktop_read()['method']=='thread/started');check(desktop_read()=={'id':rpc+1,'result':{}})
+            desktop_send({'id':rpc+2,'method':'turn/start','params':{'threadId':'desktop-thread',
+                'input':[{'type':'text','text':'Keep A, change B, verify C.'}]}})
+            check(desktop_read()=={'id':rpc+2,'result':{}})
+            desktop.stdin.close();check(desktop.wait(timeout=10)==0)
+            check(desktop.stdout.read()==b'' and desktop.stderr.read()==b'')
+        finally:
+            if desktop.poll() is None:desktop.terminate();desktop.wait(timeout=10)
+        forwarded=next(json.loads(line) for line in captured_inputs.read_text().splitlines() if json.loads(line).get('id')==rpc+2)
+        bundle=json.loads(forwarded['params']['input'][0]['text'].split('\n',1)[1])
+        check(forwarded['params']['input'][1:]==[{'type':'text','text':'Keep A, change B, verify C.'}])
+        check(bundle['original']==page_input['original'])
+        check(len(bundle['relatedExperiences'])==expected_count)
+        coverage=bundle['relatedCoverage'];check(coverage['limited']==(run!=0))
+        check(not coverage['requirementsComplete'] and not coverage['grantsAuthority'])
+        check(len(coverage['deliveredConnections'])==expected_count)
+        check((coverage['next'] is not None)==(run==1))
+        if run==0:
+            check({x['original']['digest'] for x in bundle['relatedExperiences']}=={x['digest'] for x in multi_expected})
+            check({json.loads(x['content'])['params']['item']['result']['structuredContent']['swegcaObservation']['outcome']
+                for x in bundle['relatedExperiences']}=={'support','refute','insufficient'})
     c=Client('open',desktop_root,path);c.initialize()
     for session,protocol,count in (('transport','app-server-connection','9'),('desktop-thread','app-server','9')):
         attached=c.call('swegca/agent/attach/resume',{'provider':'codex','instance':'desktop-fixture',

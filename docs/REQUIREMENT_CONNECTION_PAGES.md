@@ -101,3 +101,34 @@ A/B/C 기록을 바꾸지 않으며 B에 후속 관측을 추가하면 B의 revi
 없는 endpoint를 사용한 잘못된 인자 검사는 연결 시도 전에 구문 오류가 반환됨을
 확인한다. stdio7006 / content observer129 checks 통과. 현재 빌드에 구현했으며
 설치본 및 프록시 자동 다중 전달은 아직 갱신하지 않았다.
+
+## 프록시 다중 경험 자동 전달 및 설치
+
+부모 Replay 후 적격 관측이 있으면 프록시가 연결 페이지를 조회하고 연결별 Replay를
+수행하여 `relatedExperiences` 배열을 전달한다. 각 항목의 입력/부모/권한 없음/부모 판정
+불변을 검증하고 원문을 전달한다. `relatedCoverage`는 조회 snapshot, 목록, next,
+실제 deliveredConnections, limited, requirementsComplete=false를 포함한다. 목록에 없는
+요구를 검증 완료로 취급하지 않는다. 기존 사용자 input 배열은 수정하지 않는다.
+
+프록시 설정 `relatedConnections` 기본8(1..64), `relatedContextBytes` 기본 min(262144,
+vrsFrameBytes/2), 0 허용, 최대 vrsFrameBytes/2. 한 페이지의 항목만 자동 전달하고
+다음 페이지는 coverage.next로 남긴다. 원경험 봉투 크기로 보수적으로 사전 확인하고,
+반환 후에는 hex→JSON 텍스트의 최악 확장까지 계산해 바이트 예산을 확인한다.
+예산에 들지 않는 항목은 원문을 자르지 않고 coverage 목록에 남긴다. 바이트 예산은
+관련 Replay 항목의 표현에 적용하며 부모/목록 메타데이터와 사용자 입력은 기존
+전체 프레임/PMR 예산이 적용된다. 프로세스의 전체 최대 메모리 보장을 뜻하지 않는다.
+
+검증: wire160 / 실제 stdio7078 checks 통과(폴링에 따라 총 check 수 변동 가능).
+실제 wrapper/host/proxy/VRS+시험 backend에서 세 요구의 support/refute/insufficient
+원경험이 모두 먼저 전달됨을 확인했다. 1항목 제한의 next와 limited, 0바이트 제한의
+빈 전달 배열과 원래 3개 연결 목록 유지, 사용자 원문 보존을 확인했다. 다중 배열의
+두 번째 항목이 다른 부모를 가리키면 거부한다. 내부 모델 호출 없음.
+
+설치 전 기존 manifest의 모든 실행 파일 해시, prefix의 실행 중 프로세스 부재 확인.
+VRS/proxy/observer와 manifest 교체, 설정 파일 보존. 실제 backend 초기화 검증에서
+도구/소유 query socket/공유 I/O/동일 실행 그룹/정상 종료 확인. memory.max3999997952,
+swap0, CPU6-7, modelCalls0. 사용자 GUI 강제 재시작이나 실제 모델 대화는 수행하지 않았다.
+
+남은 1단계 한계: 아직 관측이 없는 자연어 요구 자체를 자동 구성하지 않는다. 같은
+연결의 전체 반증 원문을 모두 전달하는 기능도 아니며 선택 원경험과 비교 결과를
+전달한다. 임시/Main 범위는 기존 related Recall을 따른다. 전체 자연어 처리 완성 아님.

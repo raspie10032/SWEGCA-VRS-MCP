@@ -92,6 +92,13 @@ int main(int argc,char** argv){
         const auto* configured_rpc_frame=config.find("vrsFrameBytes");
         const auto rpc_frame=configured_rpc_frame?number(configured_rpc_frame->string()):minimum_rpc_frame;
         if(rpc_frame<minimum_rpc_frame||rpc_frame>ram)throw std::invalid_argument("invalid VRS RPC frame budget");
+        const auto* configured_related_limit=config.find("relatedConnections");
+        const auto related_limit=configured_related_limit?number(configured_related_limit->string()):8;
+        const auto* configured_related_bytes=config.find("relatedContextBytes");
+        const auto related_bytes=configured_related_bytes?number(configured_related_bytes->string()):std::min<std::uint64_t>(262144,rpc_frame/2);
+        if(!related_limit||related_limit>64||related_bytes>rpc_frame/2)
+            throw std::invalid_argument("invalid related context budget");
+
         const auto& sessions=config.at("sessions");
         if(sessions.kind!=Json::Kind::array)throw std::invalid_argument("session bindings must be an array");
         const auto* connection=config.find("connectionSession");
@@ -221,22 +228,52 @@ int main(int argc,char** argv){
                             auto& result=mutable_field(replay,"result");
                             if(result.find("isError"))throw std::runtime_error("VRS Replay context unavailable");
                             auto& packet=mutable_field(result,"structuredContent");
-                            std::optional<Json> observation;
+                            std::optional<Json> observation,coverage;
                             if(const auto* available=packet.find("relatedAvailable")){
-                                if(available->kind!=Json::Kind::boolean)
-                                    throw std::runtime_error("invalid observation availability");
+                                if(available->kind!=Json::Kind::boolean)throw std::runtime_error("invalid observation availability");
                                 if(available->scalar=="true"){
-                                    if(serial==UINT64_MAX)throw std::overflow_error("proxy request IDs exhausted");
-                                    const auto query="{\"name\":\"vrs_replay\",\"arguments\":{\"receipt\":"+
+                                    const auto query_base="{\"name\":\"vrs_replay\",\"arguments\":{\"receipt\":"+
                                         quote_json(body.at("receipt").string(),memory)+",\"inputOriginal\":"+
-                                        encode_json(body.at("original"),memory)+",\"related\":true}}";
-                                    auto answer=call(stream,"proxy/observation/"+std::to_string(++serial),"tools/call",query,memory);
-                                    auto& payload=mutable_field(answer,"result");
-                                    if(payload.find("isError"))throw std::runtime_error("VRS observation Replay unavailable");
-                                    observation.emplace(std::move(mutable_field(payload,"structuredContent")));
+                                        encode_json(body.at("original"),memory)+",\"related\":true";
+                                    const auto fetch=[&](std::string_view suffix){
+                                        if(serial==UINT64_MAX)throw std::overflow_error("proxy request IDs exhausted");
+                                        auto answer=call(stream,"proxy/observations/"+std::to_string(++serial),"tools/call",
+                                            query_base+std::pmr::string(suffix,&memory)+"}}",memory);
+                                        auto& payload=mutable_field(answer,"result");
+                                        if(payload.find("isError"))throw std::runtime_error("VRS observation query unavailable");
+                                        return std::move(mutable_field(payload,"structuredContent"));
+                                    };
+                                    auto page=fetch(",\"connections\":{\"limit\":\""+std::to_string(related_limit)+"\"}");
+                                    if(!same_context_address(page.at("inputOriginal"),body.at("original"))||
+                                        !same_context_address(page.at("relatedFrom"),packet.at("original")))
+                                        throw std::runtime_error("related page provenance mismatch");
+                                    observation.emplace(parse_json("[]",memory));
+                                    std::pmr::string delivered("[",&memory);std::size_t used=0;bool limited=page.at("next").kind!=Json::Kind::null;
+                                    for(const auto& entry:page.at("connections").values){
+                                        const auto bytes=number(entry.at("original").at("bytes").string());
+                                        // Conservative preflight avoids reading an original that cannot
+                                        // fit the remaining presentation budget. It remains in coverage.
+                                        if(bytes> (related_bytes-used)/12){limited=true;continue;}
+                                        auto item=fetch(",\"connection\":"+quote_json(entry.at("connection").string(),memory));
+                                        if(item.at("relatedConnection").string()!=entry.at("connection").string())
+                                            throw std::runtime_error("related connection mismatch");
+                                        const auto encoded=encode_json(item,memory);
+                                        // Decoding hex may expand a control byte to six JSON
+                                        // characters. Reserve that worst-case presentation size.
+                                        if(related_bytes-used<1||encoded.size()>(related_bytes-used-1)/3){limited=true;continue;}
+                                        used+=encoded.size()*3+1;
+                                        if(delivered.size()>1)delivered+=',';
+                                        append_json_string(delivered,entry.at("connection").string());
+                                        observation->values.push_back(std::move(item));
+                                    }
+                                    delivered+=']';auto report=encode_json(page,memory);report.pop_back();
+                                    report+=",\"deliveredConnections\":";report+=delivered;
+                                    report+=",\"limited\":";report+=limited?"true":"false";
+                                    report+=",\"replayBudgetBytes\":\"";report+=std::to_string(related_bytes);report+="\"}";
+                                    coverage.emplace(parse_json(report,memory));
                                 }
                             }
-                            auto context=replay_context(std::move(packet),body,memory,observation?&*observation:nullptr);
+                            auto context=replay_context(std::move(packet),body,memory,observation?&*observation:nullptr,coverage?&*coverage:nullptr);
                             pump.include_context(plan,context,rpc_frame);
                         }else{
                             const auto context=input_context(body,memory);

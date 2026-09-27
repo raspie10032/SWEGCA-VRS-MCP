@@ -195,6 +195,15 @@ int main(){
   CHECK(both.at("relatedExperience").at("content").string()=="no");
   CHECK(both.at("relatedExperience").at("assessment").at("status").scalar=="2");
   CHECK(both.at("assessment").at("status").scalar=="0");
+  auto multiple=parse_json("["+observation+","+observation+"]",memory);
+  const auto multi_context=replay_context(parse_json(packet,memory),ack,memory,&multiple);
+  const auto multi_packet=parse_json(multi_context.substr(multi_context.find('\n')+1),memory);
+  CHECK(multi_packet.at("relatedExperiences").values.size()==2);
+  CHECK(multi_packet.at("relatedExperiences").values[1].at("content").string()=="no");
+  multiple=parse_json("["+observation+","+observation+"]",memory);
+  mutable_field(mutable_field(multiple.values[1],"relatedFrom"),"digest").scalar="foreign";
+  rejects([&]{(void)replay_context(parse_json(packet,memory),ack,memory,&multiple);});
+
   for(const auto key:{"grantsAuthority","related","parentCognitionUnchanged"}){
    linked=parse_json(observation,memory);
    auto& value=mutable_field(linked,key);value.scalar=value.scalar=="true"?"false":"true";
