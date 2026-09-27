@@ -1640,6 +1640,8 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     # silently remain attached to its initial purpose after the correction.
     steer=turn_frame(10,'client',{'id':5,'method':'turn/steer','params':{'threadId':'turn-thread',
         'expectedTurnId':'turn-b','input':[{'type':'text','text':'corrected purpose'}]}})
+    check(steer['inputRelations']['priorInput']==second_turn['original'])
+    check(not steer['inputRelations']['replacementVerified'] and not steer['inputRelations']['grantsAuthority'])
     turn_frame(11,'server',{'id':5,'result':{'turnId':'turn-b'}},10)
     turn_frame(12,'server',{'method':'item/completed','params':{'threadId':'turn-thread','turnId':'turn-b'}})
     unbound=c.call('swegca/agent/original',{'identity':turns_id,'sequence':'12'})['result']
@@ -1648,6 +1650,11 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     c=Client('open',turns_root,path);c.initialize()
     check(c.call('swegca/agent/attach/resume',turns_binding)['result']['nextSequence']=='13')
     check(c.call('swegca/select',{'identity':turns_id})['result']=={})
+    recovered_steer=turn_frame(10,'client',{'id':5,'method':'turn/steer','params':{'threadId':'turn-thread',
+        'expectedTurnId':'turn-b','input':[{'type':'text','text':'corrected purpose'}]}})
+    check(recovered_steer['duplicate'] and recovered_steer['inputRelations']==steer['inputRelations'])
+    stored_steer=c.call('swegca/agent/cognition',{'identity':turns_id,'sequence':'10'})['result']['record']
+    check(stored_steer['inputRelations']==steer['inputRelations'])
     for n,target in ((13,steer),(14,second_turn)):
         tool={'method':'item/completed','params':{'threadId':'turn-thread','turnId':'turn-b',
             'item':{'type':'mcpToolCall','id':'steer-test-'+str(n),'server':'steer-verifier','tool':'verify','status':'completed',
@@ -1661,6 +1668,13 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     turn_frame(15,'server',tool)
     saved=c.call('swegca/agent/original',{'identity':turns_id,'sequence':'15'})['result']
     check(saved['context'] not in (first_turn['original']['digest'],second_turn['original']['digest'],steer['original']['digest']))
+    ambiguous_steer=turn_frame(16,'client',{'id':6,'method':'turn/steer','params':{'threadId':'turn-thread',
+        'expectedTurnId':'turn-b','input':[{'type':'text','text':'change only the last condition'}]}})
+    check(ambiguous_steer['inputRelations']['priorInput'] is None)
+    unknown_steer=turn_frame(17,'client',{'id':7,'method':'turn/steer','params':{'threadId':'turn-thread',
+        'expectedTurnId':'unknown','input':[{'type':'text','text':'keep the other requirements'}]}})
+    check(unknown_steer['inputRelations']['priorInput'] is None)
+
     check(c.call('swegca/work',{'seed':'7','step':'0'})['result']['merged']=='0')
     c.close()
     # Responses bind to an earlier committed request original, not a selected

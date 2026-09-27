@@ -173,12 +173,13 @@ private:
             std::optional<DigestBytes> revision;
         };
         struct Delivery { DigestBytes fingerprint; ExperienceLocation original; DigestBytes context{}; ExperienceSender sender=ExperienceSender::unspecified; DigestBytes connection{}; };
-        Context(MemoryBudget& memory,std::string_view native,bool app,bool connection):deliveries(&memory),turn_inputs(&memory),native_session(native,&memory),app_server(app),connection_scope(connection){}
+        Context(MemoryBudget& memory,std::string_view native,bool app,bool connection):deliveries(&memory),turn_inputs(&memory),native_session(native,&memory),input_relations(&memory),app_server(app),connection_scope(connection){}
         std::pmr::map<std::uint64_t,Delivery> deliveries;
         std::pmr::map<std::pmr::string,std::pmr::vector<Delivery>,std::less<>> turn_inputs;
         std::uint64_t indexed_turn_deliveries=0;
         bool native_ready=false;
         std::pmr::string native_session;
+        std::pmr::string input_relations;
         bool app_server=false;
         bool connection_scope=false;
         std::string_view native_source() const noexcept{return connection_scope?"codex/app-server-connection":app_server?"codex/app-server":"codex/hook";}
@@ -308,6 +309,23 @@ private:
         }
         return found->second.size()==1?std::optional<Context::Delivery>(found->second.front()):std::nullopt;
     }
+    std::pmr::string input_relations(const AgentEvent& event){
+        std::pmr::string relation(&memory_);
+        if(event.native_name()!="turn/steer")return relation;
+        const auto& params=event.fields().at("params");
+        const auto* expected=params.find("expectedTurnId");
+        if(!expected||expected->kind!=Json::Kind::string||expected->scalar.empty())return relation;
+        // Called only after the new input's Recall and durable recording.
+        // Existing authenticated request/reply bindings determine a unique
+        // predecessor; multiple owners are never collapsed to the latest one.
+        const auto prior=turn_input(context(),params.at("threadId").string(),expected->scalar,std::nullopt);
+        relation="{\"kind\":\"explicit-turn-steer\",\"threadId\":";
+        relation+=quote_json(params.at("threadId").string(),memory_);
+        relation+=",\"expectedTurnId\":";relation+=quote_json(expected->scalar,memory_);
+        relation+=",\"priorInput\":";relation+=prior?address(prior->original,memory_):"null";
+        relation+=",\"replacementVerified\":false,\"grantsAuthority\":false}";
+        return relation;
+    }
     std::optional<ExperienceLocation> tool_input_reference(const AgentEvent& event){
         if(event.native_name()!="item/completed")return std::nullopt;
         try {
@@ -410,7 +428,7 @@ private:
     void clear_replay(){
         context().replayed.reset();context().cognition.reset();context().cognition_done=false;
     }
-    void clear(){clear_replay();context().cognition_connection.reset();context().cognition_saved=false;context().cognition_snapshot_saved=false;context().cognition_revision.reset();context().cognition_parameters.reset();context().received.reset();context().recovered_cognition.reset();context().recovered_receipt=0;}
+    void clear(){clear_replay();context().input_relations.clear();context().cognition_connection.reset();context().cognition_saved=false;context().cognition_snapshot_saved=false;context().cognition_revision.reset();context().cognition_parameters.reset();context().received.reset();context().recovered_cognition.reset();context().recovered_receipt=0;}
     const ReplayedInput* selected_replay() const {
         if(context().replayed)return &*context().replayed;
         return context().cognition ? &context().cognition->replayed : nullptr;
@@ -604,6 +622,7 @@ private:
             metadata+=",\"seed\":\"";metadata+=std::to_string(parameters.first);
             metadata+="\",\"step\":\"";metadata+=std::to_string(parameters.second);metadata+='"';
             cognition_body(metadata);
+            if(!state.input_relations.empty()){metadata+=",\"inputRelations\":";metadata+=state.input_relations;}
             if(state.cognition){
                 metadata+=",\"sourceSession\":\"";metadata+=hex(state.cognition->replayed.source_identity(),memory_);
                 metadata+="\",\"selectedOriginal\":";metadata+=address(state.cognition->replayed.location(),memory_);
@@ -905,6 +924,7 @@ private:
                     complete_cognition();
                     body+="\""+std::to_string(state.receipt)+"\"";
                     cognition_body(body);
+                    if(!state.input_relations.empty()){body+=",\"inputRelations\":";body+=state.input_relations;}
                 }else if(route==AgentEventRoute::recall_then_record){
                     auto saved=runtime_.session().read_cognition(found->second.original);
                     if(saved){
@@ -915,6 +935,9 @@ private:
                         const auto ticket=next_receipt_+1;
                         body+='"';body+=std::to_string(ticket);body+="\",\"memory\":";
                         body+=encode_json(metadata.at("memory"),memory_);
+                        if(const auto* relation=metadata.find("inputRelations")){
+                            body+=",\"inputRelations\":";body+=encode_json(*relation,memory_);
+                        }
                         state.recovered_cognition.emplace(std::move(*saved));
                         state.recovered_receipt=ticket;next_receipt_=ticket;
                     }else body+="null,\"memory\":{\"completed\":false,\"original\":null}";
@@ -940,6 +963,7 @@ private:
                     slot->second.connection=state.received->recorded.refinement.connection();committed=true;
                     slot->second.fingerprint=agent_delivery_identity(sequence,observed,event.native_bytes());
                     if(state.indexed_turn_deliveries==sequence)++state.indexed_turn_deliveries;
+                    state.input_relations=input_relations(event);
                     complete_cognition();
                     return received_body(limit);
                 }
@@ -1121,7 +1145,9 @@ private:
             body+=",\"temporary\":";body+=context().received->recalled.temporary()?"true":"false";body+=',';
             candidate_page(body,0,limit);
             body+=",\"refinement\":";body+=refinement(context().received->recorded.refinement,memory_);
-            cognition_body(body);body+='}';return body;
+            cognition_body(body);
+            if(!context().input_relations.empty()){body+=",\"inputRelations\":";body+=context().input_relations;}
+            body+='}';return body;
     }
     std::pmr::string replay_prefix(const ReplayedInput& replayed,const InputCognition* cognition=nullptr,const ExperienceLocation* input=nullptr){
         const auto value=evidence_payload(replayed.original());
@@ -1207,7 +1233,8 @@ private:
         body+=hex(page.snapshot,memory_);body+="\",\"temporary\":";body+=recalled.temporary()?"true":"false";
         body+=",\"connections\":[";bool first=true;
         for(const auto& entry:page.entries){
-            if(!first)body+=',';first=false;
+            if(!first)body+=',';
+            first=false;
             body+="{\"connection\":\"";body+=hex(entry.connection,memory_);
             body+="\",\"original\":";body+=address(recalled.matches()[entry.candidate].original,memory_);body+='}';
         }

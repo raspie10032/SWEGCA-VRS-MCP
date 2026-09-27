@@ -40,3 +40,21 @@ wire172 / 실제 stdio7084 checks 통과. 한국어 UTF-8/CRLF/다중 text/첨�
 일반 목적의 일관성은 아직 미완료다. 원문 범위가 목록에 있다는 사실만으로 요구가
 추출/이해/충족됐다고 간주하지 않는다. 현재 빌드에 구현했고 설치본은 직전의
 다중 경험 전달 버전이다.
+
+## 명시적 turn/steer의 선행 입력 관계
+
+네이티브 정정 입력을 Recall하고 기록한 뒤, 기존 코어 기반 AppServerRequests의
+인증된 요청/응답 턴 결속에서 선행 입력을 찾는다. 같은 threadId/expectedTurnId의
+입력이 하나로 확정될 때만 priorInput 주소를 제공한다. 여러 입력이 같은 턴에
+결속돼 있거나 턴이 없으면 null이다. 가장 최근 입력을 임의 선택하지 않는다.
+
+inputRelations는 explicit-turn-steer, threadId, expectedTurnId, priorInput,
+replacementVerified=false, grantsAuthority=false다. 초기 cognition 원경험에 함께
+보존하며 같은 입력 재전송과 재시작 복구는 당시 관계를 반환한다. 나중에 그 턴에
+다른 입력이 추가됐다고 과거의 관계를 다시 추정하지 않는다. 프록시의 입력 참조에
+그대로 포함한다. 관계만으로 과거 요구를 삭제/취소/약화하거나 전체 대체하지 않는다.
+
+wire174 / 실제 stdio7104 통과. 유일한 선행 입력, 누적 후 모호한 턴, 없는 턴,
+재시작 후 당시 관계 복구와 journal 보존, 미확정 관계의 참조 전달을 확인했다.
+단순 입력 후보와 마찬가지로 설치본 반영은 아직 하지 않았다. 자연어만으로
+어느 요구가 정정됐는지 판단하거나 부분 취소 범위를 계산하는 것은 남아 있다.

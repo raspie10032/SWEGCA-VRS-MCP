@@ -40,6 +40,11 @@ inline void append_input_candidates(std::pmr::string& context,const Json& native
         }
     }
     references+=']';context.pop_back();
+    if(const auto* relation=acknowledged.find("inputRelations")){
+        if(context.back()!='{')context+=',';
+        context+="\"inputRelations\":";append_json(context,*relation);
+    }
+
     if(context.back()!='{')context+=',';
     context+="\"inputCandidates\":{\"inputOriginal\":";append_json(context,acknowledged.at("original"));
     context+=",\"kind\":\"uninterpreted-text-spans\",\"semanticVerified\":false,\"requirementsComplete\":false,";

@@ -201,6 +201,11 @@ int main(){
   CHECK(no_room.at("inputCandidates").at("candidates").values.empty());
   CHECK(no_room.at("inputCandidates").at("byteLimited").scalar=="true");
   CHECK(no_room.at("inputCandidates").at("next").at("byteOffset").string()=="0");
+  auto related_source=parse_json(R"({"original":{"block":"a","digest":"b","offset":"1","bytes":"2"},"inputRelations":{"kind":"explicit-turn-steer","priorInput":null,"replacementVerified":false,"grantsAuthority":false}})",memory);
+  candidates="{}";append_input_candidates(candidates,native,related_source,memory,8,4096);
+  const auto relation_context=parse_json(candidates,memory);
+  CHECK(relation_context.at("inputRelations").at("priorInput").kind==Json::Kind::null);
+  CHECK(relation_context.at("inputRelations").at("replacementVerified").scalar=="false");
   const auto ack=parse_json(R"({"receipt":"17","original":{"block":"a","digest":"b","offset":"1","bytes":"2"},"memory":{"original":{"block":"c","digest":"d","offset":"3","bytes":"4"}}})",memory);
   const std::string packet=R"({"original":{"block":"c","digest":"d","offset":"3","bytes":"4"},"media":"text/plain","grantsAuthority":false,"assessment":{"inputOriginal":{"block":"a","digest":"b","offset":"1","bytes":"2"},"agreement":1,"status":0},"contentHex":"68690a"})";
   const auto context=replay_context(parse_json(packet,memory),ack,memory);
