@@ -36,6 +36,12 @@ public:
     // It is not another observation and does not enter connection refinement.
     void save_cognition(const ExperienceLocation&, std::span<const std::byte> metadata);
     [[nodiscard]] std::optional<StoredExperience> read_cognition(const ExperienceLocation&) const;
+    // Later core assessments are immutable revisions, never replacements of
+    // the input-time record. The returned content digest selects that revision.
+    [[nodiscard]] architecture::DigestBytes save_cognition_revision(const ExperienceLocation&,
+        std::span<const std::byte> metadata);
+    [[nodiscard]] std::optional<StoredExperience> read_cognition_revision(const ExperienceLocation&,
+        const architecture::DigestBytes&) const;
     void end();
     void publish_originals();
 
@@ -82,6 +88,10 @@ private:
     void recorded(const ExperienceLocation& location) noexcept;
     [[nodiscard]] std::filesystem::path block_path(std::uint64_t index) const;
     [[nodiscard]] architecture::DigestBytes inventory() const;
+    void save_cognition_record(const ExperienceLocation&,std::span<const std::byte>,
+        std::optional<architecture::DigestBytes>);
+    [[nodiscard]] std::optional<StoredExperience> read_cognition_record(const ExperienceLocation&,
+        std::optional<architecture::DigestBytes>) const;
 
     std::filesystem::path root_, directory_;
     architecture::DigestBytes identity_;

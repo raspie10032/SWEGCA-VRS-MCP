@@ -301,12 +301,15 @@ namespace {
 constexpr std::string_view cognition_source="swegca-cognition";
 constexpr std::string_view cognition_media="application/vnd.swegca.cognition-v1";
 constexpr std::size_t cognition_limit=65536;
-DigestBytes cognition_id(const DigestBytes& session,const ExperienceLocation& input) {
+DigestBytes cognition_id(const DigestBytes& session,const ExperienceLocation& input,
+    std::optional<DigestBytes> revision={}) {
     if(!head_address_valid(input))throw std::invalid_argument("invalid cognition input address");
     Sha256 hash;hash.update("SWEGCA input cognition v1");hash.update(session);
     hash.update(input.block);hash.update(input.digest);
     std::array<std::byte,16> extent{};put(extent,0,input.offset);put(extent,8,input.bytes);
-    hash.update(extent);return hash.finish();
+    hash.update(extent);
+    if(revision){hash.update("SWEGCA cognition revision v1");hash.update(*revision);}
+    return hash.finish();
 }
 void validate_cognition(const StoredExperience& record,std::string_view session) {
     const auto view=record.view();
@@ -362,9 +365,17 @@ DigestBytes SessionStore::inventory() const {
 }
 
 std::optional<StoredExperience> SessionStore::read_cognition(const ExperienceLocation& input) const {
+    return read_cognition_record(input,std::nullopt);
+}
+std::optional<StoredExperience> SessionStore::read_cognition_revision(const ExperienceLocation& input,
+    const DigestBytes& revision) const {
+    return read_cognition_record(input,revision);
+}
+std::optional<StoredExperience> SessionStore::read_cognition_record(const ExperienceLocation& input,
+    std::optional<DigestBytes> revision) const {
     if(!usable_)throw std::logic_error("session unavailable");
     if(!blocks_.contains(input.block))throw std::invalid_argument("cognition input belongs to another session");
-    const auto identity=cognition_id(identity_,input);
+    const auto identity=cognition_id(identity_,input,revision);
     const auto path=directory_/"cognition"/(hex(identity)+".block");
     if(!std::filesystem::exists(path))return std::nullopt;
     auto block=ExperienceBlock::open_reader(path,storage_);
@@ -375,21 +386,34 @@ std::optional<StoredExperience> SessionStore::read_cognition(const ExperienceLoc
     const auto extent=block.inspect();
     if(extent.complete_records!=1 || extent.unfinished_bytes)
         throw std::runtime_error("invalid cognition record extent");
-    validate_cognition(record,name_);return record;
+    validate_cognition(record,name_);
+    if(revision&&Sha256::of(record.view().content)!=*revision)
+        throw std::runtime_error("cognition revision content mismatch");
+    return record;
 }
 void SessionStore::save_cognition(const ExperienceLocation& input,std::span<const std::byte> metadata) {
+    save_cognition_record(input,metadata,std::nullopt);
+}
+DigestBytes SessionStore::save_cognition_revision(const ExperienceLocation& input,std::span<const std::byte> metadata) {
+    require(SessionOperation::append);
+    if(metadata.empty()||metadata.size()>cognition_limit)throw std::length_error("cognition metadata limit");
+    const auto revision=Sha256::of(metadata);
+    save_cognition_record(input,metadata,revision);return revision;
+}
+void SessionStore::save_cognition_record(const ExperienceLocation& input,std::span<const std::byte> metadata,
+    std::optional<DigestBytes> revision) {
     require(SessionOperation::append);
     if(metadata.empty() || metadata.size()>cognition_limit)throw std::length_error("cognition metadata limit");
     // Bind to an actual committed record boundary, without rereading its body.
     auto cursor=read_cursor();
     if(cursor.reader(input).location_at(input.offset)!=input)
         throw std::invalid_argument("cognition input is not the committed record");
-    const auto prior=read_cognition(input);
+    const auto prior=read_cognition_record(input,revision);
     if(prior){
         if(!std::ranges::equal(prior->view().content,metadata))throw std::invalid_argument("conflicting immutable cognition");
         return;
     }
-    const auto identity=cognition_id(identity_,input);
+    const auto identity=cognition_id(identity_,input,revision);
     const auto directory=directory_/"cognition";
     try {
         if(std::filesystem::create_directory(directory))sync_directory(directory_);

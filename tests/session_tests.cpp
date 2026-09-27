@@ -230,6 +230,8 @@ int main() {
     {
         ExperienceLocation input;
         const std::string metadata=R"({"memory":{"completed":true,"original":null}})";
+        const std::string updated=R"({"memory":{"completed":true,"step":3}})";
+        DigestBytes revision{},later{};
         StorageBudget storage(1<<20);
         {
             auto session=SessionStore::create(root,id(9),"cognition",1024,memory,&storage);
@@ -245,6 +247,19 @@ int main() {
             session.save_cognition(input,bytes(metadata));
             CHECK(storage.used()==used && session.original_count()==count);
             CHECK(text(session.read_cognition(input)->view().content)==metadata);
+            revision=session.save_cognition_revision(input,bytes(updated));
+            const auto revision_used=storage.used();CHECK(revision_used>used);
+            CHECK(session.save_cognition_revision(input,bytes(updated))==revision);
+            CHECK(storage.used()==revision_used&&session.original_count()==count);
+            later=session.save_cognition_revision(input,bytes("later core assessment"));
+            CHECK(later!=revision&&session.original_count()==count);
+            CHECK(text(session.read_cognition_revision(input,revision)->view().content)==updated);
+            CHECK(text(session.read_cognition(input)->view().content)==metadata);
+            CHECK(!session.read_cognition_revision(forged,revision));
+            CHECK(!session.read_cognition_revision(input,id(99)));
+            expect_throw<std::invalid_argument>([&]{(void)session.save_cognition_revision(forged,bytes(updated));});
+            expect_throw<std::length_error>([&]{(void)session.save_cognition_revision(input,{});});
+            expect_throw<std::length_error>([&]{(void)session.save_cognition_revision(input,bytes(std::string(65537,'x')));});
             expect_throw<std::invalid_argument>([&]{session.save_cognition(input,bytes("different"));});
             expect_throw<std::length_error>([&]{session.save_cognition(input,bytes(std::string(65537,'x')));});
             auto foreign=input;foreign.block=id(99);
@@ -254,16 +269,20 @@ int main() {
         {
             auto session=SessionStore::open(root,id(9),memory,&storage);
             CHECK(text(session.read_cognition(input)->view().content)==metadata);
+            CHECK(text(session.read_cognition_revision(input,revision)->view().content)==updated);
+            CHECK(text(session.read_cognition_revision(input,later)->view().content)=="later core assessment");
             // An interrupted staging write is not a committed receipt.
             const auto directory=session_path(root,9)/"cognition";
             std::ofstream(directory/"staging-interrupted.block")<<"incomplete";
             session.end();
             expect_throw<std::logic_error>([&]{session.save_cognition(input,bytes(metadata));});
+            expect_throw<std::logic_error>([&]{(void)session.save_cognition_revision(input,bytes(updated));});
         }
         {
             auto session=SessionStore::open(root,id(9),memory,&storage);
             CHECK(session.phase()==SessionPhase::ended);
             CHECK(text(session.read_cognition(input)->view().content)==metadata);
+            CHECK(text(session.read_cognition_revision(input,revision)->view().content)==updated);
             session.publish_originals();
         }
         // Removing a committed receipt cannot silently alter an ended session.
