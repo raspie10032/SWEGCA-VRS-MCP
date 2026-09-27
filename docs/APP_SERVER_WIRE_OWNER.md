@@ -443,3 +443,22 @@ and historical simultaneous pending-request capacity, but read work grows with
 session history. A persisted pending index/checkpoint is not implemented.
 This does not prove desktop installation, reconnect ownership, agent context
 injection, arbitrary-scale memory use or input-to-Recall latency completion.
+
+## Request conflict checks before original ingestion
+
+A concrete recovery-order bug was found: a native resume delivery could be
+prepared before its session's pending requests were reconstructed. The old
+flow could then persist the new resume original and discover an RPC ID conflict
+only during Wire registration. New requests now check ID validity, active ID
+occupancy and capacity before ingestion. Lifecycle reconstruction repeats that
+check after installing recovered requests and before issuing the VRS event RPC.
+The check examines the RPC ID, not a full-envelope hash ahead of Recall.
+Existing exact-registration/retry semantics after a successful VRS ack remain.
+
+Verification: Wire 66, duplex pump 88, actual subprocess 2,453 checks passed.
+A real fixture stores pending client ID 88, restarts with no preattached thread,
+and sends thread/resume with ID 88. Lifecycle discovery recovers the pending
+request, rejects the conflicting resume with zero native forwarding, and a
+fresh VRS reopen proves nextSequence remains 1 and the original address/bytes
+are unchanged. Main merges remain zero. Allocation failure after a legitimate
+ack still retries registration without repeating the ingestion callback.

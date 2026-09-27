@@ -824,6 +824,30 @@ for line in sys.stdin:
     finally:
         if desktop.poll() is None:desktop.kill();desktop.wait(timeout=10)
         desktop.stdin.close();desktop.stdout.close();desktop.stderr.close()
+    # A recovered pending ID conflict must be rejected before storing resume.
+    collision_root=root/'resume-id-conflict';collision_root.mkdir()
+    c=Client('create',collision_root,path);c.initialize()
+    collision_binding={'provider':'codex','instance':'collision-fixture','session':'prior','protocol':'app-server'}
+    attached=c.call('swegca/agent/attach',collision_binding)['result']
+    pending_native=json.dumps({'id':88,'method':'turn/start','params':{'threadId':'prior','input':[]}})
+    pending_saved=c.call('swegca/agent/event',{'identity':attached['identity'],'sequence':'0','observedAt':'1',
+        'seed':'7','step':'0','sender':'client','native':pending_native})['result']['original']
+    c.close()
+    collision_config=root/'collision-proxy.json'
+    collision_config.write_text(json.dumps({'memoryBytes':str(8<<20),'frameBytes':'4096','pendingRequests':'8',
+        'sessionCapacity':'1','seed':'7','step':'0','instance':'collision-fixture','sessions':[]}))
+    collision=subprocess.run([str(exe.parent/'swegca-desktop-host'),str(exe.parent/'swegca-app-server-proxy'),
+        str(exe),'open',str(collision_root),str(path),str(collision_config),sys.executable,'-u','-c',backend_code],
+        input=(json.dumps({'id':88,'method':'thread/resume','params':{'threadId':'prior'}})+'\n').encode(),
+        capture_output=True,timeout=10)
+    check(collision.returncode==1 and collision.stdout==b'')
+    check(b'live request ID already in use' in collision.stderr)
+    c=Client('open',collision_root,path);c.initialize()
+    restored=c.call('swegca/agent/attach/resume',collision_binding)['result']
+    check(restored['nextSequence']=='1')
+    original=c.call('swegca/agent/original',{'identity':restored['identity'],'sequence':'0'})['result']
+    check(original['original']==pending_saved and original['native']==pending_native)
+    check(c.call('swegca/work',{'seed':'7','step':'0'})['result']['merged']=='0');c.close()
     # A separate config file must not change the root being measured.
     def stored_bytes():
         seen=set();total=0

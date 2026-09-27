@@ -181,6 +181,7 @@ int main(int argc,char** argv){
                     if(pending_recovery){
                         recover(pending_recovery->identity,pending_recovery->name,false,pending_recovery->next);
                         pending_recovery.reset();
+                        pump.preflight(plan);
                     }
                     if(serial==UINT64_MAX)throw std::overflow_error("proxy request IDs exhausted");
                     const auto found=bindings.find(plan.event().session());

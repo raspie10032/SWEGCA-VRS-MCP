@@ -15,6 +15,7 @@ public:
     AppServerPump& operator=(const AppServerPump&)=delete;
     void attach_connection(std::string_view session,std::uint64_t next){wire_.attach_connection(session,next);}
     void attach(std::string_view session,std::uint64_t next){wire_.attach(session,next);}
+    void preflight(const AppServerWire::Delivery& delivery) const{wire_.preflight(delivery);}
     void restore_request(RpcSender sender,const AgentEvent& event,std::uint64_t sequence){wire_.restore_request(sender,event,sequence);}
     [[nodiscard]] std::size_t pending_requests() const noexcept{return wire_.pending_requests();}
     [[nodiscard]] bool buffered(RpcSender sender) const{
@@ -45,6 +46,7 @@ public:
             ingress_=sender;reader.consumed();
         }
         if(!stage.ingested){
+            wire_.preflight(*stage.delivery);
             if(!ingest(*stage.delivery))return State::waiting_for_record;
             stage.ingested=true;
         }

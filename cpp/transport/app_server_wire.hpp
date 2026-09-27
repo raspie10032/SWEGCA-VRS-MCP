@@ -61,7 +61,7 @@ public:
         std::uint64_t ticket_=0;
     };
     AppServerWire(std::pmr::memory_resource& memory,std::size_t sessions,std::size_t requests)
-        :memory_(memory),capacity_(sessions),request_capacity_(requests),identity_(std::allocate_shared<Identity>(std::pmr::polymorphic_allocator<Identity>(&memory))),
+        :memory_(memory),capacity_(sessions),identity_(std::allocate_shared<Identity>(std::pmr::polymorphic_allocator<Identity>(&memory))),
          sessions_(&memory),connection_(&memory),requests_(memory,requests){
         if(!sessions)throw std::invalid_argument("wire session capacity must be positive");
     }
@@ -97,8 +97,8 @@ public:
             throw std::invalid_argument("thread resume must originate from client");
         if(event.native_name()=="thread/started"&&sender!=RpcSender::server)
             throw std::invalid_argument("thread started must originate from server");
-        if(!std::holds_alternative<AppServerRequests::Response>(value)&&event.fields().find("id")&&requests_.pending()==request_capacity_)
-            throw std::length_error("pending request capacity exhausted");
+        if(!std::holds_alternative<AppServerRequests::Response>(value)&&event.fields().find("id"))
+            requests_.require_available(sender,event);
         auto found=sessions_.find(event.session());
         if(found==sessions_.end()){
             if(sessions_.size()==capacity_)throw std::length_error("wire session capacity exhausted");
@@ -109,6 +109,14 @@ public:
         if(const auto* response=std::get_if<AppServerRequests::Response>(&value);response&&!response->request_sequence())
             throw std::invalid_argument("response request has no committed sequence");
         return Delivery(std::move(value),sender,found->second,observed,identity_);
+    }
+    // Recheck if lifecycle recovery installed pending requests after prepare.
+    void preflight(const Delivery& delivery) const {
+        validate(delivery);
+        const auto found=sessions_.find(delivery.event().session());
+        if(found==sessions_.end()||found->second!=delivery.sequence_)throw std::invalid_argument("stale wire delivery");
+        if(!std::holds_alternative<AppServerRequests::Response>(delivery.value_)&&delivery.event().fields().find("id"))
+            requests_.require_available(delivery.sender_,delivery.event());
     }
     // Only after the matching VRS RPC confirms original ingestion. If request
     // tracking allocation fails, leave the plan retryable and do not forward.
@@ -200,7 +208,7 @@ private:
         if(delivery.owner_!=identity_||delivery.recorded_)throw std::invalid_argument("foreign or recorded wire delivery");
     }
     std::pmr::memory_resource& memory_;
-    std::size_t capacity_,request_capacity_;
+    std::size_t capacity_;
     std::shared_ptr<const Identity> identity_;
     std::pmr::map<std::pmr::string,std::uint64_t,std::less<>> sessions_;
     std::pmr::string connection_;

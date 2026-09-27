@@ -105,5 +105,20 @@ int main(){
   CHECK(response.request_sequence()==8&&response.sequence()==9);wire.recorded(response);
  }
  CHECK(memory.used()==0);
+ {
+  AppServerWire wire(memory,1,3);wire.attach("a",7);
+  auto candidate=wire.prepare(a,RpcSender::client,8);
+  wire.preflight(candidate);
+  auto original=adapt_codex_app_server(a,memory);
+  wire.restore_request(RpcSender::client,original,4);
+  rejects([&]{wire.preflight(candidate);});
+  rejects([&]{(void)wire.prepare(a,RpcSender::client,8);});
+  CHECK(wire.pending_requests()==1);
+  // Settling the original frees its ID; failed checks consumed no sequence.
+  auto response=wire.prepare(reply,RpcSender::server,9);wire.recorded(response);
+  auto retry=wire.prepare(a,RpcSender::client,10);CHECK(retry.sequence()==8);
+  wire.preflight(retry);wire.recorded(retry);
+ }
+ CHECK(memory.used()==0);
  std::printf("app-server wire owner tests: %u checks passed\n",checks);
 }

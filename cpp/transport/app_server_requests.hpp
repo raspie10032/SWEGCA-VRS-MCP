@@ -37,6 +37,18 @@ public:
     AppServerRequests& operator=(const AppServerRequests&)=delete;
     [[nodiscard]] std::size_t pending() const noexcept{return pending_.size();}
 
+    // Check a newly arriving request before VRS ingestion. This examines the
+    // RPC ID only; it does not hash the full input before Deja vu/Recall.
+    void require_available(RpcSender sender,const AgentEvent& request) const {
+        if(!request.is_app_server()||request.native_name().empty())throw std::invalid_argument("app-server request required");
+        const auto& fields=request.fields();
+        if(fields.find("result")||fields.find("error"))throw std::invalid_argument("request contains response fields");
+        const auto key=id_key(sender,fields.at("id"));
+        if(pending_.contains(key))throw std::invalid_argument("live request ID already in use");
+        if(pending_.size()==capacity_)throw std::length_error("pending request capacity exhausted");
+        if(generation_==std::numeric_limits<std::uint64_t>::max())throw std::overflow_error("request generation exhausted");
+    }
+
     // Reserve before forwarding a request, so its response cannot race ahead.
     // Exact re-registration is harmless; another live request with the same ID
     // is a conflict. String IDs and signed integer IDs occupy separate keys.
