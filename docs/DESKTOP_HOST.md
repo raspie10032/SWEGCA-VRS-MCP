@@ -36,3 +36,32 @@ backend invocation interface. Override packaging, forwarding non-app-server
 CLI commands, actual installation, resource accounting across all processes,
 Recall/Replay context delivery and actual input latency remain unfinished.
 The fixed buffers and child process memory are not covered by VRS's PMR alone.
+
+## Desktop backend override wrapper
+
+`swegca-codex-wrapper` now accepts the installed desktop's original argument
+list. `SWEGCA_DESKTOP_CONFIG` points to a bounded JSON configuration (maximum
+64KiB). Fields: `backend`, `host`, `proxy`, `vrs`, `root`, `resourceConfig`,
+`proxyConfig` are absolute paths; `mode` is create/open/limited-create/limited-open.
+`backend` is the real executable, `host` is swegca-desktop-host. Self-referential
+backend/host executables are rejected using inode identity. The wrapper uses
+execv with the original argument vector, no shell or argument reconstruction.
+
+Local app inspection found both invocation orders in its EQ function:
+`-c features.code_mode_host=true app-server --analytics-default-enabled`, and
+`app-server -c ... --analytics-default-enabled`. Both are recognized. The
+installed backend's app-server help confirms stdio is the default and --stdio
+is an alias. The wrapper routes only stdio server startup to the VRS host.
+Help/version, schema generators and daemon version inspection pass to the real
+backend. Other server transports/subcommands or ambiguous leading flags fail
+rather than silently bypass VRS. Other explicit CLI commands pass through;
+this wrapper does not claim to capture separate CLI agent sessions.
+
+Verification: 33 isolated CLI routing checks, including byte-preserved argv,
+spaces/metacharacters, both desktop invocation orders, recursive configuration
+and unsupported server transports. The 2,385-check subprocess suite now launches
+the real wrapper with the installed desktop's argument shape, then the host,
+proxy, real VRS and synthetic backend. No actual app override was installed.
+Remaining deployment work includes concrete persistent configuration, root and
+session lifecycle setup, installation and live validation. Backend environment
+is inherited unchanged. Model/account operations were not exercised.

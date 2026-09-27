@@ -758,9 +758,14 @@ for line in sys.stdin:
     if 'id' in value:
         print(json.dumps({'id':value['id'],'result':{}}),flush=True)
 """
-    desktop=subprocess.Popen([str(exe.parent/'swegca-desktop-host'),
-        str(exe.parent/'swegca-app-server-proxy'),str(exe),'create',str(desktop_root),str(path),
-        str(desktop_proxy),sys.executable,'-u','-c',backend_code],
+    desktop_backend=root/'fixture backend'
+    desktop_backend.write_text('#!'+sys.executable+'\n'+backend_code);desktop_backend.chmod(0o700)
+    wrapper_config=root/'wrapper.json'
+    wrapper_config.write_text(json.dumps({'backend':str(desktop_backend),'host':str(exe.parent/'swegca-desktop-host'),
+        'proxy':str(exe.parent/'swegca-app-server-proxy'),'vrs':str(exe),'mode':'create','root':str(desktop_root),
+        'resourceConfig':str(path),'proxyConfig':str(desktop_proxy)}))
+    desktop=subprocess.Popen([str(exe.parent/'swegca-codex-wrapper'),'-c','features.code_mode_host=true',
+        'app-server','--analytics-default-enabled'],env=dict(os.environ,SWEGCA_DESKTOP_CONFIG=str(wrapper_config)),
         stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,bufsize=0)
     def desktop_send(value):desktop.stdin.write(json.dumps(value).encode()+b'\n')
     def desktop_read():
