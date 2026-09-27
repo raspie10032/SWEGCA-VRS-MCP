@@ -1,5 +1,6 @@
 #include "vrs/runtime.hpp"
 #include "vrs/storage_inventory.hpp"
+#include "swegca_architecture/sha256.hpp"
 
 #ifdef SWEGCA_BACKGROUND_WORK_PROBE
 extern "C" void swegca_background_work_probe(bool running) noexcept;
@@ -184,6 +185,28 @@ StoredExperience Runtime::read_cognition_original(const DigestBytes& source,cons
     // Source stores already belong to this Main. No directory search or graph
     // reselection, and no reconstruction of a current Re-evidence authority.
     return found->second.store->read(original,config_.read_limit);
+}
+bool Runtime::page_out_main(const DigestBytes& connection,std::size_t index) {
+    if(work_)throw std::logic_error("cannot page out during Main preparation");
+    const auto& graph=main_.graph();
+    const auto* found=graph.find(connection);
+    if(!found||index>=found->experiences().size())throw std::out_of_range("Main page-out original");
+    const auto directory=root_/"metadata-pages";
+    const auto status=std::filesystem::symlink_status(directory);
+    if(status.type()==std::filesystem::file_type::not_found)std::filesystem::create_directory(directory);
+    else if(!std::filesystem::is_directory(status))throw std::runtime_error("invalid metadata page directory");
+    for(;;){
+        if(page_attempt_==UINT64_MAX)throw std::overflow_error("metadata page attempts exhausted");
+        Sha256 hash;hash.update("SWEGCA derived metadata page v1");hash.update(config_.main_identity);
+        hash.update(main_.head().digest);hash.update(connection);
+        hash.update(":"+std::to_string(index)+":"+std::to_string(++page_attempt_));
+        const auto identity=hash.finish();
+        constexpr char digits[]="0123456789abcdef";std::string name;name.reserve(70);
+        for(const auto byte:identity){const auto n=std::to_integer<unsigned>(byte);name+=digits[n>>4];name+=digits[n&15];}
+        name+=".block";const auto path=directory/name;
+        if(std::filesystem::symlink_status(path).type()!=std::filesystem::file_type::not_found)continue;
+        return graph.page_out(connection,index,path,identity,&storage_);
+    }
 }
 void Runtime::define_connection(const DigestBytes& identity) {
     require_active();active_->runtime.define_connection(identity,config_.initial_strength,config_.policy);

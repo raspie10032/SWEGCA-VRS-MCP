@@ -1,4 +1,5 @@
 #include "vrs/runtime.hpp"
+#include "swegca_architecture/input_cue.hpp"
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -64,6 +65,10 @@ int main(){
   const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(5);
   while(!upstream.entered.load()&&std::chrono::steady_clock::now()<deadline){(void)runtime.poll_work();std::this_thread::yield();}
   CHECK(upstream.entered.load());
+  const auto storage_before=runtime.storage().used();
+  throws<std::logic_error>([&]{(void)runtime.page_out_main(input_cue("text/plain",bytes),0);});
+  CHECK(runtime.storage().used()==storage_before);
+  CHECK(!std::filesystem::exists(root/"metadata-pages"));
   for(unsigned n=0;n<10;++n){
    CHECK(!runtime.poll_work().has_value());
    auto main=runtime.input("text/plain",bytes);CHECK(!main.temporary()&&main.matches().size()==1);

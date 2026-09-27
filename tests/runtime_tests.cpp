@@ -449,5 +449,51 @@ int main(){
   host.attach_session(id(23),"unselected");
   host.end_session(id(23));CHECK(!host.has_session());
  }
+ {
+  const auto path=root/"main-pages";fs::create_directory(path);
+  const auto cue=input_cue("text/plain",content);
+  ExperienceLocation selected;std::uint64_t stored=0;
+  {
+   auto host=Runtime::create(path,config,memory);host.start_session(id(231),"page-source");
+   for(unsigned n=0;n<31;++n){
+    const auto original=host.retain({n,n,"page-source","user","text/plain",content},7,n).original;
+    if(n==15)selected=original;
+   }
+   host.end_session();CHECK(host.work(7,31)==1);host.start_session(id(232),"page-reader");
+   throws<std::out_of_range>([&]{(void)host.page_out_main(id(233),0);});
+   throws<std::out_of_range>([&]{(void)host.page_out_main(cue,31);});
+   CHECK(!fs::exists(path/"metadata-pages"));
+   const auto generation=host.main().graph().generation();
+   const auto strength=host.main().graph().find(cue)->strength();
+   {
+    auto pinned=host.input("text/plain",content);CHECK(!pinned.temporary()&&pinned.matches().size()==31);
+    const auto bytes=host.storage().used();CHECK(!host.page_out_main(cue,15));
+    CHECK(host.storage().used()==bytes);
+   }
+   // A failed first write must leave the resident original available.
+   fail_write=true;throws<std::system_error>([&]{(void)host.page_out_main(cue,15);});
+   {auto recalled=host.input("text/plain",content);CHECK(host.replay(recalled,15).location()==selected);}
+   const auto resident=memory.used(),bytes=host.storage().used();
+   const auto io=host.storage().transfer().requested();
+   CHECK(host.page_out_main(cue,15));CHECK(memory.used()<resident);
+   CHECK(host.storage().used()>bytes&&host.storage().transfer().requested()>io);
+   CHECK(host.main().graph().generation()==generation&&host.main().graph().find(cue)->strength()==strength);
+   {
+    const auto r=reads,w=writes;const auto transfer=host.storage().transfer().requested();
+    auto recalled=host.input("text/plain",content);
+    CHECK(reads==r&&writes==w&&host.storage().transfer().requested()==transfer);
+    CHECK(host.replay(recalled,15).location()==selected);CHECK(reads>r);
+   }
+   stored=host.storage().used();const auto w=writes;
+   CHECK(host.page_out_main(cue,15));CHECK(host.storage().used()==stored&&writes==w);
+  }
+  {
+   // Failed writes retain their attempted extent until cold inventory reconciles it.
+   const auto actual=stored_bytes(path,memory);CHECK(actual<=stored);
+   auto host=Runtime::open(path,config,memory);CHECK(host.storage().used()==actual);
+   host.resume_session(id(232));auto recalled=host.input("text/plain",content);
+   CHECK(!recalled.temporary()&&host.replay(recalled,15).location()==selected);
+  }
+ }
  CHECK(memory.used()==0);fs::remove_all(root);std::printf("runtime lifecycle tests: %u checks passed\n",checks);
 }

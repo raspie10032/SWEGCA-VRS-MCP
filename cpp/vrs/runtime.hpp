@@ -85,6 +85,9 @@ public:
     void save_cognition(const ExperienceLocation&, std::span<const std::byte> metadata);
     [[nodiscard]] StoredExperience read_cognition_original(const architecture::DigestBytes& source,
         const ExperienceLocation&) const;
+    // Explicit owner maintenance outside input and while no merge job exists.
+    // Original stores remain authoritative; this only releases sealed metadata.
+    [[nodiscard]] bool page_out_main(const architecture::DigestBytes&,std::size_t original_index);
     void define_connection(const architecture::DigestBytes&);
     [[nodiscard]] RecordedRefinement observe(const architecture::DigestBytes&, const OriginalExperienceView&,
         const architecture::kernel::EvidenceObservation&, std::uint64_t seed, std::uint64_t step);
@@ -141,5 +144,6 @@ private:
     std::pmr::map<architecture::DigestBytes,Active> sessions_;
     Active* active_=nullptr;
     std::optional<Work> work_;
+    std::uint64_t page_attempt_ = 0;
 };
 } // namespace swegca::vrs
