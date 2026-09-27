@@ -169,7 +169,7 @@ RecallMatch RecallCandidates::at(std::size_t index) const {
 ExperienceRouter::ExperienceRouter(SessionRuntime& temporary, MemoryBudget& memory)
     : temporary_(temporary), memory_(memory),
       issuer_(std::allocate_shared<std::byte>(std::pmr::polymorphic_allocator<std::byte>(&memory))),
-      mounted_(&memory), main_(&memory), main_cues_(&memory), merged_cues_(&memory),
+      mounted_(&memory), main_(&memory), main_cues_(&memory),
       session_context_(input_session_context(temporary.store_.name())) {}
 void ExperienceRouter::mount_main(const SessionRuntime& session) {
     if (merged_main_) throw std::logic_error("cannot mix merged Main with session candidates");
@@ -216,64 +216,10 @@ RecallMatch ExperienceRouter::merged_match(const DigestBytes& identity) const {
 void ExperienceRouter::mount_main(const PersistentMainGraph& graph) {
     if (!mounted_.empty()) throw std::logic_error("cannot mix session candidates with merged Main");
     if (merged_main_ && merged_main_ != &graph) throw std::logic_error("Main owner cannot change within a route");
-    const auto& state = graph.graph();
-    if (merged_main_ && merged_head_ == graph.head()) return;
-    decltype(main_) candidates(&memory_);
-    decltype(merged_cues_) cues(&memory_);
-    DigestBytes last_identity; last_identity.fill(std::byte{255});
-    for (auto change = state.changed_.upper_bound({indexed_generation_, last_identity});
-        change != state.changed_.end(); ++change) {
-        const auto& identity = change->second;
-        const auto& connection = state.connections_.find(identity)->connection;
-        const auto values = connection.experiences();
-        if (values.empty()) continue;
-        candidates[identity].push_back({nullptr, nullptr,
-            {identity, graph.head(), connection.revision(), connection.revision(), values.size(), connection.strength()}, &graph});
-        const auto previous = main_.find(identity);
-        const auto indexed = previous == main_.end() ? 0 : previous->second.front().recalled_head.observations;
-        // Main merges preserve the original prefix. Only newly appended
-        // originals need cue extraction; strength changes do not change cues.
-        if (indexed > values.size()) throw std::logic_error("Main original prefix shrank");
-        for (std::size_t index = indexed; index < values.size(); ++index) {
-            auto& ranges=cues[values[index].cue()];
-            const MergedCueReference key{identity,index};
-            const auto after=ranges.upper_bound(key);
-            if(after!=ranges.begin()) {
-                const auto previous=std::prev(after);
-                if(previous->first.first==identity && previous->second==index) {
-                    previous->second=index+1;
-                    continue;
-                }
-            }
-            ranges.emplace(key,index+1);
-        }
-    }
-    // All allocations precede publication. New runs transfer their nodes;
-    // a run contiguous with the existing prefix extends only its end index.
-    // Candidate ordering remains (connection identity, original index).
-    for (auto& [cue, additions] : cues) {
-        const auto previous = merged_cues_.find(cue);
-        if(previous==merged_cues_.end())continue;
-        auto& existing=previous->second;
-        while(!additions.empty()) {
-            const auto added=additions.begin();
-            const auto after=existing.upper_bound(added->first);
-            if(after!=existing.begin()) {
-                const auto prior=std::prev(after);
-                if(prior->first.first==added->first.first && prior->second==added->first.second) {
-                    prior->second=added->second;
-                    additions.erase(added);
-                    continue;
-                }
-            }
-            existing.insert(additions.extract(added));
-        }
-    }
-    // New cue nodes transfer with their prepared runs, without allocation.
-    merged_cues_.merge(cues);
-    for (const auto& [identity, values] : candidates) { (void)values; main_.erase(identity); }
-    main_.merge(candidates);
-    merged_main_ = &graph; merged_head_ = graph.head(); indexed_generation_ = state.generation();
+    (void)graph.graph();
+    // Main owns its exact cue and context indices. A route remembers only the
+    // published head; receipts still pin their original generation separately.
+    merged_main_=&graph;merged_head_=graph.head();
 }
 
 void InputRecall::append(const RecallMatch& match, std::size_t index, std::size_t boundary,
@@ -326,11 +272,17 @@ InputRecall ExperienceRouter::input(std::string_view media, std::span<const std:
     if (scope == RecallScope::temporary) return recall_cue(cue, scope, local_kind, context);
     require_main_current();
     const auto main_cue = main_cues_.find(cue);
-    const auto merged_cue = merged_cues_.find(cue);
-    const bool main_exact = merged_main_
-        ? merged_cue != merged_cues_.end() && !merged_cue->second.empty()
-        : main_cue != main_cues_.end() && !main_cue->second.empty();
-    const auto main_context = continuation_ ? main_.find(*continuation_) : main_.end();
+    bool main_exact=main_cue!=main_cues_.end()&&!main_cue->second.empty();
+    bool main_continued=false;
+    if(merged_main_){
+        const auto& graph=merged_main_->graph();
+        const auto found=graph.cues_.find(cue);
+        main_exact=found!=graph.cues_.end()&&!found->second.empty();
+        main_continued=continuation_&&graph.find(*continuation_)!=nullptr;
+    }else if(continuation_){
+        const auto found=main_.find(*continuation_);
+        main_continued=found!=main_.end()&&!found->second.empty();
+    }
     bool shared_context=false;
     if(!main_exact&&merged_main_&&continued_context_){
         const auto& portals=merged_main_->graph().contexts_;
@@ -339,7 +291,7 @@ InputRecall ExperienceRouter::input(std::string_view media, std::span<const std:
             found->second.begin()->first.first!=found->second.rbegin()->first.first;
     }
     const auto main_kind = familiarity_key(main_exact,
-        main_context != main_.end() && !main_context->second.empty(),shared_context,shared_context);
+        main_continued,shared_context,shared_context);
     // A session label is weaker than an exact/Replay-established key. Seed
     // dialogue only after those routes miss, so it cannot hide exact Main hits.
     if(main_kind==FamiliarityKey::missing&&temporary_.has_dialogue_input_){
@@ -415,7 +367,7 @@ InputRecall ExperienceRouter::recall_cue(const DigestBytes& cue, RecallScope sco
     } else if (merged_main_) {
         // Context portals are Main-owned and shared by all session routers.
         // Exact cue and portal ranges have the same original-address form.
-        const auto& index=kind==FamiliarityKey::context?merged_main_->graph().contexts_:merged_cues_;
+        const auto& index=kind==FamiliarityKey::context?merged_main_->graph().contexts_:merged_main_->graph().cues_;
         const auto found = index.find(kind==FamiliarityKey::context?*context:cue);
         if (found != index.end())
             for (const auto& [first, end] : found->second) {
@@ -586,10 +538,12 @@ RecallCandidates ExperienceRouter::recall(const DigestBytes& identity) const {
     case RecallScope::main: break;
     }
     require_main_current();
-    const auto found = main_.find(identity);
-    if (found != main_.end()) {
-        if (merged_main_) result.temporary_ = merged_match(identity);
-        else result.main_ = found->second;
+    if(merged_main_){
+        const auto* connection=merged_main_->graph().find(identity);
+        if(connection&&!connection->experiences().empty())result.temporary_=merged_match(identity);
+    }else{
+        const auto found=main_.find(identity);
+        if(found!=main_.end())result.main_=found->second;
     }
     return result;
 }

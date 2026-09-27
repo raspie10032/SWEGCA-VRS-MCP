@@ -312,14 +312,9 @@ private:
     struct MainCue { const SessionRuntime* session; CueReference reference; };
     const PersistentMainGraph* merged_main_ = nullptr;
     ExperienceLocation merged_head_;
-    std::uint64_t indexed_generation_ = 0;
     void require_main_current() const;
     [[nodiscard]] RecallMatch merged_match(const architecture::DigestBytes& identity) const;
     std::pmr::map<architecture::DigestBytes, std::pmr::vector<MainCue>> main_cues_;
-    // Exact cue index: ordered disjoint [begin,end) runs within a connection.
-    // Adjacent equal-cue originals need no repeated identity/tree node.
-    using MergedCueReference = std::pair<architecture::DigestBytes, std::size_t>;
-    std::pmr::map<architecture::DigestBytes, std::pmr::map<MergedCueReference, std::size_t>> merged_cues_;
     // The active session's recorded context may start a dialogue before any
     // Replay. Only actual sealed context-index entries can produce candidates.
     const architecture::DigestBytes session_context_;

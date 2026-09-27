@@ -1,7 +1,6 @@
 #pragma once
 #include "vrs/session_runtime.hpp"
 #include "vrs/connection_regions.hpp"
-#include <set>
 
 namespace swegca::vrs {
 
@@ -49,7 +48,6 @@ private:
     struct Entry {
         Entry(const architecture::DigestBytes& identity, double strength,
             const architecture::kernel::EvidenceRules& rules, MemoryBudget& memory);
-        std::uint64_t last_changed = 0;
         Connection connection;
         std::pmr::vector<Origin> origins;
         std::optional<ConnectionRefinement> report;
@@ -66,9 +64,8 @@ private:
     using PortalRanges=std::pmr::map<PortalReference,std::size_t>;
     using ContextPortals=std::pmr::map<architecture::DigestBytes,PortalRanges>;
     ContextPortals contexts_;
+    ContextPortals cues_;
     std::pmr::map<architecture::DigestBytes, ExperienceLocation> merged_;
-    // One entry per live connection, ordered by its latest committed generation.
-    std::pmr::set<std::pair<std::uint64_t, architecture::DigestBytes>> changed_;
     std::uint64_t generation_ = 0;
 };
 
@@ -88,10 +85,10 @@ private:
     std::uint64_t generation_, seed_, step_;
     std::pmr::map<architecture::DigestBytes, Entry> pending_;
     std::pmr::map<architecture::DigestBytes, ExperienceLocation> marker_;
-    std::pmr::set<std::pair<std::uint64_t, architecture::DigestBytes>> changes_;
     architecture::DigestBytes result_{};
     std::optional<ConnectionRegions<Entry>::Prepared> regions_;
     ContextPortals contexts_;
+    ContextPortals cues_;
 };
 
 }  // namespace swegca::vrs

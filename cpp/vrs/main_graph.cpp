@@ -13,7 +13,7 @@ MainGraph::Entry::Entry(const DigestBytes& identity, double strength, const Evid
     : connection(identity, strength, rules, memory), origins(&memory) {}
 MainGraph::MainGraph(MemoryBudget& memory, double initial_strength, const EvidencePolicy& policy, std::uint32_t workers, std::size_t region_capacity)
     : memory_(memory), initial_strength_(initial_strength), workers_(workers), rules_(make_evidence_rules(policy)),
-      policy_digest_(evidence_policy_digest(policy).bytes()), connections_(memory,region_capacity),contexts_(&memory), merged_(&memory), changed_(&memory) {
+      policy_digest_(evidence_policy_digest(policy).bytes()), connections_(memory,region_capacity),contexts_(&memory),cues_(&memory), merged_(&memory) {
     if (!workers_) throw std::invalid_argument("Main merge worker count must be positive");
     if (!finite_count(initial_strength)) throw std::invalid_argument("invalid Main initial strength");
 }
@@ -27,11 +27,11 @@ bool MainGraph::merge_impl(const SessionRuntime& source, std::uint64_t seed, std
 }
 MainGraph::PreparedMerge::PreparedMerge(const MainGraph& owner, std::uint64_t seed, std::uint64_t step)
     : owner_(&owner), generation_(owner.generation_), seed_(seed), step_(step),
-      pending_(&owner.memory_), marker_(&owner.memory_), changes_(&owner.memory_),contexts_(&owner.memory_) {}
+      pending_(&owner.memory_), marker_(&owner.memory_),contexts_(&owner.memory_),cues_(&owner.memory_) {}
 MainGraph::PreparedMerge::PreparedMerge(PreparedMerge&& other) noexcept
     : owner_(std::exchange(other.owner_, nullptr)), generation_(other.generation_), seed_(other.seed_), step_(other.step_),
       pending_(std::move(other.pending_)), marker_(std::move(other.marker_)),
-      changes_(std::move(other.changes_)), result_(other.result_), regions_(std::move(other.regions_)),contexts_(std::move(other.contexts_)) {}
+      result_(other.result_), regions_(std::move(other.regions_)),contexts_(std::move(other.contexts_)),cues_(std::move(other.cues_)) {}
 MainGraph::PreparedMerge MainGraph::prepare_merge(const SessionRuntime& source, std::uint64_t seed, std::uint64_t step) const {
     if (!main_session_readable(source.phase(), source.usable()))
         throw std::logic_error("Main merge requires an ended published session");
@@ -48,7 +48,6 @@ MainGraph::PreparedMerge MainGraph::prepare_merge(const SessionRuntime& source, 
     auto& pending = prepared.pending_;
     auto& marker = prepared.marker_;
     marker.emplace(identity, source.catalog_.root());
-    auto& changes = prepared.changes_;
     struct Task { Entry* candidate; const Entry* previous; const PersistentConnection* incoming; };
     std::pmr::vector<Task> tasks(&memory_);
     tasks.reserve(source.catalog_.heads().size());
@@ -60,8 +59,6 @@ MainGraph::PreparedMerge MainGraph::prepare_merge(const SessionRuntime& source, 
         const auto previous = connections_.find(connection_id);
         const auto strength = !previous ? initial_strength_ : previous->connection.strength();
         auto& candidate = pending.try_emplace(connection_id, connection_id, strength, rules_, memory_).first->second;
-        candidate.last_changed = generation_ + 1;
-        changes.emplace(candidate.last_changed, connection_id);
         tasks.push_back({&candidate, previous, incoming});
     }
     const auto prepare = [&](const Task& task) {
@@ -123,13 +120,17 @@ MainGraph::PreparedMerge MainGraph::prepare_merge(const SessionRuntime& source, 
         const auto* previous=connections_.find(identity);
         const auto values=candidate.connection.experiences();
         for(std::size_t index=previous?previous->connection.experiences().size():0;index<values.size();++index){
-            auto& ranges=prepared.contexts_[values[index].value().context];
-            const PortalReference key{identity,index};const auto after=ranges.upper_bound(key);
-            if(after!=ranges.begin()){
-                const auto prior=std::prev(after);
-                if(prior->first.first==identity&&prior->second==index){prior->second=index+1;continue;}
-            }
-            ranges.emplace(key,index+1);
+            const auto add=[&](auto& lookup,const DigestBytes& cue){
+                auto& ranges=lookup[cue];
+                const PortalReference key{identity,index};const auto after=ranges.upper_bound(key);
+                if(after!=ranges.begin()){
+                    const auto prior=std::prev(after);
+                    if(prior->first.first==identity&&prior->second==index){prior->second=index+1;return;}
+                }
+                ranges.emplace(key,index+1);
+            };
+            add(prepared.contexts_,values[index].value().context);
+            add(prepared.cues_,values[index].cue());
         }
     }
     return prepared;
@@ -147,29 +148,27 @@ bool MainGraph::commit_impl(PreparedMerge& prepared, MergeSink sink, void* conte
     auto& pending = prepared.pending_;
     // No allocations or fallible persistence follow this point. Transfer the
     // prepared nodes under Main's serialized ownership, then publish generation.
-    for (const auto& [connection_id, entry] : pending) {
-        (void)entry;
-        const auto previous = connections_.find(connection_id);
-        if (previous) changed_.erase({previous->last_changed, connection_id});
-    }
     connections_.commit(*prepared.regions_,pending);
-    for(auto& [context,additions]:prepared.contexts_){
-        const auto found=contexts_.find(context);if(found==contexts_.end())continue;
-        auto& existing=found->second;
-        while(!additions.empty()){
-            const auto added=additions.begin();const auto after=existing.upper_bound(added->first);
-            if(after!=existing.begin()){
-                const auto prior=std::prev(after);
-                if(prior->first.first==added->first.first&&prior->second==added->first.second){
-                    prior->second=added->second;additions.erase(added);continue;
+    const auto publish_ranges=[](auto& index,auto& prepared_index){
+        for(auto& [key,additions]:prepared_index){
+            const auto found=index.find(key);if(found==index.end())continue;
+            auto& existing=found->second;
+            while(!additions.empty()){
+                const auto added=additions.begin();const auto after=existing.upper_bound(added->first);
+                if(after!=existing.begin()){
+                    const auto prior=std::prev(after);
+                    if(prior->first.first==added->first.first&&prior->second==added->first.second){
+                        prior->second=added->second;additions.erase(added);continue;
+                    }
                 }
+                existing.insert(additions.extract(added));
             }
-            existing.insert(additions.extract(added));
         }
-    }
-    contexts_.merge(prepared.contexts_);
+        index.merge(prepared_index);
+    };
+    publish_ranges(contexts_,prepared.contexts_);
+    publish_ranges(cues_,prepared.cues_);
     merged_.merge(prepared.marker_);
-    changed_.merge(prepared.changes_);
     ++generation_;
     return true;
 }

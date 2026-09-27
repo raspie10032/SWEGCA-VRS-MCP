@@ -76,9 +76,9 @@ int main(){
    CHECK(indexed.merge(b,3,0));CHECK(indexed.merge(c,4,0));
    const auto index_before=index_memory.used();
    index_allocator.largest_request=0;index_allocator.request_limit=512;
-   index_allocator.remaining=20;
+   index_allocator.remaining=0;
    incremental.mount_main(indexed);
-   CHECK(index_allocator.largest_request<=512);
+   CHECK(index_allocator.largest_request==0);
    CHECK(index_memory.used()==index_before); // 8 -> 24 contiguous originals extend one existing run
    std::printf("Main cue run extension: %zu resident bytes added for 16 originals\n",index_memory.used()-index_before);
    index_allocator.remaining=std::numeric_limits<std::size_t>::max();
@@ -221,17 +221,21 @@ int main(){
    throws<std::logic_error>([&]{(void)route.replay(continued,0);});
    throws<std::logic_error>([&]{(void)route.input("text/plain",{});});
    throws<std::logic_error>([&]{(void)route.replay(old,0);});
-   unsigned failure_points=0;
-   for(std::size_t point=0;point<100;++point){
-    const auto used=query_memory.used();failures.remaining=point;bool failed=false;
-    try{route.mount_main(main);}catch(const std::bad_alloc&){failed=true;}
+   // A new published Main head no longer requires a private index rebuild.
+   const auto refresh_memory=query_memory.used();
+   failures.remaining=0;route.mount_main(main);
+   CHECK(query_memory.used()==refresh_memory);
+   failures.remaining=std::numeric_limits<std::size_t>::max();
+   {
+    ExperienceRouter second(active,query_memory);
+    const auto empty_route_memory=query_memory.used();
+    failures.remaining=0;second.mount_main(main);
+    CHECK(query_memory.used()==empty_route_memory);
     failures.remaining=std::numeric_limits<std::size_t>::max();
-    if(!failed)break;
-    ++failure_points;CHECK(query_memory.used()==used);
-    throws<std::logic_error>([&]{(void)route.input("text/plain",{});});
+    auto shared=second.input("text/plain",{});
+    CHECK(shared.matches().size()==16);
+    CHECK(second.replay(shared,8).location()==b.find(id(10))->state().experiences()[0].original());
    }
-   CHECK(failure_points>3);
-   std::printf("Incremental Main index failure points: %u\n",failure_points);
    throws<std::logic_error>([&]{(void)route.replay(old,0);});
    auto joined=route.input("text/plain",{});
    CHECK(joined.matches().size()==16);
