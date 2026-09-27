@@ -16,6 +16,16 @@ namespace swegca::vrs {
 using namespace architecture;
 using namespace architecture::kernel;
 
+namespace {
+void prepare_index_append(std::pmr::vector<CueReference>& references) {
+    // Let vector use its amortized growth instead of copying the whole index
+    // for every record. Acquire capacity before durable writes; leave no
+    // placeholder in the published index. CueReference has no owned resources.
+    references.emplace_back();
+    references.pop_back();
+}
+}
+
 void SessionRuntime::Slot::recover(SessionStore& store, std::uint64_t limit, const ExperienceLocation& head) {
     void* storage = memory.allocate(sizeof(PersistentConnection), alignof(PersistentConnection));
     try { connection = new (storage) PersistentConnection(PersistentConnection::recover(store, head, memory, limit)); }
@@ -90,9 +100,9 @@ RecordedRefinement SessionRuntime::observe(const DigestBytes& identity, const Or
     const auto expected = prior ? prior->record : ExperienceLocation{};
     const auto cue = input_key ? *input_key : input_cue(original.media_type, original.content);
     auto& references = cues_.try_emplace(cue).first->second;
-    references.reserve(references.size() + 1);
+    prepare_index_append(references);
     auto& contexts=contexts_.try_emplace(observation.context).first->second;
-    contexts.reserve(contexts.size()+1);
+    prepare_index_append(contexts);
     const auto index = connection.state().experiences().size();
     try {
         const auto saved = store_.append_evidence(connection.rules(), original, observation, input_key);

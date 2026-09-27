@@ -38,6 +38,21 @@ extern "C" ssize_t __wrap_pwrite(int fd, const void* data, size_t count, off_t o
 }
 #define CHECK(e) do { ++checks; if (!(e)) { std::fprintf(stderr, "FAIL %d: %s\n", __LINE__, #e); std::abort(); } } while (false)
 template<class E, class F> void throws(F f) { bool caught=false; try { f(); } catch (const E&) { caught=true; } CHECK(caught); }
+class AllocationTraffic final : public std::pmr::memory_resource {
+public:
+    std::size_t bytes=0,calls=0;
+    bool fail=false;
+private:
+    void* do_allocate(std::size_t n,std::size_t alignment) override {
+        if(fail)throw std::bad_alloc();
+        auto* result=std::pmr::new_delete_resource()->allocate(n,alignment);
+        bytes+=n;++calls;return result;
+    }
+    void do_deallocate(void* p,std::size_t n,std::size_t alignment) override {
+        std::pmr::new_delete_resource()->deallocate(p,n,alignment);
+    }
+    bool do_is_equal(const std::pmr::memory_resource& other) const noexcept override {return this==&other;}
+};
 DigestBytes id(unsigned n) { DigestBytes d{}; d[0]=std::byte(n); return d; }
 const std::string payload("original\0with bytes", 19);
 OriginalExperienceView input(std::string_view session, unsigned n) {
@@ -86,6 +101,37 @@ int main() {
         }
     }
     CHECK(memory.used()==0);
+    {
+        AllocationTraffic traffic;MemoryBudget budget(32<<20,&traffic);
+        {
+            auto store=SessionStore::create(root,id(246),"index-growth",1048576,budget);
+            SessionRuntime live(store,budget,8192);live.define_connection(id(247),1.0,policy);
+            EvidenceObservation value;value.hypothesis=id(247);value.source=id(248);
+            value.context=id(249);value.producer=id(250);
+            std::vector<ExperienceLocation> originals;
+            for(unsigned n=0;n<128;++n){
+                value.observed_at=n;
+                originals.push_back(live.observe(id(247),input("index-growth",n),value,7,n).original);
+            }
+            const auto before_writes=writes;
+            traffic.fail=true;value.observed_at=128;
+            throws<std::bad_alloc>([&]{(void)live.observe(id(247),input("index-growth",128),value,7,128);});
+            traffic.fail=false;
+            CHECK(live.usable()&&writes==before_writes);
+            CHECK(live.find(id(247))->state().experiences().size()==128);
+            for(unsigned n=128;n<193;++n){
+                value.observed_at=n;
+                originals.push_back(live.observe(id(247),input("index-growth",n),value,7,n).original);
+            }
+            std::printf("193-record index fixture allocation traffic: %zu bytes / %zu calls\n",traffic.bytes,traffic.calls);
+            ExperienceRouter route(live,budget);
+            const auto before_reads=reads;
+            auto recalled=route.input("application/octet-stream",std::as_bytes(std::span(payload)));
+            CHECK(reads==before_reads&&recalled.matches().size()==originals.size());
+            for(std::size_t n=0;n<originals.size();++n)CHECK(recalled.matches()[n].original==originals[n]);
+        }
+        CHECK(budget.used()==0);
+    }
     ExperienceLocation first;
     double saved_strength=0;
     {
