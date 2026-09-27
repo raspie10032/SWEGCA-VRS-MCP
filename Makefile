@@ -121,6 +121,7 @@ check-stdio: $(BUILD)/swegca-content-observer $(BUILD)/json-stream-tests-scalar 
 
 check: $(BUILD)/parallel-recovery-tests $(BUILD)/transfer-budget-tests $(BUILD)/parallel-main-tests $(BUILD)/runtime-tests $(BUILD)/main-sources-tests $(BUILD)/core-tests $(BUILD)/vrs-tests $(BUILD)/experience-block-tests $(BUILD)/memory-budget-tests $(BUILD)/connection-tests $(BUILD)/session-tests $(BUILD)/persistent-connection-tests $(BUILD)/catalog-tests $(BUILD)/session-runtime-tests $(BUILD)/main-graph-tests $(BUILD)/persistent-main-tests
 	./$(BUILD)/experience-page-tests
+	./$(BUILD)/portal-page-tests
 	./$(BUILD)/connection-regions-tests
 	./$(BUILD)/multi-session-runtime-tests
 	./$(BUILD)/app-server-pump-tests
@@ -154,7 +155,7 @@ bench: $(BUILD)/core-bench
 clean:
 	rm -f $(BUILD)/background-recall-bench
 	rm -f $(BUILD)/async-runtime-tests
-	rm -f $(BUILD)/input-cue-bench $(BUILD)/json-quote-bench $(BUILD)/experience-page-tests $(BUILD)/json-parse-memory-bench $(BUILD)/wire-memory-bench $(BUILD)/commit-memory-bench $(BUILD)/json-stream-tests-scalar $(BUILD)/swegca-proxy-stages-probe $(BUILD)/swegca-vrs-stages-probe $(BUILD)/stdio-frame-tests $(BUILD)/swegca-vrs-ingress-probe $(BUILD)/json-stream-tests $(BUILD)/swegca-codex-wrapper $(BUILD)/swegca-desktop-host $(BUILD)/parallel-recovery-tests $(BUILD)/recall-scale-bench $(BUILD)/resource-profile-probe $(BUILD)/sha256-vectors $(BUILD)/sha256-vectors-scalar $(BUILD)/input-recall-bench $(BUILD)/transfer-budget-tests $(BUILD)/parallel-main-tests $(BUILD)/swegca-vrs-mcp $(BUILD)/runtime-tests $(BUILD)/main-sources-tests $(BUILD)/core-tests $(BUILD)/core-bench $(BUILD)/vrs-tests $(BUILD)/experience-block-tests $(BUILD)/memory-budget-tests $(BUILD)/connection-tests $(BUILD)/session-tests $(BUILD)/persistent-connection-tests $(BUILD)/catalog-tests $(BUILD)/session-runtime-tests $(BUILD)/main-graph-tests $(BUILD)/persistent-main-tests
+	rm -f $(BUILD)/portal-page-tests $(BUILD)/input-cue-bench $(BUILD)/json-quote-bench $(BUILD)/experience-page-tests $(BUILD)/json-parse-memory-bench $(BUILD)/wire-memory-bench $(BUILD)/commit-memory-bench $(BUILD)/json-stream-tests-scalar $(BUILD)/swegca-proxy-stages-probe $(BUILD)/swegca-vrs-stages-probe $(BUILD)/stdio-frame-tests $(BUILD)/swegca-vrs-ingress-probe $(BUILD)/json-stream-tests $(BUILD)/swegca-codex-wrapper $(BUILD)/swegca-desktop-host $(BUILD)/parallel-recovery-tests $(BUILD)/recall-scale-bench $(BUILD)/resource-profile-probe $(BUILD)/sha256-vectors $(BUILD)/sha256-vectors-scalar $(BUILD)/input-recall-bench $(BUILD)/transfer-budget-tests $(BUILD)/parallel-main-tests $(BUILD)/swegca-vrs-mcp $(BUILD)/runtime-tests $(BUILD)/main-sources-tests $(BUILD)/core-tests $(BUILD)/core-bench $(BUILD)/vrs-tests $(BUILD)/experience-block-tests $(BUILD)/memory-budget-tests $(BUILD)/connection-tests $(BUILD)/session-tests $(BUILD)/persistent-connection-tests $(BUILD)/catalog-tests $(BUILD)/session-runtime-tests $(BUILD)/main-graph-tests $(BUILD)/persistent-main-tests
 
 $(BUILD)/agent-event-tests: tests/agent_event_tests.cpp cpp/transport/agent_event.hpp cpp/transport/json.cpp cpp/transport/json.hpp $(CORE_SOURCES) $(CORE_HEADERS) $(VRS_HEADERS) | $(BUILD)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< cpp/transport/json.cpp $(CORE_SOURCES) -o $@
@@ -241,3 +242,8 @@ check: $(BUILD)/experience-page-tests
 
 $(BUILD)/json-quote-bench: benchmarks/json_quote_bench.cpp cpp/transport/json.cpp cpp/transport/json.hpp cpp/vrs/memory_budget.hpp | $(BUILD)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< cpp/transport/json.cpp -o $@
+
+$(BUILD)/portal-page-tests: tests/portal_page_tests.cpp cpp/vrs/portal_page.cpp cpp/vrs/portal_page.hpp cpp/vrs/experience_block.cpp $(CORE_SOURCES) $(CORE_HEADERS) $(VRS_HEADERS) | $(BUILD)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< cpp/vrs/portal_page.cpp cpp/vrs/experience_block.cpp $(CORE_SOURCES) -Wl,--wrap=pwrite -o $@
+
+check: $(BUILD)/portal-page-tests

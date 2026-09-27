@@ -57,6 +57,7 @@ public:
 private:
     friend class ConnectionCatalog;
     friend class ExperiencePage;
+    friend class PortalPage;
     friend class ExperienceBlock;
     // Page handles may outlive this owner. Reclaim only their original counter,
     // never a raw pointer to a destroyed or replaced StorageBudget.

@@ -1,5 +1,17 @@
 # 전체 목표 대비 현재 구성 감사
 
+## 최신 상태: 포털 구간 파생 페이지 구현
+
+- 기존 ExperienceBlock/자원 예산을 사용하는 최대256구간 PortalPage를 추가했다.
+  SWEGCA 지역 크기/구간 순서 소자로 확인하며 원경험·판정·강도를 복제하지 않는다.
+- checksum/header/key/kind/범위를 검증한 뒤만 내보낸다. 소유 파생 파일만 core
+  조건에 따라 정리하고 부분 쓰기 실패 예약을 회수한다. 다른 inode/링크는 보존한다.
+- CPU6-7 / make -j2, 페이지566 checks 통과. 구간 순서 core median block mean
+  3.86ns 확인. 단일 디스크 읽기나 입력→Recall 지연의 측정은 아니다.
+- 현재는 페이지 primitive다. Main 색인의 실제 적재·퇴거, orphan 정리/복구 연결은
+  아직 남았으며 전체 상주 색인과 4GB 운용이 해결됐다고 보고하지 않는다.
+  PORTAL_INDEX_PAGES.md 참조. 실행 설치본에는 아직 이 경로가 없다.
+
 ## 최신 상태: Main 상주 색인 확인과 중복 순회 제거
 
 - MainGraph의 cue/context 전체 상주 map이 아직 남아 있음을 실제 코드에서 확인했다.

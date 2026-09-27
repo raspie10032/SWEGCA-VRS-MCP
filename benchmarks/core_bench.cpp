@@ -1,3 +1,4 @@
+#include "swegca_architecture/portal_range_kernel.hpp"
 #include "swegca_architecture/evidence_rules.hpp"
 #include "swegca_architecture/evidence_observation_kernel.hpp"
 #include "swegca_architecture/session_kernel.hpp"
@@ -57,6 +58,9 @@ __attribute__((noinline)) bool measured_recovery(FamiliarityKey kind,const Diges
  const Digest& connection,const Digest& cue,const Digest& context,bool seed) noexcept {
  return restored_reference_matches(kind,input,lookup,connection,cue,context,true,seed);
 }
+__attribute__((noinline)) bool measured_portal_order(const PortalRange& prior,const PortalRange& next) noexcept {
+ return portal_range_follows(prior,next);
+}
 template<class Fn> void measure(const char* name,Fn fn) {
  constexpr std::size_t iterations=100000;
  for(std::size_t i=0;i<iterations;++i)fn(i);
@@ -91,6 +95,11 @@ int main(){
   });
  }
 
+ std::array<PortalRange,64> portal_ranges{};
+ for(std::size_t i=0;i<portal_ranges.size();++i)portal_ranges[i]={recovery_keys[0][i/8],i*2,i*2+1};
+ measure("portal_range_order",[&](std::size_t i){
+  auto result=measured_portal_order(portal_ranges[i&63],portal_ranges[(i+1)&63]);consume(result);
+ });
  measure("metadata_pressure",[&](std::size_t i){auto result=metadata_pressure(i%100,75,i%7==0);consume(result);});
  measure("discard_metadata_page",[&](std::size_t i){auto result=measured_page_discard(i%2,i%3!=0);consume(result);});
  measure("metadata_release",[&](std::size_t i){auto result=measured_metadata(i%2,i%3,i%5!=0);consume(result);});

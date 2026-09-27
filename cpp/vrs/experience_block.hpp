@@ -113,11 +113,12 @@ public:
 
 private:
     ExperienceBlock() = default;
-    // Only ExperiencePage may request cleanup of a newly created derived file.
+    // Only derived page owners may request cleanup of a newly created derived file.
     [[nodiscard]] static ExperienceBlock create_impl(const std::filesystem::path&,
         const architecture::DigestBytes&,std::uint64_t,StorageBudget*,bool derived);
     friend class EvidenceReader;
     friend class ExperiencePage;
+    friend class PortalPage;
     friend ExperienceEvidence record_evidence(ExperienceBlock&,
         const architecture::kernel::EvidenceRules&, const OriginalExperienceView&,
         const architecture::kernel::EvidenceObservation&, std::optional<architecture::DigestBytes>);
