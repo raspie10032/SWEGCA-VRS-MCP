@@ -71,6 +71,55 @@ const MainGraph& PersistentMainGraph::graph()const{
  if(!usable_)throw std::logic_error("Main must be reopened after write failure");
  return graph_;
 }
+architecture::kernel::ConnectionHead PersistentMainGraph::historical_snapshot(
+ const DigestBytes& identity,const ExperienceLocation& target) const {
+ (void)graph();
+ const auto* entry=graph_.connections_.find(identity);
+ if(!entry)throw std::invalid_argument("historical Main connection missing");
+ if(target==head_)return {identity,head_,entry->connection.revision(),entry->connection.revision(),
+  entry->connection.experiences().size(),entry->connection.strength()};
+ // Two alternating states share immutable metadata prefixes, as normal Main
+ // merging does. Every affected merge retains its exact shuffle/core order.
+ std::optional<Connection> states[2];unsigned active=0;std::size_t origin_index=0,begin=0;
+ ExperienceLocation previous{};std::uint64_t generation=0;
+ auto values=entry->connection.experience_reader();
+ for(std::uint64_t index=0;index<next_index_;++index){
+  auto block=ExperienceBlock::open_reader(directory_/filename(index),storage_);
+  if(block.identity()!=block_id(identity_,false,index)||block.capacity()!=capacity_)
+   throw std::runtime_error("historical Main block identity mismatch");
+  const auto extent=block.inspect();
+  for(auto offset=ExperienceBlock::header_bytes;offset<extent.complete_bytes;){
+   const auto location=block.location_at(offset);const auto stored=block.read(location,metadata+record_size,memory_);
+   check_metadata(stored);const auto data=stored.view().content;
+   if(data.size()!=record_size||std::memcmp(data.data(),"SWGCMRG1",8))throw std::runtime_error("invalid historical Main record");
+   const auto source_id=get_digest(data,16);const auto source_root=get_address(data,48);
+   const auto source_entry=graph_.merged_.find(source_id);
+   const auto step=get(data,136);
+   if(get(data,8)!=generation+1||get_address(data,176)!=previous||stored.view().sequence!=generation+1||
+      stored.view().observed_at_ns!=step||source_entry==graph_.merged_.end()||source_entry->second!=source_root)
+    throw std::runtime_error("historical Main lineage mismatch");
+   if(origin_index<entry->origins.size()&&entry->origins[origin_index].store->identity()==source_id){
+    const auto end=entry->origins[origin_index].end;
+    const unsigned next=1-active;
+    states[next].emplace(identity,states[active]?states[active]->strength():graph_.initial_strength_,graph_.rules_,memory_);
+    if(states[active])states[next]->inherit_experiences(*states[active]);
+    for(auto n=begin;n<end;++n)states[next]->append(values[n]);
+    const auto report=states[next]->refine(get(data,128),step);
+    if(!report.result().strength().valid())throw std::runtime_error("invalid historical Main projection");
+    states[active].reset();active=next;begin=end;++origin_index;
+   }
+   previous=location;++generation;
+   if(location==target){
+    if(!states[active])throw std::invalid_argument("connection did not exist at requested Main root");
+    const auto& state=*states[active];
+    return {identity,target,state.revision(),state.revision(),state.experiences().size(),state.strength()};
+   }
+   offset+=location.bytes;
+  }
+ }
+ throw std::invalid_argument("requested root is not in Main history");
+}
+
 bool PersistentMainGraph::merge(const SessionRuntime& source,std::uint64_t seed,std::uint64_t step){
  (void)graph();return graph_.merge_impl(source,seed,step,persist,this);
 }

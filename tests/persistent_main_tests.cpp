@@ -21,6 +21,8 @@ extern "C" ssize_t __real_pwrite(int,const void*,size_t,off_t);
 extern "C" ssize_t __wrap_pwrite(int fd,const void* data,size_t n,off_t pos){
  if(writes_left==0){writes_left=-1;errno=ENOSPC;return -1;}if(writes_left>0)--writes_left;return __real_pwrite(fd,data,n,pos);
 }
+extern "C" int __real_fsync(int);
+extern "C" int __wrap_fsync(int fd){return __real_fsync(fd);}
 extern "C" int __real_fdatasync(int);
 extern "C" int __wrap_fdatasync(int fd){if(fail_sync){fail_sync=false;errno=EIO;return -1;}return __real_fdatasync(fd);}
 DigestBytes id(unsigned n){DigestBytes d{};for(unsigned i=0;i<4;++i)d[i]=std::byte(n>>(8*i));return d;}
@@ -51,6 +53,22 @@ int main(){
   auto c_store=SessionStore::create(root,id(3),"c",65536,memory);SessionRuntime c(c_store,memory,8192);c.define_connection(id(10),0.75,policy);fill(c,"c",300,EvidenceOutcome::insufficient);
   Resolver resolver;resolver.sources={{id(1),&a},{id(2),&b},{id(3),&c}};
   {
+   ExperienceLocation checkpoint;ConnectionHead expected;
+   {
+    auto graph=PersistentMainGraph::create(root/"history-restart-main",id(81),memory,1,policy,1024);
+    CHECK(graph.merge(a,7,0));CHECK(graph.merge(b,9,0));
+    checkpoint=graph.head();expected=graph.historical_snapshot(id(10),checkpoint);
+    CHECK(expected.observations==16);
+    CHECK(graph.merge(c,11,0));
+    const auto historical=graph.historical_snapshot(id(10),checkpoint);
+    CHECK(historical.strength==expected.strength&&historical.revision==expected.revision);
+   }
+   auto graph=PersistentMainGraph::open(root/"history-restart-main",id(81),memory,1,policy,resolver);
+   const auto historical=graph.historical_snapshot(id(10),checkpoint);
+   CHECK(historical.observations==expected.observations&&historical.strength==expected.strength);
+   CHECK(historical.record==checkpoint&&historical.revision==expected.revision);
+  }
+  {
    auto extra_store=SessionStore::create(root,id(71),"extra",65536,memory);
    SessionRuntime extra(extra_store,memory,8192);
    for(unsigned connection:{9U,11U}) {
@@ -65,7 +83,10 @@ int main(){
    auto query_store=SessionStore::create(root,id(72),"query",65536,memory);
    SessionRuntime query(query_store,memory,8192);
    auto indexed=PersistentMainGraph::create(root/"incremental-main",id(73),memory,1,policy,1024);
-   CHECK(indexed.merge(extra,1,0));CHECK(indexed.merge(a,2,0));
+   CHECK(indexed.merge(extra,1,0));const auto before_a=indexed.head();CHECK(indexed.merge(a,2,0));
+   const auto historical_root=indexed.head();
+   const auto historical=indexed.historical_snapshot(id(10),historical_root);
+
    FailingMemory index_allocator;MemoryBudget index_memory(1<<20,&index_allocator);
    ExperienceRouter incremental(query,index_memory);incremental.mount_main(indexed);
    const auto untouched=incremental.input("text/untouched",{});
@@ -74,6 +95,14 @@ int main(){
    // Skip a generation deliberately; the old observation counts still select
    // exactly the new suffix across both commits.
    CHECK(indexed.merge(b,3,0));CHECK(indexed.merge(c,4,0));
+   const auto restored_head=indexed.historical_snapshot(id(10),historical_root);
+   CHECK(restored_head.record==historical_root&&restored_head.identity==id(10));
+   CHECK(restored_head.observations==historical.observations&&restored_head.revision==historical.revision);
+   CHECK(restored_head.strength==historical.strength&&indexed.graph().find(id(10))->experiences().size()==24);
+   throws<std::invalid_argument>([&]{(void)indexed.historical_snapshot(id(10),before_a);});
+   throws<std::invalid_argument>([&]{(void)indexed.historical_snapshot(id(10),{});});
+   throws<std::invalid_argument>([&]{(void)indexed.historical_snapshot(id(999),historical_root);});
+
    const auto index_before=index_memory.used();
    index_allocator.largest_request=0;index_allocator.request_limit=512;
    index_allocator.remaining=0;

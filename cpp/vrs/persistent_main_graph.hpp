@@ -29,6 +29,10 @@ public:
     [[nodiscard]] const MainGraph& graph() const;
     [[nodiscard]] bool usable() const noexcept { return usable_; }
     [[nodiscard]] const ExperienceLocation& head() const noexcept { return head_; }
+    // Recompute only this connection at an authenticated ancestor merge root.
+    // Other connections and original payloads are never replayed here.
+    [[nodiscard]] architecture::kernel::ConnectionHead historical_snapshot(
+        const architecture::DigestBytes&,const ExperienceLocation&) const;
 private:
     struct Record {
         std::uint64_t generation, seed, step;
