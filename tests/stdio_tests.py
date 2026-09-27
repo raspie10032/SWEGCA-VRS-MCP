@@ -744,6 +744,64 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
         check(c.call('swegca/select',{'identity':attached['identity']})['result']=={})
         check(c.call('swegca/end')['result']=={})
     check(c.call('swegca/work',{'seed':'7','step':'0'})['result']['merged']=='2');c.close()
+    # Desktop-style stdio: launcher owns backend, proxy and real VRS processes.
+    desktop_root=root/'desktop-host';desktop_root.mkdir()
+    desktop_proxy=root/'desktop-proxy.json'
+    desktop_proxy.write_text(json.dumps({'memoryBytes':str(8<<20),'frameBytes':'4096',
+        'pendingRequests':'8','sessionCapacity':'2','seed':'7','step':'0','instance':'desktop-fixture',
+        'connectionSession':{'session':'transport','mode':'attach'},'sessions':[]}))
+    backend_code="""import sys,json
+for line in sys.stdin:
+    value=json.loads(line)
+    if value.get('method')=='thread/start':
+        print(json.dumps({'method':'thread/started','params':{'thread':{'id':'desktop-thread'}}}),flush=True)
+    if 'id' in value:
+        print(json.dumps({'id':value['id'],'result':{}}),flush=True)
+"""
+    desktop=subprocess.Popen([str(exe.parent/'swegca-desktop-host'),
+        str(exe.parent/'swegca-app-server-proxy'),str(exe),'create',str(desktop_root),str(path),
+        str(desktop_proxy),sys.executable,'-u','-c',backend_code],
+        stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,bufsize=0)
+    def desktop_send(value):desktop.stdin.write(json.dumps(value).encode()+b'\n')
+    def desktop_read():
+        check(bool(select.select([desktop.stdout],[],[],10)[0]))
+        return json.loads(desktop.stdout.readline())
+    try:
+        desktop_send({'id':901,'method':'initialize','params':{'clientInfo':{'name':'fixture'}}})
+        check(desktop_read()=={'id':901,'result':{}})
+        desktop_send({'method':'initialized'})
+        desktop_send({'id':902,'method':'thread/start','params':{}})
+        check(desktop_read()['method']=='thread/started')
+        check(desktop_read()=={'id':902,'result':{}})
+        desktop_send({'id':903,'method':'turn/start','params':{'threadId':'desktop-thread','input':[]}})
+        check(desktop_read()=={'id':903,'result':{}})
+        desktop.stdin.close();check(desktop.wait(timeout=10)==0)
+        check(desktop.stdout.read()==b'' and desktop.stderr.read()==b'')
+    finally:
+        if desktop.poll() is None:desktop.terminate();desktop.wait(timeout=10)
+    c=Client('open',desktop_root,path);c.initialize()
+    for session,protocol,count in (('transport','app-server-connection','5'),('desktop-thread','app-server','3')):
+        attached=c.call('swegca/agent/attach/resume',{'provider':'codex','instance':'desktop-fixture',
+            'session':session,'protocol':protocol})['result']
+        check(attached['nextSequence']==count)
+    check(c.call('swegca/work',{'seed':'7','step':'0'})['result']['merged']=='0');c.close()
+    # Interrupt only this test's launcher: all three owned children must exit.
+    interrupt_root=root/'desktop-interrupt';interrupt_root.mkdir()
+    desktop=subprocess.Popen([str(exe.parent/'swegca-desktop-host'),
+        str(exe.parent/'swegca-app-server-proxy'),str(exe),'create',str(interrupt_root),str(path),
+        str(desktop_proxy),sys.executable,'-u','-c',backend_code],
+        stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,bufsize=0)
+    try:
+        desktop_send({'id':901,'method':'initialize','params':{}})
+        check(desktop_read()=={'id':901,'result':{}})
+        children=pathlib.Path(f'/proc/{desktop.pid}/task/{desktop.pid}/children').read_text().split()
+        check(len(children)==3)
+        desktop.terminate();check(desktop.wait(timeout=10)==1)
+        check(all(not pathlib.Path(f'/proc/{pid}').exists() for pid in children))
+        check(b'interrupted' in desktop.stderr.read())
+    finally:
+        if desktop.poll() is None:desktop.kill();desktop.wait(timeout=10)
+        desktop.stdin.close();desktop.stdout.close();desktop.stderr.close()
     # A separate config file must not change the root being measured.
     def stored_bytes():
         seen=set();total=0
