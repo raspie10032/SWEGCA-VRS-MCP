@@ -247,3 +247,6 @@ $(BUILD)/portal-page-tests: tests/portal_page_tests.cpp cpp/vrs/portal_page.cpp 
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< cpp/vrs/portal_page.cpp cpp/vrs/experience_block.cpp $(CORE_SOURCES) -Wl,--wrap=pwrite -o $@
 
 check: $(BUILD)/portal-page-tests
+
+$(BUILD)/continuation-recovery-probe: benchmarks/continuation_recovery_probe.cpp $(VRS_SOURCES) $(CORE_SOURCES) $(CORE_HEADERS) $(VRS_HEADERS) | $(BUILD)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< $(VRS_SOURCES) $(CORE_SOURCES) -o $@
