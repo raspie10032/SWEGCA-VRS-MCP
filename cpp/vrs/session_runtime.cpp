@@ -447,22 +447,21 @@ std::optional<std::size_t> ExperienceRouter::select_replay(const InputRecall& re
     if(recalled.issuer_!=issuer_) throw std::invalid_argument("Recall belongs to a different input route");
     std::optional<std::size_t> selected;
     ReplayCandidate best;
-    // Receipt contexts already partition candidate order. Visit each pinned
-    // value once, without repeating a context search or constructing InputMatch.
+    // Reduce the same core candidates, reusing only complete sealed page
+    // reductions. Current head strength is applied at this receipt's boundary.
     for(const auto& context:recalled.contexts_){
-        std::optional<ExperienceSequence::Snapshot::Reader> reader;
-        if(context.sequence)reader.emplace(*context.sequence,memory_);
-        for(std::size_t index=context.begin;index<context.end;++index){
-            const auto relative=index-context.begin;
-            const auto& experience=reader ? (*reader)[relative] :
-                *recalled.addresses_.at(context.address_begin+relative).experience;
-            const ReplayCandidate candidate{context.recalled.recalled_head.strength,
-                experience.value().observed_at,context.recalled.recalled_head.identity,experience.original()};
+        const auto consider=[&](std::size_t relative,const ReplayCandidate& candidate){
             switch(prefer_replay(selected ? &best : nullptr,candidate)){
             case ReplayPreference::invalid: throw std::logic_error("invalid Recall candidate metadata");
             case ReplayPreference::keep: break;
-            case ReplayPreference::replace: best=candidate;selected=index;break;
+            case ReplayPreference::replace: best=candidate;selected=context.begin+relative;break;
             }
+        };
+        const auto& head=context.recalled.recalled_head;
+        if(context.sequence)context.sequence->visit_replay_candidates(head.identity,head.strength,memory_,consider);
+        else for(std::size_t relative=0;relative<context.end-context.begin;++relative){
+            const auto& experience=*recalled.addresses_.at(context.address_begin+relative).experience;
+            consider(relative,{head.strength,experience.value().observed_at,head.identity,experience.original()});
         }
     }
     return selected;

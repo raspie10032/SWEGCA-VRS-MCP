@@ -1,6 +1,7 @@
 #pragma once
 #include "vrs/experience_page.hpp"
 #include "swegca_architecture/metadata_residency_kernel.hpp"
+#include "swegca_architecture/recall_route_kernel.hpp"
 #include <atomic>
 #include <mutex>
 #include <algorithm>
@@ -24,8 +25,23 @@ class ExperienceSequence final {
     }
     struct Chunk {
         struct Backing {
-            Backing(ExperiencePage value,const architecture::kernel::EvidenceRules& policy)
-                :page(std::move(value)),rules(policy){}
+            Backing(ExperiencePage value,const architecture::kernel::EvidenceRules& policy,
+                std::span<const ExperienceEvidence> values):page(std::move(value)),rules(policy){
+                using namespace architecture::kernel;
+                for(std::size_t n=0;n<values.size();++n){
+                    const auto& value=values[n];
+                    const ReplayCandidate candidate{1.0,value.value().observed_at,value.value().hypothesis,value.original()};
+                    if(n&&candidate.connection!=best.connection)uniform=false;
+                    switch(prefer_replay(n?&best:nullptr,candidate)){
+                    case ReplayPreference::invalid: throw std::logic_error("invalid page selection metadata");
+                    case ReplayPreference::keep: break;
+                    case ReplayPreference::replace: best=candidate;best_index=n;break;
+                    }
+                }
+            }
+            architecture::kernel::ReplayCandidate best;
+            std::size_t best_index=0;
+            bool uniform=true;
             ExperiencePage page;
             architecture::kernel::EvidenceRules rules;
             mutable std::mutex load_mutex;
@@ -123,7 +139,8 @@ public:
             auto* storage_ptr=static_cast<Chunk::Backing*>(chunk_->memory.allocate(sizeof(Chunk::Backing),alignof(Chunk::Backing)));
             try {
                 std::construct_at(storage_ptr,ExperiencePage::create(path,identity,
-                    std::span<const ExperienceEvidence>(chunk_->data.load(),chunk_->used),chunk_->memory,storage),rules_);
+                    std::span<const ExperienceEvidence>(chunk_->data.load(),chunk_->used),chunk_->memory,storage),rules_,
+                    std::span<const ExperienceEvidence>(chunk_->data.load(),chunk_->used));
             }catch(...){chunk_->memory.deallocate(storage_ptr,sizeof(Chunk::Backing),alignof(Chunk::Backing));throw;}
             prepared_=storage_ptr;
         }
@@ -156,28 +173,36 @@ public:
     // Both the data budget and directory budget must outlive this snapshot.
     class Snapshot final {
     public:
-        // Read pinned historical metadata without promoting all candidate
-        // pages. One decoded page is retained until the next cold page access.
-        class Reader final {
-            const Snapshot& source_;
-            ReadCache cache_;
-        public:
-            Reader(const Snapshot& source,MemoryBudget& memory):source_(source),cache_(memory){}
-            Reader(const Reader&)=delete;
-            Reader& operator=(const Reader&)=delete;
-            const ExperienceEvidence& operator[](std::size_t index) {
-                if(index>=source_.count_)throw std::out_of_range("experience snapshot traversal index");
-                index+=source_.begin_;
-                const auto& chunk=source_.chunks_[chunk_index(index)-source_.first_chunk_];
-                return cache_.read(*chunk,chunk_offset(index));
-            }
-        };
         Snapshot(const Snapshot&)=delete;
         Snapshot& operator=(const Snapshot&)=delete;
         Snapshot(Snapshot&& other) noexcept:chunks_(std::move(other.chunks_)),count_(std::exchange(other.count_,0)),begin_(other.begin_),first_chunk_(other.first_chunk_){}
         Snapshot& operator=(Snapshot&&)=delete;
         [[nodiscard]] std::size_t size() const noexcept{return count_;}
         [[nodiscard]] std::size_t original_begin() const noexcept{return begin_;}
+        template<class Visit>
+        void visit_replay_candidates(const architecture::DigestBytes& connection,double strength,
+            MemoryBudget& memory,Visit&& visit) const {
+            ReadCache cache(memory);
+            for(std::size_t relative=0;relative<count_;){
+                const auto absolute=begin_+relative;
+                const auto& chunk=*chunks_[chunk_index(absolute)-first_chunk_];
+                const auto offset=chunk_offset(absolute);
+                const auto count=std::min(chunk.used-offset,count_-relative);
+                // A complete immutable page's core reduction is independent of
+                // the common connection strength. Partial ranges still inspect
+                // precisely their own values; no out-of-range winner is reused.
+                if(offset==0&&count==chunk.used&&chunk.backing&&chunk.backing->uniform&&
+                    chunk.backing->best.connection==connection){
+                    auto candidate=chunk.backing->best;candidate.strength=strength;
+                    visit(relative+chunk.backing->best_index,candidate);
+                }else for(std::size_t n=0;n<count;++n){
+                    const auto& value=cache.read(chunk,offset+n);
+                    visit(relative+n,architecture::kernel::ReplayCandidate{
+                        strength,value.value().observed_at,connection,value.original()});
+                }
+                relative+=count;
+            }
+        }
         [[nodiscard]] const ExperienceEvidence& operator[](std::size_t index) const {
             if(index>=count_)throw std::out_of_range("experience snapshot index");
             index+=begin_;
@@ -274,7 +299,8 @@ public:
             auto* backing=static_cast<Backing*>(memory_.allocate(sizeof(Backing),alignof(Backing)));
             try {
                 std::construct_at(backing,ExperiencePage::create(path,identity,
-                    std::span<const ExperienceEvidence>(chunk->resident(),chunk->used),memory_,storage),rules);
+                    std::span<const ExperienceEvidence>(chunk->resident(),chunk->used),memory_,storage),rules,
+                    std::span<const ExperienceEvidence>(chunk->resident(),chunk->used));
             }catch(...){memory_.deallocate(backing,sizeof(Backing),alignof(Backing));throw;}
             chunk->backing=backing;
         }

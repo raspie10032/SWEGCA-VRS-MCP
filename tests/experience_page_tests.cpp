@@ -175,23 +175,44 @@ int main(){
     }
    }
    CHECK(memory.used()==cold);
-   {
-    auto snapshot=sequence.snapshot(memory,65,200);
-    const auto pinned=memory.used();
-    {
-     ExperienceSequence::Snapshot::Reader reader(snapshot,memory);
-     for(unsigned n=0;n<12;++n){
-      const auto index=n%2?0:100;
-      CHECK(reader[index].original()==values[65+index].original());
-      CHECK(memory.used()<=pinned+128*sizeof(ExperienceEvidence));
-     }
-     rejects<std::out_of_range>([&]{(void)reader[135];});
-    }
-    CHECK(memory.used()==pinned);
-   }
    CHECK(memory.used()==cold);
    CHECK(!sequence.page_out(63,root/"unused",id(42),rules,&storage));
    CHECK(!sequence.page_out(127,root/"unused",id(43),rules,&storage));
+  }
+  {
+   // The page reduction must match exhaustive core selection even when append
+   // order is not chronological, addresses repeat, or a range cuts a page.
+   for(unsigned mode=0;mode<2;++mode){
+    ExperienceSequence sequence(memory);
+    const auto value_index=[&](std::size_t n){return mode?n%16:(n*73)%256;};
+    for(std::size_t n=0;n<256;++n){sequence.prepare_append();sequence.commit_append(values[value_index(n)]);}
+    CHECK(sequence.page_out(63,root/("selection-64-"+std::to_string(mode)),id(50+mode*2),rules,&storage));
+    CHECK(sequence.page_out(127,root/("selection-128-"+std::to_string(mode)),id(51+mode*2),rules,&storage));
+    const auto cold=memory.used();
+    for(const auto [begin,end]:std::array<std::pair<std::size_t,std::size_t>,8>{
+        {{0,256},{63,255},{65,200},{126,128},{127,255},{128,254},{255,256},{0,0}}}){
+     auto snapshot=sequence.snapshot(memory,begin,end);const auto pinned=memory.used();
+     for(const double strength:{0.25,2.0}){
+      std::optional<std::size_t> expected,actual;ReplayCandidate reference,best;std::size_t visits=0;
+      for(auto n=begin;n<end;++n){
+       const auto& value=values[value_index(n)];
+       const ReplayCandidate candidate{strength,value.value().observed_at,id(2),value.original()};
+       if(prefer_replay(expected?&reference:nullptr,candidate)==ReplayPreference::replace){reference=candidate;expected=n-begin;}
+      }
+      snapshot.visit_replay_candidates(id(2),strength,memory,[&](std::size_t n,const ReplayCandidate& candidate){
+       ++visits;CHECK(n<end-begin&&candidate.strength==strength);
+       CHECK(memory.used()<=pinned+128*sizeof(ExperienceEvidence));
+       const auto decision=prefer_replay(actual?&best:nullptr,candidate);
+       CHECK(decision!=ReplayPreference::invalid);
+       if(decision==ReplayPreference::replace){best=candidate;actual=n;}
+      });
+      CHECK(actual==expected&&memory.used()==pinned);
+      if(actual)CHECK(best.original==reference.original&&best.observed_at==reference.observed_at);
+      if(begin==63&&end==255)CHECK(visits==2); // 192 original candidates, two core page results.
+     }
+    }
+    CHECK(memory.used()==cold);
+   }
   }
   CHECK(!std::filesystem::exists(root/"segment"));
   {

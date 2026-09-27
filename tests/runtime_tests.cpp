@@ -507,7 +507,10 @@ int main(){
     auto recalled=host.input("text/plain",content);
     CHECK(reads==r&&writes==w&&host.storage().transfer().requested()==transfer);
     const auto cold_bytes=memory.used();
-    fail_read=true;throws<std::system_error>([&]{(void)host.select_replay(recalled);});
+    const auto selection_reads=reads;
+    fail_read=true;CHECK(host.select_replay(recalled)==30);
+    CHECK(reads==selection_reads&&fail_read); // Complete page selection needs no I/O.
+    throws<std::system_error>([&]{(void)host.replay(recalled,15);});
     CHECK(memory.used()==cold_bytes);
     CHECK(host.select_replay(recalled)==30);
     CHECK(memory.used()==cold_bytes&&writes==w);
