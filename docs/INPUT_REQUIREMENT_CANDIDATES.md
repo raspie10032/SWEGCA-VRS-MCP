@@ -72,3 +72,26 @@ false로 유지한다. 실제 stdio7120 checks 통과. 이는 의미적 대체 �
 도구 등록·소유 소켓·공유 I/O·동일 cgroup·정상 종료 확인. memory.max3999997952,
 swap0, CPU6-7, modelCalls0. GUI 강제 재시작·실제 모델 대화·장기 압축 평가 없음.
 위의 미설치 표기는 당시 이력이며 현재 후보 참조와 정정 관계는 설치본에 포함된다.
+
+## 명시적 인용 정정의 대응 후보
+
+코어 quoted_revision 소자로 전체 줄 형태 `정정: “이전” → “새 문구”` 또는
+`Correction: "old" -> "new"`의 두 원문 범위를 구성한다. ASCII/방향 인용부호,
+수평 공백, 말미 마침표와 CRLF를 처리하며 모델/외부 판정기를 호출하지 않는다.
+후행 금지 문구·추가 화살표·비어 있는 인용·예시 접두어·인용 내부 escape/줄바꿈은
+현재 문법에 해당하지 않아 후보를 만들지 않는다. 지원하지 않는 문장의 원문은 남는다.
+
+inputCandidates.revisionProposals는 priorQuote/replacementQuote를 기존 requirement
+형식으로 전달한다. 두 인용 모두 현재 입력의 원문 위치를 코어 인용 검증으로 확인한다.
+priorQuote는 과거 원경험의 인용이 아니라 현재 사용자가 언급한 이전 문구다.
+antecedentVerified=false/replacementVerified=false를 유지한다. 단순 문자열
+일치만으로 과거 요구를 선택하거나 삭제/취소/강도 변경하지 않는다.
+
+원문 후보와 같은 바이트 예산을 사용하며 대응 후보를 더 담지 못하면
+revisionProposalsLimited=true를 표시한다. 해당 원문 span 자체는 보존한다.
+
+검증: wire186 / 실제 stdio7161 통과. 한국어/영어, UTF-8 바이트 위치, 모호한
+문구 비수용, 실제 desktop 통신의 세 번째 steer에서 대응 후보 전달을 확인했다.
+같은 턴에 선행 입력이 여러 개 있으면 priorInput=null인 상태를 유지하며,
+명시적 화살표가 있다는 이유로 선행 입력이나 의미 대체를 승인하지 않는다.
+이 문법 범위의 후보 생성은 일반 자연어 의미 처리 완성이 아니다. 설치본 반영은 아직이다.

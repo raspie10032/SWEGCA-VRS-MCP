@@ -2398,6 +2398,10 @@ for line in sys.stdin:
         desktop_send({'id':983,'method':'turn/steer','params':{'threadId':'steer-desktop',
             'expectedTurnId':'turn-original','input':corrected_terms}})
         check(desktop_read()=={'id':983,'result':{'turnId':'turn-original'}})
+        desktop_send({'id':984,'method':'turn/steer','params':{'threadId':'steer-desktop',
+            'expectedTurnId':'turn-original','input':[{'type':'text','text':'정정: “중지” → “유지”\n다른 조건은 그대로.'}]}})
+        check(desktop_read()=={'id':984,'result':{'turnId':'turn-original'}})
+
         desktop.stdin.close();check(desktop.wait(timeout=10)==0)
         check(desktop.stdout.read()==b'' and desktop.stderr.read()==b'')
     finally:
@@ -2412,6 +2416,16 @@ for line in sys.stdin:
     check(corrected_packet['inputRelations']['priorInput']==first_packet['inputCandidates']['inputOriginal'])
     check(not corrected_packet['inputRelations']['replacementVerified'])
     check(''.join(x['quote'] for x in corrected_packet['inputCandidates']['candidates'])==corrected_terms[0]['text'])
+    explicit_native=next(x for x in captured if x.get('id')==984)
+    explicit_packet=json.loads(explicit_native['params']['input'][0]['text'].split('\n',1)[1])
+    proposals=explicit_packet['inputCandidates']['revisionProposals']
+    check(len(proposals)==1 and not proposals[0]['antecedentVerified'] and not proposals[0]['replacementVerified'])
+    check(explicit_packet['inputRelations']['priorInput'] is None)
+    explicit_text=explicit_native['params']['input'][1]['text'].encode()
+    for field in ('priorQuote','replacementQuote'):
+        anchor=proposals[0][field];proposal_offset=int(anchor['byteOffset']);proposal_quote=anchor['quote'].encode()
+        check(explicit_text[proposal_offset:proposal_offset+len(proposal_quote)]==proposal_quote)
+
     c=Client('open',desktop_root,path);c.initialize()
     for session,protocol,count in (('transport','app-server-connection','9'),('desktop-thread','app-server','9')):
         attached=c.call('swegca/agent/attach/resume',{'provider':'codex','instance':'desktop-fixture',

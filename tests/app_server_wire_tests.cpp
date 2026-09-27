@@ -206,6 +206,21 @@ int main(){
   const auto relation_context=parse_json(candidates,memory);
   CHECK(relation_context.at("inputRelations").at("priorInput").kind==Json::Kind::null);
   CHECK(relation_context.at("inputRelations").at("replacementVerified").scalar=="false");
+  const auto explicit_revision=parse_json(R"({"method":"turn/steer","params":{"input":[{"type":"text","text":"정정: “중지” → “유지”\r\n다른 조건은 그대로"}]}})",memory);
+  candidates="{}";append_input_candidates(candidates,explicit_revision,source,memory,8,4096);
+  const auto revisions=parse_json(candidates,memory);
+  const auto& proposals=revisions.at("inputCandidates").at("revisionProposals");
+  CHECK(proposals.values.size()==1);
+  const auto& proposal=proposals.values[0];
+  CHECK(requirement_matches(requirement_anchor(proposal.at("priorQuote")),explicit_revision));
+  CHECK(requirement_matches(requirement_anchor(proposal.at("replacementQuote")),explicit_revision));
+  CHECK(proposal.at("priorQuote").at("quote").string()=="중지");
+  CHECK(proposal.at("replacementQuote").at("quote").string()=="유지");
+  CHECK(proposal.at("antecedentVerified").scalar=="false"&&proposal.at("replacementVerified").scalar=="false");
+  using swegca::architecture::kernel::quoted_revision;
+  CHECK(quoted_revision("Correction: \"stop\" -> \"keep\"."));
+  for(const auto unsupported:{"예시: 정정: \"a\" -> \"b\"", "정정: \"a\" -> \"b\" 적용 금지", "정정: \"\" -> \"b\"", "정정: \"a\" -> \"b\" -> \"c\"", "아니, 유지하라고"})
+   CHECK(!quoted_revision(unsupported));
   const auto ack=parse_json(R"({"receipt":"17","original":{"block":"a","digest":"b","offset":"1","bytes":"2"},"memory":{"original":{"block":"c","digest":"d","offset":"3","bytes":"4"}}})",memory);
   const std::string packet=R"({"original":{"block":"c","digest":"d","offset":"3","bytes":"4"},"media":"text/plain","grantsAuthority":false,"assessment":{"inputOriginal":{"block":"a","digest":"b","offset":"1","bytes":"2"},"agreement":1,"status":0},"contentHex":"68690a"})";
   const auto context=replay_context(parse_json(packet,memory),ack,memory);
