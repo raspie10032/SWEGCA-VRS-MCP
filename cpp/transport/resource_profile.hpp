@@ -16,6 +16,13 @@
 
 namespace swegca::transport {
 #ifdef __linux__
+inline std::uint64_t profile_memory_limit(std::uint64_t requested){
+    const auto page=::sysconf(_SC_PAGESIZE);
+    if(page<=0)throw std::runtime_error("memory page size unavailable");
+    const auto effective=requested-requested%static_cast<std::uint64_t>(page);
+    if(!effective)throw std::invalid_argument("memory profile is smaller than one page");
+    return effective;
+}
 inline cpu_set_t profile_cpus(std::string_view text){
     cpu_set_t result;CPU_ZERO(&result);
     std::istringstream input{std::string(text)};std::string token;bool any=false;
@@ -34,7 +41,7 @@ inline void verify_resource_profile(std::uint64_t ram,std::string_view cpus){
     if(path.empty())throw std::runtime_error("cgroup v2 membership unavailable");
     const auto group=std::filesystem::path("/sys/fs/cgroup")/path.substr(1);
     const auto value=[&](const char* name){std::ifstream file(group/name);std::string text;if(!(file>>text))throw std::runtime_error("cgroup resource control unavailable");return text;};
-    if(value("memory.max")!=std::to_string(ram)||value("memory.swap.max")!="0")
+    if(value("memory.max")!=std::to_string(profile_memory_limit(ram))||value("memory.swap.max")!="0")
         throw std::runtime_error("VRS process memory limits do not match requested profile");
     const auto requested=profile_cpus(cpus);cpu_set_t actual;
     if(::sched_getaffinity(0,sizeof(actual),&actual)<0)throw std::system_error(errno,std::generic_category(),"read VRS affinity");
@@ -46,7 +53,7 @@ inline void verify_resource_profile(std::uint64_t ram,std::string_view cpus){
     if(command.empty()||!ram)throw std::invalid_argument("empty resource profile command or memory limit");
     std::vector<std::string> args{"systemd-run","--user","--pipe","--wait","--collect","--quiet",
         "--working-directory="+std::filesystem::current_path().string(),
-        "--property=MemoryMax="+std::to_string(ram),"--property=MemorySwapMax=0",
+        "--property=MemoryMax="+std::to_string(profile_memory_limit(ram)),"--property=MemorySwapMax=0",
         "--property=CPUAffinity="+std::string(cpus),"--property=OOMPolicy=kill",
         "--"};
     args.insert(args.end(),command.begin(),command.end());

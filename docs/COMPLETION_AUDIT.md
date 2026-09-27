@@ -1140,3 +1140,14 @@ memory.max=67108864, memory.swap.max=0을 확인했다. EOF 이후 모두 정리
 probe 통과. 기존 앱 재시작/설치·모델 호출·Claude 통신은 없었다. 합산 제한 설정의
 증거이며 전체 그래프가 4GB 안에서 동작한다거나 실제 물리 SSD 5Gbps/500GB 조건을
 달성했다는 의미는 아니다. 상세는 DESKTOP_HOST.md의 합산 제한 절을 참조한다.
+
+
+설치 백엔드 초기 통신 검사에서 4,000,000,000바이트 resource 설정의 검증 결함을
+재현했다. Linux memory.max가 페이지 단위로 내림되어 3,999,997,952가 되는데
+요청값과 문자열로 같아야 한다고 검사하고 있었다. 이제 launch/verify가 모두
+페이지 내림 값을 사용한다. 상한은 늘리지 않으며 한 페이지 미만은 거절한다.
+실제 probe의 unaligned profile과 기존 64MiB 합산 검사 포함 subprocess 3,812개
+통과. installed_backend_smoke.py는 실제 codex-cli 0.155.0-alpha.9.2를 별도 그룹에서
+초기화했다. client 2/server 2 프레임의 정확한 원문 4개를 VRS 재개 후 확인했고
+Main 병합은 0이었다. 모델 생성 요청은 0회, 기존 GUI 설정은 변경하지 않았다.
+이는 실제 백엔드 초기 통신 증거로 한정하며 자연어 의미 대조 완성으로 해석하지 않는다.

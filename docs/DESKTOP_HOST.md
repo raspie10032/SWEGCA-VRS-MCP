@@ -166,3 +166,24 @@ within 4GB, physical SSD throttling, or live desktop integration.
 
 A current read-only check found no CODEX_CLI_PATH or SWEGCA_DESKTOP_CONFIG
 overrides on running Codex backends. No running app or launcher entry was changed.
+
+## Installed backend handshake and byte-granular limits
+
+The opt-in `tests/installed_backend_smoke.py BUILD_DIR BACKEND` runs an actual
+installed backend through host/proxy/VRS, in an explicitly named test cgroup.
+It sends only initialize and initialized, never a turn or model-generation
+request. Private native frames remain in temporary storage and are compared
+byte-for-byte through VRS's authenticated original API after reopening. Cleanup
+stops only that named test unit. It does not replace the current GUI backend.
+
+The initial 4,000,000,000-byte run exposed kernel page rounding: on this 4096-byte
+page host, memory.max reads 3,999,997,952. Resource launch/verification now both
+use the requested budget rounded down to a full page; they never widen the
+requested cap and reject a sub-page budget. The 64MiB aligned case still passes.
+
+Actual installed codex-cli 0.155.0-alpha.9.2 passed: two client frames and two
+server frames became four exact originals, survived reopen, and EOF caused zero
+Main merges. The aggregate group had memory.max=3999997952 and swap.max=0.
+No model generation was requested. This is real-backend startup/transport
+evidence, not live GUI installation, user-turn quality, all-event capture, or
+proof of large-scale operation under the budget.
