@@ -419,12 +419,17 @@ DigestBytes SessionStore::save_cognition_revision(const ExperienceLocation& inpu
     const auto key=hex(cognition_id(identity_,input));
     const auto current=directory/(key+".block");
     const auto sealed=directory_/"cognition"/(hex(cognition_id(identity_,input,revision))+".block");
+    bool unchanged=false;
     if(std::filesystem::exists(current)){
         (void)read_latest_cognition(input);
-        if(same_file(current,sealed))return revision;
+        unchanged=same_file(current,sealed);
     }
     try{
-        if(std::filesystem::create_directory(directory))sync_directory(directory_);
+        // A prior rename may have succeeded before its directory sync failed.
+        // Reusing that alias must finish durability before acknowledging it.
+        (void)std::filesystem::create_directory(directory);
+        sync_directory(directory_);
+        if(unchanged){sync_directory(directory);return revision;}
         std::uint64_t attempt=0;
         auto staging=directory/("staging-"+key+"-0.block");
         while(std::filesystem::exists(staging)){
@@ -450,12 +455,16 @@ void SessionStore::save_cognition_record(const ExperienceLocation& input,std::sp
     const auto prior=read_cognition_record(input,revision);
     if(prior){
         if(!std::ranges::equal(prior->view().content,metadata))throw std::invalid_argument("conflicting immutable cognition");
+        // Recovery can observe a linked record whose directory sync failed.
+        // A byte-identical retry still has to finish that publication.
+        try{sync_directory(directory_);sync_directory(directory_/"cognition");}
+        catch(...){usable_=false;throw;}
         return;
     }
     const auto identity=cognition_id(identity_,input,revision);
     const auto directory=directory_/"cognition";
     try {
-        if(std::filesystem::create_directory(directory))sync_directory(directory_);
+        (void)std::filesystem::create_directory(directory);sync_directory(directory_);
         const auto name=hex(identity);
         auto staging=directory/("staging-"+name+"-0.block");
         std::uint64_t attempt=0;

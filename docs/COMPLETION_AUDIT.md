@@ -1012,3 +1012,14 @@ append 허가 후 불변 결과를 먼저 봉인하고, 같은 inode의 임시 h
 주지 않은 최신 조회, malformed/conflicting selector 거절을 확인했다. 최신 참조는
 전체 발행 순서 이력 로그가 아니며 기존 원경험·초기 기록·이전 revision은 보존한다.
 전체 자연어/그래프/자원·1ms 및 실제 데스크톱 통합 목표는 여전히 미완료다.
+
+
+cognition 발행 재시도의 동기화 누락을 실제 syscall 오류 주입으로 재현·수정했다.
+최신 alias가 이미 같은 inode이면 곧바로 반환하던 경로는 rename 후 fsync 실패를
+복구하지 못했다. 이제 canonical record/부모 세션/latest 디렉터리를 재동기화한
+뒤에만 성공한다. 최초 record의 동일 내용 재시도도 같은 복구 원칙을 적용했다.
+테스트는 latest rename 직전, latest rename 후 directory fsync, 완성된 canonical
+record link 후 directory fsync의 세 지점을 구분한다. 실패 후 store unusable,
+기존/신규 봉인 기록 보존, reopen 후 도달 단계에 맞는 최신값, 반복 fsync 실패
+거절, 마지막 재시도 sync 수행 및 storage bytes 불변을 확인했다. 세션 453개,
+stdio 3,771개 통과. 실제 물리 전원 차단 검증으로 확대 해석하지 않는다.

@@ -1,6 +1,7 @@
 #include "swegca_architecture/evidence_rules.hpp"
 #include "vrs/connection.hpp"
 #include "vrs/session_store.hpp"
+#include "swegca_architecture/sha256.hpp"
 
 #include <array>
 #include <cstdio>
@@ -10,6 +11,33 @@
 #include <string>
 #include <thread>
 #include <vector>
+#include <cerrno>
+#include <unistd.h>
+
+static bool fail_latest_rename=false,fail_latest_sync=false;
+static unsigned fail_cognition_sync=0;
+static unsigned latest_sync_calls=0,cognition_sync_calls=0;
+extern "C" int __real_rename(const char*,const char*);
+extern "C" int __wrap_rename(const char* from,const char* to){
+    if(fail_latest_rename&&std::string_view(to).find("/cognition-latest/")!=std::string_view::npos){
+        fail_latest_rename=false;errno=EIO;return -1;
+    }
+    return __real_rename(from,to);
+}
+extern "C" int __real_fsync(int);
+extern "C" int __wrap_fsync(int fd){
+    char link[64],path[4096];std::snprintf(link,sizeof(link),"/proc/self/fd/%d",fd);
+    const auto size=::readlink(link,path,sizeof(path));
+    if(size>0&&std::string_view(path,static_cast<std::size_t>(size)).ends_with("/cognition-latest")){
+        ++latest_sync_calls;
+        if(fail_latest_sync){fail_latest_sync=false;errno=EIO;return -1;}
+    }
+    if(size>0&&std::string_view(path,static_cast<std::size_t>(size)).ends_with("/cognition")){
+        ++cognition_sync_calls;
+        if(fail_cognition_sync&&--fail_cognition_sync==0){errno=EIO;return -1;}
+    }
+    return __real_fsync(fd);
+}
 
 using namespace swegca::architecture;
 using namespace swegca::architecture::kernel;
@@ -330,6 +358,50 @@ int main() {
         expect_throw<std::runtime_error>([&]{(void)session.read_cognition(input);});
     }
     CHECK(memory.used()==0);
+    for(unsigned mode=0;mode<3;++mode){
+        const auto owner=id(11+mode);
+        ExperienceLocation input;DigestBytes prior;
+        const auto next=Sha256::of(bytes("new assessment"));
+        StorageBudget storage(1<<20);std::uint64_t used=0;
+        {
+            auto session=SessionStore::create(root,owner,"publication-fault",1024,memory,&storage);
+            input=session.append({0,0,"publication-fault","user","text/plain",bytes(raw)});
+            session.save_cognition(input,bytes("initial assessment"));
+            prior=session.save_cognition_revision(input,bytes("prior assessment"));
+            // The first record-directory sync creates the staged block header;
+            // the second follows linking the completed canonical record.
+            if(mode==0)fail_latest_rename=true;else if(mode==1)fail_latest_sync=true;else fail_cognition_sync=2;
+            expect_throw<std::system_error>([&]{(void)session.save_cognition_revision(input,bytes("new assessment"));});
+            CHECK(!fail_latest_rename&&!fail_latest_sync&&!fail_cognition_sync&&!session.usable());
+            expect_throw<std::logic_error>([&]{(void)session.save_cognition_revision(input,bytes("new assessment"));});
+            used=storage.used();
+        }
+        {
+            auto session=SessionStore::open(root,owner,memory,&storage);
+            CHECK(text(session.read_latest_cognition(input)->view().content)==(mode==1?"new assessment":"prior assessment"));
+            CHECK(text(session.read_cognition(input)->view().content)=="initial assessment");
+            CHECK(text(session.read_cognition_revision(input,prior)->view().content)=="prior assessment");
+            const auto sealed=session.read_cognition_revision(input,next);
+            CHECK(sealed.has_value());
+            CHECK(text(sealed->view().content)=="new assessment");
+            // Even when rename succeeded before failure, retry must sync the
+            // existing alias before acknowledging durable publication.
+            fail_latest_sync=true;
+            expect_throw<std::system_error>([&]{(void)session.save_cognition_revision(input,bytes("new assessment"));});
+            CHECK(!fail_latest_sync&&!session.usable()&&storage.used()==used);
+        }
+        {
+            auto session=SessionStore::open(root,owner,memory,&storage);
+            const auto calls=latest_sync_calls;
+            const auto record_calls=cognition_sync_calls;
+            CHECK(session.save_cognition_revision(input,bytes("new assessment"))==next);
+            CHECK(latest_sync_calls==calls+1&&storage.used()==used);
+            CHECK(cognition_sync_calls==record_calls+1);
+            CHECK(text(session.read_latest_cognition(input)->view().content)=="new assessment");
+            session.end();
+        }
+        CHECK(memory.used()==0);
+    }
     fs::remove_all(root);
     std::printf("PASS: %u session checks\n", checks);
 }

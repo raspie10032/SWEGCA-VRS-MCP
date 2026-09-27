@@ -99,7 +99,8 @@ streaming comparison export.
 into a staging name under cognition-latest and atomically renames that alias to
 the original-input key. The source record has already been synced; the alias
 directory is synced before success is returned. An identical currently selected
-record is reused without a rename. Explicitly republishing an older existing
+record is reused without a rename, but the containing directories are synced
+again before acknowledgement to complete any interrupted prior publication. Explicitly republishing an older existing
 result makes it the latest successfully published result without duplicating its
 physical payload. Latest means publication completion order, not highest step,
 file modification time, semantic confidence or a full chronological event log.
@@ -116,3 +117,15 @@ unusable until recovery. Earlier revision files and the initial record remain.
 Host example: params containing identity, inputOriginal and `latest:true` return
 both the selected revision digest and its record after restart without a prior
 client-held digest. No input route or new judgment is created by the query.
+
+## Publication failure retry
+
+Session tests wrap rename and fsync at the actual latest-alias and canonical
+record directories. They inject errors before alias replacement, after alias
+replacement at directory sync, and after linking the sealed canonical record.
+The failure poisons the active store, preserving initial and older results.
+Reopen can see the old or newly linked latest result according to the reached
+boundary. A retry must sync the canonical record directory, its session parent
+and the latest directory even when file identity already matches. Repeated sync
+failure is not reported as success; a successful retry adds no payload bytes.
+This is syscall fault/reopen coverage, not a physical power-loss experiment.
