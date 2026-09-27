@@ -74,6 +74,18 @@ int main(int argc,char** argv){
             if(mode!="create"&&mode!="open"&&mode!="limited-create"&&mode!="limited-open"&&mode!="ensure"&&mode!="limited-ensure")throw std::invalid_argument("invalid VRS mode");
             owned={host,path(config,"proxy"),path(config,"vrs"),std::string(mode),path(config,"root"),
                    path(config,"resourceConfig"),path(config,"proxyConfig"),backend};
+            // Deployment-owned TOML overrides reach only the wrapped server.
+            // Each is one literal argv value; no shell or CLI-option splitting.
+            if(const auto* overrides=config.find("backendConfig")){
+                if(overrides->kind!=Json::Kind::array)throw std::invalid_argument("backendConfig must be an array");
+                for(const auto& entry:overrides->values){
+                    const auto value=entry.string();
+                    const auto equal=value.find('=');
+                    if(equal==value.npos||equal==0||value.find('\0')!=value.npos)
+                        throw std::invalid_argument("backendConfig requires literal key=value overrides");
+                    owned.emplace_back("-c");owned.emplace_back(value);
+                }
+            }
         }else owned={backend};
         for(int index=1;index<argc;++index)owned.emplace_back(argv[index]);
         std::vector<char*> arguments;for(auto& value:owned)arguments.push_back(value.data());arguments.push_back(nullptr);

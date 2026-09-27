@@ -41,3 +41,28 @@ CPU 6·7, merge worker 2, 저장소 500,000,000,000 bytes, VRS 전송 예산
 
 재설치가 필요한 경우 기존 원경험과 Main identity를 보존하는 별도 갱신 작업이 필요하다.
 현재 설치기는 처음 설치만 지원하며 기존 데이터를 초기화하거나 호환 이관하지 않는다.
+
+## 파일 관측 MCP의 백엔드 등록
+
+설치기에 `swegca-content-observer`를 추가했다. wrapper의 선택 필드 `backendConfig`는
+TOML `key=value` 문자열 배열이며 app-server 시작에만 각각 `-c`의 단일 argv로 전달한다.
+셸을 실행하거나 문자열을 옵션으로 다시 분할하지 않는다. 원래 인수는 이어서 그대로
+전달한다. help/version 등 비서버 호출에는 이 등록을 추가하지 않는다.
+
+설치된 desktop.json에는 `mcp_servers.swegca_content_observer.command`와 `args`가
+추가됐다. 관측기의 PMR 한도 128MiB, 전송 예산 625000000B/s, 한 파일 상한 16MiB다.
+백엔드의 자식으로 실행되어 VRS와 동일한 프로세스 그룹 제한을 받는다. 전역 사용자
+config.toml을 수정하지 않았다. 기존 Main identity, proxy instance, 원경험을 유지했다.
+
+검증 결과:
+- wrapper literal argv/잘못된 설정/비서버 전달 41 checks, 실제 파일 관측 105 checks.
+- `tests/installed_observer_smoke.py INSTALLED_PREFIX`로 실제 설치 백엔드의
+  `mcpServerStatus/list`에 `observe_file_content_equality`가 등록된 것을 확인했다.
+- host/proxy/VRS/observer의 /proc 및 cgroup을 실행 중 읽어 동일 그룹을 확인했다.
+  memory.max=3999997952(4GB를 페이지 단위 내림), memory.swap.max=0, CPU=6-7.
+- 이 opt-in 검사는 해당 프로세스에서만 MCP 목록을 이 로컬 관측기로 한정했다.
+  다른 사용자 커넥터는 시작하지 않았으며 영속 설정은 변경하지 않았다.
+- 모델 호출·새 대화 생성 없이 정상 종료했다. 실제 GUI에서 모델이 도구를 선택하거나
+  도구 결과가 사용자 입력의 의미에 적합한지는 이 검사가 입증하지 않는다.
+- 관측기와 VRS의 개별 전송 예산 합계가 물리 SSD 5Gbps를 넘지 않도록 하는
+  시스템 전체 I/O 강제는 여전히 미완료다. RAM/CPU 그룹 확인과 구분한다.

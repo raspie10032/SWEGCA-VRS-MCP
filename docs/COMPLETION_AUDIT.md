@@ -1,5 +1,13 @@
 # 전체 목표 대비 현재 구성 감사
 
+## 최신 상태: 관측 MCP 등록과 그룹 자원 확인
+
+- 설치 wrapper의 백엔드 한정 CLI 설정으로 파일 관측 MCP를 등록했다. 전역 사용자
+  설정은 불변이다. 실제 설치 백엔드의 MCP 목록에서 도구를 확인했고 관측기와
+  host/proxy/VRS의 동일 cgroup, RAM 3999997952 bytes, swap 0, CPU 6-7을 확인했다.
+- 검증은 모델 호출/대화 생성 없이 수행했다. GUI 도구 선택·의미 적합성과 시스템
+  전체 SSD I/O 강제는 미완료다. DESKTOP_INSTALLATION.md 마지막 절 참조.
+
 ## 최신 상태: scoped 복구 연결 및 선택형 데스크톱 설치
 
 - 임시 및 Main scoped Replay의 실시간 비교 복구가 stdio까지 연결됐다. 과거 연결

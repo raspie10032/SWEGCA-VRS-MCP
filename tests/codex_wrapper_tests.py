@@ -34,6 +34,17 @@ with tempfile.TemporaryDirectory(prefix='swegca-wrapper-') as tmp:
                  ['app-server','proxy'],['app-server','daemon','start'],['--unknown','app-server'],
                  ['-c'],['app-server','--config']):
         result=run(args);check(result.returncode==1 and result.stdout==b'')
+    overrides=['mcp_servers.swegca_content_observer.command="/path with spaces ; $(literal)/observer"',
+               'mcp_servers.swegca_content_observer.args=["134217728","625000000","16777216"]']
+    config['backendConfig']=overrides;path.write_text(json.dumps(config))
+    args=['app-server','--listen=stdio://']
+    result=run(args);check(result.returncode==0)
+    check(json.loads(result.stdout)=={'role':'host','args':prefix+[part for item in overrides for part in ('-c',item)]+args})
+    result=run(['--version']);check(json.loads(result.stdout)=={'role':'backend','args':['--version']})
+    for invalid in ('not-an-array',[42],[''],['=missing-key'],['key=embedded\x00nul']):
+        config['backendConfig']=invalid;path.write_text(json.dumps(config))
+        result=run(['app-server']);check(result.returncode==1 and result.stdout==b'')
+    del config['backendConfig']
     config['backend']=str(exe);path.write_text(json.dumps(config))
     result=run(['--version']);check(result.returncode==1 and b'recursive' in result.stderr)
     path.write_text(' '*65537)

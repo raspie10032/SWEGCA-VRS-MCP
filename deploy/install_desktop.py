@@ -12,7 +12,7 @@ from pathlib import Path
 import shutil
 import tempfile
 
-BINS = ('swegca-codex-wrapper', 'swegca-desktop-host', 'swegca-app-server-proxy', 'swegca-vrs-mcp')
+BINS = ('swegca-codex-wrapper', 'swegca-desktop-host', 'swegca-app-server-proxy', 'swegca-vrs-mcp', 'swegca-content-observer')
 
 
 def desktop_argument(value):
@@ -64,7 +64,9 @@ def install(args):
                'proxy': str(prefix / 'bin/swegca-app-server-proxy'),
                'vrs': str(prefix / 'bin/swegca-vrs-mcp'), 'root': str(prefix / 'experience'),
                'resourceConfig': str(prefix / 'resources.json'),
-               'proxyConfig': str(prefix / 'proxy.json'), 'mode': 'limited-ensure'}
+               'proxyConfig': str(prefix / 'proxy.json'), 'mode': 'limited-ensure',
+               'backendConfig': ['mcp_servers.swegca_content_observer.command=' + json.dumps(str(prefix / 'bin/swegca-content-observer')),
+                                 'mcp_servers.swegca_content_observer.args=' + json.dumps(['134217728', '625000000', '16777216'])]}
     prefix.parent.mkdir(parents=True, exist_ok=True)
     entry.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='.swegca-install-', dir=prefix.parent) as temporary:
