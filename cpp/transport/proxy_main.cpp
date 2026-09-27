@@ -196,7 +196,7 @@ int main(int argc,char** argv){
                     if(serial==UINT64_MAX)throw std::overflow_error("proxy request IDs exhausted");
                     const auto found=bindings.find(plan.event().session());
                     if(found==bindings.end())throw std::runtime_error("unbound native session");
-                    AgentEventCommit commit(found->second,pump.parameters(plan,seed,step),"proxy/event/"+std::to_string(++serial),memory);
+                    AgentEventCommit commit(found->second,pump.metadata(plan,seed,step),plan.event().native_bytes(),"proxy/event/"+std::to_string(++serial),memory);
                     SWEGCA_INGRESS_STAGE("proxy_rpc_ready");
                     while(commit.stage()!=AgentEventCommit::Stage::complete)commit.accept(stream.exchange(commit.request()));
                     return true;

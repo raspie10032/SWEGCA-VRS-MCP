@@ -199,5 +199,8 @@ std::pmr::string encode_json(const Json& value,std::pmr::memory_resource& memory
 void append_json(std::pmr::string& destination,const Json& value,std::size_t suffix_capacity){
     destination.reserve(add_size(add_size(destination.size(),encoded_size(value)),suffix_capacity));encode(destination,value);
 }
+void append_json_string(std::pmr::string& destination,std::string_view text,std::size_t suffix_capacity){
+    destination.reserve(add_size(add_size(destination.size(),quoted_size(text)),suffix_capacity));quote(destination,text);
+}
 std::pmr::string quote_json(std::string_view text,std::pmr::memory_resource& memory){std::pmr::string out(&memory);out.reserve(quoted_size(text));quote(out,text);return out;}
 } // namespace swegca::transport

@@ -9,9 +9,9 @@ int main(){
   Json fields(&memory);fields.kind=Json::Kind::object;
   Json native(&memory);native.kind=Json::Kind::string;
   native.scalar.assign(1<<20,escaped?'\n':'x');
-  fields.keys.emplace_back("native");fields.values.push_back(std::move(native));
   const auto input=memory.used();
-  AgentEventCommit commit(identity,std::move(fields),"bench",memory);
+  AgentEventCommit commit(identity,std::move(fields),native.scalar,"bench",memory);
+  std::pmr::string empty(&memory);native.scalar.swap(empty);empty.clear();empty.shrink_to_fit();
   std::printf("{\"escaped\":%s,\"nativeBytes\":1048576,\"inputTrackedBytes\":%zu,\"requestBytes\":%zu,\"retainedTrackedBytes\":%zu,\"peakTrackedBytes\":%zu}\n",
     escaped?"true":"false",input,commit.request().size(),memory.used(),memory.peak_reserved());
  }

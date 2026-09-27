@@ -178,7 +178,7 @@ public:
         else {delivery.newline_=true;::close(delivery.socket_);delivery.socket_=-1;identity_->active[lane]=0;}
         return delivery.newline_;
     }
-    [[nodiscard]] Json parameters(const Delivery& delivery,std::uint64_t seed,std::uint64_t step) const{
+    [[nodiscard]] Json metadata(const Delivery& delivery,std::uint64_t seed,std::uint64_t step) const{
         validate(delivery);
         Json body(&memory_);body.kind=Json::Kind::object;
         const auto add=[&](std::string_view name,std::string_view value){
@@ -188,7 +188,6 @@ public:
         add("sequence",std::to_string(delivery.sequence_));
         add("observedAt",std::to_string(delivery.observed_));
         add("seed",std::to_string(seed));add("step",std::to_string(step));
-        add("native",delivery.event().native_bytes());
         add("sender",delivery.sender_==RpcSender::client?"client":"server");
         if(const auto sequence=delivery.request_sequence())add("requestSequence",std::to_string(*sequence));
         return body;

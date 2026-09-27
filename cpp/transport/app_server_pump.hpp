@@ -23,8 +23,8 @@ public:
         if(sender!=RpcSender::client&&sender!=RpcSender::server)throw std::invalid_argument("invalid pump sender");
         return sender==RpcSender::client?client_.buffered():server_.buffered();
     }
-    [[nodiscard]] Json parameters(const AppServerWire::Delivery& delivery,std::uint64_t seed,std::uint64_t step) const{
-        return wire_.parameters(delivery,seed,step);
+    [[nodiscard]] Json metadata(const AppServerWire::Delivery& delivery,std::uint64_t seed,std::uint64_t step) const{
+        return wire_.metadata(delivery,seed,step);
     }
     // One direction per call; the event-loop owner schedules both fairly.
     // Ingestion is globally serialized across directions to avoid assigning two

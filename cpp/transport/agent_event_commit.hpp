@@ -12,7 +12,9 @@ namespace swegca::transport {
 class AgentEventCommit final {
 public:
     enum class Stage { event, complete };
-    AgentEventCommit(std::string_view identity,Json parsed,
+    // Native bytes are borrowed only during construction; request/retry owns
+    // its complete encoding and never retains a view into the caller's event.
+    AgentEventCommit(std::string_view identity,Json parsed,std::string_view native,
         std::string_view id,std::pmr::memory_resource& memory)
         :memory_(memory),event_id_(id,&memory),event_(&memory),reply_(&memory){
         hex(identity);
@@ -23,12 +25,14 @@ public:
             for(std::size_t j=0;j<i;++j)if(parsed.keys[i]==parsed.keys[j])
                 throw std::invalid_argument("duplicate event parameter");
         if(parsed.find("identity"))throw std::invalid_argument("event target belongs to transport owner");
+        if(parsed.find("native"))throw std::invalid_argument("native bytes belong to delivery owner");
         Json target(&memory);target.kind=Json::Kind::string;target.scalar=identity;
         parsed.keys.emplace_back("identity");parsed.values.push_back(std::move(target));
         event_id_+="/event";
         event_="{\"jsonrpc\":\"2.0\",\"id\":"+quote_json(event_id_,memory_)+
             ",\"method\":\"swegca/agent/event\",\"params\":";
-        append_json(event_,parsed,1);event_+='}';
+        append_json(event_,parsed);event_.pop_back();
+        event_+=",\"native\":";append_json_string(event_,native,2);event_+="}}";
     }
     AgentEventCommit(const AgentEventCommit&)=delete;
     AgentEventCommit& operator=(const AgentEventCommit&)=delete;

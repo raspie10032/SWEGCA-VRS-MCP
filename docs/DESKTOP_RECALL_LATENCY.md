@@ -282,3 +282,40 @@ stdio process 2,560. New checks encode ordinary/escape-heavy values with budget
 for one output plus a small envelope (insufficient for doubling), and verify
 suffix-size overflow leaves the destination unchanged. No SWEGCA kernel,
 evidence semantics, native bytes or lifecycle decision was changed.
+
+## Avoid copying native bytes into RPC metadata
+
+Wire/Pump now expose small owned `metadata` fields. AgentEventCommit borrows the
+native bytes from the still-live delivery owner only for construction and writes
+them directly into its owned final envelope. It retains no borrowed view; retry
+and acknowledgement handling continue to own the complete request. Metadata
+cannot override identity or supply a second native field. The old intermediate
+Json native scalar and old `parameters` API were removed. Host-side native parse,
+source ownership, sequence handling and SWEGCA routing remain unchanged.
+
+`benchmarks/wire_memory.cpp` measures the PMR ownership chain from native parsing
+through request construction. Raw fixture source creation is outside the PMR
+budget in BOTH runs. The baseline was d118fe1 using old parameters; the new run
+uses metadata plus native borrowing. The event's source buffer and parsed fields
+remain alive in both. Results `wire-memory-before-native-borrow.jsonl` and
+`wire-memory-after-native-borrow.jsonl`:
+
+| Source text | Native envelope bytes | Before peak PMR | After peak PMR |
+| --- | ---: | ---: | ---: |
+| 1MiB x | 1,048,668 | 4,197,658 | 3,149,366 |
+| 1MiB newlines | 6,291,548 | 21,892,378 | 15,601,206 |
+
+The request sizes and retained bytes are unchanged: this removes a transient
+copy. This wider measurement is not directly comparable to the preceding
+commit-only memory tables. That smaller benchmark was updated for the new API,
+releasing its source after construction before reporting retained bytes.
+
+`desktop-recall-native-borrow.jsonl` records five samples per size: 64KiB median
+0.177871ms (prior 0.201872ms), 1MiB median 2.607565ms (prior 2.796657ms), maximum
+3.372642ms. Smaller sizes varied upward. All 1MiB samples still exceed 1ms.
+
+Verification: Wire 74, Pump 95, framing 29, JSON both paths 13,279, wrapper 33 and
+stdio subprocess 2,560 checks passed. Pump additionally rejects native override
+and invalid UTF-8 and proves an encoded request remains intact after the source
+string is replaced and shrunk. Actual app installation, aggregate RAM, large
+Main operation and full four-stage cognition remain separate unfinished work.

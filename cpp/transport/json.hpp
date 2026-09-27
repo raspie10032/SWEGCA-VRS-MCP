@@ -25,6 +25,7 @@ struct Json {
 // the unfinished message on failure; value must not alias the destination.
 // Optional suffix capacity reserves space for a caller-owned enclosing frame.
 void append_json(std::pmr::string& destination,const Json& value,std::size_t suffix_capacity=0);
+void append_json_string(std::pmr::string& destination,std::string_view text,std::size_t suffix_capacity=0);
 // Validate before output and emit quoted runs without a payload-sized copy.
 void write_json_string(std::ostream&,std::string_view);
 void write_json_string_content(std::ostream&,std::string_view);
