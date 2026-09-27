@@ -54,15 +54,16 @@ public:
     using AutomaticWork=std::optional<std::pair<std::uint64_t,std::uint64_t>>;
     Server(Runtime& runtime,MemoryBudget& memory,std::uint64_t frame,AutomaticWork automatic={})
         :runtime_(runtime),memory_(memory),frame_(frame),automatic_(automatic),work_requested_(automatic.has_value()),contexts_(&memory){}
-    [[nodiscard]] bool automatic_work() const noexcept{return automatic_.has_value();}
+    [[nodiscard]] bool automatic_work() const noexcept{return true;}
     bool advance_work(){
-        if(!automatic_||!ready_)return false;
-        if(work_requested_){
+        if(!ready_)return false;
+        if(automatic_&&work_requested_){
             if(!runtime_.work_scheduled())(void)runtime_.schedule_work(automatic_->first,automatic_->second);
             work_requested_=false;
         }
-        if(runtime_.work_scheduled())(void)runtime_.poll_work();
-        return runtime_.work_scheduled();
+        if(automatic_&&runtime_.work_scheduled())(void)runtime_.poll_work();
+        if(runtime_.work_scheduled())return automatic_.has_value();
+        return runtime_.maintain_memory();
     }
     void message(std::string_view line){
         SWEGCA_INGRESS_STAGE("host_frame");
@@ -623,6 +624,11 @@ int main(int argc,char** argv){
         settings.io_bytes_per_second=integer(config.at("ioBytesPerSecond"));
         settings.storage_bytes=integer(config.at("storageBytes"));
         settings.merge_workers=static_cast<std::uint32_t>(workers);
+        if(const auto* target=config.find("memoryTargetBytes")){
+            const auto value=integer(*target);
+            if(value>ram)throw std::invalid_argument("memory target exceeds RAM budget");
+            settings.memory_target_bytes=static_cast<std::size_t>(value);
+        }
         Server::AutomaticWork automatic;
         if(const auto* work=config.find("automaticWork")){
             if(work->kind!=Json::Kind::object)throw std::invalid_argument("automaticWork must contain seed and step");

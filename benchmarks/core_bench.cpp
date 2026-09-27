@@ -73,6 +73,7 @@ __attribute__((noinline)) bool measured_page_discard(bool owned,bool sole) noexc
  return discard_metadata_page(owned,sole);
 }
 int main(){
+ measure("metadata_pressure",[&](std::size_t i){auto result=metadata_pressure(i%100,75,i%7==0);consume(result);});
  measure("discard_metadata_page",[&](std::size_t i){auto result=measured_page_discard(i%2,i%3!=0);consume(result);});
  measure("metadata_release",[&](std::size_t i){auto result=measured_metadata(i%2,i%3,i%5!=0);consume(result);});
  std::array<EvidenceTally,64> fixtures{};

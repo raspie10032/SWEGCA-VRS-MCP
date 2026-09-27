@@ -1099,6 +1099,28 @@ for line in sys.stdin:
         check(c.call('tools/call',{'name':'vrs_replay','arguments':{
             'receipt':current['receipt'],'candidate':'0'}})['result']['isError'])
         c.close()
+    # Idle memory management works independently of automatic Main merging.
+    pressure_root=root/'idle-pressure';pressure_root.mkdir()
+    pressure_config=root/'idle-pressure.json'
+    pressure_config.write_text(json.dumps(dict(config,memoryTargetBytes='1')))
+    c=Client('create',pressure_root,pressure_config);c.initialize()
+    check(c.call('swegca/start',{'identity':identity(221),'name':'pressure'})['result']=={})
+    expected=None
+    for n in range(31):
+        result=c.call('swegca/retain',event('pressure',sequence=str(n)))['result']
+        if n==15:expected=result['original']
+    check(c.call('swegca/end')['result']=={})
+    check(c.call('swegca/work',{'seed':'7','step':'0'})['result']['merged']=='1')
+    deadline=time.monotonic()+5
+    while time.monotonic()<deadline and not list((pressure_root/'metadata-pages').glob('*.block')):
+        check(c.p.poll() is None);time.sleep(.01)
+    check(bool(list((pressure_root/'metadata-pages').glob('*.block'))))
+    check(c.call('swegca/start',{'identity':identity(222),'name':'pressure-query'})['result']=={})
+    recall=c.call('swegca/receive',event('pressure-query'))['result']
+    replay=c.call('tools/call',{'name':'vrs_replay','arguments':{'receipt':recall['receipt'],'candidate':'15'}})['result']['structuredContent']
+    check(replay['original']==expected)
+    c.close()
+    check(not list((pressure_root/'metadata-pages').glob('*.block')))
     # A separate config file must not change the root being measured.
     def stored_bytes():
         seen=set();total=0

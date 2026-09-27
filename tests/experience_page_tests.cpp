@@ -89,6 +89,10 @@ int main(){
    CHECK(!std::filesystem::exists(root/"tail")&&!std::filesystem::exists(root/"pinned")&&!std::filesystem::exists(root/"unused"));
   }
   CHECK(!std::filesystem::exists(root/"segment"));
+  CHECK(!metadata_pressure(9,10,false)&&!metadata_pressure(10,10,false));
+  CHECK(metadata_pressure(11,10,false)&&!metadata_pressure(11,10,true));
+  CHECK(!metadata_page_beneficial(false,10,10)&&metadata_page_beneficial(false,11,10));
+  CHECK(metadata_page_beneficial(true,1,10));
   for(bool same:{false,true})for(bool sole:{false,true})CHECK(discard_metadata_page(same,sole)==(same&&sole));
   {
    const auto baseline=storage.used();

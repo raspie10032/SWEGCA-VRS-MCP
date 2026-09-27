@@ -34,6 +34,13 @@ public:
     [[nodiscard]] bool page_out(const architecture::DigestBytes& connection,std::size_t index,
         const std::filesystem::path& path,const architecture::DigestBytes& page,StorageBudget* storage=nullptr) const;
     [[nodiscard]] std::uint64_t generation() const noexcept { return generation_; }
+    [[nodiscard]] std::optional<architecture::DigestBytes> next_connection(const architecture::DigestBytes& lower) const noexcept {
+        return connections_.next_key(lower);
+    }
+    [[nodiscard]] bool page_candidate(const architecture::DigestBytes& key,std::size_t& index) const noexcept {
+        const auto* entry=connections_.find(key);
+        return entry&&entry->connection.page_candidate(index);
+    }
     [[nodiscard]] bool has_source(const architecture::DigestBytes& identity) const noexcept { return merged_.contains(identity); }
     [[nodiscard]] std::size_t region_count() const noexcept { return connections_.region_count(); }
     [[nodiscard]] std::size_t largest_region() const noexcept { return connections_.largest_region(); }

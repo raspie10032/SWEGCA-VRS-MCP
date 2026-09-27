@@ -30,6 +30,7 @@ struct RuntimeConfig {
     std::uint32_t merge_workers = 1;
     std::uint64_t storage_bytes = 500000000000ULL;
     std::uint64_t io_bytes_per_second = 625000000;
+    std::size_t memory_target_bytes = 0; // zero selects 75% of the caller's RAM budget
 };
 
 // Main's serialized lifecycle owner. Destruction never implies session end.
@@ -88,6 +89,9 @@ public:
     // Explicit owner maintenance outside input and while no merge job exists.
     // Original stores remain authoritative; this only releases sealed metadata.
     [[nodiscard]] bool page_out_main(const architecture::DigestBytes&,std::size_t original_index);
+    // Idle owner maintenance: visits at most one segment, never called by input.
+    // true requests another idle opportunity; false means relieved/exhausted/busy.
+    [[nodiscard]] bool maintain_memory();
     void define_connection(const architecture::DigestBytes&);
     [[nodiscard]] RecordedRefinement observe(const architecture::DigestBytes&, const OriginalExperienceView&,
         const architecture::kernel::EvidenceObservation&, std::uint64_t seed, std::uint64_t step);
@@ -145,5 +149,7 @@ private:
     Active* active_=nullptr;
     std::optional<Work> work_;
     std::uint64_t page_attempt_ = 0;
+    architecture::DigestBytes page_cursor_{};
+    std::size_t page_index_=0;
 };
 } // namespace swegca::vrs

@@ -22,10 +22,14 @@ int main(){
  Failing failing;MemoryBudget memory(8<<20,&failing);
  {
   ConnectionRegions<Value> regions(memory,8);ConnectionRegions<Value>::Entries pending(&memory);
+  CHECK(!regions.next_key(key(0)));
   for(unsigned n=1;n<=65;++n)pending.try_emplace(key(n),n);
   auto first=regions.prepare(pending);CHECK(regions.region_count()==0);
   failing.remaining=0;regions.commit(first,pending);failing.remaining=SIZE_MAX;
   CHECK(pending.empty()&&regions.region_count()==9&&regions.largest_region()==8);
+  CHECK(regions.next_key(key(0))==key(1));
+  for(unsigned n=1;n<=65;++n)CHECK(regions.next_key(key(n))==key(n));
+  CHECK(!regions.next_key(key(66)));
   const auto* preserved=regions.find(key(65));const auto* unrelated=regions.find(key(30));
   CHECK(!regions.find(key(0))&&!regions.find(key(100)));
   for(unsigned n=1;n<=10;++n)pending.try_emplace(key(n),n+1000);

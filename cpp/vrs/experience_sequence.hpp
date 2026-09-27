@@ -148,6 +148,17 @@ public:
     }
     // Serialized owner operation, outside input and merge preparation. Borrowed
     // views must not be used concurrently. Explicit pins/snapshots prevent eviction.
+    [[nodiscard]] bool page_candidate(std::size_t& index) const noexcept {
+        if(index>=size_)return false;
+        const auto& chunk=chunks_[chunk_index(index)];
+        index+=chunk->used-chunk_offset(index);
+        const auto action=architecture::kernel::metadata_release(chunk->used==chunk->capacity,
+            chunk.use_count(),chunk->backing!=nullptr);
+        // First backing must actually save RAM; tiny segments are retained.
+        return action!=architecture::kernel::MetadataRelease::retain&&chunk->data.load()!=nullptr&&
+            architecture::kernel::metadata_page_beneficial(chunk->backing!=nullptr,
+                chunk->capacity*sizeof(ExperienceEvidence),sizeof(Chunk::Backing));
+    }
     [[nodiscard]] bool page_out(std::size_t index,const std::filesystem::path& path,
         const architecture::DigestBytes& identity,const architecture::kernel::EvidenceRules& rules,
         StorageBudget* storage=nullptr) const {

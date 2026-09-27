@@ -495,5 +495,26 @@ int main(){
    CHECK(!recalled.temporary()&&host.replay(recalled,15).location()==selected);
   }
  }
+ {
+  const auto path=root/"pressure";fs::create_directory(path);
+  auto cfg=config;cfg.memory_target_bytes=1;
+  auto host=Runtime::create(path,cfg,memory);host.start_session(id(240),"pressure-source");
+  ExperienceLocation expected;
+  for(unsigned n=0;n<31;++n){
+   const auto value=host.retain({n,n,"pressure-source","user","text/plain",content},7,n).original;
+   if(n==15)expected=value;
+  }
+  host.end_session();CHECK(host.work(7,31)==1);host.start_session(id(241),"pressure-reader");
+  const auto drain=[&]{unsigned steps=0;while(host.maintain_memory()){CHECK(++steps<40);}return steps;};
+  {
+   auto pinned=host.input("text/plain",content);const auto bytes=host.storage().used();
+   CHECK(drain()>0);CHECK(host.storage().used()==bytes);
+   CHECK(!fs::exists(path/"metadata-pages"));
+  }
+  const auto before=memory.used();CHECK(drain()>0);CHECK(memory.used()<before);
+  const auto bytes=host.storage().used();CHECK(drain()>0);CHECK(host.storage().used()==bytes);
+  const auto r=reads;auto recalled=host.input("text/plain",content);CHECK(reads==r);
+  CHECK(host.replay(recalled,15).location()==expected);
+ }
  CHECK(memory.used()==0);fs::remove_all(root);std::printf("runtime lifecycle tests: %u checks passed\n",checks);
 }

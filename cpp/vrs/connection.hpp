@@ -79,6 +79,7 @@ private:
         const architecture::DigestBytes& identity,StorageBudget* storage) const {
         return experiences_.page_out(index,path,identity,rules_,storage);
     }
+    [[nodiscard]] bool page_candidate(std::size_t& index) const noexcept{return experiences_.page_candidate(index);}
     void inherit_experiences(const Connection&);
     void validate_experience(const ExperienceEvidence&) const;
     void prepare_append(const ExperienceEvidence& experience);

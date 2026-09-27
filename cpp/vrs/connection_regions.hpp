@@ -7,6 +7,7 @@
 #include <vector>
 #include <stdexcept>
 #include <limits>
+#include <optional>
 
 namespace swegca::vrs {
 // Main-owned address regions. Entries retain their existing graph connections,
@@ -48,6 +49,14 @@ public:
         return entry==region->second.entries.end()?nullptr:&entry->second;
     }
     [[nodiscard]] std::size_t region_count() const noexcept{return regions_.size();}
+    [[nodiscard]] std::optional<Key> next_key(const Key& lower) const noexcept {
+        if(regions_.empty())return std::nullopt;
+        auto region=std::prev(regions_.upper_bound(lower));
+        auto entry=region->second.entries.lower_bound(lower);
+        if(entry!=region->second.entries.end())return entry->first;
+        if(++region==regions_.end())return std::nullopt;
+        return region->second.entries.begin()->first;
+    }
     [[nodiscard]] std::size_t largest_region() const noexcept{
         std::size_t largest=0;for(const auto& [key,region]:regions_){(void)key;largest=std::max(largest,region.entries.size());}return largest;
     }

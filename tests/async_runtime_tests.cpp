@@ -65,6 +65,7 @@ int main(){
   const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(5);
   while(!upstream.entered.load()&&std::chrono::steady_clock::now()<deadline){(void)runtime.poll_work();std::this_thread::yield();}
   CHECK(upstream.entered.load());
+  CHECK(!runtime.maintain_memory());
   const auto storage_before=runtime.storage().used();
   throws<std::logic_error>([&]{(void)runtime.page_out_main(input_cue("text/plain",bytes),0);});
   CHECK(runtime.storage().used()==storage_before);

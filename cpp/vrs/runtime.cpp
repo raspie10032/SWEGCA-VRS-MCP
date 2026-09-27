@@ -186,6 +186,31 @@ StoredExperience Runtime::read_cognition_original(const DigestBytes& source,cons
     // reselection, and no reconstruction of a current Re-evidence authority.
     return found->second.store->read(original,config_.read_limit);
 }
+bool Runtime::maintain_memory() {
+    const auto target=config_.memory_target_bytes?config_.memory_target_bytes:memory_.limit()-memory_.limit()/4;
+    if(!metadata_pressure(memory_.used(),target,work_.has_value()))return false;
+    const auto& graph=main_.graph();
+    const auto key=graph.next_connection(page_cursor_);
+    if(!key){page_cursor_={};page_index_=0;return false;}
+    if(*key!=page_cursor_){page_cursor_=*key;page_index_=0;}
+    const auto index=page_index_;
+    const bool candidate=graph.page_candidate(*key,page_index_);
+    if(page_index_==index){
+        // Advance the fixed-width address without a second graph walk.
+        page_index_=0;
+        for(std::size_t n=page_cursor_.size();n;--n){
+            auto value=std::to_integer<unsigned>(page_cursor_[n-1]);
+            page_cursor_[n-1]=std::byte((value+1)&255);
+            if(value!=255)return true;
+        }
+        return false;
+    }
+    if(candidate){
+        try {(void)page_out_main(*key,index);}
+        catch(const std::bad_alloc&){return false;} // leave originals intact; no allocation retry loop
+    }
+    return metadata_pressure(memory_.used(),target,false);
+}
 bool Runtime::page_out_main(const DigestBytes& connection,std::size_t index) {
     if(work_)throw std::logic_error("cannot page out during Main preparation");
     const auto& graph=main_.graph();
