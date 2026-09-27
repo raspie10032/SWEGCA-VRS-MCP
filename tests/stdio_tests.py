@@ -754,6 +754,54 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     check(shared_again['result']['temporary'] and shared_again['result']['candidateCount']=='1')
     check(shared_again['result']['memory']['original']==shared_reply['original'])
     c.close()
+    # Turn notifications keep the exact originating input, including after
+    # restart and with overlapping turns. They are not evidence of success.
+    turns_root=root/'native-turns';turns_root.mkdir()
+    c=Client('create',turns_root,path);c.initialize()
+    turns_binding={'provider':'codex','instance':'turn-test','session':'turn-thread','protocol':'app-server'}
+    turns_id=c.call('swegca/agent/attach',turns_binding)['result']['identity']
+    check(c.call('swegca/select',{'identity':turns_id})['result']=={})
+    def turn_frame(n,sender,frame,request=None):
+        p={'sequence':str(n),'observedAt':str(n),'seed':'7','step':str(n),
+            'sender':sender,'native':json.dumps(frame)}
+        if request is not None:p['requestSequence']=str(request)
+        return c.call('swegca/agent/event',p)['result']
+    def start_turn(n,rpc,text):
+        return turn_frame(n,'client',{'id':rpc,'method':'turn/start',
+            'params':{'threadId':'turn-thread','input':[{'type':'text','text':text}]}})
+    first_turn=start_turn(0,1,'first independent purpose')
+    turn_frame(1,'server',{'id':1,'result':{'turn':{'id':'turn-a'}}},0)
+    second_turn=start_turn(2,2,'second independent purpose')
+    turn_frame(3,'server',{'id':2,'result':{'turn':{'id':'turn-b'}}},2)
+    c.close()
+    c=Client('open',turns_root,path);c.initialize()
+    check(c.call('swegca/agent/attach/resume',turns_binding)['result']['nextSequence']=='4')
+    check(c.call('swegca/select',{'identity':turns_id})['result']=={})
+    for n,turn,target in ((4,'turn-a',first_turn),(5,'turn-b',second_turn)):
+        frame={'method':'item/completed','params':{'threadId':'turn-thread','turnId':turn,
+            'item':{'type':'commandExecution','id':'command-'+turn,'exitCode':0}}}
+        result=turn_frame(n,'server',frame)
+        check(result['refinement']['status']==0)
+        original=c.call('swegca/agent/original',{'identity':turns_id,'sequence':str(n)})['result']
+        check(original['context']==target['original']['digest'])
+        check(json.loads(original['native'])==frame)
+        check(turn_frame(n,'server',frame)['duplicate'])
+    unknown={'method':'item/completed','params':{'threadId':'turn-thread','turnId':'unknown'}}
+    turn_frame(6,'server',unknown)
+    original=c.call('swegca/agent/original',{'identity':turns_id,'sequence':'6'})['result']
+    check(original['context'] not in (first_turn['original']['digest'],second_turn['original']['digest']))
+    # Another thread cannot acquire this owner's turn binding.
+    check('error' in c.call('swegca/agent/event',{'sequence':'7','observedAt':'7','seed':'7','step':'7',
+        'sender':'server','native':json.dumps({'method':'item/completed',
+            'params':{'threadId':'other-thread','turnId':'turn-a'}})}))
+    # Conflicting same-thread ownership cannot silently choose either purpose.
+    fourth=start_turn(7,4,'fourth purpose')
+    turn_frame(8,'server',{'id':4,'result':{'turn':{'id':'turn-a'}}},7)
+    turn_frame(9,'server',{'method':'item/completed','params':{'threadId':'turn-thread','turnId':'turn-a'}})
+    ambiguous=c.call('swegca/agent/original',{'identity':turns_id,'sequence':'9'})['result']
+    check(ambiguous['context'] not in (first_turn['original']['digest'],fourth['original']['digest']))
+    check(c.call('swegca/work',{'seed':'7','step':'0'})['result']['merged']=='0')
+    c.close()
     # Responses bind to an earlier committed request original, not a selected
     # session guess or a volatile pending map. The relation survives restart.
     response_root=root/'app-responses';response_root.mkdir()

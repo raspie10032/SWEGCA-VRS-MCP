@@ -171,3 +171,24 @@ sequence를 소비하지 않는다. 재시작에서는 모든 원경험을 스�
 결과로부터 관측을 자동 생산하는 기능의 완료가 아니다. 현재 실제 producer가 제공하는
 관측이 없는 자연어는 계속 insufficient다. 다음 구현은 이 결합 경로에 실제 관측
 생산자를 연결하는 부분이며, 외부 LLM 판정이나 키워드 참/거짓 규칙을 추가하지 않는다.
+
+## 실제 turn 결과의 입력 계보 연결 (2026-09-27)
+
+서버 notification의 params.threadId/turnId는, 앞서 봉인한 client turn/start와 그
+요청에 검증되어 결합된 server response의 result.turn.id를 통해서만 입력 원경험에
+연결한다. RPC ID 재사용이나 현재 선택된 마지막 입력을 근거로 연결하지 않는다.
+서버 응답의 context·connection, 앞선 client 원경험, 실제 request/response ID를
+재확인한다. 같은 thread/turn에 둘 이상의 서로 다른 시작 입력이 있으면 해당 키의
+소유를 미정으로 남기며 어느 한 입력을 고르지 않는다. 알 수 없는 turn도 미연결이다.
+
+연결된 notification은 원문 전체를 보존하고 실제 입력의 hypothesis와 원경험 digest
+context에 insufficient 관측으로 기록한다. 명령 exitCode=0은 사용자 목적 달성이나
+SWEGCA 승인으로 승격하지 않는다. 요청 전송/실행 성공과 의미적 목적 검증을 혼동하지
+않는다. 이벤트의 본문을 추가 복제한 증거를 만들지 않는다.
+
+파생 turn 색인은 서버 출력 notification에서 필요한 때만 갱신한다. 사용자 입력의
+Déjà vu→Recall 앞에는 넣지 않는다. 재시작 후 원경험으로 재구축되며 PMR VRS 예산을
+사용한다. 현재 복구/최초 출력은 기존 응답 원문을 읽고 대응 요청을 역순 탐색하므로
+전체 경험 수와 무관한 상수 비용은 아니다. 입력 지연 1ms 달성 증거로 사용하지 않는다.
+이미 기록된 notification의 재전송은 당시의 원경험을 재사용하며 후발 turn 응답으로
+기존 계보를 소급 변경하지 않는다. 명시적 세션 종료 전 Main 병합 금지도 유지한다.

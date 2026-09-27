@@ -1166,3 +1166,16 @@ Main 병합은 0이었다. 모델 생성 요청은 0회, 기존 GUI 설정은 �
   세 관측 outcome 기록 및 재시작 순번 복원도 확인했다.
 - 한계: 자동 자연어 의미 검증과 자동 producer 관측 생성은 미완료다. 이 결과를 1번
   기술 한계 전체 해소나 현재 데스크톱의 실제 생산자 통합 완료로 보고하지 않는다.
+
+## 2026-09-27: 출력·도구 결과와 사용자 입력의 turn 계보
+
+- 설치된 codex app-server의 generate-json-schema를 임시 경로에 생성하여
+  item/completed와 commandExecution.exitCode 필드를 확인했다. 모델 호출 없음.
+- 실제 host ingress에서 봉인된 turn/start request/response로만 turn 소유 입력을
+  결정한다. 서버 notification은 해당 입력과 같은 연결/원경험 context에 저장된다.
+- exitCode=0도 insufficient 유지. 셔플/코어 검증과 별개의 성공 판정기를 만들지 않았다.
+- CPU 6,7 및 make -j2 빌드 후 stdio subprocess **4129 checks passed**.
+  동시에 존재하는 두 turn, 재시작 복원, unknown turn, 다른 thread 거부,
+  동일 turn의 상충 소유 입력 미결정, 원문 보존, 재전송, merged=0을 확인했다.
+- 현재 데스크톱 앱에서 실제 사용자 turn을 수행한 증거나 자연어 의미 검증 완성 증거는
+  아니다. 실제 출력 계보의 연결을 구현한 상태이며 관측의 의미적 생산은 남아 있다.

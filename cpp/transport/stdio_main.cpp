@@ -113,8 +113,10 @@ private:
     bool work_requested_=false;
     struct Context {
         struct Delivery { DigestBytes fingerprint; ExperienceLocation original; DigestBytes context{}; ExperienceSender sender=ExperienceSender::unspecified; DigestBytes connection{}; };
-        Context(MemoryBudget& memory,std::string_view native,bool app,bool connection):deliveries(&memory),native_session(native,&memory),app_server(app),connection_scope(connection){}
+        Context(MemoryBudget& memory,std::string_view native,bool app,bool connection):deliveries(&memory),turn_inputs(&memory),native_session(native,&memory),app_server(app),connection_scope(connection){}
         std::pmr::map<std::uint64_t,Delivery> deliveries;
+        std::pmr::map<std::pmr::string,std::optional<Delivery>,std::less<>> turn_inputs;
+        std::uint64_t indexed_turn_deliveries=0;
         bool native_ready=false;
         std::pmr::string native_session;
         bool app_server=false;
@@ -140,6 +142,48 @@ private:
     Context& context() const {
         if(!selected_)throw std::invalid_argument("no selected session");
         return *selected_;
+    }
+    // Derive turn provenance only from authenticated request/response pairs.
+    // This runs for output notifications, never before input Recall. The cache
+    // is rebuilt from originals after restart; it is not a new evidence source.
+    std::pmr::string turn_key(std::string_view thread,std::string_view turn){
+        std::pmr::string key(std::to_string(thread.size()),&memory_);key+=':';key+=thread;key+=turn;return key;
+    }
+    std::optional<Context::Delivery> turn_input(Context& state,std::string_view thread,std::string_view turn){
+        for(auto it=state.deliveries.lower_bound(state.indexed_turn_deliveries);it!=state.deliveries.end();++it){
+            const auto& delivered=it->second;
+            if(delivered.sender==ExperienceSender::server){
+                const auto stored=runtime_.session().read_original(delivered.original);
+                const auto payload=evidence_payload(stored);
+                const std::string_view bytes(reinterpret_cast<const char*>(payload.content.data()),payload.content.size());
+                const auto fields=parse_json(bytes,memory_);
+                const auto* result=fields.find("result");
+                const auto* returned_turn=result&&result->kind==Json::Kind::object?result->find("turn"):nullptr;
+                const auto* id=returned_turn&&returned_turn->kind==Json::Kind::object?returned_turn->find("id"):nullptr;
+                if(!fields.find("method")&&id&&id->kind==Json::Kind::string&&!id->scalar.empty()){
+                    for(auto prior=it;prior!=state.deliveries.begin();){
+                        --prior;
+                        const auto& input=prior->second;
+                        if(input.original.digest!=delivered.context||input.connection!=delivered.connection||
+                            input.sender!=ExperienceSender::client)continue;
+                        const auto request=runtime_.session().read_original(input.original);
+                        const auto request_payload=evidence_payload(request);
+                        const std::string_view request_bytes(reinterpret_cast<const char*>(request_payload.content.data()),request_payload.content.size());
+                        auto event=state.connection_scope?adapt_codex_app_server_connection(request_bytes,state.native_session,memory_):
+                            adapt_codex_app_server(request_bytes,memory_);
+                        if(event.native_name()!="turn/start")break;
+                        AppServerRequests requests(memory_,1);requests.track(RpcSender::client,event);
+                        (void)requests.bind(bytes,RpcSender::server);
+                        auto [at,inserted]=state.turn_inputs.try_emplace(turn_key(event.fields().at("params").at("threadId").string(),id->scalar),input);
+                        if(!inserted&&at->second&&at->second->original!=input.original)at->second.reset();
+                        break;
+                    }
+                }
+            }
+            state.indexed_turn_deliveries=it->first+1;
+        }
+        const auto found=state.turn_inputs.find(turn_key(thread,turn));
+        return found==state.turn_inputs.end()?std::nullopt:found->second;
     }
     void select_context(const DigestBytes& identity){
         const auto found=contexts_.find(identity);
@@ -428,6 +472,21 @@ private:
                 throw std::invalid_argument("thread resume must originate from client");
             if(sender==ExperienceSender::client&&event.native_name()=="thread/started")
                 throw std::invalid_argument("thread started must originate from server");
+            // A notification's turn ID is a provenance reference, not a
+            // successful outcome. Keep the observation insufficient until an
+            // actual producer supplies evidence about the recorded input.
+            if(!request_original&&sender==ExperienceSender::server&&state.app_server&&
+                !state.deliveries.contains(integer(p.at("sequence")))&&!event.fields().find("id")&&
+                event.kind()==swegca::architecture::kernel::AgentEventKind::content){
+                const auto* params=event.fields().find("params");
+                const auto* turn=params&&params->kind==Json::Kind::object?params->find("turnId"):nullptr;
+                const auto* thread=params&&params->kind==Json::Kind::object?params->find("threadId"):nullptr;
+                if(turn&&turn->kind==Json::Kind::string&&thread&&thread->kind==Json::Kind::string){
+                    if(const auto input=turn_input(state,thread->scalar,turn->scalar)){
+                        request_original=input->original;request_connection=input->connection;
+                    }
+                }
+            }
             const auto sequence=integer(p.at("sequence")),observed=integer(p.at("observedAt"));
             const auto seed=integer(p.at("seed")),step=integer(p.at("step"));
             const OriginalExperienceView original{sequence,observed,state.native_session,state.native_source(),
@@ -499,7 +558,7 @@ private:
                 slot->second.context=recorded.context;
                 slot->second.connection=recorded.refinement.connection();committed=true;
                 invalidate_cognition(recorded);
-                if(request_original)binding->recorded(*response);
+                if(binding)binding->recorded(*response);
                 slot->second.fingerprint=agent_delivery_identity(sequence,observed,event.native_bytes());
                 return "{\"original\":"+address(recorded.original,memory_)+",\"refinement\":"+refinement(recorded.refinement,memory_)+"}";
             } catch(...) {
