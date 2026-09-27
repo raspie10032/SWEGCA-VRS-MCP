@@ -33,7 +33,8 @@ SessionRuntime::Slot::~Slot() {
     memory.deallocate(connection, sizeof(PersistentConnection), alignof(PersistentConnection));
 }
 SessionRuntime::SessionRuntime(SessionStore& store, MemoryBudget& memory, std::uint64_t limit, std::uint32_t workers)
-    : store_(store), memory_(memory), read_limit_(limit), catalog_(store, memory, limit), connections_(&memory), cues_(&memory),contexts_(&memory) {
+    : store_(store), memory_(memory), read_limit_(limit), catalog_(store, memory, limit), connections_(&memory), cues_(&memory),contexts_(&memory),
+      dialogue_context_(input_session_context(store.identity(),store.name())) {
     if (!workers) throw std::invalid_argument("session recovery worker count must be positive");
     struct Task { Slot* slot; ExperienceLocation head; };
     std::pmr::vector<Task> tasks(&memory_);tasks.reserve(catalog_.heads().size());
@@ -61,7 +62,9 @@ SessionRuntime::SessionRuntime(SessionStore& store, MemoryBudget& memory, std::u
     for (const auto& [identity, slot] : connections_) {
         const auto experiences = slot.connection->state().experiences();
         for (std::size_t i=0; i<experiences.size(); ++i){
-            has_dialogue_input_=has_dialogue_input_||experiences[i].has_input_key();
+            has_dialogue_input_=has_dialogue_input_||
+                (experiences[i].value().context==dialogue_context_&&
+                 context_reference_eligible(experiences[i].has_input_key(),true));
             cues_.try_emplace(experiences[i].cue()).first->second.push_back({identity, i});
             contexts_.try_emplace(experiences[i].value().context).first->second.push_back({identity,i});
         }
@@ -103,7 +106,8 @@ RecordedRefinement SessionRuntime::observe(const DigestBytes& identity, const Or
             return a.connection<b.connection||(a.connection==b.connection&&a.original_index<b.original_index);
         });
         contexts.insert(position,contextual);
-        has_dialogue_input_=has_dialogue_input_||saved.has_input_key();
+        has_dialogue_input_=has_dialogue_input_||
+            (saved.value().context==dialogue_context_&&context_reference_eligible(saved.has_input_key(),true));
         return {saved.original(), std::move(report)};
     } catch (...) { usable_ = false; throw; }
 }
@@ -170,7 +174,7 @@ ExperienceRouter::ExperienceRouter(SessionRuntime& temporary, MemoryBudget& memo
     : temporary_(temporary), memory_(memory),
       issuer_(std::allocate_shared<std::byte>(std::pmr::polymorphic_allocator<std::byte>(&memory))),
       mounted_(&memory), main_(&memory), main_cues_(&memory),
-      session_context_(input_session_context(temporary.store_.identity(),temporary.store_.name())) {}
+      session_context_(temporary.dialogue_context_) {}
 void ExperienceRouter::mount_main(const SessionRuntime& session) {
     if (merged_main_) throw std::logic_error("cannot mix merged Main with session candidates");
     if (!main_session_readable(session.phase(), session.usable()))

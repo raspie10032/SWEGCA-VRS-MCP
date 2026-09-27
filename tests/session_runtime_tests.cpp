@@ -59,6 +59,33 @@ int main() {
     CHECK(familiarity_key(false,false)==FamiliarityKey::missing);
     CHECK(familiarity_key(true,true)==FamiliarityKey::exact);
     CHECK(familiarity_key(false,true)==FamiliarityKey::continuation);
+    {
+        // An explicitly keyed observation in another recorded context is not
+        // evidence that this session's lifecycle-only context can seed dialogue.
+        const auto verify=[&](SessionRuntime& live){
+            ExperienceRouter route(live,memory);
+            const auto before_reads=reads,before_writes=writes;
+            auto recalled=route.input("text/plain",std::as_bytes(std::span(followup)));
+            CHECK(recalled.key_kind()==FamiliarityKey::missing);
+            CHECK(!recalled.temporary()&&!recalled.familiar());
+            CHECK(reads==before_reads&&writes==before_writes);
+        };
+        {
+            auto store=SessionStore::create(root,id(240),"seed-boundary",65536,memory);
+            SessionRuntime live(store,memory,8192);
+            (void)live.retain_input(input("seed-boundary",0),1.0,policy,0,0);
+            live.define_connection(id(241),1.0,policy);
+            EvidenceObservation value;value.hypothesis=id(241);value.source=id(242);
+            value.context=id(243);value.producer=id(244);value.observed_at=1;
+            (void)live.observe(id(241),input("seed-boundary",1),value,1,1,id(245));
+            verify(live);
+        }
+        {
+            auto store=SessionStore::open(root,id(240),memory);
+            SessionRuntime live(store,memory,8192);verify(live);
+        }
+    }
+    CHECK(memory.used()==0);
     ExperienceLocation first;
     double saved_strength=0;
     {

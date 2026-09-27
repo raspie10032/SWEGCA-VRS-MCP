@@ -81,6 +81,7 @@ private:
     // Derived only from sealed observations, not similarity or inferred truth.
     std::pmr::map<architecture::DigestBytes, std::pmr::vector<CueReference>> contexts_;
     bool usable_ = true;
+    const architecture::DigestBytes dialogue_context_;
     bool has_dialogue_input_ = false;
 };
 
