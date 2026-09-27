@@ -40,14 +40,22 @@ void ExperiencePage::discard() noexcept {
     if(block_.fd_<0)return;
     struct stat owned{},named{};
     if(::fstat(block_.fd_,&owned)<0||::lstat(path_.c_str(),&named)<0)return;
+    // This private one-record block reserves its complete capacity before
+    // writing. A failed append poisons writable_ without publishing location_.
+    // Its physical prefix may be shorter than the retained reservation.
+    const bool failed_append=location_.bytes==0&&!block_.writable_;
+    const auto physical=owned.st_size<0?0:static_cast<std::uint64_t>(owned.st_size);
+    const bool expected_extent=failed_append?
+        physical>=ExperienceBlock::header_bytes&&physical<=block_.capacity_:
+        physical==block_.end_;
     const bool same=S_ISREG(named.st_mode)&&owned.st_dev==named.st_dev&&owned.st_ino==named.st_ino&&
-        owned.st_size>=0&&static_cast<std::uint64_t>(owned.st_size)==block_.end_;
+        owned.st_size>=0&&expected_extent;
     if(!architecture::kernel::discard_metadata_page(same,owned.st_nlink==1)||owned.st_size<0)return;
     // Runtime owns the directory exclusively. A replaced name, hard link or
     // failed unlink remains conservatively charged for cold reconciliation.
     if(::unlink(path_.c_str())<0)return;
     ::close(block_.fd_);block_.fd_=-1;
-    if(charge_)StorageBudget::reclaim_removed(charge_,static_cast<std::uint64_t>(owned.st_size));
+    if(charge_)StorageBudget::reclaim_removed(charge_,failed_append?block_.capacity_:physical);
 }
 ExperiencePage ExperiencePage::create(const std::filesystem::path& path,
     const architecture::DigestBytes& identity,std::span<const ExperienceEvidence> values,
@@ -72,7 +80,7 @@ ExperiencePage ExperiencePage::create(const std::filesystem::path& path,
         ExperienceBlock::record_overhead+session.size()+source.size()+media.size()+bytes.size(),storage);
     // Own the private header before append can reject its reservation. The
     // same inode/sole-link/core disposal checks apply during stack unwinding.
-    // Partial writes with an unexpected extent remain conservatively retained.
+    // Failed private append reservations are reclaimed with their owned file.
     ExperiencePage page(std::move(block),{},values.size(),std::move(owned_path),storage);
     page.location_=page.block_.append({0,0,session,source,media,bytes});
     return page;

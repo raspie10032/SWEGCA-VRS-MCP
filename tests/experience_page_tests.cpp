@@ -9,6 +9,24 @@
 using namespace swegca::vrs;
 using namespace swegca::architecture;
 using namespace swegca::architecture::kernel;
+static std::int64_t body_write_remaining=-1;
+static bool fail_body_sync=false,body_written=false;
+extern "C" ssize_t __real_pwrite(int,const void*,size_t,off_t);
+extern "C" int __real_fdatasync(int);
+extern "C" ssize_t __wrap_pwrite(int fd,const void* bytes,size_t count,off_t offset){
+ if(offset>=static_cast<off_t>(ExperienceBlock::header_bytes)){
+  if(body_write_remaining==0){errno=EIO;return -1;}
+  if(body_write_remaining>0)count=std::min(count,static_cast<size_t>(body_write_remaining));
+  const auto result=__real_pwrite(fd,bytes,count,offset);
+  if(result>0){body_written=true;if(body_write_remaining>0)body_write_remaining-=result;}
+  return result;
+ }
+ return __real_pwrite(fd,bytes,count,offset);
+}
+extern "C" int __wrap_fdatasync(int fd){
+ if(fail_body_sync&&body_written){errno=EIO;return -1;}
+ return __real_fdatasync(fd);
+}
 static std::atomic<unsigned> checks=0;
 #define CHECK(x) do{++checks;if(!(x)){std::fprintf(stderr,"FAIL %d: %s\n",__LINE__,#x);std::abort();}}while(false)
 template<class E,class F>void rejects(F f){bool caught=false;try{f();}catch(const E&){caught=true;}CHECK(caught);}
@@ -38,6 +56,20 @@ int main(){
     CHECK(small.used()==0&&!std::filesystem::exists(destination));
     CHECK(storage.used()==original_bytes&&std::filesystem::exists(root/"original"));
    }
+  }
+  {
+   const auto before=storage.used();
+   for(const std::int64_t allowed:{0,1,17,128,4096}){
+    body_write_remaining=allowed;
+    rejects<std::system_error>([&]{(void)ExperiencePage::create(root/"failed-write",id(71),values,memory,&storage);});
+    body_write_remaining=-1;
+    CHECK(storage.used()==before&&!std::filesystem::exists(root/"failed-write"));
+   }
+   body_written=false;fail_body_sync=true;
+   rejects<std::system_error>([&]{(void)ExperiencePage::create(root/"failed-sync",id(72),values,memory,&storage);});
+   fail_body_sync=false;
+   CHECK(storage.used()==before&&!std::filesystem::exists(root/"failed-sync"));
+   CHECK(std::filesystem::exists(root/"original"));
   }
   {
    for(unsigned owners=0;owners<4;++owners)for(bool complete:{false,true})for(bool backed:{false,true}){

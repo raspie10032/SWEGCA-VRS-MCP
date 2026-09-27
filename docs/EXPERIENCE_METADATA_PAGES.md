@@ -203,3 +203,22 @@ This only covers failures after a valid header has been returned and before an
 unexpected physical extent exists. Header-creation I/O failure, partial record
 writes, process termination and restart orphan reconciliation remain unfinished.
 Unexpected extents, shared links and replaced names remain conservatively kept.
+
+## Private partial-record failures
+
+The failed-append path now distinguishes physical extent from charged extent.
+For this private, exactly-one-record page, ExperienceBlock reserves the entire
+remaining capacity before its first record write. A write/sync failure sets the
+block nonwritable and never publishes the page location. Only that state may
+remove a physical prefix between header size and full capacity and reclaim the
+full retained reservation. Completed pages still require exact committed size.
+All cleanup remains subject to the existing core ownership predicate, matching
+inode, sole hard link, and successful unlink. Unknown/replaced/shared paths stay
+charged. Original blocks never use this page-specific destructor.
+
+Fault injection reproduces EIO before any body bytes, after 1/17/128/4096 bytes,
+and after all record writes during fdatasync. Before the fix, the first fault
+already leaked reserved storage; after it, every case removes only the private
+page and restores baseline usage. Page tests pass 1,671 checks. This supersedes
+the partial-record limitation above for exceptions observed by the live owner.
+Header-creation failures and process-death/restart cleanup remain unresolved.
