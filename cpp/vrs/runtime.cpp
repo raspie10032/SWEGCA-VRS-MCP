@@ -143,9 +143,6 @@ ReEvidenceResult Runtime::re_evidence(const ReplayedInput& replayed,const Replay
     std::uint64_t seed,std::uint64_t step) const {
     return require_session().router.re_evidence(replayed,compared,seed,step);
 }
-ReEvidenceResult Runtime::re_evidence(const ReplayedInput& replayed,std::uint64_t seed,std::uint64_t step) const {
-    return require_session().router.re_evidence(replayed,seed,step);
-}
 void Runtime::define_connection(const DigestBytes& identity) {
     require_active();active_->runtime.define_connection(identity,config_.initial_strength,config_.policy);
 }

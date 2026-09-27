@@ -197,7 +197,7 @@ int main(){
    CHECK(receipt_failures==2);
    auto continued=route.input("text/other",{});
    CHECK(continued.key_kind()==FamiliarityKey::continuation&&continued.matches().size()==8);
-   CHECK(route.re_evidence(original,9,0).agreement()==ReplayAgreement::insufficient);
+   CHECK(route.compare_replay(original,9,0).agreement()==ReplayAgreement::insufficient);
    const auto exact_baseline=query_memory.used();
    unsigned exact_failures=0;
    for(std::size_t point=0;point<16;++point){
@@ -244,7 +244,8 @@ int main(){
     EvidenceObservation value;value.hypothesis=id(10);value.source=id(900+n);value.context=id(1900+n);value.producer=id(2900+n);value.outcome=EvidenceOutcome::refute;
     (void)active.observe(id(10),{n,0,"active","experiment","text/plain",{}},value,7,0);
    }
-   const auto reevaluated=route.re_evidence(original,7,0);
+   const auto compared=route.compare_replay(original,7,0);
+   const auto reevaluated=route.re_evidence(original,compared,7,0);
    CHECK(reevaluated.agreement()==ReplayAgreement::contradicts&&reevaluated.current_originals().size()==8);
    auto local=route.input("text/plain",{});
    CHECK(local.temporary()&&local.matches().size()==8);

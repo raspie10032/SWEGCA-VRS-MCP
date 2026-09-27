@@ -65,7 +65,6 @@ public:
     [[nodiscard]] ReplayComparison compare_replay(const ReplayedInput&, std::uint64_t seed, std::uint64_t step) const;
     [[nodiscard]] ReEvidenceResult re_evidence(const ReplayedInput&, const ReplayComparison&,
         std::uint64_t seed, std::uint64_t step) const;
-    [[nodiscard]] ReEvidenceResult re_evidence(const ReplayedInput&, std::uint64_t seed, std::uint64_t step) const;
     void define_connection(const architecture::DigestBytes&);
     [[nodiscard]] RecordedRefinement observe(const architecture::DigestBytes&, const OriginalExperienceView&,
         const architecture::kernel::EvidenceObservation&, std::uint64_t seed, std::uint64_t step);

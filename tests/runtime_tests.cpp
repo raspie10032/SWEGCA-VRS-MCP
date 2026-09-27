@@ -89,7 +89,7 @@ int main(){
   host.start_session(id(3),"three");auto recalled=host.input("text/plain",content);
   CHECK(recalled.matches().size()==2&&!recalled.temporary());
   CHECK(host.replay(recalled,1).location()==second);
-  CHECK(host.re_evidence(host.replay(recalled,0),9,0).agreement()==ReplayAgreement::insufficient);
+  CHECK(host.compare_replay(host.replay(recalled,0),9,0).agreement()==ReplayAgreement::insufficient);
  }
  CHECK(memory.used()==0);
  {
@@ -120,8 +120,10 @@ int main(){
     CHECK(event.recalled.matches()[0].original==initial);
     CHECK(event.recalled.matches()[0].recalled.recalled_head.observations==sequence);
     auto replayed=host.replay(event.recalled,0);CHECK(replayed.location()==initial);
-    auto checked=host.re_evidence(replayed,7,0);
+    auto compared=host.compare_replay(replayed,7,0);
+    const auto& checked=compared.evidence();
     CHECK(checked.agreement()==ReplayAgreement::insufficient);
+    throws<std::invalid_argument>([&]{(void)host.re_evidence(replayed,compared,7,0);});
     CHECK(checked.current_originals().size()==1&&checked.current_originals()[0]==event.recorded.original);
    }
    auto current=host.input("text/plain",content);CHECK(current.matches().size()==sequence+1);
@@ -190,7 +192,7 @@ int main(){
   const auto r=reads,w=writes;
   throws<std::invalid_argument>([&]{(void)host.replay(receipt,0);});
   throws<std::invalid_argument>([&]{(void)host.read_payload_slice(receipt,0,0,1);});
-  throws<std::invalid_argument>([&]{(void)host.re_evidence(replayed,7,0);});
+  throws<std::invalid_argument>([&]{(void)host.compare_replay(replayed,7,0);});
   CHECK(reads==r&&writes==w);
   CHECK(receipt.matches()[0].original==retained);
   host.end_session();

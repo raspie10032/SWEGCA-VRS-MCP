@@ -41,7 +41,7 @@ std::pmr::string refinement(const ConnectionRefinement& report,MemoryBudget& mem
 }
 constexpr std::string_view tools_list=R"({"tools":[
 {"name":"vrs_replay","description":"Read one original from current Recall. Optional offset and count return only that verified byte range, without a completed Replay receipt for Re-evidence. Does not infer truth or authorize actions.","inputSchema":{"type":"object","properties":{"receipt":{"type":"string"},"candidate":{"type":"string"},"offset":{"type":"string","description":"Raw payload byte offset; requires count."},"count":{"type":"string","description":"Byte count; requires offset."}},"required":["receipt","candidate"],"additionalProperties":false}},
-{"name":"vrs_re_evidence","description":"Use SWEGCA to check recorded current observations after the selected Replay.","inputSchema":{"type":"object","properties":{"receipt":{"type":"string"},"seed":{"type":"string"},"step":{"type":"string"}},"required":["receipt","seed","step"],"additionalProperties":false}}
+{"name":"vrs_re_evidence","description":"Compare the selected Replay with recorded current observations through SWEGCA; run Re-evidence only on a verified conflict.","inputSchema":{"type":"object","properties":{"receipt":{"type":"string"},"seed":{"type":"string"},"step":{"type":"string"}},"required":["receipt","seed","step"],"additionalProperties":false}}
 ]})";
 class Server {
 public:

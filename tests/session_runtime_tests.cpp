@@ -143,7 +143,7 @@ int main() {
             CHECK(&*reused==address);
             const auto before_reads=reads,before_writes=writes;
             throws<std::invalid_argument>([&]{(void)reused->replay(old_receipt,0);});
-            throws<std::invalid_argument>([&]{(void)reused->re_evidence(old_replay,7,0);});
+            throws<std::invalid_argument>([&]{(void)reused->compare_replay(old_replay,7,0);});
             CHECK(reads==before_reads&&writes==before_writes);
             auto current=reused->input("application/octet-stream",std::as_bytes(std::span(payload)));
             CHECK(reused->replay(current,0).location()==local.original);
@@ -253,9 +253,11 @@ int main() {
             auto activation=router.input("application/octet-stream",std::as_bytes(std::span(payload)));
             auto played=router.replay(activation,0);
             CHECK(played.input_cue()==activation.cue());
-            auto no_new=router.re_evidence(played,1,100);
+            auto no_new_comparison=router.compare_replay(played,1,100);
+            const auto& no_new=no_new_comparison.evidence();
             CHECK(no_new.agreement()==ReplayAgreement::insufficient);
             CHECK(no_new.current_originals().empty());
+            throws<std::invalid_argument>([&]{(void)router.re_evidence(played,no_new_comparison,1,100);});
             current.define_connection(id(10),0.75,policy);
             for (unsigned n=1;n<=16;++n) {
                 EvidenceObservation value;
@@ -279,7 +281,7 @@ int main() {
             }else{
                 throws<std::invalid_argument>([&]{(void)router.re_evidence(played,compared,92,1000);});
             }
-            auto checked=router.re_evidence(played,91,1000);
+            const auto& checked=compared.evidence();
             CHECK(reads==read_count && writes==write_count);
             CHECK(checked.current_originals().size()==16);
             CHECK(checked.remembered_head().record==remembered_head);
@@ -307,7 +309,8 @@ int main() {
             // observations must not become new evidence for that next request.
             auto next=router.input("application/octet-stream",std::as_bytes(std::span(payload)));
             auto next_replay=router.replay(next,0);
-            auto already_seen=router.re_evidence(next_replay,92,1000);
+            auto next_comparison=router.compare_replay(next_replay,92,1000);
+            const auto& already_seen=next_comparison.evidence();
             CHECK(already_seen.current_originals().empty());
             CHECK(already_seen.agreement()==ReplayAgreement::insufficient);
             throws<std::invalid_argument>([&]{(void)router.re_evidence(next_replay,compared,93,1000);});
@@ -315,7 +318,7 @@ int main() {
             throws<std::invalid_argument>([&]{(void)other.compare_replay(played,93,1000);});
             throws<std::invalid_argument>([&]{(void)other.re_evidence(played,compared,93,1000);});
             throws<std::invalid_argument>([&] { (void)other.replay(next,0); });
-            throws<std::invalid_argument>([&] { (void)other.re_evidence(next_replay,93,100); });
+            throws<std::invalid_argument>([&] { (void)other.compare_replay(next_replay,93,100); });
         }
     }
     CHECK(memory.used()==0);
@@ -401,7 +404,8 @@ int main() {
         const auto next=record(193,payload);
         CHECK(moved.matches().size()==192&&moved.matches()[191].original==expected.back());
         auto replayed=route.replay(moved,191);CHECK(replayed.location()==expected.back());
-        const auto assessment=route.re_evidence(replayed,7,193);
+        const auto comparison=route.compare_replay(replayed,7,193);
+        const auto& assessment=comparison.evidence();
         CHECK(assessment.agreement()==ReplayAgreement::insufficient);
         CHECK(assessment.current_originals().size()==1&&assessment.current_originals()[0]==next);
         std::printf("192-candidate temporary receipt: %zu tracked bytes\n",cost);

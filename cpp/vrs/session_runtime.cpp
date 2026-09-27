@@ -502,10 +502,6 @@ ReEvidenceResult ExperienceRouter::re_evidence(const ReplayedInput& replayed,
         throw std::invalid_argument("Re-evidence requires a core-verified conflict");
     return evaluate_replay(replayed,seed,step);
 }
-ReEvidenceResult ExperienceRouter::re_evidence(const ReplayedInput& replayed,
-    std::uint64_t seed, std::uint64_t step) const {
-    return evaluate_replay(replayed,seed,step);
-}
 ReEvidenceResult ExperienceRouter::evaluate_replay(const ReplayedInput& replayed,
     std::uint64_t seed, std::uint64_t step) const {
     if (replayed.issuer_ != issuer_) throw std::invalid_argument("Replay belongs to a different input route");
