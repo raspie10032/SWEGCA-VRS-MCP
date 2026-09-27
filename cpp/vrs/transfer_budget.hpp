@@ -1,4 +1,6 @@
 #pragma once
+#include "vrs/shared_transfer_state.hpp"
+#include <optional>
 #include <algorithm>
 #include <chrono>
 #include <cstdint>
@@ -15,15 +17,28 @@ public:
     static constexpr std::uint64_t chunk_bytes=1U<<20;
     explicit TransferBudget(std::uint64_t bytes_per_second):rate_(bytes_per_second){
         if(!rate_)throw std::invalid_argument("VRS transfer rate must be positive");
+        if(const auto* owner=std::getenv(SharedTransferState::environment);owner&&*owner)
+            shared_.emplace(owner,rate_);
     }
     [[nodiscard]] std::uint64_t rate() const noexcept{return rate_;}
-    [[nodiscard]] std::uint64_t requested() const {std::lock_guard lock(mutex_);return requested_;}
+    [[nodiscard]] std::uint64_t requested() const {
+        if(shared_){SharedTransferState::Lock lock(shared_->state());return shared_->state().requested;}
+        std::lock_guard lock(mutex_);return requested_;
+    }
     // The monotonic time is explicit so scheduling arithmetic can be verified
     // without wall-clock sleeps. Commits only when admitted now; otherwise
     // returns a retry time in ns without consuming any allowance.
     [[nodiscard]] std::int64_t try_acquire(std::uint64_t bytes,std::int64_t now) {
         if(bytes>chunk_bytes)throw std::invalid_argument("VRS transfer exceeds I/O chunk");
-        std::lock_guard lock(mutex_);
+        if(shared_){
+            auto& state=shared_->state();SharedTransferState::Lock lock(state);
+            return schedule(bytes,now,state.next,state.requested);
+        }
+        std::lock_guard lock(mutex_);return schedule(bytes,now,next_,requested_);
+    }
+private:
+    [[nodiscard]] std::int64_t schedule(std::uint64_t bytes,std::int64_t now,
+        std::int64_t& next_,std::uint64_t& requested_) const {
         const auto scaled=bytes*1000000000ULL;
         const auto service=scaled/rate_+(scaled%rate_!=0);
         const auto base=std::max(now,next_);
@@ -38,6 +53,7 @@ public:
         if(due==now){next_=next;requested_+=bytes;}
         return due;
     }
+public:
     void wait(std::uint64_t bytes) {
         using Clock=std::chrono::steady_clock;
         for(;;) {
@@ -51,6 +67,7 @@ public:
     }
 private:
     const std::uint64_t rate_;
+    std::optional<SharedTransferState> shared_;
     mutable std::mutex mutex_;
     std::int64_t next_=0;
     std::uint64_t requested_=0;

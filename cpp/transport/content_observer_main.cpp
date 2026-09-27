@@ -102,7 +102,12 @@ void tool_result(std::string_view id,std::string_view body){
 }
 int main(int argc,char** argv){
     try{
-        if(argc!=4)throw std::invalid_argument("usage: swegca-content-observer RAM_BYTES IO_BYTES_PER_SECOND MAX_FILE_BYTES");
+        if(argc!=4&&(argc!=5||std::string_view(argv[4])!="--require-shared-io"))
+            throw std::invalid_argument("usage: swegca-content-observer RAM_BYTES IO_BYTES_PER_SECOND MAX_FILE_BYTES [--require-shared-io]");
+        if(argc==5){
+            const auto* owner=std::getenv(SharedTransferState::environment);
+            if(!owner||!*owner)throw std::runtime_error("shared I/O owner required for desktop observer");
+        }
         const auto ram=integer(argv[1]);
         if(ram<(1U<<20)||ram>std::numeric_limits<std::size_t>::max())throw std::invalid_argument("invalid observer RAM budget");
         MemoryBudget memory(static_cast<std::size_t>(ram));TransferBudget transfer(integer(argv[2]));

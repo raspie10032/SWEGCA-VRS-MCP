@@ -66,3 +66,11 @@ config.toml을 수정하지 않았다. 기존 Main identity, proxy instance, 원
   도구 결과가 사용자 입력의 의미에 적합한지는 이 검사가 입증하지 않는다.
 - 관측기와 VRS의 개별 전송 예산 합계가 물리 SSD 5Gbps를 넘지 않도록 하는
   시스템 전체 I/O 강제는 여전히 미완료다. RAM/CPU 그룹 확인과 구분한다.
+
+## 합산 논리 전송 예산 후속
+
+설치 host/VRS/observer를 공유 예산 버전으로 갱신했다. MCP 설정은
+`env_vars=["SWEGCA_IO_OWNER"]`와 관측기의 `--require-shared-io`를 포함한다.
+실제 backend에서 VRS와 관측기가 같은 host의 memfd를 연결함을 확인했다.
+이는 앞 절의 개별 예산 합산 문제를 논리 요청량 범위에서 해결한 것이다.
+물리 SSD 전체 제한과 구분하며 SHARED_IO_BUDGET.md의 한계를 따른다.

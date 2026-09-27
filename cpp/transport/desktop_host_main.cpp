@@ -2,6 +2,7 @@
 #include "transport/json.hpp"
 #include "transport/resource_profile.hpp"
 #include "vrs/memory_budget.hpp"
+#include "vrs/shared_transfer_state.hpp"
 #include <charconv>
 #include <cerrno>
 #include <chrono>
@@ -117,6 +118,22 @@ int main(int argc,char** argv){
             // this same aggregate cgroup and affinity, including the backend.
             verify_resource_profile(ram,cpus);
         }
+        // One host-owned schedule covers store I/O and observer descendants.
+        // Recreate it only for a new host lifetime; never per child/process.
+        std::uint64_t transfer_rate=625000000;
+        {
+            swegca::vrs::MemoryBudget memory(1<<20);
+            std::ifstream file(argv[5],std::ios::binary);require(bool(file),"desktop I/O configuration unavailable");
+            std::pmr::string text(&memory);char byte;
+            while(file.get(byte)){require(text.size()<65536,"desktop I/O configuration too large");text+=byte;}
+            const auto config=swegca::transport::parse_json(text,memory);
+            if(const auto* rate=config.find("ioBytesPerSecond")){
+                const auto value=rate->string();const auto parsed=std::from_chars(value.data(),value.data()+value.size(),transfer_rate);
+                require(parsed.ec==std::errc{}&&parsed.ptr==value.data()+value.size()&&transfer_rate,"invalid desktop I/O rate");
+            }
+        }
+        swegca::vrs::SharedTransferState transfer(transfer_rate);
+        require(::setenv(swegca::vrs::SharedTransferState::environment,transfer.locator().c_str(),1)==0,"shared I/O environment failed");
         ::signal(SIGPIPE,SIG_IGN);
         ::signal(SIGTERM,stop);::signal(SIGINT,stop);
         struct sigaction child_action{};child_action.sa_handler=child_changed;

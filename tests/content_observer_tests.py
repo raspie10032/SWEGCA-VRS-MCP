@@ -106,4 +106,12 @@ with tempfile.TemporaryDirectory(prefix='swegca-observer-') as directory:
         check(limited['measurement']['left']['readBytes']=='0')
         check(limited['measurement']['left']['digest'] is None)
     check(left.read_bytes()==right.read_bytes()==content)
+env=dict(os.environ);env.pop('SWEGCA_IO_OWNER',None)
+missing=subprocess.run([str(exe),str(128<<20),'625000000',str(16<<20),'--require-shared-io'],
+                       input=b'',capture_output=True,env=env,timeout=5)
+check(missing.returncode!=0 and b'shared I/O owner required' in missing.stderr)
+env['SWEGCA_IO_OWNER']='invalid'
+malformed=subprocess.run([str(exe),str(128<<20),'625000000',str(16<<20),'--require-shared-io'],
+                         input=b'',capture_output=True,env=env,timeout=5)
+check(malformed.returncode!=0 and not malformed.stdout)
 print(f'content observer tests: {checks} checks passed')

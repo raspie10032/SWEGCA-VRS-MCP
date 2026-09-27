@@ -22,7 +22,8 @@ values = dict(item.split('=', 1) for item in config['backendConfig'])
 server = 'swegca_content_observer'
 command = json.loads(values[f'mcp_servers.{server}.command'])
 arguments = json.loads(values[f'mcp_servers.{server}.args'])
-override = 'mcp_servers={' + server + '={command=' + json.dumps(command) + ',args=' + json.dumps(arguments) + '}}'
+env_vars = json.loads(values.get(f'mcp_servers.{server}.env_vars', '[]'))
+override = 'mcp_servers={' + server + '={command=' + json.dumps(command) + ',args=' + json.dumps(arguments) + ',env_vars=' + json.dumps(env_vars) + '}}'
 env = dict(os.environ, SWEGCA_DESKTOP_CONFIG=str(prefix / 'desktop.json'))
 roles = {'swegca-desktop-host', 'swegca-app-server-proxy', 'swegca-vrs-mcp', 'swegca-content-observer'}
 profiles = {}
@@ -39,8 +40,11 @@ def scan():
             group = next(line[3:] for line in (proc / 'cgroup').read_text().splitlines() if line.startswith('0::'))
             root = Path('/sys/fs/cgroup') / group.lstrip('/')
             cpus = next(line.split(':', 1)[1].strip() for line in (proc / 'status').read_text().splitlines() if line.startswith('Cpus_allowed_list:'))
+            shared_owner = next((part.split(b'=', 1)[1].decode() for part in (proc / 'environ').read_bytes().split(b'\0')
+                                 if part.startswith(b'SWEGCA_IO_OWNER=')), None)
             profiles[executable.name] = {'group': group, 'memoryMax': int((root / 'memory.max').read_text()),
-                                        'swapMax': int((root / 'memory.swap.max').read_text()), 'cpus': cpus}
+                                        'swapMax': int((root / 'memory.swap.max').read_text()), 'cpus': cpus,
+                                        'pid': proc.name, 'sharedOwner': shared_owner}
         except (OSError, RuntimeError, StopIteration):
             continue
 
@@ -82,13 +86,18 @@ with tempfile.TemporaryFile() as errors:
         assert len(matches) == 1 and 'observe_file_content_equality' in matches[0].get('tools', {})
         assert profiles.keys() == roles, 'some installed process profiles were not observed'
         assert len({value['group'] for value in profiles.values()}) == 1, 'observer escaped aggregate group'
+        owner = profiles['swegca-vrs-mcp']['sharedOwner']
+        assert owner and profiles['swegca-content-observer']['sharedOwner'] == owner
+        owner_pid, descriptor = owner.split(':')
+        assert owner_pid == profiles['swegca-desktop-host']['pid']
+        assert 'memfd:swegca-transfer' in os.readlink(f'/proc/{owner_pid}/fd/{descriptor}')
         page = os.sysconf('SC_PAGESIZE')
         expected = int(resources['memoryBytes']) // page * page
         for value in profiles.values():
             assert value['memoryMax'] == expected and value['swapMax'] == 0 and value['cpus'] == '6-7'
         process.stdin.close()
         assert process.wait(timeout=20) == 0
-        print(json.dumps({'observerRegistered': True, 'sameAggregateGroup': True,
+        print(json.dumps({'observerRegistered': True, 'sameAggregateGroup': True, 'sameSharedTransfer': True,
                           'verifiedProcesses': sorted(profiles), 'memoryMax': expected,
                           'swapMax': 0, 'cpus': '6-7', 'modelCalls': 0, 'exitCode': 0}))
     finally:

@@ -66,7 +66,8 @@ def install(args):
                'resourceConfig': str(prefix / 'resources.json'),
                'proxyConfig': str(prefix / 'proxy.json'), 'mode': 'limited-ensure',
                'backendConfig': ['mcp_servers.swegca_content_observer.command=' + json.dumps(str(prefix / 'bin/swegca-content-observer')),
-                                 'mcp_servers.swegca_content_observer.args=' + json.dumps(['134217728', '625000000', '16777216'])]}
+                                 'mcp_servers.swegca_content_observer.args=' + json.dumps(['134217728', '625000000', '16777216', '--require-shared-io']),
+                                 'mcp_servers.swegca_content_observer.env_vars=["SWEGCA_IO_OWNER"]']}
     prefix.parent.mkdir(parents=True, exist_ok=True)
     entry.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='.swegca-install-', dir=prefix.parent) as temporary:

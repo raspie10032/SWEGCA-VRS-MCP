@@ -12,10 +12,10 @@ VRS_SOURCES := cpp/vrs/experience_page.cpp cpp/vrs/runtime.cpp cpp/vrs/main_sour
 .PHONY: check-agent-event all check check-stdio check-sha256 check-resource-profile check-oom-recovery bench clean
 all: $(BUILD)/core-tests
 
-$(BUILD)/swegca-content-observer: cpp/transport/content_observer_main.cpp cpp/transport/json.cpp cpp/transport/json.hpp cpp/transport/stdio_frames.hpp cpp/vrs/file_observation.cpp cpp/vrs/file_observation.hpp cpp/vrs/memory_budget.hpp cpp/vrs/transfer_budget.hpp $(CORE_HEADERS) cpp/swegca_architecture/sha256.cpp | $(BUILD)
+$(BUILD)/swegca-content-observer: cpp/transport/content_observer_main.cpp cpp/transport/json.cpp cpp/transport/json.hpp cpp/transport/stdio_frames.hpp cpp/vrs/file_observation.cpp cpp/vrs/file_observation.hpp cpp/vrs/memory_budget.hpp cpp/vrs/transfer_budget.hpp cpp/vrs/shared_transfer_state.hpp $(CORE_HEADERS) cpp/swegca_architecture/sha256.cpp | $(BUILD)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< cpp/transport/json.cpp cpp/vrs/file_observation.cpp cpp/swegca_architecture/sha256.cpp -o $@
 
-$(BUILD)/file-observation-tests: tests/file_observation_tests.cpp cpp/vrs/file_observation.cpp cpp/vrs/file_observation.hpp cpp/vrs/transfer_budget.hpp cpp/vrs/memory_budget.hpp $(CORE_HEADERS) cpp/swegca_architecture/sha256.cpp | $(BUILD)
+$(BUILD)/file-observation-tests: tests/file_observation_tests.cpp cpp/vrs/file_observation.cpp cpp/vrs/file_observation.hpp cpp/vrs/transfer_budget.hpp cpp/vrs/shared_transfer_state.hpp cpp/vrs/memory_budget.hpp $(CORE_HEADERS) cpp/swegca_architecture/sha256.cpp | $(BUILD)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< cpp/vrs/file_observation.cpp cpp/swegca_architecture/sha256.cpp -Wl,--wrap=pread -o $@
 
 $(BUILD):
@@ -54,7 +54,7 @@ $(BUILD)/vrs-tests: tests/vrs_tests.cpp $(CORE_SOURCES) $(CORE_HEADERS) $(VRS_HE
 $(BUILD)/experience-block-tests: tests/experience_block_tests.cpp $(VRS_SOURCES) $(CORE_SOURCES) $(CORE_HEADERS) $(VRS_HEADERS) | $(BUILD)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< $(VRS_SOURCES) $(CORE_SOURCES) -Wl,--wrap=pwrite -Wl,--wrap=pread -o $@
 
-$(BUILD)/transfer-budget-tests: tests/transfer_budget_tests.cpp cpp/vrs/transfer_budget.hpp | $(BUILD)
+$(BUILD)/transfer-budget-tests: tests/transfer_budget_tests.cpp cpp/vrs/transfer_budget.hpp cpp/vrs/shared_transfer_state.hpp | $(BUILD)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< -o $@
 
 $(BUILD)/memory-budget-tests: tests/memory_budget_tests.cpp cpp/vrs/memory_budget.hpp | $(BUILD)
@@ -201,7 +201,7 @@ check: $(BUILD)/connection-regions-tests
 $(BUILD)/region-partition-bench: benchmarks/region_partition_bench.cpp cpp/swegca_architecture/region_partition_kernel.hpp cpp/swegca_architecture/recall_route_kernel.hpp | $(BUILD)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< -o $@
 
-$(BUILD)/swegca-desktop-host: cpp/transport/desktop_host_main.cpp cpp/transport/json.cpp cpp/transport/json.hpp cpp/transport/resource_profile.hpp cpp/vrs/memory_budget.hpp | $(BUILD)
+$(BUILD)/swegca-desktop-host: cpp/transport/desktop_host_main.cpp cpp/transport/json.cpp cpp/transport/json.hpp cpp/transport/resource_profile.hpp cpp/vrs/memory_budget.hpp cpp/vrs/shared_transfer_state.hpp | $(BUILD)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< cpp/transport/json.cpp -o $@
 
 $(BUILD)/swegca-codex-wrapper: cpp/transport/codex_wrapper_main.cpp cpp/transport/json.cpp cpp/transport/json.hpp $(VRS_HEADERS) | $(BUILD)

@@ -1,5 +1,13 @@
 # 전체 목표 대비 현재 구성 감사
 
+## 최신 상태: VRS·관측기 합산 논리 I/O 예산
+
+- host 소유 RAM 전용 공유 예약을 VRS와 설치 관측기에 연결했다. 관측기는 공유
+  연결이 없으면 시작을 거부한다. 실제 backend에서 동일 memfd owner 및 cgroup 확인.
+- 프로세스 간 전송 예산 38, 파일 관측 107, stdio 5416 checks 통과.
+- 합산 논리 read/write 예산이며 실제 물리 SSD 전체의 제한 증거는 아니다.
+  최대 1MiB 초기 credit 및 다른 host/다른 프로그램은 별도다. SHARED_IO_BUDGET.md 참조.
+
 ## 최신 상태: 관측 MCP 등록과 그룹 자원 확인
 
 - 설치 wrapper의 백엔드 한정 CLI 설정으로 파일 관측 MCP를 등록했다. 전역 사용자
