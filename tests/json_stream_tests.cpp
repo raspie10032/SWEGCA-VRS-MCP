@@ -28,6 +28,31 @@ int main(){
   write_json_string(out,text);CHECK(std::string_view(out.str())==std::string_view(expected));CHECK(memory.used()==used);
  }
  CHECK(memory.used()==0);
+ // A final escaped quote must not double a large decoded envelope.
+ {
+  const std::string decoded=std::string("{\"text\":\"")+std::string(1<<20,'x')+"\"}";
+  auto wire=quote_json(decoded,memory);
+  swegca::vrs::MemoryBudget exact(decoded.size()+1);
+  {auto value=parse_json(wire,exact);CHECK(value.string()==decoded);
+   CHECK(exact.peak_reserved()==decoded.size()+1);}
+  CHECK(exact.used()==0);
+ }
+ {
+  const std::string wire=std::string("\"")+std::string(4096,'x')+
+      R"(\u0000\u007f\u0080\u07ff\u0800\uffff\ud83d\ude42\"\\\/\b\f\n\r\t")";
+  const std::string expected=std::string(4096,'x')+std::string(1,'\0')+
+      "\x7f\xc2\x80\xdf\xbf\xe0\xa0\x80\xef\xbf\xbf\xf0\x9f\x99\x82"+
+      "\"\\/\b\f\n\r\t";
+  swegca::vrs::MemoryBudget exact(expected.size()+1);
+  {auto value=parse_json(wire,exact);CHECK(value.string()==expected);}
+  CHECK(exact.used()==0);
+ }
+ for(const auto tail:{R"(\uD800")",R"(\uDC00")",R"(\uD800\u0041")",
+     R"(\uZZZZ")",R"(\q")","\\",""}){
+  const auto wire=std::string("\"")+std::string(4096,'x')+tail;
+  bool rejected=false;try{(void)parse_json(wire,memory);}catch(const std::invalid_argument&){rejected=true;}
+  CHECK(rejected&&memory.used()==0);
+ }
  // Exercise every ASCII byte on both sides of all 16-byte lane boundaries.
  for(unsigned offset=0;offset<33;++offset)for(unsigned c=0;c<128;++c){
   const std::string text=std::string(offset,'a')+char(c)+std::string(35,'z');

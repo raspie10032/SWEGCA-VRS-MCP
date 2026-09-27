@@ -78,20 +78,38 @@ private:
         else if(n<65536){out+=char(0xe0|(n>>12));out+=char(0x80|((n>>6)&63));out+=char(0x80|(n&63));}
         else{out+=char(0xf0|(n>>18));out+=char(0x80|((n>>12)&63));out+=char(0x80|((n>>6)&63));out+=char(0x80|(n&63));}
     }
-    std::pmr::string string(){
-        if(take()!='"')invalid();
-        std::pmr::string out(&memory_);
+    // The same decoder measures and emits escaped strings. Exact reservation
+    // avoids doubling a large native envelope for its final escaped quote.
+    template<bool Measure> std::size_t string_body(std::pmr::string& out){
+        std::size_t size=0;
+        const auto byte=[&](char c){if constexpr(Measure)++size;else out+=c;};
         for(;;){
             const auto begin=pos_;
             pos_+=prefix<true>(text_.substr(pos_));
-            out.append(text_.substr(begin,pos_-begin));
-            const char c=take();if(c=='"')return out;if(static_cast<unsigned char>(c)<32)invalid();
+            if constexpr(Measure)size+=pos_-begin;
+            else out.append(text_.substr(begin,pos_-begin));
+            const char c=take();if(c=='"')return size;if(static_cast<unsigned char>(c)<32)invalid();
             switch(take()){
-            case '"':out+='"';break;case '\\':out+='\\';break;case '/':out+='/';break;
-            case 'b':out+='\b';break;case 'f':out+='\f';break;case 'n':out+='\n';break;case 'r':out+='\r';break;case 't':out+='\t';break;
-            case 'u':{unsigned n=hex4();if(n>=0xd800&&n<=0xdbff){if(take()!='\\'||take()!='u')invalid();unsigned low=hex4();if(low<0xdc00||low>0xdfff)invalid();n=0x10000+((n-0xd800)<<10)+(low-0xdc00);}else if(n>=0xdc00&&n<=0xdfff)invalid();codepoint(out,n);break;}
+            case '"':byte('"');break;case '\\':byte('\\');break;case '/':byte('/');break;
+            case 'b':byte('\b');break;case 'f':byte('\f');break;case 'n':byte('\n');break;case 'r':byte('\r');break;case 't':byte('\t');break;
+            case 'u':{unsigned n=hex4();if(n>=0xd800&&n<=0xdbff){if(take()!='\\'||take()!='u')invalid();unsigned low=hex4();if(low<0xdc00||low>0xdfff)invalid();n=0x10000+((n-0xd800)<<10)+(low-0xdc00);}else if(n>=0xdc00&&n<=0xdfff)invalid();
+                if constexpr(Measure)size+=n<128?1:n<2048?2:n<65536?3:4;
+                else codepoint(out,n);
+                break;}
             default:invalid();}
         }
+    }
+    std::pmr::string string(){
+        if(take()!='"')invalid();
+        std::pmr::string out(&memory_);
+        const auto start=pos_;
+        const auto ordinary=prefix<true>(text_.substr(start));
+        if(ordinary<text_.size()-start&&text_[start+ordinary]=='"'){
+            out.assign(text_.substr(start,ordinary));pos_=start+ordinary+1;return out;
+        }
+        const auto size=string_body<true>(out);
+        pos_=start;out.reserve(size);(void)string_body<false>(out);
+        return out;
     }
     Json value(std::size_t depth){
         if(depth>depth_)throw std::length_error("JSON nesting limit");
