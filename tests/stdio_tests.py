@@ -2337,6 +2337,52 @@ for line in sys.stdin:
             check({x['original']['digest'] for x in bundle['relatedExperiences']}=={x['digest'] for x in multi_expected})
             check({json.loads(x['content'])['params']['item']['result']['structuredContent']['swegcaObservation']['outcome']
                 for x in bundle['relatedExperiences']}=={'support','refute','insufficient'})
+    # Actual desktop transport: a successful turn/start response establishes
+    # the exact predecessor; steer keeps its raw text and unverified candidates.
+    steer_capture=root/'steer-backend-inputs.jsonl'
+    steer_backend=root/'steer-backend'
+    steer_backend.write_text('#!'+sys.executable+'\n'+
+        'import json,sys\n'+
+        'capture='+repr(str(steer_capture))+'\n'+
+        'for line in sys.stdin:\n'+
+        ' v=json.loads(line)\n'+
+        ' with open(capture,"a") as out:out.write(json.dumps(v)+"\\n")\n'+
+        ' method=v.get("method")\n'+
+        ' if method=="thread/start":print(json.dumps({"method":"thread/started","params":{"thread":{"id":"steer-desktop"}}}),flush=True)\n'+
+        ' result={"turn":{"id":"turn-original"}} if method=="turn/start" else {"turnId":"turn-original"} if method=="turn/steer" else {}\n'+
+        ' if "id" in v:print(json.dumps({"id":v["id"],"result":result}),flush=True)\n')
+    steer_backend.chmod(0o700)
+    auto_proxy.write_text(json.dumps({**json.loads(desktop_proxy.read_text()),'frameBytes':'16384','instance':'steer-desktop'}))
+    auto_wrapper.write_text(json.dumps({**json.loads(wrapper_config.read_text()),'backend':str(steer_backend),
+        'root':str(pages_root),'resourceConfig':str(auto_resources),'proxyConfig':str(auto_proxy)}))
+    desktop=subprocess.Popen([str(exe.parent/'swegca-codex-wrapper'),'app-server'],
+        env=dict(os.environ,SWEGCA_DESKTOP_CONFIG=str(auto_wrapper)),stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,stderr=subprocess.PIPE,bufsize=0)
+    original_terms=[{'type':'text','text':'팰월드는 유지\r\nComfyUI만 중지'}]
+    corrected_terms=[{'type':'text','text':'정정: ComfyUI도 유지.\n다른 조건은 그대로.'}]
+    try:
+        desktop_send({'id':980,'method':'initialize','params':{}});check(desktop_read()=={'id':980,'result':{}})
+        desktop_send({'id':981,'method':'thread/start','params':{}})
+        check(desktop_read()['method']=='thread/started');check(desktop_read()=={'id':981,'result':{}})
+        desktop_send({'id':982,'method':'turn/start','params':{'threadId':'steer-desktop','input':original_terms}})
+        check(desktop_read()=={'id':982,'result':{'turn':{'id':'turn-original'}}})
+        desktop_send({'id':983,'method':'turn/steer','params':{'threadId':'steer-desktop',
+            'expectedTurnId':'turn-original','input':corrected_terms}})
+        check(desktop_read()=={'id':983,'result':{'turnId':'turn-original'}})
+        desktop.stdin.close();check(desktop.wait(timeout=10)==0)
+        check(desktop.stdout.read()==b'' and desktop.stderr.read()==b'')
+    finally:
+        if desktop.poll() is None:desktop.terminate();desktop.wait(timeout=10)
+    captured=[json.loads(x) for x in steer_capture.read_text().splitlines()]
+    first_native=next(x for x in captured if x.get('id')==982)
+    corrected_native=next(x for x in captured if x.get('id')==983)
+    first_packet=json.loads(first_native['params']['input'][0]['text'].split('\n',1)[1])
+    corrected_packet=json.loads(corrected_native['params']['input'][0]['text'].split('\n',1)[1])
+    check(first_native['params']['input'][1:]==original_terms)
+    check(corrected_native['params']['input'][1:]==corrected_terms)
+    check(corrected_packet['inputRelations']['priorInput']==first_packet['inputCandidates']['inputOriginal'])
+    check(not corrected_packet['inputRelations']['replacementVerified'])
+    check(''.join(x['quote'] for x in corrected_packet['inputCandidates']['candidates'])==corrected_terms[0]['text'])
     c=Client('open',desktop_root,path);c.initialize()
     for session,protocol,count in (('transport','app-server-connection','9'),('desktop-thread','app-server','9')):
         attached=c.call('swegca/agent/attach/resume',{'provider':'codex','instance':'desktop-fixture',
