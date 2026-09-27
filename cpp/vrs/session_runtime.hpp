@@ -152,13 +152,16 @@ public:
     InputRecall(const InputRecall&) = delete;
     InputRecall& operator=(const InputRecall&) = delete;
     InputRecall(InputRecall&& other) noexcept
-        : cue_(other.cue_), issuer_(std::exchange(other.issuer_, nullptr)), temporary_(other.temporary_),
+        : cue_(other.cue_), lookup_key_(other.lookup_key_), seed_only_(other.seed_only_),
+          issuer_(std::exchange(other.issuer_, nullptr)), temporary_(other.temporary_),
           key_kind_(other.key_kind_), count_(std::exchange(other.count_, 0)),
           contexts_(std::move(other.contexts_)), addresses_(std::move(other.addresses_)) {}
     InputRecall& operator=(InputRecall&&) = delete;
     [[nodiscard]] bool familiar() const noexcept { return count_ != 0; }
     [[nodiscard]] bool temporary() const noexcept { return temporary_; }
     [[nodiscard]] architecture::kernel::FamiliarityKey key_kind() const noexcept { return key_kind_; }
+    [[nodiscard]] const architecture::DigestBytes& lookup_key() const noexcept { return lookup_key_; }
+    [[nodiscard]] bool seed_only() const noexcept { return seed_only_; }
     // The receipt must outlive its view. No reference to a synthesized match is retained.
     [[nodiscard]] View matches() const noexcept { return View(this); }
     [[nodiscard]] const architecture::DigestBytes& cue() const noexcept { return cue_; }
@@ -189,6 +192,8 @@ private:
         return {found->recalled, address.original_index, found->current_observations, address.experience->original(), address.experience->value().observed_at};
     }
     architecture::DigestBytes cue_{};
+    architecture::DigestBytes lookup_key_{};
+    bool seed_only_ = false;
     std::shared_ptr<const std::byte> issuer_;
     bool temporary_ = false;
     architecture::kernel::FamiliarityKey key_kind_ = architecture::kernel::FamiliarityKey::missing;

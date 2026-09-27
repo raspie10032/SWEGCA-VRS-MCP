@@ -375,6 +375,21 @@ private:
             scoped->saved=true;
         }
     }
+    void append_recovery_checkpoint(std::pmr::string& metadata,const ReplayedInput& replayed,
+        const ReplayComparison& compared){
+        const auto& recalled=context().received->recalled;
+        metadata+=",\"recovery\":{\"temporary\":";metadata+=recalled.temporary()?"true":"false";
+        metadata+=",\"keyKind\":";metadata+=std::to_string(static_cast<unsigned>(recalled.key_kind()));
+        metadata+=",\"lookupKey\":\"";metadata+=hex(recalled.lookup_key(),memory_);
+        metadata+="\",\"inputCue\":\"";metadata+=hex(replayed.input_cue(),memory_);
+        metadata+="\",\"seedOnly\":";metadata+=recalled.seed_only()?"true":"false";
+        metadata+=",\"connection\":\"";metadata+=hex(compared.evidence().remembered_head().identity,memory_);
+        metadata+="\",\"rememberedHead\":";metadata+=address(compared.evidence().remembered_head().record,memory_);
+        metadata+=",\"observationHead\":";metadata+=address(replayed.observation_head(),memory_);
+        metadata+=",\"originalIndex\":\"";metadata+=std::to_string(replayed.original_index());
+        metadata+="\",\"observationBoundary\":\"";metadata+=std::to_string(compared.observation_boundary());
+        metadata+="\"}";
+    }
     void complete_cognition(){
         auto& state=context();
         if(!state.cognition_done){
@@ -413,6 +428,7 @@ private:
                 metadata+=",\"sourceSession\":\"";metadata+=hex(state.cognition->replayed.source_identity(),memory_);
                 metadata+="\",\"selectedOriginal\":";metadata+=address(state.cognition->replayed.location(),memory_);
                 metadata+=",\"replayPrefix\":";metadata+=quote_json(replay_prefix(state.cognition->replayed,&*state.cognition),memory_);
+                append_recovery_checkpoint(metadata,state.cognition->replayed,state.cognition->comparison);
             }else metadata+=",\"sourceSession\":null,\"selectedOriginal\":null,\"replayPrefix\":null";
             metadata+='}';
             if(!state.cognition_saved){
@@ -1073,6 +1089,7 @@ private:
                 metadata+="\",\"step\":\"";metadata+=std::to_string(step);
                 metadata+="\",\"sourceSession\":\"";metadata+=hex(replayed->source_identity(),memory_);
                 metadata+="\",\"selectedOriginal\":";metadata+=address(replayed->location(),memory_);
+                append_recovery_checkpoint(metadata,*replayed,compared);
                 metadata+=",\"comparison\":";metadata+=body;metadata+='}';
                 published=runtime_.save_cognition_revision(state.received->recorded.original,
                     std::as_bytes(std::span(metadata)));

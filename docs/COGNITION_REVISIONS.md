@@ -200,3 +200,39 @@ The host appends the original record directly into its final response allocation
 with overflow-checked reservation, avoiding another full temporary string.
 Stored record and final response buffers still exist; this is not fully streaming
 file-to-wire export or a whole-process memory bound.
+
+## General Replay recovery checkpoint
+
+Automatic parent cognition records and explicitly compared parent Replay
+revisions now include a `recovery` object populated from the live Recall and
+Replay receipts. It records the temporary/Main tier, familiarity key kind,
+actual lookup key, input cue, dialogue-seed eligibility flag, selected connection,
+remembered head, local observation head, absolute original index and observation
+boundary. These are provenance coordinates, not a second judgment or evidence.
+
+The lookup key is captured inside Recall, after the Recall entry marker.
+An exact lookup uses the input cue, a continuation uses its recorded connection
+key, and a context lookup uses the actual context key supplied to that call.
+Later Replay advances the router's continuation state, so publication must use
+the captured receipt rather than reading the router's present key. Receipt move
+construction preserves this metadata. The selected original index is within its
+connection, not the visible candidate number across Recall groups.
+
+These fields are persisted through the existing input-time record or immutable
+revision mechanism. New observations may change the comparison's current head
+and verdict but do not change this checkpoint's selected original or remembered
+boundary. Manual comparison revisions carry their own selected original's
+checkpoint rather than the automatic selection's coordinates.
+
+This is the prerequisite checkpoint writer for general parent recovery. The
+general historical Replay path still exports the saved assessment; it does not
+yet create a live comparison receipt or automatically compare new observations
+after restart. Scoped live recovery is implemented separately as documented in
+SCOPED_OBSERVATIONS.md. A future reader must authenticate the stored input,
+original and historical heads and recompute through the core; stored verdicts
+must not become current authority. No general recovery completion is claimed.
+
+Verification: CPU 6,7, make -j2; stdio 5624 checks passed. Checks cover exact
+and continuation lookup keys, temporary and Main boundaries, immutable boundary
+across new evidence, manually selected original index, and restart preservation.
+This does not measure large-input latency or prove live general recovery.

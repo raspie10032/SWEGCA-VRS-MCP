@@ -1,5 +1,18 @@
 # 전체 목표 대비 현재 구성 감사
 
+## 최신 상태: 일반 회상 대조 복구용 좌표 보존
+
+- 일반 입력의 자동 cognition과 수동 Replay 대조 개정에 당시 tier, familiarity
+  종류/실제 lookup key, input cue, seed-only 여부, 선택 연결/인덱스, 기억 head,
+  로컬 관측 head/경계를 기존 불변 기록으로 보존한다.
+- 조회 키는 Recall 진입 이후 영수증에 저장한다. 후속 Replay로 바뀐 현재
+  continuation 키를 과거 경로로 잘못 저장하지 않는다. move 시 필드 보존도 수정했다.
+- CPU 6,7 / make -j2 소스 빌드, stdio 5624 checks 통과. exact/continuation,
+  임시/Main, 새 증거 뒤 기준 경계 유지, 수동 선택 및 재시작 보존을 검사했다.
+- 일반 회상의 실시간 복구 읽기 경로는 아직 미완료다. 이번 변경은 복구에 필요한
+  실제 좌표의 기록이며 과거 verdict를 현재 판정으로 승인하지 않는다.
+  설치 바이너리는 미갱신이다. COGNITION_REVISIONS.md 마지막 절 참조.
+
 ## 최신 상태: 사용자 요구 인용과 관측의 원문 결속
 
 - 파일 관측에 선택적 requirement(textIndex/byteOffset/quote)를 추가했다.

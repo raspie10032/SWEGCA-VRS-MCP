@@ -590,6 +590,12 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     check(n0['memory']=={'completed':True,'original':None})
     check(n1['memory']['completed'] and n1['memory']['original']==n0['original'])
     check(n1['memory']['agreement']==1 and n1['memory']['reEvidencePerformed'] is False)
+    native_checkpoint=c.call('swegca/agent/cognition',{'identity':native_id,'sequence':'1'})['result']['record']['recovery']
+    check(native_checkpoint['temporary'] and native_checkpoint['keyKind']==1 and not native_checkpoint['seedOnly'])
+    check(native_checkpoint['originalIndex']=='0' and native_checkpoint['observationBoundary']=='1')
+    check(native_checkpoint['lookupKey']==native_checkpoint['inputCue']==n1['refinement']['connection'])
+    check(native_checkpoint['connection']==n0['refinement']['connection'])
+    check(native_checkpoint['rememberedHead']==native_checkpoint['observationHead'])
     automatic_played=c.call('tools/call',{'name':'vrs_replay','arguments':{'receipt':n1['receipt']}})['result']['structuredContent']
     check('structuredContent' in recheck(n1['receipt']))
     # A lost response may be retried with the same event; no new refinement.
@@ -626,6 +632,7 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     check(recovered1['duplicate'] and recovered1['original']==n1['original'] and recovered1['memory']==n1['memory'])
     recovered_play=c.call('tools/call',{'name':'vrs_replay','arguments':{'receipt':recovered1['receipt']}})['result'];assert 'structuredContent' in recovered_play, recovered_play
     check(recovered_play['structuredContent']==automatic_played)
+    check(c.call('swegca/agent/cognition',{'identity':native_id,'sequence':'1'})['result']['record']['recovery']==native_checkpoint)
     check(recheck(recovered1['receipt'])['isError']) # historical judgment is not a new comparison authority
     check(c.call('tools/call',{'name':'vrs_replay','arguments':{'receipt':recovered1['receipt'],'candidate':'0'}})['result']['isError'])
     check(sum(p.stat().st_size for p in native_root.rglob('*') if p.is_file())==before_recovery)
@@ -643,6 +650,10 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     main_raw,main_native=native_event('UserPromptSubmit',0,prompt=text)
     main_native=main_native['result']
     check(not main_native['temporary'] and main_native['candidateCount']=='3')
+    main_checkpoint=c.call('swegca/agent/cognition',{'identity':second_id,'sequence':'0'})['result']['record']['recovery']
+    check(not main_checkpoint['temporary'] and main_checkpoint['keyKind']==1)
+    check(main_checkpoint['observationBoundary']=='0' and main_checkpoint['observationHead']['bytes']=='0')
+    check(main_checkpoint['rememberedHead']['bytes']!='0')
     main_automatic=c.call('tools/call',{'name':'vrs_replay','arguments':{'receipt':main_native['receipt']}})['result']['structuredContent']
     check(bytes.fromhex(replay_receipt(main_native['receipt'])['structuredContent']['contentHex'])==raw0.encode())
     check(c.call('swegca/work',{'seed':'7','step':'0'})['result']['merged']=='0')
@@ -652,6 +663,7 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     check(c.call('swegca/select',{'identity':second_id})['result']=={})
     main_recovered=resend_native(main_raw,0)['result']
     check(main_recovered['memory']==main_native['memory'])
+    check(c.call('swegca/agent/cognition',{'identity':second_id,'sequence':'0'})['result']['record']['recovery']==main_checkpoint)
     check(c.call('tools/call',{'name':'vrs_replay','arguments':{'receipt':main_recovered['receipt']}})['result']['structuredContent']==main_automatic)
     c.close()
     # Commit the first event, deliberately leave its response unread, then kill
@@ -1229,6 +1241,8 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     updated_cognition=cognition_record(2,updated_revision)['result']['record']
     check(updated_cognition['inputOriginal']==r2['original'])
     check(updated_cognition['seed']=='7' and updated_cognition['step']=='3')
+    check(updated_cognition['recovery']==initial_cognition['record']['recovery'])
+    check(updated_cognition['recovery']['observationBoundary']=='2')
     saved_packet=json.loads(updated_cognition['replayPrefix']+after_response['contentHex']+'"}')
     check(saved_packet==after_response)
     check(json.loads(initial_cognition['record']['replayPrefix']+before_response['contentHex']+'"}')==before_response)
@@ -1276,6 +1290,13 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     check(manual_record['inputOriginal']==continued['original'] and manual_record['selectedOriginal']==r1['original'])
     check(manual_record['sourceSession']==response_id and manual_record['seed']=='13' and manual_record['step']=='7')
     check(manual_record['comparison']=={k:v for k,v in manual.items() if k!='revision'})
+    manual_checkpoint=manual_record['recovery']
+    check(manual_checkpoint['temporary'] and manual_checkpoint['keyKind']==2)
+    check(manual_checkpoint['lookupKey']==manual_checkpoint['connection']==r1['refinement']['connection'])
+    check(manual_checkpoint['inputCue']==continued['refinement']['connection'])
+    check(manual_checkpoint['inputCue']!=manual_checkpoint['lookupKey'])
+    check(manual_checkpoint['originalIndex']=='1')
+    check(manual_checkpoint['rememberedHead']==manual['rememberedHead'])
     check(not manual['reEvidencePerformed'])
     before_manual_retry=sum(p.stat().st_size for p in response_root.rglob('*') if p.is_file())
     check(c.call('tools/call',{'name':'vrs_re_evidence','arguments':manual_arguments})['result']['structuredContent']==manual)

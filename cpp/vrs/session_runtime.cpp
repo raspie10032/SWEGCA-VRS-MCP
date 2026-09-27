@@ -370,6 +370,11 @@ InputRecall ExperienceRouter::recall_cue(const DigestBytes& cue, RecallScope sco
     result.temporary_ = scope == RecallScope::temporary;
     if (kind == FamiliarityKey::missing) return result;
     if (kind == FamiliarityKey::context && !context)throw std::logic_error("Recall context key missing");
+    // Preserve the actual key used at Recall time. Replay may later advance
+    // continuation_, so a journal must not read that mutable key retrospectively.
+    result.lookup_key_=kind==FamiliarityKey::context?*context:
+        kind==FamiliarityKey::continuation?*continuation_:cue;
+    result.seed_only_=seed_only;
     if (kind == FamiliarityKey::continuation) {
         const auto candidates = recall(*continuation_);
         for (std::size_t candidate = 0; candidate < candidates.size(); ++candidate) {
