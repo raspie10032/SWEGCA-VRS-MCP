@@ -75,7 +75,19 @@ Automatic explicit comparisons also return their saved revision digest.
 The same agent/cognition query retrieves a manual revision by digest, including
 after session end, Main merge and restart. Repeated identical calls reuse the
 same record. A failed or partial Replay cannot publish a manual comparison.
-These records use the existing 64KiB cognition metadata bound; large comparison
-address lists and automatic latest-revision navigation remain limitations.
+The fixed 64KiB metadata ceiling has been removed. Content size is bounded by
+the configured VRS MemoryBudget minus the encoded record envelope, with capacity
+overflow checks. Actual reading allocations still use the shared available PMR
+budget; admission by size does not reserve memory or promise that a full read
+will succeed under simultaneous use. Storage remains under StorageBudget. Large
+comparison address lists still materialize in memory, and automatic latest-
+revision navigation remains unfinished.
 Generic host fixtures outside native session bindings still do not automatically
 persist cognition, as before this change.
+
+A 131,073-byte revision is preserved exactly through save/read and restart.
+An exhausted shared MemoryBudget rejects the read without poisoning the store;
+releasing the held allocation permits an exact retry. An encoded record exceeding
+the configured memory limit is rejected before hashing/writing. This is bounded
+metadata handling, not a proof of whole-process 4GB RSS or arbitrarily large
+streaming comparison export.

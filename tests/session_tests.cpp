@@ -231,7 +231,8 @@ int main() {
         ExperienceLocation input;
         const std::string metadata=R"({"memory":{"completed":true,"original":null}})";
         const std::string updated=R"({"memory":{"completed":true,"step":3}})";
-        DigestBytes revision{},later{};
+        DigestBytes revision{},later{},wide_revision{};
+        const std::string wide(131073,'w');
         StorageBudget storage(1<<20);
         {
             auto session=SessionStore::create(root,id(9),"cognition",1024,memory,&storage);
@@ -253,15 +254,22 @@ int main() {
             CHECK(storage.used()==revision_used&&session.original_count()==count);
             later=session.save_cognition_revision(input,bytes("later core assessment"));
             CHECK(later!=revision&&session.original_count()==count);
+            wide_revision=session.save_cognition_revision(input,bytes(wide));
+            CHECK(text(session.read_cognition_revision(input,wide_revision)->view().content)==wide);
+            const auto remaining=memory.limit()-memory.used();auto* held=memory.allocate(remaining);
+            expect_throw<std::bad_alloc>([&]{(void)session.read_cognition_revision(input,wide_revision);});
+            memory.deallocate(held,remaining);
+            CHECK(session.usable());
+            CHECK(text(session.read_cognition_revision(input,wide_revision)->view().content)==wide);
             CHECK(text(session.read_cognition_revision(input,revision)->view().content)==updated);
             CHECK(text(session.read_cognition(input)->view().content)==metadata);
             CHECK(!session.read_cognition_revision(forged,revision));
             CHECK(!session.read_cognition_revision(input,id(99)));
             expect_throw<std::invalid_argument>([&]{(void)session.save_cognition_revision(forged,bytes(updated));});
             expect_throw<std::length_error>([&]{(void)session.save_cognition_revision(input,{});});
-            expect_throw<std::length_error>([&]{(void)session.save_cognition_revision(input,bytes(std::string(65537,'x')));});
+            expect_throw<std::length_error>([&]{(void)session.save_cognition_revision(input,bytes(std::string(memory.limit(),'x')));});
             expect_throw<std::invalid_argument>([&]{session.save_cognition(input,bytes("different"));});
-            expect_throw<std::length_error>([&]{session.save_cognition(input,bytes(std::string(65537,'x')));});
+            expect_throw<std::length_error>([&]{session.save_cognition(input,bytes(std::string(memory.limit(),'x')));});
             auto foreign=input;foreign.block=id(99);
             expect_throw<std::invalid_argument>([&]{session.save_cognition(foreign,bytes(metadata));});
             CHECK(session.usable());
@@ -271,6 +279,7 @@ int main() {
             CHECK(text(session.read_cognition(input)->view().content)==metadata);
             CHECK(text(session.read_cognition_revision(input,revision)->view().content)==updated);
             CHECK(text(session.read_cognition_revision(input,later)->view().content)=="later core assessment");
+            CHECK(text(session.read_cognition_revision(input,wide_revision)->view().content)==wide);
             // An interrupted staging write is not a committed receipt.
             const auto directory=session_path(root,9)/"cognition";
             std::ofstream(directory/"staging-interrupted.block")<<"incomplete";
