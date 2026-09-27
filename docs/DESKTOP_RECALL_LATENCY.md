@@ -550,3 +550,31 @@ Actual stdio regression passed 4,690 checks, including normal EOF, launcher
 interruption, aggregate cgroup cleanup and a backend that exits with code 7
 while the launcher's SIGCHLD was initially blocked. The latter verifies prompt
 failure detection and disappearance of exactly the three owned child processes.
+
+## Rejected 16KiB socket staging trial
+
+A separate trial changed only SocketFrames staging from 4KiB to 16KiB. This is
+not the older 16KiB host-stdio trial or the rejected multi-recv drain loop.
+The larger socket read could consume coalesced relay chunks with fewer poll
+rounds. Frame limits, strong allocation-failure preservation, partial reads,
+EOF rejection and byte contents were unchanged. Socket tests passed 64 checks
+and stdio subprocess regression passed 4,694 checks during the trial.
+
+After compilation, CPU 6/7 measurements used before/after/after/before order,
+25 samples per size, same host/VRS, no concurrent build. SWEGCA_BENCH_PROXY now
+provides the explicit benchmark-only executable override for the saved baseline.
+Raw files: desktop-socket16k-{before-a,after-a,after-b,before-b}.jsonl.
+
+| Run | 64KiB median ms | 1MiB median ms |
+| --- | ---: | ---: |
+| Before A | 0.165722 | 2.273944 |
+| After A | 0.144481 | 2.220514 |
+| After B | 0.166582 | 2.291095 |
+| Before B | 0.136302 | 2.094312 |
+
+This did not demonstrate a consistent improvement: the final baseline was
+faster than both candidate runs. All 1MiB samples failed 1ms; After B also had
+one 4KiB failure. The production header was restored to 4KiB and proxy/socket
+test executables rebuilt. No larger socket staging buffer remains. These raw
+files are evidence of a rejected experiment, not a retained optimization or a
+1ms success. Full original-byte processing and the measurement boundary remain.
