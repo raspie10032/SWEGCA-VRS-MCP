@@ -508,7 +508,7 @@ ReEvidenceResult ExperienceRouter::evaluate_replay(const ReplayedInput& replayed
     const auto& prior_rules = remembered.main_graph ? remembered.main_graph->graph().rules_ : remembered.connection->rules();
     const auto& rules = current ? current->rules() : prior_rules;
     const auto prior = decode_evidence(prior_rules, replayed.original_);
-    Connection fresh(identity, current ? current->state().strength() : remembered.recalled_head.strength, rules, memory_);
+    std::optional<ConnectionRefinement> report;
     std::pmr::vector<ExperienceLocation> addresses(&memory_);
     ConnectionHead current_head{};
     if (current) {
@@ -518,15 +518,19 @@ ReEvidenceResult ExperienceRouter::evaluate_replay(const ReplayedInput& replayed
         if (boundary > values.size()) throw std::logic_error("current observation history regressed");
         addresses.reserve(values.size() - boundary);
         for (const auto& value : values.subspan(boundary)) {
-            fresh.append(value); addresses.push_back(value.original());
+            addresses.push_back(value.original());
         }
+        report.emplace(current->state().evaluate_suffix(boundary,seed,step));
     } else if (replayed.match_.current_observations != 0) {
         throw std::logic_error("current observation history disappeared");
     }
-    auto report = fresh.evaluate(seed, step);
+    if(!report){
+        Connection fresh(identity,remembered.recalled_head.strength,rules,memory_);
+        report.emplace(fresh.evaluate(seed,step));
+    }
     const auto agreement = compare_replay_evidence(rules, prior.value(), identity,
-        report.result().verification().judgment(), step);
-    return ReEvidenceResult(std::move(report), agreement, remembered.recalled_head, current_head,
+        report->result().verification().judgment(), step);
+    return ReEvidenceResult(std::move(*report), agreement, remembered.recalled_head, current_head,
         replayed.location(), replayed.input_cue(), std::move(addresses));
 }
 RecallCandidates ExperienceRouter::recall(const DigestBytes& identity) const {

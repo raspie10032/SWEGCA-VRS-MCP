@@ -94,6 +94,11 @@ public:
     [[nodiscard]] ConnectionRefinement evaluate(std::uint64_t seed, std::uint64_t step) const {
         return prepare_refinement(seed, step);
     }
+    // Detached evaluation of observations from begin through the current end.
+    // Relative sample indices/revisions match a fresh connection containing
+    // exactly this suffix; it cannot be committed to this owner's history.
+    [[nodiscard]] ConnectionRefinement evaluate_suffix(std::size_t begin,std::uint64_t seed,
+        std::uint64_t step) const;
     [[nodiscard]] const architecture::DigestBytes& identity() const noexcept { return identity_; }
     [[nodiscard]] double strength() const noexcept { return strength_; }
     [[nodiscard]] std::uint64_t revision() const noexcept { return revision_; }
@@ -120,6 +125,8 @@ private:
     void prepare_append(const ExperienceEvidence& experience);
     void commit_append(const ExperienceEvidence& experience) noexcept;
     [[nodiscard]] ConnectionRefinement prepare_refinement(std::uint64_t seed, std::uint64_t current_step) const;
+    [[nodiscard]] ConnectionRefinement prepare_refinement(std::uint64_t seed,std::uint64_t step,
+        std::size_t begin,std::size_t count,std::uint64_t revision) const;
     void commit_refinement(const ConnectionRefinement& report) noexcept;
     architecture::DigestBytes identity_;
     double strength_;

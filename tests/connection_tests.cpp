@@ -642,6 +642,28 @@ int main(int argc, char** argv) {
         }
     }
     {
+        Originals suffix_originals;MemoryBudget suffix_memory(8<<20);
+        Connection source(id(10),0.75,rules,suffix_memory);
+        for(unsigned n=0;n<300;++n)
+            source.append(suffix_originals.sample(id(10),n%4,n/3,
+                n%3?EvidenceOutcome::support:EvidenceOutcome::refute));
+        (void)source.refine(9,5);
+        const auto revision=source.revision();const auto strength=source.strength();
+        for(const std::size_t begin:{0U,1U,63U,127U,255U,299U,300U}){
+            MemoryBudget copy_memory(8<<20);
+            Connection copy(id(10),strength,rules,copy_memory);
+            for(const auto& value:source.experiences().subspan(begin))copy.append(value);
+            for(const auto seed:{1U,991U}){
+                const auto expected=copy.evaluate(seed,5);
+                const auto actual=source.evaluate_suffix(begin,seed,5);
+                CHECK(refinement_digest(expected)==refinement_digest(actual));
+                CHECK(actual.samples().size()==300-begin);
+                CHECK(source.revision()==revision&&source.strength()==strength);
+            }
+        }
+        expect_throw<std::out_of_range>([&]{(void)source.evaluate_suffix(301,1,5);});
+    }
+    {
         Originals originals8;auto policy8=EvidencePolicy{};policy8.axis_count=8;
         originals8.rules=make_evidence_rules(policy8);MemoryBudget memory8(4<<20);
         Connection connection8(id(10),0.75,originals8.rules,memory8);

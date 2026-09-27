@@ -108,16 +108,30 @@ ConnectionRefinement Connection::refine(std::uint64_t seed, std::uint64_t curren
 }
 
 ConnectionRefinement Connection::prepare_refinement(std::uint64_t seed, std::uint64_t current_step) const {
-    if (revision_ == std::numeric_limits<std::uint64_t>::max())
+    return prepare_refinement(seed,current_step,0,experiences_.size(),revision_);
+}
+ConnectionRefinement Connection::evaluate_suffix(std::size_t begin,std::uint64_t seed,std::uint64_t step) const {
+    if(begin>experiences_.size())throw std::out_of_range("evaluation suffix boundary");
+    // Preserve fresh-connection admission validation without duplicating values.
+    {
+        auto reader=experiences_.reader();
+        for(auto index=begin;index<experiences_.size();++index)validate_experience(reader[index]);
+    }
+    const auto count=experiences_.size()-begin;
+    return prepare_refinement(seed,step,begin,count,count);
+}
+ConnectionRefinement Connection::prepare_refinement(std::uint64_t seed,std::uint64_t current_step,
+    std::size_t begin,std::size_t count,std::uint64_t revision) const {
+    if (revision == std::numeric_limits<std::uint64_t>::max())
         throw std::overflow_error("VRS connection revision exhausted");
     ConnectionRefinement report(memory_);
     report.connection_ = identity_;
-    report.before_revision_ = report.after_revision_ = revision_;
+    report.before_revision_ = report.after_revision_ = revision;
     report.seed_ = seed;
     report.current_step_ = current_step;
-    report.indices_.resize(experiences_.size());
-    report.uses_.resize(experiences_.size());
-    for (std::size_t i = 0; i < experiences_.size(); ++i)
+    report.indices_.resize(count);
+    report.uses_.resize(count);
+    for (std::size_t i = 0; i < count; ++i)
         report.indices_[i] = static_cast<std::uint32_t>(i);
     shuffle(report.indices_, seed);
 
@@ -130,7 +144,7 @@ ConnectionRefinement Connection::prepare_refinement(std::uint64_t seed, std::uin
     // duplicating source/context/axis keys in the ordered sequence.
     std::pmr::vector<const GroupIndex::value_type*> groups(&memory_);
     std::pmr::vector<std::uint8_t> recent(&memory_);
-    recent.resize(std::min<std::size_t>(rules_.recent_window(), experiences_.size()));
+    recent.resize(std::min<std::size_t>(rules_.recent_window(), count));
     // All accumulators are fresh for this shuffled batch. A previous cycle's
     // tally is neither an input nor retained on the connection.
     auto& tally = report.evidence_;
@@ -138,7 +152,7 @@ ConnectionRefinement Connection::prepare_refinement(std::uint64_t seed, std::uin
     {
         DigestSet seen(&memory_);
         for (std::size_t ordinal=0;ordinal<report.indices_.size();++ordinal) {
-            const auto& value = reader[report.indices_[ordinal]].value();
+            const auto& value = reader[begin+report.indices_[ordinal]].value();
             auto& use=report.uses_[ordinal];
             use = admit_observation(rules_, identity_, value, current_step, seen.contains(value.address));
             if (use != ObservationUse::applied) continue;
@@ -185,7 +199,7 @@ ConnectionRefinement Connection::prepare_refinement(std::uint64_t seed, std::uin
             std::min(sources.size(),static_cast<std::size_t>(axis_producers[axis])));
     }
     report.result_ = verify_connection(rules_, tally, strength_);
-    if (report.result_.strength().valid()) report.after_revision_ = revision_ + 1;
+    if (report.result_.strength().valid()) report.after_revision_ = revision + 1;
     return report;
 }
 
