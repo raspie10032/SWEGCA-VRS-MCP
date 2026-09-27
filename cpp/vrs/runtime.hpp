@@ -74,6 +74,7 @@ public:
         std::span<const std::byte> cue_content, const OriginalExperienceView& envelope,
         std::uint64_t seed, std::uint64_t step);
     [[nodiscard]] InputRecall input(std::string_view media, std::span<const std::byte> content) const;
+    [[nodiscard]] InputRecall input_scope(const InputRecall&, std::string_view scope) const;
     [[nodiscard]] std::optional<InputCognition> cognize(const InputRecall&, std::uint64_t seed,
         std::uint64_t step) const;
     [[nodiscard]] std::optional<std::size_t> select_replay(const InputRecall&) const;

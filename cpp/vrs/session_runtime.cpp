@@ -291,6 +291,24 @@ void InputRecall::append_range(const RecallMatch& match, std::size_t boundary,
     count_ = end;
 }
 
+InputRecall ExperienceRouter::input_scope(const InputRecall& parent,std::string_view scope) const {
+    if(parent.issuer_!=issuer_||scope.empty())throw std::invalid_argument("scope requires this route's input receipt and nonempty name");
+    const auto cue=input_observation_scope(parent.cue_,scope);
+    if(!temporary_.usable())return recall_cue(cue,RecallScope::unavailable,FamiliarityKey::missing);
+    const auto local=temporary_.cues_.find(cue);
+    const bool local_exact=local!=temporary_.cues_.end()&&!local->second.empty();
+    const auto tier=recall_scope(true,local_exact);
+    if(tier==RecallScope::temporary)return recall_cue(cue,tier,familiarity_key(true,false));
+    require_main_current();
+    bool main_exact=false;
+    if(merged_main_){
+        const auto& index=merged_main_->graph().cues_;
+        const auto found=index.find(cue);main_exact=found!=index.end()&&!found->second.empty();
+    }else{
+        const auto found=main_cues_.find(cue);main_exact=found!=main_cues_.end()&&!found->second.empty();
+    }
+    return recall_cue(cue,tier,familiarity_key(main_exact,false));
+}
 InputRecall ExperienceRouter::input(std::string_view media, std::span<const std::byte> content) const {
     // Deja vu: natural bytes reach the core cue primitive immediately. This
     // anonymous exact familiarity signal is not a truth/semantic judgment.

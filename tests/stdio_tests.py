@@ -810,10 +810,14 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     compound='Move the file, preserve its contents and permissions.'
     scoped_outputs=[]
     scoped_connections=[]
+    scoped_support_targets=[]
     for scope,outcome,expected in (('byte content unchanged','support',1),
                                    ('permissions unchanged','refute',2)):
         for n in range(8):
+            trial_sequence=producer_seq
             received,result=producer_trial(compound,n,outcome,lambda v:v.update(scope=scope))
+            if scope=='byte content unchanged':
+                scoped_support_targets.append((received['original'],'producer-turn-'+str(trial_sequence)))
             check(received['refinement']['status']==0 and received['refinement']['strength']==1)
             check(received['refinement']['connection']!=result['refinement']['connection'])
         check(result['refinement']['status']==expected and result['refinement']['revision']=='16')
@@ -877,6 +881,34 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     check(received['candidateCount']=='16')
     check(result['refinement']['status']==1 and result['refinement']['revision']=='18')
     check(result['refinement']['connection']==scoped_connections[0])
+    def scoped_replay(receipt,scope,**extra):
+        return c.call('tools/call',{'name':'vrs_replay','arguments':{'receipt':receipt,'scope':scope,**extra}})['result']
+    scoped_receipt=received['receipt']
+    parent_before=c.call('tools/call',{'name':'vrs_replay','arguments':{'receipt':scoped_receipt}})['result']['structuredContent']
+    selected_scope=scoped_replay(scoped_receipt,'byte content unchanged')['structuredContent']
+    check(selected_scope['original']==result['original'] and selected_scope['temporary'])
+    check(selected_scope['scope']=='byte content unchanged' and selected_scope['parentCognitionUnchanged'])
+    for bad_scope in ('','unknown scope',None):
+        check(scoped_replay(scoped_receipt,bad_scope)['isError'])
+    check(scoped_replay(scoped_receipt,'byte content unchanged',candidate='0')['isError'])
+    check(c.call('tools/call',{'name':'vrs_re_evidence','arguments':{'receipt':scoped_receipt,
+        'scope':'byte content unchanged','seed':'7','step':'0'}})['result']['isError'])
+    # Late counterevidence updates the retained scoped Replay, without silently
+    # replacing it by a recent refutation or changing the parent cognition.
+    for n,(target,turn) in enumerate(scoped_support_targets):
+        scoped_counter={'method':'item/completed','params':{'threadId':'producer-thread','turnId':turn,
+            'item':{'type':'mcpToolCall','id':'scoped-counter-'+str(n),'server':'scoped-counter-'+str(n),
+                'tool':'verify','status':'completed','result':{'content':[],
+                    'structuredContent':{'swegcaObservation':{'inputOriginal':target,'axis':'0',
+                        'scope':'byte content unchanged','outcome':'refute','confidence':1.0,
+                        'hasExpiry':False,'expiresAt':'0'}}}}}}
+        _,scoped_counter_record=producer_frame('server',scoped_counter)
+    refreshed_scope=scoped_replay(scoped_receipt,'byte content unchanged')['structuredContent']
+    check(refreshed_scope['original']==selected_scope['original'])
+    check(refreshed_scope['assessment']['agreement']==3 and refreshed_scope['assessment']['status']==2)
+    check(refreshed_scope['assessment']['reEvidencePerformed'] and refreshed_scope['assessment']['currentOriginalCount']=='8')
+    parent_after=c.call('tools/call',{'name':'vrs_replay','arguments':{'receipt':scoped_receipt}})['result']['structuredContent']
+    check(parent_after==parent_before)
     current_input_sequence=producer_seq
     _,recalled=producer_frame('client',{'id':producer_seq+1,'method':'turn/start',
         'params':{'threadId':'producer-thread','input':[{'type':'text','text':'claim support'}]}})
@@ -936,6 +968,24 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     check(compound_main['refinement']['status']==0 and compound_main['refinement']['strength']==1)
     compound_replay=c.call('tools/call',{'name':'vrs_replay','arguments':{'receipt':compound_main['receipt']}})['result']['structuredContent']
     check(compound_replay['assessment']['status']==0 and compound_replay['assessment']['agreement']==1)
+    main_scope=scoped_replay(compound_main['receipt'],'byte content unchanged')['structuredContent']
+    check(not main_scope['temporary'] and main_scope['original']==scoped_counter_record['original'])
+    check(json.loads(bytes.fromhex(main_scope['contentHex']))==scoped_counter)
+    check(scoped_replay(scoped_receipt,'byte content unchanged')['isError'])
+    # The actual measured experience is retrievable through Main by its scope,
+    # with its original failure result, rather than rereading current files.
+    measurement_consumer=c.call('swegca/agent/attach',dict(producer_binding,session='measurement-consumer'))['result']['identity']
+    check(c.call('swegca/select',{'identity':measurement_consumer})['result']=={})
+    producer_seq=0
+    _,measured_parent=producer_frame('client',{'id':1,'method':'turn/start','params':{
+        'threadId':'measurement-consumer','input':[{'type':'text','text':'Check the file contents and preserve permissions.'}]}})
+    # The files now match again. Replay must still return the recorded missing
+    # file observation, not silently replace history with a fresh measurement.
+    measured_right.write_bytes(measured_left.read_bytes())
+    measurement_scope=actual_result['structuredContent']['swegcaObservation']['scope']
+    measured_recall=scoped_replay(measured_parent['receipt'],measurement_scope)['structuredContent']
+    check(not measured_recall['temporary'] and measured_recall['original']==observed_originals[-1][2])
+    check(json.loads(bytes.fromhex(measured_recall['contentHex']))==observed_originals[-1][1])
     c.close()
     # Turn notifications keep the exact originating input, including after
     # restart and with overlapping turns. They are not evidence of success.

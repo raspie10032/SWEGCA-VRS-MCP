@@ -291,6 +291,9 @@ public:
     // No disk, recording, shuffle or LLM precedes Recall. SHA-256 cue work is
     // part of Deja vu and is included in any input-to-Recall timing.
     [[nodiscard]] InputRecall input(std::string_view media, std::span<const std::byte> content) const;
+    // Exact producer-declared scope under an authenticated input receipt.
+    // A missing scope never falls back to unrelated dialogue/continuation.
+    [[nodiscard]] InputRecall input_scope(const InputRecall&, std::string_view scope) const;
     // Only receipt metadata is considered here; one original is read later.
     [[nodiscard]] std::optional<std::size_t> select_replay(const InputRecall&) const;
     [[nodiscard]] ReplayedInput replay(const InputRecall& recalled, std::size_t candidate) const;

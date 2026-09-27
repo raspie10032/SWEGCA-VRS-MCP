@@ -46,7 +46,7 @@ std::pmr::string refinement(const ConnectionRefinement& report,MemoryBudget& mem
         ",\"revision\":\""+std::to_string(report.after_revision()).c_str()+"\"}";
 }
 constexpr std::string_view tools_list=R"({"tools":[
-{"name":"vrs_replay","description":"Read one original from current Recall. Without candidate, SWEGCA selects by stored connection strength, recency and stable address. Optional offset and count return only that verified byte range, without a completed Replay receipt for Re-evidence. Does not infer truth or authorize actions.","inputSchema":{"type":"object","properties":{"receipt":{"type":"string"},"candidate":{"type":"string"},"offset":{"type":"string","description":"Raw payload byte offset; requires count."},"count":{"type":"string","description":"Byte count; requires offset."}},"required":["receipt"],"additionalProperties":false}},
+{"name":"vrs_replay","description":"Read one original from current Recall. Without candidate, SWEGCA selects by stored connection strength, recency and stable address. Optional offset/count return verified partial bytes. Scope performs a separate complete scoped Recall/Replay/comparison; it does not replace the parent cognition or the parent Replay used by vrs_re_evidence. Does not infer truth or authorize actions.","inputSchema":{"type":"object","properties":{"receipt":{"type":"string"},"candidate":{"type":"string"},"scope":{"type":"string","minLength":1,"description":"Exact producer-declared scope under the current input. Cannot combine with candidate, offset or count. A miss never returns unrelated dialogue."},"offset":{"type":"string","description":"Raw payload byte offset; requires count."},"count":{"type":"string","description":"Byte count; requires offset."}},"required":["receipt"],"additionalProperties":false}},
 {"name":"vrs_re_evidence","description":"Compare the selected Replay with recorded current observations through SWEGCA; run Re-evidence only on a verified conflict.","inputSchema":{"type":"object","properties":{"receipt":{"type":"string"},"seed":{"type":"string"},"step":{"type":"string"}},"required":["receipt","seed","step"],"additionalProperties":false}}
 ]})";
 class Server {
@@ -112,6 +112,14 @@ private:
     AutomaticWork automatic_;
     bool work_requested_=false;
     struct Context {
+        struct ScopedCognition {
+            ScopedCognition(std::string_view name,InputCognition value,std::pair<std::uint64_t,std::uint64_t> params,MemoryBudget& memory)
+                :scope(name,&memory),cognition(std::move(value)),parameters(params){}
+            std::pmr::string scope;
+            std::optional<InputCognition> cognition;
+            std::pair<std::uint64_t,std::uint64_t> parameters;
+            bool dirty=false,temporary=false;
+        };
         struct Delivery { DigestBytes fingerprint; ExperienceLocation original; DigestBytes context{}; ExperienceSender sender=ExperienceSender::unspecified; DigestBytes connection{}; };
         Context(MemoryBudget& memory,std::string_view native,bool app,bool connection):deliveries(&memory),turn_inputs(&memory),native_session(native,&memory),app_server(app),connection_scope(connection){}
         std::pmr::map<std::uint64_t,Delivery> deliveries;
@@ -126,6 +134,7 @@ private:
         std::optional<ReceivedInput> received;
         std::optional<ReplayedInput> replayed;
         std::optional<InputCognition> cognition;
+        std::optional<ScopedCognition> scoped;
         // Default core-selected connection survives disposal of Replay bytes.
         // This identity is bookkeeping, never a substitute for a full Replay.
         std::optional<DigestBytes> cognition_connection;
@@ -312,11 +321,27 @@ private:
     }
     void invalidate_cognition(const RecordedRefinement& recorded){
         auto& state=context();
+        if(state.scoped&&state.scoped->cognition->assessment().remembered_head().identity==recorded.refinement.connection()){
+            state.scoped->parameters={recorded.refinement.seed(),recorded.refinement.current_step()};
+            state.scoped->dirty=true;
+        }
         if(state.cognition_connection&&*state.cognition_connection==recorded.refinement.connection()){
             state.cognition_parameters=std::pair{recorded.refinement.seed(),recorded.refinement.current_step()};
             // Preserve the immutable input-time receipt; refresh only the live comparison.
             state.cognition_done=false;
         }
+    }
+    void complete_scoped_cognition(){
+        auto& scoped=context().scoped;
+        if(!scoped||!scoped->dirty)return;
+        auto& remembered=*scoped->cognition;
+        const auto [seed,step]=scoped->parameters;
+        auto compared=runtime_.compare_replay(remembered.replayed,seed,step);
+        std::optional<ReEvidenceResult> verified;
+        if(kernel::requires_re_evidence(compared.agreement()))
+            verified.emplace(runtime_.re_evidence(remembered.replayed,compared,seed,step));
+        InputCognition refreshed{remembered.candidate,std::move(remembered.replayed),std::move(compared),std::move(verified)};
+        scoped->cognition.reset();scoped->cognition.emplace(std::move(refreshed));scoped->dirty=false;
     }
     void complete_cognition(){
         auto& state=context();
@@ -592,6 +617,7 @@ private:
                 !state.deliveries.empty(),state.deliveries.empty()?0:state.deliveries.rbegin()->first,sequence);
             if(delivery==AgentDeliveryRoute::reject)throw std::invalid_argument("conflicting or out-of-order native delivery");
             if(delivery==AgentDeliveryRoute::reuse){
+                complete_scoped_cognition();
                 std::pmr::string body("{\"duplicate\":true,\"original\":",&memory_);
                 body+=address(found->second.original,memory_);body+=",\"receipt\":";
                 if(route==AgentEventRoute::record&&state.received&&state.cognition_connection&&
@@ -626,7 +652,11 @@ private:
                     const auto prompt=event.cue_content();
                     SWEGCA_INGRESS_STAGE("host_cue_ready");
                     clear();state.receipt=++next_receipt_;
-                    state.received.emplace(runtime_.receive_envelope(event.cue_media(),std::as_bytes(std::span(prompt)),original,seed,step));
+                    try{state.received.emplace(runtime_.receive_envelope(event.cue_media(),std::as_bytes(std::span(prompt)),original,seed,step));}
+                    catch(...){state.scoped.reset();throw;}
+                    // Release the prior scoped Replay only after this input's
+                    // Deja vu/Recall; no new cache destruction precedes them.
+                    state.scoped.reset();
                     slot->second.original=state.received->recorded.original;
                     slot->second.context=state.received->recorded.context;
                     slot->second.connection=state.received->recorded.refinement.connection();committed=true;
@@ -664,7 +694,10 @@ private:
                 if(state.indexed_turn_deliveries==sequence)++state.indexed_turn_deliveries;
                 // Finish live comparison and durable revision before acknowledging
                 // the observation. Only the core's conflict opens Re-evidence.
-                if(admitted_tool_observation&&state.received&&!state.cognition_done)complete_cognition();
+                if(admitted_tool_observation){
+                    complete_scoped_cognition();
+                    if(state.received&&!state.cognition_done)complete_cognition();
+                }
                 return "{\"original\":"+address(recorded.original,memory_)+",\"refinement\":"+refinement(recorded.refinement,memory_)+"}";
             } catch(...) {
                 if(!committed)state.deliveries.erase(slot);
@@ -790,7 +823,10 @@ private:
                 return "{\"original\":"+address(recorded.original,memory_)+",\"refinement\":"+refinement(recorded.refinement,memory_)+"}";
             }
             if(next_receipt_==std::numeric_limits<std::uint64_t>::max())throw std::overflow_error("receipt sequence exhausted");
-            clear();context().receipt=++next_receipt_;context().received.emplace(runtime_.receive({sequence,observed,session,source,media,content},seed,step));
+            clear();context().receipt=++next_receipt_;
+            try{context().received.emplace(runtime_.receive({sequence,observed,session,source,media,content},seed,step));}
+            catch(...){context().scoped.reset();throw;}
+            context().scoped.reset();
             complete_cognition();
             return received_body(page_limit);
         }
@@ -830,7 +866,7 @@ private:
     }
     void replay_result(std::string_view id,const Json& p){
         if(context().recovered_cognition && integer(p.at("receipt"))==context().recovered_receipt){
-            if(p.find("candidate") || p.find("offset") || p.find("count"))
+            if(p.find("candidate") || p.find("offset") || p.find("count") || p.find("scope"))
                 throw std::invalid_argument("historical cognition permits only its recorded original");
             const auto metadata=parse_json(content_text(*context().recovered_cognition),memory_);
             if(metadata.at("selectedOriginal").kind==Json::Kind::null)
@@ -841,6 +877,31 @@ private:
             return;
         }
         if(!context().received||integer(p.at("receipt"))!=context().receipt)throw std::invalid_argument("expired receipt");
+        if(const auto* scope=p.find("scope")){
+            if(p.find("candidate")||p.find("offset")||p.find("count"))
+                throw std::invalid_argument("scope cannot be combined with candidate or byte range");
+            const auto name=scope->string();
+            auto& state=context();
+            if(!state.scoped||state.scoped->scope!=name){
+                auto recalled=runtime_.input_scope(state.received->recalled,name);
+                const auto& recorded=state.received->recorded.refinement;
+                auto cognition=runtime_.cognize(recalled,recorded.seed(),recorded.current_step());
+                if(!cognition)throw std::invalid_argument("scope has no Recall candidate");
+                Context::ScopedCognition prepared{name,std::move(*cognition),{recorded.seed(),recorded.current_step()},memory_};
+                prepared.temporary=recalled.temporary();state.scoped.emplace(std::move(prepared));
+            }
+            complete_scoped_cognition();
+            const auto& cognition=*state.scoped->cognition;
+            auto prefix=replay_prefix(cognition.replayed,&cognition);
+            // Add explicit scope before the existing contentHex field. The
+            // parent cognition/selected Replay and its durable revision remain.
+            constexpr std::string_view content_field=",\"contentHex\":\"";
+            prefix.resize(prefix.size()-content_field.size());
+            prefix+=",\"scope\":";prefix+=quote_json(name,memory_);
+            prefix+=",\"temporary\":";prefix+=state.scoped->temporary?"true":"false";
+            prefix+=",\"parentCognitionUnchanged\":true";prefix+=content_field;
+            payload_result(id,prefix,evidence_payload(cognition.replayed.original()).content);return;
+        }
         const auto* explicit_candidate=p.find("candidate");
         // Default full Replay completes core comparison even when a preceding
         // explicit/partial read cleared cognition. Partial bytes alone never
@@ -870,6 +931,7 @@ private:
     std::pmr::string call(std::string_view method,const Json& p){
         if(!context().received||integer(p.at("receipt"))!=context().receipt)throw std::invalid_argument("expired receipt");
         if(method=="vrs_re_evidence"){
+            if(p.find("scope"))throw std::invalid_argument("refresh a scoped comparison through vrs_replay with scope");
             const auto* replayed=selected_replay();
             if(!replayed)throw std::invalid_argument("Replay required before Re-evidence");
             const auto seed=integer(p.at("seed")),step=integer(p.at("step"));

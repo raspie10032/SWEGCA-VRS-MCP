@@ -39,6 +39,10 @@ scope를 무시하고 전체 입력 관측으로 처리하지 않는다.
 
 ## 남아 있는 작업
 
+후속 scoped Recall/Replay와 실시간 대조 연결은 아래 절에 있다. scoped 대조 캐시는
+현재 프로세스 메모리에만 있으며, 원경험 저장/복원과 그 파생 대조 상태의 영속 복원은
+구분한다. 파생 scoped 대조의 전용 영속 개정은 아직 구현하지 않았다.
+
 파일 관측 함수는 이제 C++ MCP 생산자에 연결됐으며 실제 실행 결과의 native 저장/복구를
 검증했다(CONTENT_OBSERVER_MCP.md). 설치된 데스크톱 등록과 자연어 요청에서
 검증할 요구사항을 생성하고 그 적합성을 확인하는 기능, 설치된 에이전트의 도구 호출,
@@ -58,3 +62,35 @@ CPU 6,7 / make -j2 재빌드 후 실제 stdio 프로세스 **5034 checks passed*
 개정이 이어지고 native sequence가 복원되는지 검사한다. 명시적 종료→Main 병합→
 재시작→새 소비 세션의 부모 Recall도 기권이어야 한다. 보고한 support/refute 자체는
 합성 fixture이므로 자연어 해석이나 실제 측정의 사실성을 검증한 시험은 아니다.
+
+## 부분 관측의 Recall → Replay → 대조
+
+기존 `vrs_replay` 도구에 선택 인자 `scope`를 연결했다. 현재 입력의 live receipt와
+생산자가 기록한 정확한 scope 문자열을 사용한다. 부모 입력 cue와 scope로 키를
+구성하고 정확한 친숙성 신호를 확인한 뒤 기존 Recall을 호출한다. 임시에서 해당 cue가
+없을 때만 Main으로 간다. 지정 scope가 없으면 다른 대화나 연속 기억으로 대체하지 않는다.
+
+scope 조회는 candidate/offset/count와 함께 사용할 수 없다. 기존 코어 선택기로
+원경험 하나를 고른 다음 기존 Replay/대조 및 충돌 시 Re-evidence를 수행한다.
+응답은 scope, temporary, parentCognitionUnchanged와 원경험 및 assessment를 포함한다.
+실제 Replay가 기존 대화 연속 키를 갱신하는 동작은 유지하되 부모의 자동 cognition과
+부모 Replay 및 해당 영속 개정을 덮어쓰지 않는다. `vrs_re_evidence`는 부모 Replay에
+대한 기존 의미를 유지하며 scope 인자를 받으면 오류를 반환한다. scoped 대조 갱신은
+같은 `vrs_replay(scope=...)`로 조회한다.
+
+활성 입력마다 scope 하나의 선택 원경험과 대조 경계를 보유한다. 같은 scope를 다시
+조회할 때 최근 관측을 새로운 과거 기억으로 재선택하지 않는다. 이후 해당 연결에
+기록된 native 관측은 기존 선택 원경험과 대조하고 코어가 충돌로 판정할 때만
+Re-evidence를 호출한다. 이 갱신은 관측 기록 후 ACK 전에 수행하며 실패한 갱신은
+같은 delivery 재전송 또는 다음 scoped 조회에서 재시도한다. 셔플/경험 기록은 중복하지 않는다.
+
+다른 scope 선택, 새 입력 또는 세션 종료 시 그 메모리상의 선택은 교체/해제된다.
+새 입력에서는 기존 scoped 캐시 해제를 Déjà vu/Recall 이전에 추가하지 않고
+receive 이후에 수행한다. 원경험과 연결은 계속 영속 보존된다. 재시작 후 scoped
+조회는 보존된 경험에서 새 조회를 구성하며 과거 파생 대조 캐시를 복원했다고 주장하지 않는다.
+
+CPU 6,7 / make -j2 재빌드 후 stdio **5176 checks passed**. 임시 scoped 조회,
+잘못된/없는 scope의 비대체, 늦은 8개 반증에 따른 기존 선택 유지·충돌·Re-evidence,
+부모 결과 불변, Main scoped 조회, 실제 파일 상태를 변경해도 원래 측정 원문을 반환,
+다른 세션의 오래된 receipt 거부를 확인했다. 이 검증은 큰 Main의 시간/메모리
+성능이나 자연어에서 scope를 자동 해석하는 기능을 증명하지 않는다.

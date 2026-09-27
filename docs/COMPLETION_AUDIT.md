@@ -1,5 +1,20 @@
 # 전체 목표 대비 현재 구성 감사
 
+## 2026-09-27: 저장된 부분 관측의 경험 조회와 충돌 대조
+
+- 기존 vrs_replay에 명시적 scope 조회를 연결했다. 범위 키/친숙성 확인 후
+  임시 우선·Main 후순위 Recall→코어의 한 원경험 선택→Replay/대조를 수행한다.
+  없는 scope를 다른 대화로 대체하지 않는다.
+- 선택한 scoped 원경험을 유지한 채 늦은 native 관측과 대조하고 충돌일 때만
+  Re-evidence를 수행한다. 부모 cognition/Replay는 덮어쓰지 않는다. 새 입력의
+  scoped 캐시 해제도 Déjà vu/Recall 이후로 배치했다.
+- CPU 6,7 / make -j2 빌드 후 stdio **5176 checks passed**. 실제 측정 원경험의
+  Main 조회, 현재 파일을 바꿔도 과거 측정 원문 유지, 부분 반증의 충돌/재검증,
+  부모 결과 불변 및 잘못된 scope/receipt 거부를 확인했다.
+- scoped 파생 대조 캐시는 아직 휘발성이며 전용 영속 개정은 남았다. 자연어 범위
+  추출/의미 적합성, 실제 데스크톱 설치, 전체 자원·지연 목표 역시 미완료다.
+  구현 계약은 SCOPED_OBSERVATIONS.md 참조.
+
 ## 2026-09-27: 실제 C++ MCP 관측 생산자와 native 기록 연결
 
 - `swegca-content-observer`가 실제 두 파일을 읽고 코어의 내용 관측값과 파일
