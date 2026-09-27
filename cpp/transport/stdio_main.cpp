@@ -124,6 +124,9 @@ private:
         std::optional<ReceivedInput> received;
         std::optional<ReplayedInput> replayed;
         std::optional<InputCognition> cognition;
+        // Default core-selected connection survives disposal of Replay bytes.
+        // This identity is bookkeeping, never a substitute for a full Replay.
+        std::optional<DigestBytes> cognition_connection;
         bool cognition_done=false,cognition_saved=false;
         std::optional<std::pair<std::uint64_t,std::uint64_t>> cognition_parameters;
         std::optional<StoredExperience> recovered_cognition;
@@ -177,14 +180,14 @@ private:
     void clear_replay(){
         context().replayed.reset();context().cognition.reset();context().cognition_done=false;
     }
-    void clear(){clear_replay();context().cognition_saved=false;context().cognition_parameters.reset();context().received.reset();context().recovered_cognition.reset();context().recovered_receipt=0;}
+    void clear(){clear_replay();context().cognition_connection.reset();context().cognition_saved=false;context().cognition_parameters.reset();context().received.reset();context().recovered_cognition.reset();context().recovered_receipt=0;}
     const ReplayedInput* selected_replay() const {
         if(context().replayed)return &*context().replayed;
         return context().cognition ? &context().cognition->replayed : nullptr;
     }
     void invalidate_cognition(const RecordedRefinement& recorded){
         auto& state=context();
-        if(state.cognition&&state.cognition->assessment().remembered_head().identity==recorded.refinement.connection()){
+        if(state.cognition_connection&&*state.cognition_connection==recorded.refinement.connection()){
             state.cognition_parameters=std::pair{recorded.refinement.seed(),recorded.refinement.current_step()};
             // Preserve the immutable input-time receipt; refresh only the live comparison.
             state.cognition_done=false;
@@ -212,6 +215,8 @@ private:
             }
             state.replayed.reset();state.cognition.reset();
             if(cognition)state.cognition.emplace(std::move(*cognition));
+            state.cognition_connection.reset();
+            if(state.cognition)state.cognition_connection=state.cognition->assessment().remembered_head().identity;
             state.cognition_done=true;
         }
         if(!state.native_session.empty() && !state.cognition_saved){
@@ -540,8 +545,8 @@ private:
                 // This is the host's recorded observation, never a caller-supplied
                 // SWEGCA verdict. Preserve the prior selected Replay for comparison.
                 auto& state=context();
-                const bool affects_cognition=state.cognition&&
-                    state.cognition->assessment().remembered_head().identity==value.hypothesis;
+                const bool affects_cognition=state.cognition_connection&&
+                    *state.cognition_connection==value.hypothesis;
                 // A failed write may poison the session after a durable prefix.
                 // Never allow the cached assessment to bypass that failure.
                 if(affects_cognition){state.cognition_done=false;state.cognition_saved=false;}

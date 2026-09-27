@@ -149,6 +149,7 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     check(updated_packet['assessment']['currentOriginalCount']=='2' and updated_packet['assessment']['step']=='1')
     check(updated_packet['assessment']['agreement']==1 and updated_packet['assessment']['status']==0)
     check(not updated_packet['assessment']['reEvidencePerformed'] and not updated_packet['grantsAuthority'])
+    check(partial(retained_input['receipt'],0,1)['structuredContent']['partial'])
     check('result' in c.call('swegca/retain',event('retained-assessment',sequence='3',step='2',content='unrelated content')))
     check(retained_packet()==updated_packet)
     check('error' in c.call('swegca/retain',event('retained-assessment',source='',sequence='4')))
@@ -184,6 +185,7 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     check('error' in c.call('swegca/observe',invalid))
     check(c.call('tools/call',{'name':'vrs_replay','arguments':{'receipt':receipt}})['result']['structuredContent']==automatic_before)
     current=[]
+    check(partial(receipt,0,1)['structuredContent']['partial'])
     for n in range(8,16):
         incoming=observation(n,20,'refute')
         if n==15:incoming['step']='1'
@@ -716,6 +718,7 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
         return c.call('tools/call',{'name':'vrs_replay','arguments':{'receipt':receipt}})['result']['structuredContent']
     before_response=response_packet(r2['receipt'])
     check(before_response['assessment']['currentOriginalCount']=='1')
+    check(partial(r2['receipt'],0,1)['structuredContent']['partial'])
     _,r3=app_response(3,2);r3=r3['result']
     retried_input=resend_native(r2_raw,2)['result']
     check(retried_input['receipt']==r2['receipt'] and retried_input['memory']['completed'])
