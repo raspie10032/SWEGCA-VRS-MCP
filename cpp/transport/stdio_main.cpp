@@ -47,7 +47,7 @@ std::pmr::string refinement(const ConnectionRefinement& report,MemoryBudget& mem
         ",\"revision\":\""+std::to_string(report.after_revision()).c_str()+"\"}";
 }
 constexpr std::string_view tools_list=R"({"tools":[
-{"name":"vrs_replay","description":"Read one original from current Recall. Without candidate, SWEGCA selects by stored connection strength, recency and stable address. Optional offset/count return verified partial bytes. Scope performs a separate complete scoped Recall/Replay/comparison; it does not replace the parent cognition or the parent Replay used by vrs_re_evidence. Does not infer truth or authorize actions.","inputSchema":{"type":"object","properties":{"receipt":{"type":"string"},"candidate":{"type":"string"},"scope":{"type":"string","minLength":1,"description":"Exact producer-declared scope under the current input. Cannot combine with candidate, offset or count. A miss never returns unrelated dialogue."},"offset":{"type":"string","description":"Raw payload byte offset; requires count."},"count":{"type":"string","description":"Byte count; requires offset."}},"required":["receipt"],"additionalProperties":false}},
+{"name":"vrs_replay","description":"Read one original from current Recall. Without candidate, SWEGCA selects by stored connection strength, recency and stable address. Optional offset/count return verified partial bytes. Scope performs a separate complete scoped Recall/Replay/comparison; it does not replace the parent cognition or the parent Replay used by vrs_re_evidence. Does not infer truth or authorize actions.","inputSchema":{"type":"object","properties":{"receipt":{"type":"string"},"inputOriginal":{"type":"object","description":"Expected current input address paired with receipt. Rejects receipt reuse for a different input.","properties":{"block":{"type":"string"},"offset":{"type":"string"},"bytes":{"type":"string"},"digest":{"type":"string"}},"required":["block","offset","bytes","digest"],"additionalProperties":false},"candidate":{"type":"string"},"scope":{"type":"string","minLength":1,"description":"Exact producer-declared scope under the current input. Cannot combine with candidate, offset or count. A miss never returns unrelated dialogue."},"offset":{"type":"string","description":"Raw payload byte offset; requires count."},"count":{"type":"string","description":"Byte count; requires offset."}},"required":["receipt"],"additionalProperties":false}},
 {"name":"vrs_re_evidence","description":"Compare the selected Replay with recorded current observations through SWEGCA; run Re-evidence only on a verified conflict.","inputSchema":{"type":"object","properties":{"receipt":{"type":"string"},"seed":{"type":"string"},"step":{"type":"string"}},"required":["receipt","seed","step"],"additionalProperties":false}}
 ]})";
 class Server {
@@ -1010,6 +1010,9 @@ private:
             if(p.find("candidate") || p.find("offset") || p.find("count"))
                 throw std::invalid_argument("historical cognition permits only its recorded original");
             const auto metadata=parse_json(content_text(*context().recovered_cognition),memory_);
+            if(const auto* expected=p.find("inputOriginal");expected&&
+                record_address(*expected)!=record_address(metadata.at("inputOriginal")))
+                throw std::invalid_argument("receipt input address mismatch");
             if(const auto* scope=p.find("scope")){
                 const auto name=scope->string();if(name.empty())throw std::invalid_argument("scope requires a name");
                 const auto input=record_address(metadata.at("inputOriginal"));
@@ -1087,6 +1090,9 @@ private:
             payload_result(id,prefix,evidence_payload(state.restored->cognition->replayed.original()).content);return;
         }
         if(!context().received||integer(p.at("receipt"))!=context().receipt)throw std::invalid_argument("expired receipt");
+        if(const auto* expected=p.find("inputOriginal");expected&&
+            record_address(*expected)!=context().received->recorded.original)
+            throw std::invalid_argument("receipt input address mismatch");
         if(const auto* scope=p.find("scope")){
             if(p.find("candidate")||p.find("offset")||p.find("count"))
                 throw std::invalid_argument("scope cannot be combined with candidate or byte range");

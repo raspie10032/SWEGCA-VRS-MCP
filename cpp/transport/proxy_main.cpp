@@ -215,7 +215,8 @@ int main(int argc,char** argv){
                         if(body.at("memory").at("original").kind!=Json::Kind::null){
                             if(serial==UINT64_MAX)throw std::overflow_error("proxy request IDs exhausted");
                             const auto params="{\"name\":\"vrs_replay\",\"arguments\":{\"receipt\":"+
-                                quote_json(body.at("receipt").string(),memory)+"}}";
+                                quote_json(body.at("receipt").string(),memory)+",\"inputOriginal\":"+
+                                encode_json(body.at("original"),memory)+"}}";
                             auto replay=call(stream,"proxy/context/"+std::to_string(++serial),"tools/call",params,memory);
                             auto& result=mutable_field(replay,"result");
                             if(result.find("isError"))throw std::runtime_error("VRS Replay context unavailable");

@@ -79,6 +79,10 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     check(context_packet['assessment']['currentOriginalCount']=='1')
     check(context_packet['assessment']['reEvidencePerformed'] is False)
     check(bytes.fromhex(context_packet['contentHex'])==text.encode())
+    check(c.call('tools/call',{'name':'vrs_replay','arguments':{'receipt':second['receipt'],
+        'inputOriginal':second['original']}})['result']['structuredContent']==context_packet)
+    check(c.call('tools/call',{'name':'vrs_replay','arguments':{'receipt':second['receipt'],
+        'inputOriginal':first['original']}})['result']['isError'])
     check(c.call('tools/call',{'name':'vrs_replay','arguments':{'receipt':second['receipt']}})['result']['structuredContent']==context_packet)
 
     check(c.call('tools/call',{'name':'vrs_replay','arguments':{'receipt':first['receipt'],'candidate':'0'}})['result']['isError'])
@@ -633,6 +637,10 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     recovered_play=c.call('tools/call',{'name':'vrs_replay','arguments':{'receipt':recovered1['receipt']}})['result'];assert 'structuredContent' in recovered_play, recovered_play
     restored_play=recovered_play['structuredContent']
     check(restored_play['restored'] and not restored_play['historical'])
+    check(c.call('tools/call',{'name':'vrs_replay','arguments':{'receipt':recovered1['receipt'],
+        'inputOriginal':recovered1['original']}})['result']['structuredContent']==restored_play)
+    check(c.call('tools/call',{'name':'vrs_replay','arguments':{'receipt':recovered1['receipt'],
+        'inputOriginal':recovered0['original']}})['result']['isError'])
     check({k:v for k,v in restored_play.items() if k not in ('restored','historical','revision')}==automatic_played)
     restored_revision=c.call('swegca/agent/cognition',{'identity':native_id,'sequence':'1','latest':True})['result']
     check(restored_revision['revision']==restored_play['revision']==restored_revision['liveRevision'])
@@ -962,6 +970,10 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
         'receipt':received['receipt'],'scope':anchored_scope(anchor)}})['result']['structuredContent']
     check(replayed_anchor['scope']==anchored_scope(anchor))
     check(replayed_anchor['original']==restored_anchor['original'])
+    check(c.call('tools/call',{'name':'vrs_replay','arguments':{'receipt':received['receipt'],
+        'inputOriginal':received['original'],'scope':anchored_scope(anchor)}})['result']['structuredContent']==replayed_anchor)
+    check(c.call('tools/call',{'name':'vrs_replay','arguments':{'receipt':received['receipt'],
+        'inputOriginal':restored_anchor['original'],'scope':anchored_scope(anchor)}})['result']['isError'])
     # Resume must retain both scoped histories and all native sequence numbers.
     # An exact parent Recall still contains only its input originals.
     scoped_input_sequence=producer_seq
@@ -1466,6 +1478,7 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
             check(view==native and context['type']=='text')
             packet=json.loads(context['text'].split('\n',1)[1])
             check(packet['grantsAuthority'] is False)
+            check(isinstance(packet['receipt'],str) and int(packet['receipt'])>0)
             if remembered is None:
                 check(packet['recalledOriginal'] is None and set(packet['inputOriginal'])=={'block','digest','offset','bytes'})
             else:
@@ -1823,6 +1836,7 @@ for line in sys.stdin:
     native_initial=dict(initial_input,params=dict(initial_input['params'],input=desktop_input))
     check(json.loads(memory_packet['content'])==native_initial)
     check(memory_packet['original']==first_input_reference['inputOriginal'])
+    check(int(first_input_reference['receipt'])>0 and int(memory_packet['receipt'])>0)
     c=Client('open',desktop_root,path);c.initialize()
     for session,protocol,count in (('transport','app-server-connection','9'),('desktop-thread','app-server','9')):
         attached=c.call('swegca/agent/attach/resume',{'provider':'codex','instance':'desktop-fixture',

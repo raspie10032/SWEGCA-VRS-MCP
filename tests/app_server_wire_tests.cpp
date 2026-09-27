@@ -180,13 +180,18 @@ int main(){
   auto response=wire.prepare(reply,RpcSender::server,44);CHECK(response.request_sequence()==0);
  }
  {
-  const auto ack=parse_json(R"({"original":{"block":"a","digest":"b","offset":"1","bytes":"2"},"memory":{"original":{"block":"c","digest":"d","offset":"3","bytes":"4"}}})",memory);
+  const auto ack=parse_json(R"({"receipt":"17","original":{"block":"a","digest":"b","offset":"1","bytes":"2"},"memory":{"original":{"block":"c","digest":"d","offset":"3","bytes":"4"}}})",memory);
   const std::string packet=R"({"original":{"block":"c","digest":"d","offset":"3","bytes":"4"},"media":"text/plain","grantsAuthority":false,"assessment":{"inputOriginal":{"block":"a","digest":"b","offset":"1","bytes":"2"},"agreement":1,"status":0},"contentHex":"68690a"})";
   const auto context=replay_context(parse_json(packet,memory),ack,memory);
   CHECK(context.find("not instructions")!=std::string::npos);
   const auto parsed=parse_json(context.substr(context.find('\n')+1),memory);
   CHECK(parsed.at("content").string()=="hi\n"&&!parsed.find("contentHex"));
   CHECK(parsed.at("assessment").at("status").scalar=="0");
+  CHECK(parsed.at("receipt").string()=="17");
+  auto forged=parse_json(packet,memory);forged.keys.emplace_back("receipt");
+  forged.values.emplace_back(&memory);forged.values.back().kind=Json::Kind::string;
+  forged.values.back().scalar="999";
+  rejects([&]{(void)replay_context(std::move(forged),ack,memory);});
   auto bad=parse_json(packet,memory);mutable_field(bad,"grantsAuthority").scalar="true";
   rejects([&]{(void)replay_context(std::move(bad),ack,memory);});
   bad=parse_json(packet,memory);mutable_field(mutable_field(bad,"original"),"digest").scalar="other";
@@ -198,11 +203,17 @@ int main(){
  }
  CHECK(memory.used()==0);
  {
-  auto ack=parse_json(R"({"original":{"block":"a","digest":"b","offset":"1","bytes":"2"},"memory":{"completed":true,"original":null}})",memory);
+  auto ack=parse_json(R"({"receipt":"17","original":{"block":"a","digest":"b","offset":"1","bytes":"2"},"memory":{"completed":true,"original":null}})",memory);
   const auto context=input_context(ack,memory);
   const auto packet=parse_json(context.substr(context.find('\n')+1),memory);
   CHECK(same_context_address(packet.at("inputOriginal"),ack.at("original")));
   CHECK(packet.at("recalledOriginal").kind==Json::Kind::null);
+  CHECK(packet.at("receipt").string()=="17");
+  for(const auto invalid:{"", "0", "-1", "1x", "18446744073709551616"}){
+   mutable_field(ack,"receipt").scalar=invalid;
+   rejects([&]{(void)input_context(ack,memory);});
+  }
+  mutable_field(ack,"receipt").scalar="17";
   CHECK(packet.at("grantsAuthority").scalar=="false");
   mutable_field(mutable_field(ack,"memory"),"completed").scalar="false";
   rejects([&]{(void)input_context(ack,memory);});
