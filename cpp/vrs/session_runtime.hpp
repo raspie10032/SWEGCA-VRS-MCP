@@ -218,6 +218,7 @@ private:
 struct ReplayConnectionPage {
     struct Entry { architecture::DigestBytes connection; std::size_t candidate; };
     explicit ReplayConnectionPage(std::pmr::memory_resource& memory):entries(&memory){}
+    architecture::DigestBytes snapshot{};
     std::pmr::vector<Entry> entries;
     std::optional<architecture::DigestBytes> next;
 };

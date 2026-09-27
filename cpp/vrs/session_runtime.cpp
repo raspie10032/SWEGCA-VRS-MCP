@@ -1,6 +1,7 @@
 #include "vrs/persistent_main_graph.hpp"
 #include "vrs/session_runtime.hpp"
 #include "swegca_architecture/input_cue.hpp"
+#include "swegca_architecture/sha256.hpp"
 
 #include <algorithm>
 #include <new>
@@ -600,15 +601,27 @@ ReplayConnectionPage ExperienceRouter::select_replay_connections(const InputReca
     if(!limit)throw std::invalid_argument("connection page limit must be positive");
     // Address order is pagination only. Every selection inside a connection
     // still uses the existing SWEGCA prefer_replay reduction, including pages.
+    Sha256 snapshot;snapshot.update("SWEGCA Recall connection page v1");
+    snapshot.update(recalled.cue_);snapshot.update(recalled.lookup_key_);
+    const auto number=[&](std::uint64_t value){
+        std::array<std::byte,8> bytes{};
+        for(unsigned i=0;i<8;++i)bytes[i]=std::byte((value>>(8*i))&255);
+        snapshot.update(bytes);
+    };
+    number(recalled.temporary_);number(recalled.seed_only_);number(recalled.count_);
     std::pmr::set<DigestBytes> identities(&memory_);
     bool more=false;
     for(const auto& context:recalled.contexts_){
         const auto& identity=context.recalled.recalled_head.identity;
+        snapshot.update(identity);snapshot.update(context.recalled.recalled_head.record.digest);
+        snapshot.update(context.recalled.observation_head.digest);
+        number(context.recalled.recalled_head.observations);number(context.current_observations);
+        number(context.begin);number(context.end);
         if(after&&identity<=*after)continue;
         identities.insert(identity);
         if(identities.size()>limit){identities.erase(std::prev(identities.end()));more=true;}
     }
-    ReplayConnectionPage result(memory_);
+    ReplayConnectionPage result(memory_);result.snapshot=snapshot.finish();
     result.entries.reserve(identities.size());
     for(const auto& identity:identities){
         const auto selected=select_replay(recalled,&identity);

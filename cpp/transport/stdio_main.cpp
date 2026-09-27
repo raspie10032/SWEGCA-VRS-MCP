@@ -48,7 +48,7 @@ std::pmr::string refinement(const ConnectionRefinement& report,MemoryBudget& mem
         ",\"revision\":\""+std::to_string(report.after_revision()).c_str()+"\"}";
 }
 constexpr std::string_view tools_list=R"({"tools":[
-{"name":"vrs_replay","description":"Read one original from current Recall. Without candidate, SWEGCA selects by stored connection strength, recency and stable address. Optional offset/count return verified partial bytes. Scope performs a separate complete scoped Recall/Replay/comparison; it does not replace the parent cognition or the parent Replay used by vrs_re_evidence. Does not infer truth or authorize actions.","inputSchema":{"type":"object","properties":{"receipt":{"type":"string"},"inputOriginal":{"type":"object","description":"Expected current input address paired with receipt. Rejects receipt reuse for a different input.","properties":{"block":{"type":"string"},"offset":{"type":"string"},"bytes":{"type":"string"},"digest":{"type":"string"}},"required":["block","offset","bytes","digest"],"additionalProperties":false},"candidate":{"type":"string"},"related":{"type":"boolean","description":"Follow recorded observation links from the automatically selected parent Replay. Separate comparison; cannot combine with scope or candidate/range."},"scope":{"type":"string","minLength":1,"description":"Exact producer-declared scope under the current input. Cannot combine with candidate, offset or count. A miss never returns unrelated dialogue."},"offset":{"type":"string","description":"Raw payload byte offset; requires count."},"count":{"type":"string","description":"Byte count; requires offset."}},"required":["receipt"],"additionalProperties":false}},
+{"name":"vrs_replay","description":"Read one original from current Recall. Without candidate, SWEGCA selects by stored connection strength, recency and stable address. Optional offset/count return verified partial bytes. Scope performs a separate complete scoped Recall/Replay/comparison; it does not replace the parent cognition or the parent Replay used by vrs_re_evidence. Does not infer truth or authorize actions.","inputSchema":{"type":"object","properties":{"receipt":{"type":"string"},"inputOriginal":{"type":"object","description":"Expected current input address paired with receipt. Rejects receipt reuse for a different input.","properties":{"block":{"type":"string"},"offset":{"type":"string"},"bytes":{"type":"string"},"digest":{"type":"string"}},"required":["block","offset","bytes","digest"],"additionalProperties":false},"connections":{"type":"object","description":"List core-selected originals per recorded connection, without Replay or whole-purpose verdict. Requires related=true and inputOriginal. Next page requires returned snapshot.","properties":{"limit":{"type":"string"},"after":{"type":"string"},"snapshot":{"type":"string"}},"required":["limit"],"additionalProperties":false},"candidate":{"type":"string"},"related":{"type":"boolean","description":"Follow recorded observation links from the automatically selected parent Replay. Separate comparison; cannot combine with scope or candidate/range."},"scope":{"type":"string","minLength":1,"description":"Exact producer-declared scope under the current input. Cannot combine with candidate, offset or count. A miss never returns unrelated dialogue."},"offset":{"type":"string","description":"Raw payload byte offset; requires count."},"count":{"type":"string","description":"Byte count; requires offset."}},"required":["receipt"],"additionalProperties":false}},
 {"name":"vrs_re_evidence","description":"Compare the selected Replay with recorded current observations through SWEGCA; run Re-evidence only on a verified conflict.","inputSchema":{"type":"object","properties":{"receipt":{"type":"string"},"seed":{"type":"string"},"step":{"type":"string"}},"required":["receipt","seed","step"],"additionalProperties":false}}
 ]})";
 class Server {
@@ -211,7 +211,7 @@ private:
     void agent_replay_result(std::string_view id,const Json& p){
         if(p.kind!=Json::Kind::object)throw std::invalid_argument("expected replay arguments");
         for(const auto& key:p.keys)
-            if(key!="receipt"&&key!="inputOriginal"&&key!="scope"&&key!="related")
+            if(key!="receipt"&&key!="inputOriginal"&&key!="scope"&&key!="related"&&key!="connections")
                 throw std::invalid_argument("unsupported agent replay argument");
         const auto receipt=integer(p.at("receipt"));
         const auto input=record_address(p.at("inputOriginal"));
@@ -1170,6 +1170,35 @@ private:
         Context::RestoredCognition prepared(input,std::move(cognition),parameters,encode_json(metadata.at("recovery"),memory_),memory_);
         return prepared;
     }
+    void related_connections_result(std::string_view id,const Json& request,const ExperienceLocation& input,
+        const ReplayedInput& parent){
+        if(context().native_session.empty())throw std::invalid_argument("connection listing requires native input");
+        if(request.kind!=Json::Kind::object)throw std::invalid_argument("connections requires an object");
+        for(const auto& key:request.keys)if(key!="limit"&&key!="after"&&key!="snapshot")
+            throw std::invalid_argument("unsupported connection page argument");
+        const auto limit=integer(request.at("limit"));
+        if(!limit||limit>64)throw std::invalid_argument("connection page limit must be 1..64");
+        std::optional<DigestBytes> after;
+        if(const auto* field=request.find("after"))after=digest(field->string());
+        if(after&&!request.find("snapshot"))throw std::invalid_argument("continuation requires snapshot");
+        auto recalled=runtime_.related(parent);
+        auto page=runtime_.select_replay_connections(recalled,limit,after?&*after:nullptr);
+        if(const auto* expected=request.find("snapshot");expected&&digest(expected->string())!=page.snapshot)
+            throw std::invalid_argument("related connections changed; restart listing");
+        std::pmr::string body("{\"relatedFrom\":",&memory_);body+=address(parent.location(),memory_);
+        body+=",\"inputOriginal\":";body+=address(input,memory_);
+        body+=",\"grantsAuthority\":false,\"requirementsComplete\":false,\"selectionOnly\":true,\"snapshot\":\"";
+        body+=hex(page.snapshot,memory_);body+="\",\"temporary\":";body+=recalled.temporary()?"true":"false";
+        body+=",\"connections\":[";bool first=true;
+        for(const auto& entry:page.entries){
+            if(!first)body+=',';first=false;
+            body+="{\"connection\":\"";body+=hex(entry.connection,memory_);
+            body+="\",\"original\":";body+=address(recalled.matches()[entry.candidate].original,memory_);body+='}';
+        }
+        body+="],\"next\":";
+        if(page.next){body+='"';body+=hex(*page.next,memory_);body+='"';}else body+="null";
+        body+='}';tool_result(id,body);
+    }
     void related_replay_result(std::string_view id,const ExperienceLocation& input,
         const ReplayedInput& parent,std::pair<std::uint64_t,std::uint64_t> parameters){
         if(context().native_session.empty())throw std::invalid_argument("related Replay requires a native input journal");
@@ -1219,6 +1248,8 @@ private:
             if(flag->kind!=Json::Kind::boolean)throw std::invalid_argument("related must be boolean");
             related=flag->scalar=="true";
         }
+        if(p.find("connections")&&(!related||!p.find("inputOriginal")))
+            throw std::invalid_argument("connection listing requires related and inputOriginal");
         if(related&&(p.find("scope")||p.find("candidate")||p.find("offset")||p.find("count")))
             throw std::invalid_argument("related cannot combine with scope, candidate or byte range");
         if(context().recovered_cognition && integer(p.at("receipt"))==context().recovered_receipt){
@@ -1285,7 +1316,11 @@ private:
             if(!state.restored||state.restored->input!=input)
                 state.restored.emplace(restore_saved_cognition(input,metadata));
             complete_saved_cognition(state.restored);
-            if(related){related_replay_result(id,input,state.restored->cognition->replayed,state.restored->parameters);return;}
+            if(related){
+                if(const auto* page=p.find("connections"))related_connections_result(id,*page,input,state.restored->cognition->replayed);
+                else related_replay_result(id,input,state.restored->cognition->replayed,state.restored->parameters);
+                return;
+            }
             auto prefix=replay_prefix(state.restored->cognition->replayed,&*state.restored->cognition,&input);
             constexpr std::string_view content_field=",\"contentHex\":\"";
             prefix.resize(prefix.size()-content_field.size());
@@ -1301,6 +1336,9 @@ private:
         if(related){
             const auto& state=context();
             if(!state.cognition)throw std::invalid_argument("input had no parent Replay selection");
+            if(const auto* page=p.find("connections")){
+                related_connections_result(id,*page,state.received->recorded.original,state.cognition->replayed);return;
+            }
             const auto& recorded=state.received->recorded.refinement;
             related_replay_result(id,state.received->recorded.original,state.cognition->replayed,
                 {recorded.seed(),recorded.current_step()});return;

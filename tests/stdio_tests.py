@@ -1403,6 +1403,54 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     check(related_call(main_recovered['receipt'])['result']['structuredContent']==main_related)
     check(c.call('swegca/agent/cognition',main_query)['result']['revision']==main_related_journal['revision'])
     c.close()
+    # Per-connection metadata pages retain distinct scoped outcomes. Listing
+    # neither replays originals nor claims all natural-language requirements.
+    pages_root=root/'related-connection-pages';pages_root.mkdir()
+    c=Client('create',pages_root,path);c.initialize()
+    pages_binding={**producer_binding,'instance':'connection-pages'}
+    producer_owner=c.call('swegca/agent/attach',pages_binding)['result']['identity']
+    check(c.call('swegca/select',{'identity':producer_owner})['result']=={})
+    producer_seq=0
+    page_parent,page_positive=producer_trial('Keep A, change B, verify C.',0,'support',lambda v:v.update(scope='A'))
+    def page_observation(scope,outcome):
+        return producer_frame('server',{'method':'item/completed','params':{
+            'threadId':'producer-thread','turnId':'producer-turn-0','item':{
+            'type':'mcpToolCall','id':'page-'+scope,'server':'page-producer','tool':'verify','status':'completed',
+            'result':{'content':[],'structuredContent':{'swegcaObservation':{
+                'inputOriginal':page_parent['original'],'outcome':outcome,'scope':scope,'axis':'0',
+                'confidence':1.0,'hasExpiry':False,'expiresAt':'0'}}}}}})[1]
+    page_negative=page_observation('B','refute')
+    page_uncertain=page_observation('C','insufficient')
+    page_sequence=producer_seq
+    page_frame={'id':99,'method':'turn/start','params':{'threadId':'producer-thread',
+        'input':[{'type':'text','text':'Keep A, change B, verify C.'}]}}
+    _,page_input=producer_frame('client',page_frame)
+    def pages(current,arguments):
+        return c.call('swegca/agent/replay',{'receipt':current['receipt'],'inputOriginal':current['original'],
+            'related':True,'connections':arguments})
+    whole=pages(page_input,{'limit':'64'})['result']['structuredContent']
+    check(whole['selectionOnly'] and not whole['requirementsComplete'] and not whole['grantsAuthority'])
+    check(whole['relatedFrom']==page_parent['original'] and whole['inputOriginal']==page_input['original'])
+    check(len(whole['connections'])==3 and whole['next'] is None)
+    check({x['original']['digest'] for x in whole['connections']}=={
+        page_positive['original']['digest'],page_negative['original']['digest'],page_uncertain['original']['digest']})
+    first=pages(page_input,{'limit':'1'})['result']['structuredContent']
+    rest=pages(page_input,{'limit':'2','after':first['next'],'snapshot':first['snapshot']})['result']['structuredContent']
+    check(first['connections']+rest['connections']==whole['connections'] and rest['next'] is None)
+    for invalid in ({'limit':'0'},{'limit':'65'},{'limit':'1','after':first['next']},
+        {'limit':'1','after':first['next'],'snapshot':identity(250)}):
+        check('error' in pages(page_input,invalid))
+    c.close();c=Client('open',pages_root,path);c.initialize()
+    check(c.call('swegca/agent/attach/resume',pages_binding)['result']['nextSequence']==str(producer_seq))
+    check(c.call('swegca/select',{'identity':producer_owner})['result']=={})
+    restored_page_input=c.call('swegca/agent/event',{'sequence':str(page_sequence),'observedAt':str(page_sequence),
+        'seed':'7','step':str(page_sequence),'sender':'client','native':json.dumps(page_frame)})['result']
+    restored_pages=pages(restored_page_input,{'limit':'64'})['result']['structuredContent']
+    check(restored_pages==whole)
+    page_observation('D','support')
+    check('error' in pages(restored_page_input,{'limit':'2','after':first['next'],'snapshot':first['snapshot']}))
+    check(len(pages(restored_page_input,{'limit':'64'})['result']['structuredContent']['connections'])==4)
+    c.close()
     # Regression: a weakened refutation must remain the related observation
     # even when its ordinary turn response retained a higher connection strength.
     bound_root=root/'bound-observation-selection';bound_root.mkdir()
@@ -1433,6 +1481,10 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     _,consumer_input=producer_frame('client',bound_frame)
     from_main=bound_query(consumer_input)
     check(from_main['relatedFrom']==bound_input['original'] and from_main['original']==bound_report['original'])
+    main_page=pages(consumer_input,{'limit':'1'})['result']['structuredContent']
+    check(not main_page['temporary'] and main_page['next'] is None)
+    check(main_page['connections'][0]['original']==from_main['original'])
+
     journal=c.call('swegca/agent/cognition',{'identity':bound_consumer,'inputOriginal':consumer_input['original'],
         'related':True,'latest':True})['result']
     check(journal['record']['recovery']['seedOnly'])

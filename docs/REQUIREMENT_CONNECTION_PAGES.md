@@ -36,3 +36,30 @@ MCP의 입력/부모 결속된 페이지 조회 및 연결별 저장·복구, �
 관측이 아직 없는 요구는 이 목록에 없으므로 목록 끝을 전체 목적 검증 완료로
 취급하지 않는다. 임시/Main 조회 범위는 기존 Recall 규칙을 따른다.
 설치본은 이 기반 API 때문에 교체하지 않았다. 자연어 해석이나 외부 판정은 추가하지 않았다.
+
+## MCP 연결 페이지 조회
+
+`vrs_replay`와 소유 세션의 `swegca/agent/replay`에서 다음 인자를 받는다.
+
+```json
+{"receipt":"1","inputOriginal":{"block":"...","offset":"...","bytes":"...","digest":"..."},
+ "related":true,"connections":{"limit":"16"}}
+```
+
+limit은 1..64. 응답은 inputOriginal, relatedFrom, temporary, snapshot,
+connections(connection 및 원경험 주소), next를 포함한다. selectionOnly=true,
+requirementsComplete=false, grantsAuthority=false를 명시한다. 원경험 본문이나
+지지/반박 판정을 새로 생성하는 API가 아니다. scope/candidate/byte range와 혼용 불가.
+다음 페이지는 connections에 after=직전 next, snapshot=반환 snapshot을 넣는다.
+원래 입력 주소와 receipt 결속을 확인한다. snapshot은 현재 Recall의 연결 head,
+관측 경계, 조회 키 및 구간 메타데이터를 코어 SHA256으로 식별한다. 관측이 추가되어
+조회 내용이 달라졌으면 stale snapshot을 거부하고 첫 페이지 재조회를 요구한다.
+페이지당 snapshot 계산은 후보 구간 메타데이터 전체에 비례한다. 대규모 지연 상한
+달성을 주장하지 않는다. 새 후보 평가/외부 의미 판단을 추가하지 않는다.
+
+검증: Runtime2108 / stdio6894 통과. 실제 subprocess에서 동일 입력의 3개 scope
+지지/반박/불충분, 1+2 페이지와 전체 목록 일치, 잘못된 limit/snapshot/커서 거부,
+재시작 복원 동일 목록, 후속 관측 추가 시 stale snapshot 거부, Main 조회를 확인했다.
+
+다음 작업은 연결별 원경험 Replay·비교의 저장/복구와 프록시의 다중 항목 전달이다.
+프록시/관측기 query bridge 스키마와 설치본에는 이 페이지 API를 아직 연결하지 않았다.
