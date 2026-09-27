@@ -106,14 +106,14 @@ ExperienceEvidence record_evidence(ExperienceBlock& block, const EvidenceRules& 
     const auto location = block.append_parts(wrapped,parts);
     auto bound = value;
     bound.address = location.digest;
-    return ExperienceEvidence(location, bound, input_key ? *input_key : architecture::input_cue(original.media_type, original.content));
+    return ExperienceEvidence(location, bound, input_key ? *input_key : architecture::input_cue(original.media_type, original.content),input_key.has_value());
 }
 
 ExperienceEvidence decode_evidence(const EvidenceRules& rules, const StoredExperience& stored) {
     const auto original = parse_payload(stored);
     const auto data = stored.view().content;
     const auto value=decode_observation(rules,data,stored.location(),original.observed_at_ns);
-    return ExperienceEvidence(stored.location(), value, get(data,158,1) ? get_digest(data,prefix_bytes) : architecture::input_cue(original.media_type, original.content));
+    return ExperienceEvidence(stored.location(), value, get(data,158,1) ? get_digest(data,prefix_bytes) : architecture::input_cue(original.media_type, original.content),get(data,158,1)!=0);
 }
 
 // This decoder alone sees provisional chunks. No callback or byte range is
@@ -208,7 +208,7 @@ public:
         if(fingerprint)*fingerprint=decoder.delivery_hash.finish();
         if(sequence)*sequence=decoder.sequence;
         if(sender)*sender=static_cast<ExperienceSender>(get(decoder.prefix,159,1));
-        return ExperienceEvidence(location,value,decoder.input_key ? *decoder.input_key : decoder.cue.finish());
+        return ExperienceEvidence(location,value,decoder.input_key ? *decoder.input_key : decoder.cue.finish(),decoder.input_key.has_value());
     }
 };
 

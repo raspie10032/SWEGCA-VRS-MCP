@@ -297,7 +297,9 @@ int main(){
    CHECK(!first.recalled.familiar());
    auto recall=host.input("text/plain",cue);
    CHECK(recall.temporary() && recall.matches().size()==1);
-   CHECK(!host.input("application/json",raw).familiar());
+   auto envelope_context=host.input("application/json",raw);
+   CHECK(envelope_context.key_kind()==FamiliarityKey::context);
+   CHECK(envelope_context.matches().size()==1&&envelope_context.matches()[0].original==saved);
    auto part=host.read_payload_slice(recall,0,65520,48);
    CHECK(part.evidence().cue()==input_cue("text/plain",cue));
    CHECK(part.total_bytes()==raw.size() && std::ranges::equal(part.content(),raw.subspan(65520,48)));
@@ -392,6 +394,35 @@ int main(){
   CHECK(cognition->assessment().agreement()==ReplayAgreement::contradicts);
   CHECK(cognition->assessment().current_originals().size()==16);
   CHECK(writes==w&&host.session().find(id(212))->state().strength()==strength);
+ }
+ {
+  const auto path=root/"natural-dialogue";fs::create_directory(path);
+  ExperienceLocation previous;
+  {
+   auto host=Runtime::create(path,config,memory);host.start_session(id(221),"dialogue");
+   const std::array<std::string_view,3> turns{"Keep the original goal", "Implement the next function", "Now review the change"};
+   for(std::size_t n=0;n<turns.size();++n){
+    const auto bytes=std::as_bytes(std::span(turns[n]));
+    const auto r=reads,w=writes;auto probe=host.input("text/plain",bytes);
+    CHECK(reads==r&&writes==w&&probe.matches().size()==n);
+    if(n)CHECK(probe.key_kind()==FamiliarityKey::context);
+    auto received=host.receive({n,n+1,"dialogue","user","text/plain",bytes},7,n+1);
+    auto cognition=host.cognize(received.recalled,7,n+1);
+    if(n){
+     CHECK(cognition&&cognition->replayed.location()==previous);
+     CHECK(cognition->assessment().agreement()==ReplayAgreement::insufficient&&!cognition->reverified);
+    }else CHECK(!cognition);
+    previous=received.recorded.original;
+   }
+  }
+  {
+   auto host=Runtime::open(path,config,memory);host.resume_session(id(221));
+   const std::string_view fresh="Continue after restarting";
+   const auto r=reads,w=writes;auto recalled=host.input("text/plain",std::as_bytes(std::span(fresh)));
+   CHECK(reads==r&&writes==w);
+   CHECK(recalled.key_kind()==FamiliarityKey::context&&recalled.matches().size()==3);
+   auto cognition=host.cognize(recalled,7,4);CHECK(cognition&&cognition->replayed.location()==previous);
+  }
  }
  CHECK(memory.used()==0);fs::remove_all(root);std::printf("runtime lifecycle tests: %u checks passed\n",checks);
 }

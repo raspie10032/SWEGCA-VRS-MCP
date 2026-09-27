@@ -122,7 +122,9 @@ ReceivedInput Runtime::receive_envelope(std::string_view media,std::span<const s
 }
 ReceivedInput Runtime::receive(const OriginalExperienceView& original,std::uint64_t seed,std::uint64_t step) {
     auto recalled=input(original.media_type,original.content);
-    auto recorded=retain(original,seed,step);
+    require_active();
+    auto recorded=require_session().runtime.retain_input(original,config_.initial_strength,config_.policy,
+        seed,step,recalled.cue());
     return {std::move(recalled),std::move(recorded)};
 }
 InputRecall Runtime::input(std::string_view media,std::span<const std::byte> content) const {

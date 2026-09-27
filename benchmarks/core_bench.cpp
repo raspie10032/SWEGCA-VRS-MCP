@@ -49,6 +49,9 @@ __attribute__((noinline)) ReplayAgreement measured_replay(const EvidenceRules& r
 __attribute__((noinline)) ReplayPreference measured_selection(const ReplayCandidate* current,const ReplayCandidate& candidate) noexcept {
  return prefer_replay(current,candidate);
 }
+__attribute__((noinline)) bool measured_context_reference(bool input,bool seed) noexcept {
+ return context_reference_eligible(input,seed);
+}
 template<class Fn> void measure(const char* name,Fn fn) {
  constexpr std::size_t iterations=100000;
  for(std::size_t i=0;i<iterations;++i)fn(i);
@@ -83,6 +86,7 @@ int main(){
  measure("observation_admission",[&](std::size_t i){auto a=measured_admission(r,hypothesis,observations[i&63],i%16,i%7==0);consume(a);});
  measure("evidence_group_normalization",[&](std::size_t i){auto g=measured_group(i%16,i%7);consume(g);});
  measure("session_transition",[&](std::size_t i){SessionPhase next;auto valid=measured_session(static_cast<SessionPhase>(i%5),static_cast<SessionOperation>((i/5)%5),next);consume(valid);consume(next);});
+ measure("context_reference_eligibility",[&](std::size_t i){auto eligible=measured_context_reference(i%2,(i/2)%2);consume(eligible);});
  measure("familiarity_key",[&](std::size_t i){auto key=measured_familiarity(i%2,(i/2)%2);consume(key);});
  ConnectionHead current;current.identity=hypothesis;current.record={hypothesis,80,300,hypothesis};current.revision=2;current.ordinal=2;current.observations=1;current.strength=0.5;
  std::array<ConnectionHead,64> versions{};

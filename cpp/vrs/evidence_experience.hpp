@@ -13,6 +13,7 @@ public:
     [[nodiscard]] const ExperienceLocation& original() const noexcept { return original_; }
     [[nodiscard]] const architecture::kernel::EvidenceObservation& value() const noexcept { return value_; }
     [[nodiscard]] const architecture::DigestBytes& cue() const noexcept { return cue_; }
+    [[nodiscard]] bool has_input_key() const noexcept { return input_key_; }
 private:
     friend class EvidenceReader;
     friend ExperienceEvidence record_evidence(ExperienceBlock&,
@@ -23,11 +24,12 @@ private:
     friend ExperienceEvidence read_evidence(const architecture::kernel::EvidenceRules&,
         const ExperienceBlock&, const ExperienceLocation&, std::uint64_t);
     ExperienceEvidence(const ExperienceLocation& original,
-        const architecture::kernel::EvidenceObservation& value, const architecture::DigestBytes& cue)
-        : original_(original), value_(value), cue_(cue) {}
+        const architecture::kernel::EvidenceObservation& value, const architecture::DigestBytes& cue, bool input_key)
+        : original_(original), value_(value), cue_(cue), input_key_(input_key) {}
     ExperienceLocation original_;
     architecture::kernel::EvidenceObservation value_;
     architecture::DigestBytes cue_;
+    bool input_key_;
 };
 
 // The observation is the recorded result of an experiment or producer, never

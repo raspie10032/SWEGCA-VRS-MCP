@@ -577,6 +577,13 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
                 if not chunk:raise RuntimeError('proxy closed before complete frame')
                 data.extend(chunk)
             return bytes(data)
+        def check_context_forward(forwarded, original, remembered):
+            view=json.loads(forwarded);native=json.loads(original)
+            context=view['params']['input'].pop(0)
+            check(view==native and context['type']=='text')
+            packet=json.loads(context['text'].split('\n',1)[1])
+            check(packet['grantsAuthority'] is False and packet['assessment']['status']==0)
+            check(json.loads(packet['content'])==json.loads(remembered))
         global_frames=[{'id':1,'method':'initialize','params':{'clientInfo':{'name':'fixture'},'padding':'"'*1500}},
                        {'method':'initialized'}, {'id':2,'method':'thread/start','params':{}}]
         expanded=json.dumps({'native':proxy_frame(global_frames[0])[:-1].decode()}).encode()
@@ -609,10 +616,10 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
         pending_input=proxy_frame({'id':77,'method':'turn/start','params':{'threadId':'a','input':[]}})
         pending_approval=proxy_frame({'id':77,'method':'item/commandExecution/requestApproval',
                                       'params':{'threadId':'b','command':'never executed'}})
-        client_side.sendall(pending_input);check(proxy_read(server_side)==pending_input)
+        client_side.sendall(pending_input);check_context_forward(proxy_read(server_side),pending_input,request)
         server_side.sendall(pending_approval);check(proxy_read(client_side)==pending_approval)
         dynamic_pending=proxy_frame({'id':78,'method':'turn/start','params':{'threadId':'c','input':[]}})
-        client_side.sendall(dynamic_pending);check(proxy_read(server_side)==dynamic_pending)
+        client_side.sendall(dynamic_pending);check_context_forward(proxy_read(server_side),dynamic_pending,dynamic)
         client_side.shutdown(socket.SHUT_WR);check(server_side.recv(1)==b'')
         server_side.shutdown(socket.SHUT_WR);check(client_side.recv(1)==b'')
         check(proxy_process.wait(timeout=10)==0)
@@ -802,6 +809,7 @@ for line in sys.stdin:
         stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,bufsize=0)
     desktop_input=[{'type':'text','text':'현재 사용자 입력을 그대로 보존\n한글🙂'},
                    {'type':'localImage','path':'/never/open/current.png'}]
+    desktop_followup=[{'type':'text','text':'다른 문장으로 이어서 작업하자'},desktop_input[1]]
     def desktop_send(value):desktop.stdin.write(json.dumps(value).encode()+b'\n')
     def desktop_read():
         check(bool(select.select([desktop.stdout],[],[],10)[0]))
@@ -832,7 +840,7 @@ for line in sys.stdin:
         # Resume an existing conversation with no thread/started notification.
         desktop_send({'id':905,'method':'thread/resume','params':{'threadId':'desktop-thread'}})
         check(desktop_read()=={'id':905,'result':{}})
-        desktop_send({'id':906,'method':'turn/start','params':{'threadId':'desktop-thread','input':desktop_input}})
+        desktop_send({'id':906,'method':'turn/start','params':{'threadId':'desktop-thread','input':desktop_followup}})
         check(desktop_read()=={'id':906,'result':{}})
 
         desktop.stdin.close();check(desktop.wait(timeout=10)==0)
@@ -843,8 +851,8 @@ for line in sys.stdin:
     initial_input=next(value for value in received_inputs if value.get('id')==903)
     resumed_input=next(value for value in received_inputs if value.get('id')==906)
     check(initial_input['params']['input']==desktop_input)
-    check(len(resumed_input['params']['input'])==len(desktop_input)+1)
-    check(resumed_input['params']['input'][1:]==desktop_input)
+    check(len(resumed_input['params']['input'])==len(desktop_followup)+1)
+    check(resumed_input['params']['input'][1:]==desktop_followup)
     injected=resumed_input['params']['input'][0]
     check(injected['type']=='text' and injected['text'].startswith('SWEGCA recalled experience'))
     memory_packet=json.loads(injected['text'].split('\n',1)[1])
@@ -856,7 +864,7 @@ for line in sys.stdin:
             'session':session,'protocol':protocol})['result']
         check(attached['nextSequence']==count)
     stored_input=c.call('swegca/agent/original',{'identity':attached['identity'],'sequence':'7'})['result']
-    check(json.loads(stored_input['native'])['params']['input']==desktop_input)
+    check(json.loads(stored_input['native'])['params']['input']==desktop_followup)
     check(stored_input['original']==memory_packet['assessment']['inputOriginal'])
     check(c.call('swegca/work',{'seed':'7','step':'0'})['result']['merged']=='0');c.close()
     # Interrupt only this test's launcher: all three owned children must exit.

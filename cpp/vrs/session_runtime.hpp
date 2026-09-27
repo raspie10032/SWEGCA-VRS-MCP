@@ -75,6 +75,7 @@ private:
     // Derived only from sealed observations, not similarity or inferred truth.
     std::pmr::map<architecture::DigestBytes, std::pmr::vector<CueReference>> contexts_;
     bool usable_ = true;
+    bool has_dialogue_input_ = false;
 };
 
 class PersistentMainGraph;
@@ -311,12 +312,16 @@ private:
     // Adjacent equal-cue originals need no repeated identity/tree node.
     using MergedCueReference = std::pair<architecture::DigestBytes, std::size_t>;
     std::pmr::map<architecture::DigestBytes, std::pmr::map<MergedCueReference, std::size_t>> merged_cues_;
+    // The active session's recorded context may start a dialogue before any
+    // Replay. Only actual sealed context-index entries can produce candidates.
+    const architecture::DigestBytes session_context_;
     // Main-owned dialogue continuity, updated only after a successful selected
     // Replay. It holds an experience key, never copied dialogue text or a verdict.
     mutable std::optional<architecture::DigestBytes> continuation_;
     mutable std::optional<architecture::DigestBytes> continued_context_;
     [[nodiscard]] InputRecall recall_cue(const architecture::DigestBytes& cue,
-        architecture::kernel::RecallScope scope, architecture::kernel::FamiliarityKey kind) const;
+        architecture::kernel::RecallScope scope, architecture::kernel::FamiliarityKey kind,
+        const architecture::DigestBytes* context = nullptr, bool seed_only = false) const;
 };
 
 }  // namespace swegca::vrs

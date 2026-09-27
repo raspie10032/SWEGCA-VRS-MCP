@@ -61,6 +61,7 @@ SessionRuntime::SessionRuntime(SessionStore& store, MemoryBudget& memory, std::u
     for (const auto& [identity, slot] : connections_) {
         const auto experiences = slot.connection->state().experiences();
         for (std::size_t i=0; i<experiences.size(); ++i){
+            has_dialogue_input_=has_dialogue_input_||experiences[i].has_input_key();
             cues_.try_emplace(experiences[i].cue()).first->second.push_back({identity, i});
             contexts_.try_emplace(experiences[i].value().context).first->second.push_back({identity,i});
         }
@@ -102,6 +103,7 @@ RecordedRefinement SessionRuntime::observe(const DigestBytes& identity, const Or
             return a.connection<b.connection||(a.connection==b.connection&&a.original_index<b.original_index);
         });
         contexts.insert(position,contextual);
+        has_dialogue_input_=has_dialogue_input_||saved.has_input_key();
         return {saved.original(), std::move(report)};
     } catch (...) { usable_ = false; throw; }
 }
@@ -114,8 +116,7 @@ RecordedRefinement SessionRuntime::retain_input(const OriginalExperienceView& or
     observation.hypothesis = identity;
     Sha256 source; source.update("SWEGCA input source v1"); source.update(original.source);
     observation.source = observation.producer = source.finish();
-    Sha256 context; context.update("SWEGCA input session v1"); context.update(original.session);
-    observation.context = context.finish();
+    observation.context = input_session_context(original.session);
     observation.observed_at = original.observed_at_ns;
     return observe(identity, original, observation, seed, step, input_key);
 }
@@ -168,7 +169,8 @@ RecallMatch RecallCandidates::at(std::size_t index) const {
 ExperienceRouter::ExperienceRouter(SessionRuntime& temporary, MemoryBudget& memory)
     : temporary_(temporary), memory_(memory),
       issuer_(std::allocate_shared<std::byte>(std::pmr::polymorphic_allocator<std::byte>(&memory))),
-      mounted_(&memory), main_(&memory), main_cues_(&memory), merged_cues_(&memory) {}
+      mounted_(&memory), main_(&memory), main_cues_(&memory), merged_cues_(&memory),
+      session_context_(input_session_context(temporary.store_.name())) {}
 void ExperienceRouter::mount_main(const SessionRuntime& session) {
     if (merged_main_) throw std::logic_error("cannot mix merged Main with session candidates");
     if (!main_session_readable(session.phase(), session.usable()))
@@ -315,12 +317,13 @@ InputRecall ExperienceRouter::input(std::string_view media, std::span<const std:
     const auto found = temporary_.cues_.find(cue);
     const bool present = found != temporary_.cues_.end() && !found->second.empty();
     const bool continued=!present&&continuation_&&temporary_.find(*continuation_)!=nullptr;
-    const auto contextual=!present&&!continued&&continued_context_
-        ?temporary_.contexts_.find(*continued_context_):temporary_.contexts_.end();
-    const auto local_kind = familiarity_key(present,continued,
-        contextual!=temporary_.contexts_.end()&&!contextual->second.empty());
+    const DigestBytes* context=continued_context_?&*continued_context_:nullptr;
+    const auto contextual=!present&&context?temporary_.contexts_.find(*context):temporary_.contexts_.end();
+    const bool has_context=contextual!=temporary_.contexts_.end()&&!contextual->second.empty();
+    const bool linked=has_context&&contextual->second.front().connection!=contextual->second.back().connection;
+    const auto local_kind = familiarity_key(present,continued,has_context,linked);
     const auto scope = recall_scope(true, local_kind != FamiliarityKey::missing);
-    if (scope == RecallScope::temporary) return recall_cue(cue, scope, local_kind);
+    if (scope == RecallScope::temporary) return recall_cue(cue, scope, local_kind, context);
     require_main_current();
     const auto main_cue = main_cues_.find(cue);
     const auto merged_cue = merged_cues_.find(cue);
@@ -337,9 +340,19 @@ InputRecall ExperienceRouter::input(std::string_view media, std::span<const std:
     }
     const auto main_kind = familiarity_key(main_exact,
         main_context != main_.end() && !main_context->second.empty(),shared_context,shared_context);
-    return recall_cue(cue, scope, main_kind);
+    // A session label is weaker than an exact/Replay-established key. Seed
+    // dialogue only after those routes miss, so it cannot hide exact Main hits.
+    if(main_kind==FamiliarityKey::missing&&temporary_.has_dialogue_input_){
+        const auto session=temporary_.contexts_.find(session_context_);
+        const bool available=session!=temporary_.contexts_.end()&&!session->second.empty();
+        const auto seed_scope=recall_scope(true,available);
+        if(seed_scope==RecallScope::temporary)
+            return recall_cue(cue,seed_scope,familiarity_key(false,false,available),&session_context_,true);
+    }
+    return recall_cue(cue, scope, main_kind, continued_context_?&*continued_context_:nullptr);
 }
-InputRecall ExperienceRouter::recall_cue(const DigestBytes& cue, RecallScope scope, FamiliarityKey kind) const {
+InputRecall ExperienceRouter::recall_cue(const DigestBytes& cue, RecallScope scope, FamiliarityKey kind,
+    const DigestBytes* context, bool seed_only) const {
 #ifdef SWEGCA_RECALL_ENTRY_PROBE
     swegca_recall_entry_probe();
 #endif
@@ -349,6 +362,7 @@ InputRecall ExperienceRouter::recall_cue(const DigestBytes& cue, RecallScope sco
     InputRecall result(memory_); result.cue_ = cue; result.key_kind_ = kind; result.issuer_ = issuer_;
     result.temporary_ = scope == RecallScope::temporary;
     if (kind == FamiliarityKey::missing) return result;
+    if (kind == FamiliarityKey::context && !context)throw std::logic_error("Recall context key missing");
     if (kind == FamiliarityKey::continuation) {
         const auto candidates = recall(*continuation_);
         for (std::size_t candidate = 0; candidate < candidates.size(); ++candidate) {
@@ -372,16 +386,20 @@ InputRecall ExperienceRouter::recall_cue(const DigestBytes& cue, RecallScope sco
     if (scope == RecallScope::temporary) {
         result.temporary_ = true;
         const auto& references=kind==FamiliarityKey::context
-            ?temporary_.contexts_.at(*continued_context_):temporary_.cues_.at(cue);
+            ?temporary_.contexts_.at(*context):temporary_.cues_.at(cue);
         for(std::size_t first=0;first<references.size();){
             const auto& reference=references[first];
-            auto last=first+1;
-            while(last<references.size()&&references[last].connection==reference.connection&&
-                references[last-1].original_index!=std::numeric_limits<std::size_t>::max()&&
-                references[last].original_index==references[last-1].original_index+1)++last;
             const auto* owner=temporary_.find(reference.connection);
             if(!owner)throw std::logic_error("cue refers to an unavailable connection");
             const auto& connection=owner->state();
+            if(!context_reference_eligible(connection.experiences()[reference.original_index].has_input_key(),seed_only)){
+                ++first;continue;
+            }
+            auto last=first+1;
+            while(last<references.size()&&references[last].connection==reference.connection&&
+                references[last-1].original_index!=std::numeric_limits<std::size_t>::max()&&
+                references[last].original_index==references[last-1].original_index+1&&
+                context_reference_eligible(connection.experiences()[references[last].original_index].has_input_key(),seed_only))++last;
             const auto begin=reference.original_index;
             const auto end=references[last-1].original_index+1;
             if(!end)throw std::overflow_error("Recall original range overflow");
@@ -398,7 +416,7 @@ InputRecall ExperienceRouter::recall_cue(const DigestBytes& cue, RecallScope sco
         // Context portals are Main-owned and shared by all session routers.
         // Exact cue and portal ranges have the same original-address form.
         const auto& index=kind==FamiliarityKey::context?merged_main_->graph().contexts_:merged_cues_;
-        const auto found = index.find(kind==FamiliarityKey::context?*continued_context_:cue);
+        const auto found = index.find(kind==FamiliarityKey::context?*context:cue);
         if (found != index.end())
             for (const auto& [first, end] : found->second) {
                 const auto& [identity, begin]=first;

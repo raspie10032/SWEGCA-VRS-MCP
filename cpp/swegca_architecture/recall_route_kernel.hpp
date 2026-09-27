@@ -39,6 +39,11 @@ enum class ReplayPreference { invalid, keep, replace };
     };
     return key(candidate)<key(*current) ? ReplayPreference::replace : ReplayPreference::keep;
 }
+// A dialogue seed starts from an explicitly recorded input key, not a
+// lifecycle notification. Established context traversal keeps every outcome.
+[[nodiscard]] constexpr bool context_reference_eligible(bool has_input_key,bool seed_only) noexcept {
+    return !seed_only || has_input_key;
+}
 // Receipt representation only. No candidate or evidence is discarded. Compare
 // bounded snapshot metadata with individual address pins without multiplication
 // overflow; the caller accounts for its own VRS storage representation.

@@ -1,0 +1,16 @@
+judge_1_axis,median_ns=20.9575,p95_block_mean_ns=21.0019,min_ns=20.9284
+judge_4_axes,median_ns=43.6826,p95_block_mean_ns=44.2026,min_ns=43.6366
+judge_8_axes,median_ns=76.7659,p95_block_mean_ns=76.8458,min_ns=76.688
+observation_admission,median_ns=2.13402,p95_block_mean_ns=2.17162,min_ns=2.07342
+evidence_group_normalization,median_ns=1.20792,p95_block_mean_ns=1.22751,min_ns=1.20611
+session_transition,median_ns=1.22921,p95_block_mean_ns=1.32362,min_ns=1.22831
+context_reference_eligibility,median_ns=0.76341,p95_block_mean_ns=0.7792,min_ns=0.76291
+familiarity_key,median_ns=0.95431,p95_block_mean_ns=0.97351,min_ns=0.95221
+replay_candidate_selection,median_ns=3.00353,p95_block_mean_ns=3.03183,min_ns=2.98743
+head_publication,median_ns=5.18685,p95_block_mean_ns=5.19355,min_ns=5.16685
+replay_evidence_comparison,median_ns=2.45192,p95_block_mean_ns=2.53513,min_ns=2.42462
+promotion_eligibility,median_ns=1.19821,p95_block_mean_ns=1.21431,min_ns=1.19751
+promotion_decision,median_ns=1.15791,p95_block_mean_ns=1.17471,min_ns=1.15521
+connection_strength,median_ns=1.36771,p95_block_mean_ns=1.38402,min_ns=1.36611
+connection_verification_4_axes,median_ns=49.7117,p95_block_mean_ns=49.8944,min_ns=49.6102
+transaction_transition,median_ns=1.33531,p95_block_mean_ns=1.35212,min_ns=1.33332

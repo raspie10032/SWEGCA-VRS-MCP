@@ -327,6 +327,7 @@ int main() {
             const auto streamed=read_evidence(rules,block,saved.original(),8<<20);
             CHECK(largest_read<=65536);
             CHECK(streamed.cue()==expected.cue()&&streamed.original()==expected.original());
+            CHECK(!saved.has_input_key()&&!expected.has_input_key()&&!streamed.has_input_key());
             CHECK(streamed.value().observed_at==expected.value().observed_at);
             CHECK(streamed.value().producer==expected.value().producer);
             CHECK(streamed.value().outcome==expected.value().outcome);
@@ -372,6 +373,10 @@ int main() {
         auto empty=first;empty.content={};
         const auto saved=record_evidence(block,rules,empty,value);
         CHECK(read_evidence(rules,block,saved.original(),4096).cue()==saved.cue());
+        const auto keyed=record_evidence(block,rules,empty,value,identity);
+        CHECK(keyed.has_input_key());
+        CHECK(read_evidence(rules,block,keyed.original(),4096).has_input_key());
+        CHECK(decode_evidence(rules,block.read(keyed.original(),4096,full_read_memory)).has_input_key());
         MemoryBudget empty_memory(1);
         const auto empty_slice=read_evidence_slice(rules,block,saved.original(),4096,0,0,empty_memory);
         CHECK(empty_slice.content().empty() && empty_slice.total_bytes()==0 && empty_memory.used()==0);
