@@ -1,4 +1,5 @@
 #include "transport/json.hpp"
+#include "transport/stdio_frames.hpp"
 #include "transport/agent_event.hpp"
 #include "transport/app_server_requests.hpp"
 #include "swegca_architecture/input_cue.hpp"
@@ -36,11 +37,6 @@ std::pmr::string refinement(const ConnectionRefinement& report,MemoryBudget& mem
         ",\"reason\":"+std::to_string(static_cast<unsigned>(judgment.reason())).c_str()+
         ",\"strength\":"+decimal(report.result().strength().current(),memory)+
         ",\"revision\":\""+std::to_string(report.after_revision()).c_str()+"\"}";
-}
-std::pmr::string read_frame(std::istream& input,std::size_t limit,MemoryBudget& memory,bool& eof){
-    std::pmr::string line(&memory);bool overflow=false;char c;
-    while(input.get(c)){if(c=='\n'){if(overflow)throw std::length_error("frame exceeds configured limit");return line;}if(line.size()==limit)overflow=true;if(!overflow)line+=c;}
-    eof=true;if(overflow||!line.empty())throw std::invalid_argument("truncated MCP frame");return line;
 }
 constexpr std::string_view tools_list=R"({"tools":[
 {"name":"vrs_replay","description":"Read one original from current Recall. Optional offset and count return only that verified byte range, without a completed Replay receipt for Re-evidence. Does not infer truth or authorize actions.","inputSchema":{"type":"object","properties":{"receipt":{"type":"string"},"candidate":{"type":"string"},"offset":{"type":"string","description":"Raw payload byte offset; requires count."},"count":{"type":"string","description":"Byte count; requires offset."}},"required":["receipt","candidate"],"additionalProperties":false}},
@@ -473,8 +469,8 @@ int main(int argc,char** argv){
         settings.storage_bytes=integer(config.at("storageBytes"));
         settings.merge_workers=static_cast<std::uint32_t>(workers);
         auto runtime=mode=="ensure"?Runtime::ensure(argv[2],settings,memory):mode=="create"?Runtime::create(argv[2],settings,memory):Runtime::open(argv[2],settings,memory);
-        Server server(runtime,memory,frame);bool eof=false;
-        while(!eof){try{auto line=read_frame(std::cin,frame,memory,eof);if(!eof)server.message(line);}catch(const std::bad_alloc&){std::cerr<<"VRS memory budget exhausted\n";return 2;}catch(const std::exception&){server.framing_error();}if(!std::cout)return 2;}
+        Server server(runtime,memory,frame);StdioFrames frames(STDIN_FILENO,frame,memory);bool eof=false;
+        while(!eof){try{auto line=frames.next(eof);if(!eof)server.message(line);}catch(const std::bad_alloc&){std::cerr<<"VRS memory budget exhausted\n";return 2;}catch(const StdioFrames::ReadError&){std::cerr<<"VRS input failed\n";return 2;}catch(const std::exception&){server.framing_error();}if(!std::cout)return 2;}
         return 0;
     }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}
 }
