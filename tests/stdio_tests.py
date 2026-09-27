@@ -1668,8 +1668,12 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     # Steer is another real input in the same turn; unaddressed output cannot
     # silently remain attached to its initial purpose after the correction.
     steer=turn_frame(10,'client',{'id':5,'method':'turn/steer','params':{'threadId':'turn-thread',
-        'expectedTurnId':'turn-b','input':[{'type':'text','text':'corrected purpose'}]}})
+        'expectedTurnId':'turn-b','input':[{'type':'text','text':'Correction: "purpose" -> "updated purpose"'}]}})
     check(steer['inputRelations']['priorInput']==second_turn['original'])
+    steer_ref=steer['inputRelations']['revisionReferences'][0]
+    check(steer_ref['locationStatus']=='unique')
+    check(steer_ref['priorAnchor']=={'textIndex':'0','byteOffset':'19','quote':'purpose'})
+    check(not steer_ref['antecedentVerified'] and not steer_ref['replacementVerified'])
     check(not steer['inputRelations']['replacementVerified'] and not steer['inputRelations']['grantsAuthority'])
     turn_frame(11,'server',{'id':5,'result':{'turnId':'turn-b'}},10)
     turn_frame(12,'server',{'method':'item/completed','params':{'threadId':'turn-thread','turnId':'turn-b'}})
@@ -1680,7 +1684,7 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     check(c.call('swegca/agent/attach/resume',turns_binding)['result']['nextSequence']=='13')
     check(c.call('swegca/select',{'identity':turns_id})['result']=={})
     recovered_steer=turn_frame(10,'client',{'id':5,'method':'turn/steer','params':{'threadId':'turn-thread',
-        'expectedTurnId':'turn-b','input':[{'type':'text','text':'corrected purpose'}]}})
+        'expectedTurnId':'turn-b','input':[{'type':'text','text':'Correction: "purpose" -> "updated purpose"'}]}})
     check(recovered_steer['duplicate'] and recovered_steer['inputRelations']==steer['inputRelations'])
     stored_steer=c.call('swegca/agent/cognition',{'identity':turns_id,'sequence':'10'})['result']['record']
     check(stored_steer['inputRelations']==steer['inputRelations'])
@@ -2388,7 +2392,7 @@ for line in sys.stdin:
         env=dict(os.environ,SWEGCA_DESKTOP_CONFIG=str(auto_wrapper)),stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,stderr=subprocess.PIPE,bufsize=0)
     original_terms=[{'type':'text','text':'팰월드는 유지\r\nComfyUI만 중지'}]
-    corrected_terms=[{'type':'text','text':'정정: ComfyUI도 유지.\n다른 조건은 그대로.'}]
+    corrected_terms=[{'type':'text','text':'정정: “중지” → “유지”\n다른 조건은 그대로.'}]
     try:
         desktop_send({'id':980,'method':'initialize','params':{}});check(desktop_read()=={'id':980,'result':{}})
         desktop_send({'id':981,'method':'thread/start','params':{}})
@@ -2415,12 +2419,17 @@ for line in sys.stdin:
     check(corrected_native['params']['input'][1:]==corrected_terms)
     check(corrected_packet['inputRelations']['priorInput']==first_packet['inputCandidates']['inputOriginal'])
     check(not corrected_packet['inputRelations']['replacementVerified'])
+    corrected_ref=corrected_packet['inputRelations']['revisionReferences'][0]
+    check(corrected_ref['locationStatus']=='unique')
+    check(corrected_ref['priorAnchor']=={'textIndex':'0','byteOffset':str(original_terms[0]['text'].encode().index('중지'.encode())),'quote':'중지'})
+    check(not corrected_ref['antecedentVerified'] and not corrected_ref['replacementVerified'])
     check(''.join(x['quote'] for x in corrected_packet['inputCandidates']['candidates'])==corrected_terms[0]['text'])
     explicit_native=next(x for x in captured if x.get('id')==984)
     explicit_packet=json.loads(explicit_native['params']['input'][0]['text'].split('\n',1)[1])
     proposals=explicit_packet['inputCandidates']['revisionProposals']
     check(len(proposals)==1 and not proposals[0]['antecedentVerified'] and not proposals[0]['replacementVerified'])
     check(explicit_packet['inputRelations']['priorInput'] is None)
+    check(explicit_packet['inputRelations']['revisionReferences'][0]['locationStatus']=='unresolved-input')
     explicit_text=explicit_native['params']['input'][1]['text'].encode()
     for field in ('priorQuote','replacementQuote'):
         anchor=proposals[0][field];proposal_offset=int(anchor['byteOffset']);proposal_quote=anchor['quote'].encode()

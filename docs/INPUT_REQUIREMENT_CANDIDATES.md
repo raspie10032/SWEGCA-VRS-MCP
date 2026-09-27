@@ -95,3 +95,31 @@ revisionProposalsLimited=true를 표시한다. 해당 원문 span 자체는 보�
 같은 턴에 선행 입력이 여러 개 있으면 priorInput=null인 상태를 유지하며,
 명시적 화살표가 있다는 이유로 선행 입력이나 의미 대체를 승인하지 않는다.
 이 문법 범위의 후보 생성은 일반 자연어 의미 처리 완성이 아니다. 설치본 반영은 아직이다.
+
+## 2026-09-27 정정 인용과 선행 원경험 위치 연결
+
+`inputRelations.revisionReferences`는 명시적 인용 정정의 현재 두 인용과,
+인증된 턴 응답으로 고유하게 확인된 선행 입력의 인용 위치를 연결한다.
+선행 원경험은 정정 후보가 있을 때만 한 번 읽는다. 이 작업은 현재 입력의
+Recall 진입 및 원경험 기록 이후 실행한다. 모든 위치의 정확성은 기존
+SWEGCA content observation을 사용하는 requirement_matches로 검증한다.
+
+- unique: 선행 입력의 전체 text 항목에서 해당 문구가 정확히 한 번 존재.
+- ambiguous: 두 번 이상 존재. 겹치는 출현과 서로 다른 text 항목도 포함.
+- missing: 확인된 선행 입력에 문구가 없음.
+- unresolved-input: 선행 입력 자체가 고유하게 확인되지 않음.
+
+고유 위치에만 priorAnchor를 넣는다. textIndex는 첨부물까지 포함한 원본 배열
+위치이며 byteOffset은 UTF-8 바이트 위치다. antecedentVerified와
+replacementVerified는 false다. 고유 문자열 위치가 의미적 선행 요구 또는
+수정 권한의 증거는 아니다. 기존 경험/요구/연결 강도는 이 위치 연결로 변경하지 않는다.
+최대 8개/인코딩 64KiB를 전달하고 초과 시 revisionReferencesLimited를 표시한다.
+메모리는 기존 VRS PMR 예산으로 관리한다. 최초 cognition에 저장되어 재시작이나
+동일 입력 재전송 때 후속 턴 상태로 재해석하지 않는다.
+
+검증: wire 201 checks, 실제 stdio subprocess 7167 checks 통과.
+한국어/영어, 첨부물 인덱스, 겹침/항목 간 중복, 미출현/선행 미확정,
+개수/바이트 제한, 재시작 후 저장 관계 동일성, 실제 wrapper/host/proxy/VRS와
+테스트 backend 사이의 고유 위치 및 미확정 전달을 확인했다.
+실제 GUI/모델 사용, Main 병합 후 이 관계 복구, 범용 자연어 정정 의미 검증은
+이 변경의 검증 범위에 포함되지 않는다. 설치본 반영은 아직이다.

@@ -1,6 +1,7 @@
 #include "transport/agent_query_socket.hpp"
 #include "transport/requirement_anchor.hpp"
 #include "transport/measurement_observation.hpp"
+#include "transport/revision_references.hpp"
 #include "transport/json.hpp"
 #include "transport/stdio_frames.hpp"
 #include "transport/ingress_probe.hpp"
@@ -324,6 +325,15 @@ private:
         relation+=quote_json(params.at("threadId").string(),memory_);
         relation+=",\"expectedTurnId\":";relation+=quote_json(expected->scalar,memory_);
         relation+=",\"priorInput\":";relation+=prior?address(prior->original,memory_):"null";
+        std::optional<Json> prior_native;
+        append_revision_references(relation,event.fields(),[&]() -> const Json* {
+            if(!prior)return nullptr;
+            const auto stored=runtime_.session().read_original(prior->original);
+            const auto payload=evidence_payload(stored);
+            if(payload.sender!=ExperienceSender::client||payload.media_type!="application/json")return nullptr;
+            prior_native.emplace(parse_json({reinterpret_cast<const char*>(payload.content.data()),payload.content.size()},memory_));
+            return &*prior_native;
+        },memory_);
         relation+=",\"replacementVerified\":false,\"grantsAuthority\":false}";
         return relation;
     }

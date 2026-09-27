@@ -1,6 +1,7 @@
 #include "transport/app_server_wire.hpp"
 #include "transport/replay_context.hpp"
 #include "transport/input_candidates.hpp"
+#include "transport/revision_references.hpp"
 #include "vrs/memory_budget.hpp"
 #include <cstdio>
 #include <cstdlib>
@@ -313,6 +314,32 @@ int main(){
   wire.include_context(delivery,"remembered",native.size()+128);
   memory.deallocate(held,held_bytes);wire.recorded(delivery);
   CHECK(delivery.event().native_bytes()==native&&wire.forward(delivery).size()>native.size());
+ }
+ CHECK(memory.used()==0);
+ {
+  auto current=parse_json(R"({"method":"turn/steer","params":{"input":[{"type":"text","text":"정정: “중지” → “유지”\nCorrection: \"aa\" -> \"bb\"\nCorrection: \"absent\" -> \"new\""}]}})",memory);
+  auto previous=parse_json(R"({"method":"turn/start","params":{"input":[{"type":"image"},{"type":"text","text":"서버 중지 aaa"}]}})",memory);
+  unsigned reads=0;
+  auto render=[&](const Json* prior,std::size_t limit=8,std::size_t budget=65536){
+   std::pmr::string out("{\"test\":true",&memory);
+   append_revision_references(out,current,[&]{++reads;return prior;},memory,limit,budget);
+   out+='}';return parse_json(out,memory);
+  };
+  auto result=render(&previous);CHECK(reads==1);
+  const auto& refs=result.at("revisionReferences").values;CHECK(refs.size()==3);
+  CHECK(refs[0].at("locationStatus").string()=="unique");
+  CHECK(refs[0].at("priorAnchor").at("textIndex").string()=="1");
+  CHECK(refs[0].at("priorAnchor").at("byteOffset").string()=="7");
+  CHECK(refs[0].at("antecedentVerified").scalar=="false");
+  CHECK(refs[0].at("replacementVerified").scalar=="false");
+  CHECK(refs[1].at("locationStatus").string()=="ambiguous"); // overlapping aa in aaa
+  CHECK(refs[1].at("priorAnchor").kind==Json::Kind::null);
+  CHECK(refs[2].at("locationStatus").string()=="missing");
+  auto missing=render(nullptr);CHECK(missing.at("revisionReferences").values[0].at("locationStatus").string()=="unresolved-input");
+  auto bounded=render(&previous,1);CHECK(bounded.at("revisionReferences").values.size()==1&&bounded.at("revisionReferencesLimited").scalar=="true");
+  reads=0;auto empty=render(&previous,8,0);CHECK(reads==0&&empty.at("revisionReferencesLimited").scalar=="true");
+  previous=parse_json(R"({"method":"turn/start","params":{"input":[{"type":"text","text":"중지"},{"type":"text","text":"중지"}]}})",memory);
+  CHECK(render(&previous).at("revisionReferences").values[0].at("locationStatus").string()=="ambiguous");
  }
  CHECK(memory.used()==0);
  std::printf("app-server wire owner tests: %u checks passed\n",checks);
