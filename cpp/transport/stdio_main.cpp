@@ -48,7 +48,7 @@ constexpr std::string_view tools_list=R"({"tools":[
 ]})";
 class Server {
 public:
-    Server(Runtime& runtime,MemoryBudget& memory):runtime_(runtime),memory_(memory),contexts_(&memory){}
+    Server(Runtime& runtime,MemoryBudget& memory,std::uint64_t frame):runtime_(runtime),memory_(memory),frame_(frame),contexts_(&memory){}
     void message(std::string_view line){
         Json request(&memory_);
         try{request=parse_json(line,memory_);}catch(const std::bad_alloc&){throw;}catch(const std::exception&){error("null",-32700,"invalid JSON");return;}
@@ -64,7 +64,10 @@ public:
                 if(initialized_)throw std::invalid_argument("already initialized");
                 const auto& p=request.at("params");(void)p.at("protocolVersion").string();
                 if(p.at("capabilities").kind!=Json::Kind::object||p.at("clientInfo").kind!=Json::Kind::object)throw std::invalid_argument("invalid initialize parameters");
-                initialized_=true;result(encoded_id,R"({"protocolVersion":"2025-06-18","capabilities":{"tools":{},"experimental":{"swegcaHostInput":{"version":"13"}}},"serverInfo":{"name":"swegca-vrs-cpp","version":"0.1"}})");return;
+                initialized_=true;
+                auto body=std::pmr::string(R"({"protocolVersion":"2025-06-18","capabilities":{"tools":{},"experimental":{"swegcaHostInput":{"version":"14","frameBytes":")",&memory_);
+                body+=std::to_string(frame_);body+=R"("}}},"serverInfo":{"name":"swegca-vrs-cpp","version":"0.1"}})";
+                result(encoded_id,body);return;
             }
             if(method=="ping"){result(encoded_id,"{}");return;}
             if(!ready_)throw std::invalid_argument("initialization not completed");
@@ -84,7 +87,7 @@ public:
     }
     void framing_error(){error("null",-32700,"invalid or oversized MCP frame");}
 private:
-    Runtime& runtime_;MemoryBudget& memory_;bool initialized_=false,ready_=false;
+    Runtime& runtime_;MemoryBudget& memory_;std::uint64_t frame_;bool initialized_=false,ready_=false;
     struct Context {
         struct Delivery { DigestBytes fingerprint; ExperienceLocation original; DigestBytes context{}; ExperienceSender sender=ExperienceSender::unspecified; };
         Context(MemoryBudget& memory,std::string_view native,bool app,bool connection):deliveries(&memory),native_session(native,&memory),app_server(app),connection_scope(connection){}
@@ -449,7 +452,7 @@ int main(int argc,char** argv){
         settings.storage_bytes=integer(config.at("storageBytes"));
         settings.merge_workers=static_cast<std::uint32_t>(workers);
         auto runtime=mode=="ensure"?Runtime::ensure(argv[2],settings,memory):mode=="create"?Runtime::create(argv[2],settings,memory):Runtime::open(argv[2],settings,memory);
-        Server server(runtime,memory);bool eof=false;
+        Server server(runtime,memory,frame);bool eof=false;
         while(!eof){try{auto line=read_frame(std::cin,frame,memory,eof);if(!eof)server.message(line);}catch(const std::bad_alloc&){std::cerr<<"VRS memory budget exhausted\n";return 2;}catch(const std::exception&){server.framing_error();}if(!std::cout)return 2;}
         return 0;
     }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}

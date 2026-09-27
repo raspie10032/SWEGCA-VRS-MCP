@@ -34,7 +34,7 @@ class Client:
         check('error' in self.call('tools/list'))
         initialized=self.call('initialize',{'protocolVersion':'2025-06-18','capabilities':{},'clientInfo':{'name':'test','version':'1'}})['result']
         check(initialized['protocolVersion']=='2025-06-18')
-        check(initialized['capabilities']['experimental']['swegcaHostInput']['version']=='13')
+        check(initialized['capabilities']['experimental']['swegcaHostInput']['version']=='14')
         self.notice('notifications/initialized')
         tools=self.call('tools/list')['result']['tools']
         check([t['name'] for t in tools]==['vrs_replay','vrs_re_evidence'])
@@ -522,6 +522,8 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     c.close()
     # The C++ wire owner chooses thread and requestSequence automatically. Only
     # acknowledge its plan after the real VRS process confirms ingestion.
+    transport_path=root/'transport-resources.json'
+    transport_path.write_text(json.dumps(dict(config,frameBytes='131072')))
     proxy_root=root/'proxy-process';proxy_root.mkdir()
     proxy_config=root/'proxy.json'
     proxy_config.write_text(json.dumps({'memoryBytes':str(8<<20),'frameBytes':'4096',
@@ -530,7 +532,7 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     client_side,client_proxy=socket.socketpair()
     server_side,server_proxy=socket.socketpair()
     vrs_side,vrs_proxy=socket.socketpair()
-    vrs_process=subprocess.Popen([str(exe),'create',str(proxy_root),str(path)],
+    vrs_process=subprocess.Popen([str(exe),'create',str(proxy_root),str(transport_path)],
         stdin=vrs_side,stdout=vrs_side,stderr=subprocess.PIPE)
     proxy_process=subprocess.Popen([str(exe.parent/'swegca-app-server-proxy'),
         str(client_proxy.fileno()),str(server_proxy.fileno()),str(vrs_proxy.fileno()),str(proxy_config)],
@@ -549,8 +551,10 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
                 if not chunk:raise RuntimeError('proxy closed before complete frame')
                 data.extend(chunk)
             return bytes(data)
-        global_frames=[{'id':1,'method':'initialize','params':{'clientInfo':{'name':'fixture'}}},
+        global_frames=[{'id':1,'method':'initialize','params':{'clientInfo':{'name':'fixture'},'padding':'"'*1500}},
                        {'method':'initialized'}, {'id':2,'method':'thread/start','params':{}}]
+        expanded=json.dumps({'native':proxy_frame(global_frames[0])[:-1].decode()}).encode()
+        check(len(proxy_frame(global_frames[0]))<4096 and len(expanded)>4096)
         for frame in global_frames:
             raw=proxy_frame(frame);client_side.sendall(raw);check(proxy_read(server_side)==raw)
             if 'id' in frame:
@@ -648,7 +652,7 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     proxy_config.write_text(json.dumps(resumed))
     client_side,client_proxy=socket.socketpair();server_side,server_proxy=socket.socketpair()
     vrs_side,vrs_proxy=socket.socketpair()
-    vrs_process=subprocess.Popen([str(exe),'open',str(proxy_root),str(path)],
+    vrs_process=subprocess.Popen([str(exe),'open',str(proxy_root),str(transport_path)],
         stdin=vrs_side,stdout=vrs_side,stderr=subprocess.PIPE)
     proxy_process=subprocess.Popen([str(exe.parent/'swegca-app-server-proxy'),
         str(client_proxy.fileno()),str(server_proxy.fileno()),str(vrs_proxy.fileno()),str(proxy_config)],
@@ -763,7 +767,7 @@ for line in sys.stdin:
     wrapper_config=root/'wrapper.json'
     wrapper_config.write_text(json.dumps({'backend':str(desktop_backend),'host':str(exe.parent/'swegca-desktop-host'),
         'proxy':str(exe.parent/'swegca-app-server-proxy'),'vrs':str(exe),'mode':'ensure','root':str(desktop_root),
-        'resourceConfig':str(path),'proxyConfig':str(desktop_proxy)}))
+        'resourceConfig':str(transport_path),'proxyConfig':str(desktop_proxy)}))
     desktop=subprocess.Popen([str(exe.parent/'swegca-codex-wrapper'),'-c','features.code_mode_host=true',
         'app-server','--analytics-default-enabled'],env=dict(os.environ,SWEGCA_DESKTOP_CONFIG=str(wrapper_config)),
         stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,bufsize=0)
@@ -810,7 +814,7 @@ for line in sys.stdin:
     # Interrupt only this test's launcher: all three owned children must exit.
     interrupt_root=root/'desktop-interrupt';interrupt_root.mkdir()
     desktop=subprocess.Popen([str(exe.parent/'swegca-desktop-host'),
-        str(exe.parent/'swegca-app-server-proxy'),str(exe),'create',str(interrupt_root),str(path),
+        str(exe.parent/'swegca-app-server-proxy'),str(exe),'create',str(interrupt_root),str(transport_path),
         str(desktop_proxy),sys.executable,'-u','-c',backend_code],
         stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,bufsize=0)
     try:
@@ -837,7 +841,7 @@ for line in sys.stdin:
     collision_config.write_text(json.dumps({'memoryBytes':str(8<<20),'frameBytes':'4096','pendingRequests':'8',
         'sessionCapacity':'1','seed':'7','step':'0','instance':'collision-fixture','sessions':[]}))
     collision=subprocess.run([str(exe.parent/'swegca-desktop-host'),str(exe.parent/'swegca-app-server-proxy'),
-        str(exe),'open',str(collision_root),str(path),str(collision_config),sys.executable,'-u','-c',backend_code],
+        str(exe),'open',str(collision_root),str(transport_path),str(collision_config),sys.executable,'-u','-c',backend_code],
         input=(json.dumps({'id':88,'method':'thread/resume','params':{'threadId':'prior'}})+'\n').encode(),
         capture_output=True,timeout=10)
     check(collision.returncode==1 and collision.stdout==b'')
@@ -848,6 +852,15 @@ for line in sys.stdin:
     original=c.call('swegca/agent/original',{'identity':restored['identity'],'sequence':'0'})['result']
     check(original['original']==pending_saved and original['native']==pending_native)
     check(c.call('swegca/work',{'seed':'7','step':'0'})['result']['merged']=='0');c.close()
+    # An insufficient host frame limit is rejected before any native forwarding.
+    mismatch_root=root/'rpc-frame-mismatch';mismatch_root.mkdir()
+    mismatch=subprocess.run([str(exe.parent/'swegca-desktop-host'),str(exe.parent/'swegca-app-server-proxy'),
+        str(exe),'create',str(mismatch_root),str(path),str(desktop_proxy),sys.executable,'-u','-c',backend_code],
+        input=(json.dumps({'id':1,'method':'initialize','params':{}})+'\n').encode(),
+        capture_output=True,timeout=10)
+    check(mismatch.returncode==1 and mismatch.stdout==b'')
+    check(b'host frame budget smaller' in mismatch.stderr)
+    check(not (mismatch_root/'sessions').exists())
     # A separate config file must not change the root being measured.
     def stored_bytes():
         seen=set();total=0

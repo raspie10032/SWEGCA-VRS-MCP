@@ -462,3 +462,29 @@ request, rejects the conflicting resume with zero native forwarding, and a
 fresh VRS reopen proves nextSequence remains 1 and the original address/bytes
 are unchanged. Main merges remain zero. Allocation failure after a legitimate
 ack still retries registration without repeating the ingestion callback.
+
+## Host protocol 14: separate native and RPC frame budgets
+
+The old proxy used native frameBytes for its VRS socket too. A native message
+below that limit could exceed it when quoted inside an ingestion RPC or a
+recovered-original result. Protocol 14 advertises the host input frameBytes.
+Proxy keeps native frameBytes unchanged and uses a separate vrsFrameBytes for
+VRS traffic. Its default/minimum is `6 * frameBytes + 65536`: JSON's maximum
+string escape expansion plus reserved receipt/setup metadata. Arithmetic
+overflow, a value above proxy memoryBytes, and an explicit value below that
+minimum are rejected. This is a configured transport bound, not a proof that
+arbitrary metadata, historical originals or Replay payloads fit it.
+
+Before attaching sessions, proxy requires the advertised host frame limit to
+cover its RPC budget. Outgoing RPC size is checked before writing any bytes;
+responses use the separate bounded reader. The host resource config must set
+frameBytes accordingly. Limits do not preallocate that many payload bytes;
+actual allocations still use the proxy PMR budget. Full-original readLimit,
+JSON nesting and aggregate memory limits remain independently applicable.
+
+Verification: 2,457 real subprocess checks passed. A native initialization
+message below 4KiB expands past 4KiB inside RPC JSON, traverses proxy/VRS, and
+is recovered byte-exact after restart. A host advertising only 4KiB fails
+startup before forwarding native data or creating a session. Tests use a
+128KiB host frame allowance with the unchanged 4KiB native limit. No live
+configuration was modified; no arbitrary-size attachment support is claimed.

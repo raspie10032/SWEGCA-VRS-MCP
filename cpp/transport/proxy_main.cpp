@@ -29,8 +29,9 @@ void wait_ready(std::span<pollfd> descriptors){
 // backpressure; there are no background model calls or implicit reconnections.
 class VrsStream final {
 public:
-    VrsStream(int fd,std::size_t limit,std::pmr::memory_resource& memory):fd_(fd),reader_(fd,limit,memory),memory_(memory){}
+    VrsStream(int fd,std::size_t limit,std::pmr::memory_resource& memory):fd_(fd),reader_(fd,limit,memory),memory_(memory),limit_(limit){}
     void send(std::string_view frame){
+        if(frame.size()>limit_)throw std::length_error("VRS RPC exceeds configured frame limit");
         if(frame.find_first_of("\r\n")!=std::string_view::npos)throw std::invalid_argument("single JSON line required");
         write(frame);write("\n");
     }
@@ -53,7 +54,7 @@ private:
             throw std::runtime_error("VRS request send failed");
         }
     }
-    int fd_;SocketFrames reader_;std::pmr::memory_resource& memory_;
+    int fd_;SocketFrames reader_;std::pmr::memory_resource& memory_;std::size_t limit_;
 };
 Json call(VrsStream& stream,std::string_view id,std::string_view method,std::string_view params,std::pmr::memory_resource& memory){
     auto reply=parse_json(stream.exchange("{\"jsonrpc\":\"2.0\",\"id\":"+quote_json(id,memory)+",\"method\":"+
@@ -77,6 +78,13 @@ int main(int argc,char** argv){
         const auto capacity=number(config.at("pendingRequests").string());
         const auto seed=number(config.at("seed").string()),step=number(config.at("step").string());
         if(!ram||!frame||frame>ram||!capacity)throw std::invalid_argument("invalid proxy limits");
+        // Native JSON is quoted inside RPC JSON. Reserve worst-case escaping
+        // plus receipt/setup metadata, without enlarging native acceptance.
+        if(frame>(UINT64_MAX-65536)/6)throw std::overflow_error("native frame expansion overflow");
+        const auto minimum_rpc_frame=frame*6+65536;
+        const auto* configured_rpc_frame=config.find("vrsFrameBytes");
+        const auto rpc_frame=configured_rpc_frame?number(configured_rpc_frame->string()):minimum_rpc_frame;
+        if(rpc_frame<minimum_rpc_frame||rpc_frame>ram)throw std::invalid_argument("invalid VRS RPC frame budget");
         const auto& sessions=config.at("sessions");
         if(sessions.kind!=Json::Kind::array)throw std::invalid_argument("session bindings must be an array");
         const auto* connection=config.find("connectionSession");
@@ -86,11 +94,13 @@ int main(int argc,char** argv){
         if(!session_capacity||session_capacity<initial_sessions)throw std::invalid_argument("invalid session capacity");
         swegca::vrs::MemoryBudget memory(ram);
         AppServerPump pump(client,server,frame,memory,session_capacity,capacity);
-        VrsStream stream(vrs,frame,memory);
+        VrsStream stream(vrs,rpc_frame,memory);
         const auto initialized=call(stream,"proxy/initialize","initialize",R"({"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"swegca-app-server-proxy","version":"0.1"}})",memory);
         const auto& result=initialized.at("result");
-        if(result.at("protocolVersion").string()!="2025-06-18"||result.at("capabilities").at("experimental").at("swegcaHostInput").at("version").string()!="13")
+        if(result.at("protocolVersion").string()!="2025-06-18"||result.at("capabilities").at("experimental").at("swegcaHostInput").at("version").string()!="14")
             throw std::runtime_error("unsupported VRS host protocol");
+        if(number(result.at("capabilities").at("experimental").at("swegcaHostInput").at("frameBytes").string())<rpc_frame)
+            throw std::runtime_error("VRS host frame budget smaller than proxy RPC budget");
         stream.send(R"({"jsonrpc":"2.0","method":"notifications/initialized"})");
         std::pmr::map<std::pmr::string,std::pmr::string,std::less<>> bindings(&memory);
         std::uint64_t serial=0;
