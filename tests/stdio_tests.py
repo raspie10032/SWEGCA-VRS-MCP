@@ -782,7 +782,27 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     check(bytes.fromhex(response_replay['contentHex'])==reply_raw.encode())
     check(c.call('swegca/work',{'seed':'7','step':'7'})['result']['merged']=='0')
     check(c.call('swegca/end')['result']=={})
+    def archived_cognition(revision=updated_revision, source=response_id, original=r2['original']):
+        params={'identity':source,'inputOriginal':original}
+        if revision is not None:params['revision']=revision
+        return c.call('swegca/agent/cognition',params)
+    check(archived_cognition()['result']=={'revision':updated_revision,'liveRevision':None,'record':updated_cognition})
+    check(archived_cognition(None)['result']['record']==initial_cognition['record'])
+    check('error' in c.call('swegca/agent/cognition',{'identity':response_id,'sequence':'2','inputOriginal':r2['original']}))
+    check('error' in archived_cognition(source=identity(249)))
+    forged_original=dict(r2['original'],digest=identity(249))
+    check('error' in archived_cognition(original=forged_original))
+    check(c.call('swegca/start',{'identity':identity(248),'name':'history-neighbor'})['result']=={})
+    check(archived_cognition()['result']['record']==updated_cognition)
+    check('result' in c.call('swegca/receive',event('history-neighbor')))
     check(c.call('swegca/work',{'seed':'7','step':'7'})['result']['merged']=='1')
+    check(archived_cognition()['result']['record']==updated_cognition)
+    c.close()
+    c=Client('open',response_root,path);c.initialize()
+    check(archived_cognition()['result']['record']==updated_cognition)
+    check(archived_cognition(None)['result']['record']==initial_cognition['record'])
+    check(archived_cognition(explicit_revision,original=r4['original'])['result']['record']==explicit_record)
+    check('error' in c.call('swegca/select',{'identity':response_id}))
     c.close()
     # Response routing follows the sealed connection, even when its identity
     # is not a digest reconstructed from this adapter's current input encoding.

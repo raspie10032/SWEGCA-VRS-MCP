@@ -32,7 +32,7 @@ After attaching/resuming the native session, send a JSON-RPC host request:
 This returns the immutable initial `record`, `revision:null`, and `liveRevision`:
 the digest of the currently completed and persisted later snapshot, if it
 belongs to that input. A stale/incomplete snapshot does not expose a live digest.
-The request selects the explicit attached session just like agent/original.
+The request leaves the selected input session unchanged.
 
 To retrieve a known revision, add `"revision":"<digest>"` to params. `record`
 then contains that revision and `revision` echoes its digest. The reader checks
@@ -43,12 +43,20 @@ error. Lookup does not run a new comparison or grant Re-evidence authority.
 After process restart, the owner can attach/resume and retrieve a retained
 revision digest. The original duplicate-input Replay still uses the historical
 initial record; it is not silently replaced by the later result. Automatic
-latest-revision discovery across restart is not yet implemented. Ended-session
-query routing also remains constrained by the existing host session-selection
-rules. No claim of complete revision navigation or installed desktop use is made.
+latest-revision discovery across restart is not yet implemented. For an ended/published session, use `inputOriginal` (the complete recorded address)
+instead of `sequence`, with the same source session `identity` and optional
+`revision`. This reads the Main-owned store without attaching or reopening an
+input route, including after Main merge and process restart. Supplying both
+locators is rejected. Active unmounted sources still require their normal attach
+flow. No claim of complete revision navigation or installed desktop use is made.
 
 Verification uses actual stdio subprocesses: automatic response update and
 explicit comparison, preserved initial Replay, different-input/unknown-digest
 rejection, repeated-read storage size stability and exact revision retrieval
 after restart. Storage-layer tests additionally cover duplicate saves, invalid
 addresses, size bounds and end-of-session immutability.
+
+Ended-session regression additionally verifies queries before and after Main
+merge, after restart without session attachment, rejection of unknown sources
+and forged addresses, and continued input to an unrelated selected session.
+The closed session does not gain an input route from these reads.

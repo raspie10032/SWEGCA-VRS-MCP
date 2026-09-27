@@ -208,6 +208,16 @@ StoredExperience Runtime::read_cognition_original(const DigestBytes& source,cons
     // reselection, and no reconstruction of a current Re-evidence authority.
     return found->second.store->read(original,config_.read_limit);
 }
+std::optional<StoredExperience> Runtime::read_cognition_record(const DigestBytes& source,
+    const ExperienceLocation& input,std::optional<DigestBytes> revision) const {
+    const auto found=sources_.sources_.find(source);
+    if(found==sources_.sources_.end()||!found->second.store||!found->second.store->usable())
+        throw std::invalid_argument("recorded cognition source unavailable");
+    // Read a Main-owned immutable record without acquiring an input route or
+    // changing the currently selected session, including after publication.
+    return revision?found->second.store->read_cognition_revision(input,*revision):
+        found->second.store->read_cognition(input);
+}
 bool Runtime::maintain_memory() {
     if(page_work_){
         if(!page_work_->done.load(std::memory_order_acquire))return true;

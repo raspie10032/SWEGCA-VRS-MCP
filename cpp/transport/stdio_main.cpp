@@ -308,24 +308,31 @@ private:
             return "{\"identity\":\""+hex(identity,memory_)+"\",\"nextSequence\":\""+std::to_string(state.deliveries.size()).c_str()+"\"}";
         }
         if(method=="swegca/agent/cognition"){
-            select_context(digest(p.at("identity").string()));
-            const auto& state=context();
-            if(state.native_session.empty()||!state.native_ready)
-                throw std::invalid_argument("native session binding required");
-            const auto found=state.deliveries.find(integer(p.at("sequence")));
-            if(found==state.deliveries.end())throw std::invalid_argument("native delivery not recorded");
+            const auto identity=digest(p.at("identity").string());
+            const auto context_at=contexts_.find(identity);
+            const auto* state=context_at==contexts_.end()?nullptr:&context_at->second;
+            ExperienceLocation input;
+            if(const auto* original=p.find("inputOriginal")){
+                if(p.find("sequence"))throw std::invalid_argument("choose sequence or inputOriginal");
+                input=record_address(*original);
+            }else{
+                if(!state||state->native_session.empty()||!state->native_ready)
+                    throw std::invalid_argument("native session binding required");
+                const auto found=state->deliveries.find(integer(p.at("sequence")));
+                if(found==state->deliveries.end())throw std::invalid_argument("native delivery not recorded");
+                input=found->second.original;
+            }
             const auto* requested=p.find("revision");
             const auto revision=requested?std::optional<DigestBytes>(digest(requested->string())):std::nullopt;
-            const auto stored=revision?runtime_.session().read_cognition_revision(found->second.original,*revision):
-                runtime_.session().read_cognition(found->second.original);
+            const auto stored=runtime_.read_cognition_record(identity,input,revision);
             if(!stored)throw std::invalid_argument("cognition record not found");
             const auto metadata=parse_json(content_text(*stored),memory_);
-            if(record_address(metadata.at("inputOriginal"))!=found->second.original)
+            if(record_address(metadata.at("inputOriginal"))!=input)
                 throw std::runtime_error("cognition input binding mismatch");
-            const bool live=state.received&&state.received->recorded.original==found->second.original&&
-                state.cognition_done&&state.cognition_snapshot_saved&&state.cognition_revision;
+            const bool live=state&&state->received&&state->received->recorded.original==input&&
+                state->cognition_done&&state->cognition_snapshot_saved&&state->cognition_revision;
             return std::pmr::string("{\"revision\":",&memory_)+(revision?quote_json(hex(*revision,memory_),memory_):"null")+
-                ",\"liveRevision\":"+(live?quote_json(hex(*state.cognition_revision,memory_),memory_):"null")+
+                ",\"liveRevision\":"+(live?quote_json(hex(*state->cognition_revision,memory_),memory_):"null")+
                 ",\"record\":"+std::pmr::string(content_text(*stored),&memory_)+"}";
         }
         if(method=="swegca/agent/original"){

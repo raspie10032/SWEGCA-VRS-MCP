@@ -966,3 +966,15 @@ Main-owner swegca/agent/cognition 조회는 명시한 identity·sequence에 최�
 재시작 양쪽 revision 일치, 최초 Replay 불변, 다른 입력·잘못된 digest 거절,
 반복 조회 파일 용량 불변을 확인했다. 최신 revision의 재시작 자동 탐색,
 종료 세션의 호스트 조회 경로와 모든 수동 후보 대조 영속화는 아직 남는다.
+
+
+종료된 세션의 cognition 조회를 Main 소유 저장소에 직접 연결했다. Runtime의
+read_cognition_record는 기존 Source의 usable 저장소만 읽으며 입력 세션을
+획득하거나 현재 선택을 바꾸지 않는다. agent/cognition은 identity와 sequence
+(연결된 native 세션) 또는 inputOriginal(정확한 원주소) 중 하나를 받는다.
+Main 병합·재시작 후에도 종료된 세션을 입력용으로 다시 열지 않고 최초/지정
+revision을 읽는다. 대체된 SessionRuntime의 미사용 읽기 중계는 제거했다.
+수정 전 종료 직후 조회 거절을 재현했고, 수정 후 종료 직후·병합 후·재시작 후
+내용 일치, 타 활성 세션 입력 유지, unknown source/위조 주소/복수 locator 거절,
+닫힌 세션 입력 route 미생성을 포함해 stdio 3,725개 검사 통과. 조회는 쓰기나
+새 판단을 수행하지 않는다. 최신 revision 자동 탐색과 수동 후보 전체 이력은 남는다.
