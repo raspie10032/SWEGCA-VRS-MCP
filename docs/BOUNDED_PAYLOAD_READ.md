@@ -34,3 +34,25 @@ EOF/빈 원문/잘못된 범위/예산 초과/중간 I/O 실패/요청 범위 �
 Runtime 검사에서는 256KiB 추적 예산으로 2MiB 원경험을 임시/Main 양쪽에서 읽고,
 4KiB 반환 버퍼만 추가됨을 확인한다. 같은 예산에서 기존 전체 Replay는 예산 부족으로
 거부된다. 이 수치는 호출자 원문과 고정 스택을 포함한 전체 RSS가 아니다.
+
+## MCP result serialization without duplicate payload buffers
+
+The MCP host previously built an escaped text copy and a combined response
+containing both that text and structuredContent. It now keeps the generated
+result body once and writes the two protocol representations directly to stdout.
+`write_json_string` validates UTF-8 before output, then writes ordinary byte
+runs and fixed-size escapes without allocating a second payload-sized string.
+Wire representation is preserved, including control escapes and Unicode.
+
+Verification: 15 JSON stream checks include all ASCII controls, Unicode,
+quotes/backslashes, a 1MiB string, invalid UTF-8 producing no output, and a
+fully reserved PMR budget where allocating the old quoted copy fails but
+streaming succeeds. Actual subprocess suite: 2,495 checks, with every successful
+MCP tool reply checked for equality between parsed text and structuredContent.
+Test ostringstream storage is not a measurement of production RSS; this proves
+removal of the extra PMR response copies, not the complete 4GB process limit.
+
+Full Replay still retains its original and builds a hex result body. Partial
+payload access still does not issue a completed Replay/Re-evidence receipt and
+still authenticates the entire original per request. Those remaining storage
+and Replay memory costs have not been disguised as completed bounded Replay.

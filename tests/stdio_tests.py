@@ -27,6 +27,9 @@ class Client:
         self.serial+=1
         reply=self.raw(json.dumps({'jsonrpc':'2.0','id':self.serial,'method':method,'params':params or {}},ensure_ascii=True).encode()+b'\n')
         check(reply['id']==self.serial)
+        result=reply.get('result')
+        if method=='tools/call' and isinstance(result,dict) and 'structuredContent' in result:
+            check(json.loads(result['content'][0]['text'])==result['structuredContent'])
         return reply
     def notice(self,method,params=None):
         self.p.stdin.write(json.dumps({'jsonrpc':'2.0','method':method,'params':params or {}}).encode()+b'\n');self.p.stdin.flush()

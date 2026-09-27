@@ -1,5 +1,6 @@
 #pragma once
 #include <memory_resource>
+#include <iosfwd>
 #include <span>
 #include <string_view>
 #include <string>
@@ -20,5 +21,7 @@ struct Json {
 };
 [[nodiscard]] Json parse_json(std::string_view text,std::pmr::memory_resource&,std::size_t max_depth=64);
 [[nodiscard]] std::pmr::string encode_json(const Json&,std::pmr::memory_resource&);
+// Validate before output and emit quoted runs without a payload-sized copy.
+void write_json_string(std::ostream&,std::string_view);
 [[nodiscard]] std::pmr::string quote_json(std::string_view,std::pmr::memory_resource&);
 } // namespace swegca::transport

@@ -77,7 +77,7 @@ public:
                 const auto name=p.at("name").string();
                 if(name!="vrs_replay"&&name!="vrs_re_evidence")throw std::invalid_argument("unknown tool");
                 try{auto body=call(name,p.at("arguments"));
-                    result(encoded_id,"{\"content\":[{\"type\":\"text\",\"text\":"+quote_json(body,memory_)+"}],\"structuredContent\":"+body+"}");
+                    tool_result(encoded_id,body);
                 }catch(const std::exception& e){result(encoded_id,"{\"content\":[{\"type\":\"text\",\"text\":"+quote_json(e.what(),memory_)+"}],\"isError\":true}");}return;
             }
             if(method.starts_with("swegca/")){auto body=host(method,request.at("params"));result(encoded_id,body);return;}
@@ -128,6 +128,14 @@ private:
             else runtime_.attach_session(identity,name);
         } catch(...) {contexts_.erase(it);throw;}
         if(select){runtime_.select_session(identity);selected_=&it->second;}
+    }
+    void tool_result(std::string_view id,std::string_view body){
+        // The verified result is already materialized. Emit its two required
+        // MCP representations without allocating escaped/combined duplicates.
+        std::cout<<"{\"jsonrpc\":\"2.0\",\"id\":"<<id<<",\"result\":{\"content\":[{\"type\":\"text\",\"text\":";
+        write_json_string(std::cout,body);
+        std::cout<<"}],\"structuredContent\":"<<body<<"}}\n"<<std::flush;
+        if(!std::cout)throw std::runtime_error("MCP output disconnected");
     }
     void result(std::string_view id,std::string_view body){std::cout<<"{\"jsonrpc\":\"2.0\",\"id\":"<<id<<",\"result\":"<<body<<"}\n"<<std::flush;if(!std::cout)throw std::runtime_error("MCP output disconnected");}
     void error(std::string_view id,int code,std::string_view message){std::cout<<"{\"jsonrpc\":\"2.0\",\"id\":"<<id<<",\"error\":{\"code\":"<<code<<",\"message\":"<<quote_json(message,memory_)<<"}}\n"<<std::flush;}

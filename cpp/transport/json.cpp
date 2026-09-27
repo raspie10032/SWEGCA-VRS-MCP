@@ -1,5 +1,6 @@
 #include "transport/json.hpp"
 #include <stdexcept>
+#include <ostream>
 
 namespace swegca::transport {
 const Json* Json::find(std::string_view key) const noexcept {
@@ -88,6 +89,20 @@ void encode(std::pmr::string& out,const Json& value){
         for(std::size_t i=0;i<value.values.size();++i){if(i)out+=',';if(object){quote(out,value.keys[i]);out+=':';}encode(out,value.values[i]);}out+=object?'}':']';return;}
     }
 }
+}
+void write_json_string(std::ostream& out,std::string_view text){
+    utf8(text);constexpr char digits[]="0123456789abcdef";
+    out.put('"');std::size_t begin=0;
+    for(std::size_t index=0;index<text.size();++index){
+        const auto c=static_cast<unsigned char>(text[index]);
+        if(c!='"'&&c!='\\'&&c>=32)continue;
+        out.write(text.data()+begin,static_cast<std::streamsize>(index-begin));
+        if(c=='"'||c=='\\'){const char escaped[]{'\\',char(c)};out.write(escaped,2);}
+        else{const char escaped[]{'\\','u','0','0',digits[c>>4],digits[c&15]};out.write(escaped,6);}
+        begin=index+1;
+    }
+    if(begin<text.size())out.write(text.data()+begin,static_cast<std::streamsize>(text.size()-begin));
+    out.put('"');
 }
 Json parse_json(std::string_view text,std::pmr::memory_resource& memory,std::size_t depth){return Parser(text,memory,depth).parse();}
 std::pmr::string encode_json(const Json& value,std::pmr::memory_resource& memory){std::pmr::string out(&memory);encode(out,value);return out;}
