@@ -115,7 +115,7 @@ private:
         struct Delivery { DigestBytes fingerprint; ExperienceLocation original; DigestBytes context{}; ExperienceSender sender=ExperienceSender::unspecified; DigestBytes connection{}; };
         Context(MemoryBudget& memory,std::string_view native,bool app,bool connection):deliveries(&memory),turn_inputs(&memory),native_session(native,&memory),app_server(app),connection_scope(connection){}
         std::pmr::map<std::uint64_t,Delivery> deliveries;
-        std::pmr::map<std::pmr::string,std::optional<Delivery>,std::less<>> turn_inputs;
+        std::pmr::map<std::pmr::string,std::pmr::vector<Delivery>,std::less<>> turn_inputs;
         std::uint64_t indexed_turn_deliveries=0;
         bool native_ready=false;
         std::pmr::string native_session;
@@ -149,7 +149,7 @@ private:
     std::pmr::string turn_key(std::string_view thread,std::string_view turn){
         std::pmr::string key(std::to_string(thread.size()),&memory_);key+=':';key+=thread;key+=turn;return key;
     }
-    std::optional<Context::Delivery> turn_input(Context& state,std::string_view thread,std::string_view turn){
+    std::optional<Context::Delivery> turn_input(Context& state,std::string_view thread,std::string_view turn,std::optional<ExperienceLocation> requested){
         for(auto it=state.deliveries.lower_bound(state.indexed_turn_deliveries);it!=state.deliveries.end();++it){
             const auto& delivered=it->second;
             if(delivered.sender==ExperienceSender::server){
@@ -160,7 +160,8 @@ private:
                 const auto* result=fields.find("result");
                 const auto* returned_turn=result&&result->kind==Json::Kind::object?result->find("turn"):nullptr;
                 const auto* id=returned_turn&&returned_turn->kind==Json::Kind::object?returned_turn->find("id"):nullptr;
-                if(!fields.find("method")&&id&&id->kind==Json::Kind::string&&!id->scalar.empty()){
+                const auto* steer_id=result&&result->kind==Json::Kind::object?result->find("turnId"):nullptr;
+                if(!fields.find("method")&&(id||steer_id)){
                     for(auto prior=it;prior!=state.deliveries.begin();){
                         --prior;
                         const auto& input=prior->second;
@@ -171,11 +172,18 @@ private:
                         const std::string_view request_bytes(reinterpret_cast<const char*>(request_payload.content.data()),request_payload.content.size());
                         auto event=state.connection_scope?adapt_codex_app_server_connection(request_bytes,state.native_session,memory_):
                             adapt_codex_app_server(request_bytes,memory_);
-                        if(event.native_name()!="turn/start")break;
+                        const auto method=event.native_name();
+                        const auto* selected_id=method=="turn/start"?id:method=="turn/steer"?steer_id:nullptr;
+                        if(!selected_id||selected_id->kind!=Json::Kind::string||selected_id->scalar.empty())break;
+                        if(method=="turn/steer"){
+                            const auto* expected=event.fields().at("params").find("expectedTurnId");
+                            if(!expected||expected->kind!=Json::Kind::string||expected->scalar!=selected_id->scalar)break;
+                        }
                         AppServerRequests requests(memory_,1);requests.track(RpcSender::client,event);
                         (void)requests.bind(bytes,RpcSender::server);
-                        auto [at,inserted]=state.turn_inputs.try_emplace(turn_key(event.fields().at("params").at("threadId").string(),id->scalar),input);
-                        if(!inserted&&at->second&&at->second->original!=input.original)at->second.reset();
+                        auto& inputs=state.turn_inputs.try_emplace(turn_key(event.fields().at("params").at("threadId").string(),selected_id->scalar)).first->second;
+                        const auto duplicate=std::find_if(inputs.begin(),inputs.end(),[&](const auto& prior){return prior.original==input.original;});
+                        if(duplicate==inputs.end())inputs.push_back(input);
                         break;
                     }
                 }
@@ -183,7 +191,22 @@ private:
             state.indexed_turn_deliveries=it->first+1;
         }
         const auto found=state.turn_inputs.find(turn_key(thread,turn));
-        return found==state.turn_inputs.end()?std::nullopt:found->second;
+        if(found==state.turn_inputs.end())return std::nullopt;
+        if(requested){
+            for(const auto& input:found->second)if(input.original==*requested)return input;
+            // A unique native turn owner remains known even if a producer's
+            // claimed address is wrong; tool_observation rejects that claim.
+        }
+        return found->second.size()==1?std::optional<Context::Delivery>(found->second.front()):std::nullopt;
+    }
+    std::optional<ExperienceLocation> tool_input_reference(const AgentEvent& event){
+        if(event.native_name()!="item/completed")return std::nullopt;
+        try {
+            const auto& item=event.fields().at("params").at("item");
+            if(item.at("type").string()!="mcpToolCall"||item.at("status").string()!="completed")return std::nullopt;
+            return record_address(item.at("result").at("structuredContent").at("swegcaObservation").at("inputOriginal"));
+        }catch(const std::invalid_argument&){return std::nullopt;}
+        catch(const std::out_of_range&){return std::nullopt;}
     }
     // Producers may report observations, never core verdicts. Accept only an
     // explicit address-bound payload from an actual completed MCP tool item.
@@ -514,7 +537,7 @@ private:
                 const auto* turn=params&&params->kind==Json::Kind::object?params->find("turnId"):nullptr;
                 const auto* thread=params&&params->kind==Json::Kind::object?params->find("threadId"):nullptr;
                 if(turn&&turn->kind==Json::Kind::string&&thread&&thread->kind==Json::Kind::string){
-                    if(const auto input=turn_input(state,thread->scalar,turn->scalar)){
+                    if(const auto input=turn_input(state,thread->scalar,turn->scalar,tool_input_reference(event))){
                         request_original=input->original;request_connection=input->connection;
                     }
                 }

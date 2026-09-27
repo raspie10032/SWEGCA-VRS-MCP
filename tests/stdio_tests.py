@@ -872,6 +872,31 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     turn_frame(9,'server',{'method':'item/completed','params':{'threadId':'turn-thread','turnId':'turn-a'}})
     ambiguous=c.call('swegca/agent/original',{'identity':turns_id,'sequence':'9'})['result']
     check(ambiguous['context'] not in (first_turn['original']['digest'],fourth['original']['digest']))
+    # Steer is another real input in the same turn; unaddressed output cannot
+    # silently remain attached to its initial purpose after the correction.
+    steer=turn_frame(10,'client',{'id':5,'method':'turn/steer','params':{'threadId':'turn-thread',
+        'expectedTurnId':'turn-b','input':[{'type':'text','text':'corrected purpose'}]}})
+    turn_frame(11,'server',{'id':5,'result':{'turnId':'turn-b'}},10)
+    turn_frame(12,'server',{'method':'item/completed','params':{'threadId':'turn-thread','turnId':'turn-b'}})
+    unbound=c.call('swegca/agent/original',{'identity':turns_id,'sequence':'12'})['result']
+    check(unbound['context'] not in (second_turn['original']['digest'],steer['original']['digest']))
+    c.close()
+    c=Client('open',turns_root,path);c.initialize()
+    check(c.call('swegca/agent/attach/resume',turns_binding)['result']['nextSequence']=='13')
+    check(c.call('swegca/select',{'identity':turns_id})['result']=={})
+    for n,target in ((13,steer),(14,second_turn)):
+        tool={'method':'item/completed','params':{'threadId':'turn-thread','turnId':'turn-b',
+            'item':{'type':'mcpToolCall','id':'steer-test-'+str(n),'server':'steer-verifier','tool':'verify','status':'completed',
+                'result':{'content':[],'structuredContent':{'swegcaObservation':{'inputOriginal':target['original'],
+                    'axis':'0','outcome':'support','confidence':1.0,'hasExpiry':False,'expiresAt':'0'}}}}}}
+        turn_frame(n,'server',tool)
+        saved=c.call('swegca/agent/original',{'identity':turns_id,'sequence':str(n)})['result']
+        check(saved['context']==target['original']['digest'])
+    # A different turn's original cannot be claimed as the corrected input.
+    tool['params']['item']['result']['structuredContent']['swegcaObservation']['inputOriginal']=first_turn['original']
+    turn_frame(15,'server',tool)
+    saved=c.call('swegca/agent/original',{'identity':turns_id,'sequence':'15'})['result']
+    check(saved['context'] not in (first_turn['original']['digest'],second_turn['original']['digest'],steer['original']['digest']))
     check(c.call('swegca/work',{'seed':'7','step':'0'})['result']['merged']=='0')
     c.close()
     # Responses bind to an earlier committed request original, not a selected
