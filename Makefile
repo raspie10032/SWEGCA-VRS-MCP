@@ -12,6 +12,9 @@ VRS_SOURCES := cpp/vrs/experience_page.cpp cpp/vrs/runtime.cpp cpp/vrs/main_sour
 .PHONY: check-agent-event all check check-stdio check-sha256 check-resource-profile check-oom-recovery bench clean
 all: $(BUILD)/core-tests
 
+$(BUILD)/file-observation-tests: tests/file_observation_tests.cpp cpp/vrs/file_observation.cpp cpp/vrs/file_observation.hpp cpp/vrs/transfer_budget.hpp cpp/vrs/memory_budget.hpp $(CORE_HEADERS) cpp/swegca_architecture/sha256.cpp | $(BUILD)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< cpp/vrs/file_observation.cpp cpp/swegca_architecture/sha256.cpp -Wl,--wrap=pread -o $@
+
 $(BUILD):
 	mkdir -p $(BUILD)
 
