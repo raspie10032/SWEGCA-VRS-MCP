@@ -50,6 +50,11 @@ public:
     [[nodiscard]] std::size_t region_count() const noexcept { return connections_.region_count(); }
     [[nodiscard]] std::size_t largest_region() const noexcept { return connections_.largest_region(); }
     [[nodiscard]] std::size_t source_count() const noexcept { return merged_.size(); }
+    struct PortalIndexStats {std::size_t cue_keys=0,context_keys=0,cue_ranges=0,context_ranges=0;};
+    // Serialized diagnostic only: counts address topology, never evaluates
+    // evidence or enters the input/Recall hot path. No payload I/O/allocation.
+    [[nodiscard]] PortalIndexStats portal_index_stats() const noexcept;
+
 private:
     friend class PersistentMainGraph;
     friend class ExperienceRouter;

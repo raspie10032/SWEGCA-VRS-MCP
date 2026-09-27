@@ -31,13 +31,21 @@ static void measure(Runtime& host,MemoryBudget& memory,const char* route,std::st
    if(reads!=r||writes!=w||calls!=c+1||receipt.matches().size()!=expected||receipt.temporary()!=temporary)
     throw std::runtime_error("scaled Recall invariant");
    receipt_bytes=memory.used()-baseline;
-   if(n>=5){entry[n-5]=ns(entered-start);complete[n-5]=ns(end-start);exceeded+=entry[n-5]>=1000000;}
+   if(n>=5){entry[n-5]=ns(entered-start);complete[n-5]=ns(end-start);exceeded+=entry[n-5]>=5000000;}
   }
   if(memory.used()!=baseline)throw std::runtime_error("scaled Recall allocation leak");
  }
  std::sort(entry.begin(),entry.end());std::sort(complete.begin(),complete.end());
- std::printf("{\"route\":\"%s\",\"candidates\":%zu,\"samples\":30,\"entryMedianNs\":%lld,\"entryP95Ns\":%lld,\"entryMaxNs\":%lld,\"entryAtLeast1ms\":%u,\"completeMedianNs\":%lld,\"completeP95Ns\":%lld,\"receiptBytes\":%zu,\"trackedBytes\":%zu}\n",
+ std::printf("{\"route\":\"%s\",\"candidates\":%zu,\"samples\":30,\"entryMedianNs\":%lld,\"entryP95Ns\":%lld,\"entryMaxNs\":%lld,\"recallLimitNs\":5000000,\"entryAtLeast5ms\":%u,\"completeMedianNs\":%lld,\"completeP95Ns\":%lld,\"receiptBytes\":%zu,\"trackedBytes\":%zu}\n",
   route,expected,entry[15],entry[28],entry[29],exceeded,complete[15],complete[28],receipt_bytes,memory.used());std::fflush(stdout);
+}
+static void report_portals(const Runtime& host,MemoryBudget& memory,const char* phase){
+ const auto baseline=memory.used();const auto r=reads.load(),w=writes.load();
+ const auto stats=host.main().graph().portal_index_stats();
+ if(memory.used()!=baseline||reads!=r||writes!=w)throw std::runtime_error("portal diagnostic performed allocation or I/O");
+ std::printf("{\"phase\":\"%s\",\"cueKeys\":%zu,\"contextKeys\":%zu,\"cueRanges\":%zu,\"contextRanges\":%zu,\"trackedBytes\":%zu}\n",
+  phase,stats.cue_keys,stats.context_keys,stats.cue_ranges,stats.context_ranges,memory.used());
+ std::fflush(stdout);
 }
 int main(int argc,char** argv){
  std::size_t count=2048;
@@ -52,7 +60,7 @@ int main(int argc,char** argv){
  const std::filesystem::path root(pattern);
  struct Cleanup{std::filesystem::path path;~Cleanup(){std::error_code error;std::filesystem::remove_all(path,error);}} cleanup{root};
  MemoryBudget memory(256ULL<<20);EvidencePolicy policy;policy.axis_count=1;
- RuntimeConfig config{id(99),policy,1,8<<20,4096,2<<20};config.merge_workers=workers;
+ RuntimeConfig config{id(99),policy,1,8<<20,4096,2<<20};config.merge_workers=workers;config.memory_target_bytes=1;
  std::printf("{\"configuration\":{\"workers\":%u}}\n",workers);
  std::array<std::byte,128> content{};std::vector<long long> ingestion;ingestion.reserve(count);
  std::size_t expected=mode=="repeated"?count:1;ExperienceLocation last;
@@ -62,19 +70,37 @@ int main(int argc,char** argv){
    if(mode=="distinct")for(unsigned byte=0;byte<8;++byte)content[byte]=std::byte((std::uint64_t(n)>>(byte*8))&255);
    const auto start=Clock::now();auto event=host.receive({n,n,"prepared","user","application/octet-stream",content},7,n);
    ingestion.push_back(ns(Clock::now()-start));last=event.recorded.original;
-   if(event.recalled.matches().size()!=(mode=="repeated"?n:0))throw std::runtime_error("ingestion Recall count");
+   // Distinct inputs still recall previous dialogue through the session context.
+   const auto kind=n==0?kernel::FamiliarityKey::missing:
+       mode=="repeated"?kernel::FamiliarityKey::exact:kernel::FamiliarityKey::context;
+   if(event.recalled.matches().size()!=n||event.recalled.key_kind()!=kind)
+    throw std::runtime_error("ingestion Recall count or route");
   }
   std::sort(ingestion.begin(),ingestion.end());
   std::printf("{\"phase\":\"recorded\",\"mode\":\"%.*s\",\"experiences\":%zu,\"receiveMedianNs\":%lld,\"receiveP95Ns\":%lld,\"receiveMaxNs\":%lld,\"trackedBytes\":%zu,\"storedBytes\":%llu}\n",int(mode.size()),mode.data(),count,ingestion[count/2],ingestion[(count-1)*95/100],ingestion.back(),memory.used(),(unsigned long long)host.storage().used());std::fflush(stdout);
   measure(host,memory,"temporary-exact","application/octet-stream",content,expected,true);
   {auto found=host.input("application/octet-stream",content);if(host.replay(found,expected-1).location()!=last)throw std::runtime_error("temporary selected original");}
-  measure(host,memory,"temporary-continuation","text/followup",content,expected,true);
+  measure(host,memory,"temporary-continuation","text/followup",content,count,true);
   host.end_session();const auto start=Clock::now();if(host.work(7,count)!=1)throw std::runtime_error("Main merge count");
   std::printf("{\"phase\":\"merged\",\"elapsedNs\":%lld,\"trackedBytes\":%zu}\n",ns(Clock::now()-start),memory.used());std::fflush(stdout);
   host.start_session(id(2),"active");
   measure(host,memory,"main-exact","application/octet-stream",content,expected,false);
   {auto found=host.input("application/octet-stream",content);if(host.replay(found,expected-1).location()!=last)throw std::runtime_error("Main selected original");}
-  measure(host,memory,"main-continuation","text/followup",content,expected,false);
+  measure(host,memory,"main-continuation","text/followup",content,count,false);
+  const auto topology=host.main().graph().portal_index_stats();
+  const auto keys=mode=="repeated"?1:count;
+  if(topology.cue_keys!=keys||topology.context_keys!=1||topology.cue_ranges!=keys||topology.context_ranges!=keys)
+   throw std::runtime_error("Main portal topology");
+  report_portals(host,memory,"before-cache-release");
+  std::size_t passes=0;
+  while(host.maintain_memory()){
+   if(++passes>count*8+4096)throw std::runtime_error("cache maintenance did not finish a pass");
+   std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  report_portals(host,memory,"after-cache-release");
+  measure(host,memory,"page-released-main-exact","application/octet-stream",content,expected,false);
+  measure(host,memory,"page-released-main-context","text/followup",content,count,false);
+
  }
  if(memory.used())throw std::runtime_error("owner allocation leak");
  const auto start=Clock::now();

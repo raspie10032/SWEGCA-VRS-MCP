@@ -1,0 +1,14 @@
+{"configuration":{"workers":2}}
+{"phase":"recorded","mode":"repeated","experiences":2048,"receiveMedianNs":61490,"receiveP95Ns":99951,"receiveMaxNs":323184,"trackedBytes":886512,"storedBytes":3702172}
+{"route":"temporary-exact","candidates":2048,"samples":30,"entryMedianNs":160,"entryP95Ns":160,"entryMaxNs":160,"recallLimitNs":5000000,"entryAtLeast5ms":0,"completeMedianNs":4250,"completeP95Ns":4251,"receiptBytes":600,"trackedBytes":886512}
+{"route":"temporary-continuation","candidates":2048,"samples":30,"entryMedianNs":140,"entryP95Ns":140,"entryMaxNs":140,"recallLimitNs":5000000,"entryAtLeast5ms":0,"completeMedianNs":200,"completeP95Ns":210,"receiptBytes":600,"trackedBytes":886512}
+{"phase":"merged","elapsedNs":421324,"trackedBytes":732304}
+{"route":"main-exact","candidates":2048,"samples":30,"entryMedianNs":160,"entryP95Ns":160,"entryMaxNs":160,"recallLimitNs":5000000,"entryAtLeast5ms":0,"completeMedianNs":220,"completeP95Ns":230,"receiptBytes":600,"trackedBytes":734064}
+{"route":"main-continuation","candidates":2048,"samples":30,"entryMedianNs":140,"entryP95Ns":140,"entryMaxNs":150,"recallLimitNs":5000000,"entryAtLeast5ms":0,"completeMedianNs":210,"completeP95Ns":220,"receiptBytes":600,"trackedBytes":734064}
+{"phase":"before-cache-release","cueKeys":1,"contextKeys":1,"cueRanges":1,"contextRanges":1,"trackedBytes":734064}
+{"phase":"after-cache-release","cueKeys":1,"contextKeys":1,"cueRanges":1,"contextRanges":1,"trackedBytes":102544}
+{"route":"page-released-main-exact","candidates":2048,"samples":30,"entryMedianNs":160,"entryP95Ns":170,"entryMaxNs":170,"recallLimitNs":5000000,"entryAtLeast5ms":0,"completeMedianNs":290,"completeP95Ns":290,"receiptBytes":600,"trackedBytes":102544}
+{"route":"page-released-main-context","candidates":2048,"samples":30,"entryMedianNs":140,"entryP95Ns":140,"entryMaxNs":150,"recallLimitNs":5000000,"entryAtLeast5ms":0,"completeMedianNs":280,"completeP95Ns":280,"receiptBytes":600,"trackedBytes":102544}
+{"phase":"reopened","elapsedNs":201152369,"trackedBytes":734064}
+{"route":"reopened-main-exact","candidates":2048,"samples":30,"entryMedianNs":160,"entryP95Ns":170,"entryMaxNs":170,"recallLimitNs":5000000,"entryAtLeast5ms":0,"completeMedianNs":290,"completeP95Ns":290,"receiptBytes":600,"trackedBytes":734064}
+{"phase":"finished","maxRssKiB":6636}

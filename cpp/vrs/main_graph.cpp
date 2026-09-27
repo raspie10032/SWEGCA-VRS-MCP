@@ -17,6 +17,12 @@ MainGraph::MainGraph(MemoryBudget& memory, double initial_strength, const Eviden
     if (!workers_) throw std::invalid_argument("Main merge worker count must be positive");
     if (!finite_count(initial_strength)) throw std::invalid_argument("invalid Main initial strength");
 }
+MainGraph::PortalIndexStats MainGraph::portal_index_stats() const noexcept {
+    PortalIndexStats result{cues_.size(),contexts_.size(),0,0};
+    for(const auto& [key,ranges]:cues_){(void)key;result.cue_ranges+=ranges.size();}
+    for(const auto& [key,ranges]:contexts_){(void)key;result.context_ranges+=ranges.size();}
+    return result;
+}
 bool MainGraph::merge(const SessionRuntime& source, std::uint64_t seed, std::uint64_t step) {
     return merge_impl(source, seed, step, nullptr, nullptr);
 }
