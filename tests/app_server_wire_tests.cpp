@@ -120,5 +120,18 @@ int main(){
   wire.preflight(retry);wire.recorded(retry);
  }
  CHECK(memory.used()==0);
+ {
+  AppServerWire wire(memory,3,3);unsigned bindings=0;
+  const auto bind=[&](const AgentEvent& event){++bindings;CHECK(event.kind()==swegca::architecture::kernel::AgentEventKind::content);return 0;};
+  const auto read=R"({"id":7,"method":"thread/read","params":{"threadId":"prior"}})";
+  auto request=wire.prepare(read,RpcSender::client,1,bind);wire.recorded(request);
+  CHECK(bindings==1&&request.event().session()=="prior");
+  auto response=wire.prepare(R"({"id":7,"result":{}})",RpcSender::server,2,bind);wire.recorded(response);
+  CHECK(bindings==1&&response.request_sequence()==0);
+  auto notice=wire.prepare(R"({"method":"thread/status/changed","params":{"threadId":"another","status":{"type":"idle"}}})",RpcSender::server,3,bind);
+  wire.recorded(notice);CHECK(bindings==2&&notice.event().session()=="another");
+  rejects([&]{(void)wire.prepare(a,RpcSender::client,4,bind);});CHECK(bindings==2);
+ }
+ CHECK(memory.used()==0);
  std::printf("app-server wire owner tests: %u checks passed\n",checks);
 }

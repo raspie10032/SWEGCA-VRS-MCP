@@ -107,3 +107,22 @@ finds seven thread originals (the prior three plus resume/request response and
 turn/request response), while connection originals remain seven. No live app
 or account calls. A backend refusal to resume is recorded as its response; it
 does not manufacture successful model state or authorize a Main merge.
+
+## Thread content before start/resume notifications
+
+Installed schemas ThreadReadParams, ThreadStatusChangedNotification and
+ThreadNameUpdatedNotification all carry required threadId. Such messages may
+need recording before a thread has been attached to this proxy. Wire now permits
+attachment for explicitly identified content/lifecycle envelopes when the
+existing core route_agent_event permits record. The host's attach/ensure still
+checks actual session state; ended sessions are not revived. Input and unbound
+responses cannot trigger this discovery. Existing request direction, ID,
+capacity and post-recovery checks remain in effect.
+
+Verification: Wire 74, duplex pump 88, subprocess 2,459 checks passed. A prior
+conversation is read before its resume request after a desktop fixture restart,
+without a thread/started notification. The read request/response are preserved;
+reopen yields nine thread originals. Unit checks also cover a status notification
+as the first message and reject an unknown user input even with free session
+capacity. This is native envelope capture, not semantic verification of the
+returned history or live desktop installation.

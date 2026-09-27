@@ -165,7 +165,7 @@ int main(int argc,char** argv){
         for(const auto& session:sessions.values)attach(session,false);
         struct Recovery { std::pmr::string identity,name; std::uint64_t next; };
         std::optional<Recovery> pending_recovery;
-        const auto bind_lifecycle=[&](const AgentEvent& event){
+        const auto bind_thread=[&](const AgentEvent& event){
             if(serial==UINT64_MAX)throw std::overflow_error("proxy request IDs exhausted");
             const auto name=event.session();
             const auto params="{\"provider\":\"codex\",\"protocol\":\"app-server\",\"instance\":"+quote_json(config.at("instance").string(),memory)+",\"session\":"+quote_json(name,memory)+"}";
@@ -173,7 +173,7 @@ int main(int argc,char** argv){
             const auto& body=attached.at("result");const auto next=number(body.at("nextSequence").string());
             const auto identity=body.at("identity").string();
             const auto [where,inserted]=bindings.try_emplace(std::pmr::string(name,&memory),identity);
-            if(!inserted&&where->second!=identity)throw std::runtime_error("changed lifecycle binding");
+            if(!inserted&&where->second!=identity)throw std::runtime_error("changed native thread binding");
             if(next)pending_recovery.emplace(Recovery{std::pmr::string(identity,&memory),std::pmr::string(name,&memory),next});
             return next;
         };
@@ -186,8 +186,8 @@ int main(int argc,char** argv){
                 const auto sender=lane==0?RpcSender::client:RpcSender::server;
                 const auto observed=std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
                 const auto state=pump.step(sender,static_cast<std::uint64_t>(observed),[&](const AppServerWire::Delivery& plan){
-                    // Wire has now attached the lifecycle-discovered session.
-                    // Restore before acknowledging its notification, never from input.
+                    // Wire has now attached the explicitly identified native session.
+                    // Restore before recording its non-input envelope, never from input.
                     if(pending_recovery){
                         recover(pending_recovery->identity,pending_recovery->name,false,pending_recovery->next);
                         pending_recovery.reset();
@@ -199,7 +199,7 @@ int main(int argc,char** argv){
                     AgentEventCommit commit(found->second,pump.parameters(plan,seed,step),"proxy/event/"+std::to_string(++serial),memory);
                     while(commit.stage()!=AgentEventCommit::Stage::complete)commit.accept(stream.exchange(commit.request()));
                     return true;
-                },bind_lifecycle);
+                },bind_thread);
                 if(state==AppServerPump::State::end){
                     ended[lane]=true;
                     if(::shutdown(lane==0?server:client,SHUT_WR)<0)throw std::system_error(errno,std::generic_category(),"proxy half-close");

@@ -795,6 +795,9 @@ for line in sys.stdin:
     try:
         desktop_send({'id':904,'method':'initialize','params':{}})
         check(desktop_read()=={'id':904,'result':{}})
+        # Desktop may read a prior conversation before resuming it.
+        desktop_send({'id':907,'method':'thread/read','params':{'threadId':'desktop-thread'}})
+        check(desktop_read()=={'id':907,'result':{}})
         # Resume an existing conversation with no thread/started notification.
         desktop_send({'id':905,'method':'thread/resume','params':{'threadId':'desktop-thread'}})
         check(desktop_read()=={'id':905,'result':{}})
@@ -806,7 +809,7 @@ for line in sys.stdin:
     finally:
         if desktop.poll() is None:desktop.terminate();desktop.wait(timeout=10)
     c=Client('open',desktop_root,path);c.initialize()
-    for session,protocol,count in (('transport','app-server-connection','7'),('desktop-thread','app-server','7')):
+    for session,protocol,count in (('transport','app-server-connection','7'),('desktop-thread','app-server','9')):
         attached=c.call('swegca/agent/attach/resume',{'provider':'codex','instance':'desktop-fixture',
             'session':session,'protocol':protocol})['result']
         check(attached['nextSequence']==count)

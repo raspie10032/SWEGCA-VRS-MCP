@@ -102,7 +102,13 @@ public:
         auto found=sessions_.find(event.session());
         if(found==sessions_.end()){
             if(sessions_.size()==capacity_)throw std::length_error("wire session capacity exhausted");
-            if(event.native_name()!="thread/started"&&event.native_name()!="thread/resume")throw std::invalid_argument("session lifecycle binding required before input");
+            // A native thread identity on a content/lifecycle envelope is
+            // sufficient for storage attachment. Never discover from user input
+            // or invent a binding for a response without its original request.
+            using namespace architecture::kernel;
+            if(std::holds_alternative<AppServerRequests::Response>(value)||
+               route_agent_event(SessionPhase::active,event.kind())!=AgentEventRoute::record)
+                throw std::invalid_argument("session binding required before input");
             attach(event.session(),bind(event));found=sessions_.find(event.session());
         }
         if(found->second==std::numeric_limits<std::uint64_t>::max())throw std::overflow_error("delivery sequence exhausted");
