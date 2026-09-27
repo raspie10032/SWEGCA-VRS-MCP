@@ -516,5 +516,18 @@ int main(){
   const auto r=reads;auto recalled=host.input("text/plain",content);CHECK(reads==r);
   CHECK(host.replay(recalled,15).location()==expected);
  }
+ {
+  const auto path=root/"pressure";
+  auto cfg=config;cfg.memory_target_bytes=1;cfg.storage_bytes=stored_bytes(path,memory);
+  auto host=Runtime::open(path,cfg,memory);host.resume_session(id(241));
+  const auto cue=input_cue("text/plain",content);
+  const auto expected=host.main().graph().find(cue)->experiences()[15].original();
+  const auto bytes=host.storage().used();
+  unsigned attempts=0;
+  while(host.maintain_memory()){CHECK(++attempts<5000);std::this_thread::sleep_for(std::chrono::milliseconds(1));}
+  CHECK(attempts>0&&host.storage().used()==bytes);
+  CHECK(host.replay(host.input("text/plain",content),15).location()==expected);
+  CHECK(fs::is_empty(path/"metadata-pages"));
+ }
  CHECK(memory.used()==0);fs::remove_all(root);std::printf("runtime lifecycle tests: %u checks passed\n",checks);
 }

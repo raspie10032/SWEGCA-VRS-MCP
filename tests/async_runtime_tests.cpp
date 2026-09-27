@@ -7,12 +7,25 @@
 #include <dlfcn.h>
 #include <pthread.h>
 #include <unistd.h>
+#include <cstring>
+#include <sys/stat.h>
 using namespace swegca::architecture;
 using namespace swegca::vrs;
 static unsigned checks=0;
 #define CHECK(e) do{++checks;if(!(e)){std::fprintf(stderr,"FAIL %d: %s\n",__LINE__,#e);std::abort();}}while(false)
 template<class E,class F>void throws(F f){bool caught=false;try{f();}catch(const E&){caught=true;}CHECK(caught);}
 static bool fail_spawn=false;
+static const auto owner_thread=std::this_thread::get_id();
+static std::atomic<unsigned> owner_page_directories=0,worker_page_directories=0;
+extern "C" int mkdir(const char* path,mode_t mode) noexcept {
+ using Make=int(*)(const char*,mode_t);
+ static auto real=reinterpret_cast<Make>(::dlsym(RTLD_NEXT,"mkdir"));if(!real)std::abort();
+ if(std::strstr(path,"metadata-pages")){
+  if(std::this_thread::get_id()==owner_thread)++owner_page_directories;
+  else ++worker_page_directories;
+ }
+ return real(path,mode);
+}
 extern "C" int pthread_create(pthread_t* t,const pthread_attr_t* a,void*(*f)(void*),void* p) noexcept {
  if(fail_spawn){fail_spawn=false;return EAGAIN;}
  using Create=int(*)(pthread_t*,const pthread_attr_t*,void*(*)(void*),void*);
@@ -182,6 +195,7 @@ int main(){
   while(runtime.maintain_memory()){CHECK(++attempts<5000);std::this_thread::sleep_for(std::chrono::milliseconds(1));}
   CHECK(runtime.replay(runtime.input("text/plain",bytes),15).location()==selected);
  }
+ CHECK(worker_page_directories>0&&owner_page_directories==0);
  CHECK(memory.used()==0);std::filesystem::remove_all(root);
  std::printf("async runtime tests: %u checks passed\n",checks);
 }

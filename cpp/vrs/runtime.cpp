@@ -10,6 +10,23 @@ namespace swegca::vrs {
 using namespace architecture;
 using namespace architecture::kernel;
 namespace {
+// Captured identity only: worker never reads Main head or the owner's counter.
+std::pair<std::filesystem::path,DigestBytes> metadata_destination(const std::filesystem::path& root,const DigestBytes& seed) {
+    const auto directory=root/"metadata-pages";
+    const auto status=std::filesystem::symlink_status(directory);
+    if(status.type()==std::filesystem::file_type::not_found)std::filesystem::create_directory(directory);
+    else if(!std::filesystem::is_directory(status))throw std::runtime_error("invalid metadata page directory");
+    auto identity=seed;
+    for(std::uint64_t collision=0;;){
+        constexpr char digits[]="0123456789abcdef";std::string name;name.reserve(70);
+        for(const auto byte:identity){const auto n=std::to_integer<unsigned>(byte);name+=digits[n>>4];name+=digits[n&15];}
+        name+=".block";const auto path=directory/name;
+        if(std::filesystem::symlink_status(path).type()==std::filesystem::file_type::not_found)return {path,identity};
+        if(collision==UINT64_MAX)throw std::overflow_error("metadata page collisions exhausted");
+        Sha256 hash;hash.update("SWEGCA metadata page collision v1");hash.update(seed);
+        hash.update(std::to_string(++collision));identity=hash.finish();
+    }
+}
 // Called only after StorageRoot has acquired exclusive ownership. A partially
 // initialized or nonempty unrecognized root is never treated as a fresh store.
 bool create_missing_main(const std::filesystem::path& root){
@@ -195,6 +212,7 @@ bool Runtime::maintain_memory() {
             if(page_work_->failure)std::rethrow_exception(page_work_->failure);
             (void)page_work_->prepared.commit();
         }catch(const std::bad_alloc&){page_work_.reset();return false;}
+        catch(const StorageLimit&){page_work_.reset();return false;}
         catch(...){page_work_.reset();throw;}
         page_work_.reset();
     }
@@ -220,17 +238,21 @@ bool Runtime::maintain_memory() {
         try {
             auto prepared=graph.prepare_page(*key,index);
             if(prepared){
-                auto [path,identity]=page_destination(*key,index);
+                const auto seed=page_identity(*key,index);
                 page_work_.emplace(std::move(*prepared));
-                page_work_->thread=std::jthread([this,path=std::move(path),identity]{
+                page_work_->thread=std::jthread([this,seed]{
                     auto& job=*page_work_;
-                    try {job.prepared.write(path,identity,&storage_);}
+                    try {
+                        const auto [path,identity]=metadata_destination(root_,seed);
+                        job.prepared.write(path,identity,&storage_);
+                    }
                     catch(...){job.failure=std::current_exception();}
                     job.done.store(true,std::memory_order_release);
                 });
                 return true;
             }
         }catch(const std::bad_alloc&){page_work_.reset();return false;}
+        catch(const StorageLimit&){page_work_.reset();return false;}
         catch(...){page_work_.reset();throw;}
     }
     return metadata_pressure(memory_.used(),target,false);
@@ -240,26 +262,15 @@ bool Runtime::page_out_main(const DigestBytes& connection,std::size_t index) {
     const auto& graph=main_.graph();
     const auto* found=graph.find(connection);
     if(!found||index>=found->experiences().size())throw std::out_of_range("Main page-out original");
-    const auto [path,identity]=page_destination(connection,index);
+    const auto [path,identity]=metadata_destination(root_,page_identity(connection,index));
     return graph.page_out(connection,index,path,identity,&storage_);
 }
-std::pair<std::filesystem::path,DigestBytes> Runtime::page_destination(const DigestBytes& connection,std::size_t index) {
-    const auto directory=root_/"metadata-pages";
-    const auto status=std::filesystem::symlink_status(directory);
-    if(status.type()==std::filesystem::file_type::not_found)std::filesystem::create_directory(directory);
-    else if(!std::filesystem::is_directory(status))throw std::runtime_error("invalid metadata page directory");
-    for(;;){
-        if(page_attempt_==UINT64_MAX)throw std::overflow_error("metadata page attempts exhausted");
-        Sha256 hash;hash.update("SWEGCA derived metadata page v1");hash.update(config_.main_identity);
-        hash.update(main_.head().digest);hash.update(connection);
-        hash.update(":"+std::to_string(index)+":"+std::to_string(++page_attempt_));
-        const auto identity=hash.finish();
-        constexpr char digits[]="0123456789abcdef";std::string name;name.reserve(70);
-        for(const auto byte:identity){const auto n=std::to_integer<unsigned>(byte);name+=digits[n>>4];name+=digits[n&15];}
-        name+=".block";const auto path=directory/name;
-        if(std::filesystem::symlink_status(path).type()!=std::filesystem::file_type::not_found)continue;
-        return {path,identity};
-    }
+DigestBytes Runtime::page_identity(const DigestBytes& connection,std::size_t index) {
+    if(page_attempt_==UINT64_MAX)throw std::overflow_error("metadata page attempts exhausted");
+    Sha256 hash;hash.update("SWEGCA derived metadata page v1");hash.update(config_.main_identity);
+    hash.update(main_.head().digest);hash.update(connection);
+    hash.update(":"+std::to_string(index)+":"+std::to_string(++page_attempt_));
+    return hash.finish();
 }
 void Runtime::define_connection(const DigestBytes& identity) {
     require_active();active_->runtime.define_connection(identity,config_.initial_strength,config_.policy);

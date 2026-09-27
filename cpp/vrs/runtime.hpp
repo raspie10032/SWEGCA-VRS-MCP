@@ -123,7 +123,7 @@ private:
     void attach(const architecture::DigestBytes&, std::string_view, bool resume);
     void refresh_main();
     bool launch_next();
-    [[nodiscard]] std::pair<std::filesystem::path,architecture::DigestBytes> page_destination(
+    [[nodiscard]] architecture::DigestBytes page_identity(
         const architecture::DigestBytes&,std::size_t);
     void discard_work() noexcept;
     struct Work {

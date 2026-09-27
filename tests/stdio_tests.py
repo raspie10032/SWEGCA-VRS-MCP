@@ -1121,6 +1121,18 @@ for line in sys.stdin:
     check(replay['original']==expected)
     c.close()
     check(not list((pressure_root/'metadata-pages').glob('*.block')))
+    # A full storage budget may stop optional paging, but must not stop the host.
+    seen=set();pressure_bytes=0
+    for entry in pressure_root.rglob('*'):
+        if entry.is_file():
+            stat=entry.stat();key=(stat.st_dev,stat.st_ino)
+            if key not in seen:pressure_bytes+=stat.st_size;seen.add(key)
+    pressure_config.write_text(json.dumps(dict(config,memoryTargetBytes='1',storageBytes=str(pressure_bytes))))
+    c=Client('open',pressure_root,pressure_config);c.initialize()
+    time.sleep(.1)
+    check(c.call('ping')['result']=={})
+    check(not list((pressure_root/'metadata-pages').glob('*.block')))
+    c.close()
     # A separate config file must not change the root being measured.
     def stored_bytes():
         seen=set();total=0
