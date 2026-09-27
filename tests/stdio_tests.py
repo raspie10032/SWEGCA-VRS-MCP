@@ -1307,6 +1307,31 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     related_mcp_reply=json.loads(related_mcp.stdout.splitlines()[-1])
     assert 'result' in related_mcp_reply,related_mcp_reply
     check(related_mcp_reply['result']['structuredContent']==discovered)
+    def through_observer(arguments,endpoint=query_socket):
+        requests=related_mcp_requests[:2]+[{'jsonrpc':'2.0','id':3,'method':'tools/call',
+            'params':{'name':'vrs_replay','arguments':arguments}}]
+        done=subprocess.run([str(exe.parent/'swegca-content-observer'),'16777216','625000000','1048576'],
+            input=b''.join(json.dumps(x).encode()+b'\n' for x in requests),
+            env={**os.environ,'SWEGCA_QUERY_SOCKET':str(endpoint)},capture_output=True,timeout=10,check=True)
+        check(done.stderr==b'')
+        return json.loads(done.stdout.splitlines()[-1])
+    base_args={'receipt':related_input['receipt'],'inputOriginal':related_input['original'],'related':True}
+    observed_page=through_observer({**base_args,'connections':{'limit':'1'}})['result']['structuredContent']
+    check(observed_page['selectionOnly'] and not observed_page['requirementsComplete'])
+    check(observed_page['next'] is None and len(observed_page['connections'])==1)
+    observed_connection=observed_page['connections'][0]['connection']
+    observed_replay=through_observer({**base_args,'connection':observed_connection})['result']['structuredContent']
+    check(observed_replay['original']==discovered['original'] and observed_replay['relatedConnection']==observed_connection)
+    # A nonexistent endpoint distinguishes local syntax rejection from a
+    # request that reached (or tried connecting to) the VRS owner.
+    for extra,message in (({'connections':{'limit':'0'}},'limit must be'),
+        ({'connection':'bad'},'invalid identity'),
+        ({'connections':{'limit':'1','after':observed_connection}},'requires snapshot'),
+        ({'connection':observed_connection,'connections':{'limit':'1'}},'without listing'),
+        ({'related':False,'connections':{'limit':'1'}},'requires related')):
+        bad=through_observer({**base_args,**extra},root/'absent-query.sock')
+        check(message in bad['error']['message'])
+
     check(json.loads(bytes.fromhex(discovered['contentHex']))['params']['item']['result']['structuredContent']['swegcaObservation']['scope']=='measured content requirement')
     stable_bytes=sum(p.stat().st_size for p in related_root.rglob('*.block'))
     check(related_call(related_input['receipt'])['result']['structuredContent']==discovered)

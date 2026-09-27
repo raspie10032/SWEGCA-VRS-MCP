@@ -89,3 +89,15 @@ A/B/C 기록을 바꾸지 않으며 B에 후속 관측을 추가하면 B의 revi
 
 다음: query bridge 스키마와 프록시 다중 전달/분량 제한·미전달 표시. 설치본은 아직 이전
 검증 버전이며 이번 연결별 Replay와 페이지 기능을 설치하지 않았다.
+
+## 에이전트 query bridge
+
+관측기 MCP의 vrs_replay 스키마에 connections/connection을 연결했다. 같은 소유 VRS
+소켓으로 전달하며 새 VRS 인스턴스나 별도 판정 경로를 만들지 않는다. 구문/필수 주소/
+관련 인자 조합/limit/커서 형태는 연결 전에 검사한다. 실제 소유권·원경험 결속·snapshot·
+선택·판정은 VRS가 검증한다. 공유 I/O/메모리와 query socket 제한은 유지한다.
+
+실제 observer→Unix socket→VRS→응답 경로로 목록과 연결별 원경험을 확인했다.
+없는 endpoint를 사용한 잘못된 인자 검사는 연결 시도 전에 구문 오류가 반환됨을
+확인한다. stdio7006 / content observer129 checks 통과. 현재 빌드에 구현했으며
+설치본 및 프록시 자동 다중 전달은 아직 갱신하지 않았다.
