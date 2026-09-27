@@ -11,13 +11,13 @@ namespace swegca::transport {
 inline const char* agent_query_endpoint() noexcept{
     const char* path=std::getenv("SWEGCA_QUERY_SOCKET");return path&&*path?path:nullptr;
 }
-constexpr std::string_view agent_replay_tool=R"({"name":"vrs_replay","description":"Ask the owning SWEGCA VRS to recall and replay one experience for the current input reference. Requires receipt and inputOriginal from the VRS input context. Optional scope is the exact observation scope. Does not add observations, end sessions, merge Main or authorize actions.","annotations":{"readOnlyHint":true,"destructiveHint":false},"inputSchema":{"type":"object","properties":{"receipt":{"type":"string"},"inputOriginal":{"type":"object","properties":{"block":{"type":"string"},"offset":{"type":"string"},"bytes":{"type":"string"},"digest":{"type":"string"}},"required":["block","offset","bytes","digest"],"additionalProperties":false},"related":{"type":"boolean","description":"Follow observations linked to the automatically selected parent original, without a scope name. Cannot combine with scope."},"connection":{"type":"string","description":"Select one recorded related connection with its own Replay comparison. Requires related=true; excludes connections listing."},"connections":{"type":"object","description":"List related connection selections without Replay. Next page requires snapshot. This does not establish complete requirement coverage.","properties":{"limit":{"type":"string"},"after":{"type":"string"},"snapshot":{"type":"string"}},"required":["limit"],"additionalProperties":false},"scope":{"type":"string","minLength":1}},"required":["receipt","inputOriginal"],"additionalProperties":false}})";
+constexpr std::string_view agent_replay_tool=R"({"name":"vrs_replay","description":"Ask the owning SWEGCA VRS to recall and replay one experience for the current input reference. Requires receipt and inputOriginal from the VRS input context. Optional scope is the exact observation scope. Does not add observations, end sessions, merge Main or authorize actions.","annotations":{"readOnlyHint":true,"destructiveHint":false},"inputSchema":{"type":"object","properties":{"receipt":{"type":"string"},"inputOriginal":{"type":"object","properties":{"block":{"type":"string"},"offset":{"type":"string"},"bytes":{"type":"string"},"digest":{"type":"string"}},"required":["block","offset","bytes","digest"],"additionalProperties":false},"related":{"type":"boolean","description":"Follow observations linked to the automatically selected parent original, without a scope name. Cannot combine with scope."},"connection":{"type":"string","description":"Select one recorded related connection with its own Replay comparison. Requires related=true; excludes connections listing."},"inputCandidates":{"type":"object","description":"Page structural candidates from the acknowledged current input original; does not change Replay or assess meaning. Pass the returned next position as after.","properties":{"limit":{"type":"string"},"after":{"type":"object","properties":{"textIndex":{"type":"string"},"byteOffset":{"type":"string"}},"required":["textIndex","byteOffset"],"additionalProperties":false}},"required":["limit"],"additionalProperties":false},"connections":{"type":"object","description":"List related connection selections without Replay. Next page requires snapshot. This does not establish complete requirement coverage.","properties":{"limit":{"type":"string"},"after":{"type":"string"},"snapshot":{"type":"string"}},"required":["limit"],"additionalProperties":false},"scope":{"type":"string","minLength":1}},"required":["receipt","inputOriginal"],"additionalProperties":false}})";
 // Syntax checks only. The owning VRS remains responsible for receipt,
 // provenance, snapshot, selection and comparison decisions.
 inline void validate_agent_replay_arguments(const Json& args){
     if(args.kind!=Json::Kind::object)throw std::invalid_argument("expected replay arguments");
     for(const auto& key:args.keys)
-        if(key!="receipt"&&key!="inputOriginal"&&key!="scope"&&key!="related"&&key!="connection"&&key!="connections")
+        if(key!="receipt"&&key!="inputOriginal"&&key!="scope"&&key!="related"&&key!="connection"&&key!="connections"&&key!="inputCandidates")
             throw std::invalid_argument("unsupported agent replay argument");
     const auto decimal=[](const Json& value){
         const auto text=value.string();std::uint64_t number{};
@@ -35,6 +35,18 @@ inline void validate_agent_replay_arguments(const Json& args){
     if(input.kind!=Json::Kind::object||input.keys.size()!=4)throw std::invalid_argument("invalid input address");
     digest(input.at("block"));digest(input.at("digest"));(void)decimal(input.at("offset"));
     if(!decimal(input.at("bytes")))throw std::invalid_argument("empty original address");
+    if(const auto* page=args.find("inputCandidates")){
+        for(const auto& key:args.keys)if(key!="receipt"&&key!="inputOriginal"&&key!="inputCandidates")
+            throw std::invalid_argument("input candidates cannot combine with Replay selection");
+        if(page->kind!=Json::Kind::object)throw std::invalid_argument("inputCandidates requires an object");
+        for(const auto& key:page->keys)if(key!="limit"&&key!="after")throw std::invalid_argument("unsupported candidate page argument");
+        const auto limit=decimal(page->at("limit"));if(!limit||limit>64)throw std::invalid_argument("candidate limit must be 1..64");
+        if(const auto* cursor=page->find("after")){
+            if(cursor->kind!=Json::Kind::object||cursor->keys.size()!=2)throw std::invalid_argument("invalid candidate cursor");
+            (void)decimal(cursor->at("textIndex"));(void)decimal(cursor->at("byteOffset"));
+        }
+        return;
+    }
     bool related=false;
     if(const auto* field=args.find("related")){
         if(field->kind!=Json::Kind::boolean)throw std::invalid_argument("related must be boolean");

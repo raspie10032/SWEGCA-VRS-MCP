@@ -7,13 +7,24 @@ namespace swegca::transport {
 // Structural references into the acknowledged original, never instructions,
 // extracted semantics or evidence of satisfaction. No copied text is normalized.
 inline void append_input_candidates(std::pmr::string& context,const Json& native,
-    const Json& acknowledged,std::pmr::memory_resource& memory,std::size_t limit,std::size_t byte_budget){
+    const Json& acknowledged,std::pmr::memory_resource& memory,std::size_t limit,std::size_t byte_budget,
+    std::optional<std::pair<std::size_t,std::size_t>> start={}){
     if(!limit||context.empty()||context.back()!='}')throw std::invalid_argument("invalid candidate context");
     const auto* method=native.find("method");
     if(!method||method->kind!=Json::Kind::string||
         (method->scalar!="turn/start"&&method->scalar!="turn/steer"))return;
     const auto& items=native.at("params").at("input");
     if(items.kind!=Json::Kind::array)throw std::invalid_argument("candidate input must be an array");
+    if(start){
+        if(start->first>=items.values.size())throw std::invalid_argument("candidate cursor item outside original");
+        const auto& item=items.values[start->first];
+        if(item.at("type").string()!="text")throw std::invalid_argument("candidate cursor requires text item");
+        const auto text=item.at("text").string();
+        if(start->second>=text.size())throw std::invalid_argument("candidate cursor byte outside original");
+        std::size_t boundary=0;
+        while(boundary<start->second)boundary=architecture::kernel::input_span_end(text,boundary);
+        if(boundary!=start->second)throw std::invalid_argument("candidate cursor is not a structural boundary");
+    }
     std::pmr::string references("[",&memory);std::size_t emitted=0,nontext=0;
     std::optional<std::pair<std::size_t,std::size_t>> next;
     bool oversized=false,revision_limited=false;
@@ -22,8 +33,8 @@ inline void append_input_candidates(std::pmr::string& context,const Json& native
         const auto& item=items.values[index];
         if(item.at("type").string()!="text"){++nontext;continue;}
         const auto text=item.at("text").string();
-        if(next)continue;
-        std::size_t offset=0;
+        if(next||(start&&index<start->first))continue;
+        std::size_t offset=start&&index==start->first?start->second:0;
         while(offset<text.size()){
             const auto end=architecture::kernel::input_span_end(text,offset);
             const auto newline=text.find('\n',offset);

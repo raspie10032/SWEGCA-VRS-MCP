@@ -218,6 +218,12 @@ int main(){
   candidates="{}";append_input_candidates(candidates,paragraph,source,memory,1,4096);
   const auto one_span=parse_json(candidates,memory);
   CHECK(one_span.at("inputCandidates").at("next").at("byteOffset").string()==std::to_string(segments[0].at("quote").string().size()));
+  const auto cursor=std::pair<std::size_t,std::size_t>{0,segments[0].at("quote").string().size()};
+  candidates="{}";append_input_candidates(candidates,paragraph,source,memory,8,4096,cursor);
+  const auto continued=parse_json(candidates,memory);
+  CHECK(continued.at("inputCandidates").at("candidates").values.size()==2);
+  CHECK(continued.at("inputCandidates").at("candidates").values[0].at("quote").string()==segments[1].at("quote").string());
+  rejects([&]{std::pmr::string invalid("{}",&memory);append_input_candidates(invalid,paragraph,source,memory,8,4096,std::pair<std::size_t,std::size_t>{0,1});});
   using swegca::architecture::kernel::input_span_end;
   for(const auto protected_text:{"\"keep. do not delete\"", "‘keep! do not delete’", "`a. b`", "```a.\nb?\n```", "\"unclosed. keep\nthis", "1. keep version 2.2 and https://example.org/a"})
    CHECK(input_span_end(protected_text,0)==std::string_view(protected_text).size());

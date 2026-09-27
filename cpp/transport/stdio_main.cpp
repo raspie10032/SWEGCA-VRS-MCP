@@ -1,5 +1,6 @@
 #include "transport/agent_query_socket.hpp"
 #include "transport/requirement_anchor.hpp"
+#include "transport/input_candidates.hpp"
 #include "transport/measurement_observation.hpp"
 #include "transport/revision_references.hpp"
 #include "transport/json.hpp"
@@ -50,7 +51,7 @@ std::pmr::string refinement(const ConnectionRefinement& report,MemoryBudget& mem
         ",\"revision\":\""+std::to_string(report.after_revision()).c_str()+"\"}";
 }
 constexpr std::string_view tools_list=R"({"tools":[
-{"name":"vrs_replay","description":"Read one original from current Recall. Without candidate, SWEGCA selects by stored connection strength, recency and stable address. Optional offset/count return verified partial bytes. Scope performs a separate complete scoped Recall/Replay/comparison; it does not replace the parent cognition or the parent Replay used by vrs_re_evidence. Does not infer truth or authorize actions.","inputSchema":{"type":"object","properties":{"receipt":{"type":"string"},"inputOriginal":{"type":"object","description":"Expected current input address paired with receipt. Rejects receipt reuse for a different input.","properties":{"block":{"type":"string"},"offset":{"type":"string"},"bytes":{"type":"string"},"digest":{"type":"string"}},"required":["block","offset","bytes","digest"],"additionalProperties":false},"connection":{"type":"string","description":"Replay this recorded related connection using core selection and its own comparison journal. Requires related=true and inputOriginal; cannot combine with connections listing."},"connections":{"type":"object","description":"List core-selected originals per recorded connection, without Replay or whole-purpose verdict. Requires related=true and inputOriginal. Next page requires returned snapshot.","properties":{"limit":{"type":"string"},"after":{"type":"string"},"snapshot":{"type":"string"}},"required":["limit"],"additionalProperties":false},"candidate":{"type":"string"},"related":{"type":"boolean","description":"Follow recorded observation links from the automatically selected parent Replay. Separate comparison; cannot combine with scope or candidate/range."},"scope":{"type":"string","minLength":1,"description":"Exact producer-declared scope under the current input. Cannot combine with candidate, offset or count. A miss never returns unrelated dialogue."},"offset":{"type":"string","description":"Raw payload byte offset; requires count."},"count":{"type":"string","description":"Byte count; requires offset."}},"required":["receipt"],"additionalProperties":false}},
+{"name":"vrs_replay","description":"Read one original from current Recall. Without candidate, SWEGCA selects by stored connection strength, recency and stable address. Optional offset/count return verified partial bytes. Scope performs a separate complete scoped Recall/Replay/comparison; it does not replace the parent cognition or the parent Replay used by vrs_re_evidence. Does not infer truth or authorize actions.","inputSchema":{"type":"object","properties":{"receipt":{"type":"string"},"inputOriginal":{"type":"object","description":"Expected current input address paired with receipt. Rejects receipt reuse for a different input.","properties":{"block":{"type":"string"},"offset":{"type":"string"},"bytes":{"type":"string"},"digest":{"type":"string"}},"required":["block","offset","bytes","digest"],"additionalProperties":false},"connection":{"type":"string","description":"Replay this recorded related connection using core selection and its own comparison journal. Requires related=true and inputOriginal; cannot combine with connections listing."},"inputCandidates":{"type":"object","description":"Page structural candidates from the acknowledged current input original; does not change Replay or assess meaning. Pass the returned next position as after.","properties":{"limit":{"type":"string"},"after":{"type":"object","properties":{"textIndex":{"type":"string"},"byteOffset":{"type":"string"}},"required":["textIndex","byteOffset"],"additionalProperties":false}},"required":["limit"],"additionalProperties":false},"connections":{"type":"object","description":"List core-selected originals per recorded connection, without Replay or whole-purpose verdict. Requires related=true and inputOriginal. Next page requires returned snapshot.","properties":{"limit":{"type":"string"},"after":{"type":"string"},"snapshot":{"type":"string"}},"required":["limit"],"additionalProperties":false},"candidate":{"type":"string"},"related":{"type":"boolean","description":"Follow recorded observation links from the automatically selected parent Replay. Separate comparison; cannot combine with scope or candidate/range."},"scope":{"type":"string","minLength":1,"description":"Exact producer-declared scope under the current input. Cannot combine with candidate, offset or count. A miss never returns unrelated dialogue."},"offset":{"type":"string","description":"Raw payload byte offset; requires count."},"count":{"type":"string","description":"Byte count; requires offset."}},"required":["receipt"],"additionalProperties":false}},
 {"name":"vrs_re_evidence","description":"Compare the selected Replay with recorded current observations through SWEGCA; run Re-evidence only on a verified conflict.","inputSchema":{"type":"object","properties":{"receipt":{"type":"string"},"seed":{"type":"string"},"step":{"type":"string"}},"required":["receipt","seed","step"],"additionalProperties":false}}
 ]})";
 class Server {
@@ -215,7 +216,7 @@ private:
     void agent_replay_result(std::string_view id,const Json& p){
         if(p.kind!=Json::Kind::object)throw std::invalid_argument("expected replay arguments");
         for(const auto& key:p.keys)
-            if(key!="receipt"&&key!="inputOriginal"&&key!="scope"&&key!="related"&&key!="connections"&&key!="connection")
+            if(key!="receipt"&&key!="inputOriginal"&&key!="scope"&&key!="related"&&key!="connections"&&key!="connection"&&key!="inputCandidates")
                 throw std::invalid_argument("unsupported agent replay argument");
         const auto receipt=integer(p.at("receipt"));
         const auto input=record_address(p.at("inputOriginal"));
@@ -1312,7 +1313,42 @@ private:
         prefix+=",\"revision\":\"";prefix+=hex(*state.related->revision,memory_);prefix+='"';
         prefix+=content_field;payload_result(id,prefix,evidence_payload(cognition.replayed.original()).content);
     }
+    void input_candidate_result(std::string_view id,const Json& p){
+        for(const auto& key:p.keys)if(key!="receipt"&&key!="inputOriginal"&&key!="inputCandidates")
+            throw std::invalid_argument("input candidates cannot combine with Replay selection");
+        const auto input=record_address(p.at("inputOriginal"));
+        const auto receipt=integer(p.at("receipt"));const auto& state=context();
+        if(state.native_session.empty()||!state.native_ready)throw std::invalid_argument("native input required");
+        bool bound=state.received&&state.receipt==receipt&&state.received->recorded.original==input;
+        if(state.recovered_cognition&&state.recovered_receipt==receipt){
+            const auto metadata=parse_json(content_text(*state.recovered_cognition),memory_);
+            bound=record_address(metadata.at("inputOriginal"))==input;
+        }
+        if(!bound)throw std::invalid_argument("candidate input or receipt unavailable");
+        const auto& page=p.at("inputCandidates");
+        if(page.kind!=Json::Kind::object)throw std::invalid_argument("inputCandidates requires an object");
+        for(const auto& key:page.keys)if(key!="limit"&&key!="after")throw std::invalid_argument("unsupported candidate page argument");
+        const auto limit=integer(page.at("limit"));if(!limit||limit>64)throw std::invalid_argument("candidate page limit must be 1..64");
+        std::optional<std::pair<std::size_t,std::size_t>> start;
+        if(const auto* cursor=page.find("after")){
+            if(cursor->kind!=Json::Kind::object||cursor->keys.size()!=2)throw std::invalid_argument("invalid candidate cursor");
+            const auto index=integer(cursor->at("textIndex")),offset=integer(cursor->at("byteOffset"));
+            if(index>SIZE_MAX||offset>SIZE_MAX)throw std::invalid_argument("candidate cursor overflow");
+            start={{index,offset}};
+        }
+        const auto stored=runtime_.session().read_original(input);const auto payload=evidence_payload(stored);
+        if(payload.sender!=ExperienceSender::client||payload.media_type!="application/json"||
+            payload.source!=state.native_source()||payload.session!=state.native_session)
+            throw std::invalid_argument("candidate original provenance mismatch");
+        const auto native=parse_json({reinterpret_cast<const char*>(payload.content.data()),payload.content.size()},memory_);
+        if(native.at("method").string()!="turn/start"&&native.at("method").string()!="turn/steer")
+            throw std::invalid_argument("candidate original is not an input");
+        const auto ack=parse_json("{\"original\":"+address(input,memory_)+"}",memory_);
+        std::pmr::string body("{}",&memory_);
+        append_input_candidates(body,native,ack,memory_,limit,65536,start);tool_result(id,body);
+    }
     void replay_result(std::string_view id,const Json& p){
+        if(p.find("inputCandidates")){input_candidate_result(id,p);return;}
         bool related=false;
         if(const auto* flag=p.find("related")){
             if(flag->kind!=Json::Kind::boolean)throw std::invalid_argument("related must be boolean");

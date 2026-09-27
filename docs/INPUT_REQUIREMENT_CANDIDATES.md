@@ -167,3 +167,31 @@ Replay 이후 proxy에서 수행하므로 입력→Recall 앞에 처리하지 �
 미종결 인용/숫자/URL, 문장 일부만 정정으로 읽지 않는 조건을 포함한다.
 실제 wrapper/host/proxy/VRS와 테스트 backend 간 한 문단 후보 전달 및 정정
 원경험 위치 연결도 확인했다. 이번 분절 변경은 아직 설치본에 반영하지 않았다.
+
+## 현재 입력 후보의 후속 페이지 조회
+
+기존 vrs_replay에 inputCandidates:{limit,after?}를 연결했다. receipt와
+inputOriginal은 필수이며 scope/related/connection/byte-range와 혼합할 수 없다.
+limit은 1..64, after는 이전 inputCandidates.next의 textIndex/byteOffset이다.
+해당 입력 원경험이 불변이므로 별도 가변 snapshot 토큰은 필요하지 않다.
+
+예: {"receipt":"...","inputOriginal":{...},"inputCandidates":{"limit":"8",
+"after":{"textIndex":"0","byteOffset":"123"}}}
+
+소유 VRS는 현재 또는 복구된 receipt와 inputOriginal을 함께 검증한 뒤 해당
+원경험 하나를 읽는다. client/source/session/media/method가 맞는 native 입력만
+허용한다. offset까지 기존 core span 경계를 재계산해 인용/UTF-8 중간의 임의
+위치 요청을 거부한다. 후보는 기존 코어 인용 검증을 사용하고 Replay 선택이나
+경험 강도를 변경하지 않는다. 처음 입력으로 Recall 후보가 없어도 조회 가능하다.
+
+페이지 JSON 예산은 64KiB, 원경험 읽기/JSON 메모리는 기존 VRS 한도를 따른다.
+한 후보 자체가 예산보다 크면 byteLimited와 같은 다음 위치가 반환된다.
+이 경우를 자동 완전 전달로 주장하지 않는다. 구조 후보 자체는 여전히
+semanticVerified/boundariesVerified/requirementsComplete=false다.
+
+검증: wire224 / observer154 / stdio7390 checks 통과. 12개 요구 후보를 3개씩
+조회해 원문 그대로 연결, 잘못된 item/byte 경계/만료 receipt/혼합 옵션 거부,
+실제 observer→소유 VRS socket 조회, 조회 중 block 파일 크기 불변 확인.
+설치 VRS/proxy/observer를 함께 반영했고 설치 backend inventory에서 새
+inputCandidates schema와 기존 자원 제한/소유자/소켓/I/O/정상 종료 확인.
+앞선 1a1b6c8 문단 분절도 이 설치에 포함된다.

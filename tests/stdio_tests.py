@@ -1373,6 +1373,15 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
             env={**os.environ,'SWEGCA_QUERY_SOCKET':str(endpoint)},capture_output=True,timeout=10,check=True)
         check(done.stderr==b'')
         return json.loads(done.stdout.splitlines()[-1])
+    input_page_args={'receipt':related_input['receipt'],'inputOriginal':related_input['original'],
+        'inputCandidates':{'limit':'1'}}
+    page_storage=sum(p.stat().st_size for p in related_root.rglob('*.block'))
+    input_page=through_observer(input_page_args)['result']['structuredContent']['inputCandidates']
+    check(input_page['inputOriginal']==related_input['original'] and len(input_page['candidates'])==1)
+    check(not input_page['semanticVerified'] and not input_page['requirementsComplete'])
+    check(sum(p.stat().st_size for p in related_root.rglob('*.block'))==page_storage)
+    invalid_page=through_observer({**input_page_args,'inputCandidates':{'limit':'0'}},root/'absent-query.sock')
+    check('candidate limit' in invalid_page['error']['message'])
     base_args={'receipt':related_input['receipt'],'inputOriginal':related_input['original'],'related':True}
     observed_page=through_observer({**base_args,'connections':{'limit':'1'}})['result']['structuredContent']
     check(observed_page['selectionOnly'] and not observed_page['requirementsComplete'])
@@ -1669,9 +1678,26 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     def start_turn(n,rpc,text):
         return turn_frame(n,'client',{'id':rpc,'method':'turn/start',
             'params':{'threadId':'turn-thread','input':[{'type':'text','text':text}]}})
-    first_turn=start_turn(0,1,'first independent purpose')
+    first_terms='\n'.join('requirement '+str(i) for i in range(12))
+    first_turn=start_turn(0,1,first_terms)
+    candidate_arguments={'receipt':first_turn['receipt'],'inputOriginal':first_turn['original'],
+        'inputCandidates':{'limit':'3'}}
+    collected=[]
+    while True:
+        candidate_page=c.call('swegca/agent/replay',candidate_arguments)['result']['structuredContent']['inputCandidates']
+        check(candidate_page['inputOriginal']==first_turn['original'])
+        check(not candidate_page['semanticVerified'] and not candidate_page['requirementsComplete'])
+        collected.extend(candidate_page['candidates'])
+        if candidate_page['next'] is None:break
+        candidate_arguments['inputCandidates']['after']=candidate_page['next']
+    check(len(collected)==12 and ''.join(x['quote'] for x in collected)==first_terms)
+    for bad in ({'limit':'0'},{'limit':'65'},{'limit':'3','after':{'textIndex':'0','byteOffset':'1'}},
+                {'limit':'3','after':{'textIndex':'9','byteOffset':'0'}}):
+        check('error' in c.call('swegca/agent/replay',{**candidate_arguments,'inputCandidates':bad}))
+    check('error' in c.call('swegca/agent/replay',{**candidate_arguments,'related':True}))
     turn_frame(1,'server',{'id':1,'result':{'turn':{'id':'turn-a'}}},0)
     second_turn=start_turn(2,2,'second independent purpose')
+    check('error' in c.call('swegca/agent/replay',candidate_arguments))
     turn_frame(3,'server',{'id':2,'result':{'turn':{'id':'turn-b'}}},2)
     c.close()
     c=Client('open',turns_root,path);c.initialize()
