@@ -51,7 +51,19 @@ constexpr std::string_view tools_list=R"({"tools":[
 ]})";
 class Server {
 public:
-    Server(Runtime& runtime,MemoryBudget& memory,std::uint64_t frame):runtime_(runtime),memory_(memory),frame_(frame),contexts_(&memory){}
+    using AutomaticWork=std::optional<std::pair<std::uint64_t,std::uint64_t>>;
+    Server(Runtime& runtime,MemoryBudget& memory,std::uint64_t frame,AutomaticWork automatic={})
+        :runtime_(runtime),memory_(memory),frame_(frame),automatic_(automatic),work_requested_(automatic.has_value()),contexts_(&memory){}
+    [[nodiscard]] bool automatic_work() const noexcept{return automatic_.has_value();}
+    bool advance_work(){
+        if(!automatic_||!ready_)return false;
+        if(work_requested_){
+            if(!runtime_.work_scheduled())(void)runtime_.schedule_work(automatic_->first,automatic_->second);
+            work_requested_=false;
+        }
+        if(runtime_.work_scheduled())(void)runtime_.poll_work();
+        return runtime_.work_scheduled();
+    }
     void message(std::string_view line){
         SWEGCA_INGRESS_STAGE("host_frame");
         Json request(&memory_);
@@ -94,6 +106,8 @@ public:
     void framing_error(){error("null",-32700,"invalid or oversized MCP frame");}
 private:
     Runtime& runtime_;MemoryBudget& memory_;std::uint64_t frame_;bool initialized_=false,ready_=false;
+    AutomaticWork automatic_;
+    bool work_requested_=false;
     struct Context {
         struct Delivery { DigestBytes fingerprint; ExperienceLocation original; DigestBytes context{}; ExperienceSender sender=ExperienceSender::unspecified; };
         Context(MemoryBudget& memory,std::string_view native,bool app,bool connection):deliveries(&memory),native_session(native,&memory),app_server(app),connection_scope(connection){}
@@ -428,6 +442,7 @@ private:
             runtime_.end_session(target->first);
             if(&target->second==selected_)selected_=nullptr;
             contexts_.erase(target);
+            if(automatic_)work_requested_=true;
             return std::pmr::string("{}",&memory_);
         }
         if(method=="swegca/work"){const auto count=runtime_.work(integer(p.at("seed")),integer(p.at("step")));return std::pmr::string("{\"merged\":\"",&memory_)+std::to_string(count).c_str()+"\"}";}
@@ -604,9 +619,28 @@ int main(int argc,char** argv){
         settings.io_bytes_per_second=integer(config.at("ioBytesPerSecond"));
         settings.storage_bytes=integer(config.at("storageBytes"));
         settings.merge_workers=static_cast<std::uint32_t>(workers);
+        Server::AutomaticWork automatic;
+        if(const auto* work=config.find("automaticWork")){
+            if(work->kind!=Json::Kind::object)throw std::invalid_argument("automaticWork must contain seed and step");
+            automatic.emplace(integer(work->at("seed")),integer(work->at("step")));
+        }
         auto runtime=mode=="ensure"?Runtime::ensure(argv[2],settings,memory):mode=="create"?Runtime::create(argv[2],settings,memory):Runtime::open(argv[2],settings,memory);
-        Server server(runtime,memory,frame);StdioFrames frames(STDIN_FILENO,frame,memory);bool eof=false;
-        while(!eof){try{auto line=frames.next(eof);if(!eof)server.message(line);}catch(const std::bad_alloc&){std::cerr<<"VRS memory budget exhausted\n";return 2;}catch(const StdioFrames::ReadError&){std::cerr<<"VRS input failed\n";return 2;}catch(const std::exception&){server.framing_error();}if(!std::cout)return 2;}
+        Server server(runtime,memory,frame,automatic);StdioFrames frames(STDIN_FILENO,frame,memory);bool eof=false;
+        while(!eof){
+            bool background_failure=false;
+            try{
+                auto line=server.automatic_work()?frames.next(eof,[&]{
+                    try{return server.advance_work();}catch(...){background_failure=true;throw;}
+                }):frames.next(eof);
+                if(!eof)server.message(line);
+            }catch(const std::bad_alloc&){std::cerr<<"VRS memory budget exhausted\n";return 2;}
+            catch(const StdioFrames::ReadError&){std::cerr<<"VRS input failed\n";return 2;}
+            catch(const std::exception& e){
+                if(background_failure){std::cerr<<"automatic Main work failed: "<<e.what()<<'\n';return 2;}
+                server.framing_error();
+            }
+            if(!std::cout)return 2;
+        }
         return 0;
     }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}
 }

@@ -95,6 +95,7 @@ public:
     // Explicit background work scheduling, never called from input or end.
     // Returns false when no published unmerged source is available. While a
     // batch exists, later explicit ends join its queue using the same seed/step.
+    [[nodiscard]] bool work_scheduled() const noexcept { return work_.has_value(); }
     [[nodiscard]] bool schedule_work(std::uint64_t seed, std::uint64_t step);
     // nullopt: preparation still running (or next source launched).
     // A value: this scheduled batch finished, with that many committed sources.

@@ -325,6 +325,63 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     check(from_later['candidates'][0]['original']==later['original'])
     check(c.call('swegca/select',{'identity':identity(9)})['result']=={})
     check(c.call('swegca/end')['result']=={});c.close()
+    # Configured automatic work progresses with no work/start or work/poll RPC.
+    auto_root=root/'automatic-main';auto_root.mkdir()
+    auto_config=root/'automatic-main.json'
+    auto_config.write_text(json.dumps(dict(config,automaticWork={'seed':'7','step':'0'})))
+    def graph_bytes():return sum(p.stat().st_size for p in (auto_root/'graph').glob('m-*.block'))
+    def wait_for_automatic_main(before):
+        deadline=time.monotonic()+10
+        while graph_bytes()<=before:
+            check(c.p.poll() is None and time.monotonic()<deadline)
+            time.sleep(0.005)
+        # Main commit and input share an owner: this reply follows completed commit.
+        check(c.call('ping')['result']=={})
+    c=Client('create',auto_root,auto_config);c.initialize()
+    check(c.call('swegca/start',{'identity':identity(40),'name':'automatic-source'})['result']=={})
+    auto_original=c.call('swegca/receive',event('automatic-source'))['result']['original']
+    time.sleep(0.03);check(graph_bytes()==0) # idle cannot end or publish a live session
+    check(c.call('swegca/end',{'identity':identity(40)})['result']=={})
+    wait_for_automatic_main(0)
+    check(c.call('swegca/start',{'identity':identity(41),'name':'automatic-reader'})['result']=={})
+    auto_read=c.call('swegca/receive',event('automatic-reader'))['result']
+    check(not auto_read['temporary'] and auto_read['candidates'][0]['original']==auto_original)
+    before_eof=graph_bytes();c.close()
+    c=Client('open',auto_root,path);c.initialize()
+    check(c.call('swegca/resume',{'identity':identity(41)})['result']=={})
+    check(graph_bytes()==before_eof) # EOF left the reader active and unmerged
+    check(c.call('swegca/end')['result']=={})
+    check(graph_bytes()==before_eof);c.close() # manual profile leaves durable queued work
+    c=Client('open',auto_root,auto_config);c.initialize()
+    wait_for_automatic_main(before_eof) # startup recovers previously explicit-ended work
+    c.close()
+    # Automatic commit failure is not mislabeled as a malformed input frame.
+    auto_failed=root/'automatic-main-storage-failure';auto_failed.mkdir()
+    c=Client('create',auto_failed,path);c.initialize()
+    check(c.call('swegca/start',{'identity':identity(42),'name':'automatic-failed'})['result']=={})
+    c.call('swegca/receive',event('automatic-failed'))
+    check(c.call('swegca/end')['result']=={});c.close()
+    inodes={}
+    for item in auto_failed.rglob('*'):
+        if item.is_file():
+            stat=item.stat();inodes[(stat.st_dev,stat.st_ino)]=stat.st_size
+    exhausted_config=root/'automatic-exhausted.json'
+    exhausted_config.write_text(json.dumps(dict(config,storageBytes=str(sum(inodes.values())),
+        automaticWork={'seed':'7','step':'0'})))
+    c=Client('open',auto_failed,exhausted_config)
+    check('result' in c.call('initialize',{'protocolVersion':'2025-06-18','capabilities':{},'clientInfo':{'name':'fixture'}}))
+    c.notice('notifications/initialized')
+    check(c.p.wait(timeout=10)==2)
+    c.p.stdin.close();check(c.p.stdout.read()==b'');c.p.stdout.close()
+    check(b'automatic Main work failed' in c.p.stderr.read());c.p.stderr.close()
+    c=Client('open',auto_failed,auto_config);c.initialize()
+    deadline=time.monotonic()+10
+    while not list((auto_failed/'graph').glob('m-*.block')):
+        check(c.p.poll() is None and time.monotonic()<deadline);time.sleep(0.005)
+    check(c.call('ping')['result']=={})
+    check(c.call('swegca/start',{'identity':identity(43),'name':'automatic-recovered'})['result']=={})
+    recovered=c.call('swegca/receive',event('automatic-recovered'))['result']
+    check(not recovered['temporary'] and recovered['candidateCount']=='1');c.close()
     # One host/Main, independent live session receipts and explicit ends.
     multi_root=root/'multi';multi_root.mkdir()
     c=Client('create',multi_root,path);c.initialize()

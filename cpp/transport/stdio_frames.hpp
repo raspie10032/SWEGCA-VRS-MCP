@@ -7,6 +7,7 @@
 #include <string>
 #include <system_error>
 #include <unistd.h>
+#include <poll.h>
 
 namespace swegca::transport {
 // Exclusive blocking descriptor, borrowed from the owner. EOF is a transport
@@ -24,10 +25,28 @@ public:
     }
     StdioFrames(const StdioFrames&)=delete;
     StdioFrames& operator=(const StdioFrames&)=delete;
-    std::pmr::string next(bool& eof){
+    std::pmr::string next(bool& eof){return next_impl<false>(eof,[]{return false;});}
+    // Called only before a new frame and only when the descriptor has no
+    // readable input. A true result requests another idle check in 10ms.
+    template<class Idle> std::pmr::string next(bool& eof,Idle idle){return next_impl<true>(eof,idle);}
+private:
+    template<bool Background,class Idle> std::pmr::string next_impl(bool& eof,Idle idle){
         eof=false;std::pmr::string line(&memory_);bool overflow=false;
         for(;;){
             if(begin_==end_){
+                if constexpr(Background){
+                    if(fd_<0)throw ReadError(EBADF);
+                    if(line.empty()&&!overflow){
+                        pollfd ready{fd_,POLLIN,0};int status;
+                        do{status=::poll(&ready,1,0);}while(status<0&&errno==EINTR);
+                        if(status<0)throw ReadError(errno);
+                        if(!status && idle()){
+                            do{status=::poll(&ready,1,10);}while(status<0&&errno==EINTR);
+                            if(status<0)throw ReadError(errno);
+                            if(!status)continue;
+                        }
+                    }
+                }
                 ssize_t count;
                 do{count=::read(fd_,staging_.data(),staging_.size());}while(count<0&&errno==EINTR);
                 if(count<0)throw ReadError(errno);

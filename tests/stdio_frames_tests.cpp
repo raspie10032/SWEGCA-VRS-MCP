@@ -41,6 +41,24 @@ int main(){
   StdioFrames frames(-1,4,memory);bool failed=false;
   try{(void)frames.next(eof);}catch(const std::system_error&){failed=true;}CHECK(failed&&!eof);
  }
+ {
+  Pipe p;StdioFrames frames(p.fds[0],64,memory);unsigned calls=0;
+  auto idle=[&]{++calls;if(calls==1)return true;p.write("one\ntwo\n");return false;};
+  CHECK(frames.next(eof,idle)=="one"&&!eof&&calls==2);
+  CHECK(frames.next(eof,idle)=="two"&&!eof&&calls==2); // read-ahead takes priority
+  p.end();CHECK(frames.next(eof,idle).empty()&&eof&&calls==2); // EOF is not idle work
+ }
+ {
+  Pipe p;p.write("prefix");StdioFrames frames(p.fds[0],64,memory);unsigned calls=0;
+  std::thread writer([&]{std::this_thread::sleep_for(std::chrono::milliseconds(20));p.write("tail\n");});
+  CHECK(frames.next(eof,[&]{++calls;return false;})=="prefixtail"&&!eof);
+  writer.join();CHECK(calls==0); // neither readable input nor a partial frame is idle
+ }
+ {
+  StdioFrames frames(-1,4,memory);unsigned calls=0;bool failed=false;
+  try{(void)frames.next(eof,[&]{++calls;return true;});}catch(const StdioFrames::ReadError&){failed=true;}
+  CHECK(failed&&calls==0&&!eof);
+ }
  CHECK(memory.used()==0);
  std::printf("stdio frame tests: %u checks passed\n",checks);
 }
