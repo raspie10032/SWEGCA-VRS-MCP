@@ -301,17 +301,29 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     live=c.call('swegca/receive',event('async-active',content='new active input'))['result']
     # Preparation never publishes itself, even if it has already finished.
     check(live['candidateCount']=='0')
+    check(c.call('swegca/attach',{'identity':identity(19),'name':'async-later-end'})['result']=={})
+    check(c.call('swegca/select',{'identity':identity(19)})['result']=={})
+    later=c.call('swegca/receive',event('async-later-end',content='later ended content'))['result']
+    check(c.call('swegca/select',{'identity':identity(9)})['result']=={})
+    check(c.call('swegca/end',{'identity':identity(19)})['result']=={})
+    check(c.call('swegca/candidates',{'receipt':live['receipt'],'offset':'0'})['result']['candidateCount']=='0')
     deadline=time.monotonic()+10
     while True:
         state=c.call('swegca/work/poll')['result']
         if not state['running']:
-            check(state['merged']=='1');break
+            check(state['merged']=='2');break
         check(state['merged'] is None and time.monotonic()<deadline)
     recalled=c.call('swegca/receive',event('async-active',sequence='1'))['result']
     check(not recalled['temporary'] and recalled['candidateCount']=='1')
     replay=c.call('tools/call',{'name':'vrs_replay','arguments':{'receipt':recalled['receipt'],'candidate':'0'}})['result']['structuredContent']
     check(replay['original']==original and replay['contentHex']==text.encode().hex())
     check(c.call('swegca/work/poll')['result']=={'running':False,'merged':'0'})
+    check(c.call('swegca/attach',{'identity':identity(18),'name':'async-main-reader'})['result']=={})
+    check(c.call('swegca/select',{'identity':identity(18)})['result']=={})
+    from_later=c.call('swegca/receive',event('async-main-reader',content='later ended content'))['result']
+    check(not from_later['temporary'] and from_later['candidateCount']=='1')
+    check(from_later['candidates'][0]['original']==later['original'])
+    check(c.call('swegca/select',{'identity':identity(9)})['result']=={})
     check(c.call('swegca/end')['result']=={});c.close()
     # One host/Main, independent live session receipts and explicit ends.
     multi_root=root/'multi';multi_root.mkdir()

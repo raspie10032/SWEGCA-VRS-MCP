@@ -93,7 +93,8 @@ public:
     // Never called from input(). Failures leave durable work available to retry.
     [[nodiscard]] std::size_t work(std::uint64_t seed, std::uint64_t step);
     // Explicit background work scheduling, never called from input or end.
-    // Returns false when no published unmerged source is available.
+    // Returns false when no published unmerged source is available. While a
+    // batch exists, later explicit ends join its queue using the same seed/step.
     [[nodiscard]] bool schedule_work(std::uint64_t seed, std::uint64_t step);
     // nullopt: preparation still running (or next source launched).
     // A value: this scheduled batch finished, with that many committed sources.
@@ -118,6 +119,7 @@ private:
     struct Work {
         Work(std::pmr::vector<architecture::DigestBytes>&& ids, std::uint64_t seed, std::uint64_t step)
             : ids(std::move(ids)), seed(seed), step(step) {}
+        // Owner-only queue; background preparation never accesses this vector.
         std::pmr::vector<architecture::DigestBytes> ids;
         std::uint64_t seed, step;
         std::size_t index=0, merged=0;

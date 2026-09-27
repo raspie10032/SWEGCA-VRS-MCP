@@ -21,6 +21,7 @@ class WorkerMemory final:public std::pmr::memory_resource {
 public:
  const std::thread::id owner=std::this_thread::get_id();
  std::atomic<bool> hold{false},entered{false},fail{false};
+ bool fail_owner=false;
  void release(){hold=false;hold.notify_all();}
 private:
  void* do_allocate(std::size_t n,std::size_t a)override{
@@ -28,6 +29,7 @@ private:
    if(hold.load()){entered=true;while(hold.load())hold.wait(true);}
    if(fail.load())throw std::bad_alloc();
   }
+  else if(fail_owner)throw std::bad_alloc();
   return std::pmr::new_delete_resource()->allocate(n,a);
  }
  void do_deallocate(void* p,std::size_t n,std::size_t a)override{std::pmr::new_delete_resource()->deallocate(p,n,a);}
@@ -75,11 +77,12 @@ int main(){
   // Another session end evicts caches, but must preserve the worker's source.
   runtime.end_session();runtime.start_session(id(5),"next");
   CHECK(runtime.main().graph().generation()==1);
-  upstream.release();CHECK(finish(runtime)==1);
-  CHECK(runtime.main().graph().generation()==2);
+  upstream.release();CHECK(finish(runtime)==2); // includes the explicit end while preparation was held
+  CHECK(runtime.main().graph().generation()==3);
   auto recalled=runtime.input("text/plain",bytes);CHECK(!recalled.temporary()&&recalled.matches().size()==2);
   CHECK(runtime.replay(recalled,0).location()==original);
-  CHECK(runtime.schedule_work(7,0));CHECK(finish(runtime)==1);
+  CHECK(!runtime.main().graph().has_source(id(5))); // the new live session stays temporary
+  CHECK(runtime.schedule_work(7,0));CHECK(finish(runtime)==0); // only the empty source remains
   CHECK(runtime.main().graph().generation()==3);
   CHECK(runtime.input("text/active",bytes).matches().size()==2);
   (void)runtime.retain({0,0,"next","user","text/last",bytes},7,0);runtime.end_session();
@@ -99,13 +102,39 @@ int main(){
   runtime.resume_session(id(6));CHECK(runtime.input("text/unfinished",bytes).temporary());
   CHECK(runtime.schedule_work(7,0));CHECK(finish(runtime)==0);
   runtime.end_session();CHECK(runtime.schedule_work(7,0));
+  runtime.start_session(id(7),"queued-before-exit");
+  (void)runtime.retain({0,0,"queued-before-exit","user","text/queued",bytes},7,0);
+  runtime.end_session();
   // Destruction joins and discards preparation, never publishes it or ends a session.
  }
  CHECK(memory.used()==0);
  {
   auto runtime=Runtime::open(root,config,memory);CHECK(runtime.main().graph().generation()==4);
-  CHECK(runtime.schedule_work(7,0));CHECK(finish(runtime)==1);
-  CHECK(runtime.main().graph().generation()==5);
+  CHECK(runtime.schedule_work(7,0));CHECK(finish(runtime)==2);
+  CHECK(runtime.main().graph().generation()==6);
+ }
+ CHECK(memory.used()==0);
+ {
+  const auto admission=root/"admission";std::filesystem::create_directory(admission);
+  auto runtime=Runtime::create(admission,config,memory);
+  runtime.start_session(id(80),"first");
+  (void)runtime.retain({0,0,"first","user","text/plain",bytes},7,0);runtime.end_session();
+  runtime.start_session(id(81),"later");
+  (void)runtime.retain({0,0,"later","user","text/plain",bytes},7,0);
+  upstream.hold=true;upstream.entered=false;CHECK(runtime.schedule_work(7,0));
+  const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(5);
+  while(!upstream.entered.load()&&std::chrono::steady_clock::now()<deadline)std::this_thread::yield();
+  CHECK(upstream.entered.load());
+  upstream.fail_owner=true;
+  throws<std::bad_alloc>([&]{runtime.end_session();});
+  upstream.fail_owner=false;
+  CHECK(runtime.has_session()&&runtime.session().usable());
+  CHECK(runtime.session().phase()==kernel::SessionPhase::active);
+  CHECK(runtime.main().graph().generation()==0);
+  runtime.end_session(); // retry reserves first, then publishes and queues
+  CHECK(!runtime.has_session()&&runtime.main().graph().generation()==0);
+  upstream.release();CHECK(finish(runtime)==2);
+  CHECK(runtime.main().graph().generation()==2);
  }
  CHECK(memory.used()==0);std::filesystem::remove_all(root);
  std::printf("async runtime tests: %u checks passed\n",checks);
