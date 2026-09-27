@@ -49,6 +49,23 @@ int main(){
    const auto held_bytes=memory.limit()-memory.used();auto* held=memory.allocate(held_bytes);
    rejects<std::bad_alloc>([&]{(void)sequence[127];});
    memory.deallocate(held,held_bytes);CHECK(memory.used()==cold);
+   const auto segment_bytes=128*sizeof(ExperienceEvidence);
+   // Output allocation succeeds but authenticated input allocation fails:
+   // the unpublished segment must be released and remain retryable.
+   const auto held_output=memory.limit()-memory.used()-segment_bytes;
+   auto* output_hold=memory.allocate(held_output);
+   rejects<std::bad_alloc>([&]{(void)sequence[127];});
+   memory.deallocate(output_hold,held_output);CHECK(memory.used()==cold);
+   // Enough for one final segment and its encoded record, but not two decoded
+   // arrays. This rejects the former load-vector + copy implementation.
+   const auto restore_budget=segment_bytes+std::filesystem::file_size(root/"segment")-ExperienceBlock::header_bytes;
+   CHECK(restore_budget<2*segment_bytes);
+   const auto held_restore=memory.limit()-memory.used()-restore_budget;
+   auto* restore_hold=memory.allocate(held_restore);
+   CHECK(sequence[254].original()==values[254].original());
+   memory.deallocate(restore_hold,held_restore);
+   CHECK(memory.used()==cold+segment_bytes);
+   CHECK(sequence.page_out(127,root/"unused",id(23),rules,&storage));
    // Readers may restore the same shared segment concurrently; publish once.
    std::thread first([&]{CHECK(sequence[127].original()==values[127].original());});
    std::thread second([&]{CHECK(sequence[254].original()==values[254].original());});

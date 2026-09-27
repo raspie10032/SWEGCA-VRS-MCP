@@ -48,10 +48,12 @@ class ExperienceSequence final {
             if(auto* value=data.load(std::memory_order_acquire))return value;
             std::lock_guard lock(backing->load_mutex);
             if(auto* value=data.load(std::memory_order_relaxed))return value;
-            auto restored=backing->page.load(backing->rules,memory);
-            if(restored.size()!=used)throw std::runtime_error("experience page count changed");
             auto* value=static_cast<ExperienceEvidence*>(memory.allocate(capacity*sizeof(ExperienceEvidence),alignof(ExperienceEvidence)));
-            std::uninitialized_copy(restored.begin(),restored.end(),value);
+            try { backing->page.restore_into(value,used,backing->rules,memory); }
+            catch(...) {
+                memory.deallocate(value,capacity*sizeof(ExperienceEvidence),alignof(ExperienceEvidence));
+                throw;
+            }
             data.store(value,std::memory_order_release);
             return value;
         }

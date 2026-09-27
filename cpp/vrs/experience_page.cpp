@@ -86,6 +86,19 @@ std::pmr::vector<ExperienceEvidence> ExperiencePage::load(
     for(std::size_t n=0;n<count_;++n)values.push_back(decode(n,rules,stored));
     return values;
 }
+void ExperiencePage::restore_into(ExperienceEvidence* output,std::size_t count,
+    const architecture::kernel::EvidenceRules& rules,MemoryBudget& memory) const {
+    if(count!=count_)throw std::runtime_error("experience page count changed");
+    auto stored=block_.read(location_,location_.bytes,memory);
+    std::size_t constructed=0;
+    try {
+        for(;constructed<count;++constructed)
+            std::construct_at(output+constructed,decode(constructed,rules,stored));
+    } catch(...) {
+        std::destroy_n(output,constructed);
+        throw;
+    }
+}
 ExperienceEvidence ExperiencePage::decode(std::size_t index,
     const architecture::kernel::EvidenceRules& rules,const StoredExperience& stored) const {
     using namespace architecture::kernel;

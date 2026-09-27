@@ -22,6 +22,11 @@ public:
     [[nodiscard]] std::pmr::vector<ExperienceEvidence> load(
         const architecture::kernel::EvidenceRules&,MemoryBudget&) const;
 private:
+    friend class ExperienceSequence;
+    // Constructs into unpublished raw segment storage; destroys the prefix on
+    // failure. No partially authenticated/decoded segment reaches a reader.
+    void restore_into(ExperienceEvidence*,std::size_t,
+        const architecture::kernel::EvidenceRules&,MemoryBudget&) const;
     [[nodiscard]] ExperienceEvidence decode(std::size_t,
         const architecture::kernel::EvidenceRules&,const StoredExperience&) const;
     void discard() noexcept;
