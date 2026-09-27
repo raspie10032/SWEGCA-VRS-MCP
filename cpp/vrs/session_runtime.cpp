@@ -450,9 +450,11 @@ std::optional<std::size_t> ExperienceRouter::select_replay(const InputRecall& re
     // Receipt contexts already partition candidate order. Visit each pinned
     // value once, without repeating a context search or constructing InputMatch.
     for(const auto& context:recalled.contexts_){
+        std::optional<ExperienceSequence::Snapshot::Reader> reader;
+        if(context.sequence)reader.emplace(*context.sequence,memory_);
         for(std::size_t index=context.begin;index<context.end;++index){
             const auto relative=index-context.begin;
-            const auto& experience=context.sequence ? (*context.sequence)[relative] :
+            const auto& experience=reader ? (*reader)[relative] :
                 *recalled.addresses_.at(context.address_begin+relative).experience;
             const ReplayCandidate candidate{context.recalled.recalled_head.strength,
                 experience.value().observed_at,context.recalled.recalled_head.identity,experience.original()};

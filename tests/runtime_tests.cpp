@@ -505,6 +505,12 @@ int main(){
     const auto r=reads,w=writes;const auto transfer=host.storage().transfer().requested();
     auto recalled=host.input("text/plain",content);
     CHECK(reads==r&&writes==w&&host.storage().transfer().requested()==transfer);
+    const auto cold_bytes=memory.used();
+    fail_read=true;throws<std::system_error>([&]{(void)host.select_replay(recalled);});
+    CHECK(memory.used()==cold_bytes);
+    CHECK(host.select_replay(recalled)==30);
+    CHECK(memory.used()==cold_bytes&&writes==w);
+    CHECK(host.select_replay(recalled)==30&&memory.used()==cold_bytes);
     CHECK(host.replay(recalled,15).location()==selected);CHECK(reads>r);
    }
    stored=host.storage().used();const auto w=writes;

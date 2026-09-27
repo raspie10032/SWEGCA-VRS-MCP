@@ -781,3 +781,18 @@ Runtime 1,849개, 실제 stdio 3,369개 통과. 키 v2는 새 자연 입력에 �
 세션 usable 유지, 재시도 성공 및 193개 Recall 원주소 순서 보존을 확인했다.
 세션 Runtime 1,356개와 Runtime 1,849개 통과. 정렬 context 삽입의 이동 비용,
 인덱스 전체 크기의 선형 증가와 전체 4GB/1ms 목표는 여전히 남는다.
+
+Replay 후보 선택에서 Snapshot::operator[]가 cold 메타데이터 페이지를 모두 상주
+복원하는 경로를 수정했다. 선택 전후 memory.used() 증가로 회귀 실패를 확인했다.
+기존 경험 순회 Reader의 인증된 페이지 읽기 캐시를 공통화하고, pinned Snapshot에도
+한 decoded 페이지씩 순회하는 Reader를 제공한다. select_replay는 이 Reader로 같은
+순서의 모든 후보를 기존 core prefer_replay에 전달한다. 점수·동점 처리·원주소 및
+선택된 원경험 Replay 의미는 변경하지 않았다. 후보 원문 payload는 읽지 않는다.
+선택 완료 뒤 상주량 불변, 같은 후보 30 선택, 반복 선택 및 pread 실패 후 재시도를
+Runtime 1,854개 검사에서 확인했다. 부분 범위 [65,200)의 두 cold 페이지 교대 읽기,
+범위 초과 거절, reader 파기 후 예산 반환 등을 포함해 페이지 1,713개 통과.
+페이지 decoded 버퍼는 하나지만 인증된 encoded 입력의 일시 메모리도 필요하다.
+후보 메타데이터 전체 순회 및 반복 요청의 디스크 재읽기는 남는다. 이는 전체
+4GB/1ms 달성이나 대규모 후보 탐색의 시간 상한 완결을 뜻하지 않는다.
+공통 Reader를 사용하는 Main cold 셔플도 기존 refinement_digest 일치를 유지했다.
+Main 그래프 4,220개 검사 통과(할당 실패 지점 814개 포함).

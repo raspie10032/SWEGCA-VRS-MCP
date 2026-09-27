@@ -175,6 +175,21 @@ int main(){
     }
    }
    CHECK(memory.used()==cold);
+   {
+    auto snapshot=sequence.snapshot(memory,65,200);
+    const auto pinned=memory.used();
+    {
+     ExperienceSequence::Snapshot::Reader reader(snapshot,memory);
+     for(unsigned n=0;n<12;++n){
+      const auto index=n%2?0:100;
+      CHECK(reader[index].original()==values[65+index].original());
+      CHECK(memory.used()<=pinned+128*sizeof(ExperienceEvidence));
+     }
+     rejects<std::out_of_range>([&]{(void)reader[135];});
+    }
+    CHECK(memory.used()==pinned);
+   }
+   CHECK(memory.used()==cold);
    CHECK(!sequence.page_out(63,root/"unused",id(42),rules,&storage));
    CHECK(!sequence.page_out(127,root/"unused",id(43),rules,&storage));
   }

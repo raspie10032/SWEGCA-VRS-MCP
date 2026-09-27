@@ -62,6 +62,24 @@ class ExperienceSequence final {
         mutable std::atomic<ExperienceEvidence*> data;
         Backing* backing=nullptr;
     };
+    class ReadCache final {
+        MemoryBudget& memory_;
+        std::pmr::vector<ExperienceEvidence> values_;
+        const Chunk* cached_=nullptr;
+    public:
+        explicit ReadCache(MemoryBudget& memory):memory_(memory),values_(&memory){}
+        const ExperienceEvidence& read(const Chunk& chunk,std::size_t offset) {
+            if(const auto* data=chunk.data.load(std::memory_order_acquire))return data[offset];
+            if(cached_!=&chunk){
+                cached_=nullptr;
+                {decltype(values_) empty(&memory_);values_.swap(empty);}
+                values_=chunk.backing->page.load(chunk.backing->rules,memory_);
+                if(values_.size()!=chunk.used)throw std::runtime_error("experience traversal count changed");
+                cached_=&chunk;
+            }
+            return values_[offset];
+        }
+    };
 public:
     // Traversal scratch owned by one worker. Cold reads do not promote every
     // shuffled segment into the shared resident graph. References last until
@@ -69,10 +87,9 @@ public:
     class Reader final {
         friend class ExperienceSequence;
         explicit Reader(const ExperienceSequence& source)
-            :source_(source),cache_(&source.memory_){}
+            :source_(source),cache_(source.memory_){}
         const ExperienceSequence& source_;
-        std::pmr::vector<ExperienceEvidence> cache_;
-        std::size_t cached_chunk_=SIZE_MAX;
+        ReadCache cache_;
     public:
         Reader(const Reader&)=delete;
         Reader& operator=(const Reader&)=delete;
@@ -80,15 +97,7 @@ public:
         [[nodiscard]] const ExperienceEvidence& operator[](std::size_t index){
             if(index>=source_.size_)throw std::out_of_range("experience traversal index");
             const auto number=chunk_index(index);const auto& chunk=source_.chunks_[number];
-            if(const auto* data=chunk->data.load(std::memory_order_acquire))return data[chunk_offset(index)];
-            if(cached_chunk_!=number){
-                cached_chunk_=SIZE_MAX;
-                {decltype(cache_) empty(&source_.memory_);cache_.swap(empty);}
-                cache_=chunk->backing->page.load(chunk->backing->rules,source_.memory_);
-                if(cache_.size()!=chunk->used)throw std::runtime_error("experience traversal count changed");
-                cached_chunk_=number;
-            }
-            return cache_[chunk_offset(index)];
+            return cache_.read(*chunk,chunk_offset(index));
         }
     };
     [[nodiscard]] Reader reader() const{return Reader(*this);}
@@ -147,6 +156,22 @@ public:
     // Both the data budget and directory budget must outlive this snapshot.
     class Snapshot final {
     public:
+        // Read pinned historical metadata without promoting all candidate
+        // pages. One decoded page is retained until the next cold page access.
+        class Reader final {
+            const Snapshot& source_;
+            ReadCache cache_;
+        public:
+            Reader(const Snapshot& source,MemoryBudget& memory):source_(source),cache_(memory){}
+            Reader(const Reader&)=delete;
+            Reader& operator=(const Reader&)=delete;
+            const ExperienceEvidence& operator[](std::size_t index) {
+                if(index>=source_.count_)throw std::out_of_range("experience snapshot traversal index");
+                index+=source_.begin_;
+                const auto& chunk=source_.chunks_[chunk_index(index)-source_.first_chunk_];
+                return cache_.read(*chunk,chunk_offset(index));
+            }
+        };
         Snapshot(const Snapshot&)=delete;
         Snapshot& operator=(const Snapshot&)=delete;
         Snapshot(Snapshot&& other) noexcept:chunks_(std::move(other.chunks_)),count_(std::exchange(other.count_,0)),begin_(other.begin_),first_chunk_(other.first_chunk_){}
