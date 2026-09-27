@@ -2,7 +2,7 @@
 #include "vrs/memory_budget.hpp"
 #include "vrs/storage_budget.hpp"
 #include <filesystem>
-#include <set>
+#include <unordered_set>
 #include <sys/stat.h>
 #include <cerrno>
 #include <system_error>
@@ -34,7 +34,17 @@ private:
 inline std::uint64_t stored_bytes(const std::filesystem::path& root,MemoryBudget& memory) {
     if(std::filesystem::is_symlink(root)||!std::filesystem::is_directory(root))
         throw std::invalid_argument("VRS storage root must be a directory");
-    std::pmr::set<std::pair<dev_t,ino_t>> seen(&memory);
+    // Preserve full device/inode equality even for single-link files: bind
+    // mounts can expose those more than once. Hash collisions never imply
+    // identity, and every node/bucket remains charged to the caller budget.
+    struct InodeHash {
+        std::size_t operator()(const std::pair<dev_t,ino_t>& key) const noexcept {
+            const auto device=std::hash<dev_t>{}(key.first);
+            const auto inode=std::hash<ino_t>{}(key.second);
+            return device^(inode+std::size_t(0x9e3779b9U)+(device<<6)+(device>>2));
+        }
+    };
+    std::pmr::unordered_set<std::pair<dev_t,ino_t>,InodeHash> seen(&memory);
     std::uint64_t total=0;
     for(const auto& entry:std::filesystem::recursive_directory_iterator(root)) {
         struct stat info{};

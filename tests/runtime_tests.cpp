@@ -540,5 +540,27 @@ int main(){
   // Expired receipts are never used for a read, but their destruction is safe.
   retained.reset();CHECK(fs::is_empty(path/"metadata-pages"));
  }
+ {
+  const auto path=root/"inventory-many";fs::create_directory(path);
+  std::uint64_t expected=0;
+  for(unsigned n=0;n<512;++n){
+   const auto file=path/std::to_string(n);
+   const auto fd=::open(file.c_str(),O_CREAT|O_EXCL|O_RDWR|O_CLOEXEC,0600);CHECK(fd>=0);
+   CHECK(::ftruncate(fd,n%17)==0);CHECK(::close(fd)==0);expected+=n%17;
+  }
+  StorageRoot owner(path);MemoryBudget inventory_budget(20000);
+  CHECK(stored_bytes(path,inventory_budget)==expected&&inventory_budget.used()==0);
+  const auto aliases=path/"aliases";fs::create_directory(aliases);
+  for(unsigned n=0;n<64;++n)fs::create_hard_link(path/"1",aliases/std::to_string(n));
+  // A link outside this inventory does not make its one inside name free.
+  fs::create_hard_link(path/"2",root/"outside-inventory-link");
+  MemoryBudget shared_budget(20000);
+  CHECK(stored_bytes(path,shared_budget)==expected&&shared_budget.used()==0);
+  CHECK(shared_budget.peak_reserved()<=20000&&shared_budget.peak_reserved()>0);
+  MemoryBudget singleton_budget(1);
+  throws<std::bad_alloc>([&]{(void)stored_bytes(path,singleton_budget);});
+  CHECK(singleton_budget.used()==0);
+  std::printf("inventory 512 inode peak: %zu bytes\n",shared_budget.peak_reserved());
+ }
  CHECK(memory.used()==0);fs::remove_all(root);std::printf("runtime lifecycle tests: %u checks passed\n",checks);
 }
