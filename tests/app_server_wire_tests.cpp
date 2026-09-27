@@ -1,5 +1,6 @@
 #include "transport/app_server_wire.hpp"
 #include "transport/replay_context.hpp"
+#include "transport/input_candidates.hpp"
 #include "vrs/memory_budget.hpp"
 #include <cstdio>
 #include <cstdlib>
@@ -180,6 +181,26 @@ int main(){
   auto response=wire.prepare(reply,RpcSender::server,44);CHECK(response.request_sequence()==0);
  }
  {
+  const auto native=parse_json(R"({"method":"turn/steer","params":{"input":[{"type":"image","url":"local"},{"type":"text","text":"팰월드는 유지\r\nComfyUI만 중지\n"},{"type":"text","text":"if ready, do not remove A."}]}})",memory);
+  const auto source=parse_json(R"({"original":{"block":"a","digest":"b","offset":"1","bytes":"2"}})",memory);
+  std::pmr::string candidates("{}",&memory);
+  append_input_candidates(candidates,native,source,memory,8,4096);
+  const auto parsed_candidates=parse_json(candidates,memory);
+  const auto& spans=parsed_candidates.at("inputCandidates");
+  CHECK(spans.at("candidates").values.size()==3);
+  CHECK(spans.at("nonTextItems").string()=="1"&&spans.at("next").kind==Json::Kind::null);
+  CHECK(spans.at("semanticVerified").scalar=="false"&&spans.at("requirementsComplete").scalar=="false");
+  for(const auto& item:spans.at("candidates").values)CHECK(requirement_matches(requirement_anchor(item),native));
+  CHECK(spans.at("candidates").values[0].at("quote").string()=="팰월드는 유지\r\n");
+  candidates="{}";append_input_candidates(candidates,native,source,memory,1,4096);
+  const auto limited=parse_json(candidates,memory);
+  CHECK(limited.at("inputCandidates").at("next").at("textIndex").string()=="1");
+  CHECK(limited.at("inputCandidates").at("candidates").values.size()==1);
+  candidates="{}";append_input_candidates(candidates,native,source,memory,8,0);
+  const auto no_room=parse_json(candidates,memory);
+  CHECK(no_room.at("inputCandidates").at("candidates").values.empty());
+  CHECK(no_room.at("inputCandidates").at("byteLimited").scalar=="true");
+  CHECK(no_room.at("inputCandidates").at("next").at("byteOffset").string()=="0");
   const auto ack=parse_json(R"({"receipt":"17","original":{"block":"a","digest":"b","offset":"1","bytes":"2"},"memory":{"original":{"block":"c","digest":"d","offset":"3","bytes":"4"}}})",memory);
   const std::string packet=R"({"original":{"block":"c","digest":"d","offset":"3","bytes":"4"},"media":"text/plain","grantsAuthority":false,"assessment":{"inputOriginal":{"block":"a","digest":"b","offset":"1","bytes":"2"},"agreement":1,"status":0},"contentHex":"68690a"})";
   const auto context=replay_context(parse_json(packet,memory),ack,memory);

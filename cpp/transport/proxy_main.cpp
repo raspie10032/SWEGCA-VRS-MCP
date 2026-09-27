@@ -1,6 +1,7 @@
 #include "transport/app_server_pump.hpp"
 #include "transport/agent_event_commit.hpp"
 #include "transport/replay_context.hpp"
+#include "transport/input_candidates.hpp"
 #include "vrs/memory_budget.hpp"
 #include <chrono>
 #include <climits>
@@ -274,9 +275,11 @@ int main(int argc,char** argv){
                                 }
                             }
                             auto context=replay_context(std::move(packet),body,memory,observation?&*observation:nullptr,coverage?&*coverage:nullptr);
+                            append_input_candidates(context,plan.event().fields(),body,memory,8,std::min<std::size_t>(65536,rpc_frame/8));
                             pump.include_context(plan,context,rpc_frame);
                         }else{
-                            const auto context=input_context(body,memory);
+                            auto context=input_context(body,memory);
+                            append_input_candidates(context,plan.event().fields(),body,memory,8,std::min<std::size_t>(65536,rpc_frame/8));
                             pump.include_context(plan,context,rpc_frame);
                         }
                     }

@@ -2226,6 +2226,14 @@ for line in sys.stdin:
     check(initial_input['params']['input'][1:]==desktop_input)
     first_input_reference=json.loads(initial_input['params']['input'][0]['text'].split('\n',1)[1])
     check(first_input_reference['recalledOriginal'] is None and not first_input_reference['grantsAuthority'])
+    first_candidates=first_input_reference['inputCandidates']
+    check(first_candidates['inputOriginal']==first_input_reference['inputOriginal'])
+    check(not first_candidates['semanticVerified'] and not first_candidates['requirementsComplete'])
+    for candidate in first_candidates['candidates']:
+        candidate_text=desktop_input[int(candidate['textIndex'])]['text'].encode()
+        candidate_offset=int(candidate['byteOffset']);candidate_quote=candidate['quote'].encode()
+        check(candidate_text[candidate_offset:candidate_offset+len(candidate_quote)]==candidate_quote)
+
     check(len(resumed_input['params']['input'])==len(desktop_followup)+1)
     check(resumed_input['params']['input'][1:]==desktop_followup)
     injected=resumed_input['params']['input'][0]
@@ -2235,6 +2243,9 @@ for line in sys.stdin:
     native_initial=dict(initial_input,params=dict(initial_input['params'],input=desktop_input))
     check(json.loads(memory_packet['content'])==native_initial)
     check(memory_packet['original']==first_input_reference['inputOriginal'])
+    check(memory_packet['inputCandidates']['inputOriginal']==memory_packet['assessment']['inputOriginal'])
+    check(memory_packet['inputCandidates']['candidates'])
+
     backend_queries=[json.loads(line) for line in captured_queries.read_text().splitlines()]
     check(len(backend_queries)==1)
     check(backend_queries[0]['reply']['result']['structuredContent']['original']==memory_packet['original'])
