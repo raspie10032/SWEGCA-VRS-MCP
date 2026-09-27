@@ -7,12 +7,16 @@
 표준 입력/출력 MCP 도구 `observe_file_content_equality`를 제공한다. 새 VRS Main이나
 별도 판단 엔진을 생성하지 않는다. 내부 모델 호출, 명령 실행, 파일 쓰기는 없다.
 메모리·I/O·파일별 읽기 한도를 실행 인자로 받고, 프레임 한도는 64KiB다.
-현재 사용자의 데스크톱/MCP 설정에는 설치하거나 등록하지 않았다.
+선택형 데스크톱 설치와 backend 등록은 완료했다. 실제 GUI 에이전트 호출은 미검증이다.
+현재 설치/공유 자원 경계는 DESKTOP_INSTALLATION.md와 SHARED_IO_BUDGET.md를 따른다.
 
-도구 인자는 다음 세 개다.
+필수 인자는 다음 세 개이며 선택적 `requirement`를 추가할 수 있다.
 
 - `inputOriginal`: VRS가 현재 입력에 발급한 block/offset/bytes/digest 참조.
 - `left`, `right`: 읽을 두 파일의 절대 경로.
+- `requirement` (선택): `textIndex`, `byteOffset`, `quote`. 사용자 원문의 특정
+  text 항목/UTF-8 바이트 위치/인용이다. 생산자는 원문 보고와 scope에 보존하고
+  VRS가 봉인된 실제 입력과 대조한다. 의미 적합성 인증은 아니다. SCOPED_OBSERVATIONS.md 참조.
 
 생산자는 참조의 문법만 확인한다. 주소의 실재와 같은 native turn의 입력인지 여부는
 기존 VRS ingress가 봉인 원경험을 기준으로 확인한다. 주소는 파일 접근 권한이 아니다.
@@ -64,6 +68,6 @@ CPU 6,7 / make -j2로 소스에서 빌드했다.
 - 서로 다른 파일을 동시에 원자적으로 읽는 스냅샷 보증은 없다. 전후 메타데이터의
   관측된 변경은 탐지하지만 필요한 호출자는 불변 스냅샷을 제공해야 한다.
 - RAM 인자는 이 프로세스의 PMR 예산이며 전체 RSS 보증이 아니다. I/O 예산도
-  생산자 프로세스 내부에서 공유한다. 실제 설치 시 Main과 모든 생산자를 합친
-  RAM/I/O 제한을 검증해야 한다. 이번 테스트는 전체 4GB/5Gbps 운용 게이트가 아니다.
-- 아직 실제 데스크톱에 등록하지 않았다. 기존 앱과 서비스를 변경하지 않았다.
+  설치 host의 VRS/관측기 사이에 공유한다. 독립 host나 다른 프로그램 및 물리
+  SSD 전체 제한은 아니다. SHARED_IO_BUDGET.md의 검증 범위를 따른다.
+- 선택형 설치 backend 등록은 검증했다. 현재 실행 GUI의 실제 관측 사용은 미검증이다.

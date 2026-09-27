@@ -12,7 +12,7 @@ VRS_SOURCES := cpp/vrs/experience_page.cpp cpp/vrs/runtime.cpp cpp/vrs/main_sour
 .PHONY: check-agent-event all check check-stdio check-sha256 check-resource-profile check-oom-recovery bench clean
 all: $(BUILD)/core-tests
 
-$(BUILD)/swegca-content-observer: cpp/transport/content_observer_main.cpp cpp/transport/json.cpp cpp/transport/json.hpp cpp/transport/stdio_frames.hpp cpp/vrs/file_observation.cpp cpp/vrs/file_observation.hpp cpp/vrs/memory_budget.hpp cpp/vrs/transfer_budget.hpp cpp/vrs/shared_transfer_state.hpp $(CORE_HEADERS) cpp/swegca_architecture/sha256.cpp | $(BUILD)
+$(BUILD)/swegca-content-observer: cpp/transport/content_observer_main.cpp cpp/transport/requirement_anchor.hpp cpp/transport/json.cpp cpp/transport/json.hpp cpp/transport/stdio_frames.hpp cpp/vrs/file_observation.cpp cpp/vrs/file_observation.hpp cpp/vrs/memory_budget.hpp cpp/vrs/transfer_budget.hpp cpp/vrs/shared_transfer_state.hpp $(CORE_HEADERS) cpp/swegca_architecture/sha256.cpp | $(BUILD)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< cpp/transport/json.cpp cpp/vrs/file_observation.cpp cpp/swegca_architecture/sha256.cpp -o $@
 
 $(BUILD)/file-observation-tests: tests/file_observation_tests.cpp cpp/vrs/file_observation.cpp cpp/vrs/file_observation.hpp cpp/vrs/transfer_budget.hpp cpp/vrs/shared_transfer_state.hpp cpp/vrs/memory_budget.hpp $(CORE_HEADERS) cpp/swegca_architecture/sha256.cpp | $(BUILD)
@@ -95,7 +95,7 @@ $(BUILD)/async-runtime-tests: tests/async_runtime_tests.cpp $(VRS_SOURCES) $(COR
 
 check: $(BUILD)/multi-session-runtime-tests $(BUILD)/async-runtime-tests $(BUILD)/agent-event-tests
 
-$(BUILD)/swegca-vrs-mcp: cpp/transport/stdio_main.cpp cpp/transport/ingress_probe.hpp cpp/transport/stdio_frames.hpp cpp/transport/app_server_requests.hpp cpp/transport/agent_event.hpp cpp/transport/json.cpp cpp/transport/json.hpp cpp/transport/resource_profile.hpp $(VRS_SOURCES) $(CORE_SOURCES) $(CORE_HEADERS) $(VRS_HEADERS) | $(BUILD)
+$(BUILD)/swegca-vrs-mcp: cpp/transport/stdio_main.cpp cpp/transport/requirement_anchor.hpp cpp/transport/ingress_probe.hpp cpp/transport/stdio_frames.hpp cpp/transport/app_server_requests.hpp cpp/transport/agent_event.hpp cpp/transport/json.cpp cpp/transport/json.hpp cpp/transport/resource_profile.hpp $(VRS_SOURCES) $(CORE_SOURCES) $(CORE_HEADERS) $(VRS_HEADERS) | $(BUILD)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< cpp/transport/json.cpp $(VRS_SOURCES) $(CORE_SOURCES) -o $@
 
 $(BUILD)/parallel-main-tests: tests/parallel_main_tests.cpp $(VRS_SOURCES) $(CORE_SOURCES) $(CORE_HEADERS) $(VRS_HEADERS) | $(BUILD)

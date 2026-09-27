@@ -1,3 +1,4 @@
+#include "transport/requirement_anchor.hpp"
 #include "transport/json.hpp"
 #include "transport/stdio_frames.hpp"
 #include "transport/ingress_probe.hpp"
@@ -254,6 +255,16 @@ private:
             std::optional<std::string_view> scope;
             if(const auto* declared=fields.find("scope")){
                 scope=declared->string();if(scope->empty())return std::nullopt;
+            }
+            if(const auto* proposed=fields.find("requirement")){
+                if(!scope)return std::nullopt;
+                const auto anchor=requirement_anchor(*proposed);
+                const auto stored=runtime_.session().read_original(input);
+                const auto payload=evidence_payload(stored);
+                if(payload.sender!=ExperienceSender::client||payload.media_type!="application/json")return std::nullopt;
+                const std::string_view bytes(reinterpret_cast<const char*>(payload.content.data()),payload.content.size());
+                const auto native=parse_json(bytes,memory_);
+                if(!requirement_matches(anchor,native))return std::nullopt;
             }
             for(const auto key:{"hypothesis","context","source","producer","status","verdict"})
                 if(fields.find(key))return std::nullopt;

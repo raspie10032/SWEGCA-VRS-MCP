@@ -777,9 +777,9 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
         assert 'result' in response,response
         result=response['result'];producer_seq+=1
         return n,result
-    def producer_trial(prompt,n,outcome,mutate=None):
+    def producer_trial(prompt,n,outcome,mutate=None,items=None):
         seq,received=producer_frame('client',{'id':producer_seq+1,'method':'turn/start',
-            'params':{'threadId':'producer-thread','input':[{'type':'text','text':prompt}]}})
+            'params':{'threadId':'producer-thread','input':items if items is not None else [{'type':'text','text':prompt}]}})
         turn='producer-turn-'+str(seq)
         producer_frame('server',{'id':seq+1,'result':{'turn':{'id':turn}}},seq)
         observation={'inputOriginal':received['original'],'outcome':outcome,'axis':'0',
@@ -807,6 +807,32 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
         lambda v:v.update(scope=''),lambda v:v.update(scope=None),lambda v:v.update(scope={}))):
         received,result=producer_trial('unverified claim '+str(n),n,'support',mutate)
         check(result['refinement']['status']==0 and result['refinement']['strength']==1)
+    # A producer can propose an exact user span, but cannot cite its own
+    # result, another input, a character offset in place of a UTF-8 byte offset,
+    # or an invented requirement. Invalid claims retain their full native bytes
+    # as insufficient parent observations, never positive scoped evidence.
+    anchored_prompt='파일 내용 유지. 권한도 유지.'
+    anchor={'textIndex':'0','byteOffset':str(len('파일 '.encode())), 'quote':'내용 유지'}
+    received,linked=producer_trial(anchored_prompt,0,'support',
+        lambda v:v.update(scope='anchored byte comparison',requirement=anchor))
+    check(linked['refinement']['connection']!=received['refinement']['connection'])
+    check(received['refinement']['status']==0)
+    for bad in ({**anchor,'quote':'삭제해'}, {**anchor,'byteOffset':'3'},
+                {**anchor,'byteOffset':'18446744073709551615'}, {**anchor,'textIndex':'1'},
+                {**anchor,'quote':''}, {**anchor,'quote':None},
+                {**anchor,'byteOffset':'-1'}, {**anchor,'extra':True}):
+        received,rejected=producer_trial(anchored_prompt,1,'support',
+            lambda v:v.update(scope='anchored byte comparison',requirement=bad))
+        check(rejected['refinement']['connection']==received['refinement']['connection'])
+        check(rejected['refinement']['status']==0 and rejected['refinement']['strength']==1)
+    received,rejected=producer_trial(anchored_prompt,1,'support',lambda v:v.update(requirement=anchor))
+    check(rejected['refinement']['connection']==received['refinement']['connection'])
+    check(rejected['refinement']['status']==0)
+    for text_index,valid in (('1',True),('0',False)):
+        received,result=producer_trial(anchored_prompt,2,'support',
+            lambda v:v.update(scope='multiple text anchor',requirement={**anchor,'textIndex':text_index}),
+            items=[{'type':'text','text':'앞선 별도 내용'}, {'type':'text','text':anchored_prompt}])
+        check((result['refinement']['connection']!=received['refinement']['connection'])==valid)
     # Two measured subclaims of one compound request have independent core
     # connections. Neither is evidence that the entire request was fulfilled.
     compound='Move the file, preserve its contents and permissions.'
@@ -850,7 +876,8 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
             'capabilities':{},'clientInfo':{'name':'native-observation-test','version':'1'}}},
             {'jsonrpc':'2.0','method':'notifications/initialized'},
             {'jsonrpc':'2.0','id':2,'method':'tools/call','params':{'name':'observe_file_content_equality',
-                'arguments':{'inputOriginal':measured_input['original'],'left':str(measured_left),'right':str(measured_right)}}}]
+                'arguments':{'inputOriginal':measured_input['original'],'left':str(measured_left),'right':str(measured_right),
+                    'requirement':{'textIndex':'0','byteOffset':'10','quote':'file contents'}}}}]
         measured=subprocess.run([str(exe.parent/'swegca-content-observer'),'16777216','625000000','1048576'],
             input=b''.join(json.dumps(value).encode()+b'\n' for value in requests),capture_output=True,timeout=10,check=True)
         check(measured.stderr==b'')

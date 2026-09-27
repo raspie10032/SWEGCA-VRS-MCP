@@ -70,6 +70,14 @@ with tempfile.TemporaryDirectory(prefix='swegca-observer-') as directory:
                 'left':str(left),'right':str(right)})
             return body['measurement']
         measured('support')
+        anchor={'textIndex':'1','byteOffset':'4','quote':'내용 유지'}
+        anchored=observer.measure(dict(args,requirement=anchor))['result']['structuredContent']
+        check(anchored['swegcaObservation']['requirement']==anchor)
+        check(json.loads(anchored['swegcaObservation']['scope'])['requirement']==anchor)
+        for bad in ({}, {**anchor,'quote':''}, {**anchor,'byteOffset':'-1'},
+                    {**anchor,'textIndex':1}, {**anchor,'byteOffset':'18446744073709551616'},
+                    {**anchor,'semanticVerified':True}):
+            check('error' in observer.measure(dict(args,requirement=bad)))
         content=b'\x00\xff'+b'x'*70000+b'\x00'
         left.write_bytes(content);right.write_bytes(content)
         before=(left.stat().st_mtime_ns,right.stat().st_mtime_ns)

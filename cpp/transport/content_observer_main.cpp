@@ -1,4 +1,5 @@
 #include "transport/json.hpp"
+#include "transport/requirement_anchor.hpp"
 #include "transport/stdio_frames.hpp"
 #include "vrs/file_observation.hpp"
 #include "vrs/memory_budget.hpp"
@@ -56,9 +57,12 @@ void file_result(std::pmr::string& out,const Json& path,const FileReadObservatio
     out+=",\"before\":";metadata(out,value.before);out+=",\"after\":";metadata(out,value.after);out+='}';
 }
 std::pmr::string measure(const Json& args,std::uint64_t limit,MemoryBudget& memory,TransferBudget& transfer){
-    if(args.kind!=Json::Kind::object||args.keys.size()!=3)
-        throw std::invalid_argument("expected inputOriginal, left and right only");
+    if(args.kind!=Json::Kind::object||(args.keys.size()!=3&&args.keys.size()!=4))
+        throw std::invalid_argument("expected inputOriginal, left, right and optional requirement");
     const auto& input=args.at("inputOriginal");address(input);
+    const auto* requirement=args.find("requirement");
+    if(args.keys.size()==4&&!requirement)throw std::invalid_argument("unknown observation argument");
+    if(requirement)(void)requirement_anchor(*requirement);
     const auto& left_path=args.at("left");const auto& right_path=args.at("right");
     // Validate both paths before opening either one.
     for(const auto* path:{&left_path,&right_path}){
@@ -74,8 +78,11 @@ std::pmr::string measure(const Json& args,std::uint64_t limit,MemoryBudget& memo
     // The scope is derived from the actual operation and operands. Callers
     // cannot relabel a content comparison as whole-task completion.
     std::pmr::string scope("{\"predicate\":\"equal-file-bytes-v1\",\"left\":",&memory);
-    append_json(scope,left_path);scope+=",\"right\":";append_json(scope,right_path);scope+='}';
+    append_json(scope,left_path);scope+=",\"right\":";append_json(scope,right_path);
+    if(requirement){scope+=",\"requirement\":";append_requirement(scope,requirement_anchor(*requirement));}
+    scope+='}';
     std::pmr::string out("{\"swegcaObservation\":{\"inputOriginal\":",&memory);append_json(out,input);
+    if(requirement){out+=",\"requirement\":";append_requirement(out,requirement_anchor(*requirement));}
     out+=",\"scope\":";append_json_string(out,scope);out+=",\"axis\":\"0\",\"outcome\":";
     using swegca::architecture::kernel::EvidenceOutcome;
     append_json_string(out,observed.outcome==EvidenceOutcome::support?"support":
@@ -88,7 +95,7 @@ std::pmr::string measure(const Json& args,std::uint64_t limit,MemoryBudget& memo
     out+=",\"right\":";file_result(out,right_path,observed.right,observed.complete);
     out+="},\"grantsAuthority\":false}";return out;
 }
-constexpr std::string_view listing=R"({"tools":[{"name":"observe_file_content_equality","description":"Read two regular files and report only their byte-content equality as a scoped SWEGCA observation. Requires the current inputOriginal reference. Does not verify task completion, permissions, movement, or semantic relevance. Files are read only; use immutable snapshots for atomic comparison.","annotations":{"readOnlyHint":true,"destructiveHint":false},"inputSchema":{"type":"object","properties":{"inputOriginal":{"type":"object","properties":{"block":{"type":"string"},"offset":{"type":"string"},"bytes":{"type":"string"},"digest":{"type":"string"}},"required":["block","offset","bytes","digest"],"additionalProperties":false},"left":{"type":"string"},"right":{"type":"string"}},"required":["inputOriginal","left","right"],"additionalProperties":false}}]})";
+constexpr std::string_view listing=R"({"tools":[{"name":"observe_file_content_equality","description":"Read two regular files and report only their byte-content equality as a scoped SWEGCA observation. Requires the current inputOriginal reference. Does not verify task completion, permissions, movement, or semantic relevance. Files are read only; use immutable snapshots for atomic comparison.","annotations":{"readOnlyHint":true,"destructiveHint":false},"inputSchema":{"type":"object","properties":{"inputOriginal":{"type":"object","properties":{"block":{"type":"string"},"offset":{"type":"string"},"bytes":{"type":"string"},"digest":{"type":"string"}},"required":["block","offset","bytes","digest"],"additionalProperties":false},"left":{"type":"string"},"right":{"type":"string"},"requirement":{"type":"object","description":"Optional proposed user requirement: exact UTF-8 quote and byte offset within the original params.input array item at textIndex. VRS checks against the sealed user input; this does not prove semantic relevance.","properties":{"textIndex":{"type":"string"},"byteOffset":{"type":"string"},"quote":{"type":"string","minLength":1}},"required":["textIndex","byteOffset","quote"],"additionalProperties":false}},"required":["inputOriginal","left","right"],"additionalProperties":false}}]})";
 void result(std::string_view id,std::string_view body){std::cout<<"{\"jsonrpc\":\"2.0\",\"id\":"<<id<<",\"result\":"<<body<<"}\n"<<std::flush;}
 void error(std::string_view id,int code,std::string_view text){
     std::cout<<"{\"jsonrpc\":\"2.0\",\"id\":"<<id<<",\"error\":{\"code\":"<<code<<",\"message\":";
