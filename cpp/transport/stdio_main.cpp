@@ -40,7 +40,7 @@ std::pmr::string decimal(double value,MemoryBudget& memory){
 }
 std::pmr::string refinement(const ConnectionRefinement& report,MemoryBudget& memory){
     const auto& judgment=report.result().verification().judgment();
-    return std::pmr::string("{\"status\":",&memory)+std::to_string(static_cast<unsigned>(judgment.status())).c_str()+
+    return std::pmr::string("{\"connection\":\"",&memory)+hex(report.connection(),memory)+"\",\"status\":"+std::to_string(static_cast<unsigned>(judgment.status())).c_str()+
         ",\"reason\":"+std::to_string(static_cast<unsigned>(judgment.reason())).c_str()+
         ",\"strength\":"+decimal(report.result().strength().current(),memory)+
         ",\"revision\":\""+std::to_string(report.after_revision()).c_str()+"\"}";
@@ -226,7 +226,11 @@ private:
     }
     // Producers may report observations, never core verdicts. Accept only an
     // explicit address-bound payload from an actual completed MCP tool item.
-    std::optional<kernel::EvidenceObservation> tool_observation(const AgentEvent& event,
+    struct ToolObservation {
+        kernel::EvidenceObservation value;
+        std::optional<std::string_view> scope;
+    };
+    std::optional<ToolObservation> tool_observation(const AgentEvent& event,
         const ExperienceLocation& input,const DigestBytes& hypothesis,std::uint64_t observed){
         using namespace kernel;
         if(event.native_name()!="item/completed")return std::nullopt;
@@ -236,6 +240,10 @@ private:
             if(const auto* error=item.find("error");error&&error->kind!=Json::Kind::null)return std::nullopt;
             const auto& fields=item.at("result").at("structuredContent").at("swegcaObservation");
             if(record_address(fields.at("inputOriginal"))!=input)return std::nullopt;
+            std::optional<std::string_view> scope;
+            if(const auto* declared=fields.find("scope")){
+                scope=declared->string();if(scope->empty())return std::nullopt;
+            }
             for(const auto key:{"hypothesis","context","source","producer","status","verdict"})
                 if(fields.find(key))return std::nullopt;
             EvidenceObservation value;value.hypothesis=hypothesis;value.context=input.digest;value.observed_at=observed;
@@ -252,7 +260,7 @@ private:
             const auto* connection=runtime_.session().find(hypothesis);
             if(!connection||!observation_values_valid(connection->rules(),hypothesis,value))return std::nullopt;
             value.hypothesis={};value.context={}; // Runtime derives these from the sealed original.
-            return value;
+            return ToolObservation{value,scope};
         }catch(const std::invalid_argument&){return std::nullopt;}
         catch(const std::out_of_range&){return std::nullopt;}
     }
@@ -632,7 +640,9 @@ private:
                     if(!request_original)return runtime_.retain(original,seed,step);
                     if(!response&&sender==ExperienceSender::server){
                         if(const auto observed_value=tool_observation(event,*request_original,request_connection,observed)){
-                            auto result=runtime_.observe_input(*request_original,original,*observed_value,seed,step);
+                            auto result=observed_value->scope?
+                                runtime_.observe_input_scope(*request_original,*observed_value->scope,original,observed_value->value,seed,step):
+                                runtime_.observe_input(*request_original,original,observed_value->value,seed,step);
                             admitted_tool_observation=true;return result;
                         }
                     }
@@ -738,6 +748,8 @@ private:
             if(method=="swegca/observe"){
                 using namespace swegca::architecture::kernel;
                 const auto& fields=p.at("observation");EvidenceObservation value;
+                if(p.find("scope")||fields.find("scope"))
+                    throw std::invalid_argument("scoped observation requires native tool result ingress");
                 const auto* input_original=p.find("inputOriginal");
                 if(input_original){
                     if(fields.find("hypothesis")||fields.find("context"))

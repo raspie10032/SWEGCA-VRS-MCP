@@ -103,6 +103,12 @@ public:
     // hypothesis/context override; this does not interpret prose as evidence.
     [[nodiscard]] RecordedRefinement observe_input(const ExperienceLocation&, const OriginalExperienceView&,
         const architecture::kernel::EvidenceObservation&, std::uint64_t seed, std::uint64_t step);
+    // An explicitly named subclaim has its own connection and cue. The caller
+    // retains scope verbatim in the original report; no semantic entailment or
+    // parent-goal completion is inferred from this producer-declared relation.
+    [[nodiscard]] RecordedRefinement observe_input_scope(const ExperienceLocation&, std::string_view scope,
+        const OriginalExperienceView&, const architecture::kernel::EvidenceObservation&,
+        std::uint64_t seed, std::uint64_t step);
     [[nodiscard]] RecordedRefinement retain(const OriginalExperienceView&, std::uint64_t seed, std::uint64_t step);
     // Drain only published ended sources and refresh the current query index.
     // Never called from input(). Failures leave durable work available to retry.

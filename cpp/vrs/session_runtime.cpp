@@ -89,6 +89,10 @@ void SessionRuntime::define_connection(const DigestBytes& identity, double stren
     if (connections_.contains(identity)) throw std::invalid_argument("connection already defined");
     connections_.try_emplace(identity, store_, memory_, read_limit_, identity, strength, policy);
 }
+void SessionRuntime::ensure_connection(const DigestBytes& identity, double strength, const EvidencePolicy& policy) {
+    require_usable();
+    if (!connections_.contains(identity)) define_connection(identity, strength, policy);
+}
 RecordedRefinement SessionRuntime::observe(const DigestBytes& identity, const OriginalExperienceView& original,
     const EvidenceObservation& observation, std::uint64_t seed, std::uint64_t step, std::optional<DigestBytes> input_key) {
     require_usable();

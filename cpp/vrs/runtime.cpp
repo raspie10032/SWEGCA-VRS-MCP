@@ -1,6 +1,7 @@
 #include "vrs/runtime.hpp"
 #include "vrs/storage_inventory.hpp"
 #include "swegca_architecture/sha256.hpp"
+#include "swegca_architecture/input_cue.hpp"
 
 #ifdef SWEGCA_BACKGROUND_WORK_PROBE
 extern "C" void swegca_background_work_probe(bool running) noexcept;
@@ -313,6 +314,23 @@ RecordedRefinement Runtime::observe_input(const ExperienceLocation& input,const 
     // The original's cue links the outcome back to that exact natural input;
     // recording different result text must not disconnect future Recall.
     return active_->runtime.observe(bound.hypothesis,original,bound,seed,step,evidence.cue());
+}
+RecordedRefinement Runtime::observe_input_scope(const ExperienceLocation& input,std::string_view scope,
+    const OriginalExperienceView& original,const EvidenceObservation& observation,std::uint64_t seed,std::uint64_t step) {
+    require_active();
+    if(scope.empty()||named_digest(observation.hypothesis)||named_digest(observation.context))
+        throw std::invalid_argument("scoped observation requires scope and no hypothesis or context override");
+    const auto stored=active_->runtime.read_original(input);
+    const auto rules=make_evidence_rules(config_.policy);
+    const auto evidence=decode_evidence(rules,stored);
+    auto bound=observation;
+    bound.hypothesis=input_observation_scope(evidence.value().hypothesis,scope);
+    bound.context=input.digest;
+    if(!observation_values_valid(rules,bound.hypothesis,bound)||named_digest(bound.address)||
+        bound.observed_at!=original.observed_at_ns||original.media_type.empty()||static_cast<unsigned>(original.sender)>2)
+        throw std::invalid_argument("invalid scoped observation");
+    active_->runtime.ensure_connection(bound.hypothesis,config_.initial_strength,config_.policy);
+    return active_->runtime.observe(bound.hypothesis,original,bound,seed,step,bound.hypothesis);
 }
 std::size_t Runtime::work(std::uint64_t seed,std::uint64_t step) {
     if(work_)throw std::logic_error("background Main preparation already scheduled");

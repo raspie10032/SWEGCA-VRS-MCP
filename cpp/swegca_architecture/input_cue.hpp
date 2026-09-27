@@ -28,4 +28,15 @@ namespace swegca::architecture {
     return digest.finish();
 }
 
+// Producer-declared subclaim identity, not proof that the subclaim is relevant
+// to, equivalent to, or sufficient for its parent input. Keep its evidence in
+// a separate connection even if the scope text repeats the entire input.
+[[nodiscard]] inline DigestBytes input_observation_scope(const DigestBytes& parent,
+    std::string_view scope) {
+    Sha256 digest; digest.update("SWEGCA input observation scope v1"); digest.update(parent);
+    std::array<std::byte, 8> length{};
+    for (unsigned i=0;i<8;++i) length[i]=std::byte((std::uint64_t(scope.size())>>(8*i))&255);
+    digest.update(length);digest.update(scope);return digest.finish();
+}
+
 }  // namespace swegca::architecture

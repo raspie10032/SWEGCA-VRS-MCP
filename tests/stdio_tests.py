@@ -523,6 +523,12 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
         check(int(observed['refinement']['revision'])==int(received['refinement']['revision'])+2)
         last_strength=observed['refinement']['strength']
     check(last_strength>1.0 and observed['refinement']['status']==1)
+    # A scope sent through an unsupported envelope must not be silently
+    # discarded, promoting its result to the whole input's connection.
+    for nested in (False,True):
+        bad=bound_observation(linked[0],8)
+        (bad['observation'] if nested else bad)['scope']='one part only'
+        check('error' in c.call('swegca/observe',bad))
     # Neither a forged address nor a supplied hypothesis/context can redirect it.
     bad=bound_observation(linked[0],8);bad['inputOriginal']={**linked[0],'digest':identity(250)}
     check('error' in c.call('swegca/observe',bad))
@@ -795,13 +801,43 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
         check((result['refinement']['strength']>1) if expected==1 else (result['refinement']['strength']<1))
     for n,mutate in enumerate((lambda v:v.update(axis='999'),lambda v:v.update(confidence=2),
         lambda v:v.update(outcome='approve'),lambda v:v.update(source=identity(250)),
-        lambda v:v.update(inputOriginal={**v['inputOriginal'],'digest':identity(250)}))):
+        lambda v:v.update(inputOriginal={**v['inputOriginal'],'digest':identity(250)}),
+        lambda v:v.update(scope=''),lambda v:v.update(scope=None),lambda v:v.update(scope={}))):
         received,result=producer_trial('unverified claim '+str(n),n,'support',mutate)
         check(result['refinement']['status']==0 and result['refinement']['strength']==1)
+    # Two measured subclaims of one compound request have independent core
+    # connections. Neither is evidence that the entire request was fulfilled.
+    compound='Move the file, preserve its contents and permissions.'
+    scoped_outputs=[]
+    scoped_connections=[]
+    for scope,outcome,expected in (('byte content unchanged','support',1),
+                                   ('permissions unchanged','refute',2)):
+        for n in range(8):
+            received,result=producer_trial(compound,n,outcome,lambda v:v.update(scope=scope))
+            check(received['refinement']['status']==0 and received['refinement']['strength']==1)
+            check(received['refinement']['connection']!=result['refinement']['connection'])
+        check(result['refinement']['status']==expected and result['refinement']['revision']=='16')
+        scoped_outputs.append(result['original'])
+        scoped_connections.append(result['refinement']['connection'])
+    check(scoped_outputs[0]!=scoped_outputs[1])
+    check(scoped_connections[0]!=scoped_connections[1])
+    # The same declared scope attached to a different parent cannot reuse the
+    # first parent's accumulated support, even with identical producer names.
+    _,separate=producer_trial('Another file with a different requested result',0,'support',
+        lambda v:v.update(scope='byte content unchanged'))
+    check(separate['refinement']['status']==0 and separate['refinement']['revision']=='2')
+    check(separate['refinement']['connection'] not in scoped_connections)
     next_sequence=str(producer_seq);c.close()
     c=Client('open',producers_root,path);c.initialize()
     check(c.call('swegca/agent/attach/resume',producer_binding)['result']['nextSequence']==next_sequence)
     check(c.call('swegca/select',{'identity':producer_owner})['result']=={})
+    # Resume must retain both scoped histories and all native sequence numbers.
+    # An exact parent Recall still contains only its input originals.
+    received,result=producer_trial(compound,8,'support',lambda v:v.update(scope='byte content unchanged'))
+    check(received['refinement']['status']==0 and received['refinement']['strength']==1)
+    check(received['candidateCount']=='16')
+    check(result['refinement']['status']==1 and result['refinement']['revision']=='18')
+    check(result['refinement']['connection']==scoped_connections[0])
     current_input_sequence=producer_seq
     _,recalled=producer_frame('client',{'id':producer_seq+1,'method':'turn/start',
         'params':{'threadId':'producer-thread','input':[{'type':'text','text':'claim support'}]}})
@@ -851,6 +887,16 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     check(temporary_recall['temporary'] and temporary_recall['candidateCount']=='1')
     check(temporary_recall['candidates'][0]['original']==main_recall['original'])
     check(c.call('swegca/work',{'seed':'7','step':'0'})['result']['merged']=='0')
+    compound_consumer=c.call('swegca/agent/attach',dict(producer_binding,session='compound-consumer'))['result']['identity']
+    check(c.call('swegca/select',{'identity':compound_consumer})['result']=={})
+    producer_seq=0
+    frame={'id':1,'method':'turn/start','params':{'threadId':'compound-consumer',
+        'input':[{'type':'text','text':compound}]}}
+    _,compound_main=producer_frame('client',frame)
+    check(not compound_main['temporary'] and compound_main['candidateCount']=='17')
+    check(compound_main['refinement']['status']==0 and compound_main['refinement']['strength']==1)
+    compound_replay=c.call('tools/call',{'name':'vrs_replay','arguments':{'receipt':compound_main['receipt']}})['result']['structuredContent']
+    check(compound_replay['assessment']['status']==0 and compound_replay['assessment']['agreement']==1)
     c.close()
     # Turn notifications keep the exact originating input, including after
     # restart and with overlapping turns. They are not evidence of success.

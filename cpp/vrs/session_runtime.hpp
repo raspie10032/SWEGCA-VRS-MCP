@@ -29,6 +29,8 @@ public:
     SessionRuntime& operator=(const SessionRuntime&) = delete;
     void define_connection(const architecture::DigestBytes& identity, double strength,
         const architecture::EvidencePolicy& policy);
+    void ensure_connection(const architecture::DigestBytes& identity, double strength,
+        const architecture::EvidencePolicy& policy);
     [[nodiscard]] RecordedRefinement observe(const architecture::DigestBytes& identity,
         const OriginalExperienceView& original, const architecture::kernel::EvidenceObservation& observation,
         std::uint64_t shuffle_seed, std::uint64_t current_step,
