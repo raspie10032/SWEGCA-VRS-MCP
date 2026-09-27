@@ -4,9 +4,23 @@
 #include <cstdio>
 #include <cstdlib>
 using namespace swegca::transport;
+static_assert(!swegca::architecture::kernel::accepts_agent_response(RequestTransmission::recorded));
+static_assert(swegca::architecture::kernel::accepts_agent_response(RequestTransmission::stream_written));
+static_assert(swegca::architecture::kernel::accepts_agent_response(RequestTransmission::recovered_unknown));
+static_assert(!swegca::architecture::kernel::accepts_agent_response(static_cast<RequestTransmission>(99)));
 static unsigned checks=0;
 #define CHECK(x) do{++checks;if(!(x)){std::fprintf(stderr,"FAIL %d: %s\n",__LINE__,#x);std::abort();}}while(false)
 template<class F>void rejects(F f){bool failed=false;try{f();}catch(const std::exception&){failed=true;}CHECK(failed);}
+static void transmit(AppServerWire& wire,AppServerWire::Delivery& delivery,RpcSender reply_sender=RpcSender::server){
+ int sockets[2];CHECK(::socketpair(AF_UNIX,SOCK_STREAM,0,sockets)==0);
+ const auto response="{\"id\":"+std::string(delivery.event().fields().at("id").scalar)+",\"result\":{}}";
+ rejects([&]{(void)wire.prepare(response,reply_sender,0);});
+ wire.bind_socket(delivery,sockets[0]);
+ CHECK(!wire.send_ready(delivery)); // JSON without the newline is not a frame.
+ rejects([&]{(void)wire.prepare(response,reply_sender,0);});
+ CHECK(wire.send_ready(delivery));
+ ::close(sockets[0]);::close(sockets[1]);
+}
 int main(){
  swegca::vrs::MemoryBudget memory(1<<20);
  const std::string a=R"({"id":1,"method":"turn/start","params":{"threadId":"a","input":[{"type":"text","text":"입력"}]}})";
@@ -25,10 +39,16 @@ int main(){
   CHECK(!params.find("requestSequence"));
   rejects([&]{(void)wire.forward(input);});CHECK(wire.pending_requests()==0);
   wire.recorded(input);CHECK(wire.forward(input)==a && wire.pending_requests()==1);
+  // Restoring the same original cannot promote a known unsent reservation.
+  auto original_input=adapt_codex_app_server(a,memory);
+  wire.restore_request(RpcSender::client,original_input,0);
+  rejects([&]{(void)wire.prepare(reply,RpcSender::server,42);});
   rejects([&]{wire.recorded(input);});
   auto approval=wire.prepare(b,RpcSender::server,43);wire.recorded(approval);
   CHECK(approval.sequence()==4&&wire.pending_requests()==2);
   rejects([&]{(void)wire.prepare(a,RpcSender::client,44);}); // capacity before recording
+  rejects([&]{(void)wire.prepare(reply,RpcSender::server,45);});
+  transmit(wire,input);transmit(wire,approval,RpcSender::client);
   auto response_a=wire.prepare(reply,RpcSender::server,45);
   auto response_b=wire.prepare(reply,RpcSender::client,46);
   CHECK(response_a.event().session()=="a"&&response_b.event().session()=="b");
@@ -39,6 +59,8 @@ int main(){
   rejects([&]{(void)wire.forward(response_a);});
   wire.recorded(response_b);CHECK(wire.pending_requests()==1&&wire.forward(response_b)==reply);
   wire.recorded(response_a);CHECK(wire.pending_requests()==0&&wire.forward(response_a)==reply);
+  // Completed Delivery objects may outlive their settled request map nodes.
+  CHECK(wire.send_ready(input)&&wire.send_ready(approval));
   auto old=wire.prepare(a,RpcSender::client,47);
   auto current=wire.prepare(a,RpcSender::client,48);wire.recorded(current);
   rejects([&]{wire.recorded(old);});rejects([&]{(void)wire.forward(old);});
@@ -80,6 +102,7 @@ int main(){
   CHECK(request.event().session()=="transport"&&request.sequence()==0);
   rejects([&]{(void)wire.forward(request);});
   wire.recorded(request);CHECK(wire.forward(request)==init&&wire.pending_requests()==1);
+  transmit(wire,request);
   auto reply=wire.prepare(R"({"id":1,"result":{}})",RpcSender::server,2);
   CHECK(reply.event().session()=="transport"&&reply.sequence()==1&&reply.request_sequence()==0);
   wire.recorded(reply);CHECK(wire.pending_requests()==0);
@@ -102,6 +125,7 @@ int main(){
   rejects([&]{(void)wire.prepare(raw,RpcSender::server,1,bind);});CHECK(bindings==0);
   auto resumed=wire.prepare(raw,RpcSender::client,1,bind);
   CHECK(bindings==1&&resumed.sequence()==8);wire.recorded(resumed);
+  transmit(wire,resumed);
   auto response=wire.prepare(R"({"id":1,"result":{}})",RpcSender::server,2,bind);
   CHECK(response.request_sequence()==8&&response.sequence()==9);wire.recorded(response);
  }
@@ -127,6 +151,7 @@ int main(){
   const auto read=R"({"id":7,"method":"thread/read","params":{"threadId":"prior"}})";
   auto request=wire.prepare(read,RpcSender::client,1,bind);wire.recorded(request);
   CHECK(bindings==1&&request.event().session()=="prior");
+  transmit(wire,request);
   auto response=wire.prepare(R"({"id":7,"result":{}})",RpcSender::server,2,bind);wire.recorded(response);
   CHECK(bindings==1&&response.request_sequence()==0);
   auto notice=wire.prepare(R"({"method":"thread/status/changed","params":{"threadId":"another","status":{"type":"idle"}}})",RpcSender::server,3,bind);
@@ -151,6 +176,7 @@ int main(){
   rejects([&]{wire.include_context(moved,"late",4096);});
   auto approval=wire.prepare(b,RpcSender::server,43);
   rejects([&]{wire.include_context(approval,"not input",4096);});
+  transmit(wire,moved);
   auto response=wire.prepare(reply,RpcSender::server,44);CHECK(response.request_sequence()==0);
  }
  {

@@ -26,7 +26,7 @@ public:
         Delivery(Delivery&& other) noexcept
             :value_(std::move(other.value_)),sender_(other.sender_),sequence_(other.sequence_),observed_(other.observed_),
              owner_(std::move(other.owner_)),recorded_(other.recorded_),socket_(std::exchange(other.socket_,-1)),
-             offset_(other.offset_),newline_(other.newline_),ticket_(other.ticket_),projection_(std::move(other.projection_)){}
+             offset_(other.offset_),newline_(other.newline_),ticket_(other.ticket_),projection_(std::move(other.projection_)),transmission_(other.transmission_){}
         ~Delivery(){
             if(socket_>=0){
                 ::close(socket_);
@@ -60,6 +60,7 @@ public:
         bool newline_=false;
         std::uint64_t ticket_=0;
         std::optional<std::pmr::string> projection_;
+        RequestTransmission* transmission_=nullptr; // Stable map node until response settlement.
     };
     AppServerWire(std::pmr::memory_resource& memory,std::size_t sessions,std::size_t requests)
         :memory_(memory),capacity_(sessions),identity_(std::allocate_shared<Identity>(std::pmr::polymorphic_allocator<Identity>(&memory))),
@@ -132,7 +133,7 @@ public:
         const auto found=sessions_.find(delivery.event().session());
         if(found==sessions_.end()||found->second!=delivery.sequence_)throw std::invalid_argument("stale wire delivery");
         if(const auto* response=std::get_if<AppServerRequests::Response>(&delivery.value_))requests_.recorded(*response);
-        else if(delivery.event().fields().find("id"))requests_.track(delivery.sender_,delivery.event(),delivery.sequence_);
+        else if(delivery.event().fields().find("id"))delivery.transmission_=requests_.track_impl(delivery.sender_,delivery.event(),delivery.sequence_,RequestTransmission::recorded);
         ++found->second;delivery.recorded_=true;
     }
     // Derived presentation of recorded input plus recorded VRS experience.
@@ -200,7 +201,9 @@ public:
         }
         if(count==0)throw std::system_error(EPIPE,std::generic_category(),"zero-byte frame send");
         if(body)delivery.offset_+=static_cast<std::size_t>(count);
-        else {delivery.newline_=true;::close(delivery.socket_);delivery.socket_=-1;identity_->active[lane]=0;}
+        else {
+            if(delivery.transmission_)*delivery.transmission_=RequestTransmission::stream_written;
+            delivery.newline_=true;::close(delivery.socket_);delivery.socket_=-1;identity_->active[lane]=0;}
         return delivery.newline_;
     }
     [[nodiscard]] Json metadata(const Delivery& delivery,std::uint64_t seed,std::uint64_t step) const{

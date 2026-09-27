@@ -19,6 +19,16 @@ enum class AgentEventRoute { invalid, recall_then_record, record, end };
     default:return AgentEventRoute::invalid;
     }
 }
+// Delegated adapter rule: a durable original is not proof of transmission.
+// A recovered pending request may already have reached its peer. It is not
+// automatically retransmitted; a matching response can settle that uncertainty.
+// stream_written means the complete frame reached the local socket, not that
+// the peer executed it. These are transport facts, never evidence verdicts.
+enum class AgentRequestTransmission { recorded, stream_written, recovered_unknown };
+[[nodiscard]] constexpr bool accepts_agent_response(AgentRequestTransmission state) noexcept {
+    return state==AgentRequestTransmission::stream_written ||
+           state==AgentRequestTransmission::recovered_unknown;
+}
 // Delivery identity is transport provenance, never evidence support. A replayed
 // delivery acknowledges the committed original without a second refinement.
 enum class AgentDeliveryRoute { append, reuse, reject };

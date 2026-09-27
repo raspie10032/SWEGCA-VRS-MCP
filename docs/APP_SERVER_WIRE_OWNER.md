@@ -488,3 +488,24 @@ is recovered byte-exact after restart. A host advertising only 4KiB fails
 startup before forwarding native data or creating a session. Tests use a
 128KiB host frame allowance with the unchanged 4KiB native limit. No live
 configuration was modified; no arbitrary-size attachment support is claimed.
+
+## Request transmission evidence before response binding
+
+Live request reservations now start as `recorded`, distinct from
+`stream_written`. The latter is set only after send_ready successfully writes
+both the entire original/derived JSON and its line delimiter. The core
+`accepts_agent_response` gate rejects a response to a merely recorded request.
+This is socket transmission evidence, not remote execution confirmation.
+
+Historical request reconstruction uses `recovered_unknown`: the stored original
+alone cannot distinguish never sent, partially sent, or fully sent. A matching
+response may settle it, but recovery does not resend it. Re-registering an
+already live request does not change its known transmission state. The stable
+request node is reserved before forwarding; marking the delimiter consumes no
+allocation, hashing, lookup, or disk I/O. After settlement, completed Delivery
+objects return before accessing that node.
+
+This change does not persist the derived context frame or socket send progress.
+Lossless restart, application execution confirmation, and distinguishing a new
+backend from a surviving backend remain unfinished. It does not use the World
+memory transaction rollback kernel to infer network delivery.

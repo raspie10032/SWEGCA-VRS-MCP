@@ -7,6 +7,7 @@
 
 namespace swegca::transport {
 enum class RpcSender { client, server };
+using RequestTransmission=architecture::kernel::AgentRequestTransmission;
 
 // One serialized wire connection's routing provenance. This table neither
 // judges evidence nor authorizes VRS lifecycle. Its owner explicitly bounds it.
@@ -49,10 +50,18 @@ public:
         if(generation_==std::numeric_limits<std::uint64_t>::max())throw std::overflow_error("request generation exhausted");
     }
 
-    // Reserve before forwarding a request, so its response cannot race ahead.
+    // Reconstruct an authenticated historical request. Transmission is unknown;
+    // do not infer it was unsent or retransmit it. Live wire reservations use
+    // track_impl(recorded) and become response-eligible only after the delimiter.
     // Exact re-registration is harmless; another live request with the same ID
     // is a conflict. String IDs and signed integer IDs occupy separate keys.
     void track(RpcSender sender,const AgentEvent& request,std::optional<std::uint64_t> sequence=std::nullopt){
+        (void)track_impl(sender,request,sequence,RequestTransmission::recovered_unknown);
+    }
+private:
+    friend class AppServerWire;
+    RequestTransmission* track_impl(RpcSender sender,const AgentEvent& request,std::optional<std::uint64_t> sequence,
+        RequestTransmission transmission){
         if(!request.is_app_server()||request.native_name().empty())throw std::invalid_argument("app-server request required");
         const auto& fields=request.fields();
         if(fields.find("result")||fields.find("error"))throw std::invalid_argument("request contains response fields");
@@ -62,14 +71,16 @@ public:
         if(found!=pending_.end()){
             if(found->second.digest!=digest||found->second.session!=request.session()||found->second.sequence!=sequence)
                 throw std::invalid_argument("conflicting live request ID");
-            return;
+            return &found->second.transmission;
         }
         if(pending_.size()==capacity_)throw std::length_error("pending request capacity exhausted");
         if(generation_==std::numeric_limits<std::uint64_t>::max())throw std::overflow_error("request generation exhausted");
-        pending_.try_emplace(std::move(key),request.session(),digest,generation_+1,sequence,memory_);
+        const auto inserted=pending_.try_emplace(std::move(key),request.session(),digest,generation_+1,sequence,transmission,memory_);
         ++generation_;
+        return &inserted.first->second.transmission;
     }
 
+public:
     // Binding is read-only. Keep the request until the owner confirms durable
     // recording of this exact returned response. No selected-session fallback.
     [[nodiscard]] Response bind(std::string_view bytes,RpcSender sender) const{
@@ -85,6 +96,8 @@ private:
         auto key=id_key(origin,parsed.at("id"));
         const auto found=pending_.find(key);
         if(found==pending_.end())throw std::invalid_argument("response has no request binding");
+        if(!architecture::kernel::accepts_agent_response(found->second.transmission))
+            throw std::invalid_argument("response precedes request frame transmission");
         if(const auto* error=parsed.find("error")){
             if(error->kind!=Json::Kind::object||error->at("code").kind!=Json::Kind::number)
                 throw std::invalid_argument("invalid app-server error");
@@ -114,12 +127,13 @@ private:
         return value+1;
     }
     struct Pending {
-        Pending(std::string_view session,architecture::DigestBytes digest,std::uint64_t generation,std::optional<std::uint64_t> sequence,std::pmr::memory_resource& memory)
-            :session(session,&memory),digest(digest),generation(generation),sequence(sequence){}
+        Pending(std::string_view session,architecture::DigestBytes digest,std::uint64_t generation,std::optional<std::uint64_t> sequence,RequestTransmission transmission,std::pmr::memory_resource& memory)
+            :session(session,&memory),digest(digest),generation(generation),sequence(sequence),transmission(transmission){}
         std::pmr::string session;
         architecture::DigestBytes digest;
         std::uint64_t generation;
         std::optional<std::uint64_t> sequence;
+        RequestTransmission transmission;
     };
     static RpcSender opposite(RpcSender sender){
         switch(sender){case RpcSender::client:return RpcSender::server;case RpcSender::server:return RpcSender::client;}
