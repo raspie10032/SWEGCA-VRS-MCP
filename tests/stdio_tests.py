@@ -1027,6 +1027,49 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     check(not main_scope['temporary'] and main_scope['original']==after_restart['original'])
     check(json.loads(bytes.fromhex(main_scope['contentHex']))==scoped_counter)
     check(scoped_replay(scoped_receipt,'byte content unchanged')['isError'])
+    # Restore a Main-selected scope, then compare new local observations before ACK.
+    producer_frame('server',{'id':1,'result':{'turn':{'id':'main-restore-turn'}}},0)
+    main_support_targets=[]
+    for n in range(8):
+        request=producer_seq+100
+        seq,prior_input=producer_frame('client',{'id':request,'method':'turn/start','params':{
+            'threadId':'compound-consumer','input':[{'type':'text','text':compound}]}})
+        turn='main-distinct-'+str(n)
+        producer_frame('server',{'id':request,'result':{'turn':{'id':turn}}},seq)
+        main_support_targets.append((prior_input['original'],turn))
+    main_scope_query={'identity':compound_consumer,'inputOriginal':compound_main['original'],
+        'scope':'byte content unchanged','latest':True}
+    parent_query={'identity':compound_consumer,'inputOriginal':compound_main['original']}
+    main_parent_record=c.call('swegca/agent/cognition',parent_query)['result']['record']
+    c.close();c=Client('open',producers_root,path);c.initialize()
+    check(c.call('swegca/agent/attach/resume',dict(producer_binding,session='compound-consumer'))['result']['nextSequence']==str(producer_seq))
+    check(c.call('swegca/select',{'identity':compound_consumer})['result']=={})
+    main_old=c.call('swegca/agent/original',{'identity':compound_consumer,'sequence':'0'})['result']
+    main_receipt=c.call('swegca/agent/event',{'sequence':'0','observedAt':main_old['observedAt'],
+        'seed':'7','step':'0','sender':'client','native':main_old['native']})['result']['receipt']
+    resumed_main=scoped_replay(main_receipt,'byte content unchanged')['structuredContent']
+    check(resumed_main['restored'] and not resumed_main['temporary'] and not resumed_main['historical'])
+    check(resumed_main['original']==main_scope['original'] and resumed_main['contentHex']==main_scope['contentHex'])
+    for n,(target,turn) in enumerate(main_support_targets):
+        producer_frame('server',{'method':'item/completed','params':{'threadId':'compound-consumer',
+            'turnId':turn,'item':{'type':'mcpToolCall','id':'main-new-'+str(n),
+                'server':'main-new-'+str(n),'tool':'verify','status':'completed','result':{'content':[],
+                    'structuredContent':{'swegcaObservation':{'inputOriginal':target,
+                        'scope':'byte content unchanged','axis':'0','outcome':'support','confidence':1.0,
+                        'hasExpiry':False,'expiresAt':'0'}}}}}})
+    main_updated=c.call('swegca/agent/cognition',main_scope_query)['result']
+    main_assessment=json.loads(main_updated['record']['replayPrefix']+'"}')['assessment']
+    check(main_updated['liveRevision']==main_updated['revision'])
+    check(main_updated['record']['selectedOriginal']==main_scope['original'])
+    check(main_assessment['status']==1 and main_assessment['reEvidencePerformed'] and main_assessment['currentOriginalCount']=='8')
+    check(c.call('swegca/agent/cognition',parent_query)['result']['record']==main_parent_record)
+    c.close();c=Client('open',producers_root,path);c.initialize()
+    check(c.call('swegca/agent/attach/resume',dict(producer_binding,session='compound-consumer'))['result']['nextSequence']==str(producer_seq))
+    check(c.call('swegca/select',{'identity':compound_consumer})['result']=={})
+    main_receipt=c.call('swegca/agent/event',{'sequence':'0','observedAt':main_old['observedAt'],
+        'seed':'7','step':'0','sender':'client','native':main_old['native']})['result']['receipt']
+    resumed_again=scoped_replay(main_receipt,'byte content unchanged')['structuredContent']
+    check(resumed_again['original']==main_scope['original'] and resumed_again['assessment']==main_assessment)
     # The actual measured experience is retrievable through Main by its scope,
     # with its original failure result, rather than rereading current files.
     measurement_consumer=c.call('swegca/agent/attach',dict(producer_binding,session='measurement-consumer'))['result']['identity']

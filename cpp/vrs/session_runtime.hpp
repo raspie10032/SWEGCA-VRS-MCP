@@ -104,6 +104,7 @@ struct RecallMatch {
     const PersistentConnection* connection = nullptr;
     architecture::kernel::ConnectionHead recalled_head;
     const PersistentMainGraph* main_graph = nullptr;
+    ExperienceLocation observation_head{};
 };
 
 struct InputMatch {
@@ -206,6 +207,9 @@ public:
     [[nodiscard]] const StoredExperience& original() const noexcept { return original_; }
     [[nodiscard]] const architecture::DigestBytes& source_identity() const noexcept { return source_identity_; }
     [[nodiscard]] std::size_t original_index() const noexcept { return match_.original_index; }
+    [[nodiscard]] const ExperienceLocation& observation_head() const noexcept {
+        return match_.recalled.main_graph?match_.recalled.observation_head:match_.recalled.recalled_head.record;
+    }
     [[nodiscard]] const ExperienceLocation& location() const noexcept { return original_.location(); }
     [[nodiscard]] const architecture::DigestBytes& input_cue() const noexcept { return input_cue_; }
 private:
@@ -308,6 +312,9 @@ public:
     [[nodiscard]] ReplayedInput restore_temporary_replay(const ExperienceLocation& input,
         std::string_view scope,const architecture::DigestBytes& connection,const ExperienceLocation& remembered_head,
         std::size_t original_index,const ExperienceLocation& original) const;
+    [[nodiscard]] ReplayedInput restore_main_replay(const ExperienceLocation& input,
+        std::string_view scope,const architecture::DigestBytes& connection,const ExperienceLocation& remembered_head,
+        const ExperienceLocation& observation_head,std::size_t original_index,const ExperienceLocation& original) const;
     // Partial original access preserves Recall provenance but does not issue a
     // Replay receipt or update the continuation key.
     [[nodiscard]] EvidencePayloadSlice read_payload_slice(const InputRecall&, std::size_t candidate,

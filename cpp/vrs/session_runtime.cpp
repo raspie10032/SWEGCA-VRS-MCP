@@ -246,8 +246,9 @@ RecallMatch ExperienceRouter::merged_match(const DigestBytes& identity) const {
     require_main_current();
     const auto* connection = merged_main_->graph().find(identity);
     if (!connection) throw std::logic_error("merged Main cue has no connection");
+    const auto* local=temporary_.find(identity);
     return {nullptr, nullptr, {identity, merged_head_, connection->revision(), connection->revision(),
-        connection->experiences().size(), connection->strength()}, merged_main_};
+        connection->experiences().size(), connection->strength()}, merged_main_,local?local->head():ExperienceLocation{}};
 }
 void ExperienceRouter::mount_main(const PersistentMainGraph& graph) {
     if (!mounted_.empty()) throw std::logic_error("cannot mix session candidates with merged Main");
@@ -552,6 +553,38 @@ ReplayedInput ExperienceRouter::restore_temporary_replay(const ExperienceLocatio
         static_cast<std::size_t>(old.observations),original,selected_value.value().observed_at};
     continuation_=connection;continued_context_=selected_value.value().context;
     return ReplayedInput(std::move(selected),match,issuer_,cue,temporary_.store_.identity());
+}
+
+ReplayedInput ExperienceRouter::restore_main_replay(const ExperienceLocation& input,
+    std::string_view scope,const DigestBytes& connection,const ExperienceLocation& remembered_head,
+    const ExperienceLocation& observation_head,std::size_t original_index,const ExperienceLocation& original) const {
+    require_main_current();
+    if(!merged_main_||!temporary_.usable()||scope.empty())throw std::invalid_argument("Main Replay restoration unavailable");
+    const auto& graph=merged_main_->graph();
+    const auto stored_input=temporary_.read_original(input);
+    const auto parent=decode_evidence(graph.rules_,stored_input);
+    const auto cue=input_observation_scope(parent.value().hypothesis,scope);
+    if(connection!=cue)throw std::invalid_argument("restored Main scope mismatch");
+    const auto old=merged_main_->historical_snapshot(connection,remembered_head);
+    if(original_index>=old.observations)throw std::invalid_argument("original is newer than remembered Main root");
+    const auto* owner=graph.find(connection);
+    const auto evidence=owner->read_experience(original_index);
+    if(evidence.original()!=original||evidence.value().hypothesis!=cue||!evidence.has_input_key()||evidence.cue()!=cue)
+        throw std::invalid_argument("restored Main original mismatch");
+    std::size_t boundary=0;
+    if(observation_head!=ExperienceLocation{}){
+        const auto* local=temporary_.find(connection);
+        if(!local)throw std::invalid_argument("local observation history disappeared");
+        boundary=local->historical_snapshot(observation_head).observations;
+    }
+    auto selected=graph.replay(connection,original_index);
+    if(selected.location()!=original)throw std::logic_error("restored Main Replay changed");
+    const auto selected_value=decode_evidence(graph.rules_,selected);
+    const auto source=graph.original_source(connection,original_index).store->identity();
+    InputMatch match{{nullptr,nullptr,old,merged_main_,observation_head},original_index,boundary,
+        original,selected_value.value().observed_at};
+    continuation_=connection;continued_context_=selected_value.value().context;
+    return ReplayedInput(std::move(selected),match,issuer_,cue,source);
 }
 
 EvidencePayloadSlice ExperienceRouter::read_payload_slice(const InputRecall& recalled,std::size_t candidate,

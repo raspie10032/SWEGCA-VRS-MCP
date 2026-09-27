@@ -741,5 +741,47 @@ int main(){
   throws<std::invalid_argument>([&]{(void)host.restore_temporary_cognition(remembered_input,"contents",connection,{},7,selected,7,16);});
   CHECK(host.session().find(connection)->snapshot().record==before.record);
  }
+ {
+  const auto path=root/"scope-main-live-restore";fs::create_directory(path);
+  ExperienceLocation input,selected,remembered,observation_head;DigestBytes connection;
+  const auto observe=[&](Runtime& host,unsigned n,EvidenceOutcome outcome){
+   const auto parent=host.retain({n,n,"main-restore","user","text/plain",content},7,n).original;
+   EvidenceObservation value;value.source=id(n+20);value.producer=id(n+60);value.observed_at=n;value.outcome=outcome;
+   auto result=host.observe_input_scope(parent,"contents",{n,n,"main-restore","tool","text/plain",content},value,7,n);
+   connection=result.refinement.connection();return result.original;
+  };
+  {
+   auto host=Runtime::create(path,config,memory);host.start_session(id(246),"main-restore");
+   for(unsigned n=1;n<=8;++n)selected=observe(host,n,EvidenceOutcome::support);
+   host.end_session();CHECK(host.work(7,8)==1);
+   host.start_session(id(247),"main-restore");
+   auto received=host.receive({9,9,"main-restore","user","text/plain",content},7,9);input=received.recorded.original;
+   auto scoped=host.input_scope(received.recalled,"contents");CHECK(!scoped.temporary());
+   auto cognition=host.cognize(scoped,7,9);CHECK(cognition&&cognition->replayed.location()==selected);
+   remembered=cognition->assessment().remembered_head().record;observation_head=cognition->replayed.observation_head();
+   CHECK(observation_head==ExperienceLocation{});
+   // A different ended session advances the Main while this session remains active.
+   host.attach_session(id(248),"main-restore");host.select_session(id(248));
+   for(unsigned n=10;n<=17;++n)(void)observe(host,n,EvidenceOutcome::refute);
+   host.end_session();CHECK(host.work(7,17)==1);host.select_session(id(247));
+  }
+  auto host=Runtime::open(path,config,memory);host.resume_session(id(247));
+  auto restored=host.restore_main_cognition(input,"contents",connection,remembered,observation_head,7,selected,7,18);
+  CHECK(restored.replayed.location()==selected&&restored.replayed.source_identity()==id(246));
+  CHECK(restored.assessment().remembered_head().observations==8&&restored.assessment().current_originals().empty());
+  CHECK(!restored.reverified&&restored.comparison.observation_boundary()==0);
+  for(unsigned n=19;n<=26;++n)(void)observe(host,n,EvidenceOutcome::refute);
+  const auto main_head=host.main().head();const auto local_head=host.session().find(connection)->head();
+  auto updated=host.restore_main_cognition(input,"contents",connection,remembered,observation_head,7,selected,7,26);
+  CHECK(updated.reverified&&updated.assessment().current_originals().size()==8);
+  CHECK(updated.assessment().verification().result().verification().judgment().status()==EvidenceStatus::reject);
+  CHECK(host.main().head()==main_head&&host.session().find(connection)->head()==local_head);
+  throws<std::invalid_argument>([&]{(void)host.restore_main_cognition(input,"contents",connection,remembered,{},8,selected,7,26);});
+  throws<std::invalid_argument>([&]{(void)host.restore_main_cognition(input,"other",connection,remembered,{},7,selected,7,26);});
+  throws<std::invalid_argument>([&]{(void)host.restore_main_cognition(input,"contents",connection,{}, {},7,selected,7,26);});
+  // An authenticated nonzero local boundary excludes its old observations.
+  auto boundary=host.restore_main_cognition(input,"contents",connection,remembered,local_head,7,selected,7,26);
+  CHECK(boundary.comparison.observation_boundary()==8&&boundary.assessment().current_originals().empty());
+ }
  CHECK(memory.used()==0);fs::remove_all(root);std::printf("runtime lifecycle tests: %u checks passed\n",checks);
 }

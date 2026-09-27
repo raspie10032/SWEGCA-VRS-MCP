@@ -357,6 +357,7 @@ private:
             metadata+="\",\"sourceSession\":\"";metadata+=hex(cognition.replayed.source_identity(),memory_);
             metadata+="\",\"selectedOriginal\":";metadata+=address(cognition.replayed.location(),memory_);
             metadata+=",\"originalIndex\":\"";metadata+=std::to_string(cognition.replayed.original_index());metadata+='"';
+            metadata+=",\"observationHead\":";metadata+=address(cognition.replayed.observation_head(),memory_);
             metadata+=",\"replayPrefix\":";metadata+=quote_json(scoped_replay_prefix(*scoped),memory_);metadata+='}';
             scoped->revision=runtime_.save_cognition_revision(input,std::as_bytes(std::span(metadata)),
                 input_observation_scope(input.digest,scoped->scope));
@@ -931,37 +932,39 @@ private:
                 const auto checkpoint=parse_json(prefix+"\"}",memory_);
                 const auto& tier=checkpoint.at("temporary");
                 if(tier.kind!=Json::Kind::boolean)throw std::invalid_argument("invalid recorded scope tier");
-                if(tier.scalar=="true"){
-                    const auto* owner=runtime_.session().find(digest(saved.at("scopeConnection").string()));
-                    if(!owner)throw std::invalid_argument("recorded scope owner disappeared");
-                    auto& state=context();
-                    if(!state.scoped||state.scoped->input!=input||state.scoped->scope!=name){
-                        const auto parameters=owner->latest_refinement_parameters();
-                        auto cognition=runtime_.restore_temporary_cognition(input,name,digest(saved.at("scopeConnection").string()),
-                            record_address(checkpoint.at("assessment").at("rememberedHead")),
-                            integer(saved.at("originalIndex")),record_address(saved.at("selectedOriginal")),
-                            parameters.first,parameters.second);
-                        if(cognition.comparison.observation_boundary()!=integer(saved.at("observationBoundary")))
-                            throw std::invalid_argument("recorded scope observation boundary mismatch");
-                        if(cognition.replayed.source_identity()!=digest(saved.at("sourceSession").string()))
-                            throw std::invalid_argument("restored scoped source mismatch");
-                        Context::ScopedCognition prepared{input,name,std::move(cognition),parameters,memory_};
-                        prepared.temporary=true;state.scoped.emplace(std::move(prepared));
+                const bool temporary=tier.scalar=="true";
+                const auto connection=digest(saved.at("scopeConnection").string());
+                const auto* owner=runtime_.session().find(connection);
+                if(temporary&&!owner)throw std::invalid_argument("recorded scope owner disappeared");
+                auto& state=context();
+                if(!state.scoped||state.scoped->input!=input||state.scoped->scope!=name){
+                    auto parameters=std::pair{integer(saved.at("seed")),integer(saved.at("step"))};
+                    if(owner){
+                        const auto latest=owner->latest_refinement_parameters();
+                        if(latest.second>=parameters.second)parameters=latest;
+                    }else if(const auto* latest=runtime_.main().graph().refinement(connection)){
+                        if(latest->current_step()>=parameters.second)parameters={latest->seed(),latest->current_step()};
                     }
-                    complete_scoped_cognition();
-                    auto live=scoped_replay_prefix(*state.scoped);
-                    live.resize(live.size()-content_field.size());
-                    live+=",\"restored\":true,\"historical\":false,\"revision\":\"";
-                    live+=hex(*state.scoped->revision,memory_);live+='"';live+=content_field;
-                    payload_result(id,live,evidence_payload(state.scoped->cognition->replayed.original()).content);return;
+                    const auto head=record_address(checkpoint.at("assessment").at("rememberedHead"));
+                    const auto index=integer(saved.at("originalIndex"));
+                    const auto original=record_address(saved.at("selectedOriginal"));
+                    auto cognition=temporary?
+                        runtime_.restore_temporary_cognition(input,name,connection,head,index,original,parameters.first,parameters.second):
+                        runtime_.restore_main_cognition(input,name,connection,head,record_address(saved.at("observationHead")),
+                            index,original,parameters.first,parameters.second);
+                    if(cognition.comparison.observation_boundary()!=integer(saved.at("observationBoundary")))
+                        throw std::invalid_argument("recorded scope observation boundary mismatch");
+                    if(cognition.replayed.source_identity()!=digest(saved.at("sourceSession").string()))
+                        throw std::invalid_argument("restored scoped source mismatch");
+                    Context::ScopedCognition prepared{input,name,std::move(cognition),parameters,memory_};
+                    prepared.temporary=temporary;state.scoped.emplace(std::move(prepared));
                 }
-                auto original=runtime_.read_scoped_cognition_original(input,name,
-                    digest(saved.at("scopeConnection").string()),digest(saved.at("sourceSession").string()),
-                    record_address(saved.at("selectedOriginal")));
-                prefix.resize(prefix.size()-content_field.size());
-                prefix+=",\"historical\":true,\"revision\":\"";
-                prefix+=hex(Sha256::of(record->view().content),memory_);prefix+='"';prefix+=content_field;
-                payload_result(id,prefix,evidence_payload(original).content);return;
+                complete_scoped_cognition();
+                auto live=scoped_replay_prefix(*state.scoped);
+                live.resize(live.size()-content_field.size());
+                live+=",\"restored\":true,\"historical\":false,\"revision\":\"";
+                live+=hex(*state.scoped->revision,memory_);live+='"';live+=content_field;
+                payload_result(id,live,evidence_payload(state.scoped->cognition->replayed.original()).content);return;
             }
             if(metadata.at("selectedOriginal").kind==Json::Kind::null)
                 throw std::invalid_argument("recorded cognition had no Replay candidate");

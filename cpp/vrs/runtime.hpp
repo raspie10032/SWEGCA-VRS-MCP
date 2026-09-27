@@ -80,6 +80,10 @@ public:
     [[nodiscard]] InputCognition restore_temporary_cognition(const ExperienceLocation& input,
         std::string_view scope,const architecture::DigestBytes& connection,const ExperienceLocation& remembered_head,std::size_t original_index,
         const ExperienceLocation& original,std::uint64_t seed,std::uint64_t step) const;
+    [[nodiscard]] InputCognition restore_main_cognition(const ExperienceLocation& input,
+        std::string_view scope,const architecture::DigestBytes& connection,const ExperienceLocation& remembered_head,
+        const ExperienceLocation& observation_head,std::size_t original_index,const ExperienceLocation& original,
+        std::uint64_t seed,std::uint64_t step) const;
     [[nodiscard]] std::optional<std::size_t> select_replay(const InputRecall&) const;
     [[nodiscard]] ReplayedInput replay(const InputRecall&, std::size_t candidate) const;
     [[nodiscard]] EvidencePayloadSlice read_payload_slice(const InputRecall&, std::size_t candidate,

@@ -178,3 +178,33 @@ seed/step으로 기존 Connection의 원경험 admission·shuffle·refine을 수
 검증: Persistent Main 1097 checks, stdio 5250 checks 통과. 후속 병합 및 재시작 뒤
 과거 관측 수/리비전/강도의 일치, 연결 생성 이전/미등록 연결/잘못된 루트 거부,
 현재 그래프 유지 확인. 테스트 링크의 누락된 fsync 전달 래퍼도 복구했다.
+
+## Main scoped Replay의 실시간 복구 연결
+
+Main 과거 상태 재구성을 `ExperienceRouter::restore_main_replay` 및 Runtime의
+코어 비교 구성에 연결했다. 새 scoped 개정은 `observationHead`를 보존한다.
+Main Recall 시 현재 임시 연결이 있었다면 그 시점의 head, 없었다면 빈 주소다.
+이는 Main의 rememberedHead와 별개이며 이후 새 로컬 관측의 시작 경계를 확정한다.
+
+복구는 봉인된 입력→동일 scope 연결→검증된 과거 Main 루트→그 루트 안의 원경험
+인덱스/주소/키→현재 임시 연결의 과거 경계를 확인한 뒤 선택 원경험 하나만 읽는다.
+발행하는 receipt는 현재 라우터 소유이고, 동일 기존 compare/Re-evidence 코어를
+사용한다. Main에 후속 세션이 병합됐더라도 선택 경험과 기억 당시 head는 유지한다.
+현재 세션의 관측만 새 증거이며, 후속 Main 병합을 새 로컬 증거로 재계산하지 않는다.
+
+복구 transport는 임시/Main 모두 `restored:true, historical:false`로 반환한다.
+단계 파라미터는 저장된 비교 시점보다 뒤로 가지 않으며, 더 최신인 실제 연결
+refine의 seed/step을 사용한다. 새 이벤트는 기존 경로에서 응답 전에 비교와 개정을
+저장한다. 부모 cognition과 Main/임시 연결 강도는 복구로 중복 변경하지 않는다.
+이 구현은 scoped 조회의 복구이며 일반 자연어 요구사항 추출 완성이나 앱 설치,
+대용량 지연 달성의 증거가 아니다.
+
+검증: Runtime 1926 checks, stdio 5418 checks 통과. Main의 후속 병합 뒤 과거
+원경험 유지, 잘못된 scope/root/index 거부, 0 및 비제로 임시 관측 경계 검증,
+새 로컬 반증의 충돌/Re-evidence, 부모 기록 불변, 반복 재시작 후 동일 비교를 확인했다.
+같은 입력 하나에 8개 보고를 붙인 경우 코어는 맥락 다양성 부족으로 기권했다.
+충돌 검사에는 서로 다른 실제 입력 원경험 8개를 사용했으며 판정 기준은 바꾸지 않았다.
+
+추가 경계 검사: Session Runtime 1356 checks, Persistent Main 1097 checks 통과.
+관측 head 보존으로 8-original Main receipt는 408 bytes, 194-original mixed receipt는
+3040 bytes로 증가했다. 고정된 연결 그룹 메타데이터 증가이며 원문 복제는 없다.
