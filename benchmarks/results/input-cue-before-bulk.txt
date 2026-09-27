@@ -1,0 +1,5 @@
+0 median_ns=48.269 min_ns=48.195 max_ns=48.634
+128 median_ns=108.285 min_ns=108.056 max_ns=115.001
+4096 median_ns=1810.992 min_ns=1802.789 max_ns=1828.609
+65536 median_ns=28069.625 min_ns=28047.750 max_ns=28347.688
+1048576 median_ns=450038.750 min_ns=448613.750 max_ns=452442.500

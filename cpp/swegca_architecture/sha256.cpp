@@ -47,30 +47,34 @@ bool native_sha_available() noexcept {
 // [F,E,B,A] and [H,G,D,C] from low to high; the message operand carries
 // consecutive W+K words. No digest framing or arithmetic policy is changed.
 __attribute__((target("sha,ssse3")))
-void native_compress(std::uint32_t* state,const std::byte* block) noexcept {
+void native_compress(std::uint32_t* state,const std::byte* block,std::size_t blocks=1) noexcept {
     auto abef=_mm_set_epi32(state[0],state[1],state[4],state[5]);
     auto cdgh=_mm_set_epi32(state[2],state[3],state[6],state[7]);
-    const auto prior_abef=abef,prior_cdgh=cdgh;
-    __m128i words[4];
-    const auto swap=_mm_set_epi8(12,13,14,15,8,9,10,11,4,5,6,7,0,1,2,3);
-    for(unsigned group=0;group<16;++group){
-        const auto slot=group%4;
-        if(group<4)words[slot]=_mm_shuffle_epi8(_mm_loadu_si128(reinterpret_cast<const __m128i*>(block+group*16)),swap);
-        else {
-            // W[t..t+3] from the four preceding groups, preserving the exact
-            // SHA-256 schedule recurrence rather than precomputing 64 scalars.
-            const auto previous=words[(slot+3)%4];
-            auto next=_mm_sha256msg1_epu32(words[slot],words[(slot+1)%4]);
-            next=_mm_add_epi32(next,_mm_alignr_epi8(previous,words[(slot+2)%4],4));
-            words[slot]=_mm_sha256msg2_epu32(next,previous);
+    // Keep the chaining state in its native lane order across contiguous
+    // blocks. Each block still performs all 64 rounds and feed-forward.
+    for(std::size_t n=0;n<blocks;++n,block+=64){
+        const auto prior_abef=abef,prior_cdgh=cdgh;
+        __m128i words[4];
+        const auto swap=_mm_set_epi8(12,13,14,15,8,9,10,11,4,5,6,7,0,1,2,3);
+        for(unsigned group=0;group<16;++group){
+            const auto slot=group%4;
+            if(group<4)words[slot]=_mm_shuffle_epi8(_mm_loadu_si128(reinterpret_cast<const __m128i*>(block+group*16)),swap);
+            else {
+                // W[t..t+3] from the four preceding groups, preserving the exact
+                // SHA-256 schedule recurrence rather than precomputing 64 scalars.
+                const auto previous=words[(slot+3)%4];
+                auto next=_mm_sha256msg1_epu32(words[slot],words[(slot+1)%4]);
+                next=_mm_add_epi32(next,_mm_alignr_epi8(previous,words[(slot+2)%4],4));
+                words[slot]=_mm_sha256msg2_epu32(next,previous);
+            }
+            auto message=_mm_add_epi32(words[slot],
+                _mm_loadu_si128(reinterpret_cast<const __m128i*>(round_constants.data()+group*4)));
+            cdgh=_mm_sha256rnds2_epu32(cdgh,abef,message);
+            message=_mm_shuffle_epi32(message,0x0e);
+            abef=_mm_sha256rnds2_epu32(abef,cdgh,message);
         }
-        auto message=_mm_add_epi32(words[slot],
-            _mm_loadu_si128(reinterpret_cast<const __m128i*>(round_constants.data()+group*4)));
-        cdgh=_mm_sha256rnds2_epu32(cdgh,abef,message);
-        message=_mm_shuffle_epi32(message,0x0e);
-        abef=_mm_sha256rnds2_epu32(abef,cdgh,message);
+        abef=_mm_add_epi32(abef,prior_abef);cdgh=_mm_add_epi32(cdgh,prior_cdgh);
     }
-    abef=_mm_add_epi32(abef,prior_abef);cdgh=_mm_add_epi32(cdgh,prior_cdgh);
     std::array<std::uint32_t,4> left,right;
     _mm_storeu_si128(reinterpret_cast<__m128i*>(left.data()),abef);
     _mm_storeu_si128(reinterpret_cast<__m128i*>(right.data()),cdgh);
@@ -149,6 +153,14 @@ void Sha256::update(std::span<const std::byte> data) {
         compress(buffer_.data());
         buffered_ = 0;
     }
+#ifdef SWEGCA_SHA256_X86
+    static const bool accelerated=native_sha_available();
+    const auto blocks=(data.size()-at)/buffer_.size();
+    if(accelerated&&blocks){
+        native_compress(state_.data(),data.data()+at,blocks);
+        at+=blocks*buffer_.size();
+    }else
+#endif
     for (; data.size() - at >= buffer_.size(); at += buffer_.size())
         compress(data.data() + at);
     const auto rest = data.size() - at;

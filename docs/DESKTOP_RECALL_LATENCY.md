@@ -435,3 +435,41 @@ After restoring production framing, desktop-plain-text-restored.jsonl recorded
 All 25 1MiB inputs still failed the 1ms target (maximum 2.684528ms). The actual
 stdio subprocess regression passed 3,573 checks after restoration. Frame checks
 had passed 35 and socket checks 64 during the trials. No core logic changed.
+
+
+## Contiguous SHA blocks without repeated state packing
+
+The native SHA-256 path now retains its two chaining-state vectors across all
+complete contiguous blocks in one update. Every block still runs the same 64
+rounds and feed-forward. Scalar fallback, prefix framing, tail buffering and
+padding are unchanged. No allocation, digest cache or new dependency is added.
+This affects byte identity calculation only; evidence judgment is unchanged.
+
+The isolated input-cue benchmark uses the actual text/plain prefix and measures
+17 block means per size. Built with g++ -O3 -std=c++20 -ffp-contract=off; baseline
+SHA source was 2a7a7be, current source contains only the bulk change. Both used
+the same benchmark source, CPU 6/7, sequentially without concurrent compilation.
+Reproduce current measurement with make build/input-cue-bench and run that
+binary under taskset -c 6,7. Results are input-cue-{before,after}-bulk.txt.
+
+| Input | Before median ns | After median ns |
+| --- | ---: | ---: |
+| 0B | 48.269 | 48.613 |
+| 128B | 108.285 | 109.299 |
+| 4KiB | 1810.992 | 1649.859 |
+| 64KiB | 28069.625 | 25553.312 |
+| 1MiB | 450038.750 | 411777.125 |
+
+Observed 1MiB cue hashing improved about 8.5%; small inputs did not improve.
+End-to-end desktop-bulk-sha-recall.jsonl records 25 samples per size: medians
+0.010660/0.016040/0.121411/1.551823ms. Every 1MiB sample exceeds 1ms, maximum
+3.358657ms. Shared-machine variation prevents attributing this small total
+change to the hash alone, and the full ingress target remains unmet.
+
+Native and forced-scalar builds each matched 1,052 independent Python SHA-256
+digests and six streaming partitions per input, including offsets, padding
+boundaries and 1MiB payloads. Real stdio tests passed 3,572 checks (poll counts
+vary). Core before/after block means are in core-{before,after}-bulk-sha.txt;
+judgment stayed in ns, e.g. four-axis judgment 46.2303→43.9098ns and connection
+verification 52.0999→49.8911ns. These timings demonstrate retained scale, not a
+change to those unchanged judgment functions or a universal latency guarantee.
