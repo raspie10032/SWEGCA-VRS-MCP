@@ -754,6 +754,55 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     check(shared_again['result']['temporary'] and shared_again['result']['candidateCount']=='1')
     check(shared_again['result']['memory']['original']==shared_reply['original'])
     c.close()
+    # Real native tool results may carry address-bound recorded observations.
+    # Core approval/rejection still comes from independent shuffled experience.
+    producers_root=root/'native-producers';producers_root.mkdir()
+    c=Client('create',producers_root,path);c.initialize()
+    producer_binding={'provider':'codex','instance':'producer-test','session':'producer-thread','protocol':'app-server'}
+    producer_owner=c.call('swegca/agent/attach',producer_binding)['result']['identity']
+    check(c.call('swegca/select',{'identity':producer_owner})['result']=={})
+    producer_seq=0
+    def producer_frame(sender,frame,request=None):
+        global producer_seq
+        n=producer_seq
+        p={'sequence':str(n),'observedAt':str(n),'seed':'7','step':str(n),'sender':sender,'native':json.dumps(frame)}
+        if request is not None:p['requestSequence']=str(request)
+        result=c.call('swegca/agent/event',p)['result'];producer_seq+=1
+        return n,result
+    def producer_trial(prompt,n,outcome,mutate=None):
+        seq,received=producer_frame('client',{'id':producer_seq+1,'method':'turn/start',
+            'params':{'threadId':'producer-thread','input':[{'type':'text','text':prompt}]}})
+        turn='producer-turn-'+str(seq)
+        producer_frame('server',{'id':seq+1,'result':{'turn':{'id':turn}}},seq)
+        observation={'inputOriginal':received['original'],'outcome':outcome,'axis':'0',
+            'confidence':1.0,'hasExpiry':False,'expiresAt':'0'}
+        if mutate:mutate(observation)
+        item={'type':'mcpToolCall','id':'tool-'+str(seq),'server':'recorded-producer-'+str(n),
+            'tool':'verify','status':'completed','result':{'content':[],
+                'structuredContent':{'swegcaObservation':observation}}}
+        frame={'method':'item/completed','params':{'threadId':'producer-thread','turnId':turn,'item':item}}
+        output_seq,result=producer_frame('server',frame)
+        raw=c.call('swegca/agent/original',{'identity':producer_owner,'sequence':str(output_seq)})['result']
+        check(json.loads(raw['native'])==frame and raw['context']==received['original']['digest'])
+        return received,result
+    for outcome,expected in (('support',1),('refute',2)):
+        for n in range(8):received,result=producer_trial('claim '+outcome,n,outcome)
+        check(result['refinement']['status']==expected)
+        check((result['refinement']['strength']>1) if expected==1 else (result['refinement']['strength']<1))
+    for n,mutate in enumerate((lambda v:v.update(axis='999'),lambda v:v.update(confidence=2),
+        lambda v:v.update(outcome='approve'),lambda v:v.update(source=identity(250)),
+        lambda v:v.update(inputOriginal={**v['inputOriginal'],'digest':identity(250)}))):
+        received,result=producer_trial('unverified claim '+str(n),n,'support',mutate)
+        check(result['refinement']['status']==0 and result['refinement']['strength']==1)
+    next_sequence=str(producer_seq);c.close()
+    c=Client('open',producers_root,path);c.initialize()
+    check(c.call('swegca/agent/attach/resume',producer_binding)['result']['nextSequence']==next_sequence)
+    check(c.call('swegca/select',{'identity':producer_owner})['result']=={})
+    _,recalled=producer_frame('client',{'id':producer_seq+1,'method':'turn/start',
+        'params':{'threadId':'producer-thread','input':[{'type':'text','text':'claim support'}]}})
+    check(recalled['candidateCount']=='16')
+    check(c.call('swegca/work',{'seed':'7','step':'0'})['result']['merged']=='0')
+    c.close()
     # Turn notifications keep the exact originating input, including after
     # restart and with overlapping turns. They are not evidence of success.
     turns_root=root/'native-turns';turns_root.mkdir()

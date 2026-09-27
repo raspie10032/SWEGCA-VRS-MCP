@@ -185,6 +185,38 @@ private:
         const auto found=state.turn_inputs.find(turn_key(thread,turn));
         return found==state.turn_inputs.end()?std::nullopt:found->second;
     }
+    // Producers may report observations, never core verdicts. Accept only an
+    // explicit address-bound payload from an actual completed MCP tool item.
+    std::optional<kernel::EvidenceObservation> tool_observation(const AgentEvent& event,
+        const ExperienceLocation& input,const DigestBytes& hypothesis,std::uint64_t observed){
+        using namespace kernel;
+        if(event.native_name()!="item/completed")return std::nullopt;
+        try {
+            const auto& item=event.fields().at("params").at("item");
+            if(item.at("type").string()!="mcpToolCall"||item.at("status").string()!="completed")return std::nullopt;
+            if(const auto* error=item.find("error");error&&error->kind!=Json::Kind::null)return std::nullopt;
+            const auto& fields=item.at("result").at("structuredContent").at("swegcaObservation");
+            if(record_address(fields.at("inputOriginal"))!=input)return std::nullopt;
+            for(const auto key:{"hypothesis","context","source","producer","status","verdict"})
+                if(fields.find(key))return std::nullopt;
+            EvidenceObservation value;value.hypothesis=hypothesis;value.context=input.digest;value.observed_at=observed;
+            value.source=value.producer=agent_session_identity("mcp-observation",item.at("server").string(),item.at("tool").string());
+            const auto axis=integer(fields.at("axis"));if(axis>UINT32_MAX)return std::nullopt;
+            value.axis=static_cast<std::uint32_t>(axis);value.producer_confidence=real(fields.at("confidence"));
+            value.expires_at=integer(fields.at("expiresAt"));
+            const auto& expiry=fields.at("hasExpiry");if(expiry.kind!=Json::Kind::boolean)return std::nullopt;
+            value.has_expiry=expiry.scalar=="true";
+            const auto outcome=fields.at("outcome").string();
+            if(outcome=="support")value.outcome=EvidenceOutcome::support;
+            else if(outcome=="refute")value.outcome=EvidenceOutcome::refute;
+            else if(outcome!="insufficient")return std::nullopt;
+            const auto* connection=runtime_.session().find(hypothesis);
+            if(!connection||!observation_values_valid(connection->rules(),hypothesis,value))return std::nullopt;
+            value.hypothesis={};value.context={}; // Runtime derives these from the sealed original.
+            return value;
+        }catch(const std::invalid_argument&){return std::nullopt;}
+        catch(const std::out_of_range&){return std::nullopt;}
+    }
     void select_context(const DigestBytes& identity){
         const auto found=contexts_.find(identity);
         if(found==contexts_.end())throw std::invalid_argument("session not attached");
@@ -548,6 +580,10 @@ private:
                 }
                 auto recorded=[&]{
                     if(!request_original)return runtime_.retain(original,seed,step);
+                    if(!response&&sender==ExperienceSender::server){
+                        if(const auto observed_value=tool_observation(event,*request_original,request_connection,observed))
+                            return runtime_.observe_input(*request_original,original,*observed_value,seed,step);
+                    }
                     EvidenceObservation observation;observation.hypothesis=request_connection;
                     observation.context=request_original->digest;observation.observed_at=observed;
                     Sha256 source;source.update("SWEGCA input source v1");source.update(original.source);

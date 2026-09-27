@@ -192,3 +192,43 @@ Déjà vu→Recall 앞에는 넣지 않는다. 재시작 후 원경험으로 재
 전체 경험 수와 무관한 상수 비용은 아니다. 입력 지연 1ms 달성 증거로 사용하지 않는다.
 이미 기록된 notification의 재전송은 당시의 원경험을 재사용하며 후발 turn 응답으로
 기존 계보를 소급 변경하지 않는다. 명시적 세션 종료 전 Main 병합 금지도 유지한다.
+
+## 네이티브 도구 관측 제출 계약 (2026-09-27)
+
+완료된 서버 `item/completed`의 `mcpToolCall`이 다음 필드를 결과로 제출할 수 있다.
+현재 설치된 app-server 스키마에서 `result.structuredContent`는 임의 구조화 데이터를
+보존한다. 새 코어 판정기나 별도 모델을 도입하지 않는다.
+
+```json
+{
+  "structuredContent": {
+    "swegcaObservation": {
+      "inputOriginal": {"block":"<hex>","offset":"<decimal>","bytes":"<decimal>","digest":"<hex>"},
+      "axis":"0",
+      "outcome":"support",
+      "confidence":0.8,
+      "hasExpiry":false,
+      "expiresAt":"0"
+    }
+  }
+}
+```
+
+`inputOriginal`은 해당 turn의 시작 입력에 대해 VRS가 응답한 원경험 주소 전체다.
+과거 Replay 원경험 주소와 혼동하지 않는다. outcome은 support/refute/insufficient만
+허용한다. 이것은 생산자가 보고한 관측이지 SWEGCA의 승인/반려/기권 판정이 아니다.
+Main은 먼저 봉인된 요청·응답의 turn 계보와 주소의 일치를 확인한다. source/producer는
+실제 이벤트의 server/tool 쌍에서 길이 구분 해시로 구성하고, 보고서가 이 값이나
+hypothesis/context/status/verdict를 덮어쓰면 관측으로 채택하지 않는다. 도구 이름이
+진실성이나 독립성을 증명하지 않으며 같은 server/tool의 결과는 같은 생산자다.
+
+코어 observation_values_valid로 해당 연결의 실제 축/신뢰도/만료 계약을 검사한다.
+관측은 이벤트 원문과 한 번만 봉인되어 실제 셔플→코어 3상→동일 연결 갱신을 거친다.
+도구 오류/실패 상태, 잘못된 주소/값, 관측 메타데이터가 없는 결과는 원문 전체를
+insufficient 경험으로 보존한다. exitCode=0, completed 상태, confidence만으로
+지지 관측을 생성하지 않는다. 기존 입력→Recall 순서도 바뀌지 않는다.
+
+이 계약을 제출하는 실제 producer의 구현·설치와 범용 자연어 의미 대응은 여전히
+별도 미완료 범위다. 아래 회귀 결과는 실제 호스트 프로세스에 명시적 관측을 담은
+도구 이벤트를 넣은 검증이며, 임의의 기존 도구가 자동으로 이 계약을 출력한다는
+뜻이나 현재 데스크톱의 실제 모델 실행 검증이 아니다.
