@@ -197,6 +197,17 @@ int main(){
   rejects([&]{(void)replay_context(std::move(bad),ack,memory);});
  }
  CHECK(memory.used()==0);
+ {
+  auto ack=parse_json(R"({"original":{"block":"a","digest":"b","offset":"1","bytes":"2"},"memory":{"completed":true,"original":null}})",memory);
+  const auto context=input_context(ack,memory);
+  const auto packet=parse_json(context.substr(context.find('\n')+1),memory);
+  CHECK(same_context_address(packet.at("inputOriginal"),ack.at("original")));
+  CHECK(packet.at("recalledOriginal").kind==Json::Kind::null);
+  CHECK(packet.at("grantsAuthority").scalar=="false");
+  mutable_field(mutable_field(ack,"memory"),"completed").scalar="false";
+  rejects([&]{(void)input_context(ack,memory);});
+ }
+ CHECK(memory.used()==0);
  for(const bool empty:{false,true}){
   AppServerWire wire(memory,1,1);wire.attach("a",0);
   const std::string prefix=R"( {"id":9,"method":"turn/start", "params":{"threadId":"a","inpu\u0074":[)";

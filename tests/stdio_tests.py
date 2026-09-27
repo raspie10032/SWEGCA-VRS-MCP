@@ -1006,7 +1006,7 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     proxy_root=root/'proxy-process';proxy_root.mkdir()
     proxy_config=root/'proxy.json'
     proxy_config.write_text(json.dumps({'memoryBytes':str(8<<20),'frameBytes':'4096',
-        'pendingRequests':'16','sessionCapacity':'4','connectionSession':{'session':'transport','mode':'attach'},'seed':'7','step':'0','instance':'proxy-tested',
+        'pendingRequests':'16','sessionCapacity':'5','connectionSession':{'session':'transport','mode':'attach'},'seed':'7','step':'0','instance':'proxy-tested',
         'sessions':[{'session':name,'mode':'attach'} for name in ('a','b')]}))
     client_side,client_proxy=socket.socketpair()
     server_side,server_proxy=socket.socketpair()
@@ -1030,13 +1030,18 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
                 if not chunk:raise RuntimeError('proxy closed before complete frame')
                 data.extend(chunk)
             return bytes(data)
-        def check_context_forward(forwarded, original, remembered):
+        def check_context_forward(forwarded, original, remembered=None):
             view=json.loads(forwarded);native=json.loads(original)
             context=view['params']['input'].pop(0)
             check(view==native and context['type']=='text')
             packet=json.loads(context['text'].split('\n',1)[1])
-            check(packet['grantsAuthority'] is False and packet['assessment']['status']==0)
-            check(json.loads(packet['content'])==json.loads(remembered))
+            check(packet['grantsAuthority'] is False)
+            if remembered is None:
+                check(packet['recalledOriginal'] is None and set(packet['inputOriginal'])=={'block','digest','offset','bytes'})
+            else:
+                check(packet['assessment']['status']==0)
+                check(json.loads(packet['content'])==json.loads(remembered))
+            return packet
         global_frames=[{'id':1,'method':'initialize','params':{'clientInfo':{'name':'fixture'},'padding':'"'*1500}},
                        {'method':'initialized'}, {'id':2,'method':'thread/start','params':{}}]
         expanded=json.dumps({'native':proxy_frame(global_frames[0])[:-1].decode()}).encode()
@@ -1051,7 +1056,7 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
         note=proxy_frame({'method':'item/agentMessage/delta','params':{'threadId':'a','delta':'보존'}})
         # Fragment first frame, then coalesce its tail with the next whole frame.
         client_side.sendall(request[:5]);client_side.sendall(request[5:]+note)
-        check(proxy_read(server_side)==request);check(proxy_read(server_side)==note)
+        first_reference=check_context_forward(proxy_read(server_side),request);check(proxy_read(server_side)==note)
         response=proxy_frame({'id':7,'result':{'ok':True}})
         approval=proxy_frame({'id':7,'method':'item/commandExecution/requestApproval',
             'params':{'threadId':'b','command':'never executed'}})
@@ -1062,7 +1067,7 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
         server_side.sendall(started);check(proxy_read(client_side)==started)
         dynamic=proxy_frame({'id':19,'method':'turn/start','params':{'threadId':'c',
             'input':[{'type':'text','text':'새 세션 입력'}]}})
-        client_side.sendall(dynamic);check(proxy_read(server_side)==dynamic)
+        client_side.sendall(dynamic);check_context_forward(proxy_read(server_side),dynamic)
         dynamic_reply=proxy_frame({'id':19,'result':{}})
         server_side.sendall(dynamic_reply);check(proxy_read(client_side)==dynamic_reply)
         # Leave one request pending in each direction, with the same numeric ID.
@@ -1073,6 +1078,22 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
         server_side.sendall(pending_approval);check(proxy_read(client_side)==pending_approval)
         dynamic_pending=proxy_frame({'id':78,'method':'turn/start','params':{'threadId':'c','input':[]}})
         client_side.sendall(dynamic_pending);check_context_forward(proxy_read(server_side),dynamic_pending,dynamic)
+        # The actual backend-side socket obtains the first input address and
+        # returns an observation bound to it, without an extra host write call.
+        producer_started=proxy_frame({'method':'thread/started','params':{'thread':{'id':'producer-live'}}})
+        server_side.sendall(producer_started);check(proxy_read(client_side)==producer_started)
+        producer_request=proxy_frame({'id':79,'method':'turn/start','params':{'threadId':'producer-live',
+            'input':[{'type':'text','text':'verify this recorded claim'}]}})
+        client_side.sendall(producer_request)
+        producer_reference=check_context_forward(proxy_read(server_side),producer_request)
+        producer_response=proxy_frame({'id':79,'result':{'turn':{'id':'live-turn'}}})
+        server_side.sendall(producer_response);check(proxy_read(client_side)==producer_response)
+        producer_output=proxy_frame({'method':'item/completed','params':{'threadId':'producer-live','turnId':'live-turn',
+            'item':{'type':'mcpToolCall','id':'live-tool','server':'fixture-producer','tool':'verify','status':'completed',
+                'result':{'content':[],'structuredContent':{'swegcaObservation':{
+                    'inputOriginal':producer_reference['inputOriginal'],'axis':'0','outcome':'support',
+                    'confidence':1.0,'hasExpiry':False,'expiresAt':'0'}}}}}})
+        server_side.sendall(producer_output);check(proxy_read(client_side)==producer_output)
         client_side.shutdown(socket.SHUT_WR);check(server_side.recv(1)==b'')
         server_side.shutdown(socket.SHUT_WR);check(client_side.recv(1)==b'')
         check(proxy_process.wait(timeout=10)==0)
@@ -1083,6 +1104,17 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
         for process in (proxy_process,vrs_process):
             if process.poll() is None:process.terminate();process.wait(timeout=10)
     c=Client('open',proxy_root,path);c.initialize()
+    live_binding={'provider':'codex','instance':'proxy-tested','session':'producer-live','protocol':'app-server'}
+    live=c.call('swegca/agent/attach/resume',live_binding)['result']
+    check(live['nextSequence']=='4')
+    live_original=c.call('swegca/agent/original',{'identity':live['identity'],'sequence':'3'})['result']
+    check(live_original['native']==producer_output[:-1].decode())
+    check(live_original['context']==producer_reference['inputOriginal']['digest'])
+    check(c.call('swegca/select',{'identity':live['identity']})['result']=={})
+    live_recalled=c.call('swegca/agent/event',{'sequence':'4','observedAt':'4','seed':'7','step':'0','sender':'client',
+        'native':producer_request[:-1].decode()})['result']
+    check(live_recalled['candidateCount']=='2')
+    check(live_original['original'] in [x['original'] for x in live_recalled['candidates']])
     connection_binding={'provider':'codex','instance':'proxy-tested','session':'transport',
                         'protocol':'app-server-connection'}
     connection=c.call('swegca/agent/attach/resume',connection_binding)['result']
@@ -1349,14 +1381,18 @@ for line in sys.stdin:
     received_inputs=[json.loads(line) for line in captured_inputs.read_text().splitlines()]
     initial_input=next(value for value in received_inputs if value.get('id')==903)
     resumed_input=next(value for value in received_inputs if value.get('id')==906)
-    check(initial_input['params']['input']==desktop_input)
+    check(initial_input['params']['input'][1:]==desktop_input)
+    first_input_reference=json.loads(initial_input['params']['input'][0]['text'].split('\n',1)[1])
+    check(first_input_reference['recalledOriginal'] is None and not first_input_reference['grantsAuthority'])
     check(len(resumed_input['params']['input'])==len(desktop_followup)+1)
     check(resumed_input['params']['input'][1:]==desktop_followup)
     injected=resumed_input['params']['input'][0]
     check(injected['type']=='text' and injected['text'].startswith('SWEGCA recalled experience'))
     memory_packet=json.loads(injected['text'].split('\n',1)[1])
     check(memory_packet['grantsAuthority'] is False and memory_packet['assessment']['status']==0)
-    check(json.loads(memory_packet['content'])==initial_input)
+    native_initial=dict(initial_input,params=dict(initial_input['params'],input=desktop_input))
+    check(json.loads(memory_packet['content'])==native_initial)
+    check(memory_packet['original']==first_input_reference['inputOriginal'])
     c=Client('open',desktop_root,path);c.initialize()
     for session,protocol,count in (('transport','app-server-connection','9'),('desktop-thread','app-server','9')):
         attached=c.call('swegca/agent/attach/resume',{'provider':'codex','instance':'desktop-fixture',

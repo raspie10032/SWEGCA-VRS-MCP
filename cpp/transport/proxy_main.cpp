@@ -221,6 +221,9 @@ int main(int argc,char** argv){
                             if(result.find("isError"))throw std::runtime_error("VRS Replay context unavailable");
                             auto context=replay_context(std::move(mutable_field(result,"structuredContent")),body,memory);
                             pump.include_context(plan,context,rpc_frame);
+                        }else{
+                            const auto context=input_context(body,memory);
+                            pump.include_context(plan,context,rpc_frame);
                         }
                     }
                     return true;

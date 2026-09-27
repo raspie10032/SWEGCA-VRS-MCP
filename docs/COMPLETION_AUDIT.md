@@ -1194,3 +1194,16 @@ Main 병합은 0이었다. 모델 생성 요청은 0회, 기존 GUI 설정은 �
 - 미완료: 실제 producer가 해당 의미적 관측을 만드는 구현 및 앱 통합, 일반 자연어의
   명제 추출·표현 대응. 이 회귀는 계약 연결 검증이며 생산자 관측의 사실성 검증이나
   전체 의미 처리 완료 증거로 확대하지 않는다.
+
+## 2026-09-27: 첫 입력 주소 전달과 관측 반환의 전체 전송 경로
+
+- 원경험이 아직 회상되지 않은 첫 입력에도 VRS ACK의 inputOriginal 주소를 backend에
+  전달한다. 기존에는 이 경우 projection이 없어 실제 producer가 주소를 얻을 수 없었다.
+- 별도 host observe 호출 없이 backend 소켓에서 해당 주소를 참조한 관측을 반환하고,
+  실제 proxy→host→VRS 기록 및 재시작 Recall까지 검증했다. 원래 사용자 입력은 그대로
+  보존하고, 도구 결과도 바이트 그대로 전달/저장한다.
+- CPU 6,7 / make -j2. stdio subprocess **4504 checks passed**,
+  app-server wire owner **140 checks passed**. DesktopHost fixture에서도 첫 입력 주소와
+  후속 Replay의 원경험 주소가 일치함을 확인했다.
+- 현재 사용자 GUI를 재시작하거나 실제 모델 turn을 실행하지 않았다. 관측 생산의 의미적
+  구현과 범용 자연어 의미 대응은 여전히 미완료이며 전체 목표를 완료로 처리하지 않는다.

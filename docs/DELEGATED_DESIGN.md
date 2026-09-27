@@ -232,3 +232,20 @@ insufficient 경험으로 보존한다. exitCode=0, completed 상태, confidence
 별도 미완료 범위다. 아래 회귀 결과는 실제 호스트 프로세스에 명시적 관측을 담은
 도구 이벤트를 넣은 검증이며, 임의의 기존 도구가 자동으로 이 계약을 출력한다는
 뜻이나 현재 데스크톱의 실제 모델 실행 검증이 아니다.
+
+## 회상 후보 없는 첫 입력의 생산자 참조 전달 (2026-09-27)
+
+프록시는 VRS가 현재 입력을 기록하고 cognition completed=true를 응답한 뒤,
+선택 Replay가 없는 경우에도 현재 inputOriginal 주소를 backend 입력에 참조 데이터로
+전달한다. recalledOriginal=null, grantsAuthority=false이며 검증 상태나 과거 경험을
+만들지 않는다. Replay가 있는 입력은 기존 assessment.inputOriginal을 계속 사용한다.
+주소는 사용자가 제공한 문자열이 아니라 실제 VRS ACK에서 가져온다.
+
+두 경우 모두 사용자 원문은 VRS에 먼저 그대로 저장된다. 전송 시 기존 JSON 바이트를
+유지하는 projection 경로로 텍스트 항목 하나만 앞에 삽입한다. Déjà vu/Recall 전에는
+이 삽입을 하지 않는다. 추가 참조까지 포함해 기존 최종 frameBytes 한도를 지키므로,
+한도를 넘는 입력은 참조를 조용히 생략하는 대신 기존 크기 검사로 거부한다.
+
+실제 프록시 소켓 회귀에서는 backend 측이 이 주소를 받아 turn/start 응답과 완료 도구
+관측을 돌려주고, 재시작 후 원문/입력 context 및 입력+관측 Recall을 확인한다. fixture가
+보고한 support의 사실성을 인증하거나 일반 자연어 명제 추출을 수행하는 검증은 아니다.

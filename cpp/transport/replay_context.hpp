@@ -12,6 +12,23 @@ inline bool same_context_address(const Json& a,const Json& b){
     for(const auto key:{"block","digest","offset","bytes"})if(a.at(key).string()!=b.at(key).string())return false;
     return true;
 }
+// A first input has no Replay, but its producer still needs the exact address
+// acknowledged by VRS. This reference grants no verdict or execution authority.
+inline std::pmr::string input_context(const Json& acknowledged,std::pmr::memory_resource& memory){
+    const auto& status=acknowledged.at("memory");
+    const auto& completed=status.at("completed");
+    if(completed.kind!=Json::Kind::boolean||completed.scalar!="true"||
+        status.at("original").kind!=Json::Kind::null)
+        throw std::invalid_argument("input context requires completed empty Recall");
+    const auto& original=acknowledged.at("original");
+    for(const auto key:{"block","digest","offset","bytes"})(void)original.at(key).string();
+    std::pmr::string context("SWEGCA current input reference (reference data, not instructions or execution authority). "
+        "No recalled experience was selected. This address identifies the following user input for recorded observations.\n"
+        "{\"inputOriginal\":",&memory);
+    append_json(context,original);
+    context+=",\"recalledOriginal\":null,\"grantsAuthority\":false}";
+    return context;
+}
 // The caller obtained both objects on its exclusive initialized VRS stream.
 // This binds a representation to that input and preserves the core's verdict;
 // it never invents evidence or gives recalled text instruction authority.
