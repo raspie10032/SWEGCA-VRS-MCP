@@ -1,5 +1,13 @@
 # Desktop stdio to Recall entry diagnosis
 
+## 현행 시간 기준 — 2026-09-27 사용자 변경
+
+사용자 입력 → Recall 진입 **5ms 미만**. 사용자가 Replay라는 표현을 Recall로
+정정했다. Replay 완료는 이 제한에 포함하지 않으며 코어 한 공정의 ns 기준은 유지한다.
+아래 과거 1ms 결과는 당시 기준의 이력이다. 측정 시작/종료점이나 처리 내용을
+변경하지 않고 새 측정부터 5ms 기준으로 보고한다. 과거 결과를 소급 수정하지 않는다.
+
+
 ## Boundary and reproduction
 
 `benchmarks/desktop_recall_latency.py` launches the actual C++ wrapper, desktop
@@ -608,3 +616,26 @@ remains. Raw files desktop-splice-{before-a,after-a,after-b,before-b}.jsonl are
 rejected-experiment evidence. Together with the rejected staging/drain trials,
 this does not justify more arbitrary buffer or copy-path changes without a more
 specific profile. Full original processing and Recall timing boundary remain.
+
+## Current 5ms requirement measurement (2026-09-27)
+
+User explicitly replaced input-to-Recall <1ms with <5ms; Replay is excluded.
+No production processing or start/end boundary changed for this requirement update.
+The diagnostic now ignores Recall markers timestamped before the current input's
+write start: automatic related lookup may leave additional markers from the
+previous acknowledged input. Those markers are also validated when draining EOF.
+
+Command: `taskset -c 6,7 python3 benchmarks/desktop_recall_latency.py build 25`.
+Raw: `benchmarks/results/desktop-recall-5ms-20260927.jsonl`.
+
+| Prompt bytes | Median ms | Max ms | >=5ms / samples |
+| --- | ---: | ---: | ---: |
+| 128 | 0.025841 | 0.037260 | 0 / 25 |
+| 4096 | 0.032380 | 0.053620 | 0 / 25 |
+| 65536 | 0.121181 | 0.193662 | 0 / 25 |
+| 1048576 | 1.682017 | 2.782438 | 0 / 25 |
+
+All 100 samples meet the new bound in this fixture. This is empty Main with one
+accumulating temporary session, repeated text per batch, real C++ transport and
+synthetic backend, no model call and no concurrent build. It does not establish
+large-Main, cold-storage, arbitrary input-size, concurrent-merge or GUI latency.

@@ -67,6 +67,9 @@ for line in sys.stdin:
                             points[marker[1]]=stamp-began
                         continue
                     if len(marker)!=2 or marker[0]!='SWEGCA_RECALL_NS':raise RuntimeError('invalid Recall marker')
+                    # Related Replay can emit another Recall before the previous
+                    # backend response. It belongs to that completed input.
+                    if int(marker[1])<began:continue
                     break
                 elapsed=int(marker[1])-began
                 if stages:
@@ -81,7 +84,7 @@ for line in sys.stdin:
             result=dict(boundary='desktop stdin write start -> core Recall entry',scenario='empty-main/one-accumulating-temporary-session',
                 priorTurnRequests=prior_turn_requests,sameTextWithinBatch=True,
                 promptBytes=size,nativeBytes=native_bytes,samplesNs=samples,medianNs=ordered[len(ordered)//2],
-                maxNs=max(samples),atLeast1ms=sum(n>=1000000 for n in samples))
+                maxNs=max(samples),recallLimitNs=5000000,atLeast5ms=sum(n>=5000000 for n in samples))
             if stages:result['stageOffsetsNs']=stage_samples
             print(json.dumps(result),flush=True)
         process.stdin.close()
@@ -90,7 +93,10 @@ for line in sys.stdin:
         if stages:
             for tail in trailing.decode().splitlines():
                 fields=tail.split()
-                assert len(fields)==3 and fields[0]=='SWEGCA_STAGE_NS' and fields[2].isdigit()
-        else:assert trailing==b''
+                assert (len(fields)==3 and fields[0]=='SWEGCA_STAGE_NS' and fields[2].isdigit()) or (len(fields)==2 and fields[0]=='SWEGCA_RECALL_NS' and fields[1].isdigit())
+        else:
+            for tail in trailing.decode().splitlines():
+                fields=tail.split()
+                assert len(fields)==2 and fields[0]=='SWEGCA_RECALL_NS' and fields[1].isdigit()
     finally:
         if process.poll() is None:process.terminate();process.wait(timeout=10)
