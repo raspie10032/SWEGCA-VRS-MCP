@@ -118,7 +118,7 @@ RecordedRefinement SessionRuntime::observe(const DigestBytes& identity, const Or
         contexts.insert(position,contextual);
         has_dialogue_input_=has_dialogue_input_||
             (saved.value().context==dialogue_context_&&context_reference_eligible(saved.has_input_key(),true));
-        return {saved.original(), std::move(report)};
+        return {saved.original(), std::move(report), saved.value().context};
     } catch (...) { usable_ = false; throw; }
 }
 RecordedRefinement SessionRuntime::retain_input(const OriginalExperienceView& original,

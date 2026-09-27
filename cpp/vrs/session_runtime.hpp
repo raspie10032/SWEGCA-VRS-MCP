@@ -11,6 +11,8 @@ namespace swegca::vrs {
 struct RecordedRefinement {
     ExperienceLocation original;
     ConnectionRefinement refinement;
+    // Copied from the admitted sealed observation, never reconstructed by transport.
+    architecture::DigestBytes context;
 };
 
 struct CueReference {

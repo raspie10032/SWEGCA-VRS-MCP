@@ -428,6 +428,7 @@ private:
                     clear();state.receipt=++next_receipt_;
                     state.received.emplace(runtime_.receive_envelope(event.cue_media(),std::as_bytes(std::span(prompt)),original,seed,step));
                     slot->second.original=state.received->recorded.original;
+                    slot->second.context=state.received->recorded.context;
                     slot->second.connection=state.received->recorded.refinement.connection();committed=true;
                     slot->second.fingerprint=agent_delivery_identity(sequence,observed,event.native_bytes());
                     complete_cognition();
@@ -442,9 +443,10 @@ private:
                     return runtime_.observe(request_connection,original,observation,seed,step);
                 }();
                 slot->second.original=recorded.original;
+                slot->second.context=recorded.context;
                 slot->second.connection=recorded.refinement.connection();committed=true;
                 invalidate_cognition(recorded);
-                if(request_original){slot->second.context=request_original->digest;binding->recorded(*response);}
+                if(request_original)binding->recorded(*response);
                 slot->second.fingerprint=agent_delivery_identity(sequence,observed,event.native_bytes());
                 return "{\"original\":"+address(recorded.original,memory_)+",\"refinement\":"+refinement(recorded.refinement,memory_)+"}";
             } catch(...) {

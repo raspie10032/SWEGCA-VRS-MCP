@@ -541,10 +541,13 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
         check('original' in reply['result'] and 'receipt' not in reply['result'])
     check('structuredContent' in recheck(n1['receipt']))
     check(c.call('swegca/work',{'seed':'7','step':'6'})['result']['merged']=='0')
+    live_native_originals=[c.call('swegca/agent/original',{'identity':native_id,'sequence':str(n)})['result'] for n in (0,2,5)]
     c.close()
     c=Client('open',native_root,path);c.initialize()
     check(c.call('swegca/agent/attach/resume',binding)['result']['identity']==native_id)
     check(c.call('swegca/select',{'identity':native_id})['result']=={})
+    restored_native_originals=[c.call('swegca/agent/original',{'identity':native_id,'sequence':str(n)})['result'] for n in (0,2,5)]
+    check(restored_native_originals==live_native_originals)
     # No process-local cache survives restart. The immutable cognition metadata
     # restores the original result without adding observations or strength.
     recovered0=resend_native(raw0,0)['result']
