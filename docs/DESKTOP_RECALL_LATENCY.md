@@ -338,3 +338,29 @@ installed desktop or loaded graph evidence. There is no matched baseline in
 this run, so it does not establish a latency improvement. The separate
 `desktop-recall-inline-native.json` five-sample exploratory run overlapped a
 compiler and is retained only as raw diagnostic data, not a comparison.
+
+## Native eligibility scan and rejected socket drain experiment
+
+At 2b5c8a2, 15-sample ingress stage measurements on CPU 6/7 attributed medians
+of 863.853us to desktop write→proxy frame, 583.056us to adapted event→RPC ready,
+and 635.077us to RPC ready→host frame for 1MiB inputs. Stage medians are computed
+individually and must not be summed as a total median. Raw baseline:
+`desktop-inline-stages.jsonl`.
+
+A trial draining up to sixteen nonblocking 4KiB socket reads per poll, with
+memchr delimiter lookup, passed framing/pump/subprocess checks but did not show
+an end-to-end improvement: instrumented median 3.193683→3.359925ms. It was fully
+reverted; `desktop-drain-stages.jsonl` and `desktop-drain-recall.jsonl` are rejected
+experiment data, not current production behavior.
+
+The remaining native eligibility check used `find_first_of("\r\n")`, which
+searches a small character set repeatedly across the full native frame. Two
+single-character `find` calls preserve the same eligibility while permitting
+bulk character search. No input omission, depth change or SWEGCA change occurs.
+Instrumented request-build median fell 583.056→167.692us; instrumented total
+median 3.193683→2.912700ms. Uninstrumented final medians: 128B 0.020680ms,
+4KiB 0.030441ms, 64KiB 0.176512ms, 1MiB 2.602347ms (max 3.741068ms).
+All fifteen 1MiB inputs still exceed 1ms. These are sequential local runs with
+shared-machine scheduling, not a universal latency guarantee. Raw final data:
+`desktop-char-scan-stages.jsonl`, `desktop-char-scan-recall.jsonl`.
+Pump 105 and real stdio 3,256 checks passed after reverting the socket trial.

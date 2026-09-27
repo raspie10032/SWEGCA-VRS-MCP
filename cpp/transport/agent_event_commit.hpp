@@ -29,7 +29,7 @@ private:
     static bool inline_native(const AgentEvent& event){
         const auto bytes=event.native_bytes();
         return !bytes.empty()&&bytes.front()=='{'&&bytes.back()=='}'&&
-            bytes.find_first_of("\r\n")==std::string_view::npos&&shallow(event.fields());
+            bytes.find('\r')==std::string_view::npos&&bytes.find('\n')==std::string_view::npos&&shallow(event.fields());
     }
     AgentEventCommit(std::string_view identity,Json parsed,std::string_view native,
         std::string_view id,std::pmr::memory_resource& memory,bool embed)
