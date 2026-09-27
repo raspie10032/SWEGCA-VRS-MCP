@@ -143,7 +143,7 @@ bench: $(BUILD)/core-bench
 clean:
 	rm -f $(BUILD)/background-recall-bench
 	rm -f $(BUILD)/async-runtime-tests
-	rm -f $(BUILD)/json-stream-tests-scalar $(BUILD)/swegca-proxy-stages-probe $(BUILD)/swegca-vrs-stages-probe $(BUILD)/stdio-frame-tests $(BUILD)/swegca-vrs-ingress-probe $(BUILD)/json-stream-tests $(BUILD)/swegca-codex-wrapper $(BUILD)/swegca-desktop-host $(BUILD)/parallel-recovery-tests $(BUILD)/recall-scale-bench $(BUILD)/resource-profile-probe $(BUILD)/sha256-vectors $(BUILD)/sha256-vectors-scalar $(BUILD)/input-recall-bench $(BUILD)/transfer-budget-tests $(BUILD)/parallel-main-tests $(BUILD)/swegca-vrs-mcp $(BUILD)/runtime-tests $(BUILD)/main-sources-tests $(BUILD)/core-tests $(BUILD)/core-bench $(BUILD)/vrs-tests $(BUILD)/experience-block-tests $(BUILD)/memory-budget-tests $(BUILD)/connection-tests $(BUILD)/session-tests $(BUILD)/persistent-connection-tests $(BUILD)/catalog-tests $(BUILD)/session-runtime-tests $(BUILD)/main-graph-tests $(BUILD)/persistent-main-tests
+	rm -f $(BUILD)/commit-memory-bench $(BUILD)/json-stream-tests-scalar $(BUILD)/swegca-proxy-stages-probe $(BUILD)/swegca-vrs-stages-probe $(BUILD)/stdio-frame-tests $(BUILD)/swegca-vrs-ingress-probe $(BUILD)/json-stream-tests $(BUILD)/swegca-codex-wrapper $(BUILD)/swegca-desktop-host $(BUILD)/parallel-recovery-tests $(BUILD)/recall-scale-bench $(BUILD)/resource-profile-probe $(BUILD)/sha256-vectors $(BUILD)/sha256-vectors-scalar $(BUILD)/input-recall-bench $(BUILD)/transfer-budget-tests $(BUILD)/parallel-main-tests $(BUILD)/swegca-vrs-mcp $(BUILD)/runtime-tests $(BUILD)/main-sources-tests $(BUILD)/core-tests $(BUILD)/core-bench $(BUILD)/vrs-tests $(BUILD)/experience-block-tests $(BUILD)/memory-budget-tests $(BUILD)/connection-tests $(BUILD)/session-tests $(BUILD)/persistent-connection-tests $(BUILD)/catalog-tests $(BUILD)/session-runtime-tests $(BUILD)/main-graph-tests $(BUILD)/persistent-main-tests
 
 $(BUILD)/agent-event-tests: tests/agent_event_tests.cpp cpp/transport/agent_event.hpp cpp/transport/json.cpp cpp/transport/json.hpp $(CORE_SOURCES) $(CORE_HEADERS) $(VRS_HEADERS) | $(BUILD)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< cpp/transport/json.cpp $(CORE_SOURCES) -o $@
@@ -213,3 +213,6 @@ $(BUILD)/swegca-proxy-stages-probe: cpp/transport/proxy_main.cpp benchmarks/reca
 
 $(BUILD)/json-stream-tests-scalar: tests/json_stream_tests.cpp cpp/transport/json.cpp cpp/transport/json.hpp cpp/vrs/memory_budget.hpp | $(BUILD)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) -DSWEGCA_JSON_SCALAR_ONLY $(INCLUDES) $< cpp/transport/json.cpp -o $@
+
+$(BUILD)/commit-memory-bench: benchmarks/commit_memory.cpp cpp/transport/agent_event_commit.hpp cpp/transport/json.cpp cpp/transport/json.hpp cpp/vrs/memory_budget.hpp | $(BUILD)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< cpp/transport/json.cpp -o $@

@@ -212,3 +212,43 @@ each. These enumerate ASCII/control/escape positions across vector boundaries,
 valid and invalid UTF-8, and views ending at a PROT_NONE page boundary to detect
 out-of-range loads. Framing 29, wrapper 33 and actual stdio process 2,560 checks
 also pass. Test counts reflect boundary combinations, not product completeness.
+
+## Encode directly into the RPC envelope
+
+AgentEventCommit appends the existing JSON encoder's output directly into its
+owned event buffer. It no longer retains a fully encoded parameter body while
+copying it into another complete envelope. The old envelope helper was removed.
+`append_json` has an explicit discard-on-failure contract and requires a
+nonaliasing source; the commit constructor cannot expose an incomplete request.
+Identity ownership, native byte representation and acknowledgement checks are
+unchanged. No core or verification rule is bypassed.
+
+`benchmarks/commit_memory.cpp` isolates the construction with 1MiB native content
+and records input allocations, final request size, retained and peak PMR bytes.
+It does not measure whole-process RSS, stacks or complete proxy memory.
+`commit-memory-before.jsonl` uses d93ca71; `commit-memory-after.jsonl` uses the new
+encoder path. Both produce the same request byte count for each case:
+
+| Native content | Request bytes | Before peak PMR | After peak PMR |
+| --- | ---: | ---: | ---: |
+| repeated x | 1,048,743 | 6,292,349 | 4,194,934 |
+| repeated newline | 6,291,623 | 27,788,135 | 15,794,548 |
+
+`desktop-recall-direct-envelope.jsonl` retains the uninstrumented sequential
+ASCII fixture (five samples per size):
+
+| Prompt bytes | Prior median ms | Direct envelope median ms | Maximum ms |
+| --- | ---: | ---: | ---: |
+| 128 | 0.011080 | 0.011560 | 0.033410 |
+| 4096 | 0.019230 | 0.020121 | 0.031540 |
+| 65536 | 0.198142 | 0.183462 | 0.247302 |
+| 1048576 | 2.834246 | 2.392023 | 3.485292 |
+
+The small cases show measurement variation; 1MiB still fails 1ms for all samples.
+Neither this reduction nor PMR construction accounting proves aggregate 4GB
+operation, actual desktop installation or the complete VRS goal.
+
+Verification: SSE2 and scalar JSON each 13,274 checks, framing 29, wrapper 33,
+Pump 92 and real stdio subprocess 2,560 checks passed. Added append round trips
+hold source, message and reparsed value concurrently under a separate 8MiB test
+resource; the pre-existing 4MiB output-budget tests remain unchanged.

@@ -26,7 +26,9 @@ public:
         Json target(&memory);target.kind=Json::Kind::string;target.scalar=identity;
         parsed.keys.emplace_back("identity");parsed.values.push_back(std::move(target));
         event_id_+="/event";
-        event_=envelope(event_id_,"swegca/agent/event",encode_json(parsed,memory));
+        event_="{\"jsonrpc\":\"2.0\",\"id\":"+quote_json(event_id_,memory_)+
+            ",\"method\":\"swegca/agent/event\",\"params\":";
+        append_json(event_,parsed);event_+='}';
     }
     AgentEventCommit(const AgentEventCommit&)=delete;
     AgentEventCommit& operator=(const AgentEventCommit&)=delete;
@@ -70,11 +72,6 @@ private:
         if(value.empty()||parsed.ec!=std::errc{}||parsed.ptr!=value.data()+value.size())
             throw std::invalid_argument("invalid original extent");
         return result;
-    }
-    std::pmr::string envelope(std::string_view id,std::string_view method,std::string_view params){
-        auto result="{\"jsonrpc\":\"2.0\",\"id\":"+quote_json(id,memory_)+",\"method\":"+
-            quote_json(method,memory_)+",\"params\":";
-        result.append(params);result+='}';return result;
     }
     std::pmr::memory_resource& memory_;
     std::pmr::string event_id_,event_,reply_;

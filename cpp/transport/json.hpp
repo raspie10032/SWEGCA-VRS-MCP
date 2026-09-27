@@ -21,6 +21,9 @@ struct Json {
 };
 [[nodiscard]] Json parse_json(std::string_view text,std::pmr::memory_resource&,std::size_t max_depth=64);
 [[nodiscard]] std::pmr::string encode_json(const Json&,std::pmr::memory_resource&);
+// Append directly to an exclusively owned destination. The caller must discard
+// the unfinished message on failure; value must not alias the destination.
+void append_json(std::pmr::string& destination,const Json& value);
 // Validate before output and emit quoted runs without a payload-sized copy.
 void write_json_string(std::ostream&,std::string_view);
 void write_json_string_content(std::ostream&,std::string_view);

@@ -162,5 +162,6 @@ void write_json_hex(std::ostream& out,std::span<const std::byte> content){
 }
 Json parse_json(std::string_view text,std::pmr::memory_resource& memory,std::size_t depth){return Parser(text,memory,depth).parse();}
 std::pmr::string encode_json(const Json& value,std::pmr::memory_resource& memory){std::pmr::string out(&memory);encode(out,value);return out;}
+void append_json(std::pmr::string& destination,const Json& value){encode(destination,value);}
 std::pmr::string quote_json(std::string_view text,std::pmr::memory_resource& memory){std::pmr::string out(&memory);quote(out,text);return out;}
 } // namespace swegca::transport

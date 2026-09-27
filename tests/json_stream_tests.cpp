@@ -15,6 +15,14 @@ int main(){
  for(const auto& text:{std::string{},controls,std::string("한글🙂 quote\" slash\\ tail"),std::string(1<<20,'a')}){
   const auto expected=quote_json(text,memory);
   CHECK(parse_json(expected,memory).string()==text);
+  {
+   // This round-trip intentionally holds source, encoded and reparsed values
+   // simultaneously; keep it separate from the output budget checks below.
+   swegca::vrs::MemoryBudget roundtrip(8<<20);
+   auto value=parse_json(expected,roundtrip);std::pmr::string message("{\"native\":",&roundtrip);
+   append_json(message,value);message+='}';
+   CHECK(parse_json(message,roundtrip).at("native").string()==text);
+  }
   const auto used=memory.used();std::ostringstream out;
   write_json_string(out,text);CHECK(std::string_view(out.str())==std::string_view(expected));CHECK(memory.used()==used);
  }
