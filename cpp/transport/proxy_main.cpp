@@ -1,5 +1,6 @@
 #include "transport/app_server_pump.hpp"
 #include "transport/agent_event_commit.hpp"
+#include "transport/replay_context.hpp"
 #include "vrs/memory_budget.hpp"
 #include <chrono>
 #include <climits>
@@ -185,7 +186,7 @@ int main(int argc,char** argv){
                 if(ended[lane])continue;
                 const auto sender=lane==0?RpcSender::client:RpcSender::server;
                 const auto observed=std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
-                const auto state=pump.step(sender,static_cast<std::uint64_t>(observed),[&](const AppServerWire::Delivery& plan){
+                const auto state=pump.step(sender,static_cast<std::uint64_t>(observed),[&](AppServerWire::Delivery& plan){
                     // Wire has now attached the explicitly identified native session.
                     // Restore before recording its non-input envelope, never from input.
                     if(pending_recovery){
@@ -199,6 +200,23 @@ int main(int argc,char** argv){
                     AgentEventCommit commit(found->second,pump.metadata(plan,seed,step),plan.event().native_bytes(),"proxy/event/"+std::to_string(++serial),memory);
                     SWEGCA_INGRESS_STAGE("proxy_rpc_ready");
                     while(commit.stage()!=AgentEventCommit::Stage::complete)commit.accept(stream.exchange(commit.request()));
+                    if(plan.event().kind()==swegca::architecture::kernel::AgentEventKind::input){
+                        const auto acknowledged=parse_json(commit.reply(),memory);
+                        const auto& body=acknowledged.at("result");
+                        const auto& completion=body.at("memory").at("completed");
+                        if(completion.kind!=Json::Kind::boolean||completion.scalar!="true")
+                            throw std::runtime_error("VRS input cognition not completed");
+                        if(body.at("memory").at("original").kind!=Json::Kind::null){
+                            if(serial==UINT64_MAX)throw std::overflow_error("proxy request IDs exhausted");
+                            const auto params="{\"name\":\"vrs_replay\",\"arguments\":{\"receipt\":"+
+                                quote_json(body.at("receipt").string(),memory)+"}}";
+                            auto replay=call(stream,"proxy/context/"+std::to_string(++serial),"tools/call",params,memory);
+                            auto& result=mutable_field(replay,"result");
+                            if(result.find("isError"))throw std::runtime_error("VRS Replay context unavailable");
+                            auto context=replay_context(std::move(mutable_field(result,"structuredContent")),body,memory);
+                            pump.include_context(plan,context,rpc_frame);
+                        }
+                    }
                     return true;
                 },bind_thread);
                 if(state==AppServerPump::State::end){

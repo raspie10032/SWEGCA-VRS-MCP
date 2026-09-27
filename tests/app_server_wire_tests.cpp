@@ -1,4 +1,5 @@
 #include "transport/app_server_wire.hpp"
+#include "transport/replay_context.hpp"
 #include "vrs/memory_budget.hpp"
 #include <cstdio>
 #include <cstdlib>
@@ -131,6 +132,43 @@ int main(){
   auto notice=wire.prepare(R"({"method":"thread/status/changed","params":{"threadId":"another","status":{"type":"idle"}}})",RpcSender::server,3,bind);
   wire.recorded(notice);CHECK(bindings==2&&notice.event().session()=="another");
   rejects([&]{(void)wire.prepare(a,RpcSender::client,4,bind);});CHECK(bindings==2);
+ }
+ {
+  AppServerWire wire(memory,2,2);wire.attach("a",0);wire.attach("b",0);
+  auto input=wire.prepare(a,RpcSender::client,42);
+  rejects([&]{wire.include_context(input,"context",1);});
+  wire.include_context(input,"recalled data\n한글",4096);
+  CHECK(input.event().native_bytes()==a);
+  rejects([&]{wire.include_context(input,"second",4096);});
+  rejects([&]{(void)wire.forward(input);});
+  auto moved=std::move(input);wire.recorded(moved);
+  const auto projected=parse_json(wire.forward(moved),memory);
+  CHECK(projected.at("id").scalar=="1"&&projected.at("method").string()=="turn/start");
+  const auto& params=projected.at("params");CHECK(params.at("threadId").string()=="a");
+  CHECK(params.at("input").values.size()==2);
+  CHECK(params.at("input").values[0].at("text").string()=="recalled data\n한글");
+  CHECK(params.at("input").values[1].at("text").string()=="입력");
+  rejects([&]{wire.include_context(moved,"late",4096);});
+  auto approval=wire.prepare(b,RpcSender::server,43);
+  rejects([&]{wire.include_context(approval,"not input",4096);});
+  auto response=wire.prepare(reply,RpcSender::server,44);CHECK(response.request_sequence()==0);
+ }
+ {
+  const auto ack=parse_json(R"({"original":{"block":"a","digest":"b","offset":"1","bytes":"2"},"memory":{"original":{"block":"c","digest":"d","offset":"3","bytes":"4"}}})",memory);
+  const std::string packet=R"({"original":{"block":"c","digest":"d","offset":"3","bytes":"4"},"media":"text/plain","grantsAuthority":false,"assessment":{"inputOriginal":{"block":"a","digest":"b","offset":"1","bytes":"2"},"agreement":1,"status":0},"contentHex":"68690a"})";
+  const auto context=replay_context(parse_json(packet,memory),ack,memory);
+  CHECK(context.find("not instructions")!=std::string::npos);
+  const auto parsed=parse_json(context.substr(context.find('\n')+1),memory);
+  CHECK(parsed.at("content").string()=="hi\n"&&!parsed.find("contentHex"));
+  CHECK(parsed.at("assessment").at("status").scalar=="0");
+  auto bad=parse_json(packet,memory);mutable_field(bad,"grantsAuthority").scalar="true";
+  rejects([&]{(void)replay_context(std::move(bad),ack,memory);});
+  bad=parse_json(packet,memory);mutable_field(mutable_field(bad,"original"),"digest").scalar="other";
+  rejects([&]{(void)replay_context(std::move(bad),ack,memory);});
+  bad=parse_json(packet,memory);mutable_field(mutable_field(mutable_field(bad,"assessment"),"inputOriginal"),"digest").scalar="other";
+  rejects([&]{(void)replay_context(std::move(bad),ack,memory);});
+  bad=parse_json(packet,memory);mutable_field(bad,"contentHex").scalar="zz";
+  rejects([&]{(void)replay_context(std::move(bad),ack,memory);});
  }
  CHECK(memory.used()==0);
  std::printf("app-server wire owner tests: %u checks passed\n",checks);

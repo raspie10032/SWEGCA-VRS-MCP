@@ -26,7 +26,7 @@ public:
         Delivery(Delivery&& other) noexcept
             :value_(std::move(other.value_)),sender_(other.sender_),sequence_(other.sequence_),observed_(other.observed_),
              owner_(std::move(other.owner_)),recorded_(other.recorded_),socket_(std::exchange(other.socket_,-1)),
-             offset_(other.offset_),newline_(other.newline_),ticket_(other.ticket_){}
+             offset_(other.offset_),newline_(other.newline_),ticket_(other.ticket_),projection_(std::move(other.projection_)){}
         ~Delivery(){
             if(socket_>=0){
                 ::close(socket_);
@@ -59,6 +59,7 @@ public:
         std::size_t offset_=0;
         bool newline_=false;
         std::uint64_t ticket_=0;
+        std::optional<std::pmr::string> projection_;
     };
     AppServerWire(std::pmr::memory_resource& memory,std::size_t sessions,std::size_t requests)
         :memory_(memory),capacity_(sessions),identity_(std::allocate_shared<Identity>(std::pmr::polymorphic_allocator<Identity>(&memory))),
@@ -134,9 +135,33 @@ public:
         else if(delivery.event().fields().find("id"))requests_.track(delivery.sender_,delivery.event(),delivery.sequence_);
         ++found->second;delivery.recorded_=true;
     }
+    // Derived presentation of recorded input plus recorded VRS experience.
+    // Request tracking always retains the byte-exact native input.
+    void include_context(Delivery& delivery,std::string_view context,std::size_t limit){
+        validate(delivery);
+        if(delivery.sender_!=RpcSender::client || delivery.event().kind()!=swegca::architecture::kernel::AgentEventKind::input)
+            throw std::invalid_argument("Replay context requires client input");
+        if(context.empty()||delivery.projection_)throw std::invalid_argument("context already set or empty");
+        auto fields=parse_json(delivery.event().native_bytes(),memory_);
+        const auto field=[](Json& object,std::string_view key)->Json&{
+            for(std::size_t i=0;i<object.keys.size();++i)if(object.keys[i]==key)return object.values[i];
+            throw std::invalid_argument("input field missing");
+        };
+        auto& input=field(field(fields,"params"),"input");
+        if(input.kind!=Json::Kind::array)throw std::invalid_argument("input array required");
+        Json item(&memory_);item.kind=Json::Kind::object;
+        Json type(&memory_);type.kind=Json::Kind::string;type.scalar="text";
+        Json text(&memory_);text.kind=Json::Kind::string;text.scalar=context;
+        item.keys.emplace_back("type");item.values.push_back(std::move(type));
+        item.keys.emplace_back("text");item.values.push_back(std::move(text));
+        input.values.insert(input.values.begin(),std::move(item));
+        auto projected=encode_json(fields,memory_);
+        if(projected.size()>limit)throw std::length_error("Replay context exceeds forwarding frame budget");
+        delivery.projection_.emplace(std::move(projected));
+    }
     [[nodiscard]] std::string_view forward(const Delivery& delivery) const{
         if(delivery.owner_!=identity_||!delivery.recorded_)throw std::invalid_argument("VRS ingestion confirmation required");
-        return delivery.event().native_bytes();
+        return delivery.projection_ ? std::string_view(*delivery.projection_) : delivery.event().native_bytes();
     }
     // Bind one stream socket to this confirmed frame. Owning a duplicated fd
     // prevents descriptor reuse/reconnection from silently resuming a prefix on
@@ -158,7 +183,7 @@ public:
     }
     // One nonblocking send attempt. False means more readiness/drain is needed;
     // successful prefixes remain consumed through EAGAIN/EINTR or peer failure.
-    // Exactly one line delimiter follows the byte-exact original JSON.
+    // Exactly one line delimiter follows the original or derived input JSON.
     [[nodiscard]] bool send_ready(Delivery& delivery) const{
         const auto native=forward(delivery);
         if(delivery.newline_)return true;

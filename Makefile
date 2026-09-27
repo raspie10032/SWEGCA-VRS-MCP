@@ -159,7 +159,7 @@ $(BUILD)/app-server-requests-tests: tests/app_server_requests_tests.cpp cpp/tran
 
 check: $(BUILD)/app-server-requests-tests
 
-$(BUILD)/app-server-wire-tests: tests/app_server_wire_tests.cpp cpp/transport/socket_frames.hpp cpp/transport/app_server_wire.hpp cpp/transport/app_server_requests.hpp cpp/transport/agent_event.hpp cpp/transport/json.cpp cpp/transport/json.hpp $(CORE_HEADERS) $(CORE_SOURCES) | $(BUILD)
+$(BUILD)/app-server-wire-tests: tests/app_server_wire_tests.cpp cpp/transport/replay_context.hpp cpp/transport/socket_frames.hpp cpp/transport/app_server_wire.hpp cpp/transport/app_server_requests.hpp cpp/transport/agent_event.hpp cpp/transport/json.cpp cpp/transport/json.hpp $(CORE_HEADERS) $(CORE_SOURCES) | $(BUILD)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< cpp/transport/json.cpp $(CORE_SOURCES) -o $@
 
 check: $(BUILD)/app-server-wire-tests

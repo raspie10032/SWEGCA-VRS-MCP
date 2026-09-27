@@ -780,6 +780,7 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     desktop_proxy.write_text(json.dumps({'memoryBytes':str(8<<20),'frameBytes':'4096',
         'pendingRequests':'8','sessionCapacity':'2','seed':'7','step':'0','instance':'desktop-fixture',
         'connectionSession':{'session':'transport','mode':'ensure'},'sessions':[]}))
+    captured_inputs=root/'backend-inputs.jsonl'
     backend_code="""import sys,json
 for line in sys.stdin:
     value=json.loads(line)
@@ -788,6 +789,8 @@ for line in sys.stdin:
     if 'id' in value:
         print(json.dumps({'id':value['id'],'result':{}}),flush=True)
 """
+    backend_code=backend_code.replace("    value=json.loads(line)",
+        "    value=json.loads(line)\n    with open("+repr(str(captured_inputs))+",'a') as capture:capture.write(line)")
     desktop_backend=root/'fixture backend'
     desktop_backend.write_text('#!'+sys.executable+'\n'+backend_code);desktop_backend.chmod(0o700)
     wrapper_config=root/'wrapper.json'
@@ -797,6 +800,8 @@ for line in sys.stdin:
     desktop=subprocess.Popen([str(exe.parent/'swegca-codex-wrapper'),'-c','features.code_mode_host=true',
         'app-server','--analytics-default-enabled'],env=dict(os.environ,SWEGCA_DESKTOP_CONFIG=str(wrapper_config)),
         stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,bufsize=0)
+    desktop_input=[{'type':'text','text':'현재 사용자 입력을 그대로 보존\n한글🙂'},
+                   {'type':'localImage','path':'/never/open/current.png'}]
     def desktop_send(value):desktop.stdin.write(json.dumps(value).encode()+b'\n')
     def desktop_read():
         check(bool(select.select([desktop.stdout],[],[],10)[0]))
@@ -808,7 +813,7 @@ for line in sys.stdin:
         desktop_send({'id':902,'method':'thread/start','params':{}})
         check(desktop_read()['method']=='thread/started')
         check(desktop_read()=={'id':902,'result':{}})
-        desktop_send({'id':903,'method':'turn/start','params':{'threadId':'desktop-thread','input':[]}})
+        desktop_send({'id':903,'method':'turn/start','params':{'threadId':'desktop-thread','input':desktop_input}})
         check(desktop_read()=={'id':903,'result':{}})
         desktop.stdin.close();check(desktop.wait(timeout=10)==0)
         check(desktop.stdout.read()==b'' and desktop.stderr.read()==b'')
@@ -827,18 +832,32 @@ for line in sys.stdin:
         # Resume an existing conversation with no thread/started notification.
         desktop_send({'id':905,'method':'thread/resume','params':{'threadId':'desktop-thread'}})
         check(desktop_read()=={'id':905,'result':{}})
-        desktop_send({'id':906,'method':'turn/start','params':{'threadId':'desktop-thread','input':[]}})
+        desktop_send({'id':906,'method':'turn/start','params':{'threadId':'desktop-thread','input':desktop_input}})
         check(desktop_read()=={'id':906,'result':{}})
 
         desktop.stdin.close();check(desktop.wait(timeout=10)==0)
         check(desktop.stdout.read()==b'' and desktop.stderr.read()==b'')
     finally:
         if desktop.poll() is None:desktop.terminate();desktop.wait(timeout=10)
+    received_inputs=[json.loads(line) for line in captured_inputs.read_text().splitlines()]
+    initial_input=next(value for value in received_inputs if value.get('id')==903)
+    resumed_input=next(value for value in received_inputs if value.get('id')==906)
+    check(initial_input['params']['input']==desktop_input)
+    check(len(resumed_input['params']['input'])==len(desktop_input)+1)
+    check(resumed_input['params']['input'][1:]==desktop_input)
+    injected=resumed_input['params']['input'][0]
+    check(injected['type']=='text' and injected['text'].startswith('SWEGCA recalled experience'))
+    memory_packet=json.loads(injected['text'].split('\n',1)[1])
+    check(memory_packet['grantsAuthority'] is False and memory_packet['assessment']['status']==0)
+    check(json.loads(memory_packet['content'])==initial_input)
     c=Client('open',desktop_root,path);c.initialize()
     for session,protocol,count in (('transport','app-server-connection','7'),('desktop-thread','app-server','9')):
         attached=c.call('swegca/agent/attach/resume',{'provider':'codex','instance':'desktop-fixture',
             'session':session,'protocol':protocol})['result']
         check(attached['nextSequence']==count)
+    stored_input=c.call('swegca/agent/original',{'identity':attached['identity'],'sequence':'7'})['result']
+    check(json.loads(stored_input['native'])['params']['input']==desktop_input)
+    check(stored_input['original']==memory_packet['assessment']['inputOriginal'])
     check(c.call('swegca/work',{'seed':'7','step':'0'})['result']['merged']=='0');c.close()
     # Interrupt only this test's launcher: all three owned children must exit.
     interrupt_root=root/'desktop-interrupt';interrupt_root.mkdir()
