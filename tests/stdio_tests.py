@@ -827,10 +827,49 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
         lambda v:v.update(scope='byte content unchanged'))
     check(separate['refinement']['status']==0 and separate['refinement']['revision']=='2')
     check(separate['refinement']['connection'] not in scoped_connections)
+    # Execute the actual C++ producer on real files, then preserve its complete
+    # result through native ingress. No fabricated support/refute labels here.
+    measured_left=root/'measured-left';measured_right=root/'measured-right'
+    measured_left.write_bytes(b'actual measured bytes\x00\xff')
+    measured_right.write_bytes(measured_left.read_bytes())
+    measured_seq,measured_input=producer_frame('client',{'id':producer_seq+1,'method':'turn/start',
+        'params':{'threadId':'producer-thread','input':[{'type':'text','text':'Check the file contents and preserve permissions.'}]}})
+    measured_turn='measured-turn-'+str(measured_seq)
+    producer_frame('server',{'id':measured_seq+1,'result':{'turn':{'id':measured_turn}}},measured_seq)
+    observed_originals=[];measured_connection=None
+    for index,outcome in enumerate(('support','refute','insufficient')):
+        if index==1:measured_right.write_bytes(b'different measured bytes')
+        if index==2:measured_right.unlink()
+        requests=[{'jsonrpc':'2.0','id':1,'method':'initialize','params':{'protocolVersion':'2025-06-18',
+            'capabilities':{},'clientInfo':{'name':'native-observation-test','version':'1'}}},
+            {'jsonrpc':'2.0','method':'notifications/initialized'},
+            {'jsonrpc':'2.0','id':2,'method':'tools/call','params':{'name':'observe_file_content_equality',
+                'arguments':{'inputOriginal':measured_input['original'],'left':str(measured_left),'right':str(measured_right)}}}]
+        measured=subprocess.run([str(exe.parent/'swegca-content-observer'),'16777216','625000000','1048576'],
+            input=b''.join(json.dumps(value).encode()+b'\n' for value in requests),capture_output=True,timeout=10,check=True)
+        check(measured.stderr==b'')
+        actual_result=json.loads(measured.stdout.splitlines()[-1])['result']
+        check(actual_result['structuredContent']['swegcaObservation']['outcome']==outcome)
+        check('not a task-completion judgment' in actual_result['content'][0]['text'])
+        frame={'method':'item/completed','params':{'threadId':'producer-thread','turnId':measured_turn,
+            'item':{'type':'mcpToolCall','id':'measured-'+str(index),'server':'swegca-content-observer',
+                'tool':'observe_file_content_equality','status':'completed','result':actual_result}}}
+        n,recorded=producer_frame('server',frame)
+        check(recorded['refinement']['connection']!=measured_input['refinement']['connection'])
+        if measured_connection is None:measured_connection=recorded['refinement']['connection']
+        check(recorded['refinement']['connection']==measured_connection)
+        # One producer/context cannot manufacture independent evidence by
+        # repeating a measurement or renaming a tool item.
+        check(recorded['refinement']['status']==0)
+        observed_originals.append((n,frame,recorded['original']))
     next_sequence=str(producer_seq);c.close()
     c=Client('open',producers_root,path);c.initialize()
     check(c.call('swegca/agent/attach/resume',producer_binding)['result']['nextSequence']==next_sequence)
     check(c.call('swegca/select',{'identity':producer_owner})['result']=={})
+    for n,frame,original in observed_originals:
+        restored=c.call('swegca/agent/original',{'identity':producer_owner,'sequence':str(n)})['result']
+        check(restored['original']==original and json.loads(restored['native'])==frame)
+        check(restored['context']==measured_input['original']['digest'])
     # Resume must retain both scoped histories and all native sequence numbers.
     # An exact parent Recall still contains only its input originals.
     received,result=producer_trial(compound,8,'support',lambda v:v.update(scope='byte content unchanged'))

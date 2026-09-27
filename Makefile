@@ -12,6 +12,9 @@ VRS_SOURCES := cpp/vrs/experience_page.cpp cpp/vrs/runtime.cpp cpp/vrs/main_sour
 .PHONY: check-agent-event all check check-stdio check-sha256 check-resource-profile check-oom-recovery bench clean
 all: $(BUILD)/core-tests
 
+$(BUILD)/swegca-content-observer: cpp/transport/content_observer_main.cpp cpp/transport/json.cpp cpp/transport/json.hpp cpp/transport/stdio_frames.hpp cpp/vrs/file_observation.cpp cpp/vrs/file_observation.hpp cpp/vrs/memory_budget.hpp cpp/vrs/transfer_budget.hpp $(CORE_HEADERS) cpp/swegca_architecture/sha256.cpp | $(BUILD)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< cpp/transport/json.cpp cpp/vrs/file_observation.cpp cpp/swegca_architecture/sha256.cpp -o $@
+
 $(BUILD)/file-observation-tests: tests/file_observation_tests.cpp cpp/vrs/file_observation.cpp cpp/vrs/file_observation.hpp cpp/vrs/transfer_budget.hpp cpp/vrs/memory_budget.hpp $(CORE_HEADERS) cpp/swegca_architecture/sha256.cpp | $(BUILD)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< cpp/vrs/file_observation.cpp cpp/swegca_architecture/sha256.cpp -Wl,--wrap=pread -o $@
 
@@ -104,15 +107,16 @@ $(BUILD)/parallel-recovery-tests: tests/parallel_recovery_tests.cpp $(VRS_SOURCE
 check-oom-recovery: $(BUILD)/swegca-vrs-mcp
 	python3 tests/check_oom_recovery.py $(BUILD)/swegca-vrs-mcp
 
-check-resource-profile: $(BUILD)/resource-profile-probe $(BUILD)/swegca-vrs-mcp $(BUILD)/swegca-codex-wrapper $(BUILD)/swegca-desktop-host $(BUILD)/app-server-pump-tests $(BUILD)/swegca-app-server-proxy
+check-resource-profile: $(BUILD)/swegca-content-observer $(BUILD)/resource-profile-probe $(BUILD)/swegca-vrs-mcp $(BUILD)/swegca-codex-wrapper $(BUILD)/swegca-desktop-host $(BUILD)/app-server-pump-tests $(BUILD)/swegca-app-server-proxy
 	python3 tests/check_resource_profile.py $(BUILD)/resource-profile-probe
 	python3 tests/stdio_tests.py $(BUILD)/swegca-vrs-mcp --limited
 
-check-stdio: $(BUILD)/json-stream-tests-scalar $(BUILD)/stdio-frame-tests $(BUILD)/json-stream-tests $(BUILD)/swegca-codex-wrapper $(BUILD)/swegca-desktop-host $(BUILD)/swegca-vrs-mcp $(BUILD)/app-server-pump-tests $(BUILD)/swegca-app-server-proxy
+check-stdio: $(BUILD)/swegca-content-observer $(BUILD)/json-stream-tests-scalar $(BUILD)/stdio-frame-tests $(BUILD)/json-stream-tests $(BUILD)/swegca-codex-wrapper $(BUILD)/swegca-desktop-host $(BUILD)/swegca-vrs-mcp $(BUILD)/app-server-pump-tests $(BUILD)/swegca-app-server-proxy
 	./$(BUILD)/stdio-frame-tests
 	./$(BUILD)/json-stream-tests
 	./$(BUILD)/json-stream-tests-scalar
 	python3 tests/codex_wrapper_tests.py $(BUILD)/swegca-codex-wrapper
+	python3 tests/content_observer_tests.py $(BUILD)/swegca-content-observer
 	python3 tests/stdio_tests.py $(BUILD)/swegca-vrs-mcp
 
 check: $(BUILD)/parallel-recovery-tests $(BUILD)/transfer-budget-tests $(BUILD)/parallel-main-tests $(BUILD)/runtime-tests $(BUILD)/main-sources-tests $(BUILD)/core-tests $(BUILD)/vrs-tests $(BUILD)/experience-block-tests $(BUILD)/memory-budget-tests $(BUILD)/connection-tests $(BUILD)/session-tests $(BUILD)/persistent-connection-tests $(BUILD)/catalog-tests $(BUILD)/session-runtime-tests $(BUILD)/main-graph-tests $(BUILD)/persistent-main-tests
