@@ -656,3 +656,9 @@ Runtime 298개, 비동기 117개, 실제 호스트 3,255개 검사 통과. mkdir
 페이지 1,649개, Runtime 301개 검사 통과. Runtime 소멸 뒤 남은 Recall 스냅샷의
 파괴·페이지 삭제·메모리 반환도 확인했다. 만료 receipt의 읽기/판정 권한은 늘리지
 않으며 기존 MemoryBudget 수명 계약을 유지한다. 전체 목표는 계속 미완료다.
+
+native JSON quote 비용을 분리 측정했다. UTF-8 검증과 escape 길이 계산의 순회
+결합은 약 1MiB Unicode 입력에서 중앙값 1.547→1.852ms로 느려져 미채택했다.
+json.cpp는 수정 전 코드로 복원했고 JSON 스트림 13,291개 검사를 통과했다.
+JSON_QUOTE_SCAN_EXPERIMENT.md 및 재현 benchmark/원자료를 보존했다. 이는 전체
+입력 지연 개선이 아니며, 다음 대상은 native 포장/해제/재파싱의 중복 전송 구조다.
