@@ -16,6 +16,7 @@ public:
     [[nodiscard]] bool has_input_key() const noexcept { return input_key_; }
 private:
     friend class EvidenceReader;
+    friend class ExperiencePage;
     friend ExperienceEvidence record_evidence(ExperienceBlock&,
         const architecture::kernel::EvidenceRules&, const OriginalExperienceView&,
         const architecture::kernel::EvidenceObservation&, std::optional<architecture::DigestBytes>);

@@ -1,0 +1,64 @@
+#include "vrs/experience_page.hpp"
+#include "swegca_architecture/evidence_rules.hpp"
+#include <cstdio>
+#include <cstdlib>
+#include <fcntl.h>
+#include <unistd.h>
+using namespace swegca::vrs;
+using namespace swegca::architecture;
+using namespace swegca::architecture::kernel;
+static unsigned checks=0;
+#define CHECK(x) do{++checks;if(!(x)){std::fprintf(stderr,"FAIL %d: %s\n",__LINE__,#x);std::abort();}}while(false)
+template<class E,class F>void rejects(F f){bool caught=false;try{f();}catch(const E&){caught=true;}CHECK(caught);}
+DigestBytes id(unsigned n){DigestBytes value{};value[0]=std::byte(n);return value;}
+int main(){
+ auto path=(std::filesystem::temp_directory_path()/"swegca-pages-XXXXXX").string();CHECK(::mkdtemp(path.data()));
+ const auto root=std::filesystem::path(path);
+ MemoryBudget memory(4<<20);EvidencePolicy policy;policy.axis_count=2;const auto rules=make_evidence_rules(policy);
+ StorageBudget storage(2<<20);
+ {
+  auto original=ExperienceBlock::create(root/"original",id(1),1<<20,&storage);
+  std::pmr::vector<ExperienceEvidence> values(&memory);
+  for(unsigned n=0;n<256;++n){
+   EvidenceObservation value;value.hypothesis=id(2);value.source=id(3);value.context=id(4);value.producer=id(5);
+   value.observed_at=n;value.expires_at=n+100;value.has_expiry=n%2;value.axis=n%2;
+   value.producer_confidence=n/255.;value.outcome=static_cast<EvidenceOutcome>(n%3);
+   values.push_back(record_evidence(original,rules,{n,n,"session","test","text/plain",{}},value,n%2?std::optional(id(6)):std::nullopt));
+  }
+  rejects<std::invalid_argument>([&]{(void)ExperiencePage::create(root/"empty",id(7),{},memory);});
+  CHECK(!std::filesystem::exists(root/"empty"));
+  auto page=ExperiencePage::create(root/"page",id(8),values,memory,&storage);CHECK(page.size()==256);
+  MemoryBudget read_memory(80000);
+  for(unsigned n=0;n<256;++n){
+   const auto restored=page.read(n,rules,read_memory);const auto& expected=values[n];
+   CHECK(restored.original()==expected.original()&&restored.cue()==expected.cue()&&restored.has_input_key()==expected.has_input_key());
+   const auto& a=restored.value();const auto& b=expected.value();
+   CHECK(a.hypothesis==b.hypothesis&&a.address==b.address&&a.source==b.source&&a.context==b.context&&a.producer==b.producer);
+   CHECK(a.observed_at==b.observed_at&&a.expires_at==b.expires_at&&a.has_expiry==b.has_expiry);
+   CHECK(a.axis==b.axis&&a.outcome==b.outcome&&a.producer_confidence==b.producer_confidence);
+   CHECK(read_memory.used()==0);
+  }
+  {
+   MemoryBudget page_memory(200000);auto loaded=page.load(rules,page_memory);
+   CHECK(loaded.size()==values.size());
+   for(unsigned n=0;n<256;++n)CHECK(loaded[n].original()==values[n].original()&&loaded[n].cue()==values[n].cue());
+  }
+  rejects<std::out_of_range>([&]{(void)page.read(256,rules,read_memory);});
+  MemoryBudget tiny(1);rejects<std::bad_alloc>([&]{(void)page.read(0,rules,tiny);});CHECK(tiny.used()==0);
+  auto changed=policy;changed.axis_count=1;const auto narrow=make_evidence_rules(changed);
+  rejects<std::runtime_error>([&]{(void)page.read(1,narrow,read_memory);});
+  // Corrupt another entry: selecting entry zero must still authenticate the full page.
+  const auto size=std::filesystem::file_size(root/"page");const auto fd=::open((root/"page").c_str(),O_RDWR);
+  CHECK(fd>=0);char byte=0;CHECK(::pread(fd,&byte,1,size-64)==1);const char altered=byte^1;
+  CHECK(::pwrite(fd,&altered,1,size-64)==1);
+  rejects<std::runtime_error>([&]{(void)page.read(0,rules,read_memory);});CHECK(read_memory.used()==0);
+  MemoryBudget page_memory(200000);
+  rejects<std::runtime_error>([&]{(void)page.load(rules,page_memory);});CHECK(page_memory.used()==0);
+  CHECK(::pwrite(fd,&byte,1,size-64)==1);::close(fd);
+  auto moved=std::move(page);CHECK(moved.read(255,rules,read_memory).original()==values.back().original());
+  rejects<std::exception>([&]{(void)page.read(0,rules,read_memory);});
+  CHECK(decode_evidence(rules,original.read(values[0].original(),4096,memory)).original()==values[0].original());
+ }
+ CHECK(memory.used()==0);std::filesystem::remove_all(root);
+ std::printf("experience page tests: %u checks passed\n",checks);
+}
