@@ -27,11 +27,11 @@ architecture::DigestBytes digest(std::span<const std::byte> bytes,std::size_t of
 }
 }
 ExperiencePage::ExperiencePage(ExperiencePage&& other) noexcept
-    :block_(std::move(other.block_)),location_(other.location_),count_(other.count_),path_(std::move(other.path_)){}
+    :block_(std::move(other.block_)),location_(other.location_),count_(other.count_),path_(std::move(other.path_)),charge_(std::move(other.charge_)){}
 ExperiencePage& ExperiencePage::operator=(ExperiencePage&& other) noexcept {
     if(this!=&other){
         discard();block_=std::move(other.block_);location_=other.location_;
-        count_=other.count_;path_=std::move(other.path_);
+        count_=other.count_;path_=std::move(other.path_);charge_=std::move(other.charge_);
     }
     return *this;
 }
@@ -47,7 +47,7 @@ void ExperiencePage::discard() noexcept {
     // failed unlink remains conservatively charged for cold reconciliation.
     if(::unlink(path_.c_str())<0)return;
     ::close(block_.fd_);block_.fd_=-1;
-    if(block_.storage_)block_.storage_->reclaim_removed(static_cast<std::uint64_t>(owned.st_size));
+    if(charge_)StorageBudget::reclaim_removed(charge_,static_cast<std::uint64_t>(owned.st_size));
 }
 ExperiencePage ExperiencePage::create(const std::filesystem::path& path,
     const architecture::DigestBytes& identity,std::span<const ExperienceEvidence> values,
@@ -71,7 +71,7 @@ ExperiencePage ExperiencePage::create(const std::filesystem::path& path,
     auto block=ExperienceBlock::create(path,identity,ExperienceBlock::header_bytes+
         ExperienceBlock::record_overhead+session.size()+source.size()+media.size()+bytes.size(),storage);
     const auto location=block.append({0,0,session,source,media,bytes});
-    return ExperiencePage(std::move(block),location,values.size(),std::move(owned_path));
+    return ExperiencePage(std::move(block),location,values.size(),std::move(owned_path),storage);
 }
 ExperienceEvidence ExperiencePage::read(std::size_t index,
     const architecture::kernel::EvidenceRules& rules,MemoryBudget& memory) const {

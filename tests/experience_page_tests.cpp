@@ -107,6 +107,20 @@ int main(){
    CHECK(!sequence.page_out(127,root/"unused",id(43),rules,&storage));
   }
   CHECK(!std::filesystem::exists(root/"segment"));
+  {
+   alignas(StorageBudget) std::byte slot[sizeof(StorageBudget)];
+   auto* budget=std::construct_at(reinterpret_cast<StorageBudget*>(slot),1<<20);
+   std::optional<ExperiencePage> page;
+   page.emplace(ExperiencePage::create(root/"late-release",id(44),values,memory,budget));
+   // A retained snapshot can release its page after its original Runtime dies.
+   // Reuse the exact budget address to detect charging an unrelated new owner.
+   std::destroy_at(budget);
+   budget=std::construct_at(reinterpret_cast<StorageBudget*>(slot),1<<20,100000);
+   page.reset();
+   CHECK(budget->used()==100000);
+   CHECK(!std::filesystem::exists(root/"late-release"));
+   std::destroy_at(budget);
+  }
   CHECK(!metadata_pressure(9,10,false)&&!metadata_pressure(10,10,false));
   CHECK(metadata_pressure(11,10,false)&&!metadata_pressure(11,10,true));
   CHECK(!metadata_page_beneficial(false,10,10)&&metadata_page_beneficial(false,11,10));

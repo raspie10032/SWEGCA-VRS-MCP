@@ -31,11 +31,13 @@ private:
         const architecture::kernel::EvidenceRules&,const StoredExperience&) const;
     void discard() noexcept;
     ExperiencePage(ExperienceBlock block,ExperienceLocation location,std::size_t count,
-        std::filesystem::path path)
-        :block_(std::move(block)),location_(location),count_(count),path_(std::move(path)){}
+        std::filesystem::path path,StorageBudget* storage)
+        :block_(std::move(block)),location_(location),count_(count),path_(std::move(path)),
+         charge_(storage?storage->used_:nullptr){}
     ExperienceBlock block_;
     ExperienceLocation location_;
     std::size_t count_;
     std::filesystem::path path_;
+    std::shared_ptr<std::atomic<std::uint64_t>> charge_;
 };
 } // namespace swegca::vrs

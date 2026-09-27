@@ -529,5 +529,16 @@ int main(){
   CHECK(host.replay(host.input("text/plain",content),15).location()==expected);
   CHECK(fs::is_empty(path/"metadata-pages"));
  }
+ {
+  const auto path=root/"pressure";std::optional<InputRecall> retained;
+  {
+   auto host=Runtime::open(path,config,memory);host.resume_session(id(241));
+   CHECK(host.page_out_main(input_cue("text/plain",content),15));
+   retained.emplace(host.input("text/plain",content));
+  }
+  CHECK(!fs::is_empty(path/"metadata-pages"));
+  // Expired receipts are never used for a read, but their destruction is safe.
+  retained.reset();CHECK(fs::is_empty(path/"metadata-pages"));
+ }
  CHECK(memory.used()==0);fs::remove_all(root);std::printf("runtime lifecycle tests: %u checks passed\n",checks);
 }
