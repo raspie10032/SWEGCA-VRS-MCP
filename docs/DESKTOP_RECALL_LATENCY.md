@@ -473,3 +473,45 @@ vary). Core before/after block means are in core-{before,after}-bulk-sha.txt;
 judgment stayed in ns, e.g. four-axis judgment 46.2303→43.9098ns and connection
 verification 52.0999→49.8911ns. These timings demonstrate retained scale, not a
 change to those unchanged judgment functions or a universal latency guarantee.
+
+## Native observation integration: current ingress measurement
+
+Source: 723287d (production turn cache from 747a4de). Fresh diagnostic binaries,
+CPU 6/7, make -j2 completed before measuring. The same existing desktop wrapper,
+relay, proxy and VRS host chain ran with the synthetic backend and no model or
+account calls. Boundary remains stdin write start to actual core Recall entry.
+Main is empty, one temporary session accumulates all requests/responses, and
+text repeats within each size batch. Resource fixture remains 128MiB VRS and
+64MiB proxy, not a large-Main/4GB capacity acceptance run. The current desktop GUI
+was not restarted. The extra stage-marker run is separate from the 25-sample
+run below; both retain the Recall timestamp probe.
+
+| Prompt bytes | Median ms | Maximum ms | At least 1ms / 25 |
+| --- | ---: | ---: | ---: |
+| 128 | 0.028630 | 0.117021 | 0 |
+| 4096 | 0.037221 | 0.475825 | 0 |
+| 65536 | 0.165482 | 0.506085 | 0 |
+| 1048576 | 2.372864 | 4.360814 | 25 |
+
+Raw files: `benchmarks/results/desktop-native-observations-recall.jsonl` and
+`benchmarks/results/desktop-native-observations-stages.jsonl`. Commands:
+
+```sh
+taskset -c 6,7 python3 benchmarks/desktop_recall_latency.py build 25
+taskset -c 6,7 python3 benchmarks/desktop_recall_latency.py build 15 --stages
+```
+
+The separate stage run had 1MiB total median 2.550246ms and all 15 samples failed.
+Median interval durations were 801.458us from write start to proxy frame,
+178.871us proxy adaptation, 85.661us RPC preparation, 725.267us from RPC ready to
+host frame, 123.271us host RPC parsing, 26.010us native adaptation, 3.631us cue
+preparation and 426.414us from cue ready to Recall. These intervals include
+scheduler/transport/allocation effects where applicable; they are not isolated
+syscall or SHA timings. Their medians must not be summed as the total median.
+The stage run also had one 64KiB sample above 1ms (maximum 2.815529ms), so the
+small-payload pass in the other run is not a universal latency guarantee.
+
+The 1MiB target remains unmet. Differences from the earlier 1.551823ms median
+cannot be attributed to a particular code change from these sequential shared-
+machine measurements. The next profiling target is the actual transfer/frame
+path; moving the timing boundary or omitting original bytes is not a fix.
