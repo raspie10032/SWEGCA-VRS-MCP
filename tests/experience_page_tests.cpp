@@ -249,6 +249,25 @@ int main(){
    CHECK(read_calls.load()>prior_reads&&memory.used()==cold);
   }
   {
+   const auto baseline=memory.used();
+   std::optional<ExperienceSequence> sequence;sequence.emplace(memory);
+   for(const auto& value:values){sequence->prepare_append();sequence->commit_append(value);}
+   CHECK(sequence->page_out(127,root/"cold-pin",id(89),rules,&storage));
+   const auto cold=memory.used();
+   const auto held_bytes=memory.limit()-cold;auto* held=memory.allocate(held_bytes);
+   rejects<std::bad_alloc>([&]{(void)sequence->pin(127);});
+   memory.deallocate(held,held_bytes);CHECK(memory.used()==cold);
+   auto pin=sequence->pin(127);
+   CHECK(pin->original()==values[127].original());
+   CHECK(memory.used()-cold<sizeof(ExperienceEvidence)+256);
+   CHECK(!sequence->page_out(127,root/"unused-pin",id(90),rules,&storage));
+   sequence.reset();
+   CHECK(!std::filesystem::exists(root/"cold-pin"));
+   CHECK(pin->original()==values[127].original()&&pin->value().observed_at==127);
+   CHECK(memory.used()-baseline<sizeof(ExperienceEvidence)+256);
+   pin.reset();CHECK(memory.used()==baseline);
+  }
+  {
    // The page reduction must match exhaustive core selection even when append
    // order is not chronological, addresses repeat, or a range cuts a page.
    for(unsigned mode=0;mode<2;++mode){

@@ -474,6 +474,33 @@ int main(){
   host.end_session(id(23));CHECK(!host.has_session());
  }
  {
+  const auto path=root/"sparse-main-page";fs::create_directory(path);
+  auto host=Runtime::create(path,config,memory);host.start_session(id(234),"sparse-source");
+  host.define_connection(id(236));ExperienceLocation selected;
+  for(unsigned n=0;n<31;++n){
+   const auto other="other-sparse-cue-"+std::to_string(n);
+   const auto payload=n==15?content:std::as_bytes(std::span(other));
+   EvidenceObservation value;value.hypothesis=id(236);value.source=id(n+20);
+   value.context=id(n+70);value.producer=id(n+120);value.observed_at=n;value.outcome=EvidenceOutcome::support;
+   const auto original=host.observe(id(236),{n,n,"sparse-source","experiment","text/plain",payload},value,7,n).original;
+   if(n==15)selected=original;
+  }
+  host.end_session();CHECK(host.work(7,31)==1);host.start_session(id(235),"sparse-reader");
+  CHECK(host.page_out_main(id(236),15));const auto cold=memory.used();
+  {
+   auto recalled=host.input("text/plain",content);
+   CHECK(!recalled.temporary()&&recalled.matches().size()==1);
+   CHECK(recalled.matches()[0].original==selected);
+   CHECK(memory.used()-cold<16*sizeof(ExperienceEvidence));
+   const auto receipt_bytes=memory.used();
+   CHECK(host.select_replay(recalled)==0);
+   CHECK(host.replay(recalled,0).location()==selected);
+   CHECK(memory.used()==receipt_bytes);
+  }
+  CHECK(memory.used()==cold);
+  CHECK(!host.page_out_main(id(236),15));
+ }
+ {
   const auto path=root/"main-pages";fs::create_directory(path);
   const auto cue=input_cue("text/plain",content);
   ExperienceLocation selected;std::uint64_t stored=0;

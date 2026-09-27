@@ -1073,3 +1073,19 @@ Runtime 1,883개, 새 MCP 바이너리 stdio subprocess 3,772개 검사 통과. 
 수정하지 않았다. CPU 6,7/max2 빌드 조건을 유지했다. 원경험 full Replay 본문은
 여전히 전체 읽기이며 cold 주소의 각 검증 단계는 페이지를 다시 인증할 수 있다.
 소수 후보용 pin_experience의 상주 pin과 전체 규모/지연·실제 설치 앱 검증은 남는다.
+
+
+소수 후보용 pin_experience도 cold 페이지를 상주시키지 않도록 수정했다. hot 값은
+기존 무할당 alias로 세그먼트를 공유하며, cold 값은 봉인 페이지를 검증한 선택값
+하나와 shared ownership 제어 자료만 동일 VRS 메모리 예산에 보관한다. 원래
+sequence와 파생 metadata 페이지가 해제된 뒤에도 선택값·원경험 주소는 유지되고,
+마지막 후보 해제 시 예산이 반환된다. 원경험 파일이나 판정 이력은 삭제하지 않는다.
+개별 pin 방식/구간 receipt 방식의 선택은 기존 SWEGCA 코어 규칙을 유지한다.
+
+31개 경험 중 하나의 원문 키만 일치하는 Main 경로에서 cold 후보 Recall/선택/
+Replay와 해제 후 메모리 복귀를 검증했다. cold pin의 예산 소진 후 재시도, 값
+수명과 예산 반환, 기존 hot pin의 무할당 동작 및 셔플 digest 회귀를 확인했다.
+experience-page 6,074개, Runtime 1,893개, connection 15,836개, 새 MCP subprocess
+3,771개 검사 통과. CPU 6,7/max2 빌드를 유지했다. 이 변경은 후보 보관의 페이지
+증폭을 제거한 것으로, 후보 수/집계/인덱스 자체의 대규모 선형 비용이나 전체
+프로세스 4GB·입력→Recall 1ms·설치 앱 검증 완료를 뜻하지 않는다.

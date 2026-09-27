@@ -293,12 +293,17 @@ public:
     ExperienceSequence(const ExperienceSequence&)=delete;
     ExperienceSequence& operator=(const ExperienceSequence&)=delete;
     [[nodiscard]] std::size_t size() const noexcept{return size_;}
-    // Aliasing ownership pins only the containing segment; no new control
-    // block, address copy, or complete sequence directory is allocated.
+    // Hot values alias their segment without allocating. Cold values retain
+    // only the authenticated selection, not a restored resident page. Both
+    // kinds survive sequence destruction under the same caller-owned budget.
     [[nodiscard]] std::shared_ptr<const ExperienceEvidence> pin(std::size_t index) const {
         if(index>=size_)throw std::out_of_range("experience pin index");
-        const auto chunk=chunk_index(index);
-        return std::shared_ptr<const ExperienceEvidence>(chunks_[chunk], &(*this)[index]);
+        const auto& chunk=chunks_[chunk_index(index)];
+        const auto offset=chunk_offset(index);
+        if(const auto* data=chunk->data.load(std::memory_order_acquire))
+            return std::shared_ptr<const ExperienceEvidence>(chunk, &data[offset]);
+        return std::allocate_shared<ExperienceEvidence>(std::pmr::polymorphic_allocator<ExperienceEvidence>(&memory_),
+            chunk->read(offset));
     }
     [[nodiscard]] Snapshot snapshot(MemoryBudget& directory_memory) const{return Snapshot(*this,directory_memory,0,size_);}
     [[nodiscard]] Snapshot snapshot(MemoryBudget& memory,std::size_t begin,std::size_t end) const {return Snapshot(*this,memory,begin,end);}
@@ -313,7 +318,8 @@ public:
         return chunks_[chunk_index(index)]->resident()[chunk_offset(index)];
     }
     // Serialized owner operation, outside input and merge preparation. Borrowed
-    // views must not be used concurrently. Explicit pins/snapshots prevent eviction.
+    // views must not be used concurrently. Resident pins/snapshots prevent
+    // eviction; independently copied cold selections need no resident segment.
     [[nodiscard]] bool page_candidate(std::size_t& index) const noexcept {
         if(index>=size_)return false;
         const auto& chunk=chunks_[chunk_index(index)];
