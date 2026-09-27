@@ -481,14 +481,20 @@ std::optional<std::size_t> ExperienceRouter::select_replay(const InputRecall& re
     if(recalled.issuer_!=issuer_) throw std::invalid_argument("Recall belongs to a different input route");
     std::optional<std::size_t> selected;
     ReplayCandidate best;
-    for(std::size_t index=0;index<recalled.matches().size();++index){
-        const auto match=recalled.matches()[index];
-        const ReplayCandidate candidate{match.recalled.recalled_head.strength,match.observed_at,
-            match.recalled.recalled_head.identity,match.original};
-        switch(prefer_replay(selected ? &best : nullptr,candidate)){
-        case ReplayPreference::invalid: throw std::logic_error("invalid Recall candidate metadata");
-        case ReplayPreference::keep: break;
-        case ReplayPreference::replace: best=candidate;selected=index;break;
+    // Receipt contexts already partition candidate order. Visit each pinned
+    // value once, without repeating a context search or constructing InputMatch.
+    for(const auto& context:recalled.contexts_){
+        for(std::size_t index=context.begin;index<context.end;++index){
+            const auto relative=index-context.begin;
+            const auto& experience=context.sequence ? (*context.sequence)[relative] :
+                *recalled.addresses_.at(context.address_begin+relative).experience;
+            const ReplayCandidate candidate{context.recalled.recalled_head.strength,
+                experience.value().observed_at,context.recalled.recalled_head.identity,experience.original()};
+            switch(prefer_replay(selected ? &best : nullptr,candidate)){
+            case ReplayPreference::invalid: throw std::logic_error("invalid Recall candidate metadata");
+            case ReplayPreference::keep: break;
+            case ReplayPreference::replace: best=candidate;selected=index;break;
+            }
         }
     }
     return selected;

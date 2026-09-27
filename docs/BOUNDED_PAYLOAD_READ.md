@@ -79,3 +79,18 @@ one complete original; partial reads still hash the entire record per request.
 Verification: JSON stream 25 checks, including zero/one-byte and 2048/2049/8193-
 byte hex boundaries; actual subprocess suite 2,560 checks, including the 2MiB
 Replay/Re-evidence case and text/structured result equality.
+
+## Candidate selection visits each receipt group once
+
+Replay selection now walks the receipt's pinned groups directly. It no longer
+binary-searches the group directory and constructs an InputMatch for every
+candidate. Every candidate still passes the existing SWEGCA prefer_replay
+function in the same order. Strength, recency, canonical address tie breaking,
+source bounds checks and foreign/moved receipt rejection remain unchanged.
+
+This removes repeated group lookup from candidate selection; it does not add
+an alternate judge, skip candidates, or read original payloads. It also does
+not change the full-record checksum requirement or the full Replay buffer.
+A mixed receipt test covers individual pins and a longer range in different
+connections, verifies the selected global index, preserves an older receipt's
+choice after appends, and checks that selection performs no I/O or allocation.

@@ -441,6 +441,16 @@ int main() {
             (void)record(233,90,EvidenceOutcome::insufficient);
             auto tied=route.input("application/octet-stream",std::as_bytes(std::span(payload)));
             CHECK(tied.matches()[*route.select_replay(tied)].original==expected);
+            // Mix individual address pins with a longer range in another
+            // connection. Selection must retain global receipt indices.
+            const auto old_expected=expected;
+            for(unsigned step=100;step<140;++step)expected=record(233,step,EvidenceOutcome::insufficient);
+            auto mixed=route.input("application/octet-stream",std::as_bytes(std::span(payload)));
+            CHECK(mixed.matches().size()==44);
+            const auto selection_reads=reads,selection_writes=writes,selection_memory=memory.used();
+            CHECK(mixed.matches()[*route.select_replay(mixed)].original==expected);
+            CHECK(tied.matches()[*route.select_replay(tied)].original==old_expected);
+            CHECK(reads==selection_reads&&writes==selection_writes&&memory.used()==selection_memory);
         }
         {
             auto store=SessionStore::open(root,id(230),memory);
