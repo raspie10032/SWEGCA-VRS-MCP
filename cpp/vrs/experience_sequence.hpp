@@ -75,6 +75,10 @@ class ExperienceSequence final {
             data.store(value,std::memory_order_release);
             return value;
         }
+        [[nodiscard]] ExperienceEvidence read(std::size_t offset) const {
+            if(const auto* value=data.load(std::memory_order_acquire))return value[offset];
+            return backing->page.read(offset,backing->rules,memory);
+        }
         MemoryBudget& memory;
         std::size_t capacity,used=0;
         mutable std::atomic<ExperienceEvidence*> data;
@@ -235,6 +239,12 @@ public:
             index+=begin_;
             return chunks_[chunk_index(index)-first_chunk_]->resident()[chunk_offset(index)];
         }
+        // A selected value does not require promoting its entire sealed page.
+        [[nodiscard]] ExperienceEvidence read(std::size_t index) const {
+            if(index>=count_)throw std::out_of_range("experience snapshot index");
+            index+=begin_;
+            return chunks_[chunk_index(index)-first_chunk_]->read(chunk_offset(index));
+        }
     private:
         friend class ExperienceSequence;
         Snapshot(const ExperienceSequence& source,MemoryBudget& directory_memory,std::size_t begin,std::size_t end)
@@ -293,6 +303,10 @@ public:
     [[nodiscard]] Snapshot snapshot(MemoryBudget& directory_memory) const{return Snapshot(*this,directory_memory,0,size_);}
     [[nodiscard]] Snapshot snapshot(MemoryBudget& memory,std::size_t begin,std::size_t end) const {return Snapshot(*this,memory,begin,end);}
     [[nodiscard]] View view() const noexcept{return View(this,0,size_);}
+    [[nodiscard]] ExperienceEvidence read(std::size_t index) const {
+        if(index>=size_)throw std::out_of_range("experience selection index");
+        return chunks_[chunk_index(index)]->read(chunk_offset(index));
+    }
     [[nodiscard]] const ExperienceEvidence& operator[](std::size_t index) const{
         // 1,2,4,...,128 entries, then fixed 256-entry segments. Singleton
         // connections reserve one value, and shuffled access remains direct.

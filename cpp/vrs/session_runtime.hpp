@@ -174,8 +174,9 @@ private:
             [](std::size_t position, const Context& range) { return position < range.end; });
         const auto relative=index-found->begin;
         if (found->sequence) {
+            const auto experience=found->sequence->read(relative);
             return {found->recalled, found->sequence->original_begin()+relative, found->current_observations,
-                (*found->sequence)[relative].original(), (*found->sequence)[relative].value().observed_at};
+                experience.original(), experience.value().observed_at};
         }
         const auto& address = addresses_.at(found->address_begin+relative);
         return {found->recalled, address.original_index, found->current_observations, address.experience->original(), address.experience->value().observed_at};

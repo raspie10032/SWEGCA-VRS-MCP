@@ -172,6 +172,22 @@ int main(){
    CHECK(sequence.page_out(127,root/"read-128",id(41),rules,&storage));
    const auto cold=memory.used();
    {
+    auto snapshot=sequence.snapshot(memory,127,255);
+    const auto snapshot_bytes=memory.used();
+    const auto encoded=std::filesystem::file_size(root/"read-128")-ExperienceBlock::header_bytes;
+    const auto held_bytes=memory.limit()-snapshot_bytes-encoded;auto* held=memory.allocate(held_bytes);
+    // Only the authenticated encoded record fits; there is no room for a
+    // second, decoded page. Both selected-read APIs must copy just one value.
+    CHECK(snapshot.read(0).original()==values[127].original());
+    CHECK(snapshot.read(127).original()==values[254].original());
+    CHECK(sequence.read(254).original()==values[254].original());
+    CHECK(memory.used()==snapshot_bytes+held_bytes);
+    rejects<std::out_of_range>([&]{(void)snapshot.read(128);});
+    rejects<std::out_of_range>([&]{(void)sequence.read(256);});
+    memory.deallocate(held,held_bytes);CHECK(memory.used()==snapshot_bytes);
+   }
+   CHECK(memory.used()==cold);
+   {
     auto reader=sequence.reader();
     const auto before_reads=read_calls.load();std::size_t warmed_reads=0;
     for(unsigned n=0;n<12;++n){

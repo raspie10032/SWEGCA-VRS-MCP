@@ -67,8 +67,8 @@ MainGraph::PreparedMerge MainGraph::prepare_merge(const SessionRuntime& source, 
             candidate.connection.inherit_experiences(task.previous->connection);
             candidate.origins.assign(task.previous->origins.begin(), task.previous->origins.end());
         }
-        const auto added = task.incoming->state().experiences();
-        if (!added.empty()) candidate.origins.reserve(candidate.origins.size() + 1);
+        auto added = task.incoming->state().experience_reader();
+        if (added.size()) candidate.origins.reserve(candidate.origins.size() + 1);
         if(!task.previous) {
             // A first Main connection can share sealed source segments under
             // the same VRS budget. Core admission and fresh shuffle still run;
@@ -78,7 +78,7 @@ MainGraph::PreparedMerge MainGraph::prepare_merge(const SessionRuntime& source, 
             for (std::size_t index = 0; index < added.size(); ++index)
                 candidate.connection.append(added[index]);
         }
-        if (!added.empty())
+        if (added.size())
             candidate.origins.push_back({&source.store_, source.read_limit_, candidate.connection.experiences().size()});
         // Each connection keeps its exact serial shuffle and SWEGCA reduction.
         // Only independent connections run concurrently, into private candidates.
@@ -119,7 +119,7 @@ MainGraph::PreparedMerge MainGraph::prepare_merge(const SessionRuntime& source, 
     prepared.regions_.emplace(connections_.prepare(pending));
     for(const auto& [identity,candidate]:pending){
         const auto* previous=connections_.find(identity);
-        const auto values=candidate.connection.experiences();
+        auto values=candidate.connection.experience_reader();
         for(std::size_t index=previous?previous->connection.experiences().size():0;index<values.size();++index){
             const auto add=[&](auto& lookup,const DigestBytes& cue){
                 auto& ranges=lookup[cue];
@@ -203,8 +203,9 @@ const MainGraph::Origin& MainGraph::original_source(const DigestBytes& identity,
 StoredExperience MainGraph::replay(const DigestBytes& identity,std::size_t index) const {
     const auto& origin=original_source(identity,index);
     const auto found=connections_.find(identity);
-    auto result = origin.store->read(found->connection.experiences()[index].original(), origin.read_limit);
-    if (result.location() != found->connection.experiences()[index].original())
+    const auto original=found->connection.read_experience(index).original();
+    auto result = origin.store->read(original, origin.read_limit);
+    if (result.location() != original)
         throw std::runtime_error("Main original provenance mismatch");
     return result;
 }
@@ -212,7 +213,7 @@ StoredExperience MainGraph::replay(const DigestBytes& identity,std::size_t index
 EvidencePayloadSlice MainGraph::read_payload_slice(const DigestBytes& identity,std::size_t index,
     std::uint64_t offset,std::uint64_t count) const {
     const auto& origin=original_source(identity,index);
-    const auto& original=connections_.find(identity)->connection.experiences()[index].original();
+    const auto original=connections_.find(identity)->connection.read_experience(index).original();
     return origin.store->read_payload_slice(rules_,original,origin.read_limit,offset,count);
 }
 

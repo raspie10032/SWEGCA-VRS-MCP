@@ -516,9 +516,13 @@ int main(){
     CHECK(memory.used()==cold_bytes&&writes==w);
     CHECK(host.select_replay(recalled)==30&&memory.used()==cold_bytes);
     CHECK(host.replay(recalled,15).location()==selected);CHECK(reads>r);
+    CHECK(memory.used()==cold_bytes);
+    CHECK(recalled.matches()[15].original==selected&&memory.used()==cold_bytes);
+    {auto partial=host.read_payload_slice(recalled,15,0,1);CHECK(partial.evidence().original()==selected);}
+    CHECK(memory.used()==cold_bytes);
    }
    stored=host.storage().used();const auto w=writes;
-   CHECK(host.page_out_main(cue,15));CHECK(host.storage().used()==stored&&writes==w);
+   CHECK(!host.page_out_main(cue,15));CHECK(host.storage().used()==stored&&writes==w);
   }
   {
    // Failed writes retain their attempted extent until cold inventory reconciles it.

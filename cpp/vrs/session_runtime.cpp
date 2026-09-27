@@ -145,14 +145,16 @@ StoredExperience SessionRuntime::replay(const DigestBytes& identity, std::size_t
     const auto* connection = find(identity);
     if (!connection || index >= connection->state().experiences().size())
         throw std::out_of_range("selected original not in recalled connection");
-    return store_.read(connection->state().experiences()[index].original(), read_limit_);
+    const auto original=connection->state().read_experience(index).original();
+    return store_.read(original, read_limit_);
 }
 EvidencePayloadSlice SessionRuntime::read_payload_slice(const DigestBytes& identity,std::size_t index,
     std::uint64_t offset,std::uint64_t count) const {
     const auto* connection=find(identity);
     if(!connection || index>=connection->state().experiences().size())
         throw std::out_of_range("selected original not in recalled connection");
-    return store_.read_payload_slice(connection->rules(),connection->state().experiences()[index].original(),
+    const auto original=connection->state().read_experience(index).original();
+    return store_.read_payload_slice(connection->rules(),original,
         read_limit_,offset,count);
 }
 void SessionRuntime::visit_deliveries(std::string_view session,std::string_view source,std::string_view media,
@@ -421,8 +423,9 @@ InputMatch ExperienceRouter::selected_input(const InputRecall& recalled, std::si
             selected.recalled.recalled_head,true)!=HeadPublication::unchanged)
             throw std::logic_error("Main changed after Recall; recall current experience again");
         const auto* connection=merged_main_->graph().find(selected.recalled.recalled_head.identity);
-        if(!connection || selected.original_index>=connection->experiences().size() ||
-            connection->experiences()[selected.original_index].original()!=selected.original)
+        if(!connection || selected.original_index>=connection->experiences().size())
+            throw std::logic_error("Main Recall original changed");
+        if(connection->read_experience(selected.original_index).original()!=selected.original)
             throw std::logic_error("Main Recall original changed");
         return selected;
     }
@@ -438,8 +441,8 @@ InputMatch ExperienceRouter::selected_input(const InputRecall& recalled, std::si
         remembered.recalled_head.record, head, true);
     if (relation != HeadPublication::unchanged && relation != HeadPublication::publish)
         throw std::logic_error("Recall original lineage changed");
-    const auto values = current->state().experiences();
-    if (selected.original_index >= values.size() || values[selected.original_index].original() != selected.original)
+    if (selected.original_index >= current->state().experiences().size() ||
+        current->state().read_experience(selected.original_index).original() != selected.original)
         throw std::logic_error("Recall original address changed");
     return selected;
 }
@@ -473,11 +476,13 @@ ReplayedInput ExperienceRouter::replay(const InputRecall& recalled,std::size_t c
         ? merged_main_->graph().replay(identity,selected.original_index)
         : selected.recalled.session->replay(identity,selected.original_index);
     if(original.location()!=selected.original)throw std::logic_error("Replay original provenance mismatch");
-    const auto& experience=selected.recalled.main_graph
-        ?merged_main_->graph().find(identity)->experiences()[selected.original_index]
-        :selected.recalled.connection->state().experiences()[selected.original_index];
+    const auto& rules=selected.recalled.main_graph
+        ?merged_main_->graph().rules_:selected.recalled.connection->rules();
+    // The selected original is already in hand. Read its sealed context through
+    // the evidence decoder instead of loading its metadata page once more.
+    const auto context=decode_evidence(rules,original).value().context;
     continuation_=identity;
-    continued_context_=experience.value().context;
+    continued_context_=context;
     const auto source_identity=selected.recalled.main_graph
         ? merged_main_->graph().original_source(identity,selected.original_index).store->identity()
         : selected.recalled.session->store_.identity();

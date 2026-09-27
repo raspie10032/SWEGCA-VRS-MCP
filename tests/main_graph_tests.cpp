@@ -106,15 +106,17 @@ int main(){
   const auto paged_original=graph.find(id(10))->experiences()[15].original();
   CHECK(graph.page_out(id(10),15,root/"main-segment-page",id(180)));
   CHECK(graph_memory.used()<page_memory);
+  const auto replay_cold=graph_memory.used();
   const auto before_page_read=reads;
   CHECK(graph.generation()==2&&graph.find(id(10))->strength()==strength);
   CHECK(reads==before_page_read);
   CHECK(graph.replay(id(10),15).location()==paged_original);
-  CHECK(graph.page_out(id(10),15,root/"must-not-create",id(181)));
+  CHECK(graph_memory.used()==replay_cold);
+  CHECK(!graph.page_out(id(10),15,root/"must-not-create",id(181)));
   CHECK(!std::filesystem::exists(root/"must-not-create"));
   CHECK(graph.replay(id(10),15).location()==paged_original);
   const auto expected_report=refinement_digest(graph.find(id(10))->evaluate(19,100000));
-  CHECK(graph.page_out(id(10),15,root/"must-not-create",id(181)));
+  CHECK(!graph.page_out(id(10),15,root/"must-not-create",id(181)));
   CHECK(graph.page_out(id(10),31,root/"second-cold-page",id(182)));
   const auto cold_memory=graph_memory.used();
   {

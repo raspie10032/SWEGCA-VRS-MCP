@@ -1054,3 +1054,22 @@ stdio 3,771개 통과. 실제 물리 전원 차단 검증으로 확대 해석하
 수행했다. 이는 해당 사례의 I/O 호출 수 감소이며 전체 지연의 같은 비율 개선을
 뜻하지 않는다. full page들이 교차하는 대규모 셔플의 반복 읽기, cardinality에
 비례하는 판정 집계 자료와 Main 인덱스, 전체 4GB/1ms 목표는 여전히 남아 있다.
+
+
+선택 Replay의 메타데이터 상주 복원을 제거했다. ExperienceSequence/그 범위
+snapshot에 선택값 복사 읽기를 추가하여, hot 값은 복사하고 cold 값은 봉인된
+페이지 전체 체크섬 검증 뒤 필요한 항목 하나를 기존 core admission 디코더로
+읽는다. 페이지 전체를 decoded 객체 배열로 만들어 Main에 남기지 않는다.
+InputRecall 범위 후보의 주소 조회, 현재 원주소 대조, Main/세션 원경험 Replay와
+부분 읽기가 이 경로를 사용한다. 대화 continuation context는 이미 읽은 원경험을
+기존 decode_evidence로 검증하여 얻는다. Main 병합의 입력 복사/portal 작성도
+상주 View 대신 한정된 Reader로 읽는다. 기존 주소·head·출처 대조는 유지한다.
+
+encoded page 하나만 들어가는 여유 메모리에서 Sequence/Snapshot 선택 읽기가
+성공하고 메모리를 반환하는 것을 검사했다. Main 직접 Replay, Runtime 범위
+Recall의 Replay·주소 조회·부분 읽기 종료 후 cold memory 불변, 읽기 실패 뒤
+재시도, 범위 밖 거절을 확인했다. experience-page 6,064개, Main graph 4,221개,
+Runtime 1,883개, 새 MCP 바이너리 stdio subprocess 3,772개 검사 통과. core 판정식은
+수정하지 않았다. CPU 6,7/max2 빌드 조건을 유지했다. 원경험 full Replay 본문은
+여전히 전체 읽기이며 cold 주소의 각 검증 단계는 페이지를 다시 인증할 수 있다.
+소수 후보용 pin_experience의 상주 pin과 전체 규모/지연·실제 설치 앱 검증은 남는다.
