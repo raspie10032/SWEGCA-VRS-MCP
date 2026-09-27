@@ -92,6 +92,7 @@ with tempfile.TemporaryFile() as errors:
         assert query_schema['additionalProperties'] is False
         assert query_schema['properties']['related']['type'] == 'boolean'
         assert query_schema['properties']['inputCandidates']['required'] == ['limit']
+        assert query_schema['properties']['inputCandidates']['properties']['byteBudget']['type'] == 'string'
         observer_tool = matches[0]['tools']['observe_file_content_equality']
         schema = observer_tool['inputSchema']
         assert schema['properties']['expectEqual']['type'] == 'boolean'

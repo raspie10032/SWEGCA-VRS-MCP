@@ -195,3 +195,23 @@ semanticVerified/boundariesVerified/requirementsComplete=false다.
 설치 VRS/proxy/observer를 함께 반영했고 설치 backend inventory에서 새
 inputCandidates schema와 기존 자원 제한/소유자/소켓/I/O/정상 종료 확인.
 앞선 1a1b6c8 문단 분절도 이 설치에 포함된다.
+
+### 큰 단일 후보의 명시적 응답 예산
+
+후속 조회 inputCandidates.byteBudget(문자열 정수)을 추가했다. 기본65536,
+범위1..16777216 바이트이며 VRS와 observer가 각각 검증한다. 응답 안에도
+실제 적용한 byteBudget을 기록한다. 예산은 인코딩된 후보/정정 후보 JSON에
+적용되고 원경험 읽기 한도나 프로세스 RAM/IO 한도를 변경하지 않는다.
+JSON-RPC 포장/메타데이터/파서 메모리의 전체 예산이라는 뜻은 아니다.
+
+기본 페이지에서 byteLimited=true와 동일한 next를 받았다면 같은 next와
+더 큰 byteBudget을 명시해 다시 요청할 수 있다. 큰 인용/코드 블록을 자르거나
+부분 문장을 별도 요구로 승격하지 않는다. 16MiB를 초과하는 단일 인코딩 후보나
+현재 저장소 readLimit/RAM을 초과하는 원경험은 이 변경만으로 해결됐다고
+주장하지 않는다. 메모리 압박 및 대규모 저장소 검증은 계속 남아 있다.
+
+검증: wire224/observer154/stdio7443 checks 통과. 실제 VRS에 기본64KiB보다
+큰 따옴표/역슬래시 포함 코드 블록을 기록하고, 기본 예산의 명시적 제한을
+확인한 뒤1MiB 요청으로 같은 원문 전체를 회수했다. 0/음수/상한 초과 거부 확인.
+VRS/proxy/observer 설치본과 manifest를 갱신하고 설정 byte 동일성 및 설치
+backend의 byteBudget schema/동일 자원 그룹/소유자/IO/socket/정상 종료 확인.

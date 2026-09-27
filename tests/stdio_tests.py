@@ -1784,6 +1784,26 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     check(merged_steer['inputRelations']==steer['inputRelations'])
     check(c.call('swegca/work',{'seed':'7','step':'0'})['result']['merged']=='0')
     c.close()
+    large_candidates_root=root/'large-input-candidates';large_candidates_root.mkdir()
+    large_candidates_config=root/'large-input-candidates.json'
+    large_candidates_config.write_text(json.dumps(dict(config,frameBytes=str(1<<20),readLimit=str(2<<20),sessionBlockBytes=str(4<<20))))
+    c=Client('create',large_candidates_root,large_candidates_config);c.initialize()
+    large_binding={**turns_binding,'instance':'large-candidate-input'}
+    large_owner=c.call('swegca/agent/attach',large_binding)['result']['identity']
+    check(c.call('swegca/select',{'identity':large_owner})['result']=={})
+    large_code='```\n'+('x \"quoted\" \\ y\n'*6000)+'```'
+    large_frame={'id':1,'method':'turn/start','params':{'threadId':'turn-thread','input':[{'type':'text','text':large_code}]}}
+    large_input=turn_frame(0,'client',large_frame)
+    large_args={'receipt':large_input['receipt'],'inputOriginal':large_input['original'],'inputCandidates':{'limit':'1'}}
+    small_page=c.call('swegca/agent/replay',large_args)['result']['structuredContent']['inputCandidates']
+    check(small_page['byteLimited'] and small_page['candidates']==[] and small_page['next']=={'textIndex':'0','byteOffset':'0'})
+    expanded_args={**large_args,'inputCandidates':{'limit':'1','byteBudget':str(1<<20),'after':small_page['next']}}
+    expanded_page=c.call('swegca/agent/replay',expanded_args)['result']['structuredContent']['inputCandidates']
+    check(not expanded_page['byteLimited'] and expanded_page['next'] is None)
+    check(expanded_page['byteBudget']==str(1<<20) and expanded_page['candidates'][0]['quote']==large_code)
+    for invalid in ('0','16777217','-1'):
+        check('error' in c.call('swegca/agent/replay',{**large_args,'inputCandidates':{'limit':'1','byteBudget':invalid}}))
+    c.close()
     # Responses bind to an earlier committed request original, not a selected
     # session guess or a volatile pending map. The relation survives restart.
     response_root=root/'app-responses';response_root.mkdir()

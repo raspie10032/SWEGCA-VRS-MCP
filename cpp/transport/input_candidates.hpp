@@ -9,6 +9,7 @@ namespace swegca::transport {
 inline void append_input_candidates(std::pmr::string& context,const Json& native,
     const Json& acknowledged,std::pmr::memory_resource& memory,std::size_t limit,std::size_t byte_budget,
     std::optional<std::pair<std::size_t,std::size_t>> start={}){
+    const auto initial_byte_budget=byte_budget;
     if(!limit||context.empty()||context.back()!='}')throw std::invalid_argument("invalid candidate context");
     const auto* method=native.find("method");
     if(!method||method->kind!=Json::Kind::string||
@@ -81,6 +82,7 @@ inline void append_input_candidates(std::pmr::string& context,const Json& native
     context+="\"inputCandidates\":{\"inputOriginal\":";append_json(context,acknowledged.at("original"));
     context+=",\"kind\":\"uninterpreted-text-spans\",\"semanticVerified\":false,\"boundariesVerified\":false,\"requirementsComplete\":false,";
     context+="\"grantsAuthority\":false,\"candidates\":";context+=references;
+    context+=",\"byteBudget\":\"";context+=std::to_string(initial_byte_budget);context+='"';
     context+=",\"revisionProposals\":";context+=revisions;
     context+=",\"revisionProposalsLimited\":";context+=revision_limited?"true":"false";
     context+=",\"nonTextItems\":\"";context+=std::to_string(nontext);context+="\",\"next\":";
