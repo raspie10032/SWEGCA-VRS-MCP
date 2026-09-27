@@ -515,3 +515,38 @@ The 1MiB target remains unmet. Differences from the earlier 1.551823ms median
 cannot be attributed to a particular code change from these sequential shared-
 machine measurements. The next profiling target is the actual transfer/frame
 path; moving the timing boundary or omitting original bytes is not a fix.
+
+## Relay child-status probes on exit notification
+
+The relay previously called waitpid(WNOHANG) four times per loop: one per child
+through failed(), then a second backend running() probe. SIGCHLD now sets only a
+sig_atomic_t flag; the relay clears the flag before reaping all three children,
+checks the cached exit status each iteration, and retains the existing startup,
+shutdown and owned-child cleanup paths. SIGCHLD is explicitly unblocked in this
+owner so an inherited signal mask cannot disable notification. No work is done
+inside the handler beyond assigning the flag. Transfer order and retained short-
+write suffixes are unchanged; no SWEGCA work is removed or rescheduled.
+
+The pre-change desktop-host binary was copied before editing. After compilation
+finished, the existing 25-samples-per-size benchmark ran in before/after/after/
+before order on CPU 6/7 with the same current VRS/proxy binaries. The benchmark
+accepts SWEGCA_BENCH_DESKTOP_HOST as an explicit host executable override for
+this comparison. Raw files are desktop-child-notify-{before-a,after-a,after-b,
+before-b}.jsonl in benchmarks/results.
+
+| Run | 128B median ms | 4KiB median ms | 64KiB median ms | 1MiB median ms |
+| --- | ---: | ---: | ---: | ---: |
+| Before A | 0.023700 | 0.033590 | 0.168181 | 2.456676 |
+| After A | 0.023970 | 0.034450 | 0.158482 | 2.409646 |
+| After B | 0.028650 | 0.034680 | 0.169831 | 2.352985 |
+| Before B | 0.028061 | 0.035281 | 0.177001 | 2.536018 |
+
+Both after runs had lower 1MiB medians than the before runs, but these shared-
+machine samples are not a statistical or universal improvement guarantee.
+Every 1MiB sample in all four runs still exceeded 1ms. Other sizes had no
+failures in these runs. Do not report the overall target as achieved.
+
+Actual stdio regression passed 4,690 checks, including normal EOF, launcher
+interruption, aggregate cgroup cleanup and a backend that exits with code 7
+while the launcher's SIGCHLD was initially blocked. The latter verifies prompt
+failure detection and disappearance of exactly the three owned child processes.

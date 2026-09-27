@@ -20,6 +20,8 @@
 extern char** environ;
 namespace {
 volatile std::sig_atomic_t interrupted=0;
+volatile std::sig_atomic_t children_changed=1;
+void child_changed(int){children_changed=1;}
 void stop(int){interrupted=1;}
 void require(bool ok,const char* message){if(!ok)throw std::runtime_error(message);}
 struct Fd {
@@ -47,7 +49,8 @@ struct Child {
         if(result==0||(result<0&&errno==EINTR))return true;
         require(result==pid,"child wait failed");pid=-1;return false;
     }
-    bool failed(){return !running()&&(!WIFEXITED(status)||WEXITSTATUS(status)!=0);}
+    bool failed(){return !running()&&exited_failed();}
+    bool exited_failed() const{return pid<0&&(!WIFEXITED(status)||WEXITSTATUS(status)!=0);}
     ~Child(){
         if(pid<0)return;
         ::kill(pid,SIGTERM);
@@ -116,6 +119,11 @@ int main(int argc,char** argv){
         }
         ::signal(SIGPIPE,SIG_IGN);
         ::signal(SIGTERM,stop);::signal(SIGINT,stop);
+        struct sigaction child_action{};child_action.sa_handler=child_changed;
+        ::sigemptyset(&child_action.sa_mask);child_action.sa_flags=SA_NOCLDSTOP;
+        require(::sigaction(SIGCHLD,&child_action,nullptr)==0,"child notification setup failed");
+        sigset_t child_signals;::sigemptyset(&child_signals);::sigaddset(&child_signals,SIGCHLD);
+        require(::sigprocmask(SIG_UNBLOCK,&child_signals,nullptr)==0,"child notification unblock failed");
         auto client=pair(),server=pair(),vrs=pair(),ready=pair(true);
         Child backend,store,proxy;
         backend.start(argv+7,{{server[0].value,0},{server[0].value,1}});
@@ -142,8 +150,14 @@ int main(int argc,char** argv){
         Buffer incoming,outgoing;bool input_end=false,output_end=false,write_end=false;
         while(!output_end||!outgoing.empty()||!input_end||!incoming.empty()){
             require(!interrupted,"desktop host interrupted");
-            require(!proxy.failed()&&!store.failed()&&!backend.failed(),"child failed during relay");
-            if(!backend.running())input_end=true;
+            if(children_changed){
+                // Clear before reaping so an exit during these probes remains
+                // pending for the next iteration. Handlers never reap or do I/O.
+                children_changed=0;
+                (void)proxy.running();(void)store.running();(void)backend.running();
+            }
+            require(!proxy.exited_failed()&&!store.exited_failed()&&!backend.exited_failed(),"child failed during relay");
+            if(backend.pid<0)input_end=true;
             if(input_end&&incoming.empty()&&!write_end){
                 require(::shutdown(client[0].value,SHUT_WR)==0,"desktop half-close failed");write_end=true;
             }

@@ -1500,6 +1500,26 @@ for line in sys.stdin:
     finally:
         if desktop.poll() is None:desktop.kill();desktop.wait(timeout=10)
         desktop.stdin.close();desktop.stdout.close();desktop.stderr.close()
+    # An idle owner must notice backend failure even if its launcher inherited
+    # a blocked SIGCHLD mask. It cleans up only its three owned children.
+    import signal
+    failed_desktop_root=root/'desktop-child-failure';failed_desktop_root.mkdir()
+    failing_backend="import sys,json,os\nfor line in sys.stdin:\n v=json.loads(line)\n if v.get('method')=='fixture/fail':os._exit(7)\n if 'id' in v:print(json.dumps({'id':v['id'],'result':{}}),flush=True)\n"
+    def block_child_signal():signal.pthread_sigmask(signal.SIG_BLOCK,{signal.SIGCHLD})
+    desktop=subprocess.Popen([str(exe.parent/'swegca-desktop-host'),str(exe.parent/'swegca-app-server-proxy'),
+        str(exe),'create',str(failed_desktop_root),str(transport_path),str(desktop_proxy),sys.executable,'-u','-c',failing_backend],
+        stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,bufsize=0,preexec_fn=block_child_signal)
+    try:
+        desktop_send({'id':1,'method':'initialize','params':{}});check(desktop_read()=={'id':1,'result':{}})
+        children=pathlib.Path(f'/proc/{desktop.pid}/task/{desktop.pid}/children').read_text().split()
+        check(len(children)==3)
+        desktop_send({'method':'fixture/fail','params':{}})
+        check(desktop.wait(timeout=10)==1)
+        check(all(not pathlib.Path(f'/proc/{pid}').exists() for pid in children))
+        check(b'child failed' in desktop.stderr.read())
+    finally:
+        if desktop.poll() is None:desktop.kill();desktop.wait(timeout=10)
+        desktop.stdin.close();desktop.stdout.close();desktop.stderr.close()
     # A newly spawned backend owns a fresh RPC ID space while VRS experience survives.
     collision_root=root/'resume-id-conflict';collision_root.mkdir()
     c=Client('create',collision_root,path);c.initialize()

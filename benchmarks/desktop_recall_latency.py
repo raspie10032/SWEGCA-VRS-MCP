@@ -24,7 +24,7 @@ for line in sys.stdin:
         print(json.dumps({'method':'thread/started','params':{'thread':{'id':'fixture'}}}),flush=True)
     if 'id' in v:print(json.dumps({'id':v['id'],'result':{}}),flush=True)
 ''');backend.chmod(0o700)
-    config=base/'wrapper.json';config.write_text(json.dumps(dict(backend=str(backend),host=str(build/'swegca-desktop-host'),
+    config=base/'wrapper.json';config.write_text(json.dumps(dict(backend=str(backend),host=os.environ.get('SWEGCA_BENCH_DESKTOP_HOST',str(build/'swegca-desktop-host')),
         proxy=str(build/('swegca-proxy-stages-probe' if stages else 'swegca-app-server-proxy')),vrs=str(build/('swegca-vrs-stages-probe' if stages else 'swegca-vrs-ingress-probe')),mode='ensure',root=str(root),
         resourceConfig=str(resources),proxyConfig=str(proxy))))
     process=subprocess.Popen([str(build/'swegca-codex-wrapper'),'-c','features.code_mode_host=true','app-server',

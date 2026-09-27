@@ -1276,3 +1276,16 @@ Main 병합은 0이었다. 모델 생성 요청은 0회, 기존 GUI 설정은 �
 - 원시 결과와 측정 경계/조건/해석 한계는 DESKTOP_RECALL_LATENCY.md에 기록했다.
   1ms 요구는 달성하지 못했으며, 이 결과는 설치된 사용자 GUI나 큰 Main/4GB 부하
   운용을 검증한 것으로 확대하지 않는다. 전체 목표는 미완료다.
+
+## 2026-09-27: 릴레이 자식 상태 조회 비용 제거
+
+- 데이터 조각마다 반복하던 waitpid를 SIGCHLD 알림 시의 상태 갱신으로 옮겼다.
+  handler는 플래그만 기록하고 실제 reap/오류 판정은 기존 소유 프로세스가 수행한다.
+  상속된 SIGCHLD 차단을 해제하고, 초기화/EOF/종료/자식 정리 경로를 유지한다.
+- CPU 6,7 / make -j2 빌드 후 실제 stdio **4690 checks passed**. 새 실패 검증은
+  SIGCHLD가 차단된 상태로 실행한 host에서 backend exit 7을 검출하고 소유 자식
+  3개가 모두 정리되는지 확인한다.
+- 같은 VRS/proxy로 before/after/after/before 각 크기 25회 지연 비교를 수행했다.
+  1MiB 중앙값 before 2.456676/2.536018ms, after 2.409646/2.352985ms.
+  1MiB 모든 표본은 여전히 1ms 실패다. 원시 자료·조건은 DESKTOP_RECALL_LATENCY.md.
+- 판정식/원문 보존/회상 순서 변경 없음. 일반 자연어 의미 생산과 전체 목표는 미완료다.
