@@ -125,6 +125,7 @@ private:
         std::optional<ReplayedInput> replayed;
         std::optional<InputCognition> cognition;
         bool cognition_done=false,cognition_saved=false;
+        std::optional<std::pair<std::uint64_t,std::uint64_t>> cognition_parameters;
         std::optional<StoredExperience> recovered_cognition;
         std::uint64_t recovered_receipt=0;
     };
@@ -176,7 +177,7 @@ private:
     void clear_replay(){
         context().replayed.reset();context().cognition.reset();context().cognition_done=false;context().cognition_saved=false;
     }
-    void clear(){clear_replay();context().received.reset();context().recovered_cognition.reset();context().recovered_receipt=0;}
+    void clear(){clear_replay();context().cognition_parameters.reset();context().received.reset();context().recovered_cognition.reset();context().recovered_receipt=0;}
     const ReplayedInput* selected_replay() const {
         if(context().replayed)return &*context().replayed;
         return context().cognition ? &context().cognition->replayed : nullptr;
@@ -186,7 +187,21 @@ private:
         if(!state.cognition_done){
             if(!state.received)throw std::logic_error("input receipt required before cognition");
             const auto& recorded=state.received->recorded.refinement;
-            auto cognition=runtime_.cognize(state.received->recalled,recorded.seed(),recorded.current_step());
+            const auto parameters=state.cognition_parameters.value_or(std::pair{recorded.seed(),recorded.current_step()});
+            std::optional<InputCognition> cognition;
+            if(state.cognition){
+                // The selected original is already authenticated and owned.
+                // Refresh only its comparison against newly recorded evidence.
+                auto compared=runtime_.compare_replay(state.cognition->replayed,parameters.first,parameters.second);
+                std::optional<ReEvidenceResult> reverified;
+                if(swegca::architecture::kernel::requires_re_evidence(compared.agreement()))
+                    reverified.emplace(runtime_.re_evidence(state.cognition->replayed,compared,parameters.first,parameters.second));
+                cognition.emplace(InputCognition{state.cognition->candidate,std::move(state.cognition->replayed),
+                    std::move(compared),std::move(reverified)});
+            }else{
+                auto prepared=runtime_.cognize(state.received->recalled,parameters.first,parameters.second);
+                if(prepared)cognition.emplace(std::move(*prepared));
+            }
             state.replayed.reset();state.cognition.reset();
             if(cognition)state.cognition.emplace(std::move(*cognition));
             state.cognition_done=true;
@@ -502,7 +517,14 @@ private:
                 else throw std::invalid_argument("unknown observed outcome");
                 // This is the host's recorded observation, never a caller-supplied
                 // SWEGCA verdict. Preserve the prior selected Replay for comparison.
+                auto& state=context();
+                const bool affects_cognition=state.cognition&&
+                    state.cognition->assessment().remembered_head().identity==value.hypothesis;
+                // A failed write may poison the session after a durable prefix.
+                // Never allow the cached assessment to bypass that failure.
+                if(affects_cognition){state.cognition_done=false;state.cognition_saved=false;}
                 auto recorded=runtime_.observe(value.hypothesis,{sequence,observed,session,source,media,content},value,seed,step);
+                if(affects_cognition)state.cognition_parameters=std::pair{seed,step};
                 return "{\"original\":"+address(recorded.original,memory_)+",\"refinement\":"+refinement(recorded.refinement,memory_)+"}";
             }
             if(next_receipt_==std::numeric_limits<std::uint64_t>::max())throw std::overflow_error("receipt sequence exhausted");
@@ -558,8 +580,11 @@ private:
         }
         if(!context().received||integer(p.at("receipt"))!=context().receipt)throw std::invalid_argument("expired receipt");
         const auto* explicit_candidate=p.find("candidate");
-        // The automatic route already authenticated and compared this original.
-        // Export that exact receipt without reselection, disk reads or reevaluation.
+        // A committed observation for this connection invalidates only the
+        // cached assessment. Refresh before export while retaining the original.
+        if(!explicit_candidate&&!p.find("offset")&&!p.find("count")&&context().cognition&&!context().cognition_done)
+            complete_cognition();
+        // Otherwise export the already compared receipt without another read.
         if(!explicit_candidate && !p.find("offset") && !p.find("count") && context().cognition){
             replay_payload(id,context().cognition->replayed,&*context().cognition);return;
         }

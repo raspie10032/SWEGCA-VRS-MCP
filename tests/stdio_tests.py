@@ -158,10 +158,21 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     recalled=c.call('swegca/receive',event('observed',sequence='8'))['result']
     check(len(recalled['candidates'])==8)
     receipt=recalled['receipt']
-    check(c.call('tools/call',{'name':'vrs_replay','arguments':{'receipt':receipt,'candidate':'0'}})['result']['structuredContent']['original']==support_original)
+    automatic_before=c.call('tools/call',{'name':'vrs_replay','arguments':{'receipt':receipt}})['result']['structuredContent']
+    check(automatic_before['assessment']['agreement']==1)
+    check('error' in c.call('swegca/observe',invalid))
+    check(c.call('tools/call',{'name':'vrs_replay','arguments':{'receipt':receipt}})['result']['structuredContent']==automatic_before)
     current=[]
     for n in range(8,16):
-        result=c.call('swegca/observe',observation(n,20,'refute'))['result'];current.append(result['original'])
+        incoming=observation(n,20,'refute')
+        if n==15:incoming['step']='1'
+        result=c.call('swegca/observe',incoming)['result'];current.append(result['original'])
+    automatic_after=c.call('tools/call',{'name':'vrs_replay','arguments':{'receipt':receipt}})['result']['structuredContent']
+    check(automatic_after['original']==automatic_before['original'])
+    check(automatic_after['assessment']['agreement']==3 and automatic_after['assessment']['reEvidencePerformed'])
+    check(automatic_after['assessment']['currentOriginalCount']=='8' and automatic_after['assessment']['step']=='1')
+    check(c.call('tools/call',{'name':'vrs_replay','arguments':{'receipt':receipt}})['result']['structuredContent']==automatic_after)
+    check(c.call('tools/call',{'name':'vrs_replay','arguments':{'receipt':receipt,'candidate':'0'}})['result']['structuredContent']['original']==support_original)
     checked=c.call('tools/call',{'name':'vrs_re_evidence','arguments':{'receipt':receipt,'seed':'7','step':'0'}})['result']['structuredContent']
     check(checked['status']==2 and checked['agreement']==3)
     check(checked['currentOriginals']==current and checked['replayedOriginal']==support_original)
