@@ -48,7 +48,11 @@ inline architecture::kernel::EvidenceOutcome measured_file_outcome(const Json& r
     bool equal=false;
     if(complete){
         const auto& left=measurement.at("left");const auto& right=measurement.at("right");
-        equal=number(left.at("readBytes"))==number(right.at("readBytes"))&&hash(left.at("digest"))==hash(right.at("digest"));
+        // A complete measurement requires both valid digests even when size
+        // already disproves equality. Do not short-circuit structural evidence
+        // validation into support for the opposite predicate.
+        const auto left_digest=hash(left.at("digest")),right_digest=hash(right.at("digest"));
+        equal=number(left.at("readBytes"))==number(right.at("readBytes"))&&left_digest==right_digest;
     }
     return architecture::kernel::observe_content_relation(complete,stable,equal,predicate=="equal-file-bytes-v1");
 }

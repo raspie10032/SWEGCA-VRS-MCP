@@ -62,3 +62,20 @@ expectEqual은 파일 열기 전에 거부한다.
 유지했다. 설치본 실제 backend inventory에서 expectEqual schema 등록도
 확인했다. 같은 cgroup/조회 endpoint/I/O owner, 약4GB/swap0/CPU6-7,
 modelCalls0/exit0 확인. 앞선 e822e13 페이지 조회 최적화도 이번 VRS 설치에 포함된다.
+
+## 완전한 측정의 해시 검증 누락 수정
+
+추가 점검에서 equal=(leftBytes==rightBytes && hash(left)==hash(right))의 단락 평가로
+크기가 다르면 양쪽 digest 형식/존재 검사가 실행되지 않는 결함을 재현했다.
+complete/stable을 주장하면서 해시가 없거나 손상된 보고서가 equality의 refute,
+difference의 support로 scoped 연결에 들어갈 수 있었다.
+
+두 digest를 먼저 독립 검증한 뒤 크기/해시 일치를 계산하도록 수정했다.
+core 판정이나 진짜 불일치 관측의 결과는 유지한다. 부족한 complete 보고서는
+기존 ingress 실패 경로로 원문을 보존하며 해당 scoped 증거로 채택하지 않는다.
+
+수정 전 실제 stdio 재현은 잘못된 보고서가 scoped 연결에 들어가 assertion 실패.
+수정 후 같은 재현을 equality/difference × left/right × missing/malformed로
+확장한 실제 stdio7339 checks 통과. VRS 설치본 원자 교체/전체 실행 파일 해시/
+설정 보존 및 설치 backend smoke 정상 종료 확인. 자연어 의미 관련성 검증의
+완료 증거로 사용하지 않는다.

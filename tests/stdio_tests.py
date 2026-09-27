@@ -1050,6 +1050,19 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     check(rejected_difference['refinement']['connection']==measured_input['refinement']['connection'])
     check(rejected_difference['refinement']['status']==0)
 
+    # Different sizes must not skip complete-measurement digest validation.
+    # Packet 4 is a genuine unequal-size observation supporting difference.
+    for packet_index in (1,4): # equality refutation and difference support
+        for operand in ('left','right'):
+            for malformed in (None,'bad'):
+                broken=json.loads(json.dumps(measured_packets[packet_index]))
+                if malformed is None:broken['structuredContent']['measurement'][operand].pop('digest')
+                else:broken['structuredContent']['measurement'][operand]['digest']=malformed
+                bad_frame['params']['item']['result']=broken
+                _,invalid_complete=producer_frame('server',bad_frame)
+                check(invalid_complete['refinement']['connection']==measured_input['refinement']['connection'])
+                check(invalid_complete['refinement']['status']==0)
+
     next_sequence=str(producer_seq);c.close()
     c=Client('open',producers_root,path);c.initialize()
     check(c.call('swegca/agent/attach/resume',producer_binding)['result']['nextSequence']==next_sequence)
