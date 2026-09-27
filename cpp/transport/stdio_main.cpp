@@ -249,6 +249,8 @@ private:
             if(event.session()!=state.native_session)throw std::invalid_argument("native session mismatch");
             if(sender==ExperienceSender::server&&event.kind()==swegca::architecture::kernel::AgentEventKind::input)
                 throw std::invalid_argument("input must originate from client");
+            if(sender==ExperienceSender::server&&event.native_name()=="thread/resume")
+                throw std::invalid_argument("thread resume must originate from client");
             if(sender==ExperienceSender::client&&event.native_name()=="thread/started")
                 throw std::invalid_argument("thread started must originate from server");
             const auto sequence=integer(p.at("sequence")),observed=integer(p.at("observedAt"));

@@ -791,12 +791,18 @@ for line in sys.stdin:
     try:
         desktop_send({'id':904,'method':'initialize','params':{}})
         check(desktop_read()=={'id':904,'result':{}})
+        # Resume an existing conversation with no thread/started notification.
+        desktop_send({'id':905,'method':'thread/resume','params':{'threadId':'desktop-thread'}})
+        check(desktop_read()=={'id':905,'result':{}})
+        desktop_send({'id':906,'method':'turn/start','params':{'threadId':'desktop-thread','input':[]}})
+        check(desktop_read()=={'id':906,'result':{}})
+
         desktop.stdin.close();check(desktop.wait(timeout=10)==0)
         check(desktop.stdout.read()==b'' and desktop.stderr.read()==b'')
     finally:
         if desktop.poll() is None:desktop.terminate();desktop.wait(timeout=10)
     c=Client('open',desktop_root,path);c.initialize()
-    for session,protocol,count in (('transport','app-server-connection','7'),('desktop-thread','app-server','3')):
+    for session,protocol,count in (('transport','app-server-connection','7'),('desktop-thread','app-server','7')):
         attached=c.call('swegca/agent/attach/resume',{'provider':'codex','instance':'desktop-fixture',
             'session':session,'protocol':protocol})['result']
         check(attached['nextSequence']==count)

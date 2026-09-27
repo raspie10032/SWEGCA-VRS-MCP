@@ -101,7 +101,7 @@ inline AgentEvent AgentEvent::from_app_server(std::string_view bytes,Json parsed
     using architecture::kernel::AgentEventKind;
     const auto method=parsed.at("method").string();
     const auto& params=parsed.at("params");
-    const bool started=method=="thread/started";
+    const bool started=method=="thread/started",resumed=method=="thread/resume";
     const auto session=started?params.at("thread").at("id").string():params.at("threadId").string();
     if(started){
         if(parsed.find("id"))throw std::invalid_argument("thread started must be a notification");
@@ -109,7 +109,11 @@ inline AgentEvent AgentEvent::from_app_server(std::string_view bytes,Json parsed
             throw std::invalid_argument("conflicting started thread identities");
     }
     if(method.empty()||session.empty())throw std::invalid_argument("empty app-server identity");
-    auto kind=started?AgentEventKind::lifecycle:AgentEventKind::content;
+    if(resumed){
+        const auto& id=parsed.at("id");
+        if(id.kind!=Json::Kind::string&&id.kind!=Json::Kind::number)throw std::invalid_argument("resume request requires id");
+    }
+    auto kind=(started||resumed)?AgentEventKind::lifecycle:AgentEventKind::content;
     if(method=="turn/start"||method=="turn/steer"){
         const auto& id=parsed.at("id");
         if(id.kind!=Json::Kind::string&&id.kind!=Json::Kind::number)throw std::invalid_argument("input request requires id");
@@ -136,7 +140,7 @@ inline AgentEvent AgentEvent::from_app_server_connection(std::string_view bytes,
     using architecture::kernel::AgentEventKind;
     if(connection.empty())throw std::invalid_argument("connection binding required");
     const auto method=parsed.at("method").string();
-    if(method.empty()||method=="turn/start"||method=="turn/steer"||method=="thread/started")
+    if(method.empty()||method=="turn/start"||method=="turn/steer"||method=="thread/started"||method=="thread/resume")
         throw std::invalid_argument("thread event requires thread binding");
     if(parsed.find("result")||parsed.find("error"))throw std::invalid_argument("method contains response fields");
     if(const auto* params=parsed.find("params");params&&params->kind!=Json::Kind::null){

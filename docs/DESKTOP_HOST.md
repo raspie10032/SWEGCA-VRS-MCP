@@ -87,3 +87,23 @@ create/reopen, partial initialization and foreign-root preservation), wrapper
 with the exact same wrapper/proxy settings: its connection advances from five
 to seven originals while the thread's three originals remain; no Main merge.
 Live installation, root provisioning and explicit end handling still remain.
+
+## Existing conversation resume
+
+The installed backend's generated ThreadResumeParams schema requires threadId;
+ThreadResumeResponse returns thread. The transport now treats a client
+thread/resume request with an ID and nonempty threadId as lifecycle input.
+It may ensure/restore that session before forwarding the request, even when
+no thread/started notification arrives. The same deferred pending-request
+reconstruction used for lifecycle discovery runs after Wire attachment and
+before the resume request is acknowledged. User turn/start/steer still cannot
+trigger discovery. Server-origin resume and malformed resume requests fail;
+they cannot fall back to the connection-only content route.
+
+Verification: event adapter 215, Wire 61, actual subprocess 2,393 checks passed.
+The desktop fixture restarts with identical configuration, resumes its prior
+thread without a thread/started notification, then sends a user turn. Reopen
+finds seven thread originals (the prior three plus resume/request response and
+turn/request response), while connection originals remain seven. No live app
+or account calls. A backend refusal to resume is recorded as its response; it
+does not manufacture successful model state or authorize a Main merge.

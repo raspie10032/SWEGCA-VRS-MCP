@@ -94,5 +94,16 @@ int main(){
    rejects([&]{(void)wire.prepare(raw,RpcSender::server,5);});
  }
  CHECK(memory.used()==0);
+ {
+  AppServerWire wire(memory,1,2);unsigned bindings=0;
+  const auto bind=[&](const AgentEvent& event){++bindings;CHECK(event.session()=="existing");return 8;};
+  const auto raw=R"({"id":1,"method":"thread/resume","params":{"threadId":"existing"}})";
+  rejects([&]{(void)wire.prepare(raw,RpcSender::server,1,bind);});CHECK(bindings==0);
+  auto resumed=wire.prepare(raw,RpcSender::client,1,bind);
+  CHECK(bindings==1&&resumed.sequence()==8);wire.recorded(resumed);
+  auto response=wire.prepare(R"({"id":1,"result":{}})",RpcSender::server,2,bind);
+  CHECK(response.request_sequence()==8&&response.sequence()==9);wire.recorded(response);
+ }
+ CHECK(memory.used()==0);
  std::printf("app-server wire owner tests: %u checks passed\n",checks);
 }

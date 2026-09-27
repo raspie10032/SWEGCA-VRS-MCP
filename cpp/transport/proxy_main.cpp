@@ -155,7 +155,7 @@ int main(int argc,char** argv){
         for(const auto& session:sessions.values)attach(session,false);
         struct Recovery { std::pmr::string identity,name; std::uint64_t next; };
         std::optional<Recovery> pending_recovery;
-        const auto bind_started=[&](const AgentEvent& event){
+        const auto bind_lifecycle=[&](const AgentEvent& event){
             if(serial==UINT64_MAX)throw std::overflow_error("proxy request IDs exhausted");
             const auto name=event.session();
             const auto params="{\"provider\":\"codex\",\"protocol\":\"app-server\",\"instance\":"+quote_json(config.at("instance").string(),memory)+",\"session\":"+quote_json(name,memory)+"}";
@@ -188,7 +188,7 @@ int main(int argc,char** argv){
                     AgentEventCommit commit(found->second,pump.parameters(plan,seed,step),"proxy/event/"+std::to_string(++serial),memory);
                     while(commit.stage()!=AgentEventCommit::Stage::complete)commit.accept(stream.exchange(commit.request()));
                     return true;
-                },bind_started);
+                },bind_lifecycle);
                 if(state==AppServerPump::State::end){
                     ended[lane]=true;
                     if(::shutdown(lane==0?server:client,SHUT_WR)<0)throw std::system_error(errno,std::generic_category(),"proxy half-close");

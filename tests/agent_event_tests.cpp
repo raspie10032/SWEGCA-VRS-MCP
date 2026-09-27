@@ -115,5 +115,16 @@ int main(){
   rejects([&]{(void)adapt_codex_app_server_connection(raw,"connection-1",memory);});
  rejects([&]{(void)adapt_codex_app_server_connection(R"({"method":"initialized"})","",memory);});
  CHECK(memory.used()==0);
+ {
+  auto event=adapt_codex_app_server(R"({"id":91,"method":"thread/resume","params":{"threadId":"existing"}})",memory);
+  CHECK(event.session()=="existing"&&event.kind()==AgentEventKind::lifecycle);
+  CHECK(route_agent_event(SessionPhase::active,event.kind())==AgentEventRoute::record);
+ }
+ for(const auto raw:{R"({"method":"thread/resume","params":{"threadId":"existing"}})",
+     R"({"id":1,"method":"thread/resume","params":{}})"}){
+  rejects([&]{(void)adapt_codex_app_server(raw,memory);});
+  rejects([&]{(void)adapt_codex_app_server_connection(raw,"connection",memory);});
+ }
+ CHECK(memory.used()==0);
  std::printf("agent event tests: %u checks passed\n",checks);
 }

@@ -93,6 +93,8 @@ public:
         const auto& event=std::holds_alternative<AgentEvent>(value)?std::get<AgentEvent>(value):std::get<AppServerRequests::Response>(value).event();
         if(event.kind()==architecture::kernel::AgentEventKind::input&&sender!=RpcSender::client)
             throw std::invalid_argument("input request must originate from client");
+        if(event.native_name()=="thread/resume"&&sender!=RpcSender::client)
+            throw std::invalid_argument("thread resume must originate from client");
         if(event.native_name()=="thread/started"&&sender!=RpcSender::server)
             throw std::invalid_argument("thread started must originate from server");
         if(!std::holds_alternative<AppServerRequests::Response>(value)&&event.fields().find("id")&&requests_.pending()==request_capacity_)
@@ -100,7 +102,7 @@ public:
         auto found=sessions_.find(event.session());
         if(found==sessions_.end()){
             if(sessions_.size()==capacity_)throw std::length_error("wire session capacity exhausted");
-            if(event.native_name()!="thread/started")throw std::invalid_argument("session lifecycle binding required before input");
+            if(event.native_name()!="thread/started"&&event.native_name()!="thread/resume")throw std::invalid_argument("session lifecycle binding required before input");
             attach(event.session(),bind(event));found=sessions_.find(event.session());
         }
         if(found->second==std::numeric_limits<std::uint64_t>::max())throw std::overflow_error("delivery sequence exhausted");
@@ -184,7 +186,7 @@ private:
     AgentEvent adapt_method(std::string_view native,Json fields){
         const auto method=fields.at("method").string();
         const auto* params=fields.find("params");
-        const bool thread=method=="turn/start"||method=="turn/steer"||method=="thread/started"||
+        const bool thread=method=="turn/start"||method=="turn/steer"||method=="thread/started"||method=="thread/resume"||
             (params&&params->find("threadId"));
         if(thread){
             auto event=AgentEvent::from_app_server(native,std::move(fields),memory_);
