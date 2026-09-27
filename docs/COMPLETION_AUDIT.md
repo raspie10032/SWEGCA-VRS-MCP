@@ -1247,3 +1247,20 @@ Main 병합은 0이었다. 모델 생성 요청은 0회, 기존 GUI 설정은 �
 - CPU 6,7 / make -j2로 빌드하고 실제 stdio subprocess **4627 checks passed**.
   이 회귀는 출력 지연이나 I/O 횟수의 실측 벤치마크를 대신하지 않는다.
 - 일반 자연어 관측 생산과 전체 목표는 여전히 미완료다.
+
+## 2026-09-27: 네이티브 관측의 종료·Main·다른 세션 회상 전체 경로
+
+- 실제 stdio 프로세스에서 네이티브 입력과 지지/반박 관측을 쌓아 자동 충돌 재검증을
+  수행한 세션을 대상으로, 종료 전 work=0 → explicit end → work=1을 확인했다.
+- 프로세스를 종료하고 새 프로세스에서 Main을 열었다. 종료된 소유 세션을 다시 부착하지
+  않고 원경험 주소로 읽은 최신 cognition revision/record가 종료 전 결과와 일치했다.
+- 다른 native session의 같은 입력은 temporary=false, candidateCount=25로 Main을
+  조회했다. 자동 선택된 Replay가 실제 refute 도구 원문이며 source session과
+  grantsAuthority=false가 유지됨을 검사했다. 부정 경험을 성공 기록만으로 대체하지 않는다.
+- 새 세션에 입력 경험이 생긴 다음 같은 입력을 다시 넣으면 temporary=true,
+  candidateCount=1로 임시 원경험을 우선했다. 이미 병합한 소스는 work=0으로 유지됐다.
+- 이번 검증은 기존 구현을 변경하지 않고 최근 native 관측 기능의 전체 종료/병합/복구
+  통합 공백을 검사한 것이다. 일반 자연어 의미 생산이나 장기 모델 목적 유지 평가,
+  4GB 대규모 부하/지연 보장을 증명하는 시험은 아니다. 전체 목표는 계속 미완료다.
+- CPU 6,7에서 실제 stdio subprocess **4683 checks passed**. 이번 변경은 테스트와
+  검증 문서만 포함하며 실행 코어/판정식은 수정하지 않았다.

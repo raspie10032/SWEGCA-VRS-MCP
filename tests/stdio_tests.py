@@ -825,6 +825,32 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     recovered_cognition=c.call('swegca/agent/cognition',{'identity':producer_owner,'sequence':str(current_input_sequence),'latest':True})['result']
     check(recovered_cognition['revision']==refreshed['revision'] and recovered_cognition['record']==refreshed['record'])
     check(c.call('swegca/work',{'seed':'7','step':'0'})['result']['merged']=='0')
+    check(c.call('swegca/end',{'identity':producer_owner})['result']=={})
+    check(c.call('swegca/work',{'seed':'7','step':'0'})['result']['merged']=='1')
+    c.close()
+    # Merged native evidence and its cognition revision survive a fresh process
+    # and can be recalled by another agent session, including counterevidence.
+    c=Client('open',producers_root,path);c.initialize()
+    archived=c.call('swegca/agent/cognition',{'identity':producer_owner,
+        'inputOriginal':recalled['original'],'latest':True})['result']
+    check(archived['record']==refreshed['record'] and archived['revision']==refreshed['revision'])
+    consumer_binding=dict(producer_binding,session='consumer-thread')
+    consumer=c.call('swegca/agent/attach',consumer_binding)['result']['identity']
+    check(c.call('swegca/select',{'identity':consumer})['result']=={})
+    producer_seq=0
+    frame={'id':1,'method':'turn/start','params':{'threadId':'consumer-thread',
+        'input':[{'type':'text','text':'claim support'}]}}
+    _,main_recall=producer_frame('client',frame)
+    check(not main_recall['temporary'] and main_recall['candidateCount']=='25')
+    replay=c.call('tools/call',{'name':'vrs_replay','arguments':{'receipt':main_recall['receipt']}})['result']['structuredContent']
+    replayed=json.loads(bytes.fromhex(replay['contentHex']))
+    check(replayed['params']['item']['result']['structuredContent']['swegcaObservation']['outcome']=='refute')
+    check(not replay['grantsAuthority'] and replay['session']=='producer-thread')
+    frame['id']=2
+    _,temporary_recall=producer_frame('client',frame)
+    check(temporary_recall['temporary'] and temporary_recall['candidateCount']=='1')
+    check(temporary_recall['candidates'][0]['original']==main_recall['original'])
+    check(c.call('swegca/work',{'seed':'7','step':'0'})['result']['merged']=='0')
     c.close()
     # Turn notifications keep the exact originating input, including after
     # restart and with overlapping turns. They are not evidence of success.
