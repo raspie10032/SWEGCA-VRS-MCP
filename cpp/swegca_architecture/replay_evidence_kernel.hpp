@@ -6,6 +6,11 @@ namespace swegca::architecture::kernel {
 // Comparison of a recorded outcome with the core's current-evidence judgment.
 // Agreement is not semantic promotion or action/write authority.
 enum class ReplayAgreement { invalid, insufficient, agrees, contradicts };
+// Only a verified conflict opens the re-evidence phase. Abstention is not
+// agreement, and malformed evidence never authorizes another phase.
+[[nodiscard]] constexpr bool requires_re_evidence(ReplayAgreement comparison) noexcept {
+    return comparison == ReplayAgreement::contradicts;
+}
 [[nodiscard]] inline ReplayAgreement compare_replay_evidence(const EvidenceRules& rules,
     const EvidenceObservation& remembered, const Digest& hypothesis,
     const EvidenceJudgment& current, std::uint64_t step) noexcept {

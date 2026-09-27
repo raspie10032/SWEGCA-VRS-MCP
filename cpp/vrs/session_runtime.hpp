@@ -222,6 +222,24 @@ private:
     std::pmr::vector<ExperienceLocation> current_originals_;
 };
 
+// A route-issued comparison of the Replay with new, sealed observations.
+// It is not a re-evidence result or authority to modify a connection.
+class ReplayComparison final {
+public:
+    ReplayComparison(const ReplayComparison&) = delete;
+    ReplayComparison& operator=(const ReplayComparison&) = delete;
+    ReplayComparison(ReplayComparison&&) noexcept = default;
+    [[nodiscard]] const ReEvidenceResult& evidence() const noexcept { return evidence_; }
+    [[nodiscard]] architecture::kernel::ReplayAgreement agreement() const noexcept { return evidence_.agreement(); }
+private:
+    friend class ExperienceRouter;
+    ReplayComparison(ReEvidenceResult evidence, std::shared_ptr<const std::byte> issuer, std::size_t boundary)
+        : evidence_(std::move(evidence)), issuer_(std::move(issuer)), boundary_(boundary) {}
+    ReEvidenceResult evidence_;
+    std::shared_ptr<const std::byte> issuer_;
+    std::size_t boundary_;
+};
+
 // Borrowed result: use before changing the router or its sessions. No original
 // bytes are read by Recall. Main's caller selects one experience for Replay.
 class RecallCandidates final {
@@ -258,6 +276,12 @@ public:
     // Replay receipt or update the continuation key.
     [[nodiscard]] EvidencePayloadSlice read_payload_slice(const InputRecall&, std::size_t candidate,
         std::uint64_t offset, std::uint64_t count) const;
+    [[nodiscard]] ReplayComparison compare_replay(const ReplayedInput&, std::uint64_t seed,
+        std::uint64_t step) const;
+    // A conflict receipt opens re-evidence; newly arrived observations are read
+    // again. Agreement, abstention and receipts from other routes are rejected.
+    [[nodiscard]] ReEvidenceResult re_evidence(const ReplayedInput&, const ReplayComparison&,
+        std::uint64_t seed, std::uint64_t step) const;
     // Verify only observations appended to this temporary session after Recall.
     // This is a read-only evaluation; it neither writes a second strength update
     // nor makes recalled originals count as new observations.
@@ -266,6 +290,8 @@ public:
     [[nodiscard]] StoredExperience replay(const RecallCandidates& candidates, std::size_t candidate,
         std::size_t original_index) const;
 private:
+    [[nodiscard]] ReEvidenceResult evaluate_replay(const ReplayedInput&, std::uint64_t seed,
+        std::uint64_t step) const;
     [[nodiscard]] InputMatch selected_input(const InputRecall&, std::size_t candidate) const;
     SessionRuntime& temporary_;
     MemoryBudget& memory_;

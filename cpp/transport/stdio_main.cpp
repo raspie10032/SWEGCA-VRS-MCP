@@ -429,8 +429,14 @@ private:
         if(!context().received||integer(p.at("receipt"))!=context().receipt)throw std::invalid_argument("expired receipt");
         if(method=="vrs_re_evidence"){
             if(!context().replayed)throw std::invalid_argument("Replay required before Re-evidence");
-            auto checked=runtime_.re_evidence(*context().replayed,integer(p.at("seed")),integer(p.at("step")));
+            const auto seed=integer(p.at("seed")),step=integer(p.at("step"));
+            auto compared=runtime_.compare_replay(*context().replayed,seed,step);
+            std::optional<ReEvidenceResult> verified;
+            if(swegca::architecture::kernel::requires_re_evidence(compared.agreement()))
+                verified.emplace(runtime_.re_evidence(*context().replayed,compared,seed,step));
+            const auto& checked=verified ? *verified : compared.evidence();
             auto body=std::pmr::string("{\"agreement\":",&memory_)+std::to_string(static_cast<unsigned>(checked.agreement())).c_str()+",\"status\":"+std::to_string(static_cast<unsigned>(checked.verification().result().verification().judgment().status())).c_str();
+            body+=verified ? ",\"reEvidencePerformed\":true" : ",\"reEvidencePerformed\":false";
             body+=",\"replayedOriginal\":";body+=address(checked.replayed_original(),memory_);
             body+=",\"rememberedHead\":";body+=address(checked.remembered_head().record,memory_);
             body+=",\"currentHead\":";body+=address(checked.current_head().record,memory_);

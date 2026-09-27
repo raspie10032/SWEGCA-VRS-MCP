@@ -59,6 +59,10 @@ public:
 
     void append(const ExperienceEvidence& experience);
     [[nodiscard]] ConnectionRefinement refine(std::uint64_t seed, std::uint64_t current_step);
+    // Same shuffled core evaluation, without committing a strength or revision.
+    [[nodiscard]] ConnectionRefinement evaluate(std::uint64_t seed, std::uint64_t step) const {
+        return prepare_refinement(seed, step);
+    }
     [[nodiscard]] const architecture::DigestBytes& identity() const noexcept { return identity_; }
     [[nodiscard]] double strength() const noexcept { return strength_; }
     [[nodiscard]] std::uint64_t revision() const noexcept { return revision_; }

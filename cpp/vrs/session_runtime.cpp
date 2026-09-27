@@ -485,7 +485,28 @@ EvidencePayloadSlice ExperienceRouter::read_payload_slice(const InputRecall& rec
     return original;
 }
 
+ReplayComparison ExperienceRouter::compare_replay(const ReplayedInput& replayed,
+    std::uint64_t seed, std::uint64_t step) const {
+    return ReplayComparison(evaluate_replay(replayed,seed,step),issuer_,replayed.match_.current_observations);
+}
 ReEvidenceResult ExperienceRouter::re_evidence(const ReplayedInput& replayed,
+    const ReplayComparison& compared, std::uint64_t seed, std::uint64_t step) const {
+    const auto& evidence=compared.evidence();
+    if (compared.issuer_!=issuer_ || replayed.issuer_!=issuer_ ||
+        compared.boundary_!=replayed.match_.current_observations ||
+        evidence.replayed_original()!=replayed.location() || evidence.input_cue()!=replayed.input_cue() ||
+        evidence.remembered_head().record!=replayed.match_.recalled.recalled_head.record ||
+        step<evidence.verification().current_step())
+        throw std::invalid_argument("comparison does not belong to this Replay or step");
+    if (!requires_re_evidence(compared.agreement()))
+        throw std::invalid_argument("Re-evidence requires a core-verified conflict");
+    return evaluate_replay(replayed,seed,step);
+}
+ReEvidenceResult ExperienceRouter::re_evidence(const ReplayedInput& replayed,
+    std::uint64_t seed, std::uint64_t step) const {
+    return evaluate_replay(replayed,seed,step);
+}
+ReEvidenceResult ExperienceRouter::evaluate_replay(const ReplayedInput& replayed,
     std::uint64_t seed, std::uint64_t step) const {
     if (replayed.issuer_ != issuer_) throw std::invalid_argument("Replay belongs to a different input route");
     const auto& remembered = replayed.match_.recalled;
@@ -511,7 +532,7 @@ ReEvidenceResult ExperienceRouter::re_evidence(const ReplayedInput& replayed,
     } else if (replayed.match_.current_observations != 0) {
         throw std::logic_error("current observation history disappeared");
     }
-    auto report = fresh.refine(seed, step);
+    auto report = fresh.evaluate(seed, step);
     const auto agreement = compare_replay_evidence(rules, prior.value(), identity,
         report.result().verification().judgment(), step);
     return ReEvidenceResult(std::move(report), agreement, remembered.recalled_head, current_head,

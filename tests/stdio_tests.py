@@ -73,7 +73,9 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     replay=c.call('tools/call',{'name':'vrs_replay','arguments':{'receipt':second['receipt'],'candidate':'0'}})['result']
     check(bytes.fromhex(replay['structuredContent']['contentHex'])==text.encode())
     check(replay['structuredContent']['original']==first['original'])
-    check(c.call('tools/call',{'name':'vrs_re_evidence','arguments':{'receipt':second['receipt'],'seed':'7','step':'0'}})['result']['structuredContent']['status']==0)
+    compared=c.call('tools/call',{'name':'vrs_re_evidence','arguments':{'receipt':second['receipt'],'seed':'7','step':'0'}})['result']['structuredContent']
+    check(compared['status']==0)
+    check(compared['reEvidencePerformed'] is False)
     # Partial Replay retains only the requested raw bytes and cannot reuse an
     # earlier full Replay receipt for Re-evidence, even on the same candidate.
     def partial(receipt, offset, count):

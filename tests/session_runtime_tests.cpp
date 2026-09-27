@@ -19,6 +19,10 @@ static_assert(familiarity_key(false,false,true)==FamiliarityKey::context);
 static_assert(familiarity_key(false,false,false)==FamiliarityKey::missing);
 static_assert(familiarity_key(false,true,true,true)==FamiliarityKey::context);
 static_assert(familiarity_key(true,true,true,true)==FamiliarityKey::exact);
+static_assert(!requires_re_evidence(ReplayAgreement::invalid));
+static_assert(!requires_re_evidence(ReplayAgreement::insufficient));
+static_assert(!requires_re_evidence(ReplayAgreement::agrees));
+static_assert(requires_re_evidence(ReplayAgreement::contradicts));
 static unsigned checks = 0;
 static std::uint64_t reads = 0, writes = 0;
 static bool fail_read = false;
@@ -264,6 +268,17 @@ int main() {
             const auto current_head=current.find(id(10))->head();
             const auto current_strength=current.find(id(10))->state().strength();
             const auto read_count=reads,write_count=writes;
+            auto compared=router.compare_replay(played,91,1000);
+            CHECK(compared.agreement()==(scenario==0?ReplayAgreement::agrees:scenario==1?ReplayAgreement::contradicts:ReplayAgreement::insufficient));
+            CHECK(compared.evidence().current_originals().size()==16);
+            if(scenario==1){
+                auto verified=router.re_evidence(played,compared,92,1000);
+                CHECK(verified.agreement()==ReplayAgreement::contradicts);
+                CHECK(verified.current_originals().size()==16);
+                throws<std::invalid_argument>([&]{(void)router.re_evidence(played,compared,92,999);});
+            }else{
+                throws<std::invalid_argument>([&]{(void)router.re_evidence(played,compared,92,1000);});
+            }
             auto checked=router.re_evidence(played,91,1000);
             CHECK(reads==read_count && writes==write_count);
             CHECK(checked.current_originals().size()==16);
@@ -277,6 +292,17 @@ int main() {
             CHECK(checked.verification().result().verification().judgment().status()==
                 (scenario==0?EvidenceStatus::accept:scenario==1?EvidenceStatus::reject:EvidenceStatus::abstain));
             for (const auto& address:checked.current_originals()) CHECK(address!=first);
+            if(scenario==1){
+                // Re-evidence must consume observations arriving after the
+                // comparison, rather than return the old comparison report.
+                (void)observe(current,"current",10,50,EvidenceOutcome::insufficient);
+                const auto head=current.find(id(10))->head();
+                auto fresh=router.re_evidence(played,compared,94,1000);
+                CHECK(fresh.current_originals().size()==17);
+                CHECK(fresh.current_head().record==head);
+                CHECK(compared.evidence().current_originals().size()==16);
+                CHECK(fresh.agreement()==ReplayAgreement::contradicts);
+            }
             // The next Recall sets a new boundary. The already considered
             // observations must not become new evidence for that next request.
             auto next=router.input("application/octet-stream",std::as_bytes(std::span(payload)));
@@ -284,7 +310,10 @@ int main() {
             auto already_seen=router.re_evidence(next_replay,92,1000);
             CHECK(already_seen.current_originals().empty());
             CHECK(already_seen.agreement()==ReplayAgreement::insufficient);
+            throws<std::invalid_argument>([&]{(void)router.re_evidence(next_replay,compared,93,1000);});
             ExperienceRouter other(current,memory);
+            throws<std::invalid_argument>([&]{(void)other.compare_replay(played,93,1000);});
+            throws<std::invalid_argument>([&]{(void)other.re_evidence(played,compared,93,1000);});
             throws<std::invalid_argument>([&] { (void)other.replay(next,0); });
             throws<std::invalid_argument>([&] { (void)other.re_evidence(next_replay,93,100); });
         }

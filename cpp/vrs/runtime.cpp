@@ -136,6 +136,13 @@ EvidencePayloadSlice Runtime::read_payload_slice(const InputRecall& recalled,std
     std::uint64_t offset,std::uint64_t count) const {
     return require_session().router.read_payload_slice(recalled,candidate,offset,count);
 }
+ReplayComparison Runtime::compare_replay(const ReplayedInput& replayed,std::uint64_t seed,std::uint64_t step) const {
+    return require_session().router.compare_replay(replayed,seed,step);
+}
+ReEvidenceResult Runtime::re_evidence(const ReplayedInput& replayed,const ReplayComparison& compared,
+    std::uint64_t seed,std::uint64_t step) const {
+    return require_session().router.re_evidence(replayed,compared,seed,step);
+}
 ReEvidenceResult Runtime::re_evidence(const ReplayedInput& replayed,std::uint64_t seed,std::uint64_t step) const {
     return require_session().router.re_evidence(replayed,seed,step);
 }
