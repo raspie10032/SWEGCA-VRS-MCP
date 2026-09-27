@@ -1,5 +1,6 @@
 #include "transport/agent_query_socket.hpp"
 #include "transport/requirement_anchor.hpp"
+#include "transport/measurement_observation.hpp"
 #include "transport/json.hpp"
 #include "transport/stdio_frames.hpp"
 #include "transport/ingress_probe.hpp"
@@ -380,6 +381,14 @@ private:
             if(outcome=="support")value.outcome=EvidenceOutcome::support;
             else if(outcome=="refute")value.outcome=EvidenceOutcome::refute;
             else if(outcome!="insufficient")return std::nullopt;
+            Json declared_scope(&memory_);
+            if(scope){try{declared_scope=parse_json(*scope,memory_);}catch(const std::invalid_argument&){ }}
+            const auto* predicate=declared_scope.find("predicate");
+            if(item.at("tool").string()=="observe_file_content_equality"||
+                (predicate&&predicate->kind==Json::Kind::string&&predicate->scalar=="equal-file-bytes-v1")){
+                if(!scope||measured_file_outcome(item.at("result").at("structuredContent"),declared_scope)!=value.outcome)
+                    return std::nullopt;
+            }
             const auto* connection=runtime_.session().find(hypothesis);
             if(!connection||!observation_values_valid(connection->rules(),hypothesis,value))return std::nullopt;
             value.hypothesis={};value.context={}; // Runtime derives these from the sealed original.

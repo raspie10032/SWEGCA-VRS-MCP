@@ -978,7 +978,7 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
         'params':{'threadId':'producer-thread','input':[{'type':'text','text':'Check the file contents and preserve permissions.'}]}})
     measured_turn='measured-turn-'+str(measured_seq)
     producer_frame('server',{'id':measured_seq+1,'result':{'turn':{'id':measured_turn}}},measured_seq)
-    observed_originals=[];measured_connection=None
+    observed_originals=[];measured_connection=None;measured_packets=[]
     for index,outcome in enumerate(('support','refute','insufficient')):
         if index==1:measured_right.write_bytes(b'different measured bytes')
         if index==2:measured_right.unlink()
@@ -993,6 +993,7 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
         check(measured.stderr==b'')
         actual_result=json.loads(measured.stdout.splitlines()[-1])['result']
         check(actual_result['structuredContent']['swegcaObservation']['outcome']==outcome)
+        measured_packets.append(json.loads(json.dumps(actual_result)))
         check('not a task-completion judgment' in actual_result['content'][0]['text'])
         frame={'method':'item/completed','params':{'threadId':'producer-thread','turnId':measured_turn,
             'item':{'type':'mcpToolCall','id':'measured-'+str(index),'server':'swegca-content-observer',
@@ -1005,6 +1006,34 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
         # repeating a measurement or renaming a tool item.
         check(recorded['refinement']['status']==0)
         observed_originals.append((n,frame,recorded['original']))
+    # A reported predicate must agree with its measurement, even with a valid
+    # user quote and scope. Preserve contradictory reports as insufficient.
+    inconsistent=json.loads(json.dumps(actual_result))
+    inconsistent['structuredContent']['swegcaObservation']['outcome']='support'
+    bad_frame={'method':'item/completed','params':{'threadId':'producer-thread','turnId':measured_turn,
+        'item':{'type':'mcpToolCall','id':'inconsistent-measurement','server':'swegca-content-observer',
+        'tool':'observe_file_content_equality','status':'completed','result':inconsistent}}}
+    bad_sequence,bad_recorded=producer_frame('server',bad_frame)
+    check(bad_recorded['refinement']['connection']==measured_input['refinement']['connection'])
+    check(bad_recorded['refinement']['status']==0)
+    kept=c.call('swegca/agent/original',{'identity':producer_owner,'sequence':str(bad_sequence)})['result']
+    check(json.loads(kept['native'])==bad_frame)
+    mutations=[
+        lambda x:x['measurement']['right'].update(digest=identity(250)),
+        lambda x:x['measurement']['right'].update(path='/unrelated/path'),
+        lambda x:x['measurement']['left'].update(readBytes='0'),
+        lambda x:x['measurement']['left']['after'].update(mtimeSeconds='999999999'),
+        lambda x:x.pop('measurement'),
+    ]
+    for corrupt in mutations:
+        mismatched=json.loads(json.dumps(measured_packets[0]));corrupt(mismatched['structuredContent'])
+        bad_frame['params']['item']['result']=mismatched
+        # Renaming the tool cannot bypass a declared measured predicate.
+        bad_frame['params']['item']['tool']='renamed-file-observer'
+        _,rejected=producer_frame('server',bad_frame)
+        check(rejected['refinement']['connection']==measured_input['refinement']['connection'])
+        check(rejected['refinement']['status']==0)
+
     next_sequence=str(producer_seq);c.close()
     c=Client('open',producers_root,path);c.initialize()
     check(c.call('swegca/agent/attach/resume',producer_binding)['result']['nextSequence']==next_sequence)
