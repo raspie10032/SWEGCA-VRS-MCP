@@ -21,6 +21,9 @@ public:
     [[nodiscard]] Kind kind() const noexcept{return kind_;}
     [[nodiscard]] const architecture::DigestBytes& lookup() const noexcept{return lookup_;}
 private:
+    friend class Runtime;
+    static void reclaim_orphans(const std::filesystem::path&,MemoryBudget&,StorageBudget&);
+    [[nodiscard]] std::pmr::vector<Range> decode(const StoredExperience&,MemoryBudget&) const;
     PortalPage(ExperienceBlock block,Kind kind,architecture::DigestBytes lookup,std::size_t count,
         std::filesystem::path path,StorageBudget* storage)
         :block_(std::move(block)),kind_(kind),lookup_(lookup),count_(count),path_(std::move(path)),

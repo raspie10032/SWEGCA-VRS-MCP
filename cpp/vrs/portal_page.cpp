@@ -3,6 +3,9 @@
 #include "swegca_architecture/region_partition_kernel.hpp"
 #include <algorithm>
 #include <sys/stat.h>
+#include <sys/file.h>
+#include <fcntl.h>
+#include <system_error>
 #include <unistd.h>
 namespace swegca::vrs {
 namespace {
@@ -35,6 +38,56 @@ void PortalPage::discard() noexcept {
     ::close(block_.fd_);block_.fd_=-1;
     if(charge_)StorageBudget::reclaim_removed(charge_,failed_append?block_.capacity_:physical);
 }
+void PortalPage::reclaim_orphans(const std::filesystem::path& directory,MemoryBudget& memory,StorageBudget& storage){
+    if(!std::filesystem::exists(directory))return;
+    if(!std::filesystem::is_directory(std::filesystem::symlink_status(directory)))
+        throw std::runtime_error("invalid portal page directory");
+    bool removed=false;
+    for(const auto& item:std::filesystem::directory_iterator(directory)){
+        const auto name=item.path().filename().string();
+        if(name.size()!=70||!name.ends_with(".block"))continue;
+        architecture::DigestBytes identity{};bool canonical=true;
+        for(std::size_t n=0;n<64;++n){
+            const auto c=name[n];
+            if(!((c>='0'&&c<='9')||(c>='a'&&c<='f'))){canonical=false;break;}
+            const auto digit=c<='9'?c-'0':c-'a'+10;identity[n/2]|=std::byte(digit<<(n%2?0:4));
+        }
+        if(!canonical)continue;
+        struct stat named{};
+        if(::lstat(item.path().c_str(),&named)<0)throw std::system_error(errno,std::generic_category(),"inspect portal orphan");
+        if(!S_ISREG(named.st_mode)||named.st_nlink!=1)continue;
+        try{
+            auto block=ExperienceBlock::open_reader(item.path(),&storage);
+            if(::flock(block.fd_,LOCK_EX|LOCK_NB)<0){
+                if(errno==EWOULDBLOCK||errno==EAGAIN)continue;
+                throw std::system_error(errno,std::generic_category(),"lock portal orphan");
+            }
+            if(block.identity()!=identity)continue;
+            const auto location=block.location_at(ExperienceBlock::header_bytes);
+            constexpr auto maximum=ExperienceBlock::record_overhead+session.size()+source.size()+media.size()+header+entry*capacity;
+            if(location.bytes>maximum||block.capacity()!=ExperienceBlock::header_bytes+location.bytes)continue;
+            const auto stored=block.read(location,maximum,memory);const auto bytes=stored.view().content;
+            if(bytes.size()<header)continue;
+            const auto count=get(bytes,8);const auto partition=architecture::kernel::region_partition_end(0,count,capacity);
+            if(!partition||*partition!=count)continue;
+            const auto kind=static_cast<Kind>(std::to_integer<unsigned>(bytes[48]));
+            if(kind!=Kind::cue&&kind!=Kind::context)continue;
+            architecture::DigestBytes lookup{};std::copy_n(bytes.begin()+16,lookup.size(),lookup.begin());
+            if(!architecture::kernel::named_digest(lookup))continue;
+            PortalPage page(std::move(block),kind,lookup,count,{},&storage);page.location_=location;
+            (void)page.decode(stored,memory); // Authenticate before acquiring deletion ownership.
+            page.block_.end_=ExperienceBlock::header_bytes+location.bytes;page.path_=item.path();
+            const auto before=storage.used();page.discard();removed=removed||storage.used()<before;
+        }catch(const std::system_error&){throw;}
+         catch(const std::runtime_error&){ /* Unknown/corrupt files remain charged. */ }
+    }
+    if(removed){
+        const int fd=::open(directory.c_str(),O_RDONLY|O_DIRECTORY|O_CLOEXEC|O_NOFOLLOW);
+        if(fd<0)throw std::system_error(errno,std::generic_category(),"open portal cleanup directory");
+        const auto result=::fsync(fd);const auto error=errno;::close(fd);
+        if(result<0)throw std::system_error(error,std::generic_category(),"sync portal cleanup directory");
+    }
+}
 PortalPage PortalPage::create(const std::filesystem::path& path,const architecture::DigestBytes& identity,
     Kind kind,const architecture::DigestBytes& lookup,std::span<const Range> ranges,MemoryBudget& memory,StorageBudget* storage){
     using namespace architecture::kernel;
@@ -59,8 +112,11 @@ PortalPage PortalPage::create(const std::filesystem::path& path,const architectu
     page.location_=page.block_.append({0,0,session,source,media,bytes});return page;
 }
 std::pmr::vector<PortalPage::Range> PortalPage::load(MemoryBudget& memory) const {
-    using namespace architecture::kernel;
     auto stored=block_.read(location_,location_.bytes,memory);
+    return decode(stored,memory);
+}
+std::pmr::vector<PortalPage::Range> PortalPage::decode(const StoredExperience& stored,MemoryBudget& memory) const {
+    using namespace architecture::kernel;
     const auto view=stored.view();const auto bytes=view.content;
     if(view.session!=session||view.source!=source||view.media_type!=media||view.sequence||view.observed_at_ns||
         view.sender!=ExperienceSender::unspecified||bytes.size()!=header+entry*count_||get(bytes,8)!=count_||

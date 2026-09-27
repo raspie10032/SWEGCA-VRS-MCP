@@ -1,3 +1,4 @@
+#include "vrs/portal_page.hpp"
 #include "vrs/runtime.hpp"
 #include "vrs/storage_inventory.hpp"
 #include "swegca_architecture/input_cue.hpp"
@@ -833,6 +834,46 @@ int main(){
    bad=saved;bad.remembered_head={};throws<std::invalid_argument>([&]{(void)host.restore_cognition(input,bad,7,37);});
    bad=saved;bad.key_kind=FamiliarityKey::missing;throws<std::invalid_argument>([&]{(void)host.restore_cognition(input,bad,7,37);});
   }
+ }
+ {
+  const auto path=root/"portal-orphans";fs::create_directory(path);ExperienceLocation original;
+  {auto host=Runtime::create(path,config,memory);host.start_session(id(225),"portal-original");
+   original=host.receive({0,0,"portal-original","user","text/plain",content},7,0).recorded.original;}
+  const auto directory=path/"portal-pages";fs::create_directory(directory);
+  const auto filename=[&](char c){return directory/(std::string(64,c)+".block");};
+  const auto page_id=[](unsigned n){DigestBytes d{};d.fill(std::byte(n));return d;};
+  const std::array ranges{PortalRange{id(3),0,2},PortalRange{id(4),5,9}};
+  const auto child=::fork();CHECK(child>=0);
+  if(child==0){try{
+   auto orphan=PortalPage::create(filename('a'),page_id(0xaa),PortalPage::Kind::cue,id(2),ranges,memory);
+   auto linked=PortalPage::create(filename('b'),page_id(0xbb),PortalPage::Kind::context,id(2),ranges,memory);
+   if(::link(filename('b').c_str(),(directory/"retained-link").c_str())<0)::_exit(2);
+   auto corrupt=PortalPage::create(filename('d'),page_id(0xdd),PortalPage::Kind::cue,id(2),ranges,memory);
+   const auto fd=::open(filename('d').c_str(),O_WRONLY);if(fd<0)::_exit(3);
+   const char bad=127;if(::pwrite(fd,&bad,1,ExperienceBlock::header_bytes+120)!=1)::_exit(4);::close(fd);
+   ::_exit(0);
+  }catch(...){::_exit(5);}}
+  int status=0;CHECK(::waitpid(child,&status,0)==child&&WIFEXITED(status)&&WEXITSTATUS(status)==0);
+  const auto orphan_bytes=fs::file_size(filename('a'));
+  {auto ordinary=ExperienceBlock::create(filename('e'),page_id(0xee),4096);
+   (void)ordinary.append({0,0,"ordinary","source","text/plain",content});}
+  {const int fd=::open(filename('f').c_str(),O_CREAT|O_EXCL|O_WRONLY,0600);CHECK(fd>=0);
+   CHECK(::write(fd,"x",1)==1);::close(fd);}
+  std::optional<PortalPage> live;
+  live.emplace(PortalPage::create(filename('c'),page_id(0xcc),PortalPage::Kind::context,id(2),ranges,memory));
+  const auto before=stored_bytes(path,memory);auto cfg=config;cfg.storage_bytes=before-orphan_bytes;
+  {
+   auto host=Runtime::open(path,cfg,memory);host.resume_session(id(225));
+   CHECK(!fs::exists(filename('a'))&&fs::exists(filename('b'))&&fs::exists(filename('c')));
+   CHECK(fs::exists(filename('d'))&&fs::exists(filename('e'))&&fs::exists(filename('f')));
+   CHECK(host.storage().used()==before-orphan_bytes);
+   CHECK(host.session().read_original(original).location()==original);
+   CHECK(live->load(memory).size()==ranges.size());
+  }
+  live.reset();CHECK(!fs::exists(filename('c')));
+  auto too_small=config;too_small.storage_bytes=stored_bytes(path,memory)-1;
+  throws<StorageLimit>([&]{(void)Runtime::open(path,too_small,memory);});
+  CHECK(fs::exists(filename('b'))&&fs::exists(filename('d'))&&fs::exists(filename('e'))&&fs::exists(filename('f')));
  }
  CHECK(memory.used()==0);fs::remove_all(root);std::printf("runtime lifecycle tests: %u checks passed\n",checks);
 }

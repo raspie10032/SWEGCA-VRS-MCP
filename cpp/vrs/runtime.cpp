@@ -1,4 +1,5 @@
 #include "vrs/runtime.hpp"
+#include "vrs/portal_page.hpp"
 #include "vrs/storage_inventory.hpp"
 #include "swegca_architecture/sha256.hpp"
 #include "swegca_architecture/input_cue.hpp"
@@ -53,6 +54,7 @@ Runtime::Runtime(const std::filesystem::path& root,const RuntimeConfig& config,M
                  : PersistentMainGraph::open(root/"graph",config.main_identity,memory,config.initial_strength,config.policy,sources_,config.merge_workers,&storage_)),sessions_(&memory) {
     sources_.release_caches();
     ExperiencePage::reclaim_orphans(root_/"metadata-pages",make_evidence_rules(config.policy),memory_,storage_);
+    PortalPage::reclaim_orphans(root_/"portal-pages",memory_,storage_);
     if(storage_.used()>storage_.limit())throw StorageLimit();
 }
 Runtime::Active::Active(SessionRuntime& session,const DigestBytes& id,MemoryBudget& memory,const PersistentMainGraph& main)
