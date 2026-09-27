@@ -14,4 +14,11 @@ namespace swegca::architecture::kernel {
     return equal ? EvidenceOutcome::support : EvidenceOutcome::refute;
 }
 
+// Expectation is an explicit predicate operand, never inferred from prose.
+// Missing or unstable data stays insufficient for either polarity.
+[[nodiscard]] constexpr EvidenceOutcome observe_content_relation(
+    bool complete,bool stable,bool equal,bool expect_equal) noexcept {
+    return observe_content_equality(complete,stable,equal==expect_equal);
+}
+
 } // namespace swegca::architecture::kernel

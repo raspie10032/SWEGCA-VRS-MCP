@@ -70,6 +70,15 @@ with tempfile.TemporaryDirectory(prefix='swegca-observer-') as directory:
                 'left':str(left),'right':str(right)})
             return body['measurement']
         measured('support')
+        check(listing[0]['inputSchema']['properties']['expectEqual']['default'] is True)
+        def different_expected(outcome):
+            body=observer.measure(dict(args,expectEqual=False))['result']['structuredContent']
+            check(body['swegcaObservation']['outcome']==outcome)
+            check(json.loads(body['swegcaObservation']['scope'])['predicate']=='different-file-bytes-v1')
+            check(not body['grantsAuthority'])
+        different_expected('refute')
+        for bad in ('false',0,None):check('error' in observer.measure(dict(args,expectEqual=bad)))
+
         anchor={'textIndex':'1','byteOffset':'4','quote':'내용 유지'}
         anchored=observer.measure(dict(args,requirement=anchor))['result']['structuredContent']
         check(anchored['swegcaObservation']['requirement']==anchor)
@@ -88,9 +97,11 @@ with tempfile.TemporaryDirectory(prefix='swegca-observer-') as directory:
         check(before==(left.stat().st_mtime_ns,right.stat().st_mtime_ns))
         right.write_bytes(content[:-1]+b'z')
         different=measured('refute')
+        different_expected('support')
         check(different['left']['digest']!=different['right']['digest'])
         right.unlink()
         missing=measured('insufficient')
+        different_expected('insufficient')
         check(not missing['complete'] and missing['ioError']!=0 and missing['right']['digest'] is None)
         check(missing['right']['before'] is None)
         os.mkfifo(right)

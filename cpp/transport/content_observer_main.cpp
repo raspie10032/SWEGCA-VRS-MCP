@@ -58,11 +58,17 @@ void file_result(std::pmr::string& out,const Json& path,const FileReadObservatio
     out+=",\"before\":";metadata(out,value.before);out+=",\"after\":";metadata(out,value.after);out+='}';
 }
 std::pmr::string measure(const Json& args,std::uint64_t limit,MemoryBudget& memory,TransferBudget& transfer){
-    if(args.kind!=Json::Kind::object||(args.keys.size()!=3&&args.keys.size()!=4))
-        throw std::invalid_argument("expected inputOriginal, left, right and optional requirement");
+    if(args.kind!=Json::Kind::object)throw std::invalid_argument("observation arguments must be an object");
+    for(const auto& key:args.keys)
+        if(key!="inputOriginal"&&key!="left"&&key!="right"&&key!="requirement"&&key!="expectEqual")
+            throw std::invalid_argument("unknown observation argument");
+    bool expect_equal=true;
+    if(const auto* expected=args.find("expectEqual")){
+        if(expected->kind!=Json::Kind::boolean)throw std::invalid_argument("expectEqual must be boolean");
+        expect_equal=expected->scalar=="true";
+    }
     const auto& input=args.at("inputOriginal");address(input);
     const auto* requirement=args.find("requirement");
-    if(args.keys.size()==4&&!requirement)throw std::invalid_argument("unknown observation argument");
     if(requirement)(void)requirement_anchor(*requirement);
     const auto& left_path=args.at("left");const auto& right_path=args.at("right");
     // Validate both paths before opening either one.
@@ -75,10 +81,11 @@ std::pmr::string measure(const Json& args,std::uint64_t limit,MemoryBudget& memo
     File right(right_path.scalar.c_str());const int right_error=right.fd<0?errno:0;
     FileEqualityObservation observed;
     if(left_error||right_error)observed.io_error=left_error?left_error:right_error;
-    else observed=observe_file_equality(left.fd,right.fd,limit,memory,transfer);
+    else observed=observe_file_equality(left.fd,right.fd,limit,memory,transfer,expect_equal);
     // The scope is derived from the actual operation and operands. Callers
     // cannot relabel a content comparison as whole-task completion.
-    std::pmr::string scope("{\"predicate\":\"equal-file-bytes-v1\",\"left\":",&memory);
+    std::pmr::string scope("{\"predicate\":",&memory);
+    append_json_string(scope,expect_equal?"equal-file-bytes-v1":"different-file-bytes-v1");scope+=",\"left\":";
     append_json(scope,left_path);scope+=",\"right\":";append_json(scope,right_path);
     if(requirement){scope+=",\"requirement\":";append_requirement(scope,requirement_anchor(*requirement));}
     scope+='}';
@@ -96,7 +103,7 @@ std::pmr::string measure(const Json& args,std::uint64_t limit,MemoryBudget& memo
     out+=",\"right\":";file_result(out,right_path,observed.right,observed.complete);
     out+="},\"grantsAuthority\":false}";return out;
 }
-constexpr std::string_view listing=R"({"tools":[{"name":"observe_file_content_equality","description":"Read two regular files and report only their byte-content equality as a scoped SWEGCA observation. Requires the current inputOriginal reference. Does not verify task completion, permissions, movement, or semantic relevance. Files are read only; use immutable snapshots for atomic comparison.","annotations":{"readOnlyHint":true,"destructiveHint":false},"inputSchema":{"type":"object","properties":{"inputOriginal":{"type":"object","properties":{"block":{"type":"string"},"offset":{"type":"string"},"bytes":{"type":"string"},"digest":{"type":"string"}},"required":["block","offset","bytes","digest"],"additionalProperties":false},"left":{"type":"string"},"right":{"type":"string"},"requirement":{"type":"object","description":"Optional proposed user requirement: exact UTF-8 quote and byte offset within the original params.input array item at textIndex. VRS checks against the sealed user input; this does not prove semantic relevance.","properties":{"textIndex":{"type":"string"},"byteOffset":{"type":"string"},"quote":{"type":"string","minLength":1}},"required":["textIndex","byteOffset","quote"],"additionalProperties":false}},"required":["inputOriginal","left","right"],"additionalProperties":false}}]})";
+constexpr std::string_view listing=R"({"tools":[{"name":"observe_file_content_equality","description":"Read two regular files and report their byte-content relation as a scoped SWEGCA observation. expectEqual defaults to true; false requests unequal bytes, not correctness of an edit. Requires the current inputOriginal reference. Does not verify task completion, permissions, movement, or semantic relevance. Files are read only; use immutable snapshots for atomic comparison.","annotations":{"readOnlyHint":true,"destructiveHint":false},"inputSchema":{"type":"object","properties":{"inputOriginal":{"type":"object","properties":{"block":{"type":"string"},"offset":{"type":"string"},"bytes":{"type":"string"},"digest":{"type":"string"}},"required":["block","offset","bytes","digest"],"additionalProperties":false},"left":{"type":"string"},"right":{"type":"string"},"expectEqual":{"type":"boolean","default":true,"description":"True requires equal byte content; false requires different byte content. Missing or unstable files are insufficient either way."},"requirement":{"type":"object","description":"Optional proposed user requirement: exact UTF-8 quote and byte offset within the original params.input array item at textIndex. VRS checks against the sealed user input; this does not prove semantic relevance.","properties":{"textIndex":{"type":"string"},"byteOffset":{"type":"string"},"quote":{"type":"string","minLength":1}},"required":["textIndex","byteOffset","quote"],"additionalProperties":false}},"required":["inputOriginal","left","right"],"additionalProperties":false}}]})";
 void result(std::string_view id,std::string_view body){std::cout<<"{\"jsonrpc\":\"2.0\",\"id\":"<<id<<",\"result\":"<<body<<"}\n"<<std::flush;}
 void error(std::string_view id,int code,std::string_view text){
     std::cout<<"{\"jsonrpc\":\"2.0\",\"id\":"<<id<<",\"error\":{\"code\":"<<code<<",\"message\":";

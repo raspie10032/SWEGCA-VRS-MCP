@@ -9,7 +9,8 @@ namespace swegca::transport {
 // not a new file read, proof of producer honesty, or natural-language relevance.
 inline architecture::kernel::EvidenceOutcome measured_file_outcome(const Json& report,
     const Json& scope){
-    if(scope.at("predicate").string()!="equal-file-bytes-v1")
+    const auto predicate=scope.at("predicate").string();
+    if(predicate!="equal-file-bytes-v1"&&predicate!="different-file-bytes-v1")
         throw std::invalid_argument("file observation predicate mismatch");
     const auto flag=[](const Json& value){
         if(value.kind!=Json::Kind::boolean)throw std::invalid_argument("measurement flag must be boolean");
@@ -49,6 +50,6 @@ inline architecture::kernel::EvidenceOutcome measured_file_outcome(const Json& r
         const auto& left=measurement.at("left");const auto& right=measurement.at("right");
         equal=number(left.at("readBytes"))==number(right.at("readBytes"))&&hash(left.at("digest"))==hash(right.at("digest"));
     }
-    return architecture::kernel::observe_content_equality(complete,stable,equal);
+    return architecture::kernel::observe_content_relation(complete,stable,equal,predicate=="equal-file-bytes-v1");
 }
 } // namespace swegca::transport

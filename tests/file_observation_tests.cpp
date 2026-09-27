@@ -1,4 +1,5 @@
 #include "vrs/file_observation.hpp"
+#include "swegca_architecture/content_observation_kernel.hpp"
 #include "vrs/memory_budget.hpp"
 
 #include <cerrno>
@@ -10,6 +11,11 @@
 
 using namespace swegca::vrs;
 using swegca::architecture::kernel::EvidenceOutcome;
+using swegca::architecture::kernel::observe_content_relation;
+static_assert(observe_content_relation(true,true,false,false)==EvidenceOutcome::support);
+static_assert(observe_content_relation(true,true,true,false)==EvidenceOutcome::refute);
+static_assert(observe_content_relation(false,true,false,false)==EvidenceOutcome::insufficient);
+static_assert(observe_content_relation(true,false,false,false)==EvidenceOutcome::insufficient);
 static unsigned checks = 0;
 #define CHECK(e) do { ++checks; if (!(e)) { std::fprintf(stderr,"FAIL %d: %s\n",__LINE__,#e); std::abort(); } } while(false)
 

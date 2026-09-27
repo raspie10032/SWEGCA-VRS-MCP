@@ -33,6 +33,6 @@ struct FileEqualityObservation {
 // snapshot. Use immutable snapshots if that stronger property is required.
 [[nodiscard]] FileEqualityObservation observe_file_equality(
     int left, int right, std::uint64_t max_bytes,
-    std::pmr::memory_resource&, TransferBudget&);
+    std::pmr::memory_resource&, TransferBudget&, bool expect_equal = true);
 
 } // namespace swegca::vrs

@@ -979,15 +979,17 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     measured_turn='measured-turn-'+str(measured_seq)
     producer_frame('server',{'id':measured_seq+1,'result':{'turn':{'id':measured_turn}}},measured_seq)
     observed_originals=[];measured_connection=None;measured_packets=[]
-    for index,outcome in enumerate(('support','refute','insufficient')):
-        if index==1:measured_right.write_bytes(b'different measured bytes')
-        if index==2:measured_right.unlink()
+    for index,outcome in enumerate(('support','refute','insufficient','refute','support','insufficient')):
+        if index==3:measured_right.write_bytes(measured_left.read_bytes())
+        if index%3==1:measured_right.write_bytes(b'different measured bytes')
+        if index%3==2:measured_right.unlink()
         requests=[{'jsonrpc':'2.0','id':1,'method':'initialize','params':{'protocolVersion':'2025-06-18',
             'capabilities':{},'clientInfo':{'name':'native-observation-test','version':'1'}}},
             {'jsonrpc':'2.0','method':'notifications/initialized'},
             {'jsonrpc':'2.0','id':2,'method':'tools/call','params':{'name':'observe_file_content_equality',
                 'arguments':{'inputOriginal':measured_input['original'],'left':str(measured_left),'right':str(measured_right),
                     'requirement':{'textIndex':'0','byteOffset':'10','quote':'file contents'}}}}]
+        if index>=3:requests[-1]['params']['arguments']['expectEqual']=False
         measured=subprocess.run([str(exe.parent/'swegca-content-observer'),'16777216','625000000','1048576'],
             input=b''.join(json.dumps(value).encode()+b'\n' for value in requests),capture_output=True,timeout=10,check=True)
         check(measured.stderr==b'')
@@ -1001,7 +1003,11 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
         n,recorded=producer_frame('server',frame)
         check(recorded['refinement']['connection']!=measured_input['refinement']['connection'])
         if measured_connection is None:measured_connection=recorded['refinement']['connection']
-        check(recorded['refinement']['connection']==measured_connection)
+        if index<3:check(recorded['refinement']['connection']==measured_connection)
+        else:
+            check(recorded['refinement']['connection']!=measured_connection)
+            if index==3:measured_difference_connection=recorded['refinement']['connection']
+            check(recorded['refinement']['connection']==measured_difference_connection)
         # One producer/context cannot manufacture independent evidence by
         # repeating a measurement or renaming a tool item.
         check(recorded['refinement']['status']==0)
@@ -1033,6 +1039,16 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
         _,rejected=producer_frame('server',bad_frame)
         check(rejected['refinement']['connection']==measured_input['refinement']['connection'])
         check(rejected['refinement']['status']==0)
+
+    # The opposite predicate is checked even when the producer renames its
+    # tool. Equal measured bytes cannot support a request for different bytes.
+    forged_difference=json.loads(json.dumps(measured_packets[3]))
+    forged_difference['structuredContent']['swegcaObservation']['outcome']='support'
+    bad_frame['params']['item']['result']=forged_difference
+    bad_frame['params']['item']['tool']='renamed-file-observer'
+    _,rejected_difference=producer_frame('server',bad_frame)
+    check(rejected_difference['refinement']['connection']==measured_input['refinement']['connection'])
+    check(rejected_difference['refinement']['status']==0)
 
     next_sequence=str(producer_seq);c.close()
     c=Client('open',producers_root,path);c.initialize()

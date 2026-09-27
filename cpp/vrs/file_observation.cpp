@@ -49,7 +49,7 @@ bool confirm_end(int fd, std::uint64_t offset, TransferBudget& transfer, int& er
 }
 
 FileEqualityObservation observe_file_equality(int left, int right, std::uint64_t max_bytes,
-    std::pmr::memory_resource& memory, TransferBudget& transfer) {
+    std::pmr::memory_resource& memory, TransferBudget& transfer,bool expect_equal) {
     FileEqualityObservation result;
     if (::fstat(left, &result.left.before) || ::fstat(right, &result.right.before)) {
         result.io_error = errno; return result;
@@ -90,7 +90,7 @@ FileEqualityObservation observe_file_equality(int left, int right, std::uint64_t
     result.complete = true;
     result.stable = same_file_version(result.left.before, result.left.after) &&
         same_file_version(result.right.before, result.right.after);
-    result.outcome = architecture::kernel::observe_content_equality(result.complete, result.stable, equal);
+    result.outcome = architecture::kernel::observe_content_relation(result.complete, result.stable, equal,expect_equal);
     return result;
 }
 } // namespace swegca::vrs

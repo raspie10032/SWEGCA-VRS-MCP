@@ -395,7 +395,7 @@ private:
             if(scope){try{declared_scope=parse_json(*scope,memory_);}catch(const std::invalid_argument&){ }}
             const auto* predicate=declared_scope.find("predicate");
             if(item.at("tool").string()=="observe_file_content_equality"||
-                (predicate&&predicate->kind==Json::Kind::string&&predicate->scalar=="equal-file-bytes-v1")){
+                (predicate&&predicate->kind==Json::Kind::string&&(predicate->scalar=="equal-file-bytes-v1"||predicate->scalar=="different-file-bytes-v1"))){
                 if(!scope||measured_file_outcome(item.at("result").at("structuredContent"),declared_scope)!=value.outcome)
                     return std::nullopt;
             }

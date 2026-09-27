@@ -93,6 +93,8 @@ with tempfile.TemporaryFile() as errors:
         assert query_schema['properties']['related']['type'] == 'boolean'
         observer_tool = matches[0]['tools']['observe_file_content_equality']
         schema = observer_tool['inputSchema']
+        assert schema['properties']['expectEqual']['type'] == 'boolean'
+        assert schema['properties']['expectEqual']['default'] is True
         anchor = schema['properties']['requirement']
         assert set(anchor['required']) == {'textIndex', 'byteOffset', 'quote'}
         assert anchor['additionalProperties'] is False and anchor['properties']['quote']['minLength'] == 1
