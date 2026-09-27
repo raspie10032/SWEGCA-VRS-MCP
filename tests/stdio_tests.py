@@ -785,8 +785,12 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
         raw=c.call('swegca/agent/original',{'identity':producer_owner,'sequence':str(output_seq)})['result']
         check(json.loads(raw['native'])==frame and raw['context']==received['original']['digest'])
         return received,result
+    support_targets=[]
     for outcome,expected in (('support',1),('refute',2)):
-        for n in range(8):received,result=producer_trial('claim '+outcome,n,outcome)
+        for n in range(8):
+            trial_sequence=producer_seq
+            received,result=producer_trial('claim '+outcome,n,outcome)
+            if outcome=='support':support_targets.append((received['original'],'producer-turn-'+str(trial_sequence)))
         check(result['refinement']['status']==expected)
         check((result['refinement']['strength']>1) if expected==1 else (result['refinement']['strength']<1))
     for n,mutate in enumerate((lambda v:v.update(axis='999'),lambda v:v.update(confidence=2),
@@ -798,9 +802,28 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     c=Client('open',producers_root,path);c.initialize()
     check(c.call('swegca/agent/attach/resume',producer_binding)['result']['nextSequence']==next_sequence)
     check(c.call('swegca/select',{'identity':producer_owner})['result']=={})
+    current_input_sequence=producer_seq
     _,recalled=producer_frame('client',{'id':producer_seq+1,'method':'turn/start',
         'params':{'threadId':'producer-thread','input':[{'type':'text','text':'claim support'}]}})
     check(recalled['candidateCount']=='16')
+    # Later counterevidence from the original independent contexts refreshes
+    # the selected Replay without requesting Replay/Re-evidence again.
+    for n,(target,turn) in enumerate(support_targets):
+        producer_frame('server',{'method':'item/completed','params':{'threadId':'producer-thread','turnId':turn,
+            'item':{'type':'mcpToolCall','id':'counter-'+str(n),'server':'counter-producer-'+str(n),
+                'tool':'verify','status':'completed','result':{'content':[],
+                    'structuredContent':{'swegcaObservation':{'inputOriginal':target,'axis':'0',
+                        'outcome':'refute','confidence':1.0,'hasExpiry':False,'expiresAt':'0'}}}}}})
+    refreshed=c.call('swegca/agent/cognition',{'identity':producer_owner,'sequence':str(current_input_sequence),'latest':True})['result']
+    check(refreshed['record']['memory']['agreement']==3 and refreshed['record']['memory']['reEvidencePerformed'])
+    check(refreshed['record']['selectedOriginal']==recalled['memory']['original'])
+    assessment=json.loads(refreshed['record']['replayPrefix']+'"}')['assessment']
+    check(assessment['status']==2 and assessment['currentOriginalCount']=='9')
+    c.close()
+    c=Client('open',producers_root,path);c.initialize()
+    check(c.call('swegca/agent/attach/resume',producer_binding)['result']['nextSequence']==str(producer_seq))
+    recovered_cognition=c.call('swegca/agent/cognition',{'identity':producer_owner,'sequence':str(current_input_sequence),'latest':True})['result']
+    check(recovered_cognition['revision']==refreshed['revision'] and recovered_cognition['record']==refreshed['record'])
     check(c.call('swegca/work',{'seed':'7','step':'0'})['result']['merged']=='0')
     c.close()
     # Turn notifications keep the exact originating input, including after

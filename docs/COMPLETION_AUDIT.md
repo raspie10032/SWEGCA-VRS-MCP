@@ -1207,3 +1207,19 @@ Main 병합은 0이었다. 모델 생성 요청은 0회, 기존 GUI 설정은 �
   후속 Replay의 원경험 주소가 일치함을 확인했다.
 - 현재 사용자 GUI를 재시작하거나 실제 모델 turn을 실행하지 않았다. 관측 생산의 의미적
   구현과 범용 자연어 의미 대응은 여전히 미완료이며 전체 목표를 완료로 처리하지 않는다.
+
+## 2026-09-27: 관측 도착 즉시 Replay 대조와 충돌 재검증
+
+- 문제: 앞선 native 관측 경로는 cognition을 무효화하기만 해서 후속 수동 Replay가
+  없으면 현재 선택 경험과 새 관측의 대조 및 개정 보존이 지연됐다.
+- 수정: 수용된 도구 관측의 기록 후 ACK 전, 현재 연결의 대조를 갱신한다. 기존
+  requires_re_evidence 조건으로만 재검증하고 결과를 기존 cognition revision에 보존한다.
+  delivery 확정 후 재검증하며 재전송은 미완료 대조/보존을 재개하도록 연결했다.
+- CPU 6,7 / make -j2. stdio subprocess **4564 checks passed**.
+  승인된 과거 지지 경험을 Replay한 상태에, 실제 native 도구 이벤트로 서로 다른
+  원경험 context 8개의 반박 관측을 전달했다. 추가 tools/call 없이 읽기 전용
+  agent/cognition latest 조회에서 agreement=contradicts, status=reject,
+  reEvidencePerformed=true, currentOriginalCount=9를 확인했다. 선택 원경험 유지와
+  재시작 후 같은 revision/record 복원도 확인했다.
+- 관측 의미의 사실성을 검증한 시험은 아니며, 실제 사용자 GUI 모델 동작이나 범용
+  자연어 의미 처리의 완료 증거로 확대하지 않는다. 전체 목표는 여전히 미완료다.

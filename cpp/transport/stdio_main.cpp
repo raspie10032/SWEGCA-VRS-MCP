@@ -541,6 +541,9 @@ private:
             if(delivery==AgentDeliveryRoute::reuse){
                 std::pmr::string body("{\"duplicate\":true,\"original\":",&memory_);
                 body+=address(found->second.original,memory_);body+=",\"receipt\":";
+                if(route==AgentEventRoute::record&&state.received&&state.cognition_connection&&
+                    *state.cognition_connection==found->second.connection&&
+                    (!state.cognition_done||!state.cognition_snapshot_saved))complete_cognition();
                 if(state.received && state.received->recorded.original==found->second.original){
                     complete_cognition();
                     body+="\""+std::to_string(state.receipt)+"\"";
@@ -578,11 +581,14 @@ private:
                     complete_cognition();
                     return received_body(limit);
                 }
+                bool admitted_tool_observation=false;
                 auto recorded=[&]{
                     if(!request_original)return runtime_.retain(original,seed,step);
                     if(!response&&sender==ExperienceSender::server){
-                        if(const auto observed_value=tool_observation(event,*request_original,request_connection,observed))
-                            return runtime_.observe_input(*request_original,original,*observed_value,seed,step);
+                        if(const auto observed_value=tool_observation(event,*request_original,request_connection,observed)){
+                            auto result=runtime_.observe_input(*request_original,original,*observed_value,seed,step);
+                            admitted_tool_observation=true;return result;
+                        }
                     }
                     EvidenceObservation observation;observation.hypothesis=request_connection;
                     observation.context=request_original->digest;observation.observed_at=observed;
@@ -596,6 +602,9 @@ private:
                 invalidate_cognition(recorded);
                 if(binding)binding->recorded(*response);
                 slot->second.fingerprint=agent_delivery_identity(sequence,observed,event.native_bytes());
+                // Finish live comparison and durable revision before acknowledging
+                // the observation. Only the core's conflict opens Re-evidence.
+                if(admitted_tool_observation&&state.received&&!state.cognition_done)complete_cognition();
                 return "{\"original\":"+address(recorded.original,memory_)+",\"refinement\":"+refinement(recorded.refinement,memory_)+"}";
             } catch(...) {
                 if(!committed)state.deliveries.erase(slot);
