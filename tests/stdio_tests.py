@@ -70,6 +70,17 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     first=c.call('swegca/receive',event('one'))['result'];check(first['candidates']==[])
     check(c.call('tools/call',{'name':'vrs_replay','arguments':{'receipt':first['receipt']}})['result']['isError'])
     second=c.call('swegca/receive',event('one','assistant',sequence='1'))['result'];check(len(second['candidates'])==1)
+    context_packet=c.call('tools/call',{'name':'vrs_replay','arguments':{'receipt':second['receipt']}})['result']['structuredContent']
+    check(context_packet['original']==first['original'] and context_packet['source']=='user')
+    check(context_packet['session']=='one' and context_packet['observedAt']=='0')
+    check(context_packet['grantsAuthority'] is False)
+    check(context_packet['assessment']['agreement']==1 and context_packet['assessment']['status']==0)
+    check(context_packet['assessment']['inputOriginal']==second['original'])
+    check(context_packet['assessment']['currentOriginalCount']=='1')
+    check(context_packet['assessment']['reEvidencePerformed'] is False)
+    check(bytes.fromhex(context_packet['contentHex'])==text.encode())
+    check(c.call('tools/call',{'name':'vrs_replay','arguments':{'receipt':second['receipt']}})['result']['structuredContent']==context_packet)
+
     check(c.call('tools/call',{'name':'vrs_replay','arguments':{'receipt':first['receipt'],'candidate':'0'}})['result']['isError'])
     replay=c.call('tools/call',{'name':'vrs_replay','arguments':{'receipt':second['receipt'],'candidate':'0'}})['result']
     check(bytes.fromhex(replay['structuredContent']['contentHex'])==text.encode())
@@ -905,6 +916,27 @@ for line in sys.stdin:
     verified=c.call('tools/call',{'name':'vrs_re_evidence','arguments':{'receipt':recalled['receipt'],'seed':'7','step':'1'}})['result']
     check('structuredContent' in verified)
     c.close()
+    # Export the already authenticated automatic Replay without another read.
+    # Only this disposable fixture's blocks are damaged; explicit fresh Replay
+    # must still detect the corruption instead of treating the cache as storage.
+    with tempfile.TemporaryDirectory(prefix='swegca-context-export-') as cached_directory:
+        cached_root=pathlib.Path(cached_directory)
+        c=Client('create',cached_root,path);c.initialize()
+        check(c.call('swegca/start',{'identity':identity(201),'name':'context-export'})['result']=={})
+        saved=c.call('swegca/receive',event('context-export'))['result']
+        current=c.call('swegca/receive',event('context-export',sequence='1'))['result']
+        request={'name':'vrs_replay','arguments':{'receipt':current['receipt']}}
+        packet=c.call('tools/call',request)['result']['structuredContent']
+        check(packet['assessment']['inputOriginal']==current['original'])
+        blocks=list(cached_root.rglob('*.block'));check(bool(blocks))
+        for block in blocks:
+            with block.open('r+b') as stream:stream.truncate(0)
+        exported=c.call('tools/call',request)['result']['structuredContent']
+        check(exported==packet and exported['original']==saved['original'])
+        check(bytes.fromhex(exported['contentHex'])==text.encode())
+        check(c.call('tools/call',{'name':'vrs_replay','arguments':{
+            'receipt':current['receipt'],'candidate':'0'}})['result']['isError'])
+        c.close()
     # A separate config file must not change the root being measured.
     def stored_bytes():
         seen=set();total=0

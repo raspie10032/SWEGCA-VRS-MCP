@@ -447,9 +447,36 @@ private:
             body+=",\"refinement\":";body+=refinement(context().received->recorded.refinement,memory_);
             cognition_body(body);body+='}';return body;
     }
+    void replay_payload(std::string_view id,const ReplayedInput& replayed,const InputCognition* cognition=nullptr){
+        const auto value=evidence_payload(replayed.original());
+        auto prefix="{\"original\":"+address(replayed.location(),memory_)+
+            ",\"media\":"+quote_json(value.media_type,memory_)+",\"source\":"+quote_json(value.source,memory_)+
+            ",\"session\":"+quote_json(value.session,memory_)+",\"observedAt\":\""+
+            std::to_string(value.observed_at_ns).c_str()+"\",\"grantsAuthority\":false,\"assessment\":";
+        if(cognition){
+            const auto& assessment=cognition->assessment();
+            const auto& judgment=assessment.verification().result().verification().judgment();
+            prefix+="{\"agreement\":";prefix+=std::to_string(static_cast<unsigned>(assessment.agreement()));
+            prefix+=",\"status\":";prefix+=std::to_string(static_cast<unsigned>(judgment.status()));
+            prefix+=",\"reason\":";prefix+=std::to_string(static_cast<unsigned>(judgment.reason()));
+            prefix+=",\"step\":\"";prefix+=std::to_string(assessment.verification().current_step());
+            prefix+="\",\"inputOriginal\":";prefix+=address(context().received->recorded.original,memory_);
+            prefix+=",\"rememberedHead\":";prefix+=address(assessment.remembered_head().record,memory_);
+            prefix+=",\"currentHead\":";prefix+=address(assessment.current_head().record,memory_);
+            prefix+=",\"currentOriginalCount\":\"";prefix+=std::to_string(assessment.current_originals().size());
+            prefix+="\",\"reEvidencePerformed\":";prefix+=cognition->reverified?"true":"false";prefix+='}';
+        }else prefix+="null";
+        prefix+=",\"contentHex\":\"";
+        payload_result(id,prefix,value.content);
+    }
     void replay_result(std::string_view id,const Json& p){
         if(!context().received||integer(p.at("receipt"))!=context().receipt)throw std::invalid_argument("expired receipt");
         const auto* explicit_candidate=p.find("candidate");
+        // The automatic route already authenticated and compared this original.
+        // Export that exact receipt without reselection, disk reads or reevaluation.
+        if(!explicit_candidate && !p.find("offset") && !p.find("count") && context().cognition){
+            replay_payload(id,context().cognition->replayed,&*context().cognition);return;
+        }
         const auto selected=explicit_candidate ? std::optional<std::size_t>(integer(*explicit_candidate))
             : runtime_.select_replay(context().received->recalled);
         if(!selected)throw std::invalid_argument("Recall has no Replay candidate");
@@ -463,10 +490,7 @@ private:
             payload_result(id,prefix,part.content());return;
         }
         context().replayed.emplace(runtime_.replay(context().received->recalled,candidate));
-        const auto value=evidence_payload(context().replayed->original());
-        auto prefix="{\"original\":"+address(context().replayed->location(),memory_)+
-            ",\"media\":"+quote_json(value.media_type,memory_)+",\"source\":"+quote_json(value.source,memory_)+",\"contentHex\":\"";
-        payload_result(id,prefix,value.content);
+        replay_payload(id,*context().replayed);
     }
     std::pmr::string call(std::string_view method,const Json& p){
         if(!context().received||integer(p.at("receipt"))!=context().receipt)throw std::invalid_argument("expired receipt");

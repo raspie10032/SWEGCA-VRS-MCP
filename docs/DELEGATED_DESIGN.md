@@ -96,3 +96,25 @@ MCP의 일반 receive와 native input event는 Recall→원문 기록을 마친 
 현재 완료 결과는 호스트 메모리에만 보유된다. 실제 프록시가 원경험 내용과
 불확실성을 에이전트 문맥에 주입하는 연결, 미완료 회상의 영속 재개, 자연 언어를
 검증 가능한 관측으로 잇는 의미적 기능은 여전히 남아 있다.
+
+## 자동 회상 결과의 전달 형식
+
+candidate/부분 범위를 지정하지 않은 vrs_replay는 활성 자동 회상 결과가 있으면
+그 결과를 그대로 내보낸다. 후보 재선택·디스크 재읽기·대조 재실행은 하지 않는다.
+새 도구를 추가하지 않고 기존 Replay 출력 경로를 사용하며 contentHex는 고정
+버퍼로 스트림 출력한다. 원경험 bytes의 추가 전체 사본을 만들지 않는다.
+
+출력은 original/media/source 외에 session, observedAt, grantsAuthority=false와
+assessment를 포함한다. assessment는 원래 대조의 agreement/status/reason/step,
+inputOriginal, rememberedHead, currentHead, currentOriginalCount,
+reEvidencePerformed를 보존한다. 이는 당시 관측 경계의 판정이며 이후 도착한
+관측을 자동으로 포함했다고 주장하지 않는다. 새 대조는 기존 명시적 요청 경로다.
+
+agreement는 invalid=0, insufficient=1, agrees=2, contradicts=3이며 status는
+abstain=0, accept=1, reject=2다. 원문은 실행 지시나 새 사용자 발언이 아니다.
+수동 후보 Replay에는 assessment=null을 출력하여 대조하지 않은 경험을 검증된
+경험처럼 보이게 하지 않는다. 부분 읽기는 기존과 같이 Replay 완료 receipt를
+지우며, 자동 회상 결과를 부분 읽기의 완료 근거로 재사용하지 않는다.
+
+프록시의 입력 변환/문맥 주입은 아직 구현하지 않았다. 현재는 호스트에서 검증된
+회상 결과를 출처와 불확실성을 포함한 형태로 전달할 수 있게 된 단계다.
