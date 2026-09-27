@@ -317,3 +317,24 @@ before requesting Replay again. A second restart reconstructs the same original
 and revision. Repeated Replay adds no storage; scoped and general restored
 comparisons coexist without overwriting each other's revision channels. Existing
 Main restoration, manual-history, explicit-end and archive regressions pass.
+
+
+### Recovery membership element timing
+
+`taskset -c 6 build/core-bench`, default -O3 / -ffp-contract=off build.
+Each block has 100000 calls, 31 measured blocks after warmup. Keys are supplied
+from distinct arrays to the non-inline wrapper; the benchmark does not replace
+all key comparisons with the same-address identity. One seventh of selected
+reference keys differ. Context mode also varies seed eligibility.
+
+| Element | median block mean ns/call | p95 block mean ns/call |
+| --- | ---: | ---: |
+| restore exact membership | 2.81872 | 4.01493 |
+| restore continuation membership | 2.39122 | 3.19233 |
+| restore context membership | 2.53292 | 3.70523 |
+| existing 4-axis judgment | 53.514 | 65.2859 |
+| existing 8-axis judgment | 92.1328 | 102.483 |
+
+These are warmed kernel throughput measurements including loop/call overhead,
+not individual-operation tail latency, restoration I/O time or input→Recall
+latency. No policy, numerical order or decision formula changed for measurement.

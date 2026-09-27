@@ -53,6 +53,10 @@ __attribute__((noinline)) ReplayPreference measured_selection(const ReplayCandid
 __attribute__((noinline)) bool measured_context_reference(bool input,bool seed) noexcept {
  return context_reference_eligible(input,seed);
 }
+__attribute__((noinline)) bool measured_recovery(FamiliarityKey kind,const Digest& input,const Digest& lookup,
+ const Digest& connection,const Digest& cue,const Digest& context,bool seed) noexcept {
+ return restored_reference_matches(kind,input,lookup,connection,cue,context,true,seed);
+}
 template<class Fn> void measure(const char* name,Fn fn) {
  constexpr std::size_t iterations=100000;
  for(std::size_t i=0;i<iterations;++i)fn(i);
@@ -73,6 +77,20 @@ __attribute__((noinline)) bool measured_page_discard(bool owned,bool sole) noexc
  return discard_metadata_page(owned,sole);
 }
 int main(){
+ std::array<std::array<Digest,64>,5> recovery_keys{};
+ for(auto& field:recovery_keys)
+  for(std::size_t i=0;i<field.size();++i)field[i].fill(std::byte(i+1));
+ for(const auto kind:{FamiliarityKey::exact,FamiliarityKey::continuation,FamiliarityKey::context}){
+  const auto name=kind==FamiliarityKey::exact?"restore_exact_membership":
+      kind==FamiliarityKey::continuation?"restore_continuation_membership":"restore_context_membership";
+  measure(name,[&](std::size_t i){
+   const auto j=(i+(i%7==0))&63;
+   auto result=measured_recovery(kind,recovery_keys[0][i&63],recovery_keys[1][i&63],
+       recovery_keys[2][j],recovery_keys[3][j],recovery_keys[4][j],kind==FamiliarityKey::context&&i%2);
+   consume(result);
+  });
+ }
+
  measure("metadata_pressure",[&](std::size_t i){auto result=metadata_pressure(i%100,75,i%7==0);consume(result);});
  measure("discard_metadata_page",[&](std::size_t i){auto result=measured_page_discard(i%2,i%3!=0);consume(result);});
  measure("metadata_release",[&](std::size_t i){auto result=measured_metadata(i%2,i%3,i%5!=0);consume(result);});

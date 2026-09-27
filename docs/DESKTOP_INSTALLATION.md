@@ -74,3 +74,18 @@ config.toml을 수정하지 않았다. 기존 Main identity, proxy instance, 원
 실제 backend에서 VRS와 관측기가 같은 host의 memfd를 연결함을 확인했다.
 이는 앞 절의 개별 예산 합산 문제를 논리 요청량 범위에서 해결한 것이다.
 물리 SSD 전체 제한과 구분하며 SHARED_IO_BUDGET.md의 한계를 따른다.
+
+
+## 일반 회상 복구·원문 인용 버전 갱신
+
+설치 실행 파일의 기존 manifest 해시와 실행 프로세스 부재를 확인한 뒤,
+검증된 `swegca-vrs-mcp`와 `swegca-content-observer`를 갱신했다.
+설정/identity/원경험은 유지했고 GUI를 재시작하지 않았다. 파일별 교체는 임시
+파일 fsync→rename으로 수행했으며 manifest와 디렉터리도 동기화했다.
+
+실제 설치 backend의 MCP inventory에서 `requirement`의 textIndex/byteOffset/quote
+스키마와 원래 필수 인자를 확인했다. host/proxy/VRS/observer의 동일 cgroup,
+memory.max=3999997952, swap.max=0, CPU 6-7, VRS/observer의 같은 memfd 전송
+예산을 재확인했다. 모델 호출 0, 정상 종료 0, 검사 프로세스 잔류 없음.
+설치 해시와 소스 빌드 바이너리 일치도 확인했다. 현재 실행 GUI의 실제 사용자
+대화 수집이나 도구의 의미 적합성을 검증한 것은 아니다.

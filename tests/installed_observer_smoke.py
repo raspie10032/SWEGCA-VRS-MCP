@@ -84,6 +84,12 @@ with tempfile.TemporaryFile() as errors:
         scan()
         matches = [entry for entry in status.get('data', []) if entry.get('name') == server]
         assert len(matches) == 1 and 'observe_file_content_equality' in matches[0].get('tools', {})
+        observer_tool = matches[0]['tools']['observe_file_content_equality']
+        schema = observer_tool['inputSchema']
+        anchor = schema['properties']['requirement']
+        assert set(anchor['required']) == {'textIndex', 'byteOffset', 'quote'}
+        assert anchor['additionalProperties'] is False and anchor['properties']['quote']['minLength'] == 1
+        assert set(schema['required']) == {'inputOriginal', 'left', 'right'}
         assert profiles.keys() == roles, 'some installed process profiles were not observed'
         assert len({value['group'] for value in profiles.values()}) == 1, 'observer escaped aggregate group'
         owner = profiles['swegca-vrs-mcp']['sharedOwner']
@@ -97,7 +103,7 @@ with tempfile.TemporaryFile() as errors:
             assert value['memoryMax'] == expected and value['swapMax'] == 0 and value['cpus'] == '6-7'
         process.stdin.close()
         assert process.wait(timeout=20) == 0
-        print(json.dumps({'observerRegistered': True, 'sameAggregateGroup': True, 'sameSharedTransfer': True,
+        print(json.dumps({'observerRegistered': True, 'requirementSchemaRegistered': True, 'sameAggregateGroup': True, 'sameSharedTransfer': True,
                           'verifiedProcesses': sorted(profiles), 'memoryMax': expected,
                           'swapMax': 0, 'cpus': '6-7', 'modelCalls': 0, 'exitCode': 0}))
     finally:
