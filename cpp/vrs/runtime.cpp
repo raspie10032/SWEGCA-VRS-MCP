@@ -129,6 +129,17 @@ InputRecall Runtime::input(std::string_view media,std::span<const std::byte> con
     // No closure, pending merge or storage work is placed before Deja vu.
     return require_session().router.input(media,content);
 }
+std::optional<InputCognition> Runtime::cognize(const InputRecall& recalled,
+    std::uint64_t seed,std::uint64_t step) const {
+    const auto candidate=select_replay(recalled);
+    if(!candidate)return std::nullopt;
+    auto original=replay(recalled,*candidate);
+    auto compared=compare_replay(original,seed,step);
+    std::optional<ReEvidenceResult> reverified;
+    if(architecture::kernel::requires_re_evidence(compared.agreement()))
+        reverified.emplace(re_evidence(original,compared,seed,step));
+    return InputCognition{*candidate,std::move(original),std::move(compared),std::move(reverified)};
+}
 std::optional<std::size_t> Runtime::select_replay(const InputRecall& recalled) const {
     return require_session().router.select_replay(recalled);
 }

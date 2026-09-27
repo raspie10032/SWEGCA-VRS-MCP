@@ -10,11 +10,11 @@ using namespace swegca::architecture;
 using namespace swegca::architecture::kernel;
 using namespace swegca::vrs;
 namespace fs=std::filesystem;
-static unsigned checks=0,reads=0,writes=0;static bool fail_write=false;
+static unsigned checks=0,reads=0,writes=0;static bool fail_write=false,fail_read=false;
 #define CHECK(e) do{++checks;if(!(e)){std::fprintf(stderr,"FAIL %d: %s\n",__LINE__,#e);std::abort();}}while(false)
 template<class E,class F>void throws(F f){bool caught=false;try{f();}catch(const E&){caught=true;}CHECK(caught);}
 extern "C" ssize_t __real_pread(int,void*,size_t,off_t);
-extern "C" ssize_t __wrap_pread(int fd,void* p,size_t n,off_t o){++reads;return __real_pread(fd,p,n,o);}
+extern "C" ssize_t __wrap_pread(int fd,void* p,size_t n,off_t o){++reads;if(fail_read){fail_read=false;errno=EIO;return -1;}return __real_pread(fd,p,n,o);}
 extern "C" ssize_t __real_pwrite(int,const void*,size_t,off_t);
 extern "C" ssize_t __wrap_pwrite(int fd,const void* p,size_t n,off_t o){++writes;if(fail_write){fail_write=false;errno=ENOSPC;return -1;}return __real_pwrite(fd,p,n,o);}
 class FailingMemory final:public std::pmr::memory_resource {
@@ -112,13 +112,24 @@ int main(){
    auto event=host.receive({sequence,0,"events",source,"text/plain",content},7,0);
    CHECK(event.recalled.matches().size()==sequence);
    CHECK(event.recorded.refinement.result().verification().judgment().status()==EvidenceStatus::abstain);
-   if(sequence==0){CHECK(!event.recalled.familiar());initial=event.recorded.original;}
+   if(sequence==0){CHECK(!event.recalled.familiar());initial=event.recorded.original;
+    const auto r=reads,w=writes;CHECK(!host.cognize(event.recalled,7,0));CHECK(reads==r&&writes==w);
+   }
    else {
     // Receive has already appended the new event to the same connection.
     // The receipt still names only experience that existed before that append.
     CHECK(event.recalled.temporary());
     CHECK(event.recalled.matches()[0].original==initial);
     CHECK(event.recalled.matches()[0].recalled.recalled_head.observations==sequence);
+    const auto w=writes;
+    fail_read=true;throws<std::system_error>([&]{(void)host.cognize(event.recalled,7,0);});
+    CHECK(writes==w);
+    auto cognition=host.cognize(event.recalled,7,0);
+    CHECK(cognition&&cognition->replayed.location()==initial&&!cognition->reverified);
+    CHECK(cognition->assessment().agreement()==ReplayAgreement::insufficient);
+    CHECK(cognition->assessment().current_originals().size()==1);
+    CHECK(cognition->assessment().current_originals()[0]==event.recorded.original);
+    CHECK(writes==w);
     auto replayed=host.replay(event.recalled,0);CHECK(replayed.location()==initial);
     auto compared=host.compare_replay(replayed,7,0);
     const auto& checked=compared.evidence();
@@ -358,6 +369,29 @@ int main(){
   throws<std::system_error>([&]{(void)Runtime::ensure(broken,config,memory);});CHECK(writes==before);
   const auto foreign=root/"ensure-foreign";fs::create_directories(foreign/"sessions");
   throws<std::runtime_error>([&]{(void)Runtime::ensure(foreign,config,memory);});CHECK(!fs::exists(foreign/"graph"));
+ }
+ {
+  const auto path=root/"cognition-conflict";fs::create_directory(path);
+  auto host=Runtime::create(path,config,memory);host.start_session(id(211),"conflict");
+  host.define_connection(id(212));
+  const auto observe=[&](unsigned n,EvidenceOutcome outcome){
+   EvidenceObservation value;value.hypothesis=id(212);value.source=id(n+20);
+   value.context=id(n+70);value.producer=id(n+120);value.observed_at=n;value.outcome=outcome;
+   return host.observe(id(212),{n,n,"conflict","experiment","text/plain",content},value,7,n).original;
+  };
+  ExperienceLocation remembered;
+  for(unsigned n=1;n<=16;++n)remembered=observe(n,EvidenceOutcome::support);
+  auto recalled=host.input("text/plain",content);
+  for(unsigned n=17;n<=32;++n)(void)observe(n,EvidenceOutcome::refute);
+  const auto w=writes;
+  const auto strength=host.session().find(id(212))->state().strength();
+  auto cognition=host.cognize(recalled,7,32);
+  CHECK(cognition&&cognition->candidate==15&&cognition->replayed.location()==remembered);
+  CHECK(cognition->comparison.agreement()==ReplayAgreement::contradicts);
+  CHECK(cognition->reverified.has_value());
+  CHECK(cognition->assessment().agreement()==ReplayAgreement::contradicts);
+  CHECK(cognition->assessment().current_originals().size()==16);
+  CHECK(writes==w&&host.session().find(id(212))->state().strength()==strength);
  }
  CHECK(memory.used()==0);fs::remove_all(root);std::printf("runtime lifecycle tests: %u checks passed\n",checks);
 }

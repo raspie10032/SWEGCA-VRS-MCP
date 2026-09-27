@@ -10,6 +10,18 @@ struct ReceivedInput {
     RecordedRefinement recorded;
 };
 
+// Main-owned composition of the selected Replay and its core comparison.
+// Selection and this receipt confer no truth or external-action authority.
+struct InputCognition {
+    std::size_t candidate;
+    ReplayedInput replayed;
+    ReplayComparison comparison;
+    std::optional<ReEvidenceResult> reverified;
+    [[nodiscard]] const ReEvidenceResult& assessment() const noexcept {
+        return reverified ? *reverified : comparison.evidence();
+    }
+};
+
 struct RuntimeConfig {
     architecture::DigestBytes main_identity;
     architecture::EvidencePolicy policy;
@@ -59,6 +71,8 @@ public:
         std::span<const std::byte> cue_content, const OriginalExperienceView& envelope,
         std::uint64_t seed, std::uint64_t step);
     [[nodiscard]] InputRecall input(std::string_view media, std::span<const std::byte> content) const;
+    [[nodiscard]] std::optional<InputCognition> cognize(const InputRecall&, std::uint64_t seed,
+        std::uint64_t step) const;
     [[nodiscard]] std::optional<std::size_t> select_replay(const InputRecall&) const;
     [[nodiscard]] ReplayedInput replay(const InputRecall&, std::size_t candidate) const;
     [[nodiscard]] EvidencePayloadSlice read_payload_slice(const InputRecall&, std::size_t candidate,

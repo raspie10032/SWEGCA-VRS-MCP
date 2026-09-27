@@ -281,3 +281,22 @@ Recall 후보에서 한 원경험을 고르는 prefer_replay 코어 소자를 �
 benchmarks/results/core-replay-selection.txt. 후보 전체 순회는 선형 비용이다.
 실제 앱 입력→Recall 1ms, 자동 Replay 실행, 의미적 현재 명제 검증 및 agent
 문맥 반영의 완료를 뜻하지 않는다.
+
+자연 입력의 자동 회상을 Runtime::cognize로 연결했다. 일반 receive 및 native
+input은 Recall/원문 기록 후 코어 후보 선택→선택 Replay→새 관측 대조→충돌
+시 재검증을 수행한다. LLM 호출이나 원문 상태 필터는 없다. 응답 memory는
+선택 주소·agreement·실제 재검증 여부를 보고하며 기권을 승인으로 바꾸지 않는다.
+현재 receipt가 살아 있는 중복 입력은 완료 결과를 재사용한다. 저장 뒤 실패한
+경우 전달 주소를 유지하고 최초 refinement seed/step으로 다시 진행한다.
+재시작으로 Recall receipt가 없어진 중복 입력은 completed=false로 표시한다.
+
+런타임 검사 218개 통과: 빈 후보 무 I/O, Replay 읽기 실패 후 재시도, 입력
+중복 기록 없음, 새 반증에 대한 실제 재검증, 저장 강도 불변을 확인했다.
+실제 MCP 프로세스 검사 2,585개 통과: 훅/app-server 자연 입력 직후 자동
+회상과 도구 재호출 없는 후속 대조, 재전송 결과 및 재시작 미복구 표시를 확인했다.
+check-stdio의 JSON 양 경로 각 13,279개, framing 29개, wrapper 33개도 통과했다.
+
+현재 한계: 자동 회상의 호스트 내 연결까지이며, 프록시의 agent 문맥 주입은
+아직 없다. 완료 결과 영속화/미완료 회상 재개와 자연 언어의 의미적 관측 연결도
+남아 있다. 전체 기능 완성, 실제 앱 적용, 4GB 전체 운영 및 입력→Recall 1ms
+달성으로 판단하지 않는다.

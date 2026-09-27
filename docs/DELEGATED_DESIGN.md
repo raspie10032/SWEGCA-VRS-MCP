@@ -73,3 +73,26 @@ Runtime::select_replay와 MCP vrs_replay의 candidate 생략에 연결했다. �
 
 아직 자연 입력 이벤트만으로 자동 Replay를 실행하거나 agent 문맥에 넣지는
 않는다. MCP 호출자가 candidate를 지정하지 않아도 선택할 수 있게 된 범위다.
+
+## 자연 입력 뒤 자동 회상 연결
+
+Runtime::cognize는 현재 Recall receipt에서 코어로 한 후보를 선택하고, Replay한
+원경험을 현재 새 관측과 대조하며, 충돌일 때만 Re-evidence를 수행한다. 후보가
+없으면 빈 결과이고, 근거가 없는 입력은 코어의 insufficient를 유지한다. 이
+함수는 추가 원경험 기록이나 연결 강도 커밋을 하지 않는다.
+
+MCP의 일반 receive와 native input event는 Recall→원문 기록을 마친 뒤 이
+공통 경로를 호출한다. content/lifecycle 이벤트는 기존 원문 기록만 수행한다.
+자동 회상은 Recall 진입 뒤에 있으므로 입력 앞에 저장·Replay를 넣지 않는다.
+응답 memory는 처리 완료 여부, 선택한 원경험 주소, 코어 agreement와 실제
+재검증 여부를 담는다. completed는 내용이 검증됐다는 뜻이 아니다.
+
+현재 세션의 같은 입력 재전송은 완료 결과를 재사용한다. 저장 뒤 자동 회상에
+실패해도 delivery에 원경험 주소가 남아 재시도에서 중복 저장하지 않으며,
+재시도 파라미터 대신 최초 refinement의 seed/step을 사용한다. 프로세스가
+재시작되어 당시 Recall receipt가 없어진 입력의 중복 응답에는 completed=false를
+명시한다. 그 과거 회상 자체를 영속 복구한 것으로 취급하지 않는다.
+
+현재 완료 결과는 호스트 메모리에만 보유된다. 실제 프록시가 원경험 내용과
+불확실성을 에이전트 문맥에 주입하는 연결, 미완료 회상의 영속 재개, 자연 언어를
+검증 가능한 관측으로 잇는 의미적 기능은 여전히 남아 있다.

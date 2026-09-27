@@ -371,10 +371,14 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     n0=n0['result'];check(n0['candidateCount']=='0' and n0['refinement']['status']==0)
     raw1,n1=native_event('UserPromptSubmit',1,prompt=text,unknown={'turn':'b'})
     n1=n1['result'];check(n1['candidateCount']=='1' and n1['candidates'][0]['original']==n0['original'])
+    check(n0['memory']=={'completed':True,'original':None})
+    check(n1['memory']['completed'] and n1['memory']['original']==n0['original'])
+    check(n1['memory']['agreement']==1 and n1['memory']['reEvidencePerformed'] is False)
+    check('structuredContent' in recheck(n1['receipt']))
     # A lost response may be retried with the same event; no new refinement.
     same=resend_native(raw1,1)['result']
-    check(same=={'duplicate':True,'original':n1['original'],'receipt':n1['receipt']})
-    check(resend_native(raw0,0)['result']=={'duplicate':True,'original':n0['original'],'receipt':None})
+    check(same=={'duplicate':True,'original':n1['original'],'receipt':n1['receipt'],'memory':n1['memory']})
+    check(resend_native(raw0,0)['result']=={'duplicate':True,'original':n0['original'],'receipt':None,'memory':{'completed':False,'original':None}})
     check('error' in resend_native(raw1+' ',1))
     check('error' in resend_native(raw1,1,observed=9))
     check('error' in native_event('Stop',8)[1])
@@ -394,8 +398,8 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     check(c.call('swegca/select',{'identity':native_id})['result']=={})
     # No process-local delivery cache survives this restart. The committed
     # originals alone identify retries without adding observations or strength.
-    check(resend_native(raw0,0)['result']=={'duplicate':True,'original':n0['original'],'receipt':None})
-    check(resend_native(raw1,1)['result']=={'duplicate':True,'original':n1['original'],'receipt':None})
+    check(resend_native(raw0,0)['result']=={'duplicate':True,'original':n0['original'],'receipt':None,'memory':{'completed':False,'original':None}})
+    check(resend_native(raw1,1)['result']=={'duplicate':True,'original':n1['original'],'receipt':None,'memory':{'completed':False,'original':None}})
     check('error' in resend_native(raw1+' ',1))
     _,n2=native_event('UserPromptSubmit',6,prompt=text)
     n2=n2['result'];check(n2['candidateCount']=='2')
@@ -465,6 +469,9 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     a0=a0['result'];check(a0['candidateCount']=='0')
     _,a1=app_event(1,'turn/steer',{'input':app_input,'expectedTurnId':'turn-x'},2)
     a1=a1['result'];check(a1['candidateCount']=='1')
+    check(a1['memory']['completed'] and a1['memory']['original']==a0['original'])
+    check(a1['memory']['agreement']==1 and not a1['memory']['reEvidencePerformed'])
+    check('structuredContent' in recheck(a1['receipt']))
     app_replay=replay_receipt(a1['receipt'])['structuredContent']
     check(app_replay['source']=='codex/app-server' and bytes.fromhex(app_replay['contentHex'])==app_raw.encode())
     check(resend_native(app_raw,0)['result']['duplicate'])

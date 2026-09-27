@@ -100,6 +100,8 @@ private:
         std::uint64_t receipt=0;
         std::optional<ReceivedInput> received;
         std::optional<ReplayedInput> replayed;
+        std::optional<InputCognition> cognition;
+        bool cognition_done=false;
     };
     std::uint64_t next_receipt_=0;
     std::pmr::map<DigestBytes,Context> contexts_;
@@ -146,7 +148,35 @@ private:
     }
     void result(std::string_view id,std::string_view body){std::cout<<"{\"jsonrpc\":\"2.0\",\"id\":"<<id<<",\"result\":"<<body<<"}\n"<<std::flush;if(!std::cout)throw std::runtime_error("MCP output disconnected");}
     void error(std::string_view id,int code,std::string_view message){std::cout<<"{\"jsonrpc\":\"2.0\",\"id\":"<<id<<",\"error\":{\"code\":"<<code<<",\"message\":"<<quote_json(message,memory_)<<"}}\n"<<std::flush;}
-    void clear(){context().replayed.reset();context().received.reset();}
+    void clear_replay(){
+        context().replayed.reset();context().cognition.reset();context().cognition_done=false;
+    }
+    void clear(){clear_replay();context().received.reset();}
+    const ReplayedInput* selected_replay() const {
+        if(context().replayed)return &*context().replayed;
+        return context().cognition ? &context().cognition->replayed : nullptr;
+    }
+    void complete_cognition(){
+        auto& state=context();
+        if(state.cognition_done)return;
+        if(!state.received)throw std::logic_error("input receipt required before cognition");
+        const auto& recorded=state.received->recorded.refinement;
+        auto cognition=runtime_.cognize(state.received->recalled,recorded.seed(),recorded.current_step());
+        state.replayed.reset();state.cognition.reset();
+        if(cognition)state.cognition.emplace(std::move(*cognition));
+        state.cognition_done=true;
+    }
+    void cognition_body(std::pmr::string& body) const {
+        body+=",\"memory\":{\"completed\":";body+=context().cognition_done?"true":"false";
+        const auto& cognition=context().cognition;
+        if(cognition){
+            body+=",\"candidate\":\"";body+=std::to_string(cognition->candidate);body+="\",\"original\":";
+            body+=address(cognition->replayed.location(),memory_);
+            body+=",\"agreement\":";body+=std::to_string(static_cast<unsigned>(cognition->assessment().agreement()));
+            body+=",\"reEvidencePerformed\":";body+=cognition->reverified?"true":"false";
+        }else body+=",\"original\":null";
+        body+='}';
+    }
     static std::size_t candidate_limit(const Json& p) {
         const auto* value=p.find("candidateLimit");
         const auto limit=value?integer(*value):64;
@@ -294,9 +324,15 @@ private:
             if(delivery==AgentDeliveryRoute::reuse){
                 std::pmr::string body("{\"duplicate\":true,\"original\":",&memory_);
                 body+=address(found->second.original,memory_);body+=",\"receipt\":";
-                if(state.received && state.received->recorded.original==found->second.original)
+                if(state.received && state.received->recorded.original==found->second.original){
+                    complete_cognition();
                     body+="\""+std::to_string(state.receipt)+"\"";
-                else body+="null";
+                    cognition_body(body);
+                }else{
+                    body+="null";
+                    if(route==AgentEventRoute::recall_then_record)
+                        body+=",\"memory\":{\"completed\":false,\"original\":null}";
+                }
                 body+='}';return body;
             }
             // Reserve the index node before mutating durable experience state.
@@ -311,6 +347,7 @@ private:
                     state.received.emplace(runtime_.receive_envelope(event.cue_media(),std::as_bytes(std::span(prompt)),original,seed,step));
                     slot->second.original=state.received->recorded.original;committed=true;
                     slot->second.fingerprint=agent_delivery_identity(sequence,observed,event.native_bytes());
+                    complete_cognition();
                     return received_body(limit);
                 }
                 auto recorded=[&]{
@@ -398,6 +435,7 @@ private:
             }
             if(next_receipt_==std::numeric_limits<std::uint64_t>::max())throw std::overflow_error("receipt sequence exhausted");
             clear();context().receipt=++next_receipt_;context().received.emplace(runtime_.receive({sequence,observed,session,source,media,content},seed,step));
+            complete_cognition();
             return received_body(page_limit);
         }
         throw std::invalid_argument("unknown SWEGCA host method");
@@ -406,7 +444,8 @@ private:
             std::pmr::string body("{\"receipt\":\"",&memory_);body+=std::to_string(context().receipt);body+="\",\"original\":";body+=address(context().received->recorded.original,memory_);
             body+=",\"temporary\":";body+=context().received->recalled.temporary()?"true":"false";body+=',';
             candidate_page(body,0,limit);
-            body+=",\"refinement\":";body+=refinement(context().received->recorded.refinement,memory_);body+='}';return body;
+            body+=",\"refinement\":";body+=refinement(context().received->recorded.refinement,memory_);
+            cognition_body(body);body+='}';return body;
     }
     void replay_result(std::string_view id,const Json& p){
         if(!context().received||integer(p.at("receipt"))!=context().receipt)throw std::invalid_argument("expired receipt");
@@ -414,7 +453,7 @@ private:
         const auto selected=explicit_candidate ? std::optional<std::size_t>(integer(*explicit_candidate))
             : runtime_.select_replay(context().received->recalled);
         if(!selected)throw std::invalid_argument("Recall has no Replay candidate");
-        const auto candidate=*selected;context().replayed.reset();
+        const auto candidate=*selected;clear_replay();
         if(p.find("offset") || p.find("count")){
             const auto offset=integer(p.at("offset")),count=integer(p.at("count"));
             auto part=runtime_.read_payload_slice(context().received->recalled,candidate,offset,count);
@@ -432,12 +471,13 @@ private:
     std::pmr::string call(std::string_view method,const Json& p){
         if(!context().received||integer(p.at("receipt"))!=context().receipt)throw std::invalid_argument("expired receipt");
         if(method=="vrs_re_evidence"){
-            if(!context().replayed)throw std::invalid_argument("Replay required before Re-evidence");
+            const auto* replayed=selected_replay();
+            if(!replayed)throw std::invalid_argument("Replay required before Re-evidence");
             const auto seed=integer(p.at("seed")),step=integer(p.at("step"));
-            auto compared=runtime_.compare_replay(*context().replayed,seed,step);
+            auto compared=runtime_.compare_replay(*replayed,seed,step);
             std::optional<ReEvidenceResult> verified;
             if(swegca::architecture::kernel::requires_re_evidence(compared.agreement()))
-                verified.emplace(runtime_.re_evidence(*context().replayed,compared,seed,step));
+                verified.emplace(runtime_.re_evidence(*replayed,compared,seed,step));
             const auto& checked=verified ? *verified : compared.evidence();
             auto body=std::pmr::string("{\"agreement\":",&memory_)+std::to_string(static_cast<unsigned>(checked.agreement())).c_str()+",\"status\":"+std::to_string(static_cast<unsigned>(checked.verification().result().verification().judgment().status())).c_str();
             body+=verified ? ",\"reEvidencePerformed\":true" : ",\"reEvidencePerformed\":false";
