@@ -602,9 +602,10 @@ private:
         }
         if(!context().received||integer(p.at("receipt"))!=context().receipt)throw std::invalid_argument("expired receipt");
         const auto* explicit_candidate=p.find("candidate");
-        // A committed observation for this connection invalidates only the
-        // cached assessment. Refresh before export while retaining the original.
-        if(!explicit_candidate&&!p.find("offset")&&!p.find("count")&&context().cognition&&!context().cognition_done)
+        // Default full Replay completes core comparison even when a preceding
+        // explicit/partial read cleared cognition. Partial bytes alone never
+        // count as an authenticated full Replay for comparison.
+        if(!explicit_candidate&&!p.find("offset")&&!p.find("count")&&!context().cognition_done)
             complete_cognition();
         // Otherwise export the already compared receipt without another read.
         if(!explicit_candidate && !p.find("offset") && !p.find("count") && context().cognition){

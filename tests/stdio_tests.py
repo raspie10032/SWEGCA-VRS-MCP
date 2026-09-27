@@ -86,7 +86,7 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     check(bytes.fromhex(replay['structuredContent']['contentHex'])==text.encode())
     check(replay['structuredContent']['original']==first['original'])
     automatic=c.call('tools/call',{'name':'vrs_replay','arguments':{'receipt':second['receipt']}})['result']
-    check(automatic['structuredContent']==replay['structuredContent'])
+    check(automatic['structuredContent']==context_packet)
     compared=c.call('tools/call',{'name':'vrs_re_evidence','arguments':{'receipt':second['receipt'],'seed':'7','step':'0'}})['result']['structuredContent']
     check(compared['status']==0)
     check(compared['reEvidencePerformed'] is False)
@@ -99,6 +99,8 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     check(part['partial'] is True and part['offset']=='2' and part['totalBytes']==str(len(text.encode())))
     check(bytes.fromhex(part['contentHex'])==text.encode()[2:7] and part['original']==first['original'])
     check(c.call('tools/call',{'name':'vrs_re_evidence','arguments':{'receipt':second['receipt'],'seed':'7','step':'0'}})['result']['isError'])
+    restored=c.call('tools/call',{'name':'vrs_replay','arguments':{'receipt':second['receipt']}})['result']['structuredContent']
+    check(restored==context_packet)
     check(partial(second['receipt'],len(text.encode()),0)['structuredContent']['contentHex']=='')
     check(partial(second['receipt'],len(text.encode()),1)['isError'])
     for field in ('offset','count'):
@@ -190,6 +192,7 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     check(automatic_after['original']==automatic_before['original'])
     check(automatic_after['assessment']['agreement']==3 and automatic_after['assessment']['reEvidencePerformed'])
     check(automatic_after['assessment']['currentOriginalCount']=='8' and automatic_after['assessment']['step']=='1')
+    check(partial(receipt,0,1)['structuredContent']['partial'])
     check(c.call('tools/call',{'name':'vrs_replay','arguments':{'receipt':receipt}})['result']['structuredContent']==automatic_after)
     refreshed=c.call('tools/call',{'name':'vrs_re_evidence','arguments':{'receipt':receipt,'seed':'19','step':'2'}})['result']['structuredContent']
     exported=c.call('tools/call',{'name':'vrs_replay','arguments':{'receipt':receipt}})['result']['structuredContent']
@@ -721,6 +724,8 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     check(after_response['assessment']['currentOriginalCount']=='2' and after_response['assessment']['step']=='3')
     check(after_response['assessment']['agreement']==1 and after_response['assessment']['status']==0)
     check(not after_response['assessment']['reEvidencePerformed'] and not after_response['grantsAuthority'])
+    check(response_packet(r2['receipt'])==after_response)
+    check(partial(r2['receipt'],0,1)['structuredContent']['partial'])
     check(response_packet(r2['receipt'])==after_response)
     check('error' in app_response(3,0)[1]) # Same wire ID/body, wrong original lineage.
     check(app_response(3,2)[1]['result']['duplicate'])
