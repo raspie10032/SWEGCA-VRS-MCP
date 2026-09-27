@@ -194,8 +194,8 @@ check: $(BUILD)/connection-regions-tests
 $(BUILD)/region-partition-bench: benchmarks/region_partition_bench.cpp cpp/swegca_architecture/region_partition_kernel.hpp cpp/swegca_architecture/recall_route_kernel.hpp | $(BUILD)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< -o $@
 
-$(BUILD)/swegca-desktop-host: cpp/transport/desktop_host_main.cpp | $(BUILD)
-	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< -o $@
+$(BUILD)/swegca-desktop-host: cpp/transport/desktop_host_main.cpp cpp/transport/json.cpp cpp/transport/json.hpp cpp/transport/resource_profile.hpp cpp/vrs/memory_budget.hpp | $(BUILD)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< cpp/transport/json.cpp -o $@
 
 $(BUILD)/swegca-codex-wrapper: cpp/transport/codex_wrapper_main.cpp cpp/transport/json.cpp cpp/transport/json.hpp $(VRS_HEADERS) | $(BUILD)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< cpp/transport/json.cpp -o $@

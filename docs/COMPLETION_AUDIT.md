@@ -1125,3 +1125,18 @@ surrogate·누락 경로는 거절한다. JSON 정상/스칼라 각 13,322개, w
 135개, 새 host/proxy를 사용한 MCP subprocess 3,935개 검사 통과. 객체 키 폭에
 따른 검증 메모리와 최종 전달 프레임 버퍼는 남는다. 실제 설치 앱에서 모든
 이벤트/첨부 본문이 수집된다는 증거 또는 전체 4GB/1ms 달성은 아니다.
+
+
+실행 중인 Codex 백엔드의 지정 환경 변수 두 개만 읽어 확인한 결과 VRS wrapper
+override가 없었다. 실제 현재 대화가 VRS를 통과한다고 간주하지 않는다. 설치 전
+남은 합산 자원 제한을 보강했다. limited-* DesktopHost는 기존 profile launcher로
+자신을 bounded-*로 실행하고 자식 시작 전에 실제 cgroup/affinity를 검증한다.
+Host·Proxy·VRS·소유 백엔드 네 프로세스가 하나의 memory.max/zero-swap 한도를
+공유한다. 기존 standalone VRS profile도 같은 helper를 사용하며 cwd를 보존한다.
+
+실제 64MiB 시험 그룹에서 RPC 응답 후 네 PID의 동일 cgroup, CPUs 6,7,
+memory.max=67108864, memory.swap.max=0을 확인했다. EOF 이후 모두 정리됐고 재시작
+시 Main 병합 0이었다. subprocess 3,810개, wrapper 33개 및 standalone profile
+probe 통과. 기존 앱 재시작/설치·모델 호출·Claude 통신은 없었다. 합산 제한 설정의
+증거이며 전체 그래프가 4GB 안에서 동작한다거나 실제 물리 SSD 5Gbps/500GB 조건을
+달성했다는 의미는 아니다. 상세는 DESKTOP_HOST.md의 합산 제한 절을 참조한다.

@@ -40,20 +40,27 @@ inline void verify_resource_profile(std::uint64_t ram,std::string_view cpus){
     if(::sched_getaffinity(0,sizeof(actual),&actual)<0)throw std::system_error(errno,std::generic_category(),"read VRS affinity");
     if(!CPU_EQUAL(&requested,&actual))throw std::runtime_error("VRS CPU affinity differs from profile");
 }
-[[noreturn]] inline void launch_resource_profile(std::string_view mode,const char* root,const char* config,
+[[noreturn]] inline void launch_profiled_command(const std::vector<std::string>& command,
     std::uint64_t ram,std::string_view cpus){
     (void)profile_cpus(cpus);
-    const auto executable=std::filesystem::read_symlink("/proc/self/exe").string();
+    if(command.empty()||!ram)throw std::invalid_argument("empty resource profile command or memory limit");
     std::vector<std::string> args{"systemd-run","--user","--pipe","--wait","--collect","--quiet",
+        "--working-directory="+std::filesystem::current_path().string(),
         "--property=MemoryMax="+std::to_string(ram),"--property=MemorySwapMax=0",
         "--property=CPUAffinity="+std::string(cpus),"--property=OOMPolicy=kill",
-        "--",executable,"bounded-"+std::string(mode),std::filesystem::absolute(root).string(),
-        std::filesystem::absolute(config).string()};
+        "--"};
+    args.insert(args.end(),command.begin(),command.end());
     std::vector<char*> pointers;for(auto& arg:args)pointers.push_back(arg.data());pointers.push_back(nullptr);
     ::execvp("systemd-run",pointers.data());
     throw std::system_error(errno,std::generic_category(),"launch VRS resource profile");
 }
+[[noreturn]] inline void launch_resource_profile(std::string_view mode,const char* root,const char* config,
+    std::uint64_t ram,std::string_view cpus){
+    launch_profiled_command({std::filesystem::read_symlink("/proc/self/exe").string(),
+        "bounded-"+std::string(mode),std::filesystem::absolute(root).string(),std::filesystem::absolute(config).string()},ram,cpus);
+}
 #else
+[[noreturn]] inline void launch_profiled_command(const std::vector<std::string>&,std::uint64_t,std::string_view){throw std::runtime_error("limited profile requires Linux cgroup v2");}
 inline void verify_resource_profile(std::uint64_t,std::string_view){throw std::runtime_error("limited profile requires Linux cgroup v2");}
 [[noreturn]] inline void launch_resource_profile(std::string_view,const char*,const char*,std::uint64_t,std::string_view){throw std::runtime_error("limited profile requires Linux cgroup v2");}
 #endif

@@ -1110,6 +1110,42 @@ for line in sys.stdin:
     wrapper_config.write_text(json.dumps({'backend':str(desktop_backend),'host':str(exe.parent/'swegca-desktop-host'),
         'proxy':str(exe.parent/'swegca-app-server-proxy'),'vrs':str(exe),'mode':'ensure','root':str(desktop_root),
         'resourceConfig':str(transport_path),'proxyConfig':str(desktop_proxy)}))
+    # The limited desktop owner and all three children share one real cgroup.
+    aggregate_root=root/'aggregate-desktop';aggregate_root.mkdir()
+    aggregate_info=root/'aggregate-pids.json'
+    aggregate_backend=root/'aggregate backend'
+    aggregate_backend.write_text('#!'+sys.executable+'\nimport os,json,sys\n'+
+        'with open('+repr(str(aggregate_info))+',"w") as out:json.dump({"parent":os.getppid(),"pid":os.getpid(),"cwd":os.getcwd()},out)\n'+
+        'for line in sys.stdin:\n value=json.loads(line)\n if "id" in value:print(json.dumps({"id":value["id"],"result":{}}),flush=True)\n')
+    aggregate_backend.chmod(0o700)
+    aggregate_config=dict(json.loads(wrapper_config.read_text()),mode='limited-ensure',
+        root=str(aggregate_root),backend=str(aggregate_backend))
+    aggregate_path=root/'aggregate-wrapper.json';aggregate_path.write_text(json.dumps(aggregate_config))
+    aggregate=subprocess.Popen([str(exe.parent/'swegca-codex-wrapper'),'app-server'],
+        env=dict(os.environ,SWEGCA_DESKTOP_CONFIG=str(aggregate_path)),cwd=root,
+        stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,bufsize=0)
+    try:
+        aggregate.stdin.write(b'{"id":1,"method":"initialize","params":{}}\n')
+        check(bool(select.select([aggregate.stdout],[],[],15)[0]))
+        check(json.loads(aggregate.stdout.readline())=={'id':1,'result':{}})
+        info=json.loads(aggregate_info.read_text());check(info['cwd']==str(root))
+        owner=info['parent'];children=[int(pid) for pid in pathlib.Path(f'/proc/{owner}/task/{owner}/children').read_text().split()]
+        check(len(children)==3 and info['pid'] in children)
+        groups=[]
+        for pid in [owner,*children]:
+            group=next(line[3:] for line in pathlib.Path(f'/proc/{pid}/cgroup').read_text().splitlines() if line.startswith('0::/'))
+            groups.append(group);check(os.sched_getaffinity(pid)=={6,7})
+        check(len(set(groups))==1)
+        group=pathlib.Path('/sys/fs/cgroup')/groups[0].lstrip('/')
+        check(group.joinpath('memory.max').read_text().strip()==config['memoryBytes'])
+        check(group.joinpath('memory.swap.max').read_text().strip()=='0')
+        aggregate.stdin.close();check(aggregate.wait(timeout=15)==0)
+        check(aggregate.stdout.read()==b'' and aggregate.stderr.read()==b'')
+        for pid in [owner,*children]:check(not pathlib.Path(f'/proc/{pid}').exists())
+    finally:
+        if aggregate.poll() is None:aggregate.terminate();aggregate.wait(timeout=15)
+    c=Client('open',aggregate_root,transport_path);c.initialize()
+    check(c.call('swegca/work',{'seed':'7','step':'0'})['result']['merged']=='0');c.close()
     desktop=subprocess.Popen([str(exe.parent/'swegca-codex-wrapper'),'-c','features.code_mode_host=true',
         'app-server','--analytics-default-enabled'],env=dict(os.environ,SWEGCA_DESKTOP_CONFIG=str(wrapper_config)),
         stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,bufsize=0)

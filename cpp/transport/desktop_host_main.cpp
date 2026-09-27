@@ -1,4 +1,8 @@
 #include <array>
+#include "transport/json.hpp"
+#include "transport/resource_profile.hpp"
+#include "vrs/memory_budget.hpp"
+#include <charconv>
 #include <cerrno>
 #include <chrono>
 #include <csignal>
@@ -87,6 +91,29 @@ struct Buffer {
 int main(int argc,char** argv){
     try{
         require(argc>=8,"usage: swegca-desktop-host PROXY VRS MODE ROOT VRS_CONFIG PROXY_CONFIG BACKEND [ARGS...]");
+        const std::string_view mode=argv[3];
+        if(mode.starts_with("limited-")||mode.starts_with("bounded-")){
+            using namespace swegca::transport;
+            const auto action=mode.substr(8);
+            require(action=="create"||action=="open"||action=="ensure","invalid desktop resource mode");
+            swegca::vrs::MemoryBudget memory(1<<20);
+            std::ifstream file(argv[5],std::ios::binary);require(bool(file),"desktop resource configuration unavailable");
+            std::pmr::string text(&memory);char byte;
+            while(file.get(byte)){require(text.size()<65536,"desktop resource configuration too large");text+=byte;}
+            const auto config=parse_json(text,memory);
+            const auto amount=config.at("memoryBytes").string();std::uint64_t ram=0;
+            const auto parsed=std::from_chars(amount.data(),amount.data()+amount.size(),ram);
+            require(parsed.ec==std::errc{}&&parsed.ptr==amount.data()+amount.size()&&ram,"invalid desktop memory limit");
+            const auto cpus=config.at("cpuAffinity").string();
+            if(mode.starts_with("limited-")){
+                std::vector<std::string> command{std::filesystem::read_symlink("/proc/self/exe").string()};
+                for(int index=1;index<argc;++index)command.emplace_back(index==3?"bounded-"+std::string(action):argv[index]);
+                launch_profiled_command(command,ram,cpus);
+            }
+            // Verify the owner before any child launch; every child inherits
+            // this same aggregate cgroup and affinity, including the backend.
+            verify_resource_profile(ram,cpus);
+        }
         ::signal(SIGPIPE,SIG_IGN);
         ::signal(SIGTERM,stop);::signal(SIGINT,stop);
         auto client=pair(),server=pair(),vrs=pair(),ready=pair(true);

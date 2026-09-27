@@ -143,3 +143,26 @@ relaunch, for both the connection session and a dynamically rediscovered thread.
 The new reply references the new request original. The old request stays stored,
 and no Main merge occurs. This is not proof of remote exactly-once execution or
 automatic reconnect to a surviving backend.
+
+## Aggregate limited desktop profile
+
+`limited-create/open/ensure` now launches the entire desktop host in one user
+systemd service using the resource configuration's `memoryBytes` and
+`cpuAffinity`. The restarted host receives `bounded-*`, verifies actual
+`memory.max`, `memory.swap.max=0` and affinity before spawning children, and
+passes that verified mode to VRS. Host, proxy, VRS and the backend it owns share
+one aggregate memory ceiling. The backend is included; the already-running GUI
+and unrelated processes are not. A heavier backend may need a larger profile.
+The common launcher preserves cwd and exact argv without invoking a shell.
+
+Actual subprocess verification used a 64MiB profile, compiled host/proxy/VRS and
+an isolated Python backend, with no model/account calls. After an RPC round trip,
+all four live PIDs had the same cgroup and CPUs 6,7; memory.max was 67108864 and
+memory.swap.max was 0. EOF reaped all four, and reopening showed no Main merge.
+The subprocess suite passed 3,810 checks; wrapper routing passed 33; the standalone
+profile probe independently verified the same profile after the launcher refactor.
+This proves aggregate enforcement configuration, not large-graph operation
+within 4GB, physical SSD throttling, or live desktop integration.
+
+A current read-only check found no CODEX_CLI_PATH or SWEGCA_DESKTOP_CONFIG
+overrides on running Codex backends. No running app or launcher entry was changed.
