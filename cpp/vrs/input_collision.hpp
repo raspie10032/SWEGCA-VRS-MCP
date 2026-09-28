@@ -12,7 +12,8 @@ using architecture::kernel::TernaryCount;
 // Members name recorded experience relations; they are not clean-data labels
 // required of arbitrary payloads. The input adapter preserves the full original.
 // An active edge is a claim to check, never a trusted label.
-struct CollisionInput { architecture::kernel::BoundExperience binding; std::vector<std::uint32_t> members; };
+struct CollisionInput { architecture::kernel::BoundExperience binding; std::vector<std::uint32_t> members; bool membership_observed=false; };
+enum class CollisionProgress { verified, needs_observation };
 struct CollisionEvent { std::uint32_t input,left,right; bool member_pair,was_active; architecture::kernel::EvidenceStatus status; TernaryCount previous,current; };
 class InputCollision final {
 public:
@@ -22,9 +23,12 @@ public:
   for(unsigned a=0;a<t;++a)for(unsigned b=a+1;b<t;++b){auto id=pair_id(a,b);if(architecture::kernel::count_evidence_eligible(tt[id]))link(a,b,id);}
  }
  std::size_t pair_id(unsigned a,unsigned b)const noexcept {if(a>b)std::swap(a,b);return std::size_t(a)*(2ULL*t-a-1)/2+b-a-1;}
- template<class Sink> void encounter(unsigned input,const CollisionInput& raw,std::mt19937_64& rng,Sink&& sink){
+ template<class Sink> CollisionProgress encounter(unsigned input,const CollisionInput& raw,std::mt19937_64& rng,Sink&& sink){
   using namespace architecture::kernel;
   if(input>=n)throw std::invalid_argument("input id");
+  // Missing membership is not an observed empty set. No synthetic verdict is
+  // issued here; the owner must supply an actual raw-input observation path.
+  if(!raw.membership_observed)return CollisionProgress::needs_observation;
   if(++epoch==0){std::fill(seen.begin(),seen.end(),0);epoch=1;}
   std::vector<unsigned> anchors=raw.members;
   for(auto member:anchors)if(member>=t)throw std::invalid_argument("input member outside current graph");
@@ -51,6 +55,7 @@ public:
    if(job.pair&&count_evidence_eligible(value))link(job.a,job.b,job.id);
    sink(CollisionEvent{input,job.a,job.b,job.pair,count_evidence_eligible(previous),judgment.status(),previous,value});
   }
+  return CollisionProgress::verified;
  }
 private:
  void link(unsigned a,unsigned b,std::size_t id){if(!listed[id]){listed[id]=1;neighbors[a].push_back({b,id});neighbors[b].push_back({a,id});}}

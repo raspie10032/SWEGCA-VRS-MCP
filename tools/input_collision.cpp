@@ -73,6 +73,7 @@ int main(int argc,char** argv)try{
   const auto scores=file_hash(data/score_path);
   inputs[i].binding=bind_experience(image,digest(image_ids[i]),fa.digest,scores);
   const auto model=std::string(feature.at("models").at("tag_sha256").string());
+  inputs[i].membership_observed=true;
   for(auto& r:feature.at("tags").values)inputs[i].members.push_back(dictionary.at(TagKey{model,num(r.at("index")),num(r.at("category")),std::string(r.at("tag").string())}));
   // Full sealed feature payload, raw scores and original image remain linked.
   // No use of prior source.tags/witnesses, semantic cleanliness or verdicts.
