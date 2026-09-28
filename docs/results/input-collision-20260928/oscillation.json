@@ -1,0 +1,9 @@
+{
+  "early_1_5_mean": 26133.4,
+  "late_6_10_mean": 26296.6,
+  "early_1_5_population_sd": 820.6489139699145,
+  "late_6_10_population_sd": 881.388813180653,
+  "mean_shift_percent": 0.6244882028362042,
+  "round_9_10_tag_pair_jaccard": 0.160075821949147,
+  "interpretation": "Active population is approximately stable; 10 rounds do not establish stationarity. Connection identity and raw strengths are not fixed."
+}

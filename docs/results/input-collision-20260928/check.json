@@ -1,0 +1,246 @@
+{
+  "passed": true,
+  "checkpoint_values_checked": 538299894,
+  "rounds_checked": 10,
+  "raw_input_traces_checked": 1280,
+  "always_active_tag_tag_after_each_round": 4149,
+  "ever_active_tag_tag_after_each_round": 148347,
+  "rounds": [
+    {
+      "round": 1,
+      "active_tag_tag": 27022,
+      "changed_strengths": 34930115,
+      "active_set_changes": 766259,
+      "max_strength_delta": 3.741994233140892e+26
+    },
+    {
+      "round": 2,
+      "active_tag_tag": 25300,
+      "changed_strengths": 34930115,
+      "active_set_changes": 36934,
+      "max_strength_delta": 1.3863882020653062e+53
+    },
+    {
+      "round": 3,
+      "active_tag_tag": 26154,
+      "changed_strengths": 34930115,
+      "active_set_changes": 36130,
+      "max_strength_delta": 5.1364917396266454e+79
+    },
+    {
+      "round": 4,
+      "active_tag_tag": 25126,
+      "changed_strengths": 34930115,
+      "active_set_changes": 36416,
+      "max_strength_delta": 1.9030418285404545e+106
+    },
+    {
+      "round": 5,
+      "active_tag_tag": 27065,
+      "changed_strengths": 34930115,
+      "active_set_changes": 37609,
+      "max_strength_delta": 7.050664898835885e+132
+    },
+    {
+      "round": 6,
+      "active_tag_tag": 27456,
+      "changed_strengths": 34930115,
+      "active_set_changes": 39321,
+      "max_strength_delta": 2.6122324149755087e+159
+    },
+    {
+      "round": 7,
+      "active_tag_tag": 24971,
+      "changed_strengths": 34930115,
+      "active_set_changes": 37575,
+      "max_strength_delta": 9.678176863823755e+185
+    },
+    {
+      "round": 8,
+      "active_tag_tag": 25812,
+      "changed_strengths": 34930115,
+      "active_set_changes": 35527,
+      "max_strength_delta": 3.58571109027186e+212
+    },
+    {
+      "round": 9,
+      "active_tag_tag": 27032,
+      "changed_strengths": 34930115,
+      "active_set_changes": 37270,
+      "max_strength_delta": 1.3284861605452037e+239
+    },
+    {
+      "round": 10,
+      "active_tag_tag": 26212,
+      "changed_strengths": 34930115,
+      "active_set_changes": 38550,
+      "max_strength_delta": 4.9219678728392304e+265
+    }
+  ],
+  "strictly_growing_every_round_tag_tag": 2880,
+  "tags_in_all_continuously_growing_pairs": 2714,
+  "growing_candidate_examples": [
+    {
+      "left": "1girl",
+      "right": "solo",
+      "final_strength": 4.9219678728392304e+265,
+      "shared_originals": 6185,
+      "left_originals": 6256,
+      "right_originals": 6187
+    },
+    {
+      "left": "1girl",
+      "right": "blush",
+      "final_strength": 1.4938869829205263e+240,
+      "shared_originals": 5796,
+      "left_originals": 6256,
+      "right_originals": 5809
+    },
+    {
+      "left": "solo",
+      "right": "blush",
+      "final_strength": 8.927953431207106e+235,
+      "shared_originals": 5730,
+      "left_originals": 6187,
+      "right_originals": 5809
+    },
+    {
+      "left": "1girl",
+      "right": "outdoors",
+      "final_strength": 2.0424454578266572e+136,
+      "shared_originals": 4197,
+      "left_originals": 6256,
+      "right_originals": 4208
+    },
+    {
+      "left": "1girl",
+      "right": "long_hair",
+      "final_strength": 9.2881114321276e+134,
+      "shared_originals": 4174,
+      "left_originals": 6256,
+      "right_originals": 4178
+    },
+    {
+      "left": "solo",
+      "right": "outdoors",
+      "final_strength": 4.88819281601209e+134,
+      "shared_originals": 4161,
+      "left_originals": 6187,
+      "right_originals": 4208
+    },
+    {
+      "left": "1girl",
+      "right": "breasts",
+      "final_strength": 4.39554535128279e+134,
+      "shared_originals": 4169,
+      "left_originals": 6256,
+      "right_originals": 4173
+    },
+    {
+      "left": "solo",
+      "right": "long_hair",
+      "final_strength": 5.4911134593983917e+132,
+      "shared_originals": 4131,
+      "left_originals": 6187,
+      "right_originals": 4178
+    },
+    {
+      "left": "solo",
+      "right": "breasts",
+      "final_strength": 2.8871703793866573e+131,
+      "shared_originals": 4115,
+      "left_originals": 6187,
+      "right_originals": 4173
+    },
+    {
+      "left": "breasts",
+      "right": "blush",
+      "final_strength": 1.0668869981097808e+125,
+      "shared_originals": 3946,
+      "left_originals": 4173,
+      "right_originals": 5809
+    },
+    {
+      "left": "blush",
+      "right": "long_hair",
+      "final_strength": 1.2790285086561761e+119,
+      "shared_originals": 3879,
+      "left_originals": 5809,
+      "right_originals": 4178
+    },
+    {
+      "left": "blush",
+      "right": "outdoors",
+      "final_strength": 7.973859554548645e+112,
+      "shared_originals": 3815,
+      "left_originals": 5809,
+      "right_originals": 4208
+    },
+    {
+      "left": "1girl",
+      "right": "sky",
+      "final_strength": 9.49989242839029e+101,
+      "shared_originals": 3668,
+      "left_originals": 6256,
+      "right_originals": 3677
+    },
+    {
+      "left": "solo",
+      "right": "sky",
+      "final_strength": 5.5558500373453366e+101,
+      "shared_originals": 3648,
+      "left_originals": 6187,
+      "right_originals": 3677
+    },
+    {
+      "left": "1girl",
+      "right": "looking_at_viewer",
+      "final_strength": 2.733602397100516e+101,
+      "shared_originals": 3658,
+      "left_originals": 6256,
+      "right_originals": 3662
+    },
+    {
+      "left": "solo",
+      "right": "looking_at_viewer",
+      "final_strength": 1.9521774720525353e+101,
+      "shared_originals": 3639,
+      "left_originals": 6187,
+      "right_originals": 3662
+    },
+    {
+      "left": "solo",
+      "right": "sensitive",
+      "final_strength": 3.298732738520567e+98,
+      "shared_originals": 3595,
+      "left_originals": 6187,
+      "right_originals": 3614
+    },
+    {
+      "left": "1girl",
+      "right": "sensitive",
+      "final_strength": 4.202790148741865e+97,
+      "shared_originals": 3602,
+      "left_originals": 6256,
+      "right_originals": 3614
+    },
+    {
+      "left": "looking_at_viewer",
+      "right": "blush",
+      "final_strength": 9.099571624914074e+88,
+      "shared_originals": 3402,
+      "left_originals": 3662,
+      "right_originals": 5809
+    },
+    {
+      "left": "sky",
+      "right": "outdoors",
+      "final_strength": 2.7359154010269793e+88,
+      "shared_originals": 2998,
+      "left_originals": 3677,
+      "right_originals": 4208
+    }
+  ],
+  "pointwise_fixed_point_at_round_10": false,
+  "reason": "This checks exact state equality, not statistical stationarity; topology changes and maximum strength changes remain nonzero"
+}

@@ -314,3 +314,9 @@ $(BUILD)/swegca-tag-tag-refinement: tools/tag_tag_refinement.cpp cpp/transport/j
 
 $(BUILD)/cooccurrence-tests: tests/cooccurrence_tests.cpp $(CORE_HEADERS) | $(BUILD)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< -o $@
+
+$(BUILD)/input-collision-tests: tests/input_collision_tests.cpp cpp/vrs/input_collision.hpp $(CORE_HEADERS) | $(BUILD)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< -o $@
+
+$(BUILD)/swegca-input-collision: tools/input_collision.cpp cpp/vrs/input_collision.hpp cpp/transport/json.cpp cpp/transport/json.hpp $(BUILD)/libswegca-vrs.a $(CORE_HEADERS) | $(BUILD)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< cpp/transport/json.cpp $(BUILD)/libswegca-vrs.a -o $@

@@ -22,12 +22,12 @@ int main(){
     CHECK(!bind_experience(id(1),id(9),id(2),id(3)).valid());
     CHECK(!bind_experience(id(1),id(1),Digest{},id(3)).valid());
     const std::array<std::uint32_t,3> tags{4,9,12};
-    CHECK(to_outcome(observe_tag_association(binding,tags,4,9))==EvidenceOutcome::support);
-    CHECK(to_outcome(observe_tag_association(binding,tags,9,4))==EvidenceOutcome::support);
-    CHECK(to_outcome(observe_tag_association(binding,tags,4,99))==EvidenceOutcome::refute);
-    CHECK(to_outcome(observe_tag_association(binding,tags,98,99))==EvidenceOutcome::refute);
-    CHECK(to_outcome(observe_tag_association(binding,tags,4,4))==EvidenceOutcome::insufficient);
-    CHECK(to_outcome(observe_tag_association({},tags,4,9))==EvidenceOutcome::insufficient);
+    CHECK(to_outcome(observe_member_association(binding,tags,4,9))==EvidenceOutcome::support);
+    CHECK(to_outcome(observe_member_association(binding,tags,9,4))==EvidenceOutcome::support);
+    CHECK(to_outcome(observe_member_association(binding,tags,4,99))==EvidenceOutcome::refute);
+    CHECK(to_outcome(observe_member_association(binding,tags,98,99))==EvidenceOutcome::refute);
+    CHECK(to_outcome(observe_member_association(binding,tags,4,4))==EvidenceOutcome::insufficient);
+    CHECK(to_outcome(observe_member_association({},tags,4,9))==EvidenceOutcome::insufficient);
     const std::array<std::uint32_t,2> other{9,88};
     CHECK(to_outcome(observe_common_member(binding,tags,binding,other,9))==EvidenceOutcome::support);
     CHECK(to_outcome(observe_common_member(binding,tags,binding,other,4))==EvidenceOutcome::refute);

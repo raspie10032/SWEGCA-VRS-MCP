@@ -19,17 +19,17 @@ private:
     friend BoundExperience bind_experience(const Digest&,const Digest&,const Digest&,const Digest&) noexcept;
     bool valid_=false;
 };
-[[nodiscard]] inline BoundExperience bind_experience(const Digest& actual_image,
-    const Digest& declared_image,const Digest& tag_record,const Digest& dino_record) noexcept {
+[[nodiscard]] inline BoundExperience bind_experience(const Digest& actual_input,
+    const Digest& declared_input,const Digest& observation_record,const Digest& processing_record) noexcept {
     BoundExperience result;
-    result.valid_=named_digest(actual_image)&&actual_image==declared_image&&
-        named_digest(tag_record)&&named_digest(dino_record);
+    result.valid_=named_digest(actual_input)&&actual_input==declared_input&&
+        named_digest(observation_record)&&named_digest(processing_record);
     return result;
 }
 
 // These predicates describe recorded membership, not semantic truth.
 // A valid observed nonmatch is false; invalid input is not a negative sample.
-[[nodiscard]] inline PredicateObservation observe_tag_association(const BoundExperience& binding,
+[[nodiscard]] inline PredicateObservation observe_member_association(const BoundExperience& binding,
     std::span<const std::uint32_t> actual_tags,std::uint32_t left,std::uint32_t right) noexcept {
     bool seen_left=false,seen_right=false;
     for(auto tag:actual_tags){seen_left|=tag==left;seen_right|=tag==right;}
