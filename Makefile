@@ -12,13 +12,14 @@ VRS_SOURCES := cpp/vrs/portal_page.cpp cpp/vrs/experience_page.cpp cpp/vrs/runti
 CHECKPOINT_HEADERS := $(wildcard cpp/checkpoint/*.hpp)
 CHECKPOINT_SOURCES := cpp/checkpoint/restricted_zip.cpp cpp/checkpoint/restricted_pickle.cpp \
 	cpp/checkpoint/canonical_symbolic_json.cpp cpp/checkpoint/checkpoint_profile.cpp \
-	cpp/checkpoint/restricted_checkpoint.cpp
+	cpp/checkpoint/restricted_checkpoint.cpp cpp/checkpoint/materialized_tensor.cpp
 WORLD_HEADERS := $(wildcard cpp/world/*.hpp)
 WORLD_SOURCES := cpp/world/cognitive_state.cpp cpp/world/cognitive_event.cpp \
 	cpp/world/world_state.cpp cpp/world/evidence_accumulator.cpp cpp/world/evidence_revision.cpp \
 	cpp/world/synapse_arbiter.cpp cpp/world/dynamic_cognition.cpp \
 	cpp/world/bounded_world_write.cpp cpp/world/re_evidence_receipt.cpp \
-	cpp/world/re_evidence_transaction.cpp cpp/world/re_evidence_arbitration.cpp
+	cpp/world/re_evidence_transaction.cpp cpp/world/re_evidence_arbitration.cpp \
+	cpp/world/modal_to_world.cpp
 
 PRODUCTION_BINARIES := $(BUILD)/swegca-vrs-mcp $(BUILD)/swegca-content-observer $(BUILD)/swegca-codex-wrapper $(BUILD)/swegca-desktop-host $(BUILD)/swegca-app-server-proxy
 MCP_PRODUCTION_CLOSURE_SOURCES := \
@@ -57,7 +58,7 @@ PRODUCTION_SUPPORT_CLOSURE_SOURCES := \
 	$(wildcard cpp/transport/*.hpp) cpp/vrs/file_observation.cpp cpp/vrs/file_observation.hpp \
 	$(CHECKPOINT_HEADERS) $(CHECKPOINT_SOURCES) $(WORLD_HEADERS) $(WORLD_SOURCES)
 PRODUCTION_GATE_CLOSURE_SOURCES := Makefile AGENTS.md tools/stage0_gate.py docs/stage0-external-p0.json \
-	$(wildcard tests/*.cpp) $(wildcard tests/*.py)
+	$(wildcard tests/*.cpp) $(wildcard tests/*.hpp) $(wildcard tests/*.py)
 EXPERIMENTAL_CLOSURE_SOURCES := \
 	cpp/swegca_architecture/association_scalar.hpp cpp/swegca_architecture/connection_growth_kernel.hpp \
 	cpp/swegca_architecture/core_platform.hpp cpp/swegca_architecture/evidence_scalar.hpp \
@@ -468,12 +469,16 @@ $(BUILD)/restricted-checkpoint-tests: tests/restricted_checkpoint_tests.cpp $(CH
 
 check-checkpoint: $(BUILD)/restricted-zip-tests $(BUILD)/restricted-pickle-tests \
 	$(BUILD)/canonical-symbolic-json-tests $(BUILD)/checkpoint-profile-tests \
-	$(BUILD)/restricted-checkpoint-tests
+	$(BUILD)/restricted-checkpoint-tests $(BUILD)/materialized-tensor-tests
 	./$(BUILD)/restricted-zip-tests
 	./$(BUILD)/restricted-pickle-tests
 	./$(BUILD)/canonical-symbolic-json-tests
 	./$(BUILD)/checkpoint-profile-tests
 	./$(BUILD)/restricted-checkpoint-tests
+	./$(BUILD)/materialized-tensor-tests
+
+$(BUILD)/materialized-tensor-tests: tests/materialized_tensor_tests.cpp cpp/checkpoint/materialized_tensor.cpp cpp/checkpoint/materialized_tensor.hpp cpp/checkpoint/restricted_checkpoint.cpp cpp/checkpoint/restricted_checkpoint.hpp cpp/checkpoint/restricted_zip.cpp cpp/checkpoint/restricted_zip.hpp cpp/checkpoint/restricted_pickle.cpp cpp/checkpoint/restricted_pickle.hpp cpp/checkpoint/canonical_symbolic_json.cpp cpp/checkpoint/canonical_symbolic_json.hpp cpp/checkpoint/checkpoint_profile.cpp cpp/checkpoint/checkpoint_profile.hpp cpp/swegca_architecture/sha256.cpp cpp/swegca_architecture/sha256.hpp | $(BUILD)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< cpp/checkpoint/materialized_tensor.cpp cpp/checkpoint/restricted_checkpoint.cpp cpp/checkpoint/restricted_zip.cpp cpp/checkpoint/restricted_pickle.cpp cpp/checkpoint/canonical_symbolic_json.cpp cpp/checkpoint/checkpoint_profile.cpp cpp/swegca_architecture/sha256.cpp -o $@
 
 $(BUILD)/cognitive-state-tests: tests/cognitive_state_tests.cpp cpp/world/cognitive_state.cpp cpp/world/cognitive_state.hpp | $(BUILD)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< cpp/world/cognitive_state.cpp -o $@
@@ -508,11 +513,15 @@ $(BUILD)/re-evidence-transaction-tests: tests/re_evidence_transaction_tests.cpp 
 $(BUILD)/re-evidence-arbitration-tests: tests/re_evidence_arbitration_tests.cpp cpp/world/re_evidence_arbitration.cpp cpp/world/re_evidence_arbitration.hpp cpp/world/re_evidence_receipt.cpp cpp/world/re_evidence_receipt.hpp cpp/world/cognitive_state.cpp cpp/world/cognitive_state.hpp cpp/world/world_state.cpp cpp/world/world_state.hpp cpp/transport/json.cpp cpp/transport/json.hpp cpp/swegca_architecture/sha256.cpp cpp/swegca_architecture/sha256.hpp | $(BUILD)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< cpp/world/re_evidence_arbitration.cpp cpp/world/re_evidence_receipt.cpp cpp/world/cognitive_state.cpp cpp/world/world_state.cpp cpp/transport/json.cpp cpp/swegca_architecture/sha256.cpp -o $@
 
+$(BUILD)/modal-to-world-tests: tests/modal_to_world_tests.cpp tests/modal_to_world_python214_fixture.hpp cpp/world/modal_to_world.cpp cpp/world/modal_to_world.hpp cpp/world/world_state.cpp cpp/world/world_state.hpp cpp/world/cognitive_state.cpp cpp/world/cognitive_state.hpp cpp/checkpoint/materialized_tensor.cpp cpp/checkpoint/materialized_tensor.hpp cpp/checkpoint/restricted_checkpoint.cpp cpp/checkpoint/restricted_checkpoint.hpp cpp/checkpoint/restricted_zip.cpp cpp/checkpoint/restricted_zip.hpp cpp/checkpoint/restricted_pickle.cpp cpp/checkpoint/restricted_pickle.hpp cpp/checkpoint/canonical_symbolic_json.cpp cpp/checkpoint/canonical_symbolic_json.hpp cpp/checkpoint/checkpoint_profile.cpp cpp/checkpoint/checkpoint_profile.hpp cpp/swegca_architecture/sha256.cpp cpp/swegca_architecture/sha256.hpp | $(BUILD)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< cpp/world/modal_to_world.cpp cpp/world/world_state.cpp cpp/world/cognitive_state.cpp cpp/checkpoint/materialized_tensor.cpp cpp/checkpoint/restricted_checkpoint.cpp cpp/checkpoint/restricted_zip.cpp cpp/checkpoint/restricted_pickle.cpp cpp/checkpoint/canonical_symbolic_json.cpp cpp/checkpoint/checkpoint_profile.cpp cpp/swegca_architecture/sha256.cpp -o $@
+
 check-world: $(BUILD)/cognitive-state-tests $(BUILD)/cognitive-event-tests \
 	$(BUILD)/world-state-tests $(BUILD)/evidence-accumulator-tests $(BUILD)/evidence-revision-tests \
 	$(BUILD)/synapse-arbiter-world-tests $(BUILD)/dynamic-cognition-tests \
 	$(BUILD)/bounded-world-write-tests $(BUILD)/re-evidence-receipt-tests \
-	$(BUILD)/re-evidence-transaction-tests $(BUILD)/re-evidence-arbitration-tests
+	$(BUILD)/re-evidence-transaction-tests $(BUILD)/re-evidence-arbitration-tests \
+	$(BUILD)/modal-to-world-tests
 	./$(BUILD)/cognitive-state-tests
 	./$(BUILD)/cognitive-event-tests
 	./$(BUILD)/world-state-tests
@@ -524,6 +533,7 @@ check-world: $(BUILD)/cognitive-state-tests $(BUILD)/cognitive-event-tests \
 	./$(BUILD)/re-evidence-receipt-tests
 	./$(BUILD)/re-evidence-transaction-tests
 	./$(BUILD)/re-evidence-arbitration-tests
+	./$(BUILD)/modal-to-world-tests
 
 check-production: production
 	$(MAKE) --no-print-directory check
