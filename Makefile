@@ -18,7 +18,7 @@ WORLD_SOURCES := cpp/world/cognitive_state.cpp cpp/world/cognitive_event.cpp \
 	cpp/world/world_state.cpp cpp/world/evidence_accumulator.cpp cpp/world/evidence_revision.cpp \
 	cpp/world/synapse_arbiter.cpp cpp/world/dynamic_cognition.cpp \
 	cpp/world/bounded_world_write.cpp cpp/world/re_evidence_receipt.cpp \
-	cpp/world/re_evidence_transaction.cpp
+	cpp/world/re_evidence_transaction.cpp cpp/world/re_evidence_arbitration.cpp
 
 PRODUCTION_BINARIES := $(BUILD)/swegca-vrs-mcp $(BUILD)/swegca-content-observer $(BUILD)/swegca-codex-wrapper $(BUILD)/swegca-desktop-host $(BUILD)/swegca-app-server-proxy
 MCP_PRODUCTION_CLOSURE_SOURCES := \
@@ -505,11 +505,14 @@ $(BUILD)/re-evidence-receipt-tests: tests/re_evidence_receipt_tests.cpp cpp/worl
 $(BUILD)/re-evidence-transaction-tests: tests/re_evidence_transaction_tests.cpp cpp/world/re_evidence_transaction.cpp cpp/world/re_evidence_transaction.hpp cpp/world/re_evidence_receipt.cpp cpp/world/re_evidence_receipt.hpp cpp/world/cognitive_event.cpp cpp/world/cognitive_event.hpp cpp/world/evidence_accumulator.cpp cpp/world/evidence_accumulator.hpp cpp/world/synapse_arbiter.cpp cpp/world/synapse_arbiter.hpp cpp/world/bounded_world_write.cpp cpp/world/bounded_world_write.hpp cpp/world/evidence_revision.cpp cpp/world/evidence_revision.hpp cpp/world/cognitive_state.cpp cpp/world/cognitive_state.hpp cpp/world/world_state.cpp cpp/world/world_state.hpp cpp/transport/json.cpp cpp/transport/json.hpp cpp/swegca_architecture/sha256.cpp cpp/swegca_architecture/sha256.hpp | $(BUILD)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< cpp/world/re_evidence_transaction.cpp cpp/world/re_evidence_receipt.cpp cpp/world/cognitive_event.cpp cpp/world/evidence_accumulator.cpp cpp/world/synapse_arbiter.cpp cpp/world/bounded_world_write.cpp cpp/world/evidence_revision.cpp cpp/world/cognitive_state.cpp cpp/world/world_state.cpp cpp/transport/json.cpp cpp/swegca_architecture/sha256.cpp -o $@
 
+$(BUILD)/re-evidence-arbitration-tests: tests/re_evidence_arbitration_tests.cpp cpp/world/re_evidence_arbitration.cpp cpp/world/re_evidence_arbitration.hpp cpp/world/re_evidence_receipt.cpp cpp/world/re_evidence_receipt.hpp cpp/world/cognitive_state.cpp cpp/world/cognitive_state.hpp cpp/world/world_state.cpp cpp/world/world_state.hpp cpp/transport/json.cpp cpp/transport/json.hpp cpp/swegca_architecture/sha256.cpp cpp/swegca_architecture/sha256.hpp | $(BUILD)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< cpp/world/re_evidence_arbitration.cpp cpp/world/re_evidence_receipt.cpp cpp/world/cognitive_state.cpp cpp/world/world_state.cpp cpp/transport/json.cpp cpp/swegca_architecture/sha256.cpp -o $@
+
 check-world: $(BUILD)/cognitive-state-tests $(BUILD)/cognitive-event-tests \
 	$(BUILD)/world-state-tests $(BUILD)/evidence-accumulator-tests $(BUILD)/evidence-revision-tests \
 	$(BUILD)/synapse-arbiter-world-tests $(BUILD)/dynamic-cognition-tests \
 	$(BUILD)/bounded-world-write-tests $(BUILD)/re-evidence-receipt-tests \
-	$(BUILD)/re-evidence-transaction-tests
+	$(BUILD)/re-evidence-transaction-tests $(BUILD)/re-evidence-arbitration-tests
 	./$(BUILD)/cognitive-state-tests
 	./$(BUILD)/cognitive-event-tests
 	./$(BUILD)/world-state-tests
@@ -520,6 +523,7 @@ check-world: $(BUILD)/cognitive-state-tests $(BUILD)/cognitive-event-tests \
 	./$(BUILD)/bounded-world-write-tests
 	./$(BUILD)/re-evidence-receipt-tests
 	./$(BUILD)/re-evidence-transaction-tests
+	./$(BUILD)/re-evidence-arbitration-tests
 
 check-production: production
 	$(MAKE) --no-print-directory check
