@@ -32,8 +32,8 @@ struct OriginalContentObservation {
     const auto l=decode_evidence(left_rules,left),r=decode_evidence(right_rules,right);
     const auto a=evidence_payload(left),b=evidence_payload(right);
     return {l.original(),r.original(),l.value(),r.value(),a.content.size(),b.content.size(),
-        expect_equal,architecture::kernel::observe_raw_content_relation(
-            a.content,b.content,true,true,expect_equal)};
+        expect_equal,architecture::kernel::to_outcome(architecture::kernel::observe_raw_content_relation(
+            a.content,b.content,true,true,expect_equal))};
 }
 
 } // namespace swegca::vrs

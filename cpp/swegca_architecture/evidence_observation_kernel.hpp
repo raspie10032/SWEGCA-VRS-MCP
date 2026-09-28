@@ -8,6 +8,17 @@ namespace swegca::architecture::kernel {
 // accept/reject/abstain decision. Unknown observations remain insufficient.
 // Rules: original mosaic_evidence_accumulator.py@5901a5a:98-197,360-428.
 enum class EvidenceOutcome : std::uint8_t { insufficient = 0, support = 1, refute = 2 };
+// Observation kernels report predicate validity and truth separately.
+// Only this converter maps an observation into accumulated evidence.
+struct PredicateObservation { bool valid = false; bool holds = false; };
+[[nodiscard]] constexpr EvidenceOutcome to_outcome(bool valid, bool holds) noexcept {
+    return !valid ? EvidenceOutcome::insufficient
+        : holds ? EvidenceOutcome::support : EvidenceOutcome::refute;
+}
+[[nodiscard]] constexpr EvidenceOutcome to_outcome(PredicateObservation value) noexcept {
+    return to_outcome(value.valid, value.holds);
+}
+
 enum class ObservationUse : std::uint8_t {
     invalid = 0, expired = 1, insufficient = 2, duplicate = 3, applied = 4,
 };

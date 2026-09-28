@@ -32,7 +32,7 @@ void observations(SessionStore& store,Synapse& synapse,bool complete,bool equal)
         EvidenceObservation o;
         o.hypothesis=synapse.identity();o.source=id(group+1);o.context=id(group+31);
         o.producer=id(group+61);o.axis=axis;
-        o.outcome=observe_content_relation(complete,true,equal,true);
+        o.outcome=to_outcome(observe_content_relation(complete,true,equal,true));
         (void)synapse.observe({store.original_count(),0,store.name(),"synthetic-test","text/plain",
             bytes("synthetic relation observation")},o);
     }

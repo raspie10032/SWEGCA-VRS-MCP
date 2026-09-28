@@ -49,7 +49,7 @@ inline bool requirement_scope_matches(const Json* proposed,
     append_requirement(outer,requirement_anchor(*proposed));
     append_requirement(inner,requirement_anchor(*embedded));
     using namespace swegca::architecture::kernel;
-    return observe_content_equality(true,true,outer==inner)==EvidenceOutcome::support;
+    return to_outcome(observe_content_equality(true,true,outer==inner))==EvidenceOutcome::support;
 }
 inline bool requirement_matches(const RequirementAnchor& anchor,const Json& native){
     const auto* method=native.find("method");
@@ -63,7 +63,7 @@ inline bool requirement_matches(const RequirementAnchor& anchor,const Json& nati
     const auto text=item.at("text").string();
     const bool complete=anchor.byte_offset<=text.size()&&anchor.quote.size()<=text.size()-anchor.byte_offset;
     using namespace swegca::architecture::kernel;
-    return observe_content_equality(complete,true,
-        complete&&text.substr(anchor.byte_offset,anchor.quote.size())==anchor.quote)==EvidenceOutcome::support;
+    return to_outcome(observe_content_equality(complete,true,
+        complete&&text.substr(anchor.byte_offset,anchor.quote.size())==anchor.quote))==EvidenceOutcome::support;
 }
 } // namespace swegca::transport

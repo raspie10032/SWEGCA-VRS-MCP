@@ -16,26 +16,27 @@ Digest id(unsigned n){Digest d{};d[0]=std::byte(n);return d;}
 }
 int main(){
     static_assert(!std::is_convertible_v<AssociationJudgment,EvidenceJudgment>);
+    static_assert(!std::is_convertible_v<PredicateObservation,EvidenceOutcome>);
     const auto binding=bind_experience(id(1),id(1),id(2),id(3));
     CHECK(binding.valid());
     CHECK(!bind_experience(id(1),id(9),id(2),id(3)).valid());
     CHECK(!bind_experience(id(1),id(1),Digest{},id(3)).valid());
     const std::array<std::uint32_t,3> tags{4,9,12};
-    CHECK(observe_tag_association(binding,tags,4,9)==EvidenceOutcome::support);
-    CHECK(observe_tag_association(binding,tags,9,4)==EvidenceOutcome::support);
-    CHECK(observe_tag_association(binding,tags,4,99)==EvidenceOutcome::insufficient);
-    CHECK(observe_tag_association(binding,tags,98,99)==EvidenceOutcome::insufficient);
-    CHECK(observe_tag_association(binding,tags,4,4)==EvidenceOutcome::insufficient);
-    CHECK(observe_tag_association({},tags,4,9)==EvidenceOutcome::insufficient);
+    CHECK(to_outcome(observe_tag_association(binding,tags,4,9))==EvidenceOutcome::support);
+    CHECK(to_outcome(observe_tag_association(binding,tags,9,4))==EvidenceOutcome::support);
+    CHECK(to_outcome(observe_tag_association(binding,tags,4,99))==EvidenceOutcome::refute);
+    CHECK(to_outcome(observe_tag_association(binding,tags,98,99))==EvidenceOutcome::refute);
+    CHECK(to_outcome(observe_tag_association(binding,tags,4,4))==EvidenceOutcome::insufficient);
+    CHECK(to_outcome(observe_tag_association({},tags,4,9))==EvidenceOutcome::insufficient);
     const std::array<std::uint32_t,2> other{9,88};
-    CHECK(observe_common_member(binding,tags,binding,other,9)==EvidenceOutcome::support);
-    CHECK(observe_common_member(binding,tags,binding,other,4)==EvidenceOutcome::insufficient);
-    CHECK(observe_common_member(binding,tags,{},other,9)==EvidenceOutcome::insufficient);
-    CHECK(observe_recorded_member(binding,other,9)==EvidenceOutcome::support);
-    CHECK(observe_recorded_member(binding,other,12)==EvidenceOutcome::insufficient);
-    CHECK(observe_tag_image_match(binding,tags,4)==EvidenceOutcome::support);
-    CHECK(observe_tag_image_match(binding,tags,99)==EvidenceOutcome::refute);
-    CHECK(observe_tag_image_match({},tags,99)==EvidenceOutcome::insufficient);
+    CHECK(to_outcome(observe_common_member(binding,tags,binding,other,9))==EvidenceOutcome::support);
+    CHECK(to_outcome(observe_common_member(binding,tags,binding,other,4))==EvidenceOutcome::refute);
+    CHECK(to_outcome(observe_common_member(binding,tags,{},other,9))==EvidenceOutcome::insufficient);
+    CHECK(to_outcome(observe_recorded_member(binding,other,9))==EvidenceOutcome::support);
+    CHECK(to_outcome(observe_recorded_member(binding,other,12))==EvidenceOutcome::refute);
+    CHECK(to_outcome(observe_tag_image_match(binding,tags,4))==EvidenceOutcome::support);
+    CHECK(to_outcome(observe_tag_image_match(binding,tags,99))==EvidenceOutcome::refute);
+    CHECK(to_outcome(observe_tag_image_match({},tags,99))==EvidenceOutcome::insufficient);
     auto yes=judge_association({1,0}),no=judge_association({0,1}),unknown=judge_association({}),conflict=judge_association({1,1});
     CHECK(yes.status()==EvidenceStatus::accept);
     CHECK(no.status()==EvidenceStatus::reject);
@@ -47,6 +48,15 @@ int main(){
     CHECK(revise_association_strength(1,conflict).current()==1);
     CHECK(!revise_association_strength(std::numeric_limits<double>::infinity(),yes).valid());
     CHECK(!revise_association_strength(std::numeric_limits<double>::max(),yes).valid());
+    CHECK(!connection_evidence_eligible(.9999999999999999));
+    CHECK(connection_evidence_eligible(1.0));
+    CHECK(!connection_evidence_eligible(std::numeric_limits<double>::infinity()));
+    const auto weak=revise_association_strength(1,no);
+    CHECK(weak.current()==.995 && !weak.evidence_eligible());
+    const auto restored=revise_association_strength(weak.current(),yes);
+    CHECK(restored.current()==.995*1.01 && restored.evidence_eligible());
+    CHECK(revise_association_strength(2,no).evidence_eligible());
+    CHECK(revise_association_strength(1,unknown).evidence_eligible());
     // Recorded association does not bypass the unchanged causal gate.
     EvidenceTally tally;tally.axis_support[0]=6185;tally.axis_refute[0]=73;tally.revision=6258;
     tally.source_diversity=tally.context_diversity=tally.axis_source_diversity[0]=1;

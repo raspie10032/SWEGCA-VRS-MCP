@@ -4,6 +4,12 @@
 
 namespace swegca::architecture::kernel {
 
+// Eligibility affects consumption only: weak numeric state is retained and
+// can receive new evidence, including evidence that restores eligibility.
+[[nodiscard]] constexpr bool connection_evidence_eligible(double strength) noexcept {
+    return strength >= 1.0 && strength <= std::numeric_limits<double>::max();
+}
+
 // User-selected three-state VRS rule. The factors come from the user's
 // original mosaic_vrs_state_update.py@9aa5f555cf:15-16,108-120.
 // Source: support -> x1.01, refute -> x0.995, unresolved -> unchanged.
@@ -18,7 +24,7 @@ public:
     // Original mosaic_memory_promotion.py@9aa5f555cf:83,134-145.
     // Eligibility is not permission for a semantic write or external action.
     [[nodiscard]] constexpr bool evidence_eligible() const noexcept {
-        return valid_ && current_ >= 1.0;
+        return valid_ && connection_evidence_eligible(current_);
     }
 
 private:

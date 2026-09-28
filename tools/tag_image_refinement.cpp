@@ -40,6 +40,10 @@ struct Writer{
   auto a=block->append(v);used+=a.bytes;return a;
  }
 };
+std::uint64_t get64(std::span<const std::byte> bytes,std::size_t at){
+ if(at>bytes.size()||bytes.size()-at<8)throw std::runtime_error("short matrix");
+ std::uint64_t value=0;for(unsigned b=0;b<8;++b)value|=std::uint64_t(std::to_integer<unsigned>(bytes[at+b]))<<(8*b);return value;
+}
 void put64(std::vector<std::byte>& out,std::uint64_t n){for(unsigned b=0;b<8;++b)out.push_back(std::byte(n>>(8*b)));}
 int main(int argc,char** argv)try{
  if(argc==4&&std::string(argv[1])=="inspect"){
@@ -48,10 +52,11 @@ int main(int argc,char** argv)try{
   while(std::getline(records,text)){auto row=parse_json(text,memory);if(auto value=row.find("concept"))if(num(*value)==target){auto node=reader.read(addr(row.at("record")));std::cout<<encode_json(node,memory)<<'\n';return 0;}}
   throw std::runtime_error("concept not found");
  }
- if(argc!=5)throw std::runtime_error("usage: tag-image-refinement prepare|apply DATASET PAIR_GRAPH OUTPUT");
+ if(argc!=5&&argc!=6)throw std::runtime_error("usage: tag-image-refinement prepare|apply DATASET PAIR_GRAPH OUTPUT [PREVIOUS]");
  rlimit cap{4000000000ULL,4000000000ULL};if(setrlimit(RLIMIT_AS,&cap))throw std::runtime_error("memory limit");
  const std::string mode(argv[1]);const std::filesystem::path data(argv[2]),graph(argv[3]),out(argv[4]);
  if(mode!="prepare"&&mode!="apply")throw std::runtime_error("mode");
+ if(mode=="prepare"&&argc!=5)throw std::runtime_error("prepare takes no previous state");
  MemoryBudget scratch{128ULL<<20};Reader reader(graph);
  auto summary=parse_json(load(graph/"summary.json"),scratch);if(summary.at("schema").string()!="experience_pairs_common_member_v1")throw std::runtime_error("requires canonical pair graph");
  std::map<unsigned,RecordAddress> sources,tags;std::ifstream index(graph/"graph-records.jsonl");std::string line;
@@ -74,26 +79,65 @@ int main(int argc,char** argv)try{
  if(std::filesystem::exists(out/"concepts.jsonl"))throw std::runtime_error("apply already exists");
  auto meta=parse_json(load(out/"gpu-input.json"),scratch);
  if(num(meta.at("images"))!=n||num(meta.at("tags"))!=t||meta.at("members_sha256").string()!=hex(file_hash(out/"members.i32"))||meta.at("graph_index_sha256").string()!=hex(file_hash(graph/"graph-records.jsonl")))throw std::runtime_error("input changed");
+ // The optional previous state is authenticated native state, not a CSV
+ // strength override. Identical input observations must not be applied twice.
+ std::unique_ptr<Reader> previous_reader;
+ std::map<unsigned,RecordAddress> previous_records;
+ if(argc==6){
+  const std::filesystem::path previous(argv[5]);
+  auto old_meta=parse_json(load(previous/"gpu-input.json"),scratch);
+  auto old_summary=parse_json(load(previous/"summary.json"),scratch);
+  if(old_meta.at("graph_index_sha256").string()!=meta.at("graph_index_sha256").string()||
+     old_meta.at("members_sha256").string()!=meta.at("members_sha256").string()||
+     num(old_summary.at("images"))!=n||num(old_summary.at("tags"))!=t||
+     old_summary.at("schema").string()!="binary_tag_image_v2")
+   throw std::runtime_error("previous state is not for these exact observations");
+  previous_reader=std::make_unique<Reader>(previous);
+  std::ifstream old_index(previous/"tag-records.jsonl");std::string text;
+  while(std::getline(old_index,text)){auto entry=parse_json(text,scratch);if(auto tag=entry.find("tag"))
+   if(!previous_records.emplace(num(*tag),addr(entry.at("record"))).second)throw std::runtime_error("duplicate previous matrix");}
+  if(previous_records.size()!=t)throw std::runtime_error("incomplete previous state");
+ }
  Writer writer{out};std::ofstream concepts(out/"concepts.jsonl"),receipts(out/"tag-records.jsonl");concepts.exceptions(std::ios::badbit|std::ios::failbit);receipts.exceptions(std::ios::badbit|std::ios::failbit);
- std::uint64_t totals[3]{},compared=0,concept_count=0;
+ std::uint64_t totals[3]{},compared=0,concept_count=0,eligible_count=0;
  for(unsigned gpu=0;gpu<2;++gpu){
   const auto lo=t*gpu/2,hi=t*(gpu+1)/2;auto report=parse_json(load(out/("gpu"+std::to_string(gpu)+".json")),scratch);auto file=out/("gpu"+std::to_string(gpu)+".observations.u8");
   if(num(report.at("gpu"))!=gpu||num(report.at("tag_begin"))!=lo||num(report.at("tag_end"))!=hi||num(report.at("images"))!=n||report.at("members_sha256").string()!=meta.at("members_sha256").string()||report.at("output_sha256").string()!=hex(file_hash(file))||std::filesystem::file_size(file)!=(hi-lo)*n)throw std::runtime_error("GPU partition mismatch");
   std::ifstream observations(file,std::ios::binary);std::vector<unsigned char> row(n);
   for(std::size_t tag=lo;tag<hi;++tag){observations.read(reinterpret_cast<char*>(row.data()),n);if(!observations)throw std::runtime_error("GPU short read");
    auto node=reader.read(tags.at(tag));std::set<std::string> distinct_images;std::vector<unsigned> approved;std::vector<std::byte> payload;payload.reserve(24+n*16);put64(payload,tag);put64(payload,n);put64(payload,2);
+   std::optional<StoredExperience> old_matrix;
+   std::span<const std::byte> old_payload;
+   if(previous_reader){
+    const auto a=previous_records.at(tag);
+    old_matrix.emplace(previous_reader->blocks.at(a.block).read(a,2ULL<<20,previous_reader->memory));
+    old_payload=old_matrix->view().content;
+    if(old_payload.size()!=24+n*16||get64(old_payload,0)!=tag||get64(old_payload,8)!=n||get64(old_payload,16)!=2)
+     throw std::runtime_error("invalid previous matrix");
+   }
    for(std::size_t image=0;image<n;++image){
     // Full CPU/core cross-check of GPU observations, not just a sample.
     bool recorded=std::find(members[image].begin(),members[image].end(),tag)!=members[image].end();
     if(row[image]>1||bool(row[image])!=recorded)throw std::runtime_error("GPU observation differs from original members");
-    auto observed=observe_tag_image_match(bindings[image],members[image],tag);
+    auto observed=to_outcome(observe_tag_image_match(bindings[image],members[image],tag));
     if(observed==EvidenceOutcome::insufficient)throw std::runtime_error("tag-image input is not ready for binary verification");
     const auto judgment=judge_association({observed==EvidenceOutcome::support?1ULL:0ULL,observed==EvidenceOutcome::refute?1ULL:0ULL});
-    const auto strength=revise_association_strength(1.0,judgment);if(!strength.valid())throw std::runtime_error("invalid core result");
+    const double previous=previous_reader?std::bit_cast<double>(get64(old_payload,24+image*16+8)):1.0;
+    if(!finite_count(previous))throw std::runtime_error("invalid previous strength");
+    // Recompute the observation/verdict for checking, retain the accumulated
+    // value when this identical evidence has already been applied.
+    double current=previous;
+    if(previous_reader){
+     if(get64(old_payload,24+image*16)>2)throw std::runtime_error("invalid previous status");
+    }else{
+     const auto strength=revise_association_strength(previous,judgment);
+     if(!strength.valid())throw std::runtime_error("invalid core result");
+     current=strength.current();
+    }
     auto status=static_cast<unsigned>(judgment.status());++totals[status];++compared;
     // Row order identifies canonical image source. Exact binary64 strength.
-    put64(payload,status);put64(payload,std::bit_cast<std::uint64_t>(strength.current()));
-    if(judgment.status()==EvidenceStatus::accept){approved.push_back(image);distinct_images.insert(image_ids[image]);}
+    put64(payload,status);put64(payload,std::bit_cast<std::uint64_t>(current));
+    if(connection_evidence_eligible(current)){++eligible_count;approved.push_back(image);distinct_images.insert(image_ids[image]);}
    }
    auto location=writer.append(payload,"application/x-swegca-tag-image-v2");
    receipts<<"{\"tag\":"<<tag<<",\"record\":";address(receipts,location);receipts<<"}\n";
@@ -103,6 +147,6 @@ int main(int argc,char** argv)try{
    if(tag%250==0)std::cout<<"core_verified_tags="<<tag+1<<'/'<<t<<" comparisons="<<compared<<std::endl;
   }
  }
- std::ofstream result(out/"summary.json");result.exceptions(std::ios::badbit|std::ios::failbit);result<<"{\"schema\":\"binary_tag_image_v2\",\"verification_mode\":\"binary\",\"images\":"<<n<<",\"tags\":"<<t<<",\"comparisons\":"<<compared<<",\"accept\":"<<totals[1]<<",\"reject\":"<<totals[2]<<",\"abstain\":"<<totals[0]<<",\"common_concepts\":"<<concept_count<<",\"gpu_count\":2,\"all_gpu_observations_checked\":true,\"main_merged\":false}\n";
+ std::ofstream result(out/"summary.json");result.exceptions(std::ios::badbit|std::ios::failbit);result<<"{\"schema\":\"binary_tag_image_v2\",\"verification_mode\":\"binary\",\"images\":"<<n<<",\"tags\":"<<t<<",\"comparisons\":"<<compared<<",\"accept\":"<<totals[1]<<",\"reject\":"<<totals[2]<<",\"abstain\":"<<totals[0]<<",\"common_concepts\":"<<concept_count<<",\"eligible_connections\":"<<eligible_count<<",\"retained_ineligible_connections\":"<<(compared-eligible_count)<<",\"reapplied_observations\":0,\"duplicate_observations\":"<<(previous_reader?compared:0)<<",\"eligibility_minimum\":1,\"gpu_count\":2,\"all_gpu_observations_checked\":true,\"main_merged\":false}\n";
  std::cout<<"FINISHED comparisons="<<compared<<" accept="<<totals[1]<<" abstain="<<totals[0]<<" common_concepts="<<concept_count<<std::endl;
 }catch(const std::exception& e){std::cerr<<"FAILED: "<<e.what()<<std::endl;return 1;}

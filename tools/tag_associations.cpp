@@ -145,7 +145,7 @@ int main(int argc,char** argv)try{
  std::cout<<"GLOBAL_GRAPH input_bundles="<<inputs.size()<<" original_members="<<inputs.size()*3<<" tag_memberships="<<memberships<<" isolated_bundles="<<isolated<<" components="<<components.size()<<std::endl;
  for(std::size_t i=0;i<tags.size();++i){auto& t=tags[i];
   // Index observations across ALL incoming experiences, never a shared verdict.
-  for(auto source:t.sources)if(observe_recorded_member(inputs[source].binding,inputs[source].tags,i)==EvidenceOutcome::support)t.witnesses.push_back(source);
+  for(auto source:t.sources)if(to_outcome(observe_recorded_member(inputs[source].binding,inputs[source].tags,i))==EvidenceOutcome::support)t.witnesses.push_back(source);
   std::ostringstream node;node<<"{\"id\":"<<i<<",\"model\":\""<<t.model<<"\",\"index\":"<<t.index<<",\"category\":"<<t.category<<",\"tag\":";
   write_json_string(node,t.name);node<<",\"sources\":[";for(std::size_t j=0;j<t.sources.size();++j){if(j)node<<',';node<<t.sources[j];}node<<"],\"witnesses\":[";for(std::size_t j=0;j<t.witnesses.size();++j){if(j)node<<',';node<<t.witnesses[j];}node<<"]}\n";
   nodes<<node.str();auto position=graph.append(node.str());heads<<"{\"tag\":"<<i<<",\"record\":";address(heads,position);heads<<"}\n";
@@ -189,7 +189,7 @@ int main(int argc,char** argv)try{
   for(auto member:common){
    // Fresh measurement and judgment per EXPERIENCE pair. Global entries below
    // are raw membership observations, never another pair's approval.
-   if(observe_common_member(left.binding,left.tags,right.binding,right.tags,member)!=EvidenceOutcome::support)continue;
+   if(to_outcome(observe_common_member(left.binding,left.tags,right.binding,right.tags,member))!=EvidenceOutcome::support)continue;
    const auto& witnesses=tags[member].witnesses;
    evidence.support+=witnesses.size();
    external_support+=witnesses.size()-std::binary_search(witnesses.begin(),witnesses.end(),a)-std::binary_search(witnesses.begin(),witnesses.end(),b);

@@ -11,15 +11,14 @@ namespace swegca::architecture::kernel {
 // This is not a language classifier or an accept/reject/abstain judgment.
 // Only judge_evidence, after normal admission/shuffle, can issue that judgment.
 // Incomplete or changing reads cannot supply support OR refutation.
-[[nodiscard]] constexpr EvidenceOutcome observe_content_equality(
+[[nodiscard]] constexpr PredicateObservation observe_content_equality(
     bool complete, bool stable, bool equal) noexcept {
-    if (!complete || !stable) return EvidenceOutcome::insufficient;
-    return equal ? EvidenceOutcome::support : EvidenceOutcome::refute;
+    return {complete && stable, equal};
 }
 
 // Expectation is an explicit predicate operand, never inferred from prose.
 // Missing or unstable data stays insufficient for either polarity.
-[[nodiscard]] constexpr EvidenceOutcome observe_content_relation(
+[[nodiscard]] constexpr PredicateObservation observe_content_relation(
     bool complete,bool stable,bool equal,bool expect_equal) noexcept {
     return observe_content_equality(complete,stable,equal==expect_equal);
 }
@@ -30,7 +29,7 @@ namespace swegca::architecture::kernel {
 // All bytes, including NUL, invalid UTF-8, noise and contradictory content,
 // participate unchanged. Input buffers remain owned by the caller.
 // Work is O(bytes inspected); the whole-buffer operation has no ns claim.
-[[nodiscard]] constexpr EvidenceOutcome observe_raw_content_relation(
+[[nodiscard]] constexpr PredicateObservation observe_raw_content_relation(
     std::span<const std::byte> left, std::span<const std::byte> right,
     bool complete, bool stable, bool expect_equal) noexcept {
     if (!complete || !stable)

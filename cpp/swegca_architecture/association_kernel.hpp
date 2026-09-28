@@ -1,6 +1,7 @@
 #pragma once
 
 #include "swegca_architecture/evidence_observation_kernel.hpp"
+#include "swegca_architecture/connection_strength_kernel.hpp"
 #include <span>
 #include <algorithm>
 
@@ -26,48 +27,37 @@ private:
     return result;
 }
 
-// Scope: a recorded association witness in the already verified bundle.
-// No score threshold, causal requirement, or absence-as-refutation rule.
-[[nodiscard]] inline EvidenceOutcome observe_tag_association(const BoundExperience& binding,
+// These predicates describe recorded membership, not semantic truth.
+// A valid observed nonmatch is false; invalid input is not a negative sample.
+[[nodiscard]] inline PredicateObservation observe_tag_association(const BoundExperience& binding,
     std::span<const std::uint32_t> actual_tags,std::uint32_t left,std::uint32_t right) noexcept {
-    if(!binding.valid()||left==right)return EvidenceOutcome::insufficient;
     bool seen_left=false,seen_right=false;
     for(auto tag:actual_tags){seen_left|=tag==left;seen_right|=tag==right;}
-    return seen_left&&seen_right?EvidenceOutcome::support:EvidenceOutcome::insufficient;
+    return {binding.valid() && left!=right, seen_left && seen_right};
 }
-
-// An observed member of a verified bundle, not a semantic truth verdict.
-[[nodiscard]] inline EvidenceOutcome observe_recorded_member(
+[[nodiscard]] inline PredicateObservation observe_recorded_member(
     const BoundExperience& binding, std::span<const std::uint32_t> members,
     std::uint32_t member) noexcept {
-    return binding.valid() && std::find(members.begin(),members.end(),member)!=members.end()
-        ? EvidenceOutcome::support : EvidenceOutcome::insufficient;
+    return {binding.valid(), std::find(members.begin(),members.end(),member)!=members.end()};
 }
-// User-defined exhaustive tag-versus-image check: a recorded matching tag
-// supports this relation; a nonmatching tag refutes it. This binary contract
-// is scoped to tag-image verification, not generic missing evidence.
-[[nodiscard]] inline EvidenceOutcome observe_tag_image_match(
+[[nodiscard]] inline PredicateObservation observe_tag_image_match(
     const BoundExperience& binding, std::span<const std::uint32_t> members,
     std::uint32_t member) noexcept {
-    if(!binding.valid())return EvidenceOutcome::insufficient;
-    return std::find(members.begin(),members.end(),member)!=members.end()
-        ? EvidenceOutcome::support : EvidenceOutcome::refute;
+    return observe_recorded_member(binding,members,member);
 }
-// The proposition is local to THIS pair: does this member occur in both?
-// A third input may corroborate a member, but cannot invent it in either end.
-[[nodiscard]] inline EvidenceOutcome observe_common_member(
+[[nodiscard]] inline PredicateObservation observe_common_member(
     const BoundExperience& left, std::span<const std::uint32_t> left_members,
     const BoundExperience& right, std::span<const std::uint32_t> right_members,
     std::uint32_t member) noexcept {
-    return observe_recorded_member(left,left_members,member)==EvidenceOutcome::support &&
-        observe_recorded_member(right,right_members,member)==EvidenceOutcome::support
-        ? EvidenceOutcome::support : EvidenceOutcome::insufficient;
+    const auto a=observe_recorded_member(left,left_members,member);
+    const auto b=observe_recorded_member(right,right_members,member);
+    return {a.valid && b.valid, a.holds && b.holds};
 }
 
 struct AssociationEvidence {
     std::uint64_t support=0;
-    // Only an explicit, source-bound refutation of THIS relation may enter
-    // here. A missing tag, unseen pair or failed input read is not refutation.
+    // A valid measured false predicate is refutation of THIS relation.
+    // An invalid input/read is insufficient, never a negative observation.
     std::uint64_t refute=0;
 };
 enum class AssociationReason : std::uint8_t {
@@ -98,6 +88,9 @@ class AssociationStrength final {
 public:
     [[nodiscard]] constexpr bool valid() const noexcept{return valid_;}
     [[nodiscard]] constexpr double current() const noexcept{return current_;}
+    [[nodiscard]] constexpr bool evidence_eligible() const noexcept {
+        return valid_ && connection_evidence_eligible(current_);
+    }
 private:
     friend AssociationStrength revise_association_strength(double,const AssociationJudgment&) noexcept;
     bool valid_=false;double current_=0;

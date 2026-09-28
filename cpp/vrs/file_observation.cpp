@@ -90,7 +90,7 @@ FileEqualityObservation observe_file_equality(int left, int right, std::uint64_t
     result.complete = true;
     result.stable = same_file_version(result.left.before, result.left.after) &&
         same_file_version(result.right.before, result.right.after);
-    result.outcome = architecture::kernel::observe_content_relation(result.complete, result.stable, equal,expect_equal);
+    result.outcome = architecture::kernel::to_outcome(architecture::kernel::observe_content_relation(result.complete, result.stable, equal,expect_equal));
     return result;
 }
 } // namespace swegca::vrs

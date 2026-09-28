@@ -54,6 +54,6 @@ inline architecture::kernel::EvidenceOutcome measured_file_outcome(const Json& r
         const auto left_digest=hash(left.at("digest")),right_digest=hash(right.at("digest"));
         equal=number(left.at("readBytes"))==number(right.at("readBytes"))&&left_digest==right_digest;
     }
-    return architecture::kernel::observe_content_relation(complete,stable,equal,predicate=="equal-file-bytes-v1");
+    return architecture::kernel::to_outcome(architecture::kernel::observe_content_relation(complete,stable,equal,predicate=="equal-file-bytes-v1"));
 }
 } // namespace swegca::transport

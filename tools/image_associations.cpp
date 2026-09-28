@@ -1,3 +1,4 @@
+#include "swegca_architecture/connection_strength_kernel.hpp"
 // Read-only consumer of the sealed VRS graph, separate from VRS maintenance.
 #include "vrs/experience_block.hpp"
 #include "transport/json.hpp"
@@ -71,9 +72,9 @@ int main(int argc,char** argv)try{
  std::map<unsigned,Candidate> candidates;unsigned traversed=0;
  if(!disconnect)for(auto& a:edges){auto chunk=reader.read(a);for(auto& e:chunk.at("links").values){
   unsigned l=number(e.at("left")),r=number(e.at("right"));double strength=std::stod(std::string(e.at("strength").scalar));
-  // Endpoints are experiences, not tag IDs. Only core-approved pair
-  // connections activate an experience; unresolved pairs remain in storage.
-  if(number(e.at("status"))!=static_cast<unsigned>(EvidenceStatus::accept))continue;
+  // Endpoints are experiences. Eligibility uses accumulated strength,
+  // independently of the latest verdict. Weak records stay in storage.
+  if(!connection_evidence_eligible(strength))continue;
   auto visit=[&](unsigned from,unsigned to){if(from!=seed)return;
    auto neighbor=reader.read(sources.at(to));
    for(auto& member:neighbor.at("tags").values){const auto tag=number(member);if(seeds.contains(tag))continue;

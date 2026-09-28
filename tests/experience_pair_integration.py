@@ -38,8 +38,8 @@ with tempfile.TemporaryDirectory(prefix='swegca-pair-test-') as temp:
  subprocess.run([str(recall_exe),str(data),str(first),str(query/'cue.json'),str(query/'result.json')],check=True)
  answer=json.loads((query/'result.json').read_text())
  assert answer['seed_source']==0
- assert {x['tag'] for x in answer['associated_tags']}=={'circle','triangle'}
- assert {x['via_experience'] for x in answer['associated_tags']}=={1,2}
+ assert {x['tag'] for x in answer['associated_tags']}=={'circle','triangle','blue','fish'}
+ assert {x['via_experience'] for x in answer['associated_tags']}=={1,2,3}
  if len(sys.argv)>3:
   # Exercise GPU observation consumption with a deterministic fixture. Physical
   # GPU use is tested separately on the full real dataset, not claimed here.
@@ -62,6 +62,45 @@ with tempfile.TemporaryDirectory(prefix='swegca-pair-test-') as temp:
   assert report['verification_mode']=='binary'
   assert report['accept']==8 and report['comparisons']==len(tags)*4 and report['reject']==len(tags)*4-8 and report['abstain']==0
   import shutil
+  repeated=root/'repeated-tag-image';repeated.mkdir()
+  for item in ('members.i32','gpu-input.json','gpu0.json','gpu1.json','gpu0.observations.u8','gpu1.observations.u8'):
+   shutil.copyfile(tag_out/item,repeated/item)
+  subprocess.run([tag_exe,'apply',str(data),str(first),str(repeated),str(tag_out)],check=True)
+  repeat_report=json.loads((repeated/'summary.json').read_text())
+  assert repeat_report['duplicate_observations']==24 and repeat_report['reapplied_observations']==0
+  # Native payloads must be byte-identical for an identical-input replay.
+  import struct
+  def matrices(folder):
+   blocks={p.read_bytes()[8:40].hex():p for p in folder.glob('*.block')};result={}
+   for entry in map(json.loads,(folder/'tag-records.jsonl').open()):
+    if 'tag' not in entry:continue
+    a=entry['record']
+    with blocks[a['block']].open('rb') as f:f.seek(a['offset']);raw=f.read(a['bytes'])
+    ss,so,sm,sc=struct.unpack_from('<QQQQ',raw,32);result[entry['tag']]=raw[64+ss+so+sm:64+ss+so+sm+sc]
+   return result
+  assert matrices(repeated)==matrices(tag_out)
+  # Exercise persisted threshold consumption independently of latest verdict.
+  threshold=root/'threshold-previous';shutil.copytree(tag_out,threshold)
+  entries=list(map(json.loads,(threshold/'tag-records.jsonl').open()))
+  entry=next(x for x in entries if x.get('tag')==red['tag']);a=entry['record']
+  blocks={p.read_bytes()[8:40].hex():p for p in threshold.glob('*.block')}
+  path=blocks[a['block']]
+  with path.open('r+b') as f:
+   f.seek(a['offset']);raw=bytearray(f.read(a['bytes']))
+   ss,so,sm,sc=struct.unpack_from('<QQQQ',raw,32);start=64+ss+so+sm
+   for image,value in [(0,.995),(1,1.0),(3,.995*1.01)]:
+    struct.pack_into('<d',raw,start+24+image*16+8,value)
+   digest=hashlib.sha256(raw[:-48]).digest();raw[-48:-16]=digest;a['digest']=digest.hex()
+   f.seek(a['offset']);f.write(raw)
+  (threshold/'tag-records.jsonl').write_text(''.join(json.dumps(x)+'\n' for x in entries))
+  threshold_out=root/'threshold-out';threshold_out.mkdir()
+  for item in ('members.i32','gpu-input.json','gpu0.json','gpu1.json','gpu0.observations.u8','gpu1.observations.u8'):
+   shutil.copyfile(tag_out/item,threshold_out/item)
+  subprocess.run([tag_exe,'apply',str(data),str(first),str(threshold_out),str(threshold)],check=True)
+  node=next(x for x in map(json.loads,(threshold_out/'concepts.jsonl').open()) if x['tag']==red['tag'])
+  assert node['experiences']==[1,2,3] # weak accepted excluded; >=1 rejected included
+  assert matrices(threshold_out)==matrices(threshold) # no weak numeric state deleted
+
   invalid=root/'invalid-tag-image';invalid.mkdir()
   for item in ('members.i32','gpu-input.json','gpu0.json','gpu1.json','gpu0.observations.u8','gpu1.observations.u8'):
    shutil.copyfile(tag_out/item,invalid/item)
@@ -87,7 +126,7 @@ with tempfile.TemporaryDirectory(prefix='swegca-pair-test-') as temp:
  subprocess.run([str(recall_exe),str(data),str(dedup),str(query/'cue.json'),str(query/'dedup.json')],check=True)
  duplicate_answer=json.loads((query/'dedup.json').read_text())
  assert duplicate_answer['source_count']==4
- assert {x['tag'] for x in duplicate_answer['associated_tags']}=={'circle','triangle'}
+ assert {x['tag'] for x in duplicate_answer['associated_tags']}=={'circle','triangle','blue','fish'}
  # Same image but changed experience payload must NOT be merged.
  variant=json.loads(json.dumps(features[0]));variant['tags'].append({'index':999,'tag':'new_context','category':0})
  (data/'features.jsonl').write_text(''.join(json.dumps(x)+'\n' for x in features+[variant]))
