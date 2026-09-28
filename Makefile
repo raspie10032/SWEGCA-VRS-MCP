@@ -305,3 +305,6 @@ $(BUILD)/experience-pairs-tests: tests/experience_pairs_tests.cpp cpp/vrs/experi
 .PHONY: check-experience-pairs
 check-experience-pairs: $(BUILD)/experience-pairs-tests
 	./$(BUILD)/experience-pairs-tests
+
+$(BUILD)/swegca-tag-image-refinement: tools/tag_image_refinement.cpp cpp/transport/json.cpp $(BUILD)/libswegca-vrs.a $(CORE_HEADERS) | $(BUILD)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< cpp/transport/json.cpp $(BUILD)/libswegca-vrs.a -o $@

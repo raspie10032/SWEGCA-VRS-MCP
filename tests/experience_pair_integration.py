@@ -40,6 +40,39 @@ with tempfile.TemporaryDirectory(prefix='swegca-pair-test-') as temp:
  assert answer['seed_source']==0
  assert {x['tag'] for x in answer['associated_tags']}=={'circle','triangle'}
  assert {x['via_experience'] for x in answer['associated_tags']}=={1,2}
+ if len(sys.argv)>3:
+  # Exercise GPU observation consumption with a deterministic fixture. Physical
+  # GPU use is tested separately on the full real dataset, not claimed here.
+  tag_exe=str(pathlib.Path(sys.argv[3]).resolve());tag_out=root/'tag-image';tag_out.mkdir()
+  subprocess.run([tag_exe,'prepare',str(data),str(first),str(tag_out)],check=True)
+  meta=json.loads((tag_out/'gpu-input.json').read_text())
+  for gpu in range(2):
+   lo=len(tags)*gpu//2;hi=len(tags)*(gpu+1)//2
+   payload=bytes(int(image in tags[tag]['sources']) for tag in range(lo,hi) for image in range(4))
+   (tag_out/f'gpu{gpu}.observations.u8').write_bytes(payload)
+   (tag_out/f'gpu{gpu}.json').write_text(json.dumps({'gpu':gpu,'tag_begin':lo,'tag_end':hi,'images':4,'members_sha256':meta['members_sha256'],'output_sha256':hashlib.sha256(payload).hexdigest()}))
+  subprocess.run([tag_exe,'apply',str(data),str(first),str(tag_out)],check=True)
+  concepts=[json.loads(x) for x in (tag_out/'concepts.jsonl').read_text().splitlines()]
+  red=next(x for x in concepts if x['name']=='red')
+  assert red['role']=='common_concept' and red['experiences']==[0,1,2] and red['distinct_images']==3
+  restored=json.loads(subprocess.check_output([tag_exe,'inspect',str(tag_out),str(red['tag'])],text=True))
+  assert restored==red
+  assert all(x['role']=='single_observation' for x in concepts if x['name']!='red')
+  report=json.loads((tag_out/'summary.json').read_text())
+  assert report['verification_mode']=='binary'
+  assert report['accept']==8 and report['comparisons']==len(tags)*4 and report['reject']==len(tags)*4-8 and report['abstain']==0
+  import shutil
+  invalid=root/'invalid-tag-image';invalid.mkdir()
+  for item in ('members.i32','gpu-input.json','gpu0.json','gpu1.json','gpu0.observations.u8','gpu1.observations.u8'):
+   shutil.copyfile(tag_out/item,invalid/item)
+  image_path=data/'images'/(features[0]['sha256']+'.bin');original_bytes=image_path.read_bytes()
+  try:
+   image_path.write_bytes(b'changed original')
+   failed=subprocess.run([tag_exe,'apply',str(data),str(first),str(invalid)],capture_output=True,text=True)
+   assert failed.returncode!=0 and 'not ready for binary verification' in failed.stderr
+   assert not (invalid/'summary.json').exists()
+  finally:image_path.write_bytes(original_bytes)
+  print('PASS: binary tag-image core decisions, native common-concept read, invalid original fails rather than abstaining')
  # Repeated input with another delivery receipt is still one experience.
  duplicate_receipt=json.loads(json.dumps(receipts[0]));duplicate_receipt['head']['offset']=999
  (data/'features.jsonl').write_text(''.join(json.dumps(x)+'\n' for x in features+[features[0]]))

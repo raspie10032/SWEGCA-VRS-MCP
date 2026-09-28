@@ -33,6 +33,9 @@ int main(){
     CHECK(observe_common_member(binding,tags,{},other,9)==EvidenceOutcome::insufficient);
     CHECK(observe_recorded_member(binding,other,9)==EvidenceOutcome::support);
     CHECK(observe_recorded_member(binding,other,12)==EvidenceOutcome::insufficient);
+    CHECK(observe_tag_image_match(binding,tags,4)==EvidenceOutcome::support);
+    CHECK(observe_tag_image_match(binding,tags,99)==EvidenceOutcome::refute);
+    CHECK(observe_tag_image_match({},tags,99)==EvidenceOutcome::insufficient);
     auto yes=judge_association({1,0}),no=judge_association({0,1}),unknown=judge_association({}),conflict=judge_association({1,1});
     CHECK(yes.status()==EvidenceStatus::accept);
     CHECK(no.status()==EvidenceStatus::reject);

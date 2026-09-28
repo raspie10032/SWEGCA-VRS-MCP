@@ -43,6 +43,16 @@ private:
     return binding.valid() && std::find(members.begin(),members.end(),member)!=members.end()
         ? EvidenceOutcome::support : EvidenceOutcome::insufficient;
 }
+// User-defined exhaustive tag-versus-image check: a recorded matching tag
+// supports this relation; a nonmatching tag refutes it. This binary contract
+// is scoped to tag-image verification, not generic missing evidence.
+[[nodiscard]] inline EvidenceOutcome observe_tag_image_match(
+    const BoundExperience& binding, std::span<const std::uint32_t> members,
+    std::uint32_t member) noexcept {
+    if(!binding.valid())return EvidenceOutcome::insufficient;
+    return std::find(members.begin(),members.end(),member)!=members.end()
+        ? EvidenceOutcome::support : EvidenceOutcome::refute;
+}
 // The proposition is local to THIS pair: does this member occur in both?
 // A third input may corroborate a member, but cannot invent it in either end.
 [[nodiscard]] inline EvidenceOutcome observe_common_member(
