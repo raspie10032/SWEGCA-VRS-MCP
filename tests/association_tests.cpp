@@ -27,6 +27,12 @@ int main(){
     CHECK(observe_tag_association(binding,tags,98,99)==EvidenceOutcome::insufficient);
     CHECK(observe_tag_association(binding,tags,4,4)==EvidenceOutcome::insufficient);
     CHECK(observe_tag_association({},tags,4,9)==EvidenceOutcome::insufficient);
+    const std::array<std::uint32_t,2> other{9,88};
+    CHECK(observe_common_member(binding,tags,binding,other,9)==EvidenceOutcome::support);
+    CHECK(observe_common_member(binding,tags,binding,other,4)==EvidenceOutcome::insufficient);
+    CHECK(observe_common_member(binding,tags,{},other,9)==EvidenceOutcome::insufficient);
+    CHECK(observe_recorded_member(binding,other,9)==EvidenceOutcome::support);
+    CHECK(observe_recorded_member(binding,other,12)==EvidenceOutcome::insufficient);
     auto yes=judge_association({1,0}),no=judge_association({0,1}),unknown=judge_association({}),conflict=judge_association({1,1});
     CHECK(yes.status()==EvidenceStatus::accept);
     CHECK(no.status()==EvidenceStatus::reject);

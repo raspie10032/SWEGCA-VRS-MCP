@@ -2,6 +2,7 @@
 
 #include "swegca_architecture/evidence_observation_kernel.hpp"
 #include <span>
+#include <algorithm>
 
 namespace swegca::architecture::kernel {
 
@@ -33,6 +34,24 @@ private:
     bool seen_left=false,seen_right=false;
     for(auto tag:actual_tags){seen_left|=tag==left;seen_right|=tag==right;}
     return seen_left&&seen_right?EvidenceOutcome::support:EvidenceOutcome::insufficient;
+}
+
+// An observed member of a verified bundle, not a semantic truth verdict.
+[[nodiscard]] inline EvidenceOutcome observe_recorded_member(
+    const BoundExperience& binding, std::span<const std::uint32_t> members,
+    std::uint32_t member) noexcept {
+    return binding.valid() && std::find(members.begin(),members.end(),member)!=members.end()
+        ? EvidenceOutcome::support : EvidenceOutcome::insufficient;
+}
+// The proposition is local to THIS pair: does this member occur in both?
+// A third input may corroborate a member, but cannot invent it in either end.
+[[nodiscard]] inline EvidenceOutcome observe_common_member(
+    const BoundExperience& left, std::span<const std::uint32_t> left_members,
+    const BoundExperience& right, std::span<const std::uint32_t> right_members,
+    std::uint32_t member) noexcept {
+    return observe_recorded_member(left,left_members,member)==EvidenceOutcome::support &&
+        observe_recorded_member(right,right_members,member)==EvidenceOutcome::support
+        ? EvidenceOutcome::support : EvidenceOutcome::insufficient;
 }
 
 struct AssociationEvidence {

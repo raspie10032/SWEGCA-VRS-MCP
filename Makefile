@@ -298,3 +298,10 @@ $(BUILD)/related-pages-bench: benchmarks/related_pages_bench.cpp $(VRS_SOURCES) 
 
 $(BUILD)/swegca-image-associations: tools/image_associations.cpp cpp/transport/json.cpp $(BUILD)/libswegca-vrs.a $(CORE_HEADERS) | $(BUILD)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< cpp/transport/json.cpp $(BUILD)/libswegca-vrs.a -o $@
+
+$(BUILD)/experience-pairs-tests: tests/experience_pairs_tests.cpp cpp/vrs/experience_pairs.hpp $(CORE_HEADERS) | $(BUILD)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< -o $@
+
+.PHONY: check-experience-pairs
+check-experience-pairs: $(BUILD)/experience-pairs-tests
+	./$(BUILD)/experience-pairs-tests
