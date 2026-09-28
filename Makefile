@@ -16,7 +16,7 @@ CHECKPOINT_SOURCES := cpp/checkpoint/restricted_zip.cpp cpp/checkpoint/restricte
 WORLD_HEADERS := $(wildcard cpp/world/*.hpp)
 WORLD_SOURCES := cpp/world/cognitive_state.cpp cpp/world/cognitive_event.cpp \
 	cpp/world/world_state.cpp cpp/world/evidence_accumulator.cpp cpp/world/evidence_revision.cpp \
-	cpp/world/synapse_arbiter.cpp
+	cpp/world/synapse_arbiter.cpp cpp/world/dynamic_cognition.cpp
 
 PRODUCTION_BINARIES := $(BUILD)/swegca-vrs-mcp $(BUILD)/swegca-content-observer $(BUILD)/swegca-codex-wrapper $(BUILD)/swegca-desktop-host $(BUILD)/swegca-app-server-proxy
 MCP_PRODUCTION_CLOSURE_SOURCES := \
@@ -491,15 +491,19 @@ $(BUILD)/evidence-revision-tests: tests/evidence_revision_tests.cpp cpp/world/ev
 $(BUILD)/synapse-arbiter-world-tests: tests/synapse_arbiter_world_tests.cpp cpp/world/synapse_arbiter.cpp cpp/world/synapse_arbiter.hpp cpp/world/world_state.cpp cpp/world/world_state.hpp cpp/world/cognitive_state.cpp cpp/world/cognitive_state.hpp | $(BUILD)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< cpp/world/synapse_arbiter.cpp cpp/world/world_state.cpp cpp/world/cognitive_state.cpp -o $@
 
+$(BUILD)/dynamic-cognition-tests: tests/dynamic_cognition_tests.cpp cpp/world/dynamic_cognition.cpp cpp/world/dynamic_cognition.hpp cpp/world/synapse_arbiter.cpp cpp/world/synapse_arbiter.hpp cpp/world/world_state.cpp cpp/world/world_state.hpp cpp/world/cognitive_state.cpp cpp/world/cognitive_state.hpp | $(BUILD)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< cpp/world/dynamic_cognition.cpp cpp/world/synapse_arbiter.cpp cpp/world/world_state.cpp cpp/world/cognitive_state.cpp -o $@
+
 check-world: $(BUILD)/cognitive-state-tests $(BUILD)/cognitive-event-tests \
 	$(BUILD)/world-state-tests $(BUILD)/evidence-accumulator-tests $(BUILD)/evidence-revision-tests \
-	$(BUILD)/synapse-arbiter-world-tests
+	$(BUILD)/synapse-arbiter-world-tests $(BUILD)/dynamic-cognition-tests
 	./$(BUILD)/cognitive-state-tests
 	./$(BUILD)/cognitive-event-tests
 	./$(BUILD)/world-state-tests
 	./$(BUILD)/evidence-accumulator-tests
 	./$(BUILD)/evidence-revision-tests
 	./$(BUILD)/synapse-arbiter-world-tests
+	./$(BUILD)/dynamic-cognition-tests
 
 check-production: production
 	$(MAKE) --no-print-directory check
