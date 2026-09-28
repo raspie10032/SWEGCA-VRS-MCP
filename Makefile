@@ -323,3 +323,9 @@ $(BUILD)/swegca-input-collision: tools/input_collision.cpp cpp/vrs/input_collisi
 
 $(BUILD)/ternary-count-tests: tests/ternary_count_tests.cpp $(CORE_HEADERS) | $(BUILD)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< -o $@
+
+$(BUILD)/parallel-ingress-tests: tests/parallel_ingress_tests.cpp cpp/vrs/parallel_ingress.hpp $(VRS_SOURCES) $(CORE_SOURCES) $(VRS_HEADERS) | $(BUILD)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< $(VRS_SOURCES) $(CORE_SOURCES) -o $@
+
+$(BUILD)/whole-file-ingress: tools/whole_file_ingress.cpp cpp/vrs/parallel_ingress.hpp cpp/transport/json.cpp $(VRS_SOURCES) $(CORE_SOURCES) $(VRS_HEADERS) | $(BUILD)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< cpp/transport/json.cpp $(VRS_SOURCES) $(CORE_SOURCES) -o $@

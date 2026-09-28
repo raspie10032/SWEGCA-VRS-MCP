@@ -38,6 +38,7 @@ struct RuntimeConfig {
 // may run alongside them; only poll_work publishes completed Main work.
 // Borrowed Recall/Replay receipts expire when the session ends.
 class Runtime final {
+    friend class ParallelIngress;
 public:
     static Runtime create(const std::filesystem::path&, const RuntimeConfig&, MemoryBudget&);
     static Runtime ensure(const std::filesystem::path&, const RuntimeConfig&, MemoryBudget&);
