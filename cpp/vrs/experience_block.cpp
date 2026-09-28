@@ -262,7 +262,8 @@ std::vector<ExperienceLocation> ExperienceBlock::append_batch(std::span<const Or
     for(const auto& row:rows){
         if(row.session.empty()||row.source.empty()||row.media_type.empty())throw std::invalid_argument("experience provenance is incomplete");
         for(const auto size:{std::uint64_t(record_overhead),std::uint64_t(row.session.size()),std::uint64_t(row.source.size()),std::uint64_t(row.media_type.size()),std::uint64_t(row.content.size())}){
-            if(size>remaining)throw std::length_error("experience batch does not fit");remaining-=size;
+            if(size>remaining)throw std::length_error("experience batch does not fit");
+            remaining-=size;
         }
     }
     std::vector<ExperienceLocation> addresses;addresses.reserve(rows.size());

@@ -1,4 +1,5 @@
 #pragma once
+#include <cstdlib>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -54,8 +55,13 @@ inline void verify_resource_profile(std::uint64_t ram,std::string_view cpus){
     std::vector<std::string> args{"systemd-run","--user","--pipe","--wait","--collect","--quiet",
         "--working-directory="+std::filesystem::current_path().string(),
         "--property=MemoryMax="+std::to_string(profile_memory_limit(ram)),"--property=MemorySwapMax=0",
-        "--property=CPUAffinity="+std::string(cpus),"--property=OOMPolicy=kill",
-        "--"};
+        "--property=CPUAffinity="+std::string(cpus),"--property=OOMPolicy=kill"};
+    // The bounded child replaces this process. Preserve only the private
+    // owner-query endpoint required by the same MCP instance; do not forward
+    // the caller's complete environment into the systemd unit.
+    if(const char* query=std::getenv("SWEGCA_QUERY_SOCKET");query&&*query)
+        args.push_back("--setenv=SWEGCA_QUERY_SOCKET="+std::string(query));
+    args.push_back("--");
     args.insert(args.end(),command.begin(),command.end());
     std::vector<char*> pointers;for(auto& arg:args)pointers.push_back(arg.data());pointers.push_back(nullptr);
     ::execvp("systemd-run",pointers.data());

@@ -36,7 +36,8 @@ void apply(BlockStore::State& state,std::span<const std::byte> b,std::size_t id,
   }else throw std::runtime_error("unknown block entry");
   if(state.originals.size()>originals_limit||state.connections.size()>connections_limit)throw std::length_error("logical block entry limit");
  }
- if(state.batches==UINT64_MAX)throw std::overflow_error("block sequence exhausted");++state.batches;
+ if(state.batches==UINT64_MAX)throw std::overflow_error("block sequence exhausted");
+ ++state.batches;
 }
 }
 struct BlockStore::Impl {
@@ -46,7 +47,8 @@ struct BlockStore::Impl {
  Impl(std::filesystem::path path,Config c):root(std::move(path)),config(c){
   if(!c.max_originals||!c.max_connections||c.segment_bytes<header+entry+ExperienceBlock::record_overhead+ExperienceBlock::header_bytes+source.size()+session.size()+media.size())throw std::invalid_argument("block store limits");
   std::filesystem::create_directories(root);lockfd=open((root/"writer.lock").c_str(),O_CREAT|O_RDWR|O_CLOEXEC|O_NOFOLLOW,0600);
-  if(lockfd<0)throw std::runtime_error("block store lock open");if(flock(lockfd,LOCK_EX|LOCK_NB)){close(lockfd);lockfd=-1;throw std::runtime_error("block store already owned");}
+  if(lockfd<0)throw std::runtime_error("block store lock open");
+  if(flock(lockfd,LOCK_EX|LOCK_NB)){close(lockfd);lockfd=-1;throw std::runtime_error("block store already owned");}
   try{std::uint64_t bytes=std::filesystem::exists(root/"layout.block")?std::filesystem::file_size(root/"layout.block"):0;
    for(auto& dir:std::filesystem::directory_iterator(root)){auto name=dir.path().filename().string();if(!dir.is_directory()||!name.starts_with("block-"))continue;const auto id=number(std::string_view(name).substr(6));owners.emplace(id,std::make_shared<Owner>());
     for(auto& file:std::filesystem::directory_iterator(dir.path()))if(file.path().extension()==".block"||file.path().extension()==".payload"){auto n=file.file_size();if(n>UINT64_MAX-bytes)throw std::overflow_error("store size");bytes+=n;}
@@ -63,7 +65,8 @@ struct BlockStore::Impl {
  std::shared_ptr<Owner> owner(std::size_t id){std::lock_guard lock(directory_mutex);auto& value=owners[id];if(!value)value=std::make_shared<Owner>();return value;}
  std::filesystem::path directory(std::size_t id)const{return root/("block-"+std::to_string(id));}
  void recover(std::size_t id,Owner& o){
-  if(o.loaded)return;auto dir=directory(id);if(!std::filesystem::exists(dir)){o.loaded=true;return;}
+  if(o.loaded)return;
+  auto dir=directory(id);if(!std::filesystem::exists(dir)){o.loaded=true;return;}
   std::map<std::uint64_t,std::filesystem::path> paths;for(auto& file:std::filesystem::directory_iterator(dir))if(file.path().extension()==".block")paths.emplace(number(file.path().stem().string()),file.path());
   State recovered;std::optional<ExperienceBlock> writable;std::uint64_t next=0;
   for(auto& [index,path]:paths){if(index!=next++)throw std::runtime_error("missing block segment");auto block=ExperienceBlock::open_reader(path);if(block.capacity()!=config.segment_bytes)throw std::runtime_error("segment capacity mismatch");auto extent=block.inspect();MemoryBudget memory(config.segment_bytes);std::uint64_t at=ExperienceBlock::header_bytes;

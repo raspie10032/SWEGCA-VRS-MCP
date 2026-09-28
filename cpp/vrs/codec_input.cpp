@@ -25,7 +25,8 @@ void command(int source,std::vector<std::string> args,std::pmr::vector<std::byte
  add(posix_spawn_file_actions_addopen(&actions,STDIN_FILENO,"/dev/null",O_RDONLY,0));
  std::vector<char*> argv;for(auto& a:args)argv.push_back(a.data());argv.push_back(nullptr);pid_t pid;
  auto code=posix_spawnp(&pid,argv[0],&actions,nullptr,argv.data(),environ);posix_spawn_file_actions_destroy(&actions);
- if(code)throw std::runtime_error("cannot start codec: "+args[0]);::close(write_end.value);write_end.value=-1;
+ if(code)throw std::runtime_error("cannot start codec: "+args[0]);
+ ::close(write_end.value);write_end.value=-1;
  int status=0;try{append_fd(read_end.value,output);}catch(...){kill(pid,SIGKILL);while(waitpid(pid,&status,0)<0&&errno==EINTR){}throw;}
  pid_t waited;do{waited=waitpid(pid,&status,0);}while(waited<0&&errno==EINTR);
  if(waited<0||!WIFEXITED(status)||WEXITSTATUS(status))throw std::runtime_error("codec failed: "+args[0]);

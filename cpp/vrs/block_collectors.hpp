@@ -29,7 +29,8 @@ public:
   std::unique_lock l(mutex_);
   if(block>=blocks_.size()||!apply)throw std::invalid_argument("invalid block application");
  cv_.wait(l,[&]{return error_||stop_||pending_<capacity_;});
-  if(error_)std::rethrow_exception(error_);if(stop_)throw std::logic_error("collectors closed");
+  if(error_)std::rethrow_exception(error_);
+  if(stop_)throw std::logic_error("collectors closed");
   auto& b=blocks_[block];b.queue.push_back(std::move(apply));++pending_;
   if(!b.leased){b.leased=true;ready_.push_back(block);}l.unlock();cv_.notify_all();
  }

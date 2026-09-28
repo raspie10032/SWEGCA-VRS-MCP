@@ -1,0 +1,1365 @@
+{
+  "schema": "swegca-stage0-external-p0-v1",
+  "source_audit": "/var/home/raspie/Documents/Codex/swegca-original-audit-20260928/external-reference-closure.json",
+  "source_audit_sha256": "e6f04067aba157ca222a11d49b82d5952301e209f7ac0612bf5375c9977ca57c",
+  "entries": [
+    {
+      "reference": "tools/organize_rozephine_failure_evidence_requests.py",
+      "kind": "missing_source",
+      "citation_count": 2,
+      "cited_by": [
+        "docs/ROZEPHINE_SEMANTIC_EXPERIENCE_TRANSFER_1K_HELDOUT_2026-08-26.md",
+        "docs/worklogs/rozephine_continuous_experience_growth_20260826.md"
+      ],
+      "known_sha256": null,
+      "status": "missing",
+      "required_by_current_production": false,
+      "reason": "Referenced implementation is absent, so call-graph closure and faithful C++ behavior parity are blocked."
+    },
+    {
+      "reference": "tools/run_rozephine_youtube_retry_longitudinal.py",
+      "kind": "missing_source",
+      "citation_count": 1,
+      "cited_by": [
+        "tools/freeze_rozephine_youtube_retry_longitudinal.py"
+      ],
+      "known_sha256": null,
+      "status": "missing",
+      "required_by_current_production": false,
+      "reason": "Referenced implementation is absent, so call-graph closure and faithful C++ behavior parity are blocked."
+    },
+    {
+      "reference": "outputs/rozephine_mosaic_v688_gameplay_egomotion_actiondrop600_v690/mosaic_unified_gameplay_egomotion.pt",
+      "kind": "unrecovered_checkpoint",
+      "citation_count": 28,
+      "cited_by": [
+        "configs/rozephine_p2_n27_event_text_video_late_interaction_v1.json",
+        "configs/rozephine_p2_n29_event_factor_mining_bridge_v4.json",
+        "configs/rozephine_p2_n29_event_factor_mining_bridge_v5.json",
+        "configs/rozephine_p2_n29_korean_semantic_factor_bridge_v1.json",
+        "configs/rozephine_p2_n29_korean_semantic_factor_bridge_v2.json",
+        "configs/rozephine_p2_n29_korean_semantic_factor_bridge_v3.json",
+        "configs/rozephine_p2_n30_contextual_nli_v1.json",
+        "configs/rozephine_p2_n30_contextual_nli_v2.json",
+        "configs/rozephine_p2_n31_joint_core_adaptation_v1.json",
+        "configs/rozephine_p2_n32_joint_core_distillation_v1.json",
+        "configs/rozephine_p2_n33_physical_event_curriculum_v1.json",
+        "configs/rozephine_p2_n34_kornli_core_adaptation_v1.json",
+        "configs/rozephine_p2_n35_kornli_distillation_v1.json",
+        "configs/rozephine_p2_n35_kornli_hard_baseline_v1.json",
+        "configs/rozephine_p2_n36_kornli_distillation_2block_v1.json",
+        "configs/rozephine_p2_n36_kornli_distillation_4block_v1.json",
+        "configs/rozephine_p2_n37_four_block_event_calibration_v1.json",
+        "configs/rozephine_p2_n38_event_factor_evidence_v1.json",
+        "configs/rozephine_p2_n39_structured_event_factor_evidence_v1.json",
+        "configs/rozephine_p2_n40_joint_factor_core_adaptation_v1.json",
+        "configs/rozephine_p2_n41_teacher_factor_core_adaptation_v1.json",
+        "configs/rozephine_p2_n42_frozen_state_probes_v1.json",
+        "configs/rozephine_p2_n44_token_span_core_adaptation_v1.json",
+        "configs/rozephine_p2_n45_factorized_span_core_adaptation_v1.json",
+        "configs/rozephine_p2_n50_natural_event_one_shot_v1.json",
+        "configs/rozephine_p2_n51_perspective_routing_v1.json",
+        "configs/rozephine_p2_n52_temporal_antisymmetry_v1.json",
+        "tools/run_rozephine_p2_n53_motion_primitive_dual_gpu.ps1"
+      ],
+      "known_sha256": null,
+      "status": "missing",
+      "required_by_current_production": false,
+      "reason": "Exact model behavior and C++ numerical parity cannot be established without these bytes, tensor layout and provenance."
+    },
+    {
+      "reference": "outputs/rozephine_mosaic_v268_delta_ablation150_v273/mosaic_unified_teacher_distilled.pt",
+      "kind": "unrecovered_checkpoint",
+      "citation_count": 19,
+      "cited_by": [
+        "docs/MOSAIC_SESSION_BRIEF_2026-08-01_1126.md",
+        "docs/MOSAIC_SESSION_HANDOFF.md",
+        "docs/ROZEPHINE_MOSAIC_STATUS_REPORT_2026-08-01.md",
+        "docs/ROZEPHINE_MOSAIC_STATUS_REPORT_2026-08-01_0202.md",
+        "docs/ROZEPHINE_MOSAIC_STATUS_REPORT_2026-08-01_0247.md",
+        "docs/ROZEPHINE_MOSAIC_STATUS_REPORT_2026-08-01_0355.md",
+        "docs/ROZEPHINE_MOSAIC_STATUS_REPORT_2026-08-01_0500.md",
+        "docs/ROZEPHINE_MOSAIC_STATUS_REPORT_2026-08-01_0615.md",
+        "docs/ROZEPHINE_MOSAIC_STATUS_REPORT_2026-08-01_0645.md",
+        "docs/ROZEPHINE_MOSAIC_STATUS_REPORT_2026-08-01_0734.md",
+        "docs/ROZEPHINE_MOSAIC_STATUS_REPORT_2026-08-01_0808.md",
+        "docs/ROZEPHINE_MOSAIC_STATUS_REPORT_2026-08-01_0847.md",
+        "docs/ROZEPHINE_MOSAIC_STATUS_REPORT_2026-08-01_0901.md",
+        "docs/ROZEPHINE_MOSAIC_STATUS_REPORT_2026-08-01_0917.md",
+        "docs/ROZEPHINE_MOSAIC_STATUS_REPORT_2026-08-01_0947.md",
+        "docs/ROZEPHINE_MOSAIC_STATUS_REPORT_2026-08-01_1034.md",
+        "docs/ROZEPHINE_MOSAIC_STATUS_REPORT_2026-08-01_1110.md",
+        "docs/ROZEPHINE_MOSAIC_STATUS_REPORT_2026-08-01_1152.md",
+        "docs/ROZEPHINE_MOSAIC_STATUS_REPORT_2026-08-01_1224.md"
+      ],
+      "known_sha256": null,
+      "status": "missing",
+      "required_by_current_production": false,
+      "reason": "Exact model behavior and C++ numerical parity cannot be established without these bytes, tensor layout and provenance."
+    },
+    {
+      "reference": "outputs/rozephine_mosaic_v794_natural_span_continual_v900/natural_span_grounding.pt",
+      "kind": "unrecovered_checkpoint",
+      "citation_count": 19,
+      "cited_by": [
+        "configs/mosaic_natural_span_hotpot_attention_v919.json",
+        "configs/mosaic_natural_span_hotpot_attention_warm_v921.json",
+        "configs/mosaic_natural_span_hotpot_chain_v911.json",
+        "configs/mosaic_natural_span_hotpot_continual_v906.json",
+        "configs/mosaic_natural_span_hotpot_evidence_v925.json",
+        "configs/mosaic_natural_span_hotpot_focus_v909.json",
+        "configs/mosaic_natural_span_hotpot_hybrid_v923.json",
+        "configs/mosaic_natural_span_hotpot_independent_v901.json",
+        "configs/rozephine_klue_local_hidden_qa_micro_v114.json",
+        "configs/rozephine_klue_matched_evidence_pairs_v144.json",
+        "configs/rozephine_klue_pointer_evidence_verifier_v139.json",
+        "configs/rozephine_klue_qa_evidence_verifier_v136.json",
+        "configs/rozephine_klue_span_evidence_reranker_v125.json",
+        "configs/rozephine_local_memory_excerpt_span_v72.json",
+        "configs/rozephine_local_memory_explicit_span_v70.json",
+        "configs/rozephine_span_evidence_likelihood_ratio_v61.json",
+        "configs/rozephine_span_evidence_proposal_v59.json",
+        "configs/rozephine_span_relevance_v65.json",
+        "configs/rozephine_teacher_byte_reader_cv_v96.json"
+      ],
+      "known_sha256": null,
+      "status": "missing",
+      "required_by_current_production": false,
+      "reason": "Exact model behavior and C++ numerical parity cannot be established without these bytes, tensor layout and provenance."
+    },
+    {
+      "reference": "outputs/rozephine/memory/klue_teacher_byte_cache_clean_train13591_v95/teacher_byte_cache.pt",
+      "kind": "unrecovered_checkpoint",
+      "citation_count": 14,
+      "cited_by": [
+        "configs/rozephine_klue_local_hidden_contextual_qa_pilot_v120.json",
+        "configs/rozephine_klue_local_hidden_micro_v107.json",
+        "configs/rozephine_klue_local_hidden_pilot_v111.json",
+        "configs/rozephine_klue_local_hidden_qa_micro_v114.json",
+        "configs/rozephine_klue_local_hidden_qa_pilot_v117.json",
+        "configs/rozephine_klue_matched_evidence_pairs_v144.json",
+        "configs/rozephine_klue_pointer_evidence_verifier_v139.json",
+        "configs/rozephine_klue_qa_evidence_verifier_v136.json",
+        "configs/rozephine_klue_span_evidence_reranker_v125.json",
+        "configs/rozephine_klue_span_late_interaction_v131.json",
+        "configs/rozephine_qa_shortcut_withdrawal_balanced_v151.json",
+        "configs/rozephine_qa_shortcut_withdrawal_decay_v153.json",
+        "configs/rozephine_qa_shortcut_withdrawal_v149.json",
+        "configs/rozephine_teacher_byte_reader_cv_v96.json"
+      ],
+      "known_sha256": null,
+      "status": "missing",
+      "required_by_current_production": false,
+      "reason": "Exact model behavior and C++ numerical parity cannot be established without these bytes, tensor layout and provenance."
+    },
+    {
+      "reference": "outputs/mosaic_byte_retriever_v0.pt",
+      "kind": "unrecovered_checkpoint",
+      "citation_count": 9,
+      "cited_by": [
+        "ARTIFACT_INDEX.md",
+        "docs/MOSAIC_IMPLEMENTATION_PLAN.md",
+        "src/tinylm_slicer/mosaic_byte_retriever.py",
+        "src/tinylm_slicer/mosaic_byte_retriever_profile.py",
+        "src/tinylm_slicer/mosaic_cross_reader.py",
+        "src/tinylm_slicer/mosaic_operator_gate.py",
+        "src/tinylm_slicer/mosaic_operator_gate_profile.py",
+        "src/tinylm_slicer/mosaic_retrieval_workspace.py",
+        "src/tinylm_slicer/mosaic_span_reader.py"
+      ],
+      "known_sha256": null,
+      "status": "missing",
+      "required_by_current_production": false,
+      "reason": "Exact model behavior and C++ numerical parity cannot be established without these bytes, tensor layout and provenance."
+    },
+    {
+      "reference": "outputs/rozephine_mosaic_v794_xquad_sequence_state_map_full_v1025/sequence_state_map.pt",
+      "kind": "unrecovered_checkpoint",
+      "citation_count": 9,
+      "cited_by": [
+        "configs/mosaic_mlqa_sequence_map_independent_v1051.json",
+        "configs/mosaic_multilingual_map_only_reader_control_v1034.json",
+        "configs/mosaic_multilingual_reader_sequence_map_interaction_v1028.json",
+        "configs/mosaic_northeuralex_language_field_v1139.json",
+        "configs/mosaic_tatoeba_shared_role_residual_implementation_v1108.json",
+        "configs/mosaic_tatoeba_shared_role_residual_v1103.json",
+        "configs/mosaic_xquad_role_factorized_gated_residual_grouped_cv_v1087.json",
+        "configs/mosaic_xquad_sequence_state_map_batch16_v1057.json",
+        "configs/mosaic_xquad_unicode_script_residual_v1060.json"
+      ],
+      "known_sha256": null,
+      "status": "missing",
+      "required_by_current_production": false,
+      "reason": "Exact model behavior and C++ numerical parity cannot be established without these bytes, tensor layout and provenance."
+    },
+    {
+      "reference": "outputs/rozephine/cognitive_kernel_p2/n34_kornli_teacher_cache_20260810/teacher_cache_v3/teacher_logits.pt",
+      "kind": "unrecovered_checkpoint",
+      "citation_count": 8,
+      "cited_by": [
+        "configs/rozephine_p2_n35_kornli_distillation_v1.json",
+        "configs/rozephine_p2_n36_kornli_distillation_2block_v1.json",
+        "configs/rozephine_p2_n36_kornli_distillation_4block_v1.json",
+        "configs/rozephine_p2_n37_four_block_event_calibration_v1.json",
+        "configs/rozephine_p2_n40_joint_factor_core_adaptation_v1.json",
+        "configs/rozephine_p2_n41_teacher_factor_core_adaptation_v1.json",
+        "configs/rozephine_p2_n44_token_span_core_adaptation_v1.json",
+        "configs/rozephine_p2_n45_factorized_span_core_adaptation_v1.json"
+      ],
+      "known_sha256": null,
+      "status": "missing",
+      "required_by_current_production": false,
+      "reason": "Exact model behavior and C++ numerical parity cannot be established without these bytes, tensor layout and provenance."
+    },
+    {
+      "reference": "outputs/rozephine/cognitive_kernel_p2/n37_four_block_event_calibration_20260810/gpu5060ti_seed29_v1/joint_core_adapter.pt",
+      "kind": "unrecovered_checkpoint",
+      "citation_count": 7,
+      "cited_by": [
+        "configs/rozephine_p2_n38_event_factor_evidence_v1.json",
+        "configs/rozephine_p2_n39_structured_event_factor_evidence_v1.json",
+        "configs/rozephine_p2_n40_joint_factor_core_adaptation_v1.json",
+        "configs/rozephine_p2_n41_teacher_factor_core_adaptation_v1.json",
+        "configs/rozephine_p2_n42_frozen_state_probes_v1.json",
+        "configs/rozephine_p2_n44_token_span_core_adaptation_v1.json",
+        "configs/rozephine_p2_n45_factorized_span_core_adaptation_v1.json"
+      ],
+      "known_sha256": null,
+      "status": "missing",
+      "required_by_current_production": false,
+      "reason": "Exact model behavior and C++ numerical parity cannot be established without these bytes, tensor layout and provenance."
+    },
+    {
+      "reference": "outputs/rozephine/cognitive_kernel_p2/n115_visual_state_transition_development_v3_20260811/visual_state_transition.pt",
+      "kind": "unrecovered_checkpoint",
+      "citation_count": 6,
+      "cited_by": [
+        "configs/rozephine_p2_n115_visual_state_transition_confirmation_v1.json",
+        "configs/rozephine_p2_n116_cognitive_state_visual_proposal_v1.json",
+        "configs/rozephine_p2_n119_planet_crafter_ood_abstention_v1.json",
+        "configs/rozephine_p2_n120_evidence_contract_gate_v1.json",
+        "configs/rozephine_p2_n121_active_counterfactual_reobservation_v1.json",
+        "docs/ROZEPHINE_COGNITIVE_KERNEL_P2_N115_N116_VISUAL_STATE_PROPOSAL_2026-08-11.md"
+      ],
+      "known_sha256": null,
+      "status": "missing",
+      "required_by_current_production": false,
+      "reason": "Exact model behavior and C++ numerical parity cannot be established without these bytes, tensor layout and provenance."
+    },
+    {
+      "reference": "outputs/rozephine_mosaic_v794_natural_span_question_aware_warm_frozen_v891/natural_span_grounding.pt",
+      "kind": "unrecovered_checkpoint",
+      "citation_count": 6,
+      "cited_by": [
+        "configs/mosaic_natural_span_continual_v900.json",
+        "configs/mosaic_natural_span_hotpot_independent_v901.json",
+        "configs/mosaic_natural_span_independent_v893_v894.json",
+        "configs/mosaic_natural_span_multisource_v897.json",
+        "configs/mosaic_natural_span_multisource_v898.json",
+        "configs/mosaic_natural_span_source_aware_v899.json"
+      ],
+      "known_sha256": null,
+      "status": "missing",
+      "required_by_current_production": false,
+      "reason": "Exact model behavior and C++ numerical parity cannot be established without these bytes, tensor layout and provenance."
+    },
+    {
+      "reference": "outputs/rozephine/cognitive_kernel_k5a/k5a_132m_completeness300_b8_4070_seed631/prototype0.pt",
+      "kind": "unrecovered_checkpoint",
+      "citation_count": 5,
+      "cited_by": [
+        "configs/rozephine_cognitive_kernel_prototype1_n0.json",
+        "configs/rozephine_p2_n47_event_memory_state_v1.json",
+        "configs/rozephine_p2_n47_event_memory_state_v2.json",
+        "docs/ROZEPHINE_COGNITIVE_KERNEL_PROTOTYPE0_K5_K6_REPORT_2026-08-08.md",
+        "tools/run_rozephine_p2_n47_dual_gpu.ps1"
+      ],
+      "known_sha256": null,
+      "status": "missing",
+      "required_by_current_production": false,
+      "reason": "Exact model behavior and C++ numerical parity cannot be established without these bytes, tensor layout and provenance."
+    },
+    {
+      "reference": "outputs/rozephine/cognitive_kernel_k5a/k5a_132m_completeness300_b8_5060_seed641/prototype0.pt",
+      "kind": "unrecovered_checkpoint",
+      "citation_count": 5,
+      "cited_by": [
+        "configs/rozephine_cognitive_kernel_prototype1_n0.json",
+        "configs/rozephine_p2_n47_event_memory_state_v1.json",
+        "configs/rozephine_p2_n47_event_memory_state_v2.json",
+        "docs/ROZEPHINE_COGNITIVE_KERNEL_PROTOTYPE0_K5_K6_REPORT_2026-08-08.md",
+        "tools/run_rozephine_p2_n47_dual_gpu.ps1"
+      ],
+      "known_sha256": null,
+      "status": "missing",
+      "required_by_current_production": false,
+      "reason": "Exact model behavior and C++ numerical parity cannot be established without these bytes, tensor layout and provenance."
+    },
+    {
+      "reference": "outputs/rozephine/memory/teacher_byte_reader_cv_folds_v97/fold_assignments.pt",
+      "kind": "unrecovered_checkpoint",
+      "citation_count": 5,
+      "cited_by": [
+        "configs/rozephine_klue_local_hidden_contextual_qa_pilot_v120.json",
+        "configs/rozephine_klue_local_hidden_pilot_v111.json",
+        "configs/rozephine_klue_local_hidden_qa_pilot_v117.json",
+        "configs/rozephine_klue_span_evidence_reranker_v125.json",
+        "configs/rozephine_klue_span_late_interaction_v131.json"
+      ],
+      "known_sha256": null,
+      "status": "missing",
+      "required_by_current_production": false,
+      "reason": "Exact model behavior and C++ numerical parity cannot be established without these bytes, tensor layout and provenance."
+    },
+    {
+      "reference": "outputs/rozephine/cognitive_kernel_p2/n6_event_temporal_20260809/validation_v7_semantic_region16_cache.pt",
+      "kind": "unrecovered_checkpoint",
+      "citation_count": 4,
+      "cited_by": [
+        "configs/rozephine_p2_n27_event_text_video_pairwise_train_v6_v4.json",
+        "configs/rozephine_p2_n27_event_text_video_pairwise_v3.json",
+        "configs/rozephine_p2_n27_event_text_video_semantic_region_v2.json",
+        "configs/rozephine_p2_n28_event_object_correspondence_v1.json"
+      ],
+      "known_sha256": null,
+      "status": "missing",
+      "required_by_current_production": false,
+      "reason": "Exact model behavior and C++ numerical parity cannot be established without these bytes, tensor layout and provenance."
+    },
+    {
+      "reference": "outputs/rozephine/memory/klue_local_hidden_pilot_cache_v112/localized_hidden_cache.pt",
+      "kind": "unrecovered_checkpoint",
+      "citation_count": 4,
+      "cited_by": [
+        "configs/rozephine_klue_local_hidden_contextual_qa_pilot_v120.json",
+        "configs/rozephine_klue_local_hidden_qa_pilot_v117.json",
+        "configs/rozephine_klue_span_evidence_reranker_v125.json",
+        "configs/rozephine_klue_span_late_interaction_v131.json"
+      ],
+      "known_sha256": null,
+      "status": "missing",
+      "required_by_current_production": false,
+      "reason": "Exact model behavior and C++ numerical parity cannot be established without these bytes, tensor layout and provenance."
+    },
+    {
+      "reference": "outputs/rozephine/synapses/atelier_clip_identity_reference_v22/global_linear_800/clip_identity_reference.pt",
+      "kind": "unrecovered_checkpoint",
+      "citation_count": 4,
+      "cited_by": [
+        "configs/mosaic_atelier_source_diverse_visual_adapter_v24.json",
+        "configs/mosaic_atelier_source_diverse_visual_logit_adapter_v25.json",
+        "configs/mosaic_image_visual_residual_fresh_v29.json",
+        "configs/mosaic_image_visual_residual_v28.json"
+      ],
+      "known_sha256": null,
+      "status": "missing",
+      "required_by_current_production": false,
+      "reason": "Exact model behavior and C++ numerical parity cannot be established without these bytes, tensor layout and provenance."
+    },
+    {
+      "reference": "outputs/rozephine/synapses/mixed_domain_egomotion_v2_preserve/rozephine_mixed_domain_egomotion.pt",
+      "kind": "unrecovered_checkpoint",
+      "citation_count": 4,
+      "cited_by": [
+        "configs/mosaic_egomotion_evidence_gate_v3.json",
+        "configs/mosaic_egomotion_validity_v0.json",
+        "configs/mosaic_egomotion_validity_v1_explicit_delta.json",
+        "configs/mosaic_egomotion_validity_v2_evidence_labels.json"
+      ],
+      "known_sha256": null,
+      "status": "missing",
+      "required_by_current_production": false,
+      "reason": "Exact model behavior and C++ numerical parity cannot be established without these bytes, tensor layout and provenance."
+    },
+    {
+      "reference": "outputs/models/mosaic_text_lm_120m_document_start_bf16_inference_v2.pt",
+      "kind": "unrecovered_checkpoint",
+      "citation_count": 3,
+      "cited_by": [
+        "ARTIFACT_INDEX.md",
+        "docs/MOSAIC_LANGUAGE_V0.md",
+        "docs/MOSAIC_LIVE_TARGET_DEVICE_VALIDATION.md"
+      ],
+      "known_sha256": null,
+      "status": "missing",
+      "required_by_current_production": false,
+      "reason": "Exact model behavior and C++ numerical parity cannot be established without these bytes, tensor layout and provenance."
+    },
+    {
+      "reference": "outputs/mosaic_operator_gate_v0.pt",
+      "kind": "unrecovered_checkpoint",
+      "citation_count": 3,
+      "cited_by": [
+        "docs/MOSAIC_IMPLEMENTATION_PLAN.md",
+        "src/tinylm_slicer/mosaic_operator_gate.py",
+        "src/tinylm_slicer/mosaic_operator_gate_profile.py"
+      ],
+      "known_sha256": null,
+      "status": "missing",
+      "required_by_current_production": false,
+      "reason": "Exact model behavior and C++ numerical parity cannot be established without these bytes, tensor layout and provenance."
+    },
+    {
+      "reference": "outputs/rozephine/cognitive_kernel_p2/n28_event_object_correspondence_20260810/validation_v7_clip_projected_region16_cache.pt",
+      "kind": "unrecovered_checkpoint",
+      "citation_count": 3,
+      "cited_by": [
+        "configs/rozephine_p2_n28_clip_projected_correspondence_v3.json",
+        "configs/rozephine_p2_n28_clip_projected_direction_v7_v4.json",
+        "configs/rozephine_p2_n28_clip_projected_pairwise_v2.json"
+      ],
+      "known_sha256": null,
+      "status": "missing",
+      "required_by_current_production": false,
+      "reason": "Exact model behavior and C++ numerical parity cannot be established without these bytes, tensor layout and provenance."
+    },
+    {
+      "reference": "outputs/rozephine/synapses/atelier_cross_source_identity_v9/local_patch64_top4_800/local_identity_synapse.pt",
+      "kind": "unrecovered_checkpoint",
+      "citation_count": 3,
+      "cited_by": [
+        "configs/mosaic_atelier_fewshot_identity_v17.json",
+        "configs/mosaic_atelier_local_identity_augmented_v15.json",
+        "configs/mosaic_atelier_recurrent_local_identity_v16.json"
+      ],
+      "known_sha256": null,
+      "status": "missing",
+      "required_by_current_production": false,
+      "reason": "Exact model behavior and C++ numerical parity cannot be established without these bytes, tensor layout and provenance."
+    },
+    {
+      "reference": "outputs/rozephine/synapses/atelier_image_text_v0/head600/mosaic_unified_visual_text_retrieval.pt",
+      "kind": "unrecovered_checkpoint",
+      "citation_count": 3,
+      "cited_by": [
+        "configs/mosaic_atelier_semantic_prompt_synapse_v2.json",
+        "configs/mosaic_atelier_visual_statistics_adapter_v4.json",
+        "configs/mosaic_image_visual_residual_v28.json"
+      ],
+      "known_sha256": null,
+      "status": "missing",
+      "required_by_current_production": false,
+      "reason": "Exact model behavior and C++ numerical parity cannot be established without these bytes, tensor layout and provenance."
+    },
+    {
+      "reference": "outputs/rozephine_mosaic_v502_contrast_visibility_calibration300_v548/mosaic_unified_mixed_video.pt",
+      "kind": "unrecovered_checkpoint",
+      "citation_count": 3,
+      "cited_by": [
+        "docs/ROZEPHINE_MOSAIC_STATUS_REPORT_2026-08-01_1055.md",
+        "docs/ROZEPHINE_MOSAIC_STATUS_REPORT_2026-08-01_1110.md",
+        "docs/ROZEPHINE_MOSAIC_STATUS_REPORT_2026-08-01_1152.md"
+      ],
+      "known_sha256": null,
+      "status": "missing",
+      "required_by_current_production": false,
+      "reason": "Exact model behavior and C++ numerical parity cannot be established without these bytes, tensor layout and provenance."
+    },
+    {
+      "reference": "outputs/rozephine_mosaic_v794_multilingual_span_continual_v990/natural_span_grounding.pt",
+      "kind": "unrecovered_checkpoint",
+      "citation_count": 3,
+      "cited_by": [
+        "configs/mosaic_multilingual_reader_language_map_repair_v1005.json",
+        "configs/mosaic_multilingual_reader_local_map_interaction_v1009.json",
+        "configs/mosaic_multilingual_reader_sequence_map_interaction_v1028.json"
+      ],
+      "known_sha256": null,
+      "status": "missing",
+      "required_by_current_production": false,
+      "reason": "Exact model behavior and C++ numerical parity cannot be established without these bytes, tensor layout and provenance."
+    },
+    {
+      "reference": "outputs/rozephine_mosaic_v794_xquad_reader_state_bridge_v1000/reader_state_bridge.pt",
+      "kind": "unrecovered_checkpoint",
+      "citation_count": 3,
+      "cited_by": [
+        "configs/mosaic_multilingual_reader_language_map_repair_v1005.json",
+        "configs/mosaic_multilingual_reader_language_map_residual_v1001.json",
+        "configs/mosaic_multilingual_reader_local_map_interaction_v1009.json"
+      ],
+      "known_sha256": null,
+      "status": "missing",
+      "required_by_current_production": false,
+      "reason": "Exact model behavior and C++ numerical parity cannot be established without these bytes, tensor layout and provenance."
+    },
+    {
+      "reference": "outputs/models/mosaic_live_transition_v1.pt",
+      "kind": "unrecovered_checkpoint",
+      "citation_count": 2,
+      "cited_by": [
+        "ARTIFACT_INDEX.md",
+        "docs/MOSAIC_LIVE_TARGET_DEVICE_VALIDATION.md"
+      ],
+      "known_sha256": null,
+      "status": "missing",
+      "required_by_current_production": false,
+      "reason": "Exact model behavior and C++ numerical parity cannot be established without these bytes, tensor layout and provenance."
+    },
+    {
+      "reference": "outputs/mosaic_phase1_target_checkpoints/recurrent_seed_31.pt",
+      "kind": "unrecovered_checkpoint",
+      "citation_count": 2,
+      "cited_by": [
+        "ARTIFACT_INDEX.md",
+        "docs/MOSAIC_IMPLEMENTATION_PLAN.md"
+      ],
+      "known_sha256": null,
+      "status": "missing",
+      "required_by_current_production": false,
+      "reason": "Exact model behavior and C++ numerical parity cannot be established without these bytes, tensor layout and provenance."
+    },
+    {
+      "reference": "outputs/mosaic_phase1_target_checkpoints/recurrent_seed_37.pt",
+      "kind": "unrecovered_checkpoint",
+      "citation_count": 2,
+      "cited_by": [
+        "ARTIFACT_INDEX.md",
+        "docs/MOSAIC_IMPLEMENTATION_PLAN.md"
+      ],
+      "known_sha256": null,
+      "status": "missing",
+      "required_by_current_production": false,
+      "reason": "Exact model behavior and C++ numerical parity cannot be established without these bytes, tensor layout and provenance."
+    },
+    {
+      "reference": "outputs/mosaic_phase1_target_recurrent_batch64.pt",
+      "kind": "unrecovered_checkpoint",
+      "citation_count": 2,
+      "cited_by": [
+        "ARTIFACT_INDEX.md",
+        "docs/MOSAIC_IMPLEMENTATION_PLAN.md"
+      ],
+      "known_sha256": null,
+      "status": "missing",
+      "required_by_current_production": false,
+      "reason": "Exact model behavior and C++ numerical parity cannot be established without these bytes, tensor layout and provenance."
+    },
+    {
+      "reference": "outputs/mosaic_qa_reader_v1_dynamic_int8.pt",
+      "kind": "unrecovered_checkpoint",
+      "citation_count": 2,
+      "cited_by": [
+        "ARTIFACT_INDEX.md",
+        "src/tinylm_slicer/mosaic_qa_quantized.py"
+      ],
+      "known_sha256": null,
+      "status": "missing",
+      "required_by_current_production": false,
+      "reason": "Exact model behavior and C++ numerical parity cannot be established without these bytes, tensor layout and provenance."
+    },
+    {
+      "reference": "outputs/mosaic_retrieval_workspace_v0.pt",
+      "kind": "unrecovered_checkpoint",
+      "citation_count": 2,
+      "cited_by": [
+        "docs/MOSAIC_IMPLEMENTATION_PLAN.md",
+        "src/tinylm_slicer/mosaic_retrieval_workspace.py"
+      ],
+      "known_sha256": null,
+      "status": "missing",
+      "required_by_current_production": false,
+      "reason": "Exact model behavior and C++ numerical parity cannot be established without these bytes, tensor layout and provenance."
+    },
+    {
+      "reference": "outputs/mosaic_strategyqa_embeddings_v0.pt",
+      "kind": "unrecovered_checkpoint",
+      "citation_count": 2,
+      "cited_by": [
+        "ARTIFACT_INDEX.md",
+        "src/tinylm_slicer/mosaic_strategyqa_recurrent.py"
+      ],
+      "known_sha256": null,
+      "status": "missing",
+      "required_by_current_production": false,
+      "reason": "Exact model behavior and C++ numerical parity cannot be established without these bytes, tensor layout and provenance."
+    },
+    {
+      "reference": "outputs/mosaic_strategyqa_operator_embeddings_v0.pt",
+      "kind": "unrecovered_checkpoint",
+      "citation_count": 2,
+      "cited_by": [
+        "ARTIFACT_INDEX.md",
+        "src/tinylm_slicer/mosaic_strategyqa_operator.py"
+      ],
+      "known_sha256": null,
+      "status": "missing",
+      "required_by_current_production": false,
+      "reason": "Exact model behavior and C++ numerical parity cannot be established without these bytes, tensor layout and provenance."
+    },
+    {
+      "reference": "outputs/rozephine/cognitive_kernel_p2/n27_event_text_video_pairwise_20260810/train_v6_semantic_region16_cache.pt",
+      "kind": "unrecovered_checkpoint",
+      "citation_count": 2,
+      "cited_by": [
+        "configs/rozephine_p2_n27_event_text_video_pairwise_train_v6_v4.json",
+        "configs/rozephine_p2_n28_event_object_correspondence_v1.json"
+      ],
+      "known_sha256": null,
+      "status": "missing",
+      "required_by_current_production": false,
+      "reason": "Exact model behavior and C++ numerical parity cannot be established without these bytes, tensor layout and provenance."
+    },
+    {
+      "reference": "outputs/rozephine/cognitive_kernel_p2/n28_event_object_correspondence_20260810/train_v6_clip_projected_region16_cache.pt",
+      "kind": "unrecovered_checkpoint",
+      "citation_count": 2,
+      "cited_by": [
+        "configs/rozephine_p2_n28_clip_projected_correspondence_v3.json",
+        "configs/rozephine_p2_n28_clip_projected_pairwise_v2.json"
+      ],
+      "known_sha256": null,
+      "status": "missing",
+      "required_by_current_production": false,
+      "reason": "Exact model behavior and C++ numerical parity cannot be established without these bytes, tensor layout and provenance."
+    },
+    {
+      "reference": "outputs/rozephine/cognitive_kernel_p2/n32_nli_teacher_distillation_20260810/teacher_cache_v1/teacher_logits.pt",
+      "kind": "unrecovered_checkpoint",
+      "citation_count": 2,
+      "cited_by": [
+        "configs/rozephine_p2_n32_joint_core_distillation_v1.json",
+        "configs/rozephine_p2_n33_physical_event_curriculum_v1.json"
+      ],
+      "known_sha256": null,
+      "status": "missing",
+      "required_by_current_production": false,
+      "reason": "Exact model behavior and C++ numerical parity cannot be established without these bytes, tensor layout and provenance."
+    },
+    {
+      "reference": "outputs/rozephine/cognitive_kernel_p2/n36_kornli_capacity_sweep_20260810/four_block_gpu4070ti_seed17_v1/joint_core_adapter.pt",
+      "kind": "unrecovered_checkpoint",
+      "citation_count": 2,
+      "cited_by": [
+        "configs/rozephine_p2_n37_four_block_event_calibration_v1.json",
+        "docs/ROZEPHINE_COGNITIVE_KERNEL_P2_CURRENT_STATUS_2026-08-10.md"
+      ],
+      "known_sha256": null,
+      "status": "missing",
+      "required_by_current_production": false,
+      "reason": "Exact model behavior and C++ numerical parity cannot be established without these bytes, tensor layout and provenance."
+    },
+    {
+      "reference": "outputs/rozephine/cognitive_kernel_p2/n6_event_temporal_20260809/train_v5_semantic_region16_cache.pt",
+      "kind": "unrecovered_checkpoint",
+      "citation_count": 2,
+      "cited_by": [
+        "configs/rozephine_p2_n27_event_text_video_pairwise_v3.json",
+        "configs/rozephine_p2_n27_event_text_video_semantic_region_v2.json"
+      ],
+      "known_sha256": null,
+      "status": "missing",
+      "required_by_current_production": false,
+      "reason": "Exact model behavior and C++ numerical parity cannot be established without these bytes, tensor layout and provenance."
+    },
+    {
+      "reference": "outputs/rozephine/synapses/egomotion_evidence_gate_v3/rozephine_egomotion_evidence_gate.pt",
+      "kind": "unrecovered_checkpoint",
+      "citation_count": 2,
+      "cited_by": [
+        "configs/mosaic_planet_crafter_action_balanced_capture_v5.json",
+        "docs/ROZEPHINE_PLANET_CRAFTER_BALANCED_CAPTURE_2026-08-03.md"
+      ],
+      "known_sha256": null,
+      "status": "missing",
+      "required_by_current_production": false,
+      "reason": "Exact model behavior and C++ numerical parity cannot be established without these bytes, tensor layout and provenance."
+    },
+    {
+      "reference": "outputs/rozephine/synapses/source_diverse_visual_cache_v27/source_diverse_visual_cache.pt",
+      "kind": "unrecovered_checkpoint",
+      "citation_count": 2,
+      "cited_by": [
+        "configs/mosaic_image_visual_residual_fresh_v29.json",
+        "configs/mosaic_image_visual_residual_v28.json"
+      ],
+      "known_sha256": null,
+      "status": "missing",
+      "required_by_current_production": false,
+      "reason": "Exact model behavior and C++ numerical parity cannot be established without these bytes, tensor layout and provenance."
+    },
+    {
+      "reference": "outputs/rozephine_mosaic_v1025_tatoeba_shared_role_micro_v1109/shared_role_residual.pt",
+      "kind": "unrecovered_checkpoint",
+      "citation_count": 2,
+      "cited_by": [
+        "configs/mosaic_tatoeba_shared_role_group_dro_v1132.json",
+        "configs/mosaic_tatoeba_shared_role_residual_grouped_cv_v1110.json"
+      ],
+      "known_sha256": null,
+      "status": "missing",
+      "required_by_current_production": false,
+      "reason": "Exact model behavior and C++ numerical parity cannot be established without these bytes, tensor layout and provenance."
+    },
+    {
+      "reference": "outputs/rozephine_mosaic_v794_attentive_short_reader_expanded_v976/natural_span_grounding.pt",
+      "kind": "unrecovered_checkpoint",
+      "citation_count": 2,
+      "cited_by": [
+        "configs/mosaic_multilingual_reader_language_map_residual_v1001.json",
+        "configs/mosaic_multilingual_span_continual_v981.json"
+      ],
+      "known_sha256": null,
+      "status": "missing",
+      "required_by_current_production": false,
+      "reason": "Exact model behavior and C++ numerical parity cannot be established without these bytes, tensor layout and provenance."
+    },
+    {
+      "reference": "outputs/rozephine_mosaic_v794_natural_span_frozen_v885/natural_span_grounding.pt",
+      "kind": "unrecovered_checkpoint",
+      "citation_count": 2,
+      "cited_by": [
+        "configs/mosaic_natural_span_warm_ablation_v887_v888.json",
+        "configs/mosaic_natural_span_warm_core_lr2e6_v889.json"
+      ],
+      "known_sha256": null,
+      "status": "missing",
+      "required_by_current_production": false,
+      "reason": "Exact model behavior and C++ numerical parity cannot be established without these bytes, tensor layout and provenance."
+    },
+    {
+      "reference": "outputs/rozephine_mosaic_v794_xquad_state_cache_v993/state_cache.pt",
+      "kind": "unrecovered_checkpoint",
+      "citation_count": 2,
+      "cited_by": [
+        "configs/mosaic_xquad_reader_state_bridge_v998.json",
+        "configs/mosaic_xquad_token_state_map_v1013.json"
+      ],
+      "known_sha256": null,
+      "status": "missing",
+      "required_by_current_production": false,
+      "reason": "Exact model behavior and C++ numerical parity cannot be established without these bytes, tensor layout and provenance."
+    },
+    {
+      "reference": "outputs/models/mosaic_live_audio_observer_v0_candidate_v3.pt",
+      "kind": "unrecovered_checkpoint",
+      "citation_count": 1,
+      "cited_by": [
+        "ARTIFACT_INDEX.md"
+      ],
+      "known_sha256": null,
+      "status": "missing",
+      "required_by_current_production": false,
+      "reason": "Exact model behavior and C++ numerical parity cannot be established without these bytes, tensor layout and provenance."
+    },
+    {
+      "reference": "outputs/models/mosaic_live_transition_v0.pt",
+      "kind": "unrecovered_checkpoint",
+      "citation_count": 1,
+      "cited_by": [
+        "ARTIFACT_INDEX.md"
+      ],
+      "known_sha256": null,
+      "status": "missing",
+      "required_by_current_production": false,
+      "reason": "Exact model behavior and C++ numerical parity cannot be established without these bytes, tensor layout and provenance."
+    },
+    {
+      "reference": "outputs/models/mosaic_text_lm_120m_onepass_bf16_inference_v0.pt",
+      "kind": "unrecovered_checkpoint",
+      "citation_count": 1,
+      "cited_by": [
+        "ARTIFACT_INDEX.md"
+      ],
+      "known_sha256": null,
+      "status": "missing",
+      "required_by_current_production": false,
+      "reason": "Exact model behavior and C++ numerical parity cannot be established without these bytes, tensor layout and provenance."
+    },
+    {
+      "reference": "outputs/models/mosaic_text_lm_120m_source_interleaved_bf16_inference_v1.pt",
+      "kind": "unrecovered_checkpoint",
+      "citation_count": 1,
+      "cited_by": [
+        "ARTIFACT_INDEX.md"
+      ],
+      "known_sha256": null,
+      "status": "missing",
+      "required_by_current_production": false,
+      "reason": "Exact model behavior and C++ numerical parity cannot be established without these bytes, tensor layout and provenance."
+    },
+    {
+      "reference": "outputs/mosaic_cross_reader_v0.pt",
+      "kind": "unrecovered_checkpoint",
+      "citation_count": 1,
+      "cited_by": [
+        "src/tinylm_slicer/mosaic_cross_reader.py"
+      ],
+      "known_sha256": null,
+      "status": "missing",
+      "required_by_current_production": false,
+      "reason": "Exact model behavior and C++ numerical parity cannot be established without these bytes, tensor layout and provenance."
+    },
+    {
+      "reference": "outputs/mosaic_local_image_text_clip_cache_v0/validation.pt",
+      "kind": "unrecovered_checkpoint",
+      "citation_count": 1,
+      "cited_by": [
+        "configs/mosaic_visual_clip_ridge_interpolation_v6.json"
+      ],
+      "known_sha256": null,
+      "status": "missing",
+      "required_by_current_production": false,
+      "reason": "Exact model behavior and C++ numerical parity cannot be established without these bytes, tensor layout and provenance."
+    },
+    {
+      "reference": "outputs/mosaic_span_reader_v0.pt",
+      "kind": "unrecovered_checkpoint",
+      "citation_count": 1,
+      "cited_by": [
+        "src/tinylm_slicer/mosaic_span_reader.py"
+      ],
+      "known_sha256": null,
+      "status": "missing",
+      "required_by_current_production": false,
+      "reason": "Exact model behavior and C++ numerical parity cannot be established without these bytes, tensor layout and provenance."
+    },
+    {
+      "reference": "outputs/rozephine/cognitive_kernel_p1/n7_mobile_clip_graph_seed631_v1/mobile_clip_evidence_graph.pt",
+      "kind": "unrecovered_checkpoint",
+      "citation_count": 1,
+      "cited_by": [
+        "configs/rozephine_p2_n50_natural_event_one_shot_v1.json"
+      ],
+      "known_sha256": null,
+      "status": "missing",
+      "required_by_current_production": false,
+      "reason": "Exact model behavior and C++ numerical parity cannot be established without these bytes, tensor layout and provenance."
+    },
+    {
+      "reference": "outputs/rozephine/cognitive_kernel_p2/n139_query_visibility_candidate_v2_20260812/checkpoint.pt",
+      "kind": "unrecovered_checkpoint",
+      "citation_count": 1,
+      "cited_by": [
+        "configs/rozephine_p2_n139_query_visibility_ood_replay_v1.json"
+      ],
+      "known_sha256": null,
+      "status": "missing",
+      "required_by_current_production": false,
+      "reason": "Exact model behavior and C++ numerical parity cannot be established without these bytes, tensor layout and provenance."
+    },
+    {
+      "reference": "outputs/rozephine/cognitive_kernel_p2/n139_query_visibility_candidate_v3_20260812/checkpoint.pt",
+      "kind": "unrecovered_checkpoint",
+      "citation_count": 1,
+      "cited_by": [
+        "configs/rozephine_p2_n139_query_visibility_ood_replay_v2.json"
+      ],
+      "known_sha256": null,
+      "status": "missing",
+      "required_by_current_production": false,
+      "reason": "Exact model behavior and C++ numerical parity cannot be established without these bytes, tensor layout and provenance."
+    },
+    {
+      "reference": "outputs/rozephine/cognitive_kernel_p2/n28_event_object_correspondence_20260810/gpu4070_seed29_projected_v2/event_text_video_pairwise.pt",
+      "kind": "unrecovered_checkpoint",
+      "citation_count": 1,
+      "cited_by": [
+        "configs/rozephine_p2_n50_natural_event_one_shot_v1.json"
+      ],
+      "known_sha256": null,
+      "status": "missing",
+      "required_by_current_production": false,
+      "reason": "Exact model behavior and C++ numerical parity cannot be established without these bytes, tensor layout and provenance."
+    },
+    {
+      "reference": "outputs/rozephine/cognitive_kernel_p2/n28_event_object_correspondence_20260810/gpu5060_seed17_projected_v2/event_text_video_pairwise.pt",
+      "kind": "unrecovered_checkpoint",
+      "citation_count": 1,
+      "cited_by": [
+        "configs/rozephine_p2_n50_natural_event_one_shot_v1.json"
+      ],
+      "known_sha256": null,
+      "status": "missing",
+      "required_by_current_production": false,
+      "reason": "Exact model behavior and C++ numerical parity cannot be established without these bytes, tensor layout and provenance."
+    },
+    {
+      "reference": "outputs/rozephine/cognitive_kernel_p2/n28_event_object_correspondence_20260810/train_v7_clip_projected_region16_cache.pt",
+      "kind": "unrecovered_checkpoint",
+      "citation_count": 1,
+      "cited_by": [
+        "configs/rozephine_p2_n28_clip_projected_direction_v7_v4.json"
+      ],
+      "known_sha256": null,
+      "status": "missing",
+      "required_by_current_production": false,
+      "reason": "Exact model behavior and C++ numerical parity cannot be established without these bytes, tensor layout and provenance."
+    },
+    {
+      "reference": "outputs/rozephine/cognitive_kernel_p2/n40_joint_factor_core_adaptation_20260810/gpu5060ti_seed29_v1/joint_core_adapter.pt",
+      "kind": "unrecovered_checkpoint",
+      "citation_count": 1,
+      "cited_by": [
+        "configs/rozephine_p2_n42_frozen_state_probes_v1.json"
+      ],
+      "known_sha256": null,
+      "status": "missing",
+      "required_by_current_production": false,
+      "reason": "Exact model behavior and C++ numerical parity cannot be established without these bytes, tensor layout and provenance."
+    },
+    {
+      "reference": "outputs/rozephine/cognitive_kernel_p2/n41_teacher_factor_core_adaptation_20260810/gpu5060ti_seed29_v1/joint_core_adapter.pt",
+      "kind": "unrecovered_checkpoint",
+      "citation_count": 1,
+      "cited_by": [
+        "configs/rozephine_p2_n42_frozen_state_probes_v1.json"
+      ],
+      "known_sha256": null,
+      "status": "missing",
+      "required_by_current_production": false,
+      "reason": "Exact model behavior and C++ numerical parity cannot be established without these bytes, tensor layout and provenance."
+    },
+    {
+      "reference": "outputs/rozephine/cognitive_kernel_p2/n53_motion_primitives_v6_20260810/gpu4070ti_seed17/motion_primitive_synapse.pt",
+      "kind": "unrecovered_checkpoint",
+      "citation_count": 1,
+      "cited_by": [
+        "configs/rozephine_p2_n53_natural_motion_proposals_v1.json"
+      ],
+      "known_sha256": null,
+      "status": "missing",
+      "required_by_current_production": false,
+      "reason": "Exact model behavior and C++ numerical parity cannot be established without these bytes, tensor layout and provenance."
+    },
+    {
+      "reference": "outputs/rozephine/cognitive_kernel_p2/n53_motion_primitives_v6_20260810/gpu5060ti_seed29/motion_primitive_synapse.pt",
+      "kind": "unrecovered_checkpoint",
+      "citation_count": 1,
+      "cited_by": [
+        "configs/rozephine_p2_n53_natural_motion_proposals_v1.json"
+      ],
+      "known_sha256": null,
+      "status": "missing",
+      "required_by_current_production": false,
+      "reason": "Exact model behavior and C++ numerical parity cannot be established without these bytes, tensor layout and provenance."
+    },
+    {
+      "reference": "outputs/rozephine/cognitive_kernel_p2/n6_event_temporal_20260809/object_track_confirmation_v2_cache.pt",
+      "kind": "unrecovered_checkpoint",
+      "citation_count": 1,
+      "cited_by": [
+        "docs/ROZEPHINE_COGNITIVE_KERNEL_P2_N6_REGION_CONFIRMATION_OBJECT_TRACK_2026-08-09.md"
+      ],
+      "known_sha256": null,
+      "status": "missing",
+      "required_by_current_production": false,
+      "reason": "Exact model behavior and C++ numerical parity cannot be established without these bytes, tensor layout and provenance."
+    },
+    {
+      "reference": "outputs/rozephine/cognitive_kernel_p2/n6_event_temporal_20260809/object_track_pairwise_train_v5_seed17/object_track_pairwise.pt",
+      "kind": "unrecovered_checkpoint",
+      "citation_count": 1,
+      "cited_by": [
+        "configs/rozephine_p2_n6_object_track_confirmation_prereg_v1.json"
+      ],
+      "known_sha256": null,
+      "status": "missing",
+      "required_by_current_production": false,
+      "reason": "Exact model behavior and C++ numerical parity cannot be established without these bytes, tensor layout and provenance."
+    },
+    {
+      "reference": "outputs/rozephine/cognitive_kernel_p2/n6_event_temporal_20260809/object_track_pairwise_train_v5_seed29/object_track_pairwise.pt",
+      "kind": "unrecovered_checkpoint",
+      "citation_count": 1,
+      "cited_by": [
+        "configs/rozephine_p2_n6_object_track_confirmation_prereg_v1.json"
+      ],
+      "known_sha256": null,
+      "status": "missing",
+      "required_by_current_production": false,
+      "reason": "Exact model behavior and C++ numerical parity cannot be established without these bytes, tensor layout and provenance."
+    },
+    {
+      "reference": "outputs/rozephine/cognitive_kernel_p2/n6_event_temporal_20260809/semantic_region_pairwise_train_v5_seed17/region_pairwise_order.pt",
+      "kind": "unrecovered_checkpoint",
+      "citation_count": 1,
+      "cited_by": [
+        "configs/rozephine_p2_n6_region_pairwise_confirmation_prereg_v1.json"
+      ],
+      "known_sha256": null,
+      "status": "missing",
+      "required_by_current_production": false,
+      "reason": "Exact model behavior and C++ numerical parity cannot be established without these bytes, tensor layout and provenance."
+    },
+    {
+      "reference": "outputs/rozephine/cognitive_kernel_p2/n6_event_temporal_20260809/semantic_region_pairwise_train_v5_seed29/region_pairwise_order.pt",
+      "kind": "unrecovered_checkpoint",
+      "citation_count": 1,
+      "cited_by": [
+        "configs/rozephine_p2_n6_region_pairwise_confirmation_prereg_v1.json"
+      ],
+      "known_sha256": null,
+      "status": "missing",
+      "required_by_current_production": false,
+      "reason": "Exact model behavior and C++ numerical parity cannot be established without these bytes, tensor layout and provenance."
+    },
+    {
+      "reference": "outputs/rozephine/cognitive_kernel_p2/n6_event_temporal_20260809/train_v5_region16_cache.pt",
+      "kind": "unrecovered_checkpoint",
+      "citation_count": 1,
+      "cited_by": [
+        "configs/rozephine_p2_n27_event_text_video_late_interaction_v1.json"
+      ],
+      "known_sha256": null,
+      "status": "missing",
+      "required_by_current_production": false,
+      "reason": "Exact model behavior and C++ numerical parity cannot be established without these bytes, tensor layout and provenance."
+    },
+    {
+      "reference": "outputs/rozephine/cognitive_kernel_p2/n6_event_temporal_20260809/validation_v7_region16_cache.pt",
+      "kind": "unrecovered_checkpoint",
+      "citation_count": 1,
+      "cited_by": [
+        "configs/rozephine_p2_n27_event_text_video_late_interaction_v1.json"
+      ],
+      "known_sha256": null,
+      "status": "missing",
+      "required_by_current_production": false,
+      "reason": "Exact model behavior and C++ numerical parity cannot be established without these bytes, tensor layout and provenance."
+    },
+    {
+      "reference": "outputs/rozephine/memory/klue_local_hidden_micro_recheck_v110/local_hidden_byte_adapter.pt",
+      "kind": "unrecovered_checkpoint",
+      "citation_count": 1,
+      "cited_by": [
+        "configs/rozephine_klue_local_hidden_qa_micro_v114.json"
+      ],
+      "known_sha256": null,
+      "status": "missing",
+      "required_by_current_production": false,
+      "reason": "Exact model behavior and C++ numerical parity cannot be established without these bytes, tensor layout and provenance."
+    },
+    {
+      "reference": "outputs/rozephine/memory/klue_local_hidden_pilot_fold0_v113/local_hidden_byte_adapter.pt",
+      "kind": "unrecovered_checkpoint",
+      "citation_count": 1,
+      "cited_by": [
+        "configs/rozephine_klue_qa_evidence_verifier_v136.json"
+      ],
+      "known_sha256": null,
+      "status": "missing",
+      "required_by_current_production": false,
+      "reason": "Exact model behavior and C++ numerical parity cannot be established without these bytes, tensor layout and provenance."
+    },
+    {
+      "reference": "outputs/rozephine/synapses/atelier_fewshot_identity_v17/evaluation_v18/fewshot_identity_synapse.pt",
+      "kind": "unrecovered_checkpoint",
+      "citation_count": 1,
+      "cited_by": [
+        "configs/mosaic_atelier_fewshot_ood_composition_v19.json"
+      ],
+      "known_sha256": null,
+      "status": "missing",
+      "required_by_current_production": false,
+      "reason": "Exact model behavior and C++ numerical parity cannot be established without these bytes, tensor layout and provenance."
+    },
+    {
+      "reference": "outputs/rozephine/synapses/atelier_identity_ood_gate_v12/prototype16_top4_1200/identity_ood_gate.pt",
+      "kind": "unrecovered_checkpoint",
+      "citation_count": 1,
+      "cited_by": [
+        "configs/mosaic_atelier_fewshot_ood_composition_v19.json"
+      ],
+      "known_sha256": null,
+      "status": "missing",
+      "required_by_current_production": false,
+      "reason": "Exact model behavior and C++ numerical parity cannot be established without these bytes, tensor layout and provenance."
+    },
+    {
+      "reference": "outputs/rozephine/synapses/atelier_image_text_v0/visual_address_v1/visual_address_index.pt",
+      "kind": "unrecovered_checkpoint",
+      "citation_count": 1,
+      "cited_by": [
+        "docs/ROZEPHINE_ATELIER_IMAGE_SYNAPSE_2026-08-03.md"
+      ],
+      "known_sha256": null,
+      "status": "missing",
+      "required_by_current_production": false,
+      "reason": "Exact model behavior and C++ numerical parity cannot be established without these bytes, tensor layout and provenance."
+    },
+    {
+      "reference": "outputs/rozephine/synapses/source_diverse_visual_cache_v26/source_diverse_visual_cache.pt",
+      "kind": "unrecovered_checkpoint",
+      "citation_count": 1,
+      "cited_by": [
+        "configs/mosaic_source_diverse_visual_cache_dedup_v27.json"
+      ],
+      "known_sha256": null,
+      "status": "missing",
+      "required_by_current_production": false,
+      "reason": "Exact model behavior and C++ numerical parity cannot be established without these bytes, tensor layout and provenance."
+    },
+    {
+      "reference": "outputs/rozephine/synapses/span_relevance_full_v67/span_relevance.pt",
+      "kind": "unrecovered_checkpoint",
+      "citation_count": 1,
+      "cited_by": [
+        "configs/rozephine_span_relevance_calibration_v68.json"
+      ],
+      "known_sha256": null,
+      "status": "missing",
+      "required_by_current_production": false,
+      "reason": "Exact model behavior and C++ numerical parity cannot be established without these bytes, tensor layout and provenance."
+    },
+    {
+      "reference": "outputs/rozephine/synapses/visual_clip_ridge_v5/visual_clip_ridge_synapse.pt",
+      "kind": "unrecovered_checkpoint",
+      "citation_count": 1,
+      "cited_by": [
+        "configs/mosaic_visual_clip_ridge_interpolation_v6.json"
+      ],
+      "known_sha256": null,
+      "status": "missing",
+      "required_by_current_production": false,
+      "reason": "Exact model behavior and C++ numerical parity cannot be established without these bytes, tensor layout and provenance."
+    },
+    {
+      "reference": "outputs/rozephine_mosaic_audio_dedicated_centered_1200_v20/mosaic_unified_audio_content.pt",
+      "kind": "unrecovered_checkpoint",
+      "citation_count": 1,
+      "cited_by": [
+        "docs/MOSAIC_SUBTITLE_GROUNDING_CHECKPOINT.md"
+      ],
+      "known_sha256": null,
+      "status": "missing",
+      "required_by_current_production": false,
+      "reason": "Exact model behavior and C++ numerical parity cannot be established without these bytes, tensor layout and provenance."
+    },
+    {
+      "reference": "outputs/rozephine_mosaic_audio_temporal_head_500_v14b/mosaic_unified_audio_temporal.pt",
+      "kind": "unrecovered_checkpoint",
+      "citation_count": 1,
+      "cited_by": [
+        "docs/MOSAIC_SUBTITLE_GROUNDING_CHECKPOINT.md"
+      ],
+      "known_sha256": null,
+      "status": "missing",
+      "required_by_current_production": false,
+      "reason": "Exact model behavior and C++ numerical parity cannot be established without these bytes, tensor layout and provenance."
+    },
+    {
+      "reference": "outputs/rozephine_mosaic_korean_compact_ctc_microrefine_1600_v45/mosaic_unified_supervised_ctc.pt",
+      "kind": "unrecovered_checkpoint",
+      "citation_count": 1,
+      "cited_by": [
+        "docs/ROZEPHINE_MOSAIC_CURRENT_EVALUATION_2026-07-31.md"
+      ],
+      "known_sha256": null,
+      "status": "missing",
+      "required_by_current_production": false,
+      "reason": "Exact model behavior and C++ numerical parity cannot be established without these bytes, tensor layout and provenance."
+    },
+    {
+      "reference": "outputs/rozephine_mosaic_spectral_ctc_refine_4800_v31/mosaic_unified_audio_ctc_promoted.pt",
+      "kind": "unrecovered_checkpoint",
+      "citation_count": 1,
+      "cited_by": [
+        "docs/MOSAIC_SUBTITLE_GROUNDING_CHECKPOINT.md"
+      ],
+      "known_sha256": null,
+      "status": "missing",
+      "required_by_current_production": false,
+      "reason": "Exact model behavior and C++ numerical parity cannot be established without these bytes, tensor layout and provenance."
+    },
+    {
+      "reference": "outputs/rozephine_mosaic_v175_v179_ffn_delta_v201/mosaic_unified_visual_semantics.pt",
+      "kind": "unrecovered_checkpoint",
+      "citation_count": 1,
+      "cited_by": [
+        "docs/ROZEPHINE_MOSAIC_STATUS_REPORT_2026-07-31.md"
+      ],
+      "known_sha256": null,
+      "status": "missing",
+      "required_by_current_production": false,
+      "reason": "Exact model behavior and C++ numerical parity cannot be established without these bytes, tensor layout and provenance."
+    },
+    {
+      "reference": "outputs/rozephine_mosaic_v273_augmented_natural_procedural_real1800_v306/mosaic_unified_mixed_video.pt",
+      "kind": "unrecovered_checkpoint",
+      "citation_count": 1,
+      "cited_by": [
+        "docs/ROZEPHINE_MOSAIC_STATUS_REPORT_2026-08-01_0202.md"
+      ],
+      "known_sha256": null,
+      "status": "missing",
+      "required_by_current_production": false,
+      "reason": "Exact model behavior and C++ numerical parity cannot be established without these bytes, tensor layout and provenance."
+    },
+    {
+      "reference": "outputs/rozephine_mosaic_v437_descriptor_event4_polish300_v439/mosaic_unified_mixed_video.pt",
+      "kind": "unrecovered_checkpoint",
+      "citation_count": 1,
+      "cited_by": [
+        "docs/ROZEPHINE_MOSAIC_STATUS_REPORT_2026-08-01_0808.md"
+      ],
+      "known_sha256": null,
+      "status": "missing",
+      "required_by_current_production": false,
+      "reason": "Exact model behavior and C++ numerical parity cannot be established without these bytes, tensor layout and provenance."
+    },
+    {
+      "reference": "outputs/rozephine_mosaic_v439_object_memory_event4_300_v477/mosaic_unified_mixed_video.pt",
+      "kind": "unrecovered_checkpoint",
+      "citation_count": 1,
+      "cited_by": [
+        "docs/ROZEPHINE_MOSAIC_STATUS_REPORT_2026-08-01_0917.md"
+      ],
+      "known_sha256": null,
+      "status": "missing",
+      "required_by_current_production": false,
+      "reason": "Exact model behavior and C++ numerical parity cannot be established without these bytes, tensor layout and provenance."
+    },
+    {
+      "reference": "outputs/rozephine_mosaic_v495_object_memory_scale050_v502/mosaic_unified_mixed_video.pt",
+      "kind": "unrecovered_checkpoint",
+      "citation_count": 1,
+      "cited_by": [
+        "docs/ROZEPHINE_MOSAIC_STATUS_REPORT_2026-08-01_0947.md"
+      ],
+      "known_sha256": null,
+      "status": "missing",
+      "required_by_current_production": false,
+      "reason": "Exact model behavior and C++ numerical parity cannot be established without these bytes, tensor layout and provenance."
+    },
+    {
+      "reference": "outputs/rozephine_mosaic_v548_temporal_relative_residual_lr25e5_300_v621/mosaic_unified_mixed_video.pt",
+      "kind": "unrecovered_checkpoint",
+      "citation_count": 1,
+      "cited_by": [
+        "docs/ROZEPHINE_MOSAIC_STATUS_REPORT_2026-08-01_1224.md"
+      ],
+      "known_sha256": null,
+      "status": "missing",
+      "required_by_current_production": false,
+      "reason": "Exact model behavior and C++ numerical parity cannot be established without these bytes, tensor layout and provenance."
+    },
+    {
+      "reference": "outputs/rozephine_mosaic_v62_gate_calibrated_v6_v64/mosaic_unified_epistemic_gate_calibrated.pt",
+      "kind": "unrecovered_checkpoint",
+      "citation_count": 1,
+      "cited_by": [
+        "docs/ROZEPHINE_MOSAIC_CURRENT_EVALUATION_2026-07-31.md"
+      ],
+      "known_sha256": null,
+      "status": "missing",
+      "required_by_current_production": false,
+      "reason": "Exact model behavior and C++ numerical parity cannot be established without these bytes, tensor layout and provenance."
+    },
+    {
+      "reference": "outputs/rozephine_mosaic_v794_map_only_reader_control_v1037/map_only_reader.pt",
+      "kind": "unrecovered_checkpoint",
+      "citation_count": 1,
+      "cited_by": [
+        "configs/mosaic_map_only_reader_uncertainty_v1041.json"
+      ],
+      "known_sha256": null,
+      "status": "missing",
+      "required_by_current_production": false,
+      "reason": "Exact model behavior and C++ numerical parity cannot be established without these bytes, tensor layout and provenance."
+    },
+    {
+      "reference": "outputs/rozephine_mosaic_v794_map_only_reader_trained_v1038/map_only_reader.pt",
+      "kind": "unrecovered_checkpoint",
+      "citation_count": 1,
+      "cited_by": [
+        "configs/mosaic_map_only_reader_uncertainty_v1041.json"
+      ],
+      "known_sha256": null,
+      "status": "missing",
+      "required_by_current_production": false,
+      "reason": "Exact model behavior and C++ numerical parity cannot be established without these bytes, tensor layout and provenance."
+    },
+    {
+      "reference": "outputs/rozephine_mosaic_v794_natural_span_question_aware_frozen_v890/natural_span_grounding.pt",
+      "kind": "unrecovered_checkpoint",
+      "citation_count": 1,
+      "cited_by": [
+        "configs/mosaic_natural_span_question_aware_warm_v891_v892.json"
+      ],
+      "known_sha256": null,
+      "status": "missing",
+      "required_by_current_production": false,
+      "reason": "Exact model behavior and C++ numerical parity cannot be established without these bytes, tensor layout and provenance."
+    },
+    {
+      "reference": "outputs/rozephine_mosaic_v794_natural_span_question_aware_warm_core1_v892/natural_span_grounding.pt",
+      "kind": "unrecovered_checkpoint",
+      "citation_count": 1,
+      "cited_by": [
+        "configs/mosaic_natural_span_independent_v893_v894.json"
+      ],
+      "known_sha256": null,
+      "status": "missing",
+      "required_by_current_production": false,
+      "reason": "Exact model behavior and C++ numerical parity cannot be established without these bytes, tensor layout and provenance."
+    },
+    {
+      "reference": "outputs/rozephine_mosaic_v794_tatoeba_sequence_state_cache_v1106/sequence_index.pt",
+      "kind": "unrecovered_checkpoint",
+      "citation_count": 1,
+      "cited_by": [
+        "configs/mosaic_tatoeba_shared_role_residual_implementation_v1108.json"
+      ],
+      "known_sha256": null,
+      "status": "missing",
+      "required_by_current_production": false,
+      "reason": "Exact model behavior and C++ numerical parity cannot be established without these bytes, tensor layout and provenance."
+    },
+    {
+      "reference": "outputs/rozephine_mosaic_v794_xquad_sequence_state_cache_v1022/sequence_index.pt",
+      "kind": "unrecovered_checkpoint",
+      "citation_count": 1,
+      "cited_by": [
+        "configs/mosaic_tatoeba_shared_role_residual_implementation_v1108.json"
+      ],
+      "known_sha256": null,
+      "status": "missing",
+      "required_by_current_production": false,
+      "reason": "Exact model behavior and C++ numerical parity cannot be established without these bytes, tensor layout and provenance."
+    },
+    {
+      "reference": "outputs/rozephine_mosaic_v794_xquad_state_bridge_v995/state_bridge.pt",
+      "kind": "unrecovered_checkpoint",
+      "citation_count": 1,
+      "cited_by": [
+        "configs/mosaic_xquad_reader_state_bridge_v998.json"
+      ],
+      "known_sha256": null,
+      "status": "missing",
+      "required_by_current_production": false,
+      "reason": "Exact model behavior and C++ numerical parity cannot be established without these bytes, tensor layout and provenance."
+    },
+    {
+      "reference": "outputs/rozephine_mosaic_visual_pretrain_split_full_v109/mosaic_unified_visual_pretrained.pt",
+      "kind": "unrecovered_checkpoint",
+      "citation_count": 1,
+      "cited_by": [
+        "configs/mosaic_visual_local_tag_pretrain_v33.json"
+      ],
+      "known_sha256": null,
+      "status": "missing",
+      "required_by_current_production": false,
+      "reason": "Exact model behavior and C++ numerical parity cannot be established without these bytes, tensor layout and provenance."
+    },
+    {
+      "reference": "outputs/rozephine_mosaic_xquad_role_factorized_full_fit_v1097/fold_models.pt",
+      "kind": "unrecovered_checkpoint",
+      "citation_count": 1,
+      "cited_by": [
+        "configs/mosaic_mkqa_role_factorized_independent_v1098.json"
+      ],
+      "known_sha256": null,
+      "status": "missing",
+      "required_by_current_production": false,
+      "reason": "Exact model behavior and C++ numerical parity cannot be established without these bytes, tensor layout and provenance."
+    }
+  ],
+  "summary": {
+    "total": 98,
+    "missing_source": 2,
+    "unrecovered_checkpoint": 96,
+    "required_by_current_production": 0,
+    "policy": "A target that declares one of these references must fail closed until exact bytes and provenance are acquired. Historical references unused by the current production closure remain recorded without blocking unrelated targets."
+  }
+}

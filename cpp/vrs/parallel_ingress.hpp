@@ -38,7 +38,8 @@ public:
         owner.config_.initial_strength,owner.config_.policy,seed,step));}
    catch(...){results[i].error=std::current_exception();}
   });
-  for(auto& worker:workers)worker.join();return results;
+  for(auto& worker:workers)worker.join();
+  return results;
  }
 };
 }

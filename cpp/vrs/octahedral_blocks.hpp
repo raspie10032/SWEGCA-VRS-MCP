@@ -49,7 +49,8 @@ public:
   if(!architecture::kernel::head_address_valid(address))throw std::invalid_argument("invalid original address");
   std::unique_lock lock(topology_);const auto it=locations_.find(id);if(it==locations_.end())throw std::invalid_argument("unplaced original");
   auto& original=experiences_[it->second.block][it->second.slot].original;
-  if(original&&*original!=address)throw std::logic_error("original address already published");original=address;
+  if(original&&*original!=address)throw std::logic_error("original address already published");
+  original=address;
  }
  // Upper second-level orchestrator: gives each bounded block its own work
  // batch. The provided executor allocates that batch to available SWEGCA

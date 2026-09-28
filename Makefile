@@ -2,12 +2,70 @@ CXX ?= c++
 CPPFLAGS ?=
 CXXFLAGS ?= -O3
 BUILD := build
+.DEFAULT_GOAL := all
 INCLUDES := -Icpp
 CORE_FLAGS := -pthread -std=c++20 -ffp-contract=off -Wall -Wextra -Wpedantic
 CORE_SOURCES := cpp/swegca_architecture/evidence_rules.cpp cpp/swegca_architecture/sha256.cpp cpp/swegca_architecture/strong_types.cpp
 CORE_HEADERS := $(wildcard cpp/swegca_architecture/*.hpp)
 VRS_HEADERS := $(wildcard cpp/vrs/*.hpp)
 VRS_SOURCES := cpp/vrs/portal_page.cpp cpp/vrs/experience_page.cpp cpp/vrs/runtime.cpp cpp/vrs/main_sources.cpp cpp/vrs/main_graph.cpp cpp/vrs/persistent_main_graph.cpp cpp/vrs/experience_block.cpp cpp/vrs/evidence_experience.cpp cpp/vrs/connection.cpp cpp/vrs/session_store.cpp cpp/vrs/persistent_connection.cpp cpp/vrs/connection_catalog.cpp cpp/vrs/session_runtime.cpp
+
+PRODUCTION_BINARIES := $(BUILD)/swegca-vrs-mcp $(BUILD)/swegca-content-observer $(BUILD)/swegca-codex-wrapper $(BUILD)/swegca-desktop-host $(BUILD)/swegca-app-server-proxy
+MCP_PRODUCTION_CLOSURE_SOURCES := \
+	cpp/swegca_architecture/agent_delivery_identity.hpp cpp/swegca_architecture/agent_event_kernel.hpp \
+	cpp/swegca_architecture/connection_strength_kernel.hpp cpp/swegca_architecture/content_observation_kernel.hpp \
+	cpp/swegca_architecture/core_platform.hpp cpp/swegca_architecture/digest_bytes.hpp \
+	cpp/swegca_architecture/evidence_kernel.hpp cpp/swegca_architecture/evidence_observation_kernel.hpp \
+	cpp/swegca_architecture/evidence_rules.cpp cpp/swegca_architecture/evidence_rules.hpp \
+	cpp/swegca_architecture/evidence_scalar.hpp cpp/swegca_architecture/head_publication_kernel.hpp \
+	cpp/swegca_architecture/input_cue.hpp cpp/swegca_architecture/input_span_kernel.hpp \
+	cpp/swegca_architecture/metadata_residency_kernel.hpp cpp/swegca_architecture/numeric_contract.hpp \
+	cpp/swegca_architecture/portal_range_kernel.hpp cpp/swegca_architecture/quoted_revision_kernel.hpp \
+	cpp/swegca_architecture/recall_route_kernel.hpp cpp/swegca_architecture/record_address.hpp \
+	cpp/swegca_architecture/region_partition_kernel.hpp cpp/swegca_architecture/replay_evidence_kernel.hpp \
+	cpp/swegca_architecture/session_kernel.hpp cpp/swegca_architecture/sha256.cpp \
+	cpp/swegca_architecture/sha256.hpp cpp/swegca_architecture/strong_types.cpp \
+	cpp/swegca_architecture/strong_types.hpp cpp/transport/agent_event.hpp \
+	cpp/transport/agent_query_socket.hpp cpp/transport/app_server_requests.hpp \
+	cpp/transport/ingress_probe.hpp cpp/transport/input_candidates.hpp cpp/transport/json.cpp \
+	cpp/transport/json.hpp cpp/transport/measurement_observation.hpp cpp/transport/requirement_anchor.hpp \
+	cpp/transport/resource_profile.hpp cpp/transport/revision_references.hpp cpp/transport/socket_frames.hpp \
+	cpp/transport/stdio_frames.hpp cpp/transport/stdio_main.cpp cpp/vrs/connection.cpp cpp/vrs/connection.hpp \
+	cpp/vrs/connection_catalog.cpp cpp/vrs/connection_catalog.hpp cpp/vrs/connection_regions.hpp \
+	cpp/vrs/evidence_executor.hpp cpp/vrs/evidence_experience.cpp cpp/vrs/evidence_experience.hpp \
+	cpp/vrs/experience_block.cpp cpp/vrs/experience_block.hpp cpp/vrs/experience_page.cpp \
+	cpp/vrs/experience_page.hpp cpp/vrs/experience_sequence.hpp cpp/vrs/main_graph.cpp cpp/vrs/main_graph.hpp \
+	cpp/vrs/main_sources.cpp cpp/vrs/main_sources.hpp cpp/vrs/memory_budget.hpp \
+	cpp/vrs/persistent_connection.cpp cpp/vrs/persistent_connection.hpp cpp/vrs/persistent_main_graph.cpp \
+	cpp/vrs/persistent_main_graph.hpp cpp/vrs/portal_page.cpp cpp/vrs/portal_page.hpp cpp/vrs/replay_position.hpp \
+	cpp/vrs/runtime.cpp cpp/vrs/runtime.hpp cpp/vrs/session_runtime.cpp cpp/vrs/session_runtime.hpp \
+	cpp/vrs/session_store.cpp cpp/vrs/session_store.hpp cpp/vrs/shared_transfer_state.hpp \
+	cpp/vrs/storage_budget.hpp cpp/vrs/storage_inventory.hpp cpp/vrs/transfer_budget.hpp cpp/vrs/verification.hpp
+PRODUCTION_SUPPORT_CLOSURE_SOURCES := \
+	cpp/transport/stdio_main.cpp cpp/transport/content_observer_main.cpp cpp/transport/codex_wrapper_main.cpp \
+	cpp/transport/desktop_host_main.cpp cpp/transport/proxy_main.cpp cpp/transport/json.cpp \
+	$(wildcard cpp/transport/*.hpp) cpp/vrs/file_observation.cpp cpp/vrs/file_observation.hpp
+PRODUCTION_GATE_CLOSURE_SOURCES := Makefile AGENTS.md tools/stage0_gate.py docs/stage0-external-p0.json \
+	$(wildcard tests/*.cpp) $(wildcard tests/*.py)
+EXPERIMENTAL_CLOSURE_SOURCES := \
+	cpp/swegca_architecture/association_scalar.hpp cpp/swegca_architecture/connection_growth_kernel.hpp \
+	cpp/swegca_architecture/core_platform.hpp cpp/swegca_architecture/evidence_scalar.hpp \
+	cpp/vrs/block_collectors.hpp cpp/vrs/block_ingress.cpp cpp/vrs/block_ingress.hpp \
+	cpp/vrs/block_store.cpp cpp/vrs/block_store.hpp cpp/vrs/codec_input.cpp cpp/vrs/codec_input.hpp \
+	cpp/vrs/codec_stream.cpp cpp/vrs/codec_stream.hpp cpp/vrs/collision_dispatch.cpp cpp/vrs/collision_dispatch.hpp \
+	cpp/vrs/concept_growth.hpp cpp/vrs/device_evidence.cpp cpp/vrs/device_evidence.hpp \
+	cpp/vrs/evidence_executor.hpp cpp/vrs/gpu_evidence.cpp cpp/vrs/gpu_evidence.hpp \
+	cpp/vrs/input_collision.hpp cpp/vrs/octahedral_blocks.hpp cpp/vrs/parallel_ingress.hpp cpp/vrs/work_pipeline.hpp \
+	tests/cooccurrence_tests.cpp tests/input_collision_tests.cpp tests/ternary_count_tests.cpp \
+	tests/parallel_ingress_tests.cpp tests/gpu_evidence_tests.cpp tests/collision_dispatch_tests.cpp \
+	tests/work_pipeline_tests.cpp tests/codec_input_tests.cpp tests/codec_pipeline_tests.cpp \
+	tests/codec_stream_tests.cpp tests/concept_growth_tests.cpp tests/block_store_tests.cpp \
+	tests/block_ingress_tests.cpp tests/block_session_tests.cpp tools/embed_gpu_core.py tools/whole_file_ingress.cpp
+EXPERIMENTAL_CPU_TESTS := $(BUILD)/cooccurrence-tests $(BUILD)/input-collision-tests $(BUILD)/ternary-count-tests \
+	$(BUILD)/parallel-ingress-tests $(BUILD)/codec-input-tests $(BUILD)/codec-stream-tests \
+	$(BUILD)/concept-growth-tests $(BUILD)/block-store-tests
+EXPERIMENTAL_GPU_TESTS := $(BUILD)/gpu-evidence-tests $(BUILD)/collision-dispatch-tests \
+	$(BUILD)/work-pipeline-tests $(BUILD)/codec-pipeline-tests $(BUILD)/block-ingress-tests $(BUILD)/block-session-tests
 
 # VRS experience/synapse maintenance builds without Runtime, SessionRuntime,
 # transport, or the four-stage memory activation path.
@@ -51,8 +109,10 @@ check-raw-observation: $(BUILD)/raw-content-observation-tests $(BUILD)/original-
 	./$(BUILD)/raw-content-observation-tests
 	./$(BUILD)/original-observation-tests
 
-.PHONY: check-agent-event all check check-stdio check-sha256 check-resource-profile check-oom-recovery bench clean
-all: $(BUILD)/core-tests
+.PHONY: check-agent-event all production check check-production check-experimental-cpu check-experimental-gpu stage0-gate check-stdio check-sha256 check-resource-profile check-oom-recovery bench clean
+all: production
+
+production: $(PRODUCTION_BINARIES)
 
 $(BUILD)/swegca-content-observer: cpp/transport/content_observer_main.cpp cpp/transport/agent_query_client.hpp cpp/transport/socket_frames.hpp cpp/transport/requirement_anchor.hpp cpp/transport/json.cpp cpp/transport/json.hpp cpp/transport/stdio_frames.hpp cpp/vrs/file_observation.cpp cpp/vrs/file_observation.hpp cpp/vrs/memory_budget.hpp cpp/vrs/transfer_budget.hpp cpp/vrs/shared_transfer_state.hpp $(CORE_HEADERS) cpp/swegca_architecture/sha256.cpp | $(BUILD)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< cpp/transport/json.cpp cpp/vrs/file_observation.cpp cpp/swegca_architecture/sha256.cpp -o $@
@@ -195,9 +255,7 @@ bench: $(BUILD)/core-bench
 	./$(BUILD)/core-bench
 
 clean:
-	rm -f $(BUILD)/background-recall-bench
-	rm -f $(BUILD)/async-runtime-tests
-	rm -f $(BUILD)/portal-page-tests $(BUILD)/input-cue-bench $(BUILD)/json-quote-bench $(BUILD)/experience-page-tests $(BUILD)/json-parse-memory-bench $(BUILD)/wire-memory-bench $(BUILD)/commit-memory-bench $(BUILD)/json-stream-tests-scalar $(BUILD)/swegca-proxy-stages-probe $(BUILD)/swegca-vrs-stages-probe $(BUILD)/stdio-frame-tests $(BUILD)/swegca-vrs-ingress-probe $(BUILD)/json-stream-tests $(BUILD)/swegca-codex-wrapper $(BUILD)/swegca-desktop-host $(BUILD)/parallel-recovery-tests $(BUILD)/recall-scale-bench $(BUILD)/resource-profile-probe $(BUILD)/sha256-vectors $(BUILD)/sha256-vectors-scalar $(BUILD)/input-recall-bench $(BUILD)/transfer-budget-tests $(BUILD)/parallel-main-tests $(BUILD)/swegca-vrs-mcp $(BUILD)/runtime-tests $(BUILD)/main-sources-tests $(BUILD)/core-tests $(BUILD)/core-bench $(BUILD)/vrs-tests $(BUILD)/experience-block-tests $(BUILD)/memory-budget-tests $(BUILD)/connection-tests $(BUILD)/session-tests $(BUILD)/persistent-connection-tests $(BUILD)/catalog-tests $(BUILD)/session-runtime-tests $(BUILD)/main-graph-tests $(BUILD)/persistent-main-tests
+	rm -rf -- $(BUILD)
 
 $(BUILD)/agent-event-tests: tests/agent_event_tests.cpp cpp/transport/agent_event.hpp cpp/transport/json.cpp cpp/transport/json.hpp $(CORE_SOURCES) $(CORE_HEADERS) $(VRS_HEADERS) | $(BUILD)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< cpp/transport/json.cpp $(CORE_SOURCES) -o $@
@@ -328,28 +386,36 @@ $(BUILD)/parallel-ingress-tests: tests/parallel_ingress_tests.cpp cpp/vrs/parall
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< $(VRS_SOURCES) $(CORE_SOURCES) -o $@
 
 
-CUDA_ROOT ?= /var/home/raspie/Documents/Codex/tinylm-slicer-sanabi-bazzite/.runtime-rozephine-python314-torch214-cu132-20260903/venv/lib/python3.14/site-packages/nvidia/cu13
-GPU_FLAGS = -I$(CUDA_ROOT)/include -I$(BUILD) -L$(CUDA_ROOT)/lib -Wl,-rpath,$(CUDA_ROOT)/lib -l:libnvrtc.so.13 -lcuda
+CUDA_ROOT ?=
+CUDA_LIBDIR ?= $(CUDA_ROOT)/lib64
+GPU_FLAGS = -I$(CUDA_ROOT)/include -I$(BUILD) -L$(CUDA_LIBDIR) -Wl,-rpath,$(CUDA_LIBDIR) -lnvrtc -lcuda
+
+.PHONY: require-cuda-toolkit
+require-cuda-toolkit:
+	@test -n "$(CUDA_ROOT)" || { echo "CUDA_ROOT must name a system or source toolkit; venv/site-packages toolkits are forbidden" >&2; exit 2; }
+	@case "$(CUDA_ROOT)" in *venv*|*site-packages*|*.whl*) echo "forbidden CUDA dependency origin: $(CUDA_ROOT)" >&2; exit 2;; esac
+	@test -f "$(CUDA_ROOT)/include/nvrtc.h" || { echo "missing $(CUDA_ROOT)/include/nvrtc.h" >&2; exit 2; }
+	@test -e "$(CUDA_LIBDIR)/libnvrtc.so" || { echo "missing $(CUDA_LIBDIR)/libnvrtc.so" >&2; exit 2; }
 $(BUILD)/gpu_core_source.hpp: cpp/swegca_architecture/core_platform.hpp cpp/swegca_architecture/evidence_scalar.hpp cpp/swegca_architecture/association_scalar.hpp tools/embed_gpu_core.py | $(BUILD)
 	python3 tools/embed_gpu_core.py
 
-$(BUILD)/gpu-evidence-tests: tests/gpu_evidence_tests.cpp cpp/vrs/gpu_evidence.cpp $(BUILD)/gpu_core_source.hpp $(CORE_SOURCES) $(VRS_HEADERS) $(CORE_HEADERS)
+$(BUILD)/gpu-evidence-tests: tests/gpu_evidence_tests.cpp cpp/vrs/gpu_evidence.cpp $(BUILD)/gpu_core_source.hpp $(CORE_SOURCES) $(VRS_HEADERS) $(CORE_HEADERS) | $(BUILD) require-cuda-toolkit
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< cpp/vrs/gpu_evidence.cpp $(CORE_SOURCES) $(GPU_FLAGS) -o $@
 
 
-$(BUILD)/collision-dispatch-tests: tests/collision_dispatch_tests.cpp cpp/vrs/collision_dispatch.cpp $(BUILD)/gpu_core_source.hpp $(CORE_HEADERS) $(VRS_HEADERS)
+$(BUILD)/collision-dispatch-tests: tests/collision_dispatch_tests.cpp cpp/vrs/collision_dispatch.cpp $(BUILD)/gpu_core_source.hpp $(CORE_HEADERS) $(VRS_HEADERS) | $(BUILD) require-cuda-toolkit
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< cpp/vrs/collision_dispatch.cpp $(GPU_FLAGS) -o $@
 
-$(BUILD)/swegca-input-collision-parallel: tools/input_collision.cpp cpp/vrs/collision_dispatch.cpp $(BUILD)/gpu_core_source.hpp cpp/transport/json.cpp $(BUILD)/libswegca-vrs.a $(CORE_HEADERS) $(VRS_HEADERS)
+$(BUILD)/swegca-input-collision-parallel: tools/input_collision.cpp cpp/vrs/collision_dispatch.cpp $(BUILD)/gpu_core_source.hpp cpp/transport/json.cpp $(BUILD)/libswegca-vrs.a $(CORE_HEADERS) $(VRS_HEADERS) | $(BUILD) require-cuda-toolkit
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) -fopenmp -DSWEGCA_PARALLEL_COLLISION $(INCLUDES) $< cpp/vrs/collision_dispatch.cpp cpp/transport/json.cpp $(BUILD)/libswegca-vrs.a $(GPU_FLAGS) -o $@
 
-$(BUILD)/work-pipeline-tests: tests/work_pipeline_tests.cpp cpp/vrs/work_pipeline.hpp cpp/vrs/device_evidence.cpp cpp/vrs/device_evidence.hpp $(BUILD)/gpu_core_source.hpp $(CORE_HEADERS) $(CORE_SOURCES)
+$(BUILD)/work-pipeline-tests: tests/work_pipeline_tests.cpp cpp/vrs/work_pipeline.hpp cpp/vrs/device_evidence.cpp cpp/vrs/device_evidence.hpp $(BUILD)/gpu_core_source.hpp $(CORE_HEADERS) $(CORE_SOURCES) | $(BUILD) require-cuda-toolkit
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< cpp/vrs/device_evidence.cpp $(CORE_SOURCES) $(GPU_FLAGS) -o $@
 
 $(BUILD)/codec-input-tests: tests/codec_input_tests.cpp cpp/vrs/codec_input.cpp cpp/vrs/codec_input.hpp cpp/transport/json.cpp $(CORE_SOURCES) $(CORE_HEADERS)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< cpp/vrs/codec_input.cpp cpp/transport/json.cpp $(CORE_SOURCES) -o $@
 
-$(BUILD)/codec-pipeline-tests: tests/codec_pipeline_tests.cpp cpp/vrs/work_pipeline.hpp cpp/vrs/codec_input.cpp cpp/vrs/device_evidence.cpp cpp/transport/json.cpp $(BUILD)/gpu_core_source.hpp $(CORE_SOURCES) $(CORE_HEADERS)
+$(BUILD)/codec-pipeline-tests: tests/codec_pipeline_tests.cpp cpp/vrs/work_pipeline.hpp cpp/vrs/codec_input.cpp cpp/vrs/device_evidence.cpp cpp/transport/json.cpp $(BUILD)/gpu_core_source.hpp $(CORE_SOURCES) $(CORE_HEADERS) | $(BUILD) require-cuda-toolkit
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< cpp/vrs/codec_input.cpp cpp/vrs/device_evidence.cpp cpp/transport/json.cpp $(CORE_SOURCES) $(GPU_FLAGS) -o $@
 
 $(BUILD)/compare-count-checkpoints: tools/compare_count_checkpoints.cpp cpp/transport/json.cpp $(BUILD)/libswegca-vrs.a $(CORE_HEADERS)
@@ -365,11 +431,45 @@ BLOCK_INGRESS_SOURCES := cpp/vrs/block_ingress.cpp cpp/vrs/block_store.cpp cpp/v
 $(BUILD)/codec-stream-tests: tests/codec_stream_tests.cpp cpp/vrs/codec_stream.cpp cpp/vrs/codec_stream.hpp cpp/transport/json.cpp $(CORE_SOURCES) $(CORE_HEADERS) | $(BUILD)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< cpp/vrs/codec_stream.cpp cpp/transport/json.cpp $(CORE_SOURCES) -o $@
 
-$(BUILD)/whole-file-ingress $(BUILD)/whole-file-ingress-gpu: tools/whole_file_ingress.cpp $(BLOCK_INGRESS_SOURCES) $(BUILD)/gpu_core_source.hpp $(CORE_HEADERS) $(VRS_HEADERS)
+$(BUILD)/whole-file-ingress $(BUILD)/whole-file-ingress-gpu: tools/whole_file_ingress.cpp $(BLOCK_INGRESS_SOURCES) $(BUILD)/gpu_core_source.hpp $(CORE_HEADERS) $(VRS_HEADERS) | $(BUILD) require-cuda-toolkit
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(if $(filter %gpu,$@),-DSWEGCA_GPU_CORE) $(INCLUDES) $< $(BLOCK_INGRESS_SOURCES) $(GPU_FLAGS) -o $@
 
-$(BUILD)/block-ingress-tests: tests/block_ingress_tests.cpp $(BLOCK_INGRESS_SOURCES) $(BUILD)/gpu_core_source.hpp $(CORE_HEADERS) $(VRS_HEADERS)
+$(BUILD)/block-ingress-tests: tests/block_ingress_tests.cpp $(BLOCK_INGRESS_SOURCES) $(BUILD)/gpu_core_source.hpp $(CORE_HEADERS) $(VRS_HEADERS) | $(BUILD) require-cuda-toolkit
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< $(BLOCK_INGRESS_SOURCES) $(GPU_FLAGS) -o $@
 
-$(BUILD)/block-session-tests: tests/block_session_tests.cpp $(BLOCK_INGRESS_SOURCES) $(BUILD)/gpu_core_source.hpp $(CORE_HEADERS) $(VRS_HEADERS)
+$(BUILD)/block-session-tests: tests/block_session_tests.cpp $(BLOCK_INGRESS_SOURCES) $(BUILD)/gpu_core_source.hpp $(CORE_HEADERS) $(VRS_HEADERS) | $(BUILD) require-cuda-toolkit
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< $(BLOCK_INGRESS_SOURCES) $(GPU_FLAGS) -o $@
+
+check-production: production
+	$(MAKE) --no-print-directory check
+	$(MAKE) --no-print-directory check-stdio
+	$(MAKE) --no-print-directory check-resource-profile
+	$(MAKE) --no-print-directory check-oom-recovery
+	$(MAKE) --no-print-directory check-sha256
+	$(MAKE) --no-print-directory check-synapse
+	$(MAKE) --no-print-directory check-association
+	$(MAKE) --no-print-directory check-raw-observation
+	$(MAKE) --no-print-directory check-experience-pairs
+	$(MAKE) --no-print-directory $(BUILD)/file-observation-tests
+	./$(BUILD)/file-observation-tests
+
+check-experimental-cpu: $(EXPERIMENTAL_CPU_TESTS)
+	@for test in $(EXPERIMENTAL_CPU_TESTS); do $$test || exit $$?; done
+
+check-experimental-gpu: require-cuda-toolkit $(EXPERIMENTAL_GPU_TESTS)
+	@for test in $(EXPERIMENTAL_GPU_TESTS); do $$test $(BUILD)/gpu_core_source.hpp || exit $$?; done
+
+STAGE0_BUILD ?= build/stage0-clean
+STAGE0_RECEIPT := $(STAGE0_BUILD)/stage0-receipt.json
+stage0-gate:
+	@test -z "$(filter /%,$(STAGE0_BUILD))" || { echo "STAGE0_BUILD must be repository-relative" >&2; exit 2; }
+	rm -rf -- $(STAGE0_BUILD)
+	mkdir -p $(STAGE0_BUILD)
+	$(MAKE) --no-print-directory -j$${SWEGCA_BUILD_JOBS:-10} BUILD=$(STAGE0_BUILD) check-production >$(STAGE0_BUILD)/build.log 2>&1
+	python3 tools/stage0_gate.py --root . --build-dir $(STAGE0_BUILD) --output $(STAGE0_RECEIPT) \
+		--build-log $(STAGE0_BUILD)/build.log --compiler "$(CXX)" --external-manifest docs/stage0-external-p0.json \
+		$(foreach path,$(sort $(MCP_PRODUCTION_CLOSURE_SOURCES)),--mcp-source $(path)) \
+		$(foreach path,$(sort $(PRODUCTION_SUPPORT_CLOSURE_SOURCES)),--support-source $(path)) \
+		$(foreach path,$(sort $(PRODUCTION_GATE_CLOSURE_SOURCES)),--gate-source $(path)) \
+		$(foreach path,$(sort $(EXPERIMENTAL_CLOSURE_SOURCES)),--experimental-source $(path)) \
+		$(foreach path,$(PRODUCTION_BINARIES),--production-binary $(patsubst $(BUILD)/%,$(STAGE0_BUILD)/%,$(path)))
