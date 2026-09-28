@@ -13,6 +13,9 @@ CHECKPOINT_HEADERS := $(wildcard cpp/checkpoint/*.hpp)
 CHECKPOINT_SOURCES := cpp/checkpoint/restricted_zip.cpp cpp/checkpoint/restricted_pickle.cpp \
 	cpp/checkpoint/canonical_symbolic_json.cpp cpp/checkpoint/checkpoint_profile.cpp \
 	cpp/checkpoint/restricted_checkpoint.cpp
+WORLD_HEADERS := $(wildcard cpp/world/*.hpp)
+WORLD_SOURCES := cpp/world/cognitive_state.cpp cpp/world/cognitive_event.cpp \
+	cpp/world/world_state.cpp cpp/world/evidence_accumulator.cpp cpp/world/synapse_arbiter.cpp
 
 PRODUCTION_BINARIES := $(BUILD)/swegca-vrs-mcp $(BUILD)/swegca-content-observer $(BUILD)/swegca-codex-wrapper $(BUILD)/swegca-desktop-host $(BUILD)/swegca-app-server-proxy
 MCP_PRODUCTION_CLOSURE_SOURCES := \
@@ -49,7 +52,7 @@ PRODUCTION_SUPPORT_CLOSURE_SOURCES := \
 	cpp/transport/stdio_main.cpp cpp/transport/content_observer_main.cpp cpp/transport/codex_wrapper_main.cpp \
 	cpp/transport/desktop_host_main.cpp cpp/transport/proxy_main.cpp cpp/transport/json.cpp \
 	$(wildcard cpp/transport/*.hpp) cpp/vrs/file_observation.cpp cpp/vrs/file_observation.hpp \
-	$(CHECKPOINT_HEADERS) $(CHECKPOINT_SOURCES)
+	$(CHECKPOINT_HEADERS) $(CHECKPOINT_SOURCES) $(WORLD_HEADERS) $(WORLD_SOURCES)
 PRODUCTION_GATE_CLOSURE_SOURCES := Makefile AGENTS.md tools/stage0_gate.py docs/stage0-external-p0.json \
 	$(wildcard tests/*.cpp) $(wildcard tests/*.py)
 EXPERIMENTAL_CLOSURE_SOURCES := \
@@ -114,7 +117,7 @@ check-raw-observation: $(BUILD)/raw-content-observation-tests $(BUILD)/original-
 	./$(BUILD)/raw-content-observation-tests
 	./$(BUILD)/original-observation-tests
 
-.PHONY: check-agent-event all production check check-production check-checkpoint check-experimental-cpu check-experimental-gpu stage0-gate check-stdio check-sha256 check-resource-profile check-oom-recovery bench clean
+.PHONY: check-agent-event all production check check-production check-checkpoint check-world check-experimental-cpu check-experimental-gpu stage0-gate check-stdio check-sha256 check-resource-profile check-oom-recovery bench clean
 all: production
 
 production: $(PRODUCTION_BINARIES)
@@ -469,6 +472,30 @@ check-checkpoint: $(BUILD)/restricted-zip-tests $(BUILD)/restricted-pickle-tests
 	./$(BUILD)/checkpoint-profile-tests
 	./$(BUILD)/restricted-checkpoint-tests
 
+$(BUILD)/cognitive-state-tests: tests/cognitive_state_tests.cpp cpp/world/cognitive_state.cpp cpp/world/cognitive_state.hpp | $(BUILD)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< cpp/world/cognitive_state.cpp -o $@
+
+$(BUILD)/cognitive-event-tests: tests/cognitive_event_tests.cpp cpp/world/cognitive_event.cpp cpp/world/cognitive_event.hpp cpp/world/cognitive_state.cpp cpp/world/cognitive_state.hpp | $(BUILD)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< cpp/world/cognitive_event.cpp cpp/world/cognitive_state.cpp -o $@
+
+$(BUILD)/world-state-tests: tests/world_state_tests.cpp cpp/world/world_state.cpp cpp/world/world_state.hpp cpp/world/cognitive_state.cpp cpp/world/cognitive_state.hpp | $(BUILD)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< cpp/world/world_state.cpp cpp/world/cognitive_state.cpp -o $@
+
+$(BUILD)/evidence-accumulator-tests: tests/evidence_accumulator_tests.cpp cpp/world/evidence_accumulator.cpp cpp/world/evidence_accumulator.hpp cpp/swegca_architecture/sha256.cpp cpp/swegca_architecture/sha256.hpp | $(BUILD)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< cpp/world/evidence_accumulator.cpp cpp/swegca_architecture/sha256.cpp -o $@
+
+$(BUILD)/synapse-arbiter-world-tests: tests/synapse_arbiter_world_tests.cpp cpp/world/synapse_arbiter.cpp cpp/world/synapse_arbiter.hpp cpp/world/world_state.cpp cpp/world/world_state.hpp cpp/world/cognitive_state.cpp cpp/world/cognitive_state.hpp | $(BUILD)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< cpp/world/synapse_arbiter.cpp cpp/world/world_state.cpp cpp/world/cognitive_state.cpp -o $@
+
+check-world: $(BUILD)/cognitive-state-tests $(BUILD)/cognitive-event-tests \
+	$(BUILD)/world-state-tests $(BUILD)/evidence-accumulator-tests \
+	$(BUILD)/synapse-arbiter-world-tests
+	./$(BUILD)/cognitive-state-tests
+	./$(BUILD)/cognitive-event-tests
+	./$(BUILD)/world-state-tests
+	./$(BUILD)/evidence-accumulator-tests
+	./$(BUILD)/synapse-arbiter-world-tests
+
 check-production: production
 	$(MAKE) --no-print-directory check
 	$(MAKE) --no-print-directory check-stdio
@@ -480,6 +507,7 @@ check-production: production
 	$(MAKE) --no-print-directory check-raw-observation
 	$(MAKE) --no-print-directory check-experience-pairs
 	$(MAKE) --no-print-directory check-checkpoint
+	$(MAKE) --no-print-directory check-world
 	$(MAKE) --no-print-directory $(BUILD)/file-observation-tests
 	./$(BUILD)/file-observation-tests
 
