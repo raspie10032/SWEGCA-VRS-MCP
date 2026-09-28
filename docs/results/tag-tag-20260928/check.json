@@ -1,0 +1,61 @@
+{
+  "passed": true,
+  "every_pair_checked": 14799520,
+  "accept": 793281,
+  "reject": 14006239,
+  "abstain": 0,
+  "examples": {
+    "1": [
+      {
+        "left": "1girl",
+        "right": "roboco-san",
+        "witnesses": 3,
+        "strength": 1.01
+      },
+      {
+        "left": "1girl",
+        "right": "solo",
+        "witnesses": 6185,
+        "strength": 1.01
+      },
+      {
+        "left": "1girl",
+        "right": "virtual_youtuber",
+        "witnesses": 594,
+        "strength": 1.01
+      },
+      {
+        "left": "1girl",
+        "right": "sensitive",
+        "witnesses": 3602,
+        "strength": 1.01
+      }
+    ],
+    "2": [
+      {
+        "left": "1girl",
+        "right": "lap_pillow",
+        "witnesses": 0,
+        "strength": 0.995
+      },
+      {
+        "left": "1girl",
+        "right": "yuri",
+        "witnesses": 0,
+        "strength": 0.995
+      },
+      {
+        "left": "1girl",
+        "right": "3girls",
+        "witnesses": 0,
+        "strength": 0.995
+      },
+      {
+        "left": "1girl",
+        "right": "self-harm",
+        "witnesses": 0,
+        "strength": 0.995
+      }
+    ]
+  }
+}

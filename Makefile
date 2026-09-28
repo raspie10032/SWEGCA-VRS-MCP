@@ -308,3 +308,9 @@ check-experience-pairs: $(BUILD)/experience-pairs-tests
 
 $(BUILD)/swegca-tag-image-refinement: tools/tag_image_refinement.cpp cpp/transport/json.cpp $(BUILD)/libswegca-vrs.a $(CORE_HEADERS) | $(BUILD)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< cpp/transport/json.cpp $(BUILD)/libswegca-vrs.a -o $@
+
+$(BUILD)/swegca-tag-tag-refinement: tools/tag_tag_refinement.cpp cpp/transport/json.cpp cpp/transport/json.hpp $(BUILD)/libswegca-vrs.a $(CORE_HEADERS) | $(BUILD)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< cpp/transport/json.cpp $(BUILD)/libswegca-vrs.a -o $@
+
+$(BUILD)/cooccurrence-tests: tests/cooccurrence_tests.cpp $(CORE_HEADERS) | $(BUILD)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< -o $@
