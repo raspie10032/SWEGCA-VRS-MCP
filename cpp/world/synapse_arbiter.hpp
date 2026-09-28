@@ -8,9 +8,15 @@
 #include <span>
 #include <string>
 #include <utility>
+#include <variant>
 #include <vector>
 
 namespace swegca::world {
+
+using ProposalTargetSlot = std::variant<std::int64_t, std::string>;
+
+[[nodiscard]] Tensor state_slot_tensor(std::shared_ptr<const WorldState> world);
+[[nodiscard]] Tensor state_slot_tensor(std::shared_ptr<const CognitiveState> world);
 
 struct SynapseProposal final {
     std::string source;
@@ -25,6 +31,22 @@ struct SynapseProposal final {
     void validate(const WorldState& world) const;
     void validate(const CognitiveState& world) const;
 };
+
+[[nodiscard]] SynapseProposal evidence_delta_proposal(
+    std::shared_ptr<const WorldState> world, const Tensor& evidence_delta,
+    const Tensor& evidence_logits, std::string source,
+    std::vector<std::vector<std::string>> evidence_addresses = {},
+    std::string hypothesis_id = {},
+    ProposalTargetSlot target_slot = std::string("verification"),
+    std::int64_t consistent_class = 0, std::int64_t contradiction_class = 1);
+
+[[nodiscard]] SynapseProposal evidence_delta_proposal(
+    std::shared_ptr<const CognitiveState> world, const Tensor& evidence_delta,
+    const Tensor& evidence_logits, std::string source,
+    std::vector<std::vector<std::string>> evidence_addresses = {},
+    std::string hypothesis_id = {},
+    ProposalTargetSlot target_slot = std::string("verification"),
+    std::int64_t consistent_class = 0, std::int64_t contradiction_class = 1);
 
 [[nodiscard]] SynapseProposal sufficiency_gated_proposal(
     const WorldState& world, const SynapseProposal& proposal,

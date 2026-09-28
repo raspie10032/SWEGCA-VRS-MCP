@@ -15,7 +15,8 @@ CHECKPOINT_SOURCES := cpp/checkpoint/restricted_zip.cpp cpp/checkpoint/restricte
 	cpp/checkpoint/restricted_checkpoint.cpp
 WORLD_HEADERS := $(wildcard cpp/world/*.hpp)
 WORLD_SOURCES := cpp/world/cognitive_state.cpp cpp/world/cognitive_event.cpp \
-	cpp/world/world_state.cpp cpp/world/evidence_accumulator.cpp cpp/world/synapse_arbiter.cpp
+	cpp/world/world_state.cpp cpp/world/evidence_accumulator.cpp cpp/world/evidence_revision.cpp \
+	cpp/world/synapse_arbiter.cpp
 
 PRODUCTION_BINARIES := $(BUILD)/swegca-vrs-mcp $(BUILD)/swegca-content-observer $(BUILD)/swegca-codex-wrapper $(BUILD)/swegca-desktop-host $(BUILD)/swegca-app-server-proxy
 MCP_PRODUCTION_CLOSURE_SOURCES := \
@@ -484,16 +485,20 @@ $(BUILD)/world-state-tests: tests/world_state_tests.cpp cpp/world/world_state.cp
 $(BUILD)/evidence-accumulator-tests: tests/evidence_accumulator_tests.cpp cpp/world/evidence_accumulator.cpp cpp/world/evidence_accumulator.hpp cpp/swegca_architecture/sha256.cpp cpp/swegca_architecture/sha256.hpp | $(BUILD)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< cpp/world/evidence_accumulator.cpp cpp/swegca_architecture/sha256.cpp -o $@
 
+$(BUILD)/evidence-revision-tests: tests/evidence_revision_tests.cpp cpp/world/evidence_revision.cpp cpp/world/evidence_revision.hpp cpp/transport/json.cpp cpp/transport/json.hpp cpp/swegca_architecture/sha256.cpp cpp/swegca_architecture/sha256.hpp | $(BUILD)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< cpp/world/evidence_revision.cpp cpp/transport/json.cpp cpp/swegca_architecture/sha256.cpp -o $@
+
 $(BUILD)/synapse-arbiter-world-tests: tests/synapse_arbiter_world_tests.cpp cpp/world/synapse_arbiter.cpp cpp/world/synapse_arbiter.hpp cpp/world/world_state.cpp cpp/world/world_state.hpp cpp/world/cognitive_state.cpp cpp/world/cognitive_state.hpp | $(BUILD)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< cpp/world/synapse_arbiter.cpp cpp/world/world_state.cpp cpp/world/cognitive_state.cpp -o $@
 
 check-world: $(BUILD)/cognitive-state-tests $(BUILD)/cognitive-event-tests \
-	$(BUILD)/world-state-tests $(BUILD)/evidence-accumulator-tests \
+	$(BUILD)/world-state-tests $(BUILD)/evidence-accumulator-tests $(BUILD)/evidence-revision-tests \
 	$(BUILD)/synapse-arbiter-world-tests
 	./$(BUILD)/cognitive-state-tests
 	./$(BUILD)/cognitive-event-tests
 	./$(BUILD)/world-state-tests
 	./$(BUILD)/evidence-accumulator-tests
+	./$(BUILD)/evidence-revision-tests
 	./$(BUILD)/synapse-arbiter-world-tests
 
 check-production: production

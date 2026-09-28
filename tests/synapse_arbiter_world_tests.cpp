@@ -1,5 +1,6 @@
 #include "world/synapse_arbiter.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <iostream>
@@ -18,6 +19,8 @@ using swegca::world::SynapseProposal;
 using swegca::world::Tensor;
 using swegca::world::TensorDType;
 using swegca::world::WorldState;
+using swegca::world::evidence_delta_proposal;
+using swegca::world::state_slot_tensor;
 using swegca::world::sufficiency_gated_proposal;
 
 void require(const bool condition, const char* message) {
@@ -263,6 +266,142 @@ void test_preview_owns_shared_input_lifetime() {
     require(preview.world_state()->source() == "test", "retained preview state is unusable");
 }
 
+void test_public_state_slot_tensor() {
+    const auto world_state = std::make_shared<const WorldState>(world());
+    const auto world_slots = state_slot_tensor(world_state);
+    require(world_slots.exact_equal(world_state->semantic_slots()),
+            "WorldState slot tensor changed values");
+
+    const auto cognitive_state = std::make_shared<const CognitiveState>(
+        Tensor(TensorDType::float32, {1, 2, 2}, {1.0, 2.0, 3.0, 4.0}),
+        Tensor(TensorDType::float32, {1, 1, 2}, {5.0, 6.0}),
+        Tensor(TensorDType::float32, {1, 1, 2}, {7.0, 8.0}));
+    const auto cognitive_slots = state_slot_tensor(cognitive_state);
+    require(cognitive_slots.shape()[0] == 1 && cognitive_slots.shape()[1] == 4 &&
+                cognitive_slots.shape()[2] == 2,
+            "CognitiveState combined slot shape changed");
+    const std::vector<double> expected{1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0};
+    require(std::equal(cognitive_slots.values().begin(), cognitive_slots.values().end(),
+                       expected.begin(), expected.end()),
+            "CognitiveState slot order changed");
+}
+
+void test_evidence_delta_world_proposal() {
+    const auto state = std::make_shared<const WorldState>(world());
+    const Tensor evidence_delta(TensorDType::float32, {2, 4},
+                                {1.0, 2.0, 3.0, 4.0, -1.0, -2.0, -3.0, -4.0});
+    const Tensor logits(TensorDType::float32, {2, 2}, {8.0, -8.0, -8.0, 8.0});
+    const std::vector<std::vector<std::string>> addresses{{"clip:1"}, {"clip:2", "text:2"}};
+    const auto result = evidence_delta_proposal(state, evidence_delta, logits, "text-video",
+                                                addresses, "hypothesis:1");
+    require(result.source == "text-video", "proposal source changed");
+    require(result.evidence_addresses == addresses, "proposal evidence addresses changed");
+    require(result.hypothesis_id == "hypothesis:1", "proposal hypothesis changed");
+    require(result.target_slot_mask.at(0, 30) && result.target_slot_mask.at(1, 30),
+            "verification role did not map to slot 30");
+    require(result.confidence[0] > result.confidence[1], "softmax confidence order changed");
+    require(result.contradiction[0] < result.contradiction[1],
+            "softmax contradiction order changed");
+    for (std::uint64_t batch = 0; batch < 2; ++batch) {
+        for (std::uint64_t slot = 0; slot < 32; ++slot) {
+            for (std::uint64_t dimension = 0; dimension < 4; ++dimension) {
+                const auto index = static_cast<std::size_t>((batch * 32 + slot) * 4 + dimension);
+                const auto evidence_index = static_cast<std::size_t>(batch * 4 + dimension);
+                const double expected = slot == 30 ? evidence_delta.values()[evidence_index] : 0.0;
+                require(result.delta_candidate.values()[index] == expected,
+                        "evidence delta escaped target slot");
+            }
+        }
+    }
+
+    const Tensor uniform_logits(TensorDType::float32, {2, 2}, {0.0, 0.0, 0.0, 0.0});
+    const auto uniform = evidence_delta_proposal(
+        state, evidence_delta, uniform_logits, "uniform", {}, {}, std::int64_t{31});
+    require(std::abs(uniform.confidence[0] - 0.5) < 1e-12,
+            "binary softmax probability changed");
+    require(std::abs(uniform.uncertainty[0] - 1.0) < 1e-12,
+            "normalized binary entropy changed");
+    require(uniform.target_slot_mask.at(0, 31), "numeric target slot changed");
+    const auto global = evidence_delta_proposal(
+        state, evidence_delta, uniform_logits, "global", {}, {}, std::string("global"));
+    require(global.target_slot_mask.at(0, 31), "fixed global role did not map to slot 31");
+}
+
+void test_evidence_delta_cognitive_proposal() {
+    const auto state = std::make_shared<const CognitiveState>(cognitive());
+    const Tensor evidence_delta(TensorDType::float32, {2, 4},
+                                std::vector<double>(8, 1.0));
+    const Tensor logits(TensorDType::float32, {2, 3},
+                        {4.0, 1.0, -2.0, 4.0, 1.0, -2.0});
+    const auto result = evidence_delta_proposal(
+        state, evidence_delta, logits, "cognitive", {{"a"}, {"b"}}, "h",
+        std::string("verification"), 0, 1);
+    require(result.delta_candidate.shape()[1] == 32,
+            "CognitiveState proposal did not use combined slots");
+    require(result.target_slot_mask.at(0, 30),
+            "CognitiveState verification role did not map to combined slot 30");
+    require(result.confidence[0] > result.contradiction[0],
+            "multiclass softmax class selection changed");
+    require(result.uncertainty[0] >= 0.0 && result.uncertainty[0] <= 1.0,
+            "multiclass normalized entropy left [0,1]");
+}
+
+void test_evidence_delta_rejects_invalid_shapes_classes_and_roles() {
+    const auto state = std::make_shared<const WorldState>(world());
+    const Tensor delta(TensorDType::float32, {2, 4}, std::vector<double>(8, 1.0));
+    const Tensor logits(TensorDType::float32, {2, 2}, {1.0, 0.0, 1.0, 0.0});
+    require_invalid_argument(
+        [&] {
+            static_cast<void>(evidence_delta_proposal(
+                state, Tensor(TensorDType::float32, {2, 1, 4}, std::vector<double>(8, 1.0)),
+                logits, "bad-delta"));
+        },
+        "rank-3 evidence delta was accepted");
+    require_invalid_argument(
+        [&] {
+            static_cast<void>(evidence_delta_proposal(
+                state, delta, Tensor(TensorDType::float32, {4}, std::vector<double>(4, 0.0)),
+                "bad-logits"));
+        },
+        "rank-1 evidence logits were accepted");
+    require_invalid_argument(
+        [&] {
+            static_cast<void>(evidence_delta_proposal(
+                state, delta,
+                Tensor(TensorDType::float32, {1, 2}, std::vector<double>(2, 0.0)),
+                "bad-logit-batch"));
+        },
+        "wrong evidence logits batch was accepted");
+    for (const auto classes : {std::pair{-1, 1}, std::pair{0, -1}, std::pair{2, 1},
+                               std::pair{0, 2}}) {
+        require_invalid_argument(
+            [&] {
+                static_cast<void>(evidence_delta_proposal(
+                    state, delta, logits, "bad-class", {}, {}, std::string("verification"),
+                    classes.first, classes.second));
+            },
+            "invalid signed class index was accepted");
+    }
+    require_invalid_argument(
+        [&] {
+            static_cast<void>(evidence_delta_proposal(
+                state, delta, logits, "negative-slot", {}, {}, std::int64_t{-1}));
+        },
+        "negative target slot was accepted");
+    require_invalid_argument(
+        [&] {
+            static_cast<void>(evidence_delta_proposal(
+                state, delta, logits, "outside-slot", {}, {}, std::int64_t{32}));
+        },
+        "outside target slot was accepted");
+    require_invalid_argument(
+        [&] {
+            static_cast<void>(evidence_delta_proposal(
+                state, delta, logits, "unknown-role", {}, {}, std::string("missing")));
+        },
+        "unknown target role was accepted");
+}
+
 }  // namespace
 
 int main() {
@@ -276,6 +415,10 @@ int main() {
         test_nonfinite_configuration_is_rejected();
         test_malformed_state_and_device_fail_closed();
         test_preview_owns_shared_input_lifetime();
+        test_public_state_slot_tensor();
+        test_evidence_delta_world_proposal();
+        test_evidence_delta_cognitive_proposal();
+        test_evidence_delta_rejects_invalid_shapes_classes_and_roles();
         std::cout << "synapse arbiter world tests passed\n";
         return 0;
     } catch (const std::exception& error) {

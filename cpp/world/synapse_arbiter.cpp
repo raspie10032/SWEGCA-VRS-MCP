@@ -82,6 +82,126 @@ struct SlotShape final {
             world.semantic_slots().dtype(), std::string(world.semantic_slots().device())};
 }
 
+[[nodiscard]] Tensor copy_world_slots(const WorldState& world) {
+    return world.semantic_slots().clone();
+}
+
+[[nodiscard]] Tensor copy_world_slots(const CognitiveState& world) {
+    const auto shape = slot_shape(world);
+    std::vector<double> values;
+    values.reserve(checked_product({shape.batch, shape.slots, shape.dimension}));
+    const Tensor* parts[]{&world.semantic_slots(), &world.executive_slots(),
+                          &world.scratch_slots()};
+    for (std::uint64_t batch = 0; batch < shape.batch; ++batch) {
+        for (const auto* part : parts) {
+            const auto part_shape = part->shape();
+            const auto begin = static_cast<std::size_t>(batch * part_shape[1] * shape.dimension);
+            const auto count = static_cast<std::size_t>(part_shape[1] * shape.dimension);
+            values.insert(values.end(), part->values().begin() + static_cast<std::ptrdiff_t>(begin),
+                          part->values().begin() + static_cast<std::ptrdiff_t>(begin + count));
+        }
+    }
+    return Tensor(shape.dtype, {shape.batch, shape.slots, shape.dimension}, std::move(values),
+                  shape.device);
+}
+
+[[nodiscard]] std::uint64_t target_slot_index(const ProposalTargetSlot& target,
+                                              const std::uint64_t slots) {
+    std::int64_t index = 0;
+    if (const auto* numeric = std::get_if<std::int64_t>(&target)) {
+        index = *numeric;
+    } else {
+        const auto& role = std::get<std::string>(target);
+        const auto found = std::find(slot_roles.begin(), slot_roles.end(), role);
+        if (found == slot_roles.end()) {
+            throw std::invalid_argument("unknown World slot role: " + role);
+        }
+        index = static_cast<std::int64_t>(std::distance(slot_roles.begin(), found));
+    }
+    if (index < 0 || static_cast<std::uint64_t>(index) >= slots) {
+        throw std::invalid_argument("target slot is outside World State");
+    }
+    return static_cast<std::uint64_t>(index);
+}
+
+template <typename State>
+[[nodiscard]] SynapseProposal make_evidence_delta_proposal(
+    const std::shared_ptr<const State>& world, const Tensor& evidence_delta,
+    const Tensor& evidence_logits, std::string source,
+    std::vector<std::vector<std::string>> evidence_addresses,
+    std::string hypothesis_id, const ProposalTargetSlot& target_slot,
+    const std::int64_t consistent_class, const std::int64_t contradiction_class) {
+    if (!world) throw std::invalid_argument("World State must not be null");
+    const auto shape = slot_shape(*world);
+    if (!same_shape(evidence_delta.shape(), {shape.batch, shape.dimension})) {
+        throw std::invalid_argument(
+            "evidence delta must have shape [batch, World dimension]");
+    }
+    if (evidence_logits.rank() != 2 || evidence_logits.shape()[0] != shape.batch) {
+        throw std::invalid_argument("evidence logits must have shape [batch, classes]");
+    }
+    const auto classes = evidence_logits.shape()[1];
+    if (classes < 2 || consistent_class < 0 || contradiction_class < 0 ||
+        static_cast<std::uint64_t>(consistent_class) >= classes ||
+        static_cast<std::uint64_t>(contradiction_class) >= classes) {
+        throw std::invalid_argument("evidence classes are invalid");
+    }
+    if (evidence_delta.device() != shape.device || evidence_logits.device() != shape.device) {
+        throw std::invalid_argument("evidence tensors must match World State device");
+    }
+    const auto selected_slot = target_slot_index(target_slot, shape.slots);
+    std::vector<double> delta(checked_product({shape.batch, shape.slots, shape.dimension}), 0.0);
+    std::vector<std::uint8_t> mask(checked_product({shape.batch, shape.slots}), 0);
+    std::vector<double> confidence(static_cast<std::size_t>(shape.batch), 0.0);
+    std::vector<double> contradiction(static_cast<std::size_t>(shape.batch), 0.0);
+    std::vector<double> uncertainty(static_cast<std::size_t>(shape.batch), 0.0);
+    std::vector<double> probabilities(static_cast<std::size_t>(classes), 0.0);
+    const double entropy_divisor = std::log(static_cast<double>(classes));
+
+    for (std::uint64_t batch = 0; batch < shape.batch; ++batch) {
+        const auto logits_begin = static_cast<std::size_t>(batch * classes);
+        const auto maximum = *std::max_element(
+            evidence_logits.values().begin() + static_cast<std::ptrdiff_t>(logits_begin),
+            evidence_logits.values().begin() +
+                static_cast<std::ptrdiff_t>(logits_begin + classes));
+        double denominator = 0.0;
+        for (std::uint64_t klass = 0; klass < classes; ++klass) {
+            const double probability = std::exp(
+                evidence_logits.values()[logits_begin + static_cast<std::size_t>(klass)] - maximum);
+            probabilities[static_cast<std::size_t>(klass)] = probability;
+            denominator += probability;
+        }
+        double entropy = 0.0;
+        for (std::uint64_t klass = 0; klass < classes; ++klass) {
+            auto& probability = probabilities[static_cast<std::size_t>(klass)];
+            probability /= denominator;
+            entropy -= probability * std::log(std::max(probability,
+                                                        std::numeric_limits<double>::min()));
+        }
+        confidence[static_cast<std::size_t>(batch)] =
+            probabilities[static_cast<std::size_t>(consistent_class)];
+        contradiction[static_cast<std::size_t>(batch)] =
+            probabilities[static_cast<std::size_t>(contradiction_class)];
+        uncertainty[static_cast<std::size_t>(batch)] = entropy / entropy_divisor;
+        mask[static_cast<std::size_t>(batch * shape.slots + selected_slot)] = 1;
+        const auto source_begin = static_cast<std::size_t>(batch * shape.dimension);
+        const auto target_begin = offset(shape, batch, selected_slot, 0);
+        std::copy_n(evidence_delta.values().begin() + static_cast<std::ptrdiff_t>(source_begin),
+                    static_cast<std::size_t>(shape.dimension),
+                    delta.begin() + static_cast<std::ptrdiff_t>(target_begin));
+    }
+
+    SynapseProposal proposal{
+        std::move(source),
+        Tensor(shape.dtype, {shape.batch, shape.slots, shape.dimension}, std::move(delta),
+               shape.device),
+        std::move(confidence), std::move(contradiction), std::move(uncertainty),
+        BooleanMask({shape.batch, shape.slots}, std::move(mask)),
+        std::move(evidence_addresses), std::move(hypothesis_id)};
+    proposal.validate(*world);
+    return proposal;
+}
+
 [[nodiscard]] bool same_shape(const std::span<const std::uint64_t> actual,
                               const std::initializer_list<std::uint64_t> expected) {
     return actual.size() == expected.size() &&
@@ -347,12 +467,47 @@ template <typename State>
 
 }  // namespace
 
+Tensor state_slot_tensor(std::shared_ptr<const WorldState> world) {
+    if (!world) throw std::invalid_argument("World State must not be null");
+    static_cast<void>(slot_shape(*world));
+    return copy_world_slots(*world);
+}
+
+Tensor state_slot_tensor(std::shared_ptr<const CognitiveState> world) {
+    if (!world) throw std::invalid_argument("Cognitive State must not be null");
+    return copy_world_slots(*world);
+}
+
 void SynapseProposal::validate(const WorldState& world) const {
     validate_proposal(*this, slot_shape(world));
 }
 
 void SynapseProposal::validate(const CognitiveState& world) const {
     validate_proposal(*this, slot_shape(world));
+}
+
+SynapseProposal evidence_delta_proposal(
+    std::shared_ptr<const WorldState> world, const Tensor& evidence_delta,
+    const Tensor& evidence_logits, std::string source,
+    std::vector<std::vector<std::string>> evidence_addresses,
+    std::string hypothesis_id, ProposalTargetSlot target_slot,
+    const std::int64_t consistent_class, const std::int64_t contradiction_class) {
+    return make_evidence_delta_proposal(world, evidence_delta, evidence_logits,
+                                        std::move(source), std::move(evidence_addresses),
+                                        std::move(hypothesis_id), target_slot,
+                                        consistent_class, contradiction_class);
+}
+
+SynapseProposal evidence_delta_proposal(
+    std::shared_ptr<const CognitiveState> world, const Tensor& evidence_delta,
+    const Tensor& evidence_logits, std::string source,
+    std::vector<std::vector<std::string>> evidence_addresses,
+    std::string hypothesis_id, ProposalTargetSlot target_slot,
+    const std::int64_t consistent_class, const std::int64_t contradiction_class) {
+    return make_evidence_delta_proposal(world, evidence_delta, evidence_logits,
+                                        std::move(source), std::move(evidence_addresses),
+                                        std::move(hypothesis_id), target_slot,
+                                        consistent_class, contradiction_class);
 }
 
 SynapseProposal sufficiency_gated_proposal(const WorldState& world,
