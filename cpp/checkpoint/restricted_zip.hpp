@@ -28,6 +28,23 @@ struct ZipMember {
     std::uint16_t method = 0;
 };
 
+// Identity of the already-open regular file. The descriptor pins the inode;
+// these fields additionally detect in-place writes while an audited archive
+// is being parsed or consumed.
+struct RestrictedZipIdentity final {
+    std::uint64_t device = 0;
+    std::uint64_t inode = 0;
+    std::uint64_t size = 0;
+    std::uint64_t mode = 0;
+    std::int64_t modification_seconds = 0;
+    std::int64_t modification_nanoseconds = 0;
+    std::int64_t change_seconds = 0;
+    std::int64_t change_nanoseconds = 0;
+
+    friend bool operator==(const RestrictedZipIdentity&,
+                           const RestrictedZipIdentity&) = default;
+};
+
 class RestrictedZip final {
 public:
     [[nodiscard]] static RestrictedZip open(
@@ -56,11 +73,14 @@ public:
     void read_archive(std::uint64_t offset, std::span<std::byte> destination) const;
 
     [[nodiscard]] std::uint64_t archive_bytes() const noexcept { return archive_bytes_; }
+    [[nodiscard]] RestrictedZipIdentity identity() const;
 
 private:
+    void require_unchanged() const;
     RestrictedZip() = default;
     int fd_ = -1;
     std::uint64_t archive_bytes_ = 0;
+    RestrictedZipIdentity opened_identity_{};
     ZipLimits limits_{};
     std::vector<ZipMember> members_;
 };

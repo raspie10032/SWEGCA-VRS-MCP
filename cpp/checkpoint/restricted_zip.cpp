@@ -134,6 +134,22 @@ struct Span {
     std::uint64_t end;
 };
 
+RestrictedZipIdentity zip_identity(const struct stat& status) {
+    if (!S_ISREG(status.st_mode) || status.st_size < 0) {
+        invalid("ZIP archive is not a regular file");
+    }
+    return {
+        static_cast<std::uint64_t>(status.st_dev),
+        static_cast<std::uint64_t>(status.st_ino),
+        static_cast<std::uint64_t>(status.st_size),
+        static_cast<std::uint64_t>(status.st_mode),
+        static_cast<std::int64_t>(status.st_mtim.tv_sec),
+        static_cast<std::int64_t>(status.st_mtim.tv_nsec),
+        static_cast<std::int64_t>(status.st_ctim.tv_sec),
+        static_cast<std::int64_t>(status.st_ctim.tv_nsec),
+    };
+}
+
 }  // namespace
 
 RestrictedZip RestrictedZip::open(const std::filesystem::path& path, ZipLimits limits) {
@@ -148,10 +164,9 @@ RestrictedZip RestrictedZip::open(const std::filesystem::path& path, ZipLimits l
     if (result.fd_ < 0) throw std::runtime_error("cannot open ZIP archive");
     try {
         struct stat status {};
-        if (::fstat(result.fd_, &status) != 0 || !S_ISREG(status.st_mode) || status.st_size < 0) {
-            invalid("ZIP archive is not a regular file");
-        }
-        result.archive_bytes_ = static_cast<std::uint64_t>(status.st_size);
+        if (::fstat(result.fd_, &status) != 0) invalid("cannot stat ZIP archive");
+        result.opened_identity_ = zip_identity(status);
+        result.archive_bytes_ = result.opened_identity_.size;
         if (result.archive_bytes_ < eocd_bytes || result.archive_bytes_ > limits.maximum_archive_bytes) {
             invalid("ZIP archive size is outside limits");
         }
@@ -300,6 +315,7 @@ RestrictedZip RestrictedZip::open(const std::filesystem::path& path, ZipLimits l
                 invalid("overlapping ZIP local records");
             }
         }
+        result.require_unchanged();
         return result;
     } catch (...) {
         if (result.fd_ >= 0) ::close(result.fd_);
@@ -309,7 +325,8 @@ RestrictedZip RestrictedZip::open(const std::filesystem::path& path, ZipLimits l
 }
 
 RestrictedZip::RestrictedZip(RestrictedZip&& other) noexcept
-    : fd_(other.fd_), archive_bytes_(other.archive_bytes_), limits_(other.limits_),
+    : fd_(other.fd_), archive_bytes_(other.archive_bytes_),
+      opened_identity_(other.opened_identity_), limits_(other.limits_),
       members_(std::move(other.members_)) {
     other.fd_ = -1;
     other.archive_bytes_ = 0;
@@ -320,6 +337,7 @@ RestrictedZip& RestrictedZip::operator=(RestrictedZip&& other) noexcept {
     if (fd_ >= 0) ::close(fd_);
     fd_ = other.fd_;
     archive_bytes_ = other.archive_bytes_;
+    opened_identity_ = other.opened_identity_;
     limits_ = other.limits_;
     members_ = std::move(other.members_);
     other.fd_ = -1;
@@ -338,7 +356,21 @@ const ZipMember* RestrictedZip::find(std::string_view name) const noexcept {
     return where == members_.end() ? nullptr : &*where;
 }
 
+RestrictedZipIdentity RestrictedZip::identity() const {
+    if (fd_ < 0) invalid("ZIP archive descriptor is closed");
+    struct stat status {};
+    if (::fstat(fd_, &status) != 0) invalid("cannot stat ZIP archive");
+    return zip_identity(status);
+}
+
+void RestrictedZip::require_unchanged() const {
+    if (identity() != opened_identity_) {
+        invalid("ZIP archive changed after open");
+    }
+}
+
 std::vector<std::byte> RestrictedZip::read(std::string_view name) const {
+    require_unchanged();
     const auto* member = find(name);
     if (member == nullptr) throw std::out_of_range("ZIP member not found");
     if (member->size > limits_.maximum_member_bytes || member->size > std::numeric_limits<std::size_t>::max()) {
@@ -349,10 +381,12 @@ std::vector<std::byte> RestrictedZip::read(std::string_view name) const {
     }
     auto bytes = read_bytes(fd_, member->payload_offset, static_cast<std::size_t>(member->size));
     if (crc32(bytes) != member->crc32) invalid("ZIP member CRC mismatch");
+    require_unchanged();
     return bytes;
 }
 
 void RestrictedZip::verify(std::string_view name) const {
+    require_unchanged();
     const auto* member = find(name);
     if (member == nullptr) throw std::out_of_range("ZIP member not found");
     if (checked_add(member->payload_offset, member->size) > archive_bytes_) {
@@ -372,6 +406,7 @@ void RestrictedZip::verify(std::string_view name) const {
         complete += count;
     }
     if (~crc != member->crc32) invalid("ZIP member CRC mismatch");
+    require_unchanged();
 }
 
 void RestrictedZip::verify_all() const {
@@ -380,10 +415,12 @@ void RestrictedZip::verify_all() const {
 
 void RestrictedZip::read_archive(const std::uint64_t offset,
                                  const std::span<std::byte> destination) const {
+    require_unchanged();
     if (offset > archive_bytes_ || destination.size() > archive_bytes_ - offset) {
         throw std::out_of_range("ZIP archive read outside file");
     }
     read_exact(fd_, offset, destination);
+    require_unchanged();
 }
 
 }  // namespace swegca::checkpoint

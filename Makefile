@@ -2,6 +2,7 @@ CXX ?= c++
 CPPFLAGS ?=
 CXXFLAGS ?= -O3
 BUILD := build
+OPENBLAS_SO ?= $(firstword $(wildcard /usr/lib64/libopenblaso.so.0 /usr/lib/x86_64-linux-gnu/libopenblas.so.0))
 .DEFAULT_GOAL := all
 INCLUDES := -Icpp
 CORE_FLAGS := -pthread -std=c++20 -ffp-contract=off -Wall -Wextra -Wpedantic
@@ -12,14 +13,16 @@ VRS_SOURCES := cpp/vrs/portal_page.cpp cpp/vrs/experience_page.cpp cpp/vrs/runti
 CHECKPOINT_HEADERS := $(wildcard cpp/checkpoint/*.hpp)
 CHECKPOINT_SOURCES := cpp/checkpoint/restricted_zip.cpp cpp/checkpoint/restricted_pickle.cpp \
 	cpp/checkpoint/canonical_symbolic_json.cpp cpp/checkpoint/checkpoint_profile.cpp \
-	cpp/checkpoint/restricted_checkpoint.cpp cpp/checkpoint/materialized_tensor.cpp
+	cpp/checkpoint/restricted_checkpoint.cpp cpp/checkpoint/materialized_tensor.cpp \
+	cpp/checkpoint/prototype_checkpoint.cpp cpp/checkpoint/prototype_materialized_tensor.cpp
 WORLD_HEADERS := $(wildcard cpp/world/*.hpp)
 WORLD_SOURCES := cpp/world/cognitive_state.cpp cpp/world/cognitive_event.cpp \
 	cpp/world/world_state.cpp cpp/world/evidence_accumulator.cpp cpp/world/evidence_revision.cpp \
 	cpp/world/synapse_arbiter.cpp cpp/world/dynamic_cognition.cpp \
 	cpp/world/bounded_world_write.cpp cpp/world/re_evidence_receipt.cpp \
 	cpp/world/re_evidence_transaction.cpp cpp/world/re_evidence_arbitration.cpp \
-	cpp/world/modal_to_world.cpp
+	cpp/world/modal_to_world.cpp cpp/world/recurrent_cognition.cpp \
+	cpp/world/prototype_recurrent_cognition.cpp
 
 PRODUCTION_BINARIES := $(BUILD)/swegca-vrs-mcp $(BUILD)/swegca-content-observer $(BUILD)/swegca-codex-wrapper $(BUILD)/swegca-desktop-host $(BUILD)/swegca-app-server-proxy
 MCP_PRODUCTION_CLOSURE_SOURCES := \
@@ -121,7 +124,7 @@ check-raw-observation: $(BUILD)/raw-content-observation-tests $(BUILD)/original-
 	./$(BUILD)/raw-content-observation-tests
 	./$(BUILD)/original-observation-tests
 
-.PHONY: check-agent-event all production check check-production check-checkpoint check-world check-experimental-cpu check-experimental-gpu stage0-gate check-stdio check-sha256 check-resource-profile check-oom-recovery bench clean
+.PHONY: check-agent-event all production check check-production check-checkpoint check-world check-prototype-recurrent-artifacts check-prototype-recurrent-activation check-experimental-cpu check-experimental-gpu stage0-gate check-stdio check-sha256 check-resource-profile check-oom-recovery bench clean
 all: production
 
 production: $(PRODUCTION_BINARIES)
@@ -467,6 +470,9 @@ $(BUILD)/checkpoint-profile-tests: tests/checkpoint_profile_tests.cpp cpp/checkp
 $(BUILD)/restricted-checkpoint-tests: tests/restricted_checkpoint_tests.cpp $(CHECKPOINT_HEADERS) $(CHECKPOINT_SOURCES) cpp/swegca_architecture/sha256.cpp cpp/swegca_architecture/sha256.hpp | $(BUILD)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< $(CHECKPOINT_SOURCES) cpp/swegca_architecture/sha256.cpp -o $@
 
+$(BUILD)/prototype-checkpoint-tests: tests/prototype_checkpoint_tests.cpp cpp/checkpoint/prototype_checkpoint.cpp cpp/checkpoint/prototype_checkpoint.hpp cpp/checkpoint/restricted_checkpoint.cpp cpp/checkpoint/restricted_checkpoint.hpp cpp/checkpoint/restricted_zip.cpp cpp/checkpoint/restricted_zip.hpp cpp/checkpoint/restricted_pickle.cpp cpp/checkpoint/restricted_pickle.hpp cpp/checkpoint/canonical_symbolic_json.cpp cpp/checkpoint/canonical_symbolic_json.hpp cpp/checkpoint/checkpoint_profile.cpp cpp/checkpoint/checkpoint_profile.hpp cpp/swegca_architecture/sha256.cpp cpp/swegca_architecture/sha256.hpp | $(BUILD)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< cpp/checkpoint/prototype_checkpoint.cpp cpp/checkpoint/restricted_checkpoint.cpp cpp/checkpoint/restricted_zip.cpp cpp/checkpoint/restricted_pickle.cpp cpp/checkpoint/canonical_symbolic_json.cpp cpp/checkpoint/checkpoint_profile.cpp cpp/swegca_architecture/sha256.cpp -o $@
+
 check-checkpoint: $(BUILD)/restricted-zip-tests $(BUILD)/restricted-pickle-tests \
 	$(BUILD)/canonical-symbolic-json-tests $(BUILD)/checkpoint-profile-tests \
 	$(BUILD)/restricted-checkpoint-tests $(BUILD)/materialized-tensor-tests
@@ -516,12 +522,35 @@ $(BUILD)/re-evidence-arbitration-tests: tests/re_evidence_arbitration_tests.cpp 
 $(BUILD)/modal-to-world-tests: tests/modal_to_world_tests.cpp tests/modal_to_world_python214_fixture.hpp cpp/world/modal_to_world.cpp cpp/world/modal_to_world.hpp cpp/world/world_state.cpp cpp/world/world_state.hpp cpp/world/cognitive_state.cpp cpp/world/cognitive_state.hpp cpp/checkpoint/materialized_tensor.cpp cpp/checkpoint/materialized_tensor.hpp cpp/checkpoint/restricted_checkpoint.cpp cpp/checkpoint/restricted_checkpoint.hpp cpp/checkpoint/restricted_zip.cpp cpp/checkpoint/restricted_zip.hpp cpp/checkpoint/restricted_pickle.cpp cpp/checkpoint/restricted_pickle.hpp cpp/checkpoint/canonical_symbolic_json.cpp cpp/checkpoint/canonical_symbolic_json.hpp cpp/checkpoint/checkpoint_profile.cpp cpp/checkpoint/checkpoint_profile.hpp cpp/swegca_architecture/sha256.cpp cpp/swegca_architecture/sha256.hpp | $(BUILD)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< cpp/world/modal_to_world.cpp cpp/world/world_state.cpp cpp/world/cognitive_state.cpp cpp/checkpoint/materialized_tensor.cpp cpp/checkpoint/restricted_checkpoint.cpp cpp/checkpoint/restricted_zip.cpp cpp/checkpoint/restricted_pickle.cpp cpp/checkpoint/canonical_symbolic_json.cpp cpp/checkpoint/checkpoint_profile.cpp cpp/swegca_architecture/sha256.cpp -o $@
 
+$(BUILD)/recurrent-cognition-tests: tests/recurrent_cognition_tests.cpp tests/recurrent_cognition_python214_fixture.hpp cpp/world/recurrent_cognition.cpp cpp/world/recurrent_cognition.hpp cpp/world/world_state.cpp cpp/world/world_state.hpp cpp/world/cognitive_state.cpp cpp/world/cognitive_state.hpp cpp/swegca_architecture/sha256.cpp cpp/swegca_architecture/sha256.hpp | $(BUILD)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) -Itests $< cpp/world/recurrent_cognition.cpp cpp/world/world_state.cpp cpp/world/cognitive_state.cpp cpp/swegca_architecture/sha256.cpp -o $@
+
+$(BUILD)/prototype-recurrent-cognition-tests: tests/prototype_recurrent_cognition_tests.cpp cpp/world/prototype_recurrent_cognition.cpp cpp/world/prototype_recurrent_cognition.hpp cpp/world/recurrent_cognition.cpp cpp/world/recurrent_cognition.hpp cpp/world/world_state.cpp cpp/world/world_state.hpp cpp/world/cognitive_state.cpp cpp/world/cognitive_state.hpp cpp/checkpoint/prototype_materialized_tensor.cpp cpp/checkpoint/prototype_materialized_tensor.hpp cpp/checkpoint/materialized_tensor.cpp cpp/checkpoint/materialized_tensor.hpp cpp/checkpoint/prototype_checkpoint.cpp cpp/checkpoint/prototype_checkpoint.hpp cpp/checkpoint/restricted_checkpoint.cpp cpp/checkpoint/restricted_checkpoint.hpp cpp/checkpoint/restricted_zip.cpp cpp/checkpoint/restricted_zip.hpp cpp/checkpoint/restricted_pickle.cpp cpp/checkpoint/restricted_pickle.hpp cpp/checkpoint/canonical_symbolic_json.cpp cpp/checkpoint/canonical_symbolic_json.hpp cpp/checkpoint/checkpoint_profile.cpp cpp/checkpoint/checkpoint_profile.hpp cpp/swegca_architecture/sha256.cpp cpp/swegca_architecture/sha256.hpp | $(BUILD)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< cpp/world/prototype_recurrent_cognition.cpp cpp/world/recurrent_cognition.cpp cpp/world/world_state.cpp cpp/world/cognitive_state.cpp cpp/checkpoint/prototype_materialized_tensor.cpp cpp/checkpoint/materialized_tensor.cpp cpp/checkpoint/prototype_checkpoint.cpp cpp/checkpoint/restricted_checkpoint.cpp cpp/checkpoint/restricted_zip.cpp cpp/checkpoint/restricted_pickle.cpp cpp/checkpoint/canonical_symbolic_json.cpp cpp/checkpoint/checkpoint_profile.cpp cpp/swegca_architecture/sha256.cpp -o $@
+
+$(BUILD)/prototype-recurrent-activation-tests: tests/prototype_recurrent_activation_tests.cpp tests/generate_prototype_recurrent_fixture.py tests/fixtures/prototype_recurrent_seed631_python214_output.f32le tests/fixtures/prototype_recurrent_seed631_python214_output.json cpp/world/prototype_recurrent_cognition.cpp cpp/world/prototype_recurrent_cognition.hpp cpp/world/recurrent_cognition.cpp cpp/world/recurrent_cognition.hpp cpp/world/world_state.cpp cpp/world/world_state.hpp cpp/world/cognitive_state.cpp cpp/world/cognitive_state.hpp cpp/checkpoint/prototype_materialized_tensor.cpp cpp/checkpoint/prototype_materialized_tensor.hpp cpp/checkpoint/materialized_tensor.cpp cpp/checkpoint/materialized_tensor.hpp cpp/checkpoint/prototype_checkpoint.cpp cpp/checkpoint/prototype_checkpoint.hpp cpp/checkpoint/restricted_checkpoint.cpp cpp/checkpoint/restricted_checkpoint.hpp cpp/checkpoint/restricted_zip.cpp cpp/checkpoint/restricted_zip.hpp cpp/checkpoint/restricted_pickle.cpp cpp/checkpoint/restricted_pickle.hpp cpp/checkpoint/canonical_symbolic_json.cpp cpp/checkpoint/canonical_symbolic_json.hpp cpp/checkpoint/checkpoint_profile.cpp cpp/checkpoint/checkpoint_profile.hpp cpp/swegca_architecture/sha256.cpp cpp/swegca_architecture/sha256.hpp | $(BUILD)
+	test -n "$(OPENBLAS_SO)" || (echo "OpenBLAS shared library not found" >&2; exit 1)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) -DSWEGCA_RECURRENT_USE_CBLAS $(INCLUDES) $< cpp/world/prototype_recurrent_cognition.cpp cpp/world/recurrent_cognition.cpp cpp/world/world_state.cpp cpp/world/cognitive_state.cpp cpp/checkpoint/prototype_materialized_tensor.cpp cpp/checkpoint/materialized_tensor.cpp cpp/checkpoint/prototype_checkpoint.cpp cpp/checkpoint/restricted_checkpoint.cpp cpp/checkpoint/restricted_zip.cpp cpp/checkpoint/restricted_pickle.cpp cpp/checkpoint/canonical_symbolic_json.cpp cpp/checkpoint/checkpoint_profile.cpp cpp/swegca_architecture/sha256.cpp $(OPENBLAS_SO) -o $@
+
+check-prototype-recurrent-activation: $(BUILD)/prototype-recurrent-activation-tests
+	OPENBLAS_NUM_THREADS=10 ./$(BUILD)/prototype-recurrent-activation-tests
+
+# Exact local artifact integration. This deliberately remains outside the
+# hermetic production gate because it requires the two audited 529 MB
+# Prototype0 checkpoints and the pinned source/config snapshot.
+check-prototype-recurrent-artifacts: $(BUILD)/prototype-checkpoint-tests \
+	$(BUILD)/prototype-recurrent-cognition-tests \
+	$(BUILD)/prototype-recurrent-activation-tests
+	./$(BUILD)/prototype-checkpoint-tests
+	./$(BUILD)/prototype-recurrent-cognition-tests
+	OPENBLAS_NUM_THREADS=10 ./$(BUILD)/prototype-recurrent-activation-tests
+
 check-world: $(BUILD)/cognitive-state-tests $(BUILD)/cognitive-event-tests \
 	$(BUILD)/world-state-tests $(BUILD)/evidence-accumulator-tests $(BUILD)/evidence-revision-tests \
 	$(BUILD)/synapse-arbiter-world-tests $(BUILD)/dynamic-cognition-tests \
-	$(BUILD)/bounded-world-write-tests $(BUILD)/re-evidence-receipt-tests \
-	$(BUILD)/re-evidence-transaction-tests $(BUILD)/re-evidence-arbitration-tests \
-	$(BUILD)/modal-to-world-tests
+		$(BUILD)/bounded-world-write-tests $(BUILD)/re-evidence-receipt-tests \
+		$(BUILD)/re-evidence-transaction-tests $(BUILD)/re-evidence-arbitration-tests \
+		$(BUILD)/modal-to-world-tests $(BUILD)/recurrent-cognition-tests
 	./$(BUILD)/cognitive-state-tests
 	./$(BUILD)/cognitive-event-tests
 	./$(BUILD)/world-state-tests
@@ -534,6 +563,7 @@ check-world: $(BUILD)/cognitive-state-tests $(BUILD)/cognitive-event-tests \
 	./$(BUILD)/re-evidence-transaction-tests
 	./$(BUILD)/re-evidence-arbitration-tests
 	./$(BUILD)/modal-to-world-tests
+	./$(BUILD)/recurrent-cognition-tests
 
 check-production: production
 	$(MAKE) --no-print-directory check

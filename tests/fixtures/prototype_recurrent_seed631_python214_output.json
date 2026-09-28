@@ -1,0 +1,78 @@
+{
+  "source_sha256": "5ea32f8d6b97ae8db013e09b1cb4d42f49e9c1cd1794d8d8f5bad40ea519ef6e",
+  "source_config_sha256": "543784817730b6e79261621d8b7b4ce3d54eff23a9027788d5104e05cdd7eea5",
+  "checkpoint_sha256": "2d067dd9c46a01d0bce16d2c123f0a306956c970a0eff6d7bbd607a34df76e74",
+  "torch_version": "2.14.0+cu130",
+  "output_file": "prototype_recurrent_seed631_python214_output.f32le",
+  "output_count": 98304,
+  "output_sha256": "1413f54338f1c57498de4d9f1f76194033665676aa72994ab5db17941c83859b",
+  "cycles_used": [
+    4
+  ],
+  "halt_logits": [
+    [
+      -0.04057028889656067
+    ],
+    [
+      -0.050241619348526
+    ],
+    [
+      -0.06470328569412231
+    ],
+    [
+      -0.07940900325775146
+    ]
+  ],
+  "halt_probabilities": [
+    [
+      0.48985883593559265
+    ],
+    [
+      0.4874422550201416
+    ],
+    [
+      0.4838297963142395
+    ],
+    [
+      0.48015815019607544
+    ]
+  ],
+  "input_formula": {
+    "semantic": [
+      257,
+      128,
+      257
+    ],
+    "executive": [
+      251,
+      125,
+      263
+    ],
+    "scratch": [
+      241,
+      120,
+      239
+    ],
+    "evidence": [
+      131,
+      65,
+      193
+    ]
+  },
+  "mask": [
+    true,
+    false,
+    true
+  ],
+  "coverage": [
+    0.72
+  ],
+  "confidence": [
+    0.8
+  ],
+  "keyweight": [
+    1.25,
+    2.0,
+    0.75
+  ]
+}

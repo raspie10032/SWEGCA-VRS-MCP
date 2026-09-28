@@ -186,6 +186,8 @@ int main() {
     const auto valid_path = write(root, "valid.zip", valid.body);
     {
         auto archive = RestrictedZip::open(valid_path);
+        const auto identity = archive.identity();
+        assert(identity.size == valid.body.size());
         assert(archive.members().size() == 2);
         assert(archive.archive_bytes() == valid.body.size());
         assert(archive.find("checkpoint/data.pkl") != nullptr);
@@ -194,7 +196,17 @@ int main() {
         assert(archive.read("checkpoint/data/0") == input[1].body);
         fails([&] { (void)archive.read("missing"); });
         auto moved = std::move(archive);
+        assert(moved.identity() == identity);
         assert(moved.read("checkpoint/data/0") == input[1].body);
+    }
+    {
+        const auto mutable_path = write(root, "mutated-after-open.zip", valid.body);
+        auto archive = RestrictedZip::open(mutable_path);
+        auto changed = valid.body;
+        changed[valid.payloads[0]] ^= std::byte{1};
+        write(root, "mutated-after-open.zip", changed);
+        assert(archive.identity().inode != 0);
+        fails([&] { (void)archive.read("checkpoint/data/0"); });
     }
     {
         const auto zip64 = with_zip64_trailer(build(input));
