@@ -1,0 +1,20 @@
+{
+  "passed": true,
+  "rounds": 10,
+  "integer_components_checked": 1614899682,
+  "connections": 48936354,
+  "experiences": 6274,
+  "stored_order": [
+    "accept",
+    "reject",
+    "abstain"
+  ],
+  "slope_definition": "(count_round_10-count_round_0)/10; net is an analysis-only accept-minus-reject projection",
+  "experience_totals": [
+    71143490,
+    407558998,
+    0
+  ],
+  "activation": "accept>=reject",
+  "initialization": "one recorded original verdict per connection; previous float run was not inverted"
+}

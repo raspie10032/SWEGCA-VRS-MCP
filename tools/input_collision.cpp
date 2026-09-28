@@ -56,7 +56,7 @@ int main(int argc,char** argv)try{
  MemoryBudget mem{128ULL<<20};Reader gr(graph),ir(irpath),pr(prpath);
  auto meta=parse_json(load(irpath/"summary.json"),mem);const unsigned n=num(meta.at("images")),t=num(meta.at("tags"));
  if(meta.at("schema").string()!="binary_tag_image_v2"||!n||t<2)throw std::runtime_error("input schema/dimensions");
- std::vector<double> ti(std::size_t(n)*t),tt(std::size_t(t)*(t-1)/2);
+ std::vector<TernaryCount> ti(std::size_t(n)*t),tt(std::size_t(t)*(t-1)/2);
  std::map<unsigned,RecordAddress> source_records,tag_records,matrices;std::string line;
  {std::ifstream file(graph/"graph-records.jsonl");while(std::getline(file,line)){auto r=parse_json(line,mem);if(auto v=r.find("source"))source_records.emplace(num(*v),addr(r.at("record")));else if(auto v=r.find("tag"))tag_records.emplace(num(*v),addr(r.at("record")));}}
  {std::ifstream file(irpath/"tag-records.jsonl");while(std::getline(file,line)){auto r=parse_json(line,mem);if(auto v=r.find("tag"))matrices.emplace(num(*v),addr(r.at("record")));}}
@@ -81,34 +81,41 @@ int main(int argc,char** argv)try{
  input_refs.close();
  for(auto [tag,a]:matrices){if(tag>=t)throw std::runtime_error("matrix id");auto stored=ir.blocks.at(a.block).read(a,2ULL<<20,ir.memory);auto b=stored.view().content;
   if(b.size()!=24+std::size_t(n)*16||get64(b,0)!=tag||get64(b,8)!=n||get64(b,16)!=2)throw std::runtime_error("matrix format");
-  for(unsigned i=0;i<n;++i){const double w=std::bit_cast<double>(get64(b,32+i*16));if(!finite_count(w))throw std::runtime_error("strength");ti[std::size_t(tag)*n+i]=w;}
+  for(unsigned i=0;i<n;++i){auto& value=ti[std::size_t(tag)*n+i];const auto status=get64(b,24+i*16);if(status>2||!accumulate_verdict(value,static_cast<EvidenceStatus>(status)))throw std::runtime_error("initial verdict");}
  }
  {std::ifstream file(prpath/"pairs.jsonl");std::size_t pos=0;unsigned left=0,right=1;
   while(std::getline(file,line)){auto r=parse_json(line,mem);auto a=addr(r.at("record"));auto stored=pr.blocks.at(a.block).read(a,2ULL<<20,pr.memory);auto b=stored.view().content;
    if(b.size()!=std::size_t(num(r.at("pairs")))*40)throw std::runtime_error("pair shape");
-   for(std::size_t at=0;at<b.size();at+=40){if(pos>=tt.size()||get64(b,at)!=left||get64(b,at+8)!=right)throw std::runtime_error("pair order");const auto w=std::bit_cast<double>(get64(b,at+32));if(!finite_count(w))throw std::runtime_error("pair strength");tt[pos++]=w;if(++right==t){++left;right=left+1;}}
+   for(std::size_t at=0;at<b.size();at+=40){if(pos>=tt.size()||get64(b,at)!=left||get64(b,at+8)!=right)throw std::runtime_error("pair order");const auto status=get64(b,at+24);if(status>2||!accumulate_verdict(tt[pos++],static_cast<EvidenceStatus>(status)))throw std::runtime_error("initial pair verdict");if(++right==t){++left;right=left+1;}}
   }if(pos!=tt.size())throw std::runtime_error("missing pairs");
  }
  InputCollision engine(n,t,ti,tt);std::vector<unsigned> order(n);std::iota(order.begin(),order.end(),0);
+ std::vector<TernaryCount> experience_counts(n);
+ std::ofstream experience_log(out/"experience-counts.jsonl");experience_log.exceptions(std::ios::badbit|std::ios::failbit);
  Writer writer{out};std::ofstream records(out/"checkpoints.jsonl"),reports(out/"rounds.jsonl"),traces(out/"trace.jsonl"),concepts(out/"concepts.jsonl");
  for(auto* f:{&records,&reports,&traces,&concepts}){f->exceptions(std::ios::badbit|std::ios::failbit);*f<<std::setprecision(17);}
- auto checkpoint=[&](unsigned round,const char* kind,const std::vector<double>& values){for(std::size_t start=0;start<values.size();start+=16384){auto span=std::span(values).subspan(start,std::min<std::size_t>(16384,values.size()-start));auto a=writer.append(std::as_bytes(span),"application/x-swegca-strengths-f64");records<<"{\"round\":"<<round<<",\"kind\":\""<<kind<<"\",\"start\":"<<start<<",\"count\":"<<span.size()<<",\"record\":";address(records,a);records<<"}\n";}};
+ auto checkpoint=[&](unsigned round,const char* kind,const std::vector<TernaryCount>& values){for(std::size_t start=0;start<values.size();start+=16384){auto span=std::span(values).subspan(start,std::min<std::size_t>(16384,values.size()-start));auto a=writer.append(std::as_bytes(span),"application/x-swegca-counts-u64x3");records<<"{\"round\":"<<round<<",\"kind\":\""<<kind<<"\",\"start\":"<<start<<",\"count\":"<<span.size()<<",\"record\":";address(records,a);records<<"}\n";}};
  checkpoint(0,"tag_image",ti);checkpoint(0,"tag_tag",tt);
  for(unsigned round=1;round<=rounds;++round){
   const auto begin=std::chrono::steady_clock::now();const auto before_ti=ti,before_tt=tt;const std::uint64_t seed=202609280000ULL+round;
   std::mt19937_64 rng(seed);std::shuffle(order.begin(),order.end(),rng);std::uint64_t counts[2][3]{},revived=0,fallen=0,transitions=0,logged=0;bool last=false,first=true;
   for(unsigned image:order){engine.encounter(image,inputs[image],rng,[&](const CollisionEvent& e){
+   if(!accumulate_verdict(experience_counts[image],e.status))throw std::overflow_error("experience count overflow");
    ++counts[e.member_pair][static_cast<unsigned>(e.status)];if(!first)transitions+=last!=e.member_pair;first=false;last=e.member_pair;
-   const bool now=connection_evidence_eligible(e.current);revived+=!e.was_active&&now;fallen+=e.was_active&&!now;
-   if(logged<128){++logged;traces<<"{\"round\":"<<round<<",\"input\":"<<image<<",\"tag_pair\":"<<(e.member_pair?"true":"false")<<",\"left\":"<<e.left<<",\"right\":"<<e.right<<",\"status\":"<<unsigned(e.status)<<",\"previous\":"<<e.previous<<",\"current\":"<<e.current<<"}\n";}
+   const bool now=count_evidence_eligible(e.current);revived+=!e.was_active&&now;fallen+=e.was_active&&!now;
+   if(logged<128){++logged;traces<<"{\"round\":"<<round<<",\"input\":"<<image<<",\"tag_pair\":"<<(e.member_pair?"true":"false")<<",\"left\":"<<e.left<<",\"right\":"<<e.right<<",\"status\":"<<unsigned(e.status)<<",\"previous\":"<<'['<<e.previous.accept<<','<<e.previous.reject<<','<<e.previous.abstain<<"],\"current\":["<<e.current.accept<<','<<e.current.reject<<','<<e.current.abstain<<']'<<"}\n";}
   });}
-  std::uint64_t changed=0,active_ti=0,active_tt=0,active_changes=0;double max_delta=0,max_strength=0,min_strength=std::numeric_limits<double>::max();
-  const auto measure=[&](const std::vector<double>& current,const std::vector<double>& previous,std::uint64_t& active){for(std::size_t i=0;i<current.size();++i){changed+=current[i]!=previous[i];active+=connection_evidence_eligible(current[i]);active_changes+=connection_evidence_eligible(current[i])!=connection_evidence_eligible(previous[i]);max_delta=std::max(max_delta,std::abs(current[i]-previous[i]));max_strength=std::max(max_strength,current[i]);min_strength=std::min(min_strength,current[i]);}};
+  for(unsigned i=0;i<n;++i){auto c=experience_counts[i];experience_log<<"{\"round\":"<<round<<",\"input\":"<<i<<",\"counts\":["<<c.accept<<','<<c.reject<<','<<c.abstain<<"]}\n";}experience_log.flush();
+  std::uint64_t changed=0,active_ti=0,active_tt=0,active_changes=0,max_increment=0;
+  const auto measure=[&](const std::vector<TernaryCount>& current,const std::vector<TernaryCount>& previous,std::uint64_t& active){for(std::size_t i=0;i<current.size();++i){
+   const auto a=current[i],b=previous[i];changed+=a!=b;active+=count_evidence_eligible(a);active_changes+=count_evidence_eligible(a)!=count_evidence_eligible(b);
+   max_increment=std::max({max_increment,a.accept-b.accept,a.reject-b.reject,a.abstain-b.abstain});
+  }};
   measure(ti,before_ti,active_ti);measure(tt,before_tt,active_tt);unsigned common=0;
-  for(unsigned tag=0;tag<t;++tag){std::set<std::string> distinct;for(unsigned i=0;i<n;++i)if(connection_evidence_eligible(ti[std::size_t(tag)*n+i]))distinct.insert(image_ids[i]);common+=distinct.size()>1;if(round==rounds)concepts<<"{\"tag\":"<<tag<<",\"distinct_images\":"<<distinct.size()<<",\"common_concept\":"<<(distinct.size()>1?"true":"false")<<"}\n";}
+  for(unsigned tag=0;tag<t;++tag){std::set<std::string> distinct;for(unsigned i=0;i<n;++i)if(count_evidence_eligible(ti[std::size_t(tag)*n+i]))distinct.insert(image_ids[i]);common+=distinct.size()>1;if(round==rounds)concepts<<"{\"tag\":"<<tag<<",\"distinct_images\":"<<distinct.size()<<",\"common_concept\":"<<(distinct.size()>1?"true":"false")<<"}\n";}
   checkpoint(round,"tag_image",ti);checkpoint(round,"tag_tag",tt);records.flush();
-  reports<<"{\"round\":"<<round<<",\"seed\":"<<seed<<",\"input_order_sha256\":\""<<hex(Sha256::of(std::as_bytes(std::span(order))))<<"\",\"tag_image\":["<<counts[0][0]<<','<<counts[0][1]<<','<<counts[0][2]<<"],\"tag_tag\":["<<counts[1][0]<<','<<counts[1][1]<<','<<counts[1][2]<<"],\"type_switches\":"<<transitions<<",\"changed_strengths\":"<<changed<<",\"active_tag_image\":"<<active_ti<<",\"active_tag_tag\":"<<active_tt<<",\"active_set_changes\":"<<active_changes<<",\"revival_events\":"<<revived<<",\"deactivation_events\":"<<fallen<<",\"common_concepts\":"<<common<<",\"max_strength_delta\":"<<max_delta<<",\"min_strength\":"<<min_strength<<",\"max_strength\":"<<max_strength<<",\"seconds\":"<<std::chrono::duration<double>(std::chrono::steady_clock::now()-begin).count()<<"}\n";reports.flush();
-  std::cout<<"ROUND "<<round<<'/'<<rounds<<" changed="<<changed<<" active_tag_tag="<<active_tt<<" revived="<<revived<<" fallen="<<fallen<<" delta="<<max_delta<<std::endl;
+  reports<<"{\"round\":"<<round<<",\"seed\":"<<seed<<",\"input_order_sha256\":\""<<hex(Sha256::of(std::as_bytes(std::span(order))))<<"\",\"tag_image\":["<<counts[0][1]<<','<<counts[0][2]<<','<<counts[0][0]<<"],\"tag_tag\":["<<counts[1][1]<<','<<counts[1][2]<<','<<counts[1][0]<<"],\"type_switches\":"<<transitions<<",\"changed_strengths\":"<<changed<<",\"active_tag_image\":"<<active_ti<<",\"active_tag_tag\":"<<active_tt<<",\"active_set_changes\":"<<active_changes<<",\"revival_events\":"<<revived<<",\"deactivation_events\":"<<fallen<<",\"common_concepts\":"<<common<<",\"max_component_increment\":"<<max_increment<<",\"seconds\":"<<std::chrono::duration<double>(std::chrono::steady_clock::now()-begin).count()<<"}\n";reports.flush();
+  std::cout<<"ROUND "<<round<<'/'<<rounds<<" changed="<<changed<<" active_tag_tag="<<active_tt<<" revived="<<revived<<" fallen="<<fallen<<" max_increment="<<max_increment<<std::endl;
  }
- std::ofstream manifest(out/"inputs.json");manifest<<"{\"graph\":";write_json_string(manifest,graph.string());manifest<<",\"tag_image\":";write_json_string(manifest,irpath.string());manifest<<",\"tag_tag\":";write_json_string(manifest,prpath.string());manifest<<",\"rounds\":"<<rounds<<",\"images\":"<<n<<",\"tags\":"<<t<<",\"claim\":\"Does this incoming experience support this activated relation?\",\"main_merged\":false}\n";
+ std::ofstream manifest(out/"inputs.json");manifest<<"{\"graph\":";write_json_string(manifest,graph.string());manifest<<",\"tag_image\":";write_json_string(manifest,irpath.string());manifest<<",\"tag_tag\":";write_json_string(manifest,prpath.string());manifest<<",\"rounds\":"<<rounds<<",\"images\":"<<n<<",\"tags\":"<<t<<",\"representation\":\"accept_reject_abstain_u64\",\"activation\":\"accept>=reject\",\"initialization\":\"one recorded initial verdict per connection, no float inversion\",\"claim\":\"Does this incoming experience support this activated relation?\",\"main_merged\":false}\n";
 }catch(const std::exception& e){std::cerr<<"FAILED: "<<e.what()<<std::endl;return 1;}

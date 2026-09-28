@@ -320,3 +320,6 @@ $(BUILD)/input-collision-tests: tests/input_collision_tests.cpp cpp/vrs/input_co
 
 $(BUILD)/swegca-input-collision: tools/input_collision.cpp cpp/vrs/input_collision.hpp cpp/transport/json.cpp cpp/transport/json.hpp $(BUILD)/libswegca-vrs.a $(CORE_HEADERS) | $(BUILD)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< cpp/transport/json.cpp $(BUILD)/libswegca-vrs.a -o $@
+
+$(BUILD)/ternary-count-tests: tests/ternary_count_tests.cpp $(CORE_HEADERS) | $(BUILD)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< -o $@
