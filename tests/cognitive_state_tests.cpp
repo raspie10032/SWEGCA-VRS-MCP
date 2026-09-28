@@ -1,8 +1,10 @@
 #include "world/cognitive_state.hpp"
 
+#include <cmath>
 #include <cstdlib>
 #include <functional>
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -102,6 +104,87 @@ void test_all_supported_dtypes() {
             "unsupported cognitive state dtype");
 }
 
+double stored(const TensorDType dtype, const double value) {
+    return Tensor(dtype, {1}, {value}).values()[0];
+}
+
+void test_tensor_dtype_storage_canonicalization() {
+    for (const auto dtype : {TensorDType::bfloat16, TensorDType::float16,
+                             TensorDType::float32, TensorDType::float64}) {
+        const double positive_zero = stored(dtype, 0.0);
+        const double negative_zero = stored(dtype, -0.0);
+        const double positive_infinity =
+            stored(dtype, std::numeric_limits<double>::infinity());
+        const double negative_infinity =
+            stored(dtype, -std::numeric_limits<double>::infinity());
+        const double positive_nan =
+            stored(dtype, std::numeric_limits<double>::quiet_NaN());
+        const double negative_nan =
+            stored(dtype, -std::numeric_limits<double>::quiet_NaN());
+        CHECK(positive_zero == 0.0 && !std::signbit(positive_zero));
+        CHECK(negative_zero == 0.0 && std::signbit(negative_zero));
+        CHECK(std::isinf(positive_infinity) && !std::signbit(positive_infinity));
+        CHECK(std::isinf(negative_infinity) && std::signbit(negative_infinity));
+        CHECK(std::isnan(positive_nan) && !std::signbit(positive_nan));
+        CHECK(std::isnan(negative_nan) && std::signbit(negative_nan));
+    }
+
+    CHECK(stored(TensorDType::float64, 16'777'217.0) == 16'777'217.0);
+    CHECK(stored(TensorDType::float64, std::numeric_limits<double>::denorm_min()) ==
+          std::numeric_limits<double>::denorm_min());
+    CHECK(stored(TensorDType::float64, std::numeric_limits<double>::max()) ==
+          std::numeric_limits<double>::max());
+    CHECK(stored(TensorDType::float32, 16'777'217.0) == 16'777'216.0);
+    CHECK(stored(TensorDType::float32, 16'777'219.0) == 16'777'220.0);
+    const double float_minimum_subnormal =
+        static_cast<double>(std::numeric_limits<float>::denorm_min());
+    CHECK(stored(TensorDType::float32, float_minimum_subnormal) ==
+          float_minimum_subnormal);
+    CHECK(stored(TensorDType::float32, std::ldexp(1.0, -150)) == 0.0);
+    CHECK(std::signbit(stored(TensorDType::float32, -std::ldexp(1.0, -150))));
+    CHECK(stored(TensorDType::float32,
+                 static_cast<double>(std::numeric_limits<float>::max())) ==
+          static_cast<double>(std::numeric_limits<float>::max()));
+
+    CHECK(stored(TensorDType::float16, 1.0 + std::ldexp(1.0, -11)) == 1.0);
+    CHECK(stored(TensorDType::float16, 1.0 + 3.0 * std::ldexp(1.0, -11)) ==
+          1.0 + std::ldexp(1.0, -9));
+    CHECK(stored(TensorDType::bfloat16, 1.0 + std::ldexp(1.0, -8)) == 1.0);
+    CHECK(stored(TensorDType::bfloat16, 1.0 + 3.0 * std::ldexp(1.0, -8)) ==
+          1.0 + std::ldexp(1.0, -6));
+
+    const double half_minimum_subnormal = std::ldexp(1.0, -24);
+    CHECK(stored(TensorDType::float16, half_minimum_subnormal) ==
+          half_minimum_subnormal);
+    CHECK(stored(TensorDType::float16, std::ldexp(1.0, -25)) == 0.0);
+    CHECK(stored(TensorDType::float16,
+                 std::nextafter(std::ldexp(1.0, -25), 1.0)) ==
+          half_minimum_subnormal);
+
+    const double bfloat_minimum_subnormal = std::ldexp(1.0, -133);
+    CHECK(stored(TensorDType::bfloat16, bfloat_minimum_subnormal) ==
+          bfloat_minimum_subnormal);
+    CHECK(stored(TensorDType::bfloat16, std::ldexp(1.0, -134)) == 0.0);
+    CHECK(stored(TensorDType::bfloat16,
+                 std::nextafter(std::ldexp(1.0, -134), 1.0)) ==
+          bfloat_minimum_subnormal);
+
+    CHECK(stored(TensorDType::float16, 65'504.0) == 65'504.0);
+    CHECK(std::isinf(stored(TensorDType::float16, 65'520.0)));
+    const double bfloat_maximum = std::ldexp(2.0 - std::ldexp(1.0, -7), 127);
+    CHECK(stored(TensorDType::bfloat16, bfloat_maximum) == bfloat_maximum);
+    CHECK(std::isinf(stored(TensorDType::bfloat16,
+                            bfloat_maximum + std::ldexp(1.0, 119))));
+
+    const Tensor original(
+        TensorDType::float32, {1, 4},
+        {16'777'217.0, -0.0, std::numeric_limits<double>::infinity(),
+         std::numeric_limits<double>::quiet_NaN()});
+    const Tensor restored = Tensor::from_json_payload(original.to_json_payload());
+    CHECK(restored.exact_equal(original));
+    CHECK(original.values()[0] == 16'777'216.0);
+}
+
 void test_shape_dtype_device_and_owner_validation() {
     rejects(
         [] {
@@ -194,6 +277,7 @@ void test_deep_ownership_clone_and_input_nonmutation() {
 int main() {
     test_one_state_and_round_trip();
     test_all_supported_dtypes();
+    test_tensor_dtype_storage_canonicalization();
     test_shape_dtype_device_and_owner_validation();
     test_graph_integrity_and_round_trip();
     test_deep_ownership_clone_and_input_nonmutation();

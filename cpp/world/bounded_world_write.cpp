@@ -240,15 +240,12 @@ std::string mask_hash(const BooleanMask& mask) {
     return hex_digest(digest.finish());
 }
 
-std::string vector_hash(const std::span<const double> values, const TensorDType dtype,
-                        const std::string_view device) {
-    return tensor_hash(Tensor(dtype, {values.size()},
-        std::vector<double>(values.begin(), values.end()), std::string(device)));
+std::string vector_hash(const std::span<const double> values) {
+    return tensor_hash(Tensor(TensorDType::float64, {values.size()},
+        std::vector<double>(values.begin(), values.end())));
 }
 
 std::string proposal_digest(const SynapseProposal& proposal) {
-    const auto dtype = proposal.delta_candidate.dtype();
-    const auto device = proposal.delta_candidate.device();
     std::string addresses{"["};
     for (std::size_t batch = 0; batch != proposal.evidence_addresses.size(); ++batch) {
         if (batch != 0) addresses.push_back(',');
@@ -256,9 +253,9 @@ std::string proposal_digest(const SynapseProposal& proposal) {
     }
     addresses.push_back(']');
     std::string payload{"{\"confidence\":"};
-    append_json_string(payload, vector_hash(proposal.confidence, dtype, device));
+    append_json_string(payload, vector_hash(proposal.confidence));
     payload += ",\"contradiction\":";
-    append_json_string(payload, vector_hash(proposal.contradiction, dtype, device));
+    append_json_string(payload, vector_hash(proposal.contradiction));
     payload += ",\"delta_candidate\":";
     append_json_string(payload, tensor_hash(proposal.delta_candidate));
     payload += ",\"evidence_addresses\":" + addresses + ",\"hypothesis_id\":";
@@ -268,7 +265,7 @@ std::string proposal_digest(const SynapseProposal& proposal) {
     payload += ",\"target_slot_mask\":";
     append_json_string(payload, mask_hash(proposal.target_slot_mask));
     payload += ",\"uncertainty\":";
-    append_json_string(payload, vector_hash(proposal.uncertainty, dtype, device));
+    append_json_string(payload, vector_hash(proposal.uncertainty));
     payload.push_back('}');
     return sha256_text(payload);
 }
@@ -321,16 +318,38 @@ bool payload_string(const RevisionPayloadValue* value, const std::string& expect
 bool payload_double(const RevisionPayloadValue* value, const double expected) {
     if (value == nullptr) return false;
     if (const auto* number = std::get_if<double>(value)) return *number == expected;
-    if (const auto* integer = std::get_if<std::int64_t>(value))
-        return static_cast<double>(*integer) == expected;
+    if (const auto* integer = std::get_if<std::int64_t>(value)) {
+        constexpr double two_to_63 = 9223372036854775808.0;
+        if (!std::isfinite(expected) || std::trunc(expected) != expected ||
+            expected < -two_to_63 || expected >= two_to_63)
+            return false;
+        return static_cast<std::int64_t>(expected) == *integer;
+    }
     if (const auto* boolean = std::get_if<bool>(value))
-        return static_cast<double>(*boolean) == expected;
+        return expected == (*boolean ? 1.0 : 0.0);
+    return false;
+}
+
+bool payload_unsigned_integer(const RevisionPayloadValue* value,
+                              const std::uint64_t expected) {
+    constexpr double two_to_64 = 18446744073709551616.0;
+    if (value == nullptr) return false;
+    if (const auto* integer = std::get_if<std::int64_t>(value))
+        return *integer >= 0 && static_cast<std::uint64_t>(*integer) == expected;
+    if (const auto* number = std::get_if<double>(value)) {
+        if (!std::isfinite(*number) || std::trunc(*number) != *number ||
+            *number < 0.0 || *number >= two_to_64)
+            return false;
+        return static_cast<std::uint64_t>(*number) == expected;
+    }
+    if (const auto* boolean = std::get_if<bool>(value))
+        return static_cast<std::uint64_t>(*boolean) == expected;
     return false;
 }
 
 bool payload_size(const RevisionPayloadValue* value, const std::size_t expected) {
-    if (expected > static_cast<std::size_t>(std::numeric_limits<std::int64_t>::max())) return false;
-    return payload_double(value, static_cast<double>(expected));
+    static_assert(sizeof(std::size_t) <= sizeof(std::uint64_t));
+    return payload_unsigned_integer(value, static_cast<std::uint64_t>(expected));
 }
 
 bool verification_matches_decision(const EvidenceRevisionVerification& verification,
@@ -347,7 +366,7 @@ bool verification_matches_decision(const EvidenceRevisionVerification& verificat
         payload_size(payload_entry(verification, "source_diversity"), decision.source_diversity) &&
         payload_size(payload_entry(verification, "context_diversity"), decision.context_diversity) &&
         payload_double(payload_entry(verification, "regime_change_score"), decision.regime_change_score) &&
-        payload_double(payload_entry(verification, "revision"), static_cast<double>(decision.revision)) &&
+        payload_unsigned_integer(payload_entry(verification, "revision"), decision.revision) &&
         payload_string(payload_entry(verification, "hypothesis_id"), decision.hypothesis_id) &&
         stored_addresses != nullptr && *stored_addresses == decision.evidence_addresses;
 }
@@ -357,6 +376,41 @@ std::vector<std::string> flattened_addresses(const SynapseProposal& proposal) {
     for (const auto& batch : proposal.evidence_addresses)
         result.insert(result.end(), batch.begin(), batch.end());
     return result;
+}
+
+struct VerificationTopology final {
+    std::uint64_t semantic_slots;
+    std::uint64_t executive_slots;
+    std::uint64_t scratch_slots;
+    std::uint64_t local_index;
+};
+
+VerificationTopology verification_topology(const CognitiveState& state) {
+    const Tensor* partitions[]{&state.semantic_slots(), &state.executive_slots(),
+                               &state.scratch_slots()};
+    for (const auto* tensor : partitions)
+        if (tensor->rank() != 3)
+            throw std::invalid_argument("cognitive slot partitions must have rank three");
+    const auto semantic = state.semantic_slots().shape();
+    const auto executive = state.executive_slots().shape();
+    const auto scratch = state.scratch_slots().shape();
+    if (semantic[0] != executive[0] || semantic[0] != scratch[0] ||
+        semantic[2] != executive[2] || semantic[2] != scratch[2])
+        throw std::invalid_argument("cognitive slot partitions must share batch and dimension");
+    if (semantic[1] > slot_roles.size() || executive[1] > slot_roles.size() ||
+        scratch[1] > slot_roles.size())
+        throw std::invalid_argument(
+            "compatibility slot topology requires exactly the registered 32 roles");
+    const auto prefix = semantic[1] + executive[1];
+    const auto total = prefix + scratch[1];
+    if (total != slot_roles.size())
+        throw std::invalid_argument(
+            "compatibility slot topology requires exactly the registered 32 roles");
+    if (verification_index < prefix || verification_index >= total ||
+        verification_index - prefix >= scratch[1])
+        throw std::invalid_argument("verification role must remain in the scratch partition");
+    return VerificationTopology{
+        semantic[1], executive[1], scratch[1], verification_index - prefix};
 }
 
 std::optional<std::string> authorization_reason(const WorldWriteGates& gates,
@@ -420,6 +474,10 @@ Tensor add_tensors(const Tensor& left, const Tensor& right) {
 Tensor replace_scratch_slot(const Tensor& scratch, const std::uint64_t local_slot,
                             const Tensor& value) {
     const auto shape = scratch.shape();
+    const auto value_shape = value.shape();
+    if (value_shape.size() != 2 || value_shape[0] != shape[0] ||
+        value_shape[1] != shape[2])
+        throw std::invalid_argument("verification slot value has incompatible shape");
     std::vector<double> values(scratch.values().begin(), scratch.values().end());
     for (std::uint64_t batch = 0; batch != shape[0]; ++batch) {
         const auto target = static_cast<std::size_t>((batch * shape[1] + local_slot) * shape[2]);
@@ -432,22 +490,93 @@ Tensor replace_scratch_slot(const Tensor& scratch, const std::uint64_t local_slo
                   std::move(values), std::string(scratch.device()));
 }
 
+std::shared_ptr<const CognitiveState> replace_scratch_and_self(
+    const CognitiveState& state, Tensor scratch, JsonValue::Object self_state) {
+    return std::make_shared<const CognitiveState>(
+        state.semantic_slots().clone(), state.executive_slots().clone(),
+        std::move(scratch), state.structured_world_graph(),
+        std::vector<std::string>(state.evidence_refs().begin(), state.evidence_refs().end()),
+        state.goal_state(), state.value_state(), std::move(self_state),
+        std::string(state.owner_id()));
+}
+
+const JsonValue* optional_value(const JsonValue::Object& object,
+                                const std::string_view key) {
+    const auto found = object.find(key);
+    return found == object.end() ? nullptr : &found->second;
+}
+
+std::string python_string(const JsonValue& value) {
+    const auto& storage = value.storage();
+    if (const auto* item = std::get_if<std::string>(&storage)) return *item;
+    if (const auto* item = std::get_if<std::int64_t>(&storage)) return std::to_string(*item);
+    if (const auto* item = std::get_if<double>(&storage)) {
+        if (std::isnan(*item)) return "nan";
+        if (std::isinf(*item)) return std::signbit(*item) ? "-inf" : "inf";
+        return json_double(*item);
+    }
+    if (const auto* item = std::get_if<bool>(&storage)) return *item ? "True" : "False";
+    if (std::holds_alternative<std::nullptr_t>(storage)) return "None";
+    throw std::invalid_argument("receipt identification field must be scalar");
+}
+
+std::string required_string(const JsonValue::Object& object,
+                            const std::string_view key) {
+    const auto* value = optional_value(object, key);
+    if (value == nullptr) throw std::out_of_range("missing receipt field: " + std::string(key));
+    return python_string(*value);
+}
+
+std::vector<std::string> receipt_strings(const JsonValue* value) {
+    std::vector<std::string> result;
+    if (value == nullptr) return result;
+    result.reserve(value->as_array().size());
+    for (const auto& item : value->as_array()) result.emplace_back(item.as_string());
+    return result;
+}
+
 std::int64_t python_int(const JsonValue& value) {
+    constexpr double two_to_63 = 9223372036854775808.0;
     const auto& storage = value.storage();
     if (const auto* item = std::get_if<std::int64_t>(&storage)) return *item;
     if (const auto* item = std::get_if<bool>(&storage)) return *item ? 1 : 0;
     if (const auto* item = std::get_if<double>(&storage)) {
-        if (!std::isfinite(*item) || *item < static_cast<double>(std::numeric_limits<std::int64_t>::min()) ||
-            *item > static_cast<double>(std::numeric_limits<std::int64_t>::max()))
+        if (!std::isfinite(*item) || *item < -two_to_63 || *item >= two_to_63)
             throw std::invalid_argument("bounded write revision is invalid");
         return static_cast<std::int64_t>(*item);
     }
     if (const auto* item = std::get_if<std::string>(&storage)) {
+        const auto first = item->find_first_not_of(" \t\n\r\f\v");
+        if (first == std::string::npos)
+            throw std::invalid_argument("bounded write revision is invalid");
+        const auto last = item->find_last_not_of(" \t\n\r\f\v");
+        std::string_view text(*item);
+        text = text.substr(first, last - first + 1);
+        if (!text.empty() && text.front() == '+') {
+            text.remove_prefix(1);
+        }
+        if (text.empty()) throw std::invalid_argument("bounded write revision is invalid");
         std::int64_t result = 0;
-        const auto parsed = std::from_chars(item->data(), item->data() + item->size(), result);
-        if (parsed.ec == std::errc{} && parsed.ptr == item->data() + item->size()) return result;
+        const auto parsed = std::from_chars(text.data(), text.data() + text.size(), result);
+        if (parsed.ec == std::errc{} && parsed.ptr == text.data() + text.size()) {
+            return result;
+        }
     }
     throw std::invalid_argument("bounded write revision is invalid");
+}
+
+bool exact_json_integer_equal(const JsonValue& value, const std::int64_t expected) {
+    constexpr double two_to_63 = 9223372036854775808.0;
+    const auto& storage = value.storage();
+    if (const auto* item = std::get_if<std::int64_t>(&storage)) return *item == expected;
+    if (const auto* item = std::get_if<bool>(&storage)) return (*item ? 1 : 0) == expected;
+    if (const auto* item = std::get_if<double>(&storage)) {
+        if (!std::isfinite(*item) || std::trunc(*item) != *item ||
+            *item < -two_to_63 || *item >= two_to_63)
+            return false;
+        return static_cast<std::int64_t>(*item) == expected;
+    }
+    return false;
 }
 
 std::string receipt_id(const std::string& before_state_hash,
@@ -469,6 +598,15 @@ std::string receipt_id(const std::string& before_state_hash,
 }
 
 }  // namespace
+
+// Kept out of the public header: this narrow probe lets the direct regression
+// tests exercise the exact payload comparison without minting authority or
+// manufacturing 2^53 contiguous evidence-ledger rows.
+bool bounded_world_write_payload_matches_for_test(
+    const EvidenceRevisionVerification& verification,
+    const AccumulatorDecision& decision) {
+    return verification_matches_decision(verification, decision);
+}
 
 BoundedWorldWriteConfig::BoundedWorldWriteConfig(
     const double minimum_causal_lower_bound_value,
@@ -610,6 +748,61 @@ BoundedWorldWriteResult::BoundedWorldWriteResult(
       committed(committed_value), reason(std::move(reason_value)),
       proposed_delta(std::move(proposed_delta_value)), receipt(std::move(receipt_value)) {}
 
+JsonValue::Object bounded_world_write_receipt_to_dict(
+    const BoundedWorldWriteReceipt& receipt) {
+    JsonValue::Array evidence;
+    evidence.reserve(receipt.evidence_refs.size());
+    for (const auto& item : receipt.evidence_refs) evidence.emplace_back(item);
+    return JsonValue::Object{
+        {"receipt_id", receipt.receipt_id},
+        {"revision", receipt.revision},
+        {"target_role", receipt.target_role},
+        {"before_state_hash", receipt.before_state_hash},
+        {"after_state_hash", receipt.after_state_hash},
+        {"before_slot", receipt.before_slot.to_json_payload()},
+        {"before_slot_hash", receipt.before_slot_hash},
+        {"after_slot_hash", receipt.after_slot_hash},
+        {"applied_delta_hash", receipt.applied_delta_hash},
+        {"evidence_refs", std::move(evidence)},
+        {"hypothesis_id", receipt.hypothesis_id},
+        {"proposal_binding_digest", receipt.proposal_binding_digest},
+        {"prior_write_metadata", receipt.prior_write_metadata
+            ? JsonValue(*receipt.prior_write_metadata) : JsonValue(nullptr)},
+    };
+}
+
+BoundedWorldWriteReceipt bounded_world_write_receipt_from_dict(
+    const JsonValue::Object& payload) {
+    const auto* before_slot_payload = optional_value(payload, "before_slot");
+    if (before_slot_payload == nullptr || !before_slot_payload->is_object())
+        throw std::invalid_argument("receipt before slot must be an object");
+    const auto* revision_value = optional_value(payload, "revision");
+    if (revision_value == nullptr) throw std::out_of_range("missing receipt field: revision");
+    const std::int64_t revision = python_int(*revision_value);
+
+    std::optional<JsonValue::Object> prior;
+    if (const auto* value = optional_value(payload, "prior_write_metadata");
+        value != nullptr && !std::holds_alternative<std::nullptr_t>(value->storage())) {
+        if (!value->is_object())
+            throw std::invalid_argument("prior write metadata must be an object or null");
+        prior = value->as_object();
+    }
+    const auto* hypothesis = optional_value(payload, "hypothesis_id");
+    const auto* binding = optional_value(payload, "proposal_binding_digest");
+    return BoundedWorldWriteReceipt(
+        required_string(payload, "receipt_id"), revision,
+        required_string(payload, "target_role"),
+        required_string(payload, "before_state_hash"),
+        required_string(payload, "after_state_hash"),
+        Tensor::from_json_payload(*before_slot_payload),
+        required_string(payload, "before_slot_hash"),
+        required_string(payload, "after_slot_hash"),
+        required_string(payload, "applied_delta_hash"),
+        receipt_strings(optional_value(payload, "evidence_refs")), std::move(prior),
+        hypothesis == nullptr ? std::string{} : python_string(*hypothesis),
+        binding == nullptr ? std::string{} : python_string(*binding));
+}
+
 std::string cognitive_state_hash(const CognitiveState& state) {
     architecture::Sha256 digest;
     for (const Tensor* tensor : {&state.semantic_slots(), &state.executive_slots(),
@@ -636,15 +829,11 @@ BoundedWorldWriteResult bounded_verification_write(
     const SynapseProposal& proposal, const WorldWriteGates& gates,
     const BoundedWorldWriteConfig& config, const bool commit) {
     if (!state) throw std::invalid_argument("bounded World write state must not be null");
+    const auto topology = verification_topology(*state);
     const auto semantic = state->semantic_slots().shape();
-    const auto executive = state->executive_slots().shape();
-    const auto scratch = state->scratch_slots().shape();
     if (state->persistent_state_count() != 1 || semantic[0] != 1)
         throw std::invalid_argument("bounded World write requires one batch-one CognitiveState");
     proposal.validate(*state);
-    const auto total_slots = semantic[1] + executive[1] + scratch[1];
-    if (total_slots != slot_roles.size())
-        throw std::invalid_argument("compatibility slot topology requires exactly the registered 32 roles");
     std::size_t targets = 0;
     std::uint64_t target_batch = 0;
     std::uint64_t target_slot = 0;
@@ -677,9 +866,7 @@ BoundedWorldWriteResult bounded_verification_write(
         return BoundedWorldWriteResult(state, true, false, "authorized_dry_run",
                                        arbitration.proposed_delta().clone());
 
-    if (verification_index < semantic[1] + executive[1])
-        throw std::invalid_argument("verification role must remain in the scratch partition");
-    const auto local_index = verification_index - semantic[1] - executive[1];
+    const auto local_index = topology.local_index;
     const std::string before_hash = cognitive_state_hash(*state);
     const Tensor before_slot = slot_tensor(*state, local_index);
     const Tensor local_delta = delta_slot(arbitration.proposed_delta(), verification_index);
@@ -730,6 +917,95 @@ BoundedWorldWriteResult bounded_verification_write(
         prior, proposal.hypothesis_id, bound);
     return BoundedWorldWriteResult(updated, true, true, "committed",
                                    arbitration.proposed_delta().clone(), receipt);
+}
+
+std::shared_ptr<const CognitiveState> rollback_bounded_verification_write(
+    std::shared_ptr<const CognitiveState> state,
+    const BoundedWorldWriteReceipt& receipt) {
+    if (!state) throw std::invalid_argument("bounded rollback state must not be null");
+    if (receipt.target_role != "verification")
+        throw std::invalid_argument("receipt target role is invalid");
+    const auto topology = verification_topology(*state);
+    if (cognitive_state_hash(*state) != receipt.after_state_hash)
+        throw std::invalid_argument("state changed after bounded write; rollback is stale");
+    const auto local_index = topology.local_index;
+    if (tensor_hash(slot_tensor(*state, local_index)) != receipt.after_slot_hash)
+        throw std::invalid_argument("verification slot differs from receipt");
+    const auto before_slot = Tensor(
+        state->scratch_slots().dtype(),
+        std::vector<std::uint64_t>(receipt.before_slot.shape().begin(),
+                                   receipt.before_slot.shape().end()),
+        std::vector<double>(receipt.before_slot.values().begin(),
+                            receipt.before_slot.values().end()),
+        std::string(state->scratch_slots().device()));
+    auto self_state = state->self_state();
+    if (receipt.prior_write_metadata) {
+        self_state[std::string(write_key)] = JsonValue(*receipt.prior_write_metadata);
+    } else {
+        self_state.erase(std::string(write_key));
+    }
+    auto restored = replace_scratch_and_self(
+        *state, replace_scratch_slot(state->scratch_slots(), local_index, before_slot),
+        std::move(self_state));
+    if (cognitive_state_hash(*restored) != receipt.before_state_hash)
+        throw std::invalid_argument("bounded write rollback was not bit-exact");
+    return restored;
+}
+
+void validate_bounded_verification_retraction(
+    const CognitiveState& state, const BoundedWorldWriteReceipt& receipt) {
+    if (receipt.target_role != "verification")
+        throw std::invalid_argument("receipt target role is invalid");
+    const auto topology = verification_topology(state);
+    const auto found = state.self_state().find(std::string(write_key));
+    if (found == state.self_state().end() || !found->second.is_object())
+        throw std::invalid_argument("bounded write receipt is no longer active");
+    const auto& current = found->second.as_object();
+    const auto receipt_id_value = current.find("receipt_id");
+    const auto revision_value = current.find("revision");
+    const auto target_value = current.find("target_role");
+    bool head_matches = receipt_id_value != current.end() &&
+        revision_value != current.end() && target_value != current.end();
+    if (head_matches) {
+        try {
+            head_matches = receipt_id_value->second.as_string() == receipt.receipt_id &&
+                exact_json_integer_equal(revision_value->second, receipt.revision) &&
+                target_value->second.as_string() == receipt.target_role;
+        } catch (const std::invalid_argument&) {
+            head_matches = false;
+        }
+    }
+    if (!head_matches)
+        throw std::invalid_argument("bounded write receipt is not the current LIFO head");
+    const auto local_index = topology.local_index;
+    if (tensor_hash(slot_tensor(state, local_index)) != receipt.after_slot_hash)
+        throw std::invalid_argument("verification slot has a newer or unrelated value");
+}
+
+std::shared_ptr<const CognitiveState> retract_bounded_verification_write(
+    std::shared_ptr<const CognitiveState> state,
+    const BoundedWorldWriteReceipt& receipt) {
+    if (!state) throw std::invalid_argument("bounded retraction state must not be null");
+    validate_bounded_verification_retraction(*state, receipt);
+    const auto local_index = verification_topology(*state).local_index;
+    const auto current = slot_tensor(*state, local_index);
+    const Tensor before_slot(
+        current.dtype(), std::vector<std::uint64_t>(receipt.before_slot.shape().begin(),
+                                                    receipt.before_slot.shape().end()),
+        std::vector<double>(receipt.before_slot.values().begin(),
+                            receipt.before_slot.values().end()),
+        std::string(current.device()));
+    if (tensor_hash(before_slot) != receipt.before_slot_hash)
+        throw std::invalid_argument("receipt before slot differs from its content hash");
+    auto self_state = state->self_state();
+    if (receipt.prior_write_metadata) {
+        self_state[std::string(write_key)] = JsonValue(*receipt.prior_write_metadata);
+    } else {
+        self_state.erase(std::string(write_key));
+    }
+    return replace_scratch_and_self(
+        *state, replace_scratch_slot(state->scratch_slots(), local_index, before_slot),
+        std::move(self_state));
 }
 
 }  // namespace swegca::world

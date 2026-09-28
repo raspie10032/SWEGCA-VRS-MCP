@@ -166,7 +166,10 @@ void test_weighted_reduction() {
                                 proposal(*state, "heavier", 3.0, 1.0)};
     const auto result = arbiter(state, proposals, false);
     const auto first_target = static_cast<std::size_t>(30 * 4);
-    require(std::abs(result.proposed_delta().values()[first_target] - (3.5 / 1.5)) < 1e-12,
+    const double float32_expected = static_cast<double>(static_cast<float>(3.5 / 1.5));
+    require(result.proposed_delta().dtype() == TensorDType::float32,
+            "weighted proposal reduction dtype changed");
+    require(result.proposed_delta().values()[first_target] == float32_expected,
             "weighted proposal reduction changed");
 }
 

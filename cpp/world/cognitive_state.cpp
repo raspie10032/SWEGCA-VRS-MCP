@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <bit>
+#include <cmath>
 #include <limits>
 #include <set>
 #include <stdexcept>
@@ -64,6 +65,130 @@ void require_text(const std::string_view value, const char* name) {
         return TensorDType::float64;
     }
     throw std::invalid_argument("unsupported cognitive state dtype: " + std::string(name));
+}
+
+[[nodiscard]] std::uint64_t round_shift_right_to_even(
+    const std::uint64_t value, const unsigned shift) noexcept {
+    if (shift == 0) return value;
+    if (shift >= 64) return 0;
+    const std::uint64_t quotient = value >> shift;
+    const std::uint64_t remainder = value & ((std::uint64_t{1} << shift) - 1U);
+    const std::uint64_t halfway = std::uint64_t{1} << (shift - 1U);
+    return quotient + static_cast<std::uint64_t>(
+        remainder > halfway || (remainder == halfway && (quotient & 1U) != 0));
+}
+
+[[nodiscard]] std::uint16_t binary64_to_reduced_bits(
+    const double value, const unsigned exponent_bits, const unsigned fraction_bits,
+    const int exponent_bias) noexcept {
+    const std::uint64_t raw = std::bit_cast<std::uint64_t>(value);
+    const std::uint16_t sign = static_cast<std::uint16_t>(
+        (raw >> 63U) << (exponent_bits + fraction_bits));
+    const std::uint64_t source_exponent = (raw >> 52U) & 0x7ffU;
+    const std::uint64_t source_fraction = raw & ((std::uint64_t{1} << 52U) - 1U);
+    const std::uint16_t target_exponent_mask = static_cast<std::uint16_t>(
+        (std::uint16_t{1} << exponent_bits) - 1U);
+    const auto encode = [&](const std::uint16_t exponent,
+                            const std::uint16_t fraction) noexcept {
+        return static_cast<std::uint16_t>(
+            sign | static_cast<std::uint16_t>(exponent << fraction_bits) | fraction);
+    };
+
+    if (source_exponent == 0x7ffU) {
+        if (source_fraction == 0) return encode(target_exponent_mask, 0);
+        return encode(target_exponent_mask,
+                      static_cast<std::uint16_t>(std::uint16_t{1} <<
+                                                 (fraction_bits - 1U)));
+    }
+    if (source_exponent == 0 && source_fraction == 0) return sign;
+
+    const std::uint64_t significand = source_exponent == 0
+        ? source_fraction
+        : (std::uint64_t{1} << 52U) | source_fraction;
+    const int source_power = source_exponent == 0
+        ? -1074
+        : static_cast<int>(source_exponent) - 1023 - 52;
+    const unsigned highest_bit = 63U - static_cast<unsigned>(std::countl_zero(significand));
+    int target_exponent = source_power + static_cast<int>(highest_bit);
+    const int minimum_normal_exponent = 1 - exponent_bias;
+    const int maximum_normal_exponent =
+        static_cast<int>(target_exponent_mask) - 1 - exponent_bias;
+
+    if (target_exponent < minimum_normal_exponent) {
+        const int subnormal_power = minimum_normal_exponent -
+            static_cast<int>(fraction_bits);
+        const int shift = subnormal_power - source_power;
+        const std::uint64_t fraction = shift > 0
+            ? round_shift_right_to_even(significand, static_cast<unsigned>(shift))
+            : significand << static_cast<unsigned>(-shift);
+        if (fraction == 0) return sign;
+        if (fraction >= (std::uint64_t{1} << fraction_bits)) return encode(1, 0);
+        return encode(0, static_cast<std::uint16_t>(fraction));
+    }
+    if (target_exponent > maximum_normal_exponent) {
+        return encode(target_exponent_mask, 0);
+    }
+
+    const unsigned precision = fraction_bits + 1U;
+    const unsigned shift = highest_bit - (precision - 1U);
+    std::uint64_t rounded = round_shift_right_to_even(significand, shift);
+    if (rounded == (std::uint64_t{1} << precision)) {
+        rounded >>= 1U;
+        ++target_exponent;
+        if (target_exponent > maximum_normal_exponent) {
+            return encode(target_exponent_mask, 0);
+        }
+    }
+    const auto stored_exponent = static_cast<std::uint16_t>(target_exponent + exponent_bias);
+    const auto stored_fraction = static_cast<std::uint16_t>(
+        rounded - (std::uint64_t{1} << fraction_bits));
+    return encode(stored_exponent, stored_fraction);
+}
+
+[[nodiscard]] double reduced_bits_to_binary64(
+    const std::uint16_t bits, const unsigned exponent_bits,
+    const unsigned fraction_bits, const int exponent_bias) noexcept {
+    const std::uint16_t fraction_mask = static_cast<std::uint16_t>(
+        (std::uint16_t{1} << fraction_bits) - 1U);
+    const std::uint16_t exponent_mask = static_cast<std::uint16_t>(
+        (std::uint16_t{1} << exponent_bits) - 1U);
+    const bool negative = (bits & static_cast<std::uint16_t>(
+        std::uint16_t{1} << (exponent_bits + fraction_bits))) != 0;
+    const std::uint16_t exponent = static_cast<std::uint16_t>(
+        (bits >> fraction_bits) & exponent_mask);
+    const std::uint16_t fraction = static_cast<std::uint16_t>(bits & fraction_mask);
+
+    double result = 0.0;
+    if (exponent == exponent_mask) {
+        result = fraction == 0 ? std::numeric_limits<double>::infinity()
+                               : std::numeric_limits<double>::quiet_NaN();
+    } else if (exponent == 0) {
+        result = std::ldexp(static_cast<double>(fraction),
+                            1 - exponent_bias - static_cast<int>(fraction_bits));
+    } else {
+        result = std::ldexp(
+            1.0 + std::ldexp(static_cast<double>(fraction),
+                             -static_cast<int>(fraction_bits)),
+            static_cast<int>(exponent) - exponent_bias);
+    }
+    return std::copysign(result, negative ? -1.0 : 1.0);
+}
+
+[[nodiscard]] double canonical_tensor_value(
+    const TensorDType dtype, const double value) noexcept {
+    switch (dtype) {
+    case TensorDType::float64:
+        return value;
+    case TensorDType::float32:
+        return static_cast<double>(static_cast<float>(value));
+    case TensorDType::bfloat16:
+        return reduced_bits_to_binary64(
+            binary64_to_reduced_bits(value, 8, 7, 127), 8, 7, 127);
+    case TensorDType::float16:
+        return reduced_bits_to_binary64(
+            binary64_to_reduced_bits(value, 5, 10, 15), 5, 10, 15);
+    }
+    return value;
 }
 
 [[nodiscard]] JsonValue nested_values(const std::span<const std::uint64_t> shape,
@@ -224,6 +349,7 @@ Tensor::Tensor(const TensorDType dtype, std::vector<std::uint64_t> shape,
         static_cast<std::size_t>(count) != values_.size()) {
         throw std::invalid_argument("tensor shape does not match value count");
     }
+    for (double& value : values_) value = canonical_tensor_value(dtype_, value);
 }
 
 TensorDType Tensor::dtype() const noexcept { return dtype_; }

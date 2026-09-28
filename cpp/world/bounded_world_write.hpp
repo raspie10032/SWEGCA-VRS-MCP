@@ -129,11 +129,27 @@ public:
     const std::shared_ptr<const BoundedWorldWriteReceipt> receipt;
 };
 
+[[nodiscard]] JsonValue::Object bounded_world_write_receipt_to_dict(
+    const BoundedWorldWriteReceipt& receipt);
+[[nodiscard]] BoundedWorldWriteReceipt bounded_world_write_receipt_from_dict(
+    const JsonValue::Object& payload);
+
 [[nodiscard]] std::string cognitive_state_hash(const CognitiveState& state);
 
 [[nodiscard]] BoundedWorldWriteResult bounded_verification_write(
     std::shared_ptr<const CognitiveState> state,
     const SynapseProposal& proposal, const WorldWriteGates& gates,
     const BoundedWorldWriteConfig& config, bool commit);
+
+[[nodiscard]] std::shared_ptr<const CognitiveState> rollback_bounded_verification_write(
+    std::shared_ptr<const CognitiveState> state,
+    const BoundedWorldWriteReceipt& receipt);
+
+void validate_bounded_verification_retraction(
+    const CognitiveState& state, const BoundedWorldWriteReceipt& receipt);
+
+[[nodiscard]] std::shared_ptr<const CognitiveState> retract_bounded_verification_write(
+    std::shared_ptr<const CognitiveState> state,
+    const BoundedWorldWriteReceipt& receipt);
 
 }  // namespace swegca::world
