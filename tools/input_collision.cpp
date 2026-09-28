@@ -11,6 +11,10 @@
 #include <iomanip>
 #include <sys/resource.h>
 #include "vrs/input_collision.hpp"
+#include "vrs/concept_growth.hpp"
+#ifdef SWEGCA_PARALLEL_COLLISION
+#include "vrs/collision_dispatch.hpp"
+#endif
 #include <chrono>
 #include <tuple>
 using namespace swegca::architecture;
@@ -49,8 +53,10 @@ std::uint64_t get64(std::span<const std::byte> bytes,std::size_t at){
 }
 void put64(std::vector<std::byte>& out,std::uint64_t n){for(unsigned b=0;b<8;++b)out.push_back(std::byte(n>>(8*b)));}
 int main(int argc,char** argv)try{
- if(argc!=7)throw std::runtime_error("usage: input-collision DATASET GRAPH TAG_IMAGE TAG_TAG OUTPUT ROUNDS");
+ if(argc!=7&&argc!=8)throw std::runtime_error("usage: input-collision DATASET GRAPH TAG_IMAGE TAG_TAG OUTPUT ROUNDS [COUNT_CHECKPOINT]");
+#ifndef SWEGCA_PARALLEL_COLLISION
  rlimit cap{4000000000ULL,4000000000ULL};if(setrlimit(RLIMIT_AS,&cap))throw std::runtime_error("memory limit");
+#endif
  const std::filesystem::path data(argv[1]),graph(argv[2]),irpath(argv[3]),prpath(argv[4]),out(argv[5]);const unsigned rounds=std::stoul(argv[6]);
  if(!rounds||std::filesystem::exists(out/"rounds.jsonl"))throw std::runtime_error("invalid rounds/existing output");
  MemoryBudget mem{128ULL<<20};Reader gr(graph),ir(irpath),pr(prpath);
@@ -63,7 +69,8 @@ int main(int argc,char** argv)try{
  if(source_records.size()!=n||tag_records.size()!=t||matrices.size()!=t)throw std::runtime_error("missing source/tag/matrix");
  using TagKey=std::tuple<std::string,unsigned,unsigned,std::string>;
  std::map<TagKey,unsigned> dictionary;
- for(auto [tag,a]:tag_records){auto r=gr.read(a);dictionary.emplace(TagKey{std::string(r.at("model").string()),num(r.at("index")),num(r.at("category")),std::string(r.at("tag").string())},tag);}
+ std::vector<std::string> tag_names(t);std::ofstream tag_names_log(out/"tag-dictionary.jsonl");
+ for(auto [tag,a]:tag_records){auto r=gr.read(a);tag_names[tag]=std::string(r.at("tag").string());tag_names_log<<"{\"tag\":"<<tag<<",\"name\":";write_json_string(tag_names_log,tag_names[tag]);tag_names_log<<"}\n";dictionary.emplace(TagKey{std::string(r.at("model").string()),num(r.at("index")),num(r.at("category")),std::string(r.at("tag").string())},tag);}
  std::vector<CollisionInput> inputs(n);std::vector<std::string> image_ids(n);
  std::ofstream input_refs(out/"input-records.jsonl");input_refs.exceptions(std::ios::badbit|std::ios::failbit);
  for(auto [i,a]:source_records){if(i>=n)throw std::runtime_error("source id");auto source=gr.read(a);const auto fa=addr(source.at("feature_record"));auto feature=gr.read(fa);
@@ -90,22 +97,55 @@ int main(int argc,char** argv)try{
    for(std::size_t at=0;at<b.size();at+=40){if(pos>=tt.size()||get64(b,at)!=left||get64(b,at+8)!=right)throw std::runtime_error("pair order");const auto status=get64(b,at+24);if(status>2||!accumulate_verdict(tt[pos++],static_cast<EvidenceStatus>(status)))throw std::runtime_error("initial pair verdict");if(++right==t){++left;right=left+1;}}
   }if(pos!=tt.size())throw std::runtime_error("missing pairs");
  }
- InputCollision engine(n,t,ti,tt);std::vector<unsigned> order(n);std::iota(order.begin(),order.end(),0);
+ unsigned round_offset=0;
+ if(argc==8){
+  const std::filesystem::path base(argv[7]);auto previous=parse_json(load(base/"inputs.json"),mem);
+  if(previous.at("representation").string()!="accept_reject_abstain_u64"||num(previous.at("images"))!=n||num(previous.at("tags"))!=t||previous.at("graph").string()!=graph.string()||previous.at("tag_image").string()!=irpath.string()||previous.at("tag_tag").string()!=prpath.string())throw std::runtime_error("checkpoint lineage mismatch");
+  round_offset=num(previous.at("rounds"));Reader saved(base);std::size_t loaded_ti=0,loaded_tt=0;
+  std::ifstream checkpoints(base/"checkpoints.jsonl");
+  while(std::getline(checkpoints,line)){auto row=parse_json(line,mem);if(num(row.at("round"))!=round_offset)continue;
+   const auto kind=row.at("kind").string();if(kind!="tag_image"&&kind!="tag_tag")throw std::runtime_error("checkpoint kind");
+   auto& values=kind=="tag_image"?ti:tt;auto& loaded=kind=="tag_image"?loaded_ti:loaded_tt;
+   const auto start=std::stoull(std::string(row.at("start").scalar)),count=std::stoull(std::string(row.at("count").scalar));
+   if(start!=loaded||start>values.size()||count>values.size()-start)throw std::runtime_error("checkpoint range");
+   const auto a=addr(row.at("record"));auto record=saved.blocks.at(a.block).read(a,2ULL<<20,saved.memory);const auto bytes=record.view().content;
+   if(bytes.size()!=count*24)throw std::runtime_error("checkpoint count encoding");
+   for(std::size_t i=0;i<count;++i)values[start+i]={get64(bytes,i*24),get64(bytes,i*24+8),get64(bytes,i*24+16)};
+   loaded+=count;
+  }
+  if(loaded_ti!=ti.size()||loaded_tt!=tt.size())throw std::runtime_error("incomplete count checkpoint");
+ }
+ InputCollision::Dispatch dispatch;
+#ifdef SWEGCA_PARALLEL_COLLISION
+ CollisionDispatch pool((out/"dispatch").string());
+ dispatch=[&](auto in,auto results,auto commit){pool.judge(in,results,std::move(commit));};
+#endif
+ InputCollision engine(n,t,ti,tt,std::move(dispatch));std::vector<unsigned> order(n);std::iota(order.begin(),order.end(),0);
  std::vector<TernaryCount> experience_counts(n);
  std::ofstream experience_log(out/"experience-counts.jsonl");experience_log.exceptions(std::ios::badbit|std::ios::failbit);
+ std::ofstream growth_log(out/"concept-growth.jsonl");growth_log.exceptions(std::ios::badbit|std::ios::failbit);
+ std::vector<DigestBytes> growth_ids;growth_ids.reserve(n);std::set<DigestBytes> growth_population;
+ for(const auto& id:image_ids){auto d=digest(id);growth_ids.push_back(d);growth_population.insert(d);}
  Writer writer{out};std::ofstream records(out/"checkpoints.jsonl"),reports(out/"rounds.jsonl"),traces(out/"trace.jsonl"),concepts(out/"concepts.jsonl");
  for(auto* f:{&records,&reports,&traces,&concepts}){f->exceptions(std::ios::badbit|std::ios::failbit);*f<<std::setprecision(17);}
  auto checkpoint=[&](unsigned round,const char* kind,const std::vector<TernaryCount>& values){for(std::size_t start=0;start<values.size();start+=16384){auto span=std::span(values).subspan(start,std::min<std::size_t>(16384,values.size()-start));auto a=writer.append(std::as_bytes(span),"application/x-swegca-counts-u64x3");records<<"{\"round\":"<<round<<",\"kind\":\""<<kind<<"\",\"start\":"<<start<<",\"count\":"<<span.size()<<",\"record\":";address(records,a);records<<"}\n";}};
- checkpoint(0,"tag_image",ti);checkpoint(0,"tag_tag",tt);
- for(unsigned round=1;round<=rounds;++round){
-  const auto begin=std::chrono::steady_clock::now();const auto before_ti=ti,before_tt=tt;const std::uint64_t seed=202609280000ULL+round;
+ // A resumed run already has an authenticated immutable baseline. Do not
+ // rewrite it before verification; emit only the new completed checkpoint.
+ if(!round_offset){checkpoint(0,"tag_image",ti);checkpoint(0,"tag_tag",tt);}
+ for(unsigned round=round_offset+1;round<=round_offset+rounds;++round){
+  const auto begin=std::chrono::steady_clock::now();const auto before_ti=ti,before_tt=tt;std::random_device entropy;const std::uint64_t seed=(std::uint64_t(entropy())<<32)^entropy();
   std::mt19937_64 rng(seed);std::shuffle(order.begin(),order.end(),rng);std::uint64_t counts[2][3]{},revived=0,fallen=0,transitions=0,logged=0;bool last=false,first=true;
+  unsigned processed=0;
   for(unsigned image:order){engine.encounter(image,inputs[image],rng,[&](const CollisionEvent& e){
    if(!accumulate_verdict(experience_counts[image],e.status))throw std::overflow_error("experience count overflow");
    ++counts[e.member_pair][static_cast<unsigned>(e.status)];if(!first)transitions+=last!=e.member_pair;first=false;last=e.member_pair;
    const bool now=count_evidence_eligible(e.current);revived+=!e.was_active&&now;fallen+=e.was_active&&!now;
    if(logged<128){++logged;traces<<"{\"round\":"<<round<<",\"input\":"<<image<<",\"tag_pair\":"<<(e.member_pair?"true":"false")<<",\"left\":"<<e.left<<",\"right\":"<<e.right<<",\"status\":"<<unsigned(e.status)<<",\"previous\":"<<'['<<e.previous.accept<<','<<e.previous.reject<<','<<e.previous.abstain<<"],\"current\":["<<e.current.accept<<','<<e.current.reject<<','<<e.current.abstain<<']'<<"}\n";}
-  });}
+  });
+   if(++processed%32==0||processed==n){
+    auto tmp=out/"live.tmp";std::ofstream live(tmp);live<<"{\"phase\":\"actual_synapse_verification_and_application\",\"round\":"<<round<<",\"inputs_applied\":"<<processed<<",\"inputs_total\":"<<n<<",\"verified_applied\":"<<(counts[0][0]+counts[0][1]+counts[0][2]+counts[1][0]+counts[1][1]+counts[1][2])<<",\"accept\":"<<counts[0][1]+counts[1][1]<<",\"reject\":"<<counts[0][2]+counts[1][2]<<",\"abstain\":"<<counts[0][0]+counts[1][0]<<",\"checkpoint_complete\":false}\n";live.close();std::filesystem::rename(tmp,out/"live.json");
+   }
+  }
   for(unsigned i=0;i<n;++i){auto c=experience_counts[i];experience_log<<"{\"round\":"<<round<<",\"input\":"<<i<<",\"counts\":["<<c.accept<<','<<c.reject<<','<<c.abstain<<"]}\n";}experience_log.flush();
   std::uint64_t changed=0,active_ti=0,active_tt=0,active_changes=0,max_increment=0;
   const auto measure=[&](const std::vector<TernaryCount>& current,const std::vector<TernaryCount>& previous,std::uint64_t& active){for(std::size_t i=0;i<current.size();++i){
@@ -113,10 +153,33 @@ int main(int argc,char** argv)try{
    max_increment=std::max({max_increment,a.accept-b.accept,a.reject-b.reject,a.abstain-b.abstain});
   }};
   measure(ti,before_ti,active_ti);measure(tt,before_tt,active_tt);unsigned common=0;
-  for(unsigned tag=0;tag<t;++tag){std::set<std::string> distinct;for(unsigned i=0;i<n;++i)if(count_evidence_eligible(ti[std::size_t(tag)*n+i]))distinct.insert(image_ids[i]);common+=distinct.size()>1;if(round==rounds)concepts<<"{\"tag\":"<<tag<<",\"distinct_images\":"<<distinct.size()<<",\"common_concept\":"<<(distinct.size()>1?"true":"false")<<"}\n";}
+  for(unsigned tag=0;tag<t;++tag){std::set<std::string> distinct;ConceptGrowth growth;
+   for(unsigned i=0;i<n;++i){const auto index=std::size_t(tag)*n+i;
+    if(count_evidence_eligible(ti[index]))distinct.insert(image_ids[i]);
+    growth.observe(growth_ids[i],before_ti[index],ti[index]);
+   }
+   growth.write(growth_log,round,tag,growth_population.size());
+   common+=distinct.size()>1;if(round==round_offset+rounds)concepts<<"{\"tag\":"<<tag<<",\"distinct_images\":"<<distinct.size()<<",\"common_concept\":"<<(distinct.size()>1?"true":"false")<<"}\n";}
+  {
+   std::vector<TernaryCount> incident(t);std::vector<std::uint64_t> observed(t),positive(t),eligible(t);
+   std::size_t index=0;
+   for(unsigned left=0;left<t;++left)for(unsigned right=left+1;right<t;++right,++index){
+    const auto g=connection_growth(before_tt[index],tt[index]);
+    if(g.state==GrowthState::invalid_counts)throw std::runtime_error("invalid pair growth");
+    for(auto tag:{left,right}){
+     if(!merge_growth_counts(incident[tag],g.delta))throw std::overflow_error("incident count overflow");
+     observed[tag]+=g.observations!=0;positive[tag]+=g.delta.accept>g.delta.reject;eligible[tag]+=count_evidence_eligible(tt[index]);
+    }
+   }
+   std::ofstream pairs(out/"concept-pair-growth.jsonl",std::ios::app);
+   for(unsigned tag=0;tag<t;++tag){const auto g=connection_growth({},incident[tag]);
+    pairs<<"{\"round\":"<<round<<",\"tag\":"<<tag<<",\"scope\":\"incident_tag_pair\",\"delta\":["<<g.delta.accept<<','<<g.delta.reject<<','<<g.delta.abstain<<"],\"N\":"<<g.observations<<",\"observed_partner_edges\":"<<observed[tag]<<",\"positive_net_edges\":"<<positive[tag]<<",\"active_edges\":"<<eligible[tag]<<"}\n";
+   }
+  }
+  growth_log.flush();
   checkpoint(round,"tag_image",ti);checkpoint(round,"tag_tag",tt);records.flush();
   reports<<"{\"round\":"<<round<<",\"seed\":"<<seed<<",\"input_order_sha256\":\""<<hex(Sha256::of(std::as_bytes(std::span(order))))<<"\",\"tag_image\":["<<counts[0][1]<<','<<counts[0][2]<<','<<counts[0][0]<<"],\"tag_tag\":["<<counts[1][1]<<','<<counts[1][2]<<','<<counts[1][0]<<"],\"type_switches\":"<<transitions<<",\"changed_strengths\":"<<changed<<",\"active_tag_image\":"<<active_ti<<",\"active_tag_tag\":"<<active_tt<<",\"active_set_changes\":"<<active_changes<<",\"revival_events\":"<<revived<<",\"deactivation_events\":"<<fallen<<",\"common_concepts\":"<<common<<",\"max_component_increment\":"<<max_increment<<",\"seconds\":"<<std::chrono::duration<double>(std::chrono::steady_clock::now()-begin).count()<<"}\n";reports.flush();
-  std::cout<<"ROUND "<<round<<'/'<<rounds<<" changed="<<changed<<" active_tag_tag="<<active_tt<<" revived="<<revived<<" fallen="<<fallen<<" max_increment="<<max_increment<<std::endl;
+  std::cout<<"ROUND "<<round<<'/'<<round_offset+rounds<<" changed="<<changed<<" active_tag_tag="<<active_tt<<" revived="<<revived<<" fallen="<<fallen<<" max_increment="<<max_increment<<std::endl;
  }
- std::ofstream manifest(out/"inputs.json");manifest<<"{\"graph\":";write_json_string(manifest,graph.string());manifest<<",\"tag_image\":";write_json_string(manifest,irpath.string());manifest<<",\"tag_tag\":";write_json_string(manifest,prpath.string());manifest<<",\"rounds\":"<<rounds<<",\"images\":"<<n<<",\"tags\":"<<t<<",\"representation\":\"accept_reject_abstain_u64\",\"activation\":\"accept>=reject\",\"initialization\":\"one recorded initial verdict per connection, no float inversion\",\"claim\":\"Does this incoming experience support this activated relation?\",\"main_merged\":false}\n";
+ std::ofstream manifest(out/"inputs.json");manifest<<"{\"graph\":";write_json_string(manifest,graph.string());manifest<<",\"tag_image\":";write_json_string(manifest,irpath.string());manifest<<",\"tag_tag\":";write_json_string(manifest,prpath.string());manifest<<",\"rounds\":"<<round_offset+rounds<<",\"images\":"<<n<<",\"tags\":"<<t<<",\"representation\":\"accept_reject_abstain_u64\",\"activation\":\"accept>=reject\",\"initialization\":\"one recorded initial verdict per connection, no float inversion\",\"claim\":\"Does this incoming experience support this activated relation?\",\"main_merged\":false}\n";
 }catch(const std::exception& e){std::cerr<<"FAILED: "<<e.what()<<std::endl;return 1;}

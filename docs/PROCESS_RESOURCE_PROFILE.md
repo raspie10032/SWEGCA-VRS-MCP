@@ -8,7 +8,7 @@ stopped or reconfigured. The service runs the same native C++ executable.
 
 Properties:
 
-- MemoryMax = `memoryBytes` (example 4,294,967,296 bytes, 4GiB).
+- MemoryMax = `memoryBytes` (default example 4,000,000,000 bytes, decimal 4GB; larger configured budgets remain supported).
 - MemorySwapMax = 0.
 - CPUAffinity = the explicit `cpuAffinity` config string (example `"6 7"`
   on this user's 16-thread PC, preserving other CPUs for Palworld).

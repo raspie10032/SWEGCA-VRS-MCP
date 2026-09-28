@@ -11,7 +11,7 @@ VRS_SOURCES := cpp/vrs/portal_page.cpp cpp/vrs/experience_page.cpp cpp/vrs/runti
 
 # VRS experience/synapse maintenance builds without Runtime, SessionRuntime,
 # transport, or the four-stage memory activation path.
-SYNAPSE_SOURCES := cpp/vrs/synapse.cpp cpp/vrs/experience_page.cpp cpp/vrs/experience_block.cpp cpp/vrs/evidence_experience.cpp cpp/vrs/connection.cpp cpp/vrs/session_store.cpp cpp/vrs/persistent_connection.cpp
+SYNAPSE_SOURCES := cpp/vrs/block_store.cpp cpp/vrs/synapse.cpp cpp/vrs/experience_page.cpp cpp/vrs/experience_block.cpp cpp/vrs/evidence_experience.cpp cpp/vrs/connection.cpp cpp/vrs/session_store.cpp cpp/vrs/persistent_connection.cpp
 SYNAPSE_OBJECTS := $(patsubst %.cpp,$(BUILD)/synapse/%.o,$(SYNAPSE_SOURCES) $(CORE_SOURCES))
 
 .PHONY: check-synapse vrs-synapse
@@ -327,5 +327,49 @@ $(BUILD)/ternary-count-tests: tests/ternary_count_tests.cpp $(CORE_HEADERS) | $(
 $(BUILD)/parallel-ingress-tests: tests/parallel_ingress_tests.cpp cpp/vrs/parallel_ingress.hpp $(VRS_SOURCES) $(CORE_SOURCES) $(VRS_HEADERS) | $(BUILD)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< $(VRS_SOURCES) $(CORE_SOURCES) -o $@
 
-$(BUILD)/whole-file-ingress: tools/whole_file_ingress.cpp cpp/vrs/parallel_ingress.hpp cpp/transport/json.cpp $(VRS_SOURCES) $(CORE_SOURCES) $(VRS_HEADERS) | $(BUILD)
-	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< cpp/transport/json.cpp $(VRS_SOURCES) $(CORE_SOURCES) -o $@
+
+CUDA_ROOT ?= /var/home/raspie/Documents/Codex/tinylm-slicer-sanabi-bazzite/.runtime-rozephine-python314-torch214-cu132-20260903/venv/lib/python3.14/site-packages/nvidia/cu13
+GPU_FLAGS = -I$(CUDA_ROOT)/include -I$(BUILD) -L$(CUDA_ROOT)/lib -Wl,-rpath,$(CUDA_ROOT)/lib -l:libnvrtc.so.13 -lcuda
+$(BUILD)/gpu_core_source.hpp: cpp/swegca_architecture/core_platform.hpp cpp/swegca_architecture/evidence_scalar.hpp cpp/swegca_architecture/association_scalar.hpp tools/embed_gpu_core.py | $(BUILD)
+	python3 tools/embed_gpu_core.py
+
+$(BUILD)/gpu-evidence-tests: tests/gpu_evidence_tests.cpp cpp/vrs/gpu_evidence.cpp $(BUILD)/gpu_core_source.hpp $(CORE_SOURCES) $(VRS_HEADERS) $(CORE_HEADERS)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< cpp/vrs/gpu_evidence.cpp $(CORE_SOURCES) $(GPU_FLAGS) -o $@
+
+
+$(BUILD)/collision-dispatch-tests: tests/collision_dispatch_tests.cpp cpp/vrs/collision_dispatch.cpp $(BUILD)/gpu_core_source.hpp $(CORE_HEADERS) $(VRS_HEADERS)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< cpp/vrs/collision_dispatch.cpp $(GPU_FLAGS) -o $@
+
+$(BUILD)/swegca-input-collision-parallel: tools/input_collision.cpp cpp/vrs/collision_dispatch.cpp $(BUILD)/gpu_core_source.hpp cpp/transport/json.cpp $(BUILD)/libswegca-vrs.a $(CORE_HEADERS) $(VRS_HEADERS)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) -fopenmp -DSWEGCA_PARALLEL_COLLISION $(INCLUDES) $< cpp/vrs/collision_dispatch.cpp cpp/transport/json.cpp $(BUILD)/libswegca-vrs.a $(GPU_FLAGS) -o $@
+
+$(BUILD)/work-pipeline-tests: tests/work_pipeline_tests.cpp cpp/vrs/work_pipeline.hpp cpp/vrs/device_evidence.cpp cpp/vrs/device_evidence.hpp $(BUILD)/gpu_core_source.hpp $(CORE_HEADERS) $(CORE_SOURCES)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< cpp/vrs/device_evidence.cpp $(CORE_SOURCES) $(GPU_FLAGS) -o $@
+
+$(BUILD)/codec-input-tests: tests/codec_input_tests.cpp cpp/vrs/codec_input.cpp cpp/vrs/codec_input.hpp cpp/transport/json.cpp $(CORE_SOURCES) $(CORE_HEADERS)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< cpp/vrs/codec_input.cpp cpp/transport/json.cpp $(CORE_SOURCES) -o $@
+
+$(BUILD)/codec-pipeline-tests: tests/codec_pipeline_tests.cpp cpp/vrs/work_pipeline.hpp cpp/vrs/codec_input.cpp cpp/vrs/device_evidence.cpp cpp/transport/json.cpp $(BUILD)/gpu_core_source.hpp $(CORE_SOURCES) $(CORE_HEADERS)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< cpp/vrs/codec_input.cpp cpp/vrs/device_evidence.cpp cpp/transport/json.cpp $(CORE_SOURCES) $(GPU_FLAGS) -o $@
+
+$(BUILD)/compare-count-checkpoints: tools/compare_count_checkpoints.cpp cpp/transport/json.cpp $(BUILD)/libswegca-vrs.a $(CORE_HEADERS)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< cpp/transport/json.cpp $(BUILD)/libswegca-vrs.a -o $@
+
+$(BUILD)/concept-growth-tests: tests/concept_growth_tests.cpp cpp/vrs/concept_growth.hpp $(CORE_HEADERS) | $(BUILD)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< -o $@
+
+$(BUILD)/block-store-tests: tests/block_store_tests.cpp cpp/vrs/block_store.cpp cpp/vrs/experience_block.cpp $(CORE_SOURCES) $(CORE_HEADERS) $(VRS_HEADERS) | $(BUILD)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< cpp/vrs/block_store.cpp cpp/vrs/experience_block.cpp $(CORE_SOURCES) -o $@
+
+BLOCK_INGRESS_SOURCES := cpp/vrs/block_ingress.cpp cpp/vrs/block_store.cpp cpp/vrs/codec_input.cpp cpp/vrs/device_evidence.cpp cpp/vrs/experience_block.cpp cpp/transport/json.cpp $(CORE_SOURCES)
+$(BUILD)/codec-stream-tests: tests/codec_stream_tests.cpp cpp/vrs/codec_stream.cpp cpp/vrs/codec_stream.hpp cpp/transport/json.cpp $(CORE_SOURCES) $(CORE_HEADERS) | $(BUILD)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< cpp/vrs/codec_stream.cpp cpp/transport/json.cpp $(CORE_SOURCES) -o $@
+
+$(BUILD)/whole-file-ingress $(BUILD)/whole-file-ingress-gpu: tools/whole_file_ingress.cpp $(BLOCK_INGRESS_SOURCES) $(BUILD)/gpu_core_source.hpp $(CORE_HEADERS) $(VRS_HEADERS)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(if $(filter %gpu,$@),-DSWEGCA_GPU_CORE) $(INCLUDES) $< $(BLOCK_INGRESS_SOURCES) $(GPU_FLAGS) -o $@
+
+$(BUILD)/block-ingress-tests: tests/block_ingress_tests.cpp $(BLOCK_INGRESS_SOURCES) $(BUILD)/gpu_core_source.hpp $(CORE_HEADERS) $(VRS_HEADERS)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< $(BLOCK_INGRESS_SOURCES) $(GPU_FLAGS) -o $@
+
+$(BUILD)/block-session-tests: tests/block_session_tests.cpp $(BLOCK_INGRESS_SOURCES) $(BUILD)/gpu_core_source.hpp $(CORE_HEADERS) $(VRS_HEADERS)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< $(BLOCK_INGRESS_SOURCES) $(GPU_FLAGS) -o $@

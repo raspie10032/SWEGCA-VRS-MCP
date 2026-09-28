@@ -127,16 +127,30 @@ RecordedRefinement SessionRuntime::observe(const DigestBytes& identity, const Or
     } catch (...) { usable_ = false; throw; }
 }
 RecordedRefinement SessionRuntime::retain_input(const OriginalExperienceView& original,
-    double initial_strength, const EvidencePolicy& policy, std::uint64_t seed, std::uint64_t step, std::optional<DigestBytes> input_key) {
+    double initial_strength, const EvidencePolicy& policy, std::uint64_t seed, std::uint64_t step,
+    std::optional<DigestBytes> input_key, const EvidenceObservation* incoming) {
     require_usable();
     const auto identity = input_key ? *input_key : input_cue(original.media_type, original.content);
-    if (!connections_.contains(identity)) define_connection(identity, initial_strength, policy);
     EvidenceObservation observation;
+    if (incoming) {
+        // A live observation belongs to this input, not a caller-selected prior
+        // connection or stored verdict. Preserve its actual provenance/context.
+        if (named_digest(incoming->address) || named_digest(incoming->hypothesis) ||
+            incoming->observed_at != original.observed_at_ns)
+            throw std::invalid_argument("incoming evidence must belong to the current input");
+        observation = *incoming;
+    } else {
+        Sha256 source; source.update("SWEGCA input source v1"); source.update(original.source);
+        observation.source = observation.producer = source.finish();
+        observation.context = input_session_context(store_.identity(),original.session);
+        observation.observed_at = original.observed_at_ns;
+    }
     observation.hypothesis = identity;
-    Sha256 source; source.update("SWEGCA input source v1"); source.update(original.source);
-    observation.source = observation.producer = source.finish();
-    observation.context = input_session_context(store_.identity(),original.session);
-    observation.observed_at = original.observed_at_ns;
+    if (!observation_values_valid(make_evidence_rules(policy), identity, observation))
+        throw std::invalid_argument("invalid incoming evidence");
+    // Validate before creating a durable connection. The one sealed record
+    // retains both the raw input and its observation; no second event is needed.
+    if (!connections_.contains(identity)) define_connection(identity, initial_strength, policy);
     return observe(identity, original, observation, seed, step, input_key);
 }
 const PersistentConnection* SessionRuntime::find(const DigestBytes& identity) const {

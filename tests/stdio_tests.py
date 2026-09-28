@@ -163,6 +163,24 @@ with tempfile.TemporaryDirectory(prefix='swegca-stdio-') as directory:
     check(c.call('tools/call',{'name':'vrs_replay','arguments':{'receipt':retained_input['receipt']}})['result']['isError'])
     c.close()
     # Recorded observations go through the same server/runtime/core route.
+    # Evidence travels in the receive call, before a separate observe or merge.
+    live_root=root/'live-input-evidence';live_root.mkdir()
+    live=Client('create',live_root,path);live.initialize()
+    live.call('swegca/start',{'identity':identity(19),'name':'live'})
+    for outcome,expected in [('support',1),('refute',2),('insufficient',0)]:
+        for n in range(12):
+            obs={'source':identity(100+n),'context':identity(150+n),'producer':identity(200+n),
+                 'expiresAt':'0','hasExpiry':False,'confidence':1.0,'axis':'0','outcome':outcome}
+            result=live.call('swegca/receive',event('live','sensor',sequence=str(n),
+                content='predicate '+outcome,observation=obs))['result']
+            if n or outcome=='support': check(len(result['candidates'])==n)
+        check(result['refinement']['status']==expected)
+    bad=dict(obs,verdict='accept')
+    check('error' in live.call('swegca/receive',event('live',observation=bad)))
+    bad=dict(obs,hypothesis=identity(1))
+    check('error' in live.call('swegca/receive',event('live',observation=bad)))
+    live.close()
+
     observed_root=root/'observed';observed_root.mkdir()
     c=Client('create',observed_root,path);c.initialize()
     check(c.call('swegca/start',{'identity':identity(3),'name':'observed'})['result']=={})

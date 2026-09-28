@@ -256,8 +256,24 @@ ExperienceLocation ExperienceBlock::append(const OriginalExperienceView& experie
     const std::array parts{experience.content};
     return append_parts(experience, parts);
 }
+std::vector<ExperienceLocation> ExperienceBlock::append_batch(std::span<const OriginalExperienceView> rows) {
+    if (!writable_ || fd_ < 0) throw std::logic_error("experience block cannot append");
+    auto remaining=capacity_-end_;
+    for(const auto& row:rows){
+        if(row.session.empty()||row.source.empty()||row.media_type.empty())throw std::invalid_argument("experience provenance is incomplete");
+        for(const auto size:{std::uint64_t(record_overhead),std::uint64_t(row.session.size()),std::uint64_t(row.source.size()),std::uint64_t(row.media_type.size()),std::uint64_t(row.content.size())}){
+            if(size>remaining)throw std::length_error("experience batch does not fit");remaining-=size;
+        }
+    }
+    std::vector<ExperienceLocation> addresses;addresses.reserve(rows.size());
+    try {
+        for(const auto& row:rows){const std::array parts{row.content};addresses.push_back(append_parts(row,parts,false));}
+        if(!rows.empty())sync_data(fd_);
+    }catch(...){writable_=false;throw;}
+    return addresses;
+}
 ExperienceLocation ExperienceBlock::append_parts(const OriginalExperienceView& experience,
-    std::span<const std::span<const std::byte>> parts) {
+    std::span<const std::span<const std::byte>> parts, bool sync) {
     if (!writable_ || fd_ < 0) throw std::logic_error("experience block cannot append");
     if (experience.session.empty() || experience.source.empty() || experience.media_type.empty())
         throw std::invalid_argument("experience provenance is incomplete");
@@ -306,7 +322,7 @@ ExperienceLocation ExperienceBlock::append_parts(const OriginalExperienceView& e
                                as_bytes(experience.source), as_bytes(experience.media_type)})write_part(part);
         for(const auto part:parts)write_part(part);
         write_part(trailer);
-        sync_data(fd_);
+        if(sync)sync_data(fd_);
     } catch (...) {
         writable_ = false;
         throw;

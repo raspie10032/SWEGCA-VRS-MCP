@@ -68,12 +68,14 @@ public:
     [[nodiscard]] const PersistentMainGraph& main() const noexcept { return main_; }
     // Recall before recording this event, then synchronously retain its full
     // original through SWEGCA. No choice of Replay candidate is invented here.
-    [[nodiscard]] ReceivedInput receive(const OriginalExperienceView&, std::uint64_t seed, std::uint64_t step);
+    [[nodiscard]] ReceivedInput receive(const OriginalExperienceView&, std::uint64_t seed, std::uint64_t step,
+        const architecture::kernel::EvidenceObservation* incoming = nullptr);
     // Natural cue and exact native envelope bind to one original record. Recall
     // precedes recording; the cue is persisted under the same record checksum.
     [[nodiscard]] ReceivedInput receive_envelope(std::string_view cue_media,
         std::span<const std::byte> cue_content, const OriginalExperienceView& envelope,
-        std::uint64_t seed, std::uint64_t step);
+        std::uint64_t seed, std::uint64_t step,
+        const architecture::kernel::EvidenceObservation* incoming = nullptr);
     [[nodiscard]] InputRecall input(std::string_view media, std::span<const std::byte> content) const;
     [[nodiscard]] InputRecall input_scope(const InputRecall&, std::string_view scope) const;
     [[nodiscard]] InputRecall related(const ReplayedInput&, const architecture::DigestBytes* connection=nullptr) const;

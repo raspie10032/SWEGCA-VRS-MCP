@@ -90,6 +90,8 @@ public:
     // Address is returned only after the complete record is fdatasync'ed.
     // On I/O failure this handle refuses further appends; partial bytes remain.
     [[nodiscard]] ExperienceLocation append(const OriginalExperienceView& experience);
+    // One durable flush for an owned block batch; no addresses escape before it.
+    [[nodiscard]] std::vector<ExperienceLocation> append_batch(std::span<const OriginalExperienceView>);
 
     // Allocation uses Main's shared VRS budget as well as a per-read limit.
     // `memory` must outlive the returned record. Moving it does not allocate.
@@ -131,7 +133,7 @@ private:
         void*, void (*)(void*, unsigned, std::span<const std::byte>, std::uint64_t, std::uint64_t),
         void (*)(void*, std::uint64_t, std::uint64_t)) const;
     [[nodiscard]] ExperienceLocation append_parts(const OriginalExperienceView&,
-        std::span<const std::span<const std::byte>> content);
+        std::span<const std::span<const std::byte>> content, bool sync = true);
     [[nodiscard]] static ExperienceBlock open(const std::filesystem::path& path, bool writer, StorageBudget* storage);
     int fd_ = -1;
     architecture::DigestBytes identity_{};

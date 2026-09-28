@@ -1150,9 +1150,34 @@ private:
                 invalidate_cognition(recorded);complete_restored_cognition();
                 return "{\"original\":"+address(recorded.original,memory_)+",\"refinement\":"+refinement(recorded.refinement,memory_)+"}";
             }
+            // A host can deliver the observed evidence with the input itself.
+            // It is not required to wait for a receipt, Replay or Main merge.
+            std::optional<kernel::EvidenceObservation> incoming;
+            if(const auto* fields=p.find("observation")){
+                for(const auto key:{"hypothesis","address","verdict","status"})
+                    if(fields->find(key))throw std::invalid_argument("incoming evidence cannot supply a connection or core verdict");
+                kernel::EvidenceObservation value;
+                value.source=digest(fields->at("source").string());
+                value.producer=digest(fields->at("producer").string());
+                value.context=digest(fields->at("context").string());
+                value.observed_at=observed;value.expires_at=integer(fields->at("expiresAt"));
+                value.producer_confidence=real(fields->at("confidence"));
+                const auto axis=integer(fields->at("axis"));
+                if(axis>UINT32_MAX)throw std::invalid_argument("axis overflow");
+                value.axis=static_cast<std::uint32_t>(axis);
+                const auto& expiry=fields->at("hasExpiry");
+                if(expiry.kind!=Json::Kind::boolean)throw std::invalid_argument("hasExpiry must be boolean");
+                value.has_expiry=expiry.scalar=="true";
+                const auto outcome=fields->at("outcome").string();
+                if(outcome=="support")value.outcome=kernel::EvidenceOutcome::support;
+                else if(outcome=="refute")value.outcome=kernel::EvidenceOutcome::refute;
+                else if(outcome!="insufficient")throw std::invalid_argument("unknown observed outcome");
+                incoming=value;
+            }
             if(next_receipt_==std::numeric_limits<std::uint64_t>::max())throw std::overflow_error("receipt sequence exhausted");
             clear();context().receipt=++next_receipt_;
-            try{context().received.emplace(runtime_.receive({sequence,observed,session,source,media,content},seed,step));}
+            try{context().received.emplace(runtime_.receive({sequence,observed,session,source,media,content},seed,step,
+                incoming?&*incoming:nullptr));}
             catch(...){context().scoped.reset();context().restored.reset();context().related.reset();throw;}
             context().scoped.reset();context().restored.reset();context().related.reset();
             complete_cognition();

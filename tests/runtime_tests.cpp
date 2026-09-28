@@ -160,6 +160,84 @@ int main(){
   CHECK(!host.session().usable());
  }
  {
+  // Live observations reach the same core refinement before session end or any
+  // Main merge. No prior processed experience, observe call or DLM is required.
+  const auto path=root/"live-evidence";fs::create_directory(path);
+  auto live_config=config;live_config.policy=EvidencePolicy{};
+  auto host=Runtime::create(path,live_config,memory);host.start_session(id(12),"live");
+  for(const auto outcome:{EvidenceOutcome::support,EvidenceOutcome::refute,EvidenceOutcome::insufficient}){
+   const std::string cue="live predicate "+std::to_string(static_cast<unsigned>(outcome));
+   const auto bytes=std::as_bytes(std::span(cue));
+   EvidenceStatus last=EvidenceStatus::abstain;
+   for(unsigned n=0;n<48;++n){
+    EvidenceObservation value;value.axis=n%4;value.source=id(100+n);value.producer=id(150+n);
+    value.context=id(200+n);value.outcome=outcome;value.producer_confidence=1;
+    auto received=host.receive({n,0,"live","sensor","text/plain",bytes},7,0,&value);
+    CHECK(received.recalled.matches().size()==n);
+    const auto stored=host.session().read_original(received.recorded.original);
+    const auto decoded=decode_evidence(make_evidence_rules(live_config.policy),stored);
+    CHECK(decoded.value().outcome==outcome&&decoded.value().source==value.source);
+    CHECK(decoded.value().context==value.context&&decoded.value().producer==value.producer);
+    CHECK(std::ranges::equal(evidence_payload(stored).content,bytes));
+    CHECK(host.main().graph().generation()==0&&host.session().phase()==SessionPhase::active);
+    last=received.recorded.refinement.result().verification().judgment().status();
+   }
+   CHECK(last==(outcome==EvidenceOutcome::support?EvidenceStatus::accept:
+       outcome==EvidenceOutcome::refute?EvidenceStatus::reject:EvidenceStatus::abstain));
+  }
+  // Repeated input from the same observational group is not new independence.
+  EvidenceObservation repeated;repeated.source=id(60);repeated.producer=id(61);
+  repeated.context=id(62);repeated.outcome=EvidenceOutcome::support;repeated.producer_confidence=1;
+  for(unsigned n=0;n<12;++n){
+   auto event=host.receive({n,0,"live","sensor","text/plain",content},7,0,&repeated);
+   CHECK(event.recorded.refinement.result().verification().judgment().status()==EvidenceStatus::abstain);
+  }
+  // Expired current-input observations are preserved but cannot contribute.
+  const std::string expired_text="expired live predicate";
+  const auto expired_bytes=std::as_bytes(std::span(expired_text));
+  for(unsigned n=0;n<48;++n){
+   EvidenceObservation value;value.axis=n%4;value.source=id(100+n);value.producer=id(150+n);
+   value.context=id(200+n);value.outcome=EvidenceOutcome::support;value.producer_confidence=1;
+   value.has_expiry=true;value.expires_at=0;
+   auto event=host.receive({n,0,"live","sensor","text/plain",expired_bytes},7,1,&value);
+   CHECK(event.recorded.refinement.result().verification().judgment().status()==EvidenceStatus::abstain);
+  }
+  // Bad observation metadata must not poison the owner or write any prefix.
+  for(unsigned kind=0;kind<4;++kind){
+   auto bad=repeated;
+   if(kind==0)bad.source={};
+   if(kind==1)bad.axis=4;
+   if(kind==2)bad.observed_at=1;
+   if(kind==3)bad.producer_confidence=2;
+   const auto before_bad=writes;
+   throws<std::invalid_argument>([&]{(void)host.receive({0,0,"live","sensor","text/plain",content},7,0,&bad);});
+   CHECK(writes==before_bad&&host.session().usable());
+  }
+  EvidenceObservation invalid;invalid.hypothesis=id(9);
+  const auto before=writes;
+  throws<std::invalid_argument>([&]{(void)host.receive({0,0,"live","sensor","text/plain",content},7,0,&invalid);});
+  CHECK(writes==before&&host.session().usable());
+ }
+ {
+  // Reopen an active session: evidence does not require end/merge to survive.
+  auto live_config=config;live_config.policy=EvidencePolicy{};
+  auto host=Runtime::open(root/"live-evidence",live_config,memory);host.resume_session(id(12));
+  CHECK(host.session().phase()==SessionPhase::active&&host.main().graph().generation()==0);
+  for(const auto outcome:{EvidenceOutcome::support,EvidenceOutcome::refute,EvidenceOutcome::insufficient}){
+   const std::string cue="live predicate "+std::to_string(static_cast<unsigned>(outcome));
+   const auto bytes=std::as_bytes(std::span(cue));
+   auto recalled=host.input("text/plain",bytes);CHECK(recalled.temporary()&&recalled.matches().size()==48);
+   auto replayed=host.replay(recalled,0);
+   const auto value=decode_evidence(make_evidence_rules(live_config.policy),replayed.original()).value();
+   CHECK(value.outcome==outcome&&named_digest(value.source)&&named_digest(value.context));
+   const auto* connection=host.session().find(value.hypothesis);CHECK(connection);
+   const double strength=connection->snapshot().strength;
+   CHECK(outcome==EvidenceOutcome::support?strength>1:outcome==EvidenceOutcome::refute?strength<1:strength==1);
+   std::printf("live input restart: outcome=%u originals=48 strength=%.9f main_generation=0\n",
+       static_cast<unsigned>(outcome),strength);
+  }
+ }
+ {
   const auto budget_root=root/"budget-runtime";fs::create_directory(budget_root);
   std::uint64_t initial=0,charged=0;
   {

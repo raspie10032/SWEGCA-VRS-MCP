@@ -3,6 +3,7 @@
 #include "swegca_architecture/connection_strength_kernel.hpp"
 
 #include <cstdint>
+#include "vrs/evidence_executor.hpp"
 
 namespace swegca::vrs {
 
@@ -37,7 +38,7 @@ public:
 private:
     friend VerificationResult verify_experience(
         const architecture::kernel::EvidenceRules&,
-        const architecture::kernel::EvidenceTally&) noexcept;
+        const architecture::kernel::EvidenceTally&);
     constexpr explicit VerificationResult(architecture::kernel::EvidenceJudgment judgment) noexcept
         : judgment_(judgment) {}
     architecture::kernel::EvidenceJudgment judgment_;
@@ -48,8 +49,8 @@ private:
 // The SWEGCA core alone produces the three-state judgment.
 [[nodiscard]] inline VerificationResult verify_experience(
     const architecture::kernel::EvidenceRules& rules,
-    const architecture::kernel::EvidenceTally& shuffled_evidence) noexcept {
-    return VerificationResult{architecture::kernel::judge_evidence(rules, shuffled_evidence)};
+    const architecture::kernel::EvidenceTally& shuffled_evidence) {
+    return VerificationResult{current_evidence_executor ? current_evidence_executor->judge(rules, shuffled_evidence) : architecture::kernel::judge_evidence(rules, shuffled_evidence)};
 }
 
 class ConnectionVerification final {
@@ -65,7 +66,7 @@ public:
 private:
     friend ConnectionVerification verify_connection(
         const architecture::kernel::EvidenceRules&,
-        const architecture::kernel::EvidenceTally&, double) noexcept;
+        const architecture::kernel::EvidenceTally&, double);
     VerificationResult verification_;
     architecture::kernel::ConnectionStrengthResult strength_;
 };
@@ -75,7 +76,7 @@ private:
 [[nodiscard]] inline ConnectionVerification verify_connection(
     const architecture::kernel::EvidenceRules& rules,
     const architecture::kernel::EvidenceTally& shuffled_evidence,
-    double previous_strength) noexcept {
+    double previous_strength) {
     ConnectionVerification result;
     result.verification_ = verify_experience(rules, shuffled_evidence);
     result.strength_ = architecture::kernel::revise_connection_strength(

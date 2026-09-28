@@ -45,11 +45,13 @@ public:
         std::uint64_t shuffle_seed, std::uint64_t current_step,
         std::optional<architecture::DigestBytes> input_key = std::nullopt);
     // Retains natural content through the same shuffle/core path. With no
-    // observed outcome, evidence stays insufficient. No prose verdict is made.
+    // observed outcome, evidence stays insufficient. An incoming observation is
+    // sealed with this original and refined immediately, without prior VRS work.
     [[nodiscard]] RecordedRefinement retain_input(const OriginalExperienceView& original,
         double initial_strength, const architecture::EvidencePolicy& policy,
         std::uint64_t shuffle_seed, std::uint64_t current_step,
-        std::optional<architecture::DigestBytes> input_key = std::nullopt);
+        std::optional<architecture::DigestBytes> input_key = std::nullopt,
+        const architecture::kernel::EvidenceObservation* incoming = nullptr);
     [[nodiscard]] const PersistentConnection* find(const architecture::DigestBytes& identity) const;
     [[nodiscard]] StoredExperience replay(const architecture::DigestBytes& identity, std::size_t original_index) const;
     [[nodiscard]] EvidencePayloadSlice read_payload_slice(const architecture::DigestBytes&, std::size_t original_index,

@@ -3,7 +3,7 @@
   "ioBytesPerSecond": "625000000",
   "storageBytes": "500000000000",
   "mergeWorkers": "2",
-  "memoryBytes": "4294967296",
+  "memoryBytes": "4000000000",
   "frameBytes": "1048576",
   "mainIdentity": "6300000000000000000000000000000000000000000000000000000000000000",
   "initialStrength": 1.0,

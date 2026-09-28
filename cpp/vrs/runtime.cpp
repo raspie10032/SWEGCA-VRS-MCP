@@ -152,18 +152,20 @@ void Runtime::end_session(const DigestBytes& requested) {
     if(work_)work_->ids.push_back(identity); // reserved, fixed-size, no allocation
 }
 ReceivedInput Runtime::receive_envelope(std::string_view media,std::span<const std::byte> content,
-    const OriginalExperienceView& envelope,std::uint64_t seed,std::uint64_t step) {
+    const OriginalExperienceView& envelope,std::uint64_t seed,std::uint64_t step,
+    const EvidenceObservation* incoming) {
     auto recalled=input(media,content);
     require_active();
     auto recorded=active_->runtime.retain_input(envelope,config_.initial_strength,config_.policy,
-        seed,step,recalled.cue());
+        seed,step,recalled.cue(),incoming);
     return {std::move(recalled),std::move(recorded)};
 }
-ReceivedInput Runtime::receive(const OriginalExperienceView& original,std::uint64_t seed,std::uint64_t step) {
+ReceivedInput Runtime::receive(const OriginalExperienceView& original,std::uint64_t seed,std::uint64_t step,
+    const EvidenceObservation* incoming) {
     auto recalled=input(original.media_type,original.content);
     require_active();
     auto recorded=require_session().runtime.retain_input(original,config_.initial_strength,config_.policy,
-        seed,step,recalled.cue());
+        seed,step,recalled.cue(),incoming);
     return {std::move(recalled),std::move(recorded)};
 }
 InputRecall Runtime::input(std::string_view media,std::span<const std::byte> content) const {
