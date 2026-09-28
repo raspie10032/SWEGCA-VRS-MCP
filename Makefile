@@ -9,6 +9,10 @@ CORE_SOURCES := cpp/swegca_architecture/evidence_rules.cpp cpp/swegca_architectu
 CORE_HEADERS := $(wildcard cpp/swegca_architecture/*.hpp)
 VRS_HEADERS := $(wildcard cpp/vrs/*.hpp)
 VRS_SOURCES := cpp/vrs/portal_page.cpp cpp/vrs/experience_page.cpp cpp/vrs/runtime.cpp cpp/vrs/main_sources.cpp cpp/vrs/main_graph.cpp cpp/vrs/persistent_main_graph.cpp cpp/vrs/experience_block.cpp cpp/vrs/evidence_experience.cpp cpp/vrs/connection.cpp cpp/vrs/session_store.cpp cpp/vrs/persistent_connection.cpp cpp/vrs/connection_catalog.cpp cpp/vrs/session_runtime.cpp
+CHECKPOINT_HEADERS := $(wildcard cpp/checkpoint/*.hpp)
+CHECKPOINT_SOURCES := cpp/checkpoint/restricted_zip.cpp cpp/checkpoint/restricted_pickle.cpp \
+	cpp/checkpoint/canonical_symbolic_json.cpp cpp/checkpoint/checkpoint_profile.cpp \
+	cpp/checkpoint/restricted_checkpoint.cpp
 
 PRODUCTION_BINARIES := $(BUILD)/swegca-vrs-mcp $(BUILD)/swegca-content-observer $(BUILD)/swegca-codex-wrapper $(BUILD)/swegca-desktop-host $(BUILD)/swegca-app-server-proxy
 MCP_PRODUCTION_CLOSURE_SOURCES := \
@@ -44,7 +48,8 @@ MCP_PRODUCTION_CLOSURE_SOURCES := \
 PRODUCTION_SUPPORT_CLOSURE_SOURCES := \
 	cpp/transport/stdio_main.cpp cpp/transport/content_observer_main.cpp cpp/transport/codex_wrapper_main.cpp \
 	cpp/transport/desktop_host_main.cpp cpp/transport/proxy_main.cpp cpp/transport/json.cpp \
-	$(wildcard cpp/transport/*.hpp) cpp/vrs/file_observation.cpp cpp/vrs/file_observation.hpp
+	$(wildcard cpp/transport/*.hpp) cpp/vrs/file_observation.cpp cpp/vrs/file_observation.hpp \
+	$(CHECKPOINT_HEADERS) $(CHECKPOINT_SOURCES)
 PRODUCTION_GATE_CLOSURE_SOURCES := Makefile AGENTS.md tools/stage0_gate.py docs/stage0-external-p0.json \
 	$(wildcard tests/*.cpp) $(wildcard tests/*.py)
 EXPERIMENTAL_CLOSURE_SOURCES := \
@@ -109,7 +114,7 @@ check-raw-observation: $(BUILD)/raw-content-observation-tests $(BUILD)/original-
 	./$(BUILD)/raw-content-observation-tests
 	./$(BUILD)/original-observation-tests
 
-.PHONY: check-agent-event all production check check-production check-experimental-cpu check-experimental-gpu stage0-gate check-stdio check-sha256 check-resource-profile check-oom-recovery bench clean
+.PHONY: check-agent-event all production check check-production check-checkpoint check-experimental-cpu check-experimental-gpu stage0-gate check-stdio check-sha256 check-resource-profile check-oom-recovery bench clean
 all: production
 
 production: $(PRODUCTION_BINARIES)
@@ -440,6 +445,30 @@ $(BUILD)/block-ingress-tests: tests/block_ingress_tests.cpp $(BLOCK_INGRESS_SOUR
 $(BUILD)/block-session-tests: tests/block_session_tests.cpp $(BLOCK_INGRESS_SOURCES) $(BUILD)/gpu_core_source.hpp $(CORE_HEADERS) $(VRS_HEADERS) | $(BUILD) require-cuda-toolkit
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< $(BLOCK_INGRESS_SOURCES) $(GPU_FLAGS) -o $@
 
+$(BUILD)/restricted-zip-tests: tests/restricted_zip_tests.cpp cpp/checkpoint/restricted_zip.cpp cpp/checkpoint/restricted_zip.hpp | $(BUILD)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< cpp/checkpoint/restricted_zip.cpp -o $@
+
+$(BUILD)/restricted-pickle-tests: tests/restricted_pickle_tests.cpp cpp/checkpoint/restricted_pickle.cpp cpp/checkpoint/restricted_pickle.hpp | $(BUILD)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< cpp/checkpoint/restricted_pickle.cpp -o $@
+
+$(BUILD)/canonical-symbolic-json-tests: tests/canonical_symbolic_json_tests.cpp cpp/checkpoint/canonical_symbolic_json.cpp cpp/checkpoint/canonical_symbolic_json.hpp cpp/checkpoint/restricted_pickle.hpp | $(BUILD)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< cpp/checkpoint/canonical_symbolic_json.cpp -o $@
+
+$(BUILD)/checkpoint-profile-tests: tests/checkpoint_profile_tests.cpp cpp/checkpoint/checkpoint_profile.cpp cpp/checkpoint/checkpoint_profile.hpp | $(BUILD)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< cpp/checkpoint/checkpoint_profile.cpp -o $@
+
+$(BUILD)/restricted-checkpoint-tests: tests/restricted_checkpoint_tests.cpp $(CHECKPOINT_HEADERS) $(CHECKPOINT_SOURCES) cpp/swegca_architecture/sha256.cpp cpp/swegca_architecture/sha256.hpp | $(BUILD)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< $(CHECKPOINT_SOURCES) cpp/swegca_architecture/sha256.cpp -o $@
+
+check-checkpoint: $(BUILD)/restricted-zip-tests $(BUILD)/restricted-pickle-tests \
+	$(BUILD)/canonical-symbolic-json-tests $(BUILD)/checkpoint-profile-tests \
+	$(BUILD)/restricted-checkpoint-tests
+	./$(BUILD)/restricted-zip-tests
+	./$(BUILD)/restricted-pickle-tests
+	./$(BUILD)/canonical-symbolic-json-tests
+	./$(BUILD)/checkpoint-profile-tests
+	./$(BUILD)/restricted-checkpoint-tests
+
 check-production: production
 	$(MAKE) --no-print-directory check
 	$(MAKE) --no-print-directory check-stdio
@@ -450,6 +479,7 @@ check-production: production
 	$(MAKE) --no-print-directory check-association
 	$(MAKE) --no-print-directory check-raw-observation
 	$(MAKE) --no-print-directory check-experience-pairs
+	$(MAKE) --no-print-directory check-checkpoint
 	$(MAKE) --no-print-directory $(BUILD)/file-observation-tests
 	./$(BUILD)/file-observation-tests
 
