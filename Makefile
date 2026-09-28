@@ -9,6 +9,48 @@ CORE_HEADERS := $(wildcard cpp/swegca_architecture/*.hpp)
 VRS_HEADERS := $(wildcard cpp/vrs/*.hpp)
 VRS_SOURCES := cpp/vrs/portal_page.cpp cpp/vrs/experience_page.cpp cpp/vrs/runtime.cpp cpp/vrs/main_sources.cpp cpp/vrs/main_graph.cpp cpp/vrs/persistent_main_graph.cpp cpp/vrs/experience_block.cpp cpp/vrs/evidence_experience.cpp cpp/vrs/connection.cpp cpp/vrs/session_store.cpp cpp/vrs/persistent_connection.cpp cpp/vrs/connection_catalog.cpp cpp/vrs/session_runtime.cpp
 
+# VRS experience/synapse maintenance builds without Runtime, SessionRuntime,
+# transport, or the four-stage memory activation path.
+SYNAPSE_SOURCES := cpp/vrs/synapse.cpp cpp/vrs/experience_page.cpp cpp/vrs/experience_block.cpp cpp/vrs/evidence_experience.cpp cpp/vrs/connection.cpp cpp/vrs/session_store.cpp cpp/vrs/persistent_connection.cpp
+SYNAPSE_OBJECTS := $(patsubst %.cpp,$(BUILD)/synapse/%.o,$(SYNAPSE_SOURCES) $(CORE_SOURCES))
+
+.PHONY: check-synapse vrs-synapse
+.PHONY: check-association
+$(BUILD)/association-tests: tests/association_tests.cpp $(CORE_HEADERS) $(CORE_SOURCES) | $(BUILD)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< $(CORE_SOURCES) -o $@
+
+check-association: $(BUILD)/association-tests
+	./$(BUILD)/association-tests
+
+$(BUILD)/swegca-tag-associations: tools/tag_associations.cpp cpp/transport/json.cpp cpp/transport/json.hpp $(BUILD)/libswegca-vrs.a $(CORE_HEADERS) | $(BUILD)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< cpp/transport/json.cpp $(BUILD)/libswegca-vrs.a -o $@
+
+vrs-synapse: $(BUILD)/libswegca-vrs.a
+
+$(BUILD)/synapse/%.o: %.cpp $(CORE_HEADERS) $(VRS_HEADERS)
+	mkdir -p $(@D)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) -c $< -o $@
+
+$(BUILD)/libswegca-vrs.a: $(SYNAPSE_OBJECTS)
+	$(AR) rcs $@ $^
+
+$(BUILD)/synapse-tests: tests/synapse_tests.cpp $(BUILD)/libswegca-vrs.a $(CORE_HEADERS) $(VRS_HEADERS) | $(BUILD)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< $(BUILD)/libswegca-vrs.a -Wl,--wrap=pwrite -o $@
+
+check-synapse: $(BUILD)/synapse-tests
+	./$(BUILD)/synapse-tests
+
+.PHONY: check-raw-observation
+$(BUILD)/raw-content-observation-tests: tests/raw_content_observation_tests.cpp $(CORE_HEADERS) | $(BUILD)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< -o $@
+
+$(BUILD)/original-observation-tests: tests/original_observation_tests.cpp $(BUILD)/libswegca-vrs.a cpp/vrs/original_observation.hpp $(CORE_HEADERS) | $(BUILD)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< $(BUILD)/libswegca-vrs.a -o $@
+
+check-raw-observation: $(BUILD)/raw-content-observation-tests $(BUILD)/original-observation-tests
+	./$(BUILD)/raw-content-observation-tests
+	./$(BUILD)/original-observation-tests
+
 .PHONY: check-agent-event all check check-stdio check-sha256 check-resource-profile check-oom-recovery bench clean
 all: $(BUILD)/core-tests
 

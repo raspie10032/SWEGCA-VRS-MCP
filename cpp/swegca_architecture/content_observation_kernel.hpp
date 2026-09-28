@@ -2,6 +2,9 @@
 
 #include "swegca_architecture/evidence_observation_kernel.hpp"
 
+#include <cstddef>
+#include <span>
+
 namespace swegca::architecture::kernel {
 
 // An observation of the explicitly requested predicate "equal byte content".
@@ -19,6 +22,24 @@ namespace swegca::architecture::kernel {
 [[nodiscard]] constexpr EvidenceOutcome observe_content_relation(
     bool complete,bool stable,bool equal,bool expect_equal) noexcept {
     return observe_content_equality(complete,stable,equal==expect_equal);
+}
+
+// The measured operands enter the core, rather than a host-computed `equal`
+// flag. This retains the existing explicitly declared equal/different
+// predicate. It is NOT an automatic multimodal relationship definition.
+// All bytes, including NUL, invalid UTF-8, noise and contradictory content,
+// participate unchanged. Input buffers remain owned by the caller.
+// Work is O(bytes inspected); the whole-buffer operation has no ns claim.
+[[nodiscard]] constexpr EvidenceOutcome observe_raw_content_relation(
+    std::span<const std::byte> left, std::span<const std::byte> right,
+    bool complete, bool stable, bool expect_equal) noexcept {
+    if (!complete || !stable)
+        return observe_content_relation(complete, stable, false, expect_equal);
+    bool equal = left.size() == right.size();
+    if (equal)
+        for (std::size_t i = 0; i < left.size(); ++i)
+            if (left[i] != right[i]) { equal = false; break; }
+    return observe_content_relation(true, true, equal, expect_equal);
 }
 
 } // namespace swegca::architecture::kernel
