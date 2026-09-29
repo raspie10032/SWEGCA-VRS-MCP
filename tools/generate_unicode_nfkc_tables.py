@@ -30,6 +30,9 @@ def generate(output: Path) -> None:
     decomposition_values: list[int] = []
     combining_entries: list[tuple[int, int]] = []
     composition_entries: list[tuple[int, int, int]] = []
+    casefold_entries: list[tuple[int, int, int]] = []
+    casefold_values: list[int] = []
+    whitespace: list[int] = []
 
     for point in range(0x110000):
         if HANGUL_FIRST <= point <= HANGUL_LAST:
@@ -44,6 +47,12 @@ def generate(output: Path) -> None:
         combining = unicodedata.combining(chr(point))
         if combining:
             combining_entries.append((point, combining))
+        folded = [ord(value) for value in chr(point).casefold()]
+        if folded != [point]:
+            casefold_entries.append((point, len(casefold_values), len(folded)))
+            casefold_values.extend(folded)
+        if chr(point).isspace():
+            whitespace.append(point)
 
         raw = unicodedata.decomposition(chr(point))
         if not raw or raw.startswith("<"):
@@ -71,6 +80,11 @@ struct DecompositionEntry final {{
 }};
 struct CombiningEntry final {{ char32_t point; std::uint8_t value; }};
 struct CompositionEntry final {{ char32_t first; char32_t second; char32_t value; }};
+struct CasefoldEntry final {{
+    char32_t point;
+    std::uint32_t offset;
+    std::uint8_t size;
+}};
 
 inline constexpr std::array<char32_t, {len(decomposition_values)}> decomposition_values{{{{
 {_format(decomposition_values)}
@@ -90,10 +104,22 @@ inline constexpr std::array<CompositionEntry, {len(composition_entries)}> compos
 ''' + "\n".join(
         f"    {{0x{first:x}u, 0x{second:x}u, 0x{value:x}u}},"
         for first, second, value in composition_entries
-    ) + '''
-}};
+    ) + f'''
+}}}};
+inline constexpr std::array<char32_t, {len(casefold_values)}> casefold_values{{{{
+{_format(casefold_values)}
+}}}};
+inline constexpr std::array<CasefoldEntry, {len(casefold_entries)}> casefolds{{{{
+''' + "\n".join(
+        f"    {{0x{point:x}u, {offset}u, {size}u}},"
+        for point, offset, size in casefold_entries
+    ) + f'''
+}}}};
+inline constexpr std::array<char32_t, {len(whitespace)}> whitespace{{{{
+{_format(whitespace)}
+}}}};
 
-}  // namespace swegca::world::unicode_data
+}}  // namespace swegca::world::unicode_data
 '''
     output.write_text(text, encoding="utf-8")
 

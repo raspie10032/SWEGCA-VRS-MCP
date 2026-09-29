@@ -22,6 +22,8 @@ struct ContinuousSensorEvent final {
     double screen_motion_score = 0.0;
     std::string screen_ocr;
     std::string system_audio_transcript;
+
+    friend bool operator==(const ContinuousSensorEvent&, const ContinuousSensorEvent&) = default;
 };
 
 struct CounterfactualDefinitionPlan final {
@@ -29,6 +31,10 @@ struct CounterfactualDefinitionPlan final {
     std::string kind;
     std::vector<std::string> target_evidence_refs;
     std::string status{"unexecuted"};
+
+    friend bool operator==(
+        const CounterfactualDefinitionPlan&,
+        const CounterfactualDefinitionPlan&) = default;
 };
 
 struct SensorDefinitionCandidate final {

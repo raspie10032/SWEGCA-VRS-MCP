@@ -69,6 +69,8 @@ void check_unicode_parity() {
     assert(normalize_nfkc("\xe1\x84\x80\xe1\x85\xa1\xe1\x86\xa8") == "각");
     assert(normalize_nfkc("\xef\xac\x83") == "ffi");
     assert(normalize_nfkc("ＡＢＣ１２３") == "ABC123");
+    assert(unicode_casefold("Straße Σ") == "strasse σ");
+    assert(strip_unicode_whitespace("\xc2\xa0\xe3\x80\x80 내용 \xe3\x80\x80") == "내용");
 
     // Python 3.14 / unicodedata 16.0.0 fixture over every valid scalar.
     swegca::architecture::Sha256 sha;
@@ -83,6 +85,19 @@ void check_unicode_parity() {
     }
     assert(hex(sha.finish()) ==
            "5650e8743caff1ed039e6e038c35b471260e724d078d675af780f09a86fd5c2d");
+
+    swegca::architecture::Sha256 casefold_sha;
+    for (std::uint32_t point = 0; point <= 0x10ffffU; ++point) {
+        if (point >= 0xd800U && point <= 0xdfffU) continue;
+        std::string source;
+        append_utf8(source, point);
+        const auto folded = unicode_casefold(source);
+        update_u32_le(casefold_sha, point);
+        update_u32_le(casefold_sha, static_cast<std::uint32_t>(folded.size()));
+        casefold_sha.update(folded);
+    }
+    assert(hex(casefold_sha.finish()) ==
+           "f81ef069dc4dc4016c1ab2c2d1b22b56e6436e01d15ac408175b1c8067380e05");
 }
 
 }  // namespace

@@ -181,4 +181,38 @@ std::string normalize_nfkc(const std::string_view input) {
     return output;
 }
 
+std::string unicode_casefold(const std::string_view input) {
+    const auto decoded = decode_utf8(input);
+    std::string output;
+    output.reserve(input.size());
+    for (const auto point : decoded) {
+        const auto iterator = std::lower_bound(
+            unicode_data::casefolds.begin(), unicode_data::casefolds.end(), point,
+            [](const auto& entry, const char32_t value) { return entry.point < value; });
+        if (iterator == unicode_data::casefolds.end() || iterator->point != point) {
+            append_utf8(output, point);
+            continue;
+        }
+        for (std::size_t index = 0; index != iterator->size; ++index) {
+            append_utf8(output, unicode_data::casefold_values[iterator->offset + index]);
+        }
+    }
+    return output;
+}
+
+std::string strip_unicode_whitespace(const std::string_view input) {
+    const auto decoded = decode_utf8(input);
+    const auto whitespace = [](const char32_t point) {
+        return std::binary_search(
+            unicode_data::whitespace.begin(), unicode_data::whitespace.end(), point);
+    };
+    std::size_t first = 0;
+    while (first != decoded.size() && whitespace(decoded[first])) ++first;
+    std::size_t last = decoded.size();
+    while (last != first && whitespace(decoded[last - 1])) --last;
+    std::string output;
+    for (std::size_t index = first; index != last; ++index) append_utf8(output, decoded[index]);
+    return output;
+}
+
 }  // namespace swegca::world
