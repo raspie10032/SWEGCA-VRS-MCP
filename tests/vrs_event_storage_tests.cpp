@@ -239,6 +239,41 @@ void sparse_delta_settles_and_persists_only_candidate_changes() {
     assert(restore_float32(*bound->scores) == parent->score.materialize());
     assert((restore_float16(*bound->strengths) ==
             std::vector<std::uint16_t>{0x3c00U, 0x3a00U}));
+
+    const auto successor = stored.successor_inputs(std::string(64, 'c'));
+    assert(successor->inputs->snapshot_id == std::string(64, 'c'));
+    assert(successor->inputs->delta_parent() == nullptr);
+    assert(successor->scores == stored.scores && successor->strengths == stored.strengths);
+    assert(successor->inputs->score.materialize() == expected_scores);
+    assert(successor->inputs->strength.materialize() == expected_strengths);
+    assert(successor->inputs->dependency_segment_count() ==
+           candidate->dependency_segment_count());
+    assert(successor->inputs->dependency_index_bytes() ==
+           candidate->dependency_index_bytes());
+    for (std::size_t node = 0; node < candidate->score.size(); ++node) {
+        assert(successor->inputs->incoming(node) == candidate->incoming(node));
+        assert(successor->inputs->outgoing(node) == candidate->outgoing(node));
+    }
+    assert(rejects([&] { (void)stored.successor_inputs("bad"); }));
+    assert(rejects([&] {
+        (void)stored.successor_inputs(candidate->snapshot_id);
+    }));
+    assert(rejects([&] {
+        (void)stored.successor_inputs(parent->snapshot_id);
+    }));
+
+    const std::array<float, 1> next_direct{0.1F};
+    const std::array<float, 1> next_score{0.0F};
+    const std::array<std::uint8_t, 1> next_unresolved{0};
+    const std::array<EventSignalEdge, 1> next_edge{EventSignalEdge{4, 5, 1, 0.5F}};
+    const std::array<float, 1> next_strength{0.5F};
+    const auto next = prepare_event_delta(
+        successor->inputs, std::string(64, 'd'), next_direct, next_score,
+        next_unresolved, next_edge, next_strength);
+    const auto next_proposal = successor->settle_candidate(
+        next, {}, {}, "vrs-edge:", nullptr, 1000);
+    assert(!next_proposal.signal.pending());
+    assert(next_proposal.inputs_owner == next);
 }
 
 void sparse_delta_rejects_non_durable_and_foreign_generations() {

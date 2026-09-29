@@ -1,6 +1,7 @@
 #include "world/vrs_event_signal.hpp"
 
 #include <algorithm>
+#include <array>
 #include <bit>
 #include <charconv>
 #include <cmath>
@@ -10,6 +11,134 @@
 #include <utility>
 
 namespace swegca::world {
+
+class EventSignalDependencies final {
+    struct Posting final {
+        std::uint32_t node{};
+        std::uint32_t edge{};
+    };
+    struct Segment final {
+        std::array<std::vector<Posting>, 2> directions;
+        std::size_t size{};
+    };
+
+public:
+    [[nodiscard]] static std::shared_ptr<const EventSignalDependencies> build(
+        const std::size_t node_count,
+        const PersistentEventVector<EventSignalEdge>& edges) {
+        std::vector<std::shared_ptr<const Segment>> segments;
+        segments.push_back(segment(edges, 0, edges.size()));
+        return std::shared_ptr<const EventSignalDependencies>(
+            new EventSignalDependencies(node_count, edges.size(), std::move(segments)));
+    }
+
+    [[nodiscard]] static std::shared_ptr<const EventSignalDependencies> advance(
+        std::shared_ptr<const EventSignalDependencies> parent,
+        const std::size_t parent_node_count, const std::size_t node_count,
+        const std::size_t old_edge_count,
+        const PersistentEventVector<EventSignalEdge>& edges) {
+        if (!parent || parent->node_count_ != parent_node_count ||
+            parent->edge_count_ != old_edge_count || node_count < parent_node_count ||
+            old_edge_count > edges.size())
+            throw std::invalid_argument("event dependency generation changed");
+        auto segments = parent->segments_;
+        if (old_edge_count != edges.size()) {
+            segments.push_back(segment(edges, old_edge_count, edges.size()));
+            while (segments.size() > 2 &&
+                   2 * segments.back()->size >= segments[segments.size() - 2]->size) {
+                auto combined = merge(
+                    *segments[segments.size() - 2], *segments.back());
+                segments.pop_back();
+                segments.back() = std::move(combined);
+            }
+        }
+        return std::shared_ptr<const EventSignalDependencies>(
+            new EventSignalDependencies(node_count, edges.size(), std::move(segments)));
+    }
+
+    [[nodiscard]] std::vector<std::size_t> incoming(const std::size_t node) const {
+        return edges_for(node, 1);
+    }
+
+    [[nodiscard]] std::vector<std::size_t> outgoing(const std::size_t node) const {
+        return edges_for(node, 0);
+    }
+
+    [[nodiscard]] std::size_t segment_count() const noexcept { return segments_.size(); }
+    [[nodiscard]] std::size_t index_bytes() const noexcept {
+        std::size_t result = 0;
+        for (const auto& segment : segments_)
+            for (const auto& direction : segment->directions)
+                result += direction.size() * sizeof(Posting);
+        return result;
+    }
+
+private:
+    EventSignalDependencies(
+        const std::size_t node_count, const std::size_t edge_count,
+        std::vector<std::shared_ptr<const Segment>> segments)
+        : node_count_(node_count), edge_count_(edge_count), segments_(std::move(segments)) {}
+
+    [[nodiscard]] static std::shared_ptr<const Segment> segment(
+        const PersistentEventVector<EventSignalEdge>& edges,
+        const std::size_t begin, const std::size_t end) {
+        auto result = std::make_shared<Segment>();
+        result->size = end - begin;
+        for (std::size_t index = begin; index < end; ++index) {
+            const auto edge = edges[index];
+            result->directions[0].push_back(
+                {edge.source, static_cast<std::uint32_t>(index)});
+            result->directions[1].push_back(
+                {edge.target, static_cast<std::uint32_t>(index)});
+        }
+        for (auto& direction : result->directions)
+            std::stable_sort(direction.begin(), direction.end(), [](const Posting& a, const Posting& b) {
+                return a.node < b.node;
+            });
+        return result;
+    }
+
+    [[nodiscard]] static std::shared_ptr<const Segment> merge(
+        const Segment& left, const Segment& right) {
+        auto result = std::make_shared<Segment>();
+        result->size = left.size + right.size;
+        for (std::size_t direction = 0; direction < 2; ++direction) {
+            auto& output = result->directions[direction];
+            output.reserve(result->size);
+            output.insert(output.end(), left.directions[direction].begin(),
+                          left.directions[direction].end());
+            output.insert(output.end(), right.directions[direction].begin(),
+                          right.directions[direction].end());
+            std::stable_sort(output.begin(), output.end(), [](const Posting& a, const Posting& b) {
+                return a.node < b.node;
+            });
+        }
+        return result;
+    }
+
+    [[nodiscard]] std::vector<std::size_t> edges_for(
+        const std::size_t node, const std::size_t direction) const {
+        if (node >= node_count_) throw std::out_of_range("event node outside directory");
+        std::vector<std::size_t> result;
+        const auto probe = static_cast<std::uint32_t>(node);
+        for (const auto& segment : segments_) {
+            const auto& postings = segment->directions[direction];
+            const auto lower = std::lower_bound(
+                postings.begin(), postings.end(), probe,
+                [](const Posting& row, const std::uint32_t value) { return row.node < value; });
+            const auto upper = std::upper_bound(
+                lower, postings.end(), probe,
+                [](const std::uint32_t value, const Posting& row) { return value < row.node; });
+            for (auto at = lower; at != upper; ++at) result.push_back(at->edge);
+        }
+        return result;
+    }
+
+    const std::size_t node_count_;
+    const std::size_t edge_count_;
+    const std::vector<std::shared_ptr<const Segment>> segments_;
+};
+
 namespace {
 
 [[nodiscard]] bool digest(const std::string_view value) noexcept {
@@ -158,8 +287,7 @@ EventSignalInputs::EventSignalInputs(
     std::vector<float> strength_value, std::vector<std::uint8_t> unresolved_value)
     : snapshot_id(std::move(snapshot_id_value)), direct(std::move(direct_value)),
       score(std::move(score_value)), edges(std::move(edges_value)),
-      strength(std::move(strength_value)), unresolved(std::move(unresolved_value)),
-      incoming_(score.size()), outgoing_(score.size()) {
+      strength(std::move(strength_value)), unresolved(std::move(unresolved_value)) {
     if (!digest(snapshot_id)) throw std::invalid_argument("event inputs need a generation digest");
     if (direct.size() != score.size() || unresolved.size() != score.size() ||
         strength.size() != edges.size()) {
@@ -178,9 +306,8 @@ EventSignalInputs::EventSignalInputs(
             edge.vrs_strength < 0) {
             throw std::invalid_argument("event edges or strength changed");
         }
-        outgoing_[edge.source].push_back(index);
-        incoming_[edge.target].push_back(index);
     }
+    dependencies_ = EventSignalDependencies::build(score.size(), edges);
 }
 
 EventSignalInputs::EventSignalInputs(
@@ -208,41 +335,42 @@ EventSignalInputs::EventSignalInputs(
         const auto edge = edges[index];
         if (edge.source >= score.size() || edge.target >= score.size())
             throw std::invalid_argument("event endpoint is outside the node directory");
-        auto& incoming = incoming_delta_[edge.target];
-        if (incoming.empty() && edge.target < delta_parent_->score.size()) {
-            const auto prior = delta_parent_->incoming(edge.target);
-            incoming.assign(prior.begin(), prior.end());
-        }
-        incoming.push_back(index);
-        auto& outgoing = outgoing_delta_[edge.source];
-        if (outgoing.empty() && edge.source < delta_parent_->score.size()) {
-            const auto prior = delta_parent_->outgoing(edge.source);
-            outgoing.assign(prior.begin(), prior.end());
-        }
-        outgoing.push_back(index);
     }
+    dependencies_ = EventSignalDependencies::advance(
+        delta_parent_->dependencies_, delta_parent_->score.size(), score.size(),
+        old_edges, edges);
 }
 
-std::span<const std::size_t> EventSignalInputs::incoming(const std::size_t node) const {
-    if (node >= score.size()) throw std::out_of_range("event node outside directory");
-    if (const auto found = incoming_delta_.find(node); found != incoming_delta_.end())
-        return found->second;
-    if (delta_parent_) {
-        if (node < delta_parent_->score.size()) return delta_parent_->incoming(node);
-        return {};
-    }
-    return incoming_[node];
+EventSignalInputs::EventSignalInputs(
+    std::string snapshot_id_value, PersistentEventVector<float> direct_value,
+    PersistentEventVector<float> score_value,
+    PersistentEventVector<EventSignalEdge> edges_value,
+    PersistentEventVector<float> strength_value,
+    PersistentEventVector<std::uint8_t> unresolved_value,
+    std::shared_ptr<const EventSignalDependencies> dependencies_value)
+    : snapshot_id(std::move(snapshot_id_value)), direct(std::move(direct_value)),
+      score(std::move(score_value)), edges(std::move(edges_value)),
+      strength(std::move(strength_value)), unresolved(std::move(unresolved_value)),
+      dependencies_(std::move(dependencies_value)) {
+    if (!digest(snapshot_id) || !dependencies_ || direct.size() != score.size() ||
+        unresolved.size() != score.size() || strength.size() != edges.size())
+        throw std::invalid_argument("event successor generation changed");
 }
 
-std::span<const std::size_t> EventSignalInputs::outgoing(const std::size_t node) const {
-    if (node >= score.size()) throw std::out_of_range("event node outside directory");
-    if (const auto found = outgoing_delta_.find(node); found != outgoing_delta_.end())
-        return found->second;
-    if (delta_parent_) {
-        if (node < delta_parent_->score.size()) return delta_parent_->outgoing(node);
-        return {};
-    }
-    return outgoing_[node];
+std::vector<std::size_t> EventSignalInputs::incoming(const std::size_t node) const {
+    return dependencies_->incoming(node);
+}
+
+std::vector<std::size_t> EventSignalInputs::outgoing(const std::size_t node) const {
+    return dependencies_->outgoing(node);
+}
+
+std::size_t EventSignalInputs::dependency_segment_count() const noexcept {
+    return dependencies_->segment_count();
+}
+
+std::size_t EventSignalInputs::dependency_index_bytes() const noexcept {
+    return dependencies_->index_bytes();
 }
 
 EventSignalProposal::EventSignalProposal(

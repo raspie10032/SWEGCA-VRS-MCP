@@ -14,6 +14,12 @@ namespace {
 
 [[noreturn]] void reject(const char* message) { throw std::invalid_argument(message); }
 
+bool digest(const std::string_view value) noexcept {
+    return value.size() == 64 && std::ranges::all_of(value, [](const char byte) {
+        return (byte >= '0' && byte <= '9') || (byte >= 'a' && byte <= 'f');
+    });
+}
+
 std::vector<std::byte> float32_bytes(const std::span<const float> values) {
     static_assert(std::endian::native == std::endian::little);
     const auto bytes = std::as_bytes(values);
@@ -71,6 +77,45 @@ PreparedEventSignalStorage::PreparedEventSignalStorage(
       promotions(std::move(promotions_value)), diagnostics(diagnostics_value) {
     if (!parent || !proposal || proposal->binding != parent || !scores || !strengths)
         reject("invalid prepared event storage candidate");
+}
+
+std::shared_ptr<const BoundEventSignalStorage>
+PreparedEventSignalStorage::successor_inputs(std::string snapshot_id) const {
+    if (!digest(snapshot_id)) reject("event successor needs a generation digest");
+    const auto& source = proposal->inputs_owner;
+    if (!source || proposal->signal.pending() ||
+        !proposal->signal.belongs_to(*source) ||
+        (source != parent->inputs && source->delta_parent() != parent->inputs.get()))
+        reject("event storage parent generation changed");
+    if (snapshot_id == source->snapshot_id || snapshot_id == parent->inputs->snapshot_id)
+        reject("event successor must use a new generation digest");
+
+    std::vector<std::size_t> score_indices;
+    std::vector<float> score_values;
+    score_indices.reserve(proposal->signal.scores.size());
+    score_values.reserve(proposal->signal.scores.size());
+    for (const auto& [index, value] : proposal->signal.scores) {
+        score_indices.push_back(index);
+        score_values.push_back(value);
+    }
+    std::vector<std::size_t> strength_indices;
+    std::vector<float> strength_values;
+    strength_indices.reserve(proposal->signal.strengths.size());
+    strength_values.reserve(proposal->signal.strengths.size());
+    for (const auto& [index, value] : proposal->signal.strengths) {
+        strength_indices.push_back(index);
+        strength_values.push_back(value);
+    }
+    const std::span<const float> no_float_append;
+    auto score = PersistentEventVector<float>::extend(
+        source->score, score_indices, score_values, no_float_append);
+    auto strength = PersistentEventVector<float>::extend(
+        source->strength, strength_indices, strength_values, no_float_append);
+    auto inputs = std::shared_ptr<const EventSignalInputs>(new EventSignalInputs(
+        std::move(snapshot_id), source->direct, std::move(score), source->edges,
+        std::move(strength), source->unresolved, source->dependencies_));
+    return std::shared_ptr<const BoundEventSignalStorage>(new BoundEventSignalStorage(
+        std::move(inputs), scores, strengths));
 }
 
 BoundEventSignalStorage::BoundEventSignalStorage(

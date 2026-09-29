@@ -60,10 +60,8 @@ void shared_delta_matches_dense() {
     assert(delta->strength[0] == 1.125F && delta->strength[3] == 0.25F);
     assert(delta->edges[1].vrs_strength == 0.8F);
     assert(delta->edges[2] == appended_edges[0] && delta->edges[3] == appended_edges[1]);
-    assert((std::vector<std::size_t>(delta->incoming(1).begin(), delta->incoming(1).end()) ==
-            std::vector<std::size_t>{0, 3}));
-    assert((std::vector<std::size_t>(delta->outgoing(2).begin(), delta->outgoing(2).end()) ==
-            std::vector<std::size_t>{2}));
+    assert(delta->incoming(1) == std::vector<std::size_t>({0, 3}));
+    assert(delta->outgoing(2) == std::vector<std::size_t>({2}));
     assert(parent->score.size() == 3 && parent->edges.size() == 2);
     assert(parent->direct[1] == 0.2F && parent->score[2] == -0.5F &&
            parent->strength[0] == 1.0F && parent->unresolved[2] == 1);
@@ -124,12 +122,36 @@ void invalid_delta_is_rejected() {
     }));
 }
 
+void dependency_segments_remain_geometrically_bounded() {
+    auto current = base();
+    const std::array<EventSignalEdge, 1> edge{EventSignalEdge{0, 1, 1, 0.5F}};
+    const std::array<float, 1> strength{0.5F};
+    for (std::size_t iteration = 0; iteration < 256; ++iteration) {
+        const char digit = "bcdef0123456789a"[iteration % 16];
+        current = prepare_event_delta(
+            current, std::string(64, digit), {}, {}, {}, edge, strength);
+    }
+    assert(current->dependency_segment_count() <= 16);
+    assert(current->dependency_index_bytes() == current->edges.size() * 16);
+    const auto outgoing = current->outgoing(0);
+    const auto incoming = current->incoming(1);
+    assert(outgoing.size() == 257 && incoming.size() == 257);
+    for (std::size_t index = 0; index < outgoing.size(); ++index) {
+        const auto expected = index == 0 ? 0 : index + 1;
+        assert(outgoing[index] == expected);
+        assert(incoming[index] == expected);
+    }
+}
+
 }  // namespace
 
 int main() {
     assert(vrs_event_delta_source_sha256 ==
            "ab60dccb5914d6eb01319c61094d1e43f1e883da180c4e815a7201f99cc9cfdd");
+    assert(vrs_event_dependency_source_sha256 ==
+           "db3eac9ac08e70dbb6afdf4d9ccd6df61fe0d9f50148959c91e6d69b70ddc225");
     shared_delta_matches_dense();
     invalid_delta_is_rejected();
+    dependency_segments_remain_geometrically_bounded();
     std::cout << "VRS sparse event delta tests passed\n";
 }

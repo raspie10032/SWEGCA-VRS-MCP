@@ -58,6 +58,8 @@ public:
     [[nodiscard]] bool authority_granted() const noexcept { return false; }
     [[nodiscard]] bool persistent_state_mutated() const noexcept { return false; }
     [[nodiscard]] bool main_committed() const noexcept { return false; }
+    [[nodiscard]] std::shared_ptr<const BoundEventSignalStorage> successor_inputs(
+        std::string snapshot_id) const;
 
 private:
     friend class BoundEventSignalStorage;
@@ -105,6 +107,7 @@ public:
     const std::shared_ptr<const VrsArrayBlocks> strengths;
 
 private:
+    friend class PreparedEventSignalStorage;
     BoundEventSignalStorage(
         std::shared_ptr<const EventSignalInputs> inputs,
         std::shared_ptr<const VrsArrayBlocks> scores,

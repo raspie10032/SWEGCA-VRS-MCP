@@ -15,8 +15,13 @@
 
 namespace swegca::world {
 
+class EventSignalDependencies;
+class PreparedEventSignalStorage;
+
 inline constexpr std::string_view vrs_event_signal_source_sha256 =
     "f851084f095a539a8098ce3f94a366a7ec91defcc040b7c2ce9db5ba305a51b1";
+inline constexpr std::string_view vrs_event_dependency_source_sha256 =
+    "db3eac9ac08e70dbb6afdf4d9ccd6df61fe0d9f50148959c91e6d69b70ddc225";
 inline constexpr std::string_view vrs_event_signal_version =
     "vrs-re-evidence-event-signal-f32-v2-experimental";
 
@@ -57,10 +62,13 @@ public:
     const PersistentEventVector<float> strength;
     const PersistentEventVector<std::uint8_t> unresolved;
 
-    [[nodiscard]] std::span<const std::size_t> incoming(std::size_t node) const;
-    [[nodiscard]] std::span<const std::size_t> outgoing(std::size_t node) const;
+    [[nodiscard]] std::vector<std::size_t> incoming(std::size_t node) const;
+    [[nodiscard]] std::vector<std::size_t> outgoing(std::size_t node) const;
+    [[nodiscard]] std::size_t dependency_segment_count() const noexcept;
+    [[nodiscard]] std::size_t dependency_index_bytes() const noexcept;
 
 private:
+    friend class PreparedEventSignalStorage;
     friend std::shared_ptr<const EventSignalInputs> prepare_event_delta(
         const std::shared_ptr<const EventSignalInputs>&, std::string,
         std::span<const float>, std::span<const float>,
@@ -81,11 +89,15 @@ private:
         std::vector<std::size_t> score_indices,
         std::vector<std::size_t> strength_indices,
         std::vector<std::size_t> direct_indices);
-    std::vector<std::vector<std::size_t>> incoming_;
-    std::vector<std::vector<std::size_t>> outgoing_;
+    EventSignalInputs(
+        std::string snapshot_id, PersistentEventVector<float> direct,
+        PersistentEventVector<float> score,
+        PersistentEventVector<EventSignalEdge> edges,
+        PersistentEventVector<float> strength,
+        PersistentEventVector<std::uint8_t> unresolved,
+        std::shared_ptr<const EventSignalDependencies> dependencies);
+    std::shared_ptr<const EventSignalDependencies> dependencies_;
     std::shared_ptr<const EventSignalInputs> delta_parent_;
-    std::map<std::size_t, std::vector<std::size_t>> incoming_delta_;
-    std::map<std::size_t, std::vector<std::size_t>> outgoing_delta_;
     std::vector<std::size_t> score_indices_;
     std::vector<std::size_t> strength_indices_;
     std::vector<std::size_t> direct_indices_;
