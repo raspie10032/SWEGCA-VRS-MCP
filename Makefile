@@ -40,6 +40,7 @@ WORLD_SOURCES := cpp/world/cognitive_state.cpp cpp/world/cognitive_event.cpp \
 	cpp/world/semantic_table_value.cpp \
 	cpp/world/semantic_source_context.cpp \
 	cpp/world/provider_cancellation.cpp \
+	cpp/world/syllogism.cpp \
 	cpp/world/semantic_encoding.cpp \
 	cpp/world/semantic_input_scope.cpp \
 	cpp/world/semantic_vrs_ingress.cpp \
