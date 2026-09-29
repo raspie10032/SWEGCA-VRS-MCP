@@ -298,6 +298,75 @@ void test_large_parent_remains_shared_across_semantic_append() {
     assert(inputs->score.size() == edge_count + 2 && inputs->edges.size() == edge_count);
 }
 
+void test_optional_session_binding_uses_same_sparse_canonical_append() {
+    const SemanticAnchor first{
+        "event-0-block-0", 0, {std::int64_t{0}}, "text", "original", {0, 3}, {}, {}};
+    const SemanticAnchor second{
+        "event-1-block-0", 0, {std::int64_t{1}}, "text", "original", {0, 3}, {}, {}};
+    const SemanticMeaningUnit first_unit{
+        "문", "확인요청", true, "affirmed", "reported",
+        {first.identifier}, {}, "literal"};
+    const SemanticMeaningUnit second_unit{
+        "문", "현재잠금", nullptr, "unknown", "reported",
+        {second.identifier}, {}, "literal"};
+    const auto episode = [](std::string identifier) {
+        return SemanticSourceEpisode{
+            std::move(identifier), {}, {}, {}, "revision", "fixture"};
+    };
+    const auto bound = std::make_shared<const BoundSessionSemantics>(
+        BoundSessionSemantics{
+            std::string(64, 'a'), {"sess", "rev", "turn"},
+            JsonValue::Object{{"model", "fixture"}},
+            {episode("parent:0"), episode("parent:1"), episode("parent:2")},
+            episode("session-semantic:one"), {first, second},
+            {{first_unit, {first}, {}, {}, {}, {}},
+             {second_unit, {second}, {}, {}, {}, {second.identifier}}},
+            {second.identifier},
+        });
+    const auto terms = TermAddressIndex::build(
+        {"parent:0", "parent:1", "parent:2", "unrelated"});
+    const auto inputs = std::make_shared<const EventSignalInputs>(
+        std::string(64, 'a'), std::vector<float>(4), std::vector<float>(4),
+        std::vector<EventSignalEdge>{{3, 3, 1, .5F}, {3, 0, -1, .5F}},
+        std::vector<float>{.5F, .5F}, std::vector<std::uint8_t>(4));
+    const auto lineage = std::make_shared<const CanonicalVrsMemberLineage>(
+        std::vector<std::uint32_t>{0, 1}, std::vector<std::uint64_t>{0, 1, 2},
+        std::vector<std::uint32_t>{0, 1});
+    const auto edges = CanonicalEdgeAddressIndex::build(inputs->edges);
+
+    const auto result = prepare_semantic_event_append(
+        inputs, terms, lineage, edges, bound, std::string(64, 'b'), "vrs-1");
+    assert(result.semantic_delta.binding.get() == bound.get());
+    assert(result.semantic_delta.memory_snapshot_id == std::string(64, 'a'));
+    assert(result.semantic_delta.vrs_snapshot_id == "vrs-1");
+    assert(result.semantic_delta.edge_rows.size() == 11);
+    assert(result.canonical_delta.appended_member_group_ids.size() == 11);
+    assert(result.address_index->size() == 10);
+    assert(result.inputs->score.size() == 10);
+    assert(result.inputs->delta_parent() == inputs.get());
+    assert(result.lineage.base().get() == lineage.get());
+    result.semantic_delta.require_parent(terms, std::string(64, 'a'), "vrs-1", 2);
+
+    const auto receipt = result.receipt();
+    assert(receipt.schema == semantic_event_append_schema);
+    assert(receipt.parent_memory_snapshot_id == std::string(64, 'a'));
+    assert(receipt.candidate_snapshot_id == std::string(64, 'b'));
+    assert(receipt.added_terms == 6);
+    assert(receipt.added_logical_members == 11);
+    assert(receipt.semantic_proposals.size() == 1);
+    assert(receipt.semantic_proposals.front().semantic.schema ==
+           session_semantic_graph_schema);
+    assert(receipt.semantic_proposals.front().canonical_edge_ids.size() == 11);
+    assert(receipt.internal_llm_calls() == 0);
+    assert(!receipt.main_pair_committed() && !receipt.authority_granted());
+    assert(!receipt.signal_settled() && !receipt.whole_graph_convergence_claimed());
+
+    assert(rejects([&] {
+        (void)prepare_semantic_event_append(
+            inputs, terms, lineage, edges, bound, std::string(64, 'b'), "");
+    }));
+}
+
 }  // namespace
 
 int main() {
@@ -307,6 +376,7 @@ int main() {
     test_existing_groups_receive_python_mean_and_float16_strength();
     test_empty_append_and_invalid_generation_bindings();
     test_large_parent_remains_shared_across_semantic_append();
+    test_optional_session_binding_uses_same_sparse_canonical_append();
     assert(semantic_event_append_source_sha256 ==
            "816a39039c3b84733cd7b8d4d0b6d6486ca77528b30e144db74bd52d88a7a619");
     std::cout << "semantic event append tests passed\n";

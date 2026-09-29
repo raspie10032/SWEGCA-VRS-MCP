@@ -549,16 +549,34 @@ std::string semantic_encoding_episode_id(const SemanticEncoding& encoding) {
     return "semantic-encoding:" + digest(canonical_json(encoding_receipt(encoding)));
 }
 
+std::string semantic_scoped_address(const std::string_view kind,
+                                    const JsonValue& scope,
+                                    const JsonValue& value) {
+    if (kind.empty()) reject("semantic address kind required");
+    JsonValue::Array wire{scope, value};
+    return std::string(kind) + ':' + digest(canonical_json(JsonValue(std::move(wire))));
+}
+
 std::string semantic_anchor_address(const std::string_view source_id,
                                     const std::string_view source_revision,
                                     const SemanticAnchor& anchor) {
     return address("semantic-anchor", source_id, source_revision, anchor_payload(anchor));
 }
 
+std::string semantic_anchor_address(const JsonValue& scope,
+                                    const SemanticAnchor& anchor) {
+    return semantic_scoped_address("semantic-anchor", scope, anchor_payload(anchor));
+}
+
 std::string semantic_unit_address(const std::string_view source_id,
                                   const std::string_view source_revision,
                                   const SemanticMeaningUnit& unit) {
     return address("semantic-unit", source_id, source_revision, unit_payload(unit, true));
+}
+
+std::string semantic_unit_address(const JsonValue& scope,
+                                  const SemanticMeaningUnit& unit) {
+    return semantic_scoped_address("semantic-unit", scope, unit_payload(unit, true));
 }
 
 std::vector<std::vector<SemanticGraphCoordinate>> prepare_claim_graph_addresses(

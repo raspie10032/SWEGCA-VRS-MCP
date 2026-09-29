@@ -151,12 +151,18 @@ private:
 
 [[nodiscard]] std::string semantic_source_digest(const SemanticSourceEpisode& source);
 [[nodiscard]] std::string semantic_encoding_episode_id(const SemanticEncoding& encoding);
+[[nodiscard]] std::string semantic_scoped_address(
+    std::string_view kind, const JsonValue& scope, const JsonValue& value);
 [[nodiscard]] std::string semantic_anchor_address(
     std::string_view source_id, std::string_view source_revision,
     const SemanticAnchor& anchor);
+[[nodiscard]] std::string semantic_anchor_address(
+    const JsonValue& scope, const SemanticAnchor& anchor);
 [[nodiscard]] std::string semantic_unit_address(
     std::string_view source_id, std::string_view source_revision,
     const SemanticMeaningUnit& unit);
+[[nodiscard]] std::string semantic_unit_address(
+    const JsonValue& scope, const SemanticMeaningUnit& unit);
 
 [[nodiscard]] std::vector<std::vector<SemanticGraphCoordinate>>
 prepare_claim_graph_addresses(const SemanticEncoding& encoding,
