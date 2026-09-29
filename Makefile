@@ -40,6 +40,8 @@ WORLD_SOURCES := cpp/world/cognitive_state.cpp cpp/world/cognitive_event.cpp \
 	cpp/world/semantic_table_value.cpp \
 	cpp/world/semantic_source_context.cpp \
 	cpp/world/provider_cancellation.cpp \
+	cpp/world/semantic_response_error.cpp \
+	cpp/world/offline_semantic_batch.cpp \
 	cpp/world/syllogism.cpp \
 	cpp/world/syllogism_sources.cpp \
 	cpp/world/utterance_receipt.cpp \
