@@ -21,6 +21,7 @@ WORLD_SOURCES := cpp/world/cognitive_state.cpp cpp/world/cognitive_event.cpp \
 	cpp/world/evidence_accumulator.cpp cpp/world/evidence_revision.cpp \
 	cpp/world/image_tag_experience.cpp \
 	cpp/world/detached_vrs_state_update.cpp \
+	cpp/world/vrs_event_signal.cpp \
 	cpp/world/counterfactual_replay.cpp \
 	cpp/world/hypothesis_proposer.cpp cpp/world/sensor_definition.cpp \
 	cpp/world/sensor_counterfactual.cpp \
@@ -508,6 +509,9 @@ $(BUILD)/image-tag-experience-tests: tests/image_tag_experience_tests.cpp cpp/wo
 $(BUILD)/detached-vrs-state-update-tests: tests/detached_vrs_state_update_tests.cpp cpp/world/detached_vrs_state_update.cpp cpp/world/detached_vrs_state_update.hpp | $(BUILD)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< cpp/world/detached_vrs_state_update.cpp -o $@
 
+$(BUILD)/vrs-event-signal-tests: tests/vrs_event_signal_tests.cpp cpp/world/vrs_event_signal.cpp cpp/world/vrs_event_signal.hpp cpp/world/detached_vrs_state_update.cpp cpp/world/detached_vrs_state_update.hpp | $(BUILD)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< cpp/world/vrs_event_signal.cpp cpp/world/detached_vrs_state_update.cpp -o $@
+
 $(BUILD)/sensor-definition-tests: tests/sensor_definition_tests.cpp cpp/world/sensor_definition.cpp cpp/world/sensor_definition.hpp cpp/world/sensor_term_index.cpp cpp/world/sensor_term_index.hpp cpp/world/unicode_nfkc.cpp cpp/world/unicode_nfkc.hpp cpp/world/unicode_nfkc_data.hpp cpp/world/definition_contract.cpp cpp/world/definition_contract.hpp cpp/world/evidence_accumulator.cpp cpp/world/evidence_accumulator.hpp cpp/swegca_architecture/sha256.cpp cpp/swegca_architecture/sha256.hpp | $(BUILD)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< cpp/world/sensor_definition.cpp cpp/world/sensor_term_index.cpp cpp/world/unicode_nfkc.cpp cpp/world/definition_contract.cpp cpp/world/evidence_accumulator.cpp cpp/swegca_architecture/sha256.cpp -o $@
 
@@ -591,6 +595,7 @@ check-prototype-recurrent-artifacts: $(BUILD)/prototype-checkpoint-tests \
 check-world: $(BUILD)/cognitive-state-tests $(BUILD)/definition-contract-tests \
 	$(BUILD)/cognitive-event-tests $(BUILD)/hypothesis-proposer-tests $(BUILD)/image-tag-experience-tests \
 	$(BUILD)/detached-vrs-state-update-tests \
+	$(BUILD)/vrs-event-signal-tests \
 	$(BUILD)/sensor-definition-tests $(BUILD)/sensor-term-index-tests \
 	$(BUILD)/sensor-counterfactual-tests $(BUILD)/counterfactual-replay-tests \
 	$(BUILD)/autonomous-cognition-tests $(BUILD)/accelerated-verification-tests \
@@ -606,6 +611,7 @@ check-world: $(BUILD)/cognitive-state-tests $(BUILD)/definition-contract-tests \
 	./$(BUILD)/hypothesis-proposer-tests
 	./$(BUILD)/image-tag-experience-tests
 	./$(BUILD)/detached-vrs-state-update-tests
+	./$(BUILD)/vrs-event-signal-tests
 	./$(BUILD)/sensor-definition-tests
 	./$(BUILD)/sensor-term-index-tests
 	./$(BUILD)/sensor-counterfactual-tests
