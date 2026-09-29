@@ -144,6 +144,14 @@ namespace {
 
 }  // namespace
 
+std::uint16_t event_strength_float16_bits(const float value) {
+    return float_to_half(value);
+}
+
+float event_strength_from_float16_bits(const std::uint16_t value) {
+    return half_to_float(value);
+}
+
 EventSignalInputs::EventSignalInputs(
     std::string snapshot_id_value, std::vector<float> direct_value,
     std::vector<float> score_value, std::vector<EventSignalEdge> edges_value,

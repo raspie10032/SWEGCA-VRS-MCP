@@ -32,6 +32,11 @@ enum class EventStrengthStorage : std::uint8_t {
     float16,
 };
 
+// One binary16 conversion boundary is shared by event arithmetic and its
+// detached storage candidate. It carries no verdict or publication authority.
+[[nodiscard]] std::uint16_t event_strength_float16_bits(float value);
+[[nodiscard]] float event_strength_from_float16_bits(std::uint16_t value);
+
 class EventSignalInputs final {
 public:
     EventSignalInputs(std::string snapshot_id, std::vector<float> direct,
@@ -71,6 +76,9 @@ public:
     [[nodiscard]] bool persistent_state_mutated() const noexcept { return false; }
     [[nodiscard]] bool whole_graph_convergence_claimed() const noexcept { return false; }
     [[nodiscard]] bool cognitive_completion() const noexcept { return false; }
+    [[nodiscard]] bool belongs_to(const EventSignalInputs& inputs) const noexcept {
+        return inputs_ == &inputs;
+    }
     [[nodiscard]] std::size_t input_strength_proposal_count() const noexcept {
         return strength_receipt ? strength_receipt->updates.size() : 0;
     }
