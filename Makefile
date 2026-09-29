@@ -33,12 +33,16 @@ WORLD_SOURCES := cpp/world/cognitive_state.cpp cpp/world/cognitive_event.cpp \
 	cpp/world/semantic_family_directory.cpp \
 	cpp/world/snapshot_digest.cpp \
 	cpp/world/memory_activation.cpp \
+	cpp/world/hot_memory_step.cpp \
+	cpp/world/hot_review_throughput.cpp \
+	cpp/world/packed_memberships.cpp \
 	cpp/world/semantic_speech_value.cpp \
 	cpp/world/semantic_table_value.cpp \
 	cpp/world/semantic_source_context.cpp \
 	cpp/world/semantic_vrs_ingress.cpp \
 	cpp/world/stage_timing.cpp \
 	cpp/world/vrs_kernel_timing.cpp \
+	cpp/world/vrs_cue_cost.cpp \
 	cpp/world/vrs_region_arrays.cpp \
 	cpp/world/transport_plain.cpp \
 	cpp/world/session_semantic_binding.cpp \
