@@ -562,6 +562,20 @@ std::string semantic_encoding_episode_id(const SemanticEncoding& encoding) {
     return "semantic-encoding:" + digest(canonical_json(encoding_receipt(encoding)));
 }
 
+JsonValue semantic_encoding_receipt(const SemanticEncoding& encoding) {
+    return encoding_receipt(encoding);
+}
+
+JsonValue semantic_meaning_unit_payload(const SemanticMeaningUnit& unit,
+                                        const bool address_form) {
+    return unit_payload(unit, address_form);
+}
+
+void validate_semantic_encoding(const SemanticEncoding& encoding,
+                                const SemanticSourceEpisode& source) {
+    validate_encoding(encoding, source);
+}
+
 std::string semantic_scoped_address(const std::string_view kind,
                                     const JsonValue& scope,
                                     const JsonValue& value) {

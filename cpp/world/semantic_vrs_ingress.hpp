@@ -153,6 +153,11 @@ private:
 [[nodiscard]] std::string semantic_canonical_json(const JsonValue& value);
 [[nodiscard]] std::string semantic_json_digest(const JsonValue& value);
 [[nodiscard]] std::string semantic_encoding_episode_id(const SemanticEncoding& encoding);
+[[nodiscard]] JsonValue semantic_encoding_receipt(const SemanticEncoding& encoding);
+[[nodiscard]] JsonValue semantic_meaning_unit_payload(
+    const SemanticMeaningUnit& unit, bool address_form = false);
+void validate_semantic_encoding(const SemanticEncoding& encoding,
+                                const SemanticSourceEpisode& source);
 [[nodiscard]] std::string semantic_scoped_address(
     std::string_view kind, const JsonValue& scope, const JsonValue& value);
 [[nodiscard]] std::string semantic_anchor_address(
