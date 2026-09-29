@@ -183,6 +183,11 @@ CanonicalVrsMemberLineage CanonicalVrsMemberLineage::append_members(
     const std::span<const std::uint32_t> group_ids,
     const std::uint64_t new_group_count) const {
     (void)require_validated_immutable();
+    if (new_group_count >
+            std::numeric_limits<std::uint64_t>::max() - group_count() ||
+        group_ids.size() >
+            std::numeric_limits<std::uint64_t>::max() - member_count())
+        reject("canonical member append exceeds uint32 addressing");
     const auto groups = static_cast<std::uint64_t>(group_count()) + new_group_count;
     const auto members = static_cast<std::uint64_t>(member_count()) + group_ids.size();
     if (groups > std::numeric_limits<std::uint32_t>::max() ||
