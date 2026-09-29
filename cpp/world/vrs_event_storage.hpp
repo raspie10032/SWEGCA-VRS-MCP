@@ -26,12 +26,14 @@ public:
 
     const EventSignalProposal signal;
     const std::shared_ptr<const BoundEventSignalStorage> binding;
+    const std::shared_ptr<const EventSignalInputs> inputs_owner;
 
 private:
     friend class BoundEventSignalStorage;
     StorageBoundEventSignalProposal(
         EventSignalProposal signal,
-        std::shared_ptr<const BoundEventSignalStorage> binding);
+        std::shared_ptr<const BoundEventSignalStorage> binding,
+        std::shared_ptr<const EventSignalInputs> inputs_owner);
 };
 
 struct PreparedEventStorageDiagnostics final {
@@ -69,8 +71,8 @@ private:
 };
 
 // This pinned storage boundary binds the already validated base generation.
-// Sparse appended EventVrsInputs are a separate prerequisite and are not
-// represented as a dense fallback here.
+// An accepted sparse candidate must be its immediate delta and retains that
+// owner's lifetime through settle and changed-only block preparation.
 class BoundEventSignalStorage final :
     public std::enable_shared_from_this<BoundEventSignalStorage> {
 public:
@@ -80,6 +82,14 @@ public:
         std::shared_ptr<const VrsArrayBlocks> strengths);
 
     [[nodiscard]] StorageBoundEventSignalProposal settle(
+        std::span<const std::size_t> changed_nodes = {},
+        std::shared_ptr<const DetachedVrsStateUpdateReceipt> strength_updates = {},
+        std::string_view connection_namespace = "vrs-edge:",
+        const StorageBoundEventSignalProposal* previous = nullptr,
+        std::uint64_t maximum_rounds = 1) const;
+
+    [[nodiscard]] StorageBoundEventSignalProposal settle_candidate(
+        std::shared_ptr<const EventSignalInputs> candidate,
         std::span<const std::size_t> changed_nodes = {},
         std::shared_ptr<const DetachedVrsStateUpdateReceipt> strength_updates = {},
         std::string_view connection_namespace = "vrs-edge:",

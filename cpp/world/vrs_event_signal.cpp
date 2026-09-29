@@ -165,12 +165,12 @@ EventSignalInputs::EventSignalInputs(
         strength.size() != edges.size()) {
         throw std::invalid_argument("event input shape or dtype changed");
     }
-    if (std::any_of(direct.begin(), direct.end(), [](const float value) { return !std::isfinite(value); }) ||
-        std::any_of(score.begin(), score.end(), [](const float value) { return !std::isfinite(value); }) ||
-        std::any_of(strength.begin(), strength.end(), [](const float value) { return !std::isfinite(value) || value < 0; }) ||
-        std::any_of(unresolved.begin(), unresolved.end(), [](const std::uint8_t value) { return value > 1; })) {
-        throw std::invalid_argument("event input contains invalid values");
-    }
+    for (std::size_t index = 0; index < score.size(); ++index)
+        if (!std::isfinite(direct[index]) || !std::isfinite(score[index]) || unresolved[index] > 1)
+            throw std::invalid_argument("event input contains invalid values");
+    for (std::size_t index = 0; index < strength.size(); ++index)
+        if (!std::isfinite(strength[index]) || strength[index] < 0)
+            throw std::invalid_argument("event input contains invalid values");
     for (std::size_t index = 0; index != edges.size(); ++index) {
         const auto& edge = edges[index];
         if (edge.source >= score.size() || edge.target >= score.size() ||
@@ -183,13 +183,65 @@ EventSignalInputs::EventSignalInputs(
     }
 }
 
+EventSignalInputs::EventSignalInputs(
+    std::string snapshot_id_value, PersistentEventVector<float> direct_value,
+    PersistentEventVector<float> score_value,
+    PersistentEventVector<EventSignalEdge> edges_value,
+    PersistentEventVector<float> strength_value,
+    PersistentEventVector<std::uint8_t> unresolved_value,
+    std::shared_ptr<const EventSignalInputs> delta_parent_value,
+    std::vector<std::size_t> score_indices_value,
+    std::vector<std::size_t> strength_indices_value,
+    std::vector<std::size_t> direct_indices_value)
+    : snapshot_id(std::move(snapshot_id_value)), direct(std::move(direct_value)),
+      score(std::move(score_value)), edges(std::move(edges_value)),
+      strength(std::move(strength_value)), unresolved(std::move(unresolved_value)),
+      delta_parent_(std::move(delta_parent_value)),
+      score_indices_(std::move(score_indices_value)),
+      strength_indices_(std::move(strength_indices_value)),
+      direct_indices_(std::move(direct_indices_value)) {
+    if (!digest(snapshot_id) || !delta_parent_ || direct.size() != score.size() ||
+        unresolved.size() != score.size() || strength.size() != edges.size())
+        throw std::invalid_argument("event delta node/edge counts disagree");
+    const auto old_edges = delta_parent_->edges.size();
+    for (std::size_t index = old_edges; index < edges.size(); ++index) {
+        const auto edge = edges[index];
+        if (edge.source >= score.size() || edge.target >= score.size())
+            throw std::invalid_argument("event endpoint is outside the node directory");
+        auto& incoming = incoming_delta_[edge.target];
+        if (incoming.empty() && edge.target < delta_parent_->score.size()) {
+            const auto prior = delta_parent_->incoming(edge.target);
+            incoming.assign(prior.begin(), prior.end());
+        }
+        incoming.push_back(index);
+        auto& outgoing = outgoing_delta_[edge.source];
+        if (outgoing.empty() && edge.source < delta_parent_->score.size()) {
+            const auto prior = delta_parent_->outgoing(edge.source);
+            outgoing.assign(prior.begin(), prior.end());
+        }
+        outgoing.push_back(index);
+    }
+}
+
 std::span<const std::size_t> EventSignalInputs::incoming(const std::size_t node) const {
-    if (node >= incoming_.size()) throw std::out_of_range("event node outside directory");
+    if (node >= score.size()) throw std::out_of_range("event node outside directory");
+    if (const auto found = incoming_delta_.find(node); found != incoming_delta_.end())
+        return found->second;
+    if (delta_parent_) {
+        if (node < delta_parent_->score.size()) return delta_parent_->incoming(node);
+        return {};
+    }
     return incoming_[node];
 }
 
 std::span<const std::size_t> EventSignalInputs::outgoing(const std::size_t node) const {
-    if (node >= outgoing_.size()) throw std::out_of_range("event node outside directory");
+    if (node >= score.size()) throw std::out_of_range("event node outside directory");
+    if (const auto found = outgoing_delta_.find(node); found != outgoing_delta_.end())
+        return found->second;
+    if (delta_parent_) {
+        if (node < delta_parent_->score.size()) return delta_parent_->outgoing(node);
+        return {};
+    }
     return outgoing_[node];
 }
 
@@ -311,7 +363,7 @@ EventSignalProposal settle_event_signal(
                 Topology value;
                 std::vector<double> absolute_weights;
                 for (const auto edge_index : inputs.incoming(node)) {
-                    const auto& edge = inputs.edges[edge_index];
+                    const auto edge = inputs.edges[edge_index];
                     const auto changed = strengths.find(edge_index);
                     const float weight = changed == strengths.end() ? inputs.strength[edge_index] : changed->second;
                     value.incoming.push_back({edge.source, edge.sign, weight, initial(edge.source)});

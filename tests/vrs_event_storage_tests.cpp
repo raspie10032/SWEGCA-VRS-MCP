@@ -1,4 +1,5 @@
 #include "world/vrs_event_storage.hpp"
+#include "world/vrs_event_delta.hpp"
 
 #include <array>
 #include <bit>
@@ -46,11 +47,13 @@ std::shared_ptr<const DetachedVrsStateUpdateReceipt> receipt() {
 std::shared_ptr<const BoundEventSignalStorage> bind(
     const std::shared_ptr<const EventSignalInputs>& inputs) {
     const std::vector<std::size_t> score_shape{inputs->score.size()};
-    const auto score_bytes = bytes(inputs->score);
+    const auto dense_score = inputs->score.materialize();
+    const auto score_bytes = bytes(dense_score);
     auto scores = VrsArrayBlocks::prepare(
         {"<f4", score_shape, score_bytes}, {}, 64).array;
     std::vector<std::uint16_t> half;
-    for (const auto strength : inputs->strength) {
+    for (std::size_t index = 0; index < inputs->strength.size(); ++index) {
+        const auto strength = inputs->strength[index];
         if (strength == 1.0F) half.push_back(0x3c00U);
         else if (strength == 0.75F) half.push_back(0x3a00U);
         else throw std::runtime_error("fixture strength is not encoded");
@@ -117,7 +120,7 @@ void paired_storage_exact() {
     assert(stored.diagnostics.scores.candidate_bytes_scanned == 8);
     assert(stored.diagnostics.strengths.candidate_bytes_scanned == 4);
     assert(bound->scores == original_scores && bound->strengths == original_strengths);
-    assert(restore_float32(*bound->scores) == inputs->score);
+    assert(restore_float32(*bound->scores) == inputs->score.materialize());
     assert((restore_float16(*bound->strengths) ==
             std::vector<std::uint16_t>{0x3c00U, 0x3a00U}));
 }
@@ -156,7 +159,7 @@ void no_change_pending_and_owner_boundaries() {
 void cold_binding_rejects_layout_and_values() {
     const auto inputs = fixture();
     const std::vector<std::size_t> score_shape{3};
-    auto changed_score = inputs->score;
+    auto changed_score = inputs->score.materialize();
     changed_score[0] += 0.1F;
     const auto score_raw = bytes(changed_score);
     auto bad_scores = VrsArrayBlocks::prepare(
@@ -169,7 +172,8 @@ void cold_binding_rejects_layout_and_values() {
     assert(rejects([&] {
         (void)BoundEventSignalStorage::cold_bind(inputs, bad_scores, strengths);
     }));
-    const auto score_raw_good = bytes(inputs->score);
+    const auto dense_score = inputs->score.materialize();
+    const auto score_raw_good = bytes(dense_score);
     auto scores = VrsArrayBlocks::prepare(
         {"<f4", score_shape, score_raw_good}, {}, 64).array;
     const std::vector<float> wrong_strength{1.0F, 0.75F};
@@ -188,6 +192,86 @@ void cold_binding_rejects_layout_and_values() {
     }));
 }
 
+void sparse_delta_settles_and_persists_only_candidate_changes() {
+    const auto parent = fixture();
+    const auto bound = bind(parent);
+    const auto parent_scores = bound->scores;
+    const auto parent_strengths = bound->strengths;
+    const std::array<float, 2> appended_direct{0.4F, -0.2F};
+    const std::array<float, 2> appended_score{0.2F, -0.1F};
+    const std::array<std::uint8_t, 2> appended_unresolved{0, 1};
+    const std::array<EventSignalEdge, 2> appended_edges{
+        EventSignalEdge{1, 3, 1, 0.5F}, EventSignalEdge{3, 4, -1, 0.25F}};
+    const std::array<float, 2> appended_strength{0.5F, 0.25F};
+    const std::array<std::size_t, 1> strength_indices{1};
+    const std::array<float, 1> strength_values{0.5F};
+    const std::array<std::size_t, 1> direct_indices{0};
+    const std::array<float, 1> direct_values{0.3F};
+    const std::array<std::size_t, 1> score_indices{2};
+    const std::array<float, 1> score_values{-0.25F};
+    const auto candidate = prepare_event_delta(
+        parent, std::string(64, 'b'), appended_direct, appended_score,
+        appended_unresolved, appended_edges, appended_strength,
+        {}, {}, strength_indices, strength_values, direct_indices, direct_values,
+        score_indices, score_values);
+
+    const auto proposal = bound->settle_candidate(candidate, {}, {}, "vrs-edge:", nullptr, 1000);
+    assert(!proposal.signal.pending());
+    assert(proposal.inputs_owner == candidate);
+    assert(proposal.signal.belongs_to(*candidate));
+    assert(proposal.signal.seed_nodes == std::vector<std::size_t>({0, 2, 3, 4}));
+    const auto stored = bound->prepare(proposal);
+
+    auto expected_scores = candidate->score.materialize();
+    for (const auto& [index, value] : proposal.signal.scores) expected_scores[index] = value;
+    auto expected_strengths = candidate->strength.materialize();
+    for (const auto& [index, value] : proposal.signal.strengths) expected_strengths[index] = value;
+    std::vector<std::uint16_t> expected_halves;
+    for (const auto value : expected_strengths)
+        expected_halves.push_back(event_strength_float16_bits(value));
+    assert(restore_float32(*stored.scores) == expected_scores);
+    assert(restore_float16(*stored.strengths) == expected_halves);
+    assert(stored.scores->shape == std::vector<std::size_t>{5});
+    assert(stored.strengths->shape == std::vector<std::size_t>{4});
+    assert(stored.diagnostics.scores.sparse_storage_update);
+    assert(stored.diagnostics.strengths.sparse_storage_update);
+    assert(bound->scores == parent_scores && bound->strengths == parent_strengths);
+    assert(restore_float32(*bound->scores) == parent->score.materialize());
+    assert((restore_float16(*bound->strengths) ==
+            std::vector<std::uint16_t>{0x3c00U, 0x3a00U}));
+}
+
+void sparse_delta_rejects_non_durable_and_foreign_generations() {
+    const auto parent = fixture();
+    const auto bound = bind(parent);
+    const std::array<float, 1> direct{0.1F};
+    const std::array<float, 1> score{0.2F};
+    const std::array<std::uint8_t, 1> unresolved{0};
+    const std::array<EventSignalEdge, 1> edge{EventSignalEdge{0, 3, 1, 0.1F}};
+    const std::array<float, 1> unrounded_strength{0.1F};
+    const auto unrounded = prepare_event_delta(
+        parent, std::string(64, 'b'), direct, score, unresolved, edge,
+        unrounded_strength);
+    assert(rejects([&] {
+        (void)bound->settle_candidate(unrounded, {}, {}, "vrs-edge:", nullptr, 1000);
+    }));
+
+    const auto foreign_parent = fixture();
+    const auto foreign = prepare_event_delta(
+        foreign_parent, std::string(64, 'c'), {}, {}, {}, {}, {});
+    assert(rejects([&] {
+        (void)bound->settle_candidate(foreign, {}, {}, "vrs-edge:", nullptr, 1000);
+    }));
+
+    const auto first = prepare_event_delta(
+        parent, std::string(64, 'd'), {}, {}, {}, {}, {});
+    const auto second = prepare_event_delta(
+        first, std::string(64, 'e'), {}, {}, {}, {}, {});
+    assert(rejects([&] {
+        (void)bound->settle_candidate(second, {}, {}, "vrs-edge:", nullptr, 1000);
+    }));
+}
+
 }  // namespace
 
 int main() {
@@ -198,5 +282,7 @@ int main() {
     paired_storage_exact();
     no_change_pending_and_owner_boundaries();
     cold_binding_rejects_layout_and_values();
+    sparse_delta_settles_and_persists_only_candidate_changes();
+    sparse_delta_rejects_non_durable_and_foreign_generations();
     std::cout << "VRS event storage tests passed\n";
 }

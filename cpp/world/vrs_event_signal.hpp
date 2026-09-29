@@ -1,6 +1,7 @@
 #pragma once
 
 #include "world/detached_vrs_state_update.hpp"
+#include "world/persistent_event_vector.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -50,18 +51,50 @@ public:
     EventSignalInputs& operator=(EventSignalInputs&&) = delete;
 
     const std::string snapshot_id;
-    const std::vector<float> direct;
-    const std::vector<float> score;
-    const std::vector<EventSignalEdge> edges;
-    const std::vector<float> strength;
-    const std::vector<std::uint8_t> unresolved;
+    const PersistentEventVector<float> direct;
+    const PersistentEventVector<float> score;
+    const PersistentEventVector<EventSignalEdge> edges;
+    const PersistentEventVector<float> strength;
+    const PersistentEventVector<std::uint8_t> unresolved;
 
     [[nodiscard]] std::span<const std::size_t> incoming(std::size_t node) const;
     [[nodiscard]] std::span<const std::size_t> outgoing(std::size_t node) const;
 
 private:
+    friend std::shared_ptr<const EventSignalInputs> prepare_event_delta(
+        const std::shared_ptr<const EventSignalInputs>&, std::string,
+        std::span<const float>, std::span<const float>,
+        std::span<const std::uint8_t>, std::span<const EventSignalEdge>,
+        std::span<const float>, std::span<const std::size_t>,
+        std::span<const float>, std::span<const std::size_t>,
+        std::span<const float>, std::span<const std::size_t>,
+        std::span<const float>, std::span<const std::size_t>,
+        std::span<const float>, std::span<const std::size_t>,
+        std::span<const std::uint8_t>);
+    EventSignalInputs(
+        std::string snapshot_id, PersistentEventVector<float> direct,
+        PersistentEventVector<float> score,
+        PersistentEventVector<EventSignalEdge> edges,
+        PersistentEventVector<float> strength,
+        PersistentEventVector<std::uint8_t> unresolved,
+        std::shared_ptr<const EventSignalInputs> delta_parent,
+        std::vector<std::size_t> score_indices,
+        std::vector<std::size_t> strength_indices,
+        std::vector<std::size_t> direct_indices);
     std::vector<std::vector<std::size_t>> incoming_;
     std::vector<std::vector<std::size_t>> outgoing_;
+    std::shared_ptr<const EventSignalInputs> delta_parent_;
+    std::map<std::size_t, std::vector<std::size_t>> incoming_delta_;
+    std::map<std::size_t, std::vector<std::size_t>> outgoing_delta_;
+    std::vector<std::size_t> score_indices_;
+    std::vector<std::size_t> strength_indices_;
+    std::vector<std::size_t> direct_indices_;
+
+public:
+    [[nodiscard]] const EventSignalInputs* delta_parent() const noexcept { return delta_parent_.get(); }
+    [[nodiscard]] std::span<const std::size_t> score_indices() const noexcept { return score_indices_; }
+    [[nodiscard]] std::span<const std::size_t> strength_indices() const noexcept { return strength_indices_; }
+    [[nodiscard]] std::span<const std::size_t> direct_indices() const noexcept { return direct_indices_; }
 };
 
 class EventSignalProposal final {
