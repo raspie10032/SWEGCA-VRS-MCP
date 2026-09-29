@@ -1,6 +1,7 @@
 #include "world/sensor_definition.hpp"
 
 #include "swegca_architecture/sha256.hpp"
+#include "world/sensor_term_index.hpp"
 
 #include <algorithm>
 #include <charconv>
@@ -8,6 +9,8 @@
 #include <cstdint>
 #include <stdexcept>
 #include <string>
+#include <map>
+#include <set>
 #include <utility>
 
 namespace swegca::world {
@@ -182,6 +185,70 @@ SensorDefinitionCandidate make_sensor_definition_candidate(
             std::vector<std::size_t>(source_event_indices.begin(), source_event_indices.end()),
             std::move(contract), DefinitionStatus::partial,
             assessment.unresolved_definitions, std::move(plans), false};
+}
+
+std::vector<SensorDefinitionCandidate> propose_sensor_definition_candidates(
+    const std::span<const ContinuousSensorEvent> events,
+    const std::size_t minimum_observations,
+    const std::size_t maximum_candidates_per_modality,
+    const SensorTermIndex* term_index) {
+    if (events.empty()) return {};
+    if (minimum_observations == 0 || maximum_candidates_per_modality == 0) {
+        throw std::invalid_argument("OCR proposal limits must be positive");
+    }
+    SensorTermIndex temporary;
+    if (term_index == nullptr) {
+        temporary = update_sensor_term_index(nullptr, events).index;
+        term_index = &temporary;
+    } else {
+        validate_sensor_term_index(*term_index, events);
+    }
+    const auto screen = indexed_term_candidates(
+        *term_index, "screen_ocr", minimum_observations,
+        maximum_candidates_per_modality);
+    const auto audio = indexed_term_candidates(
+        *term_index, "system_audio_transcript", minimum_observations,
+        maximum_candidates_per_modality);
+    std::vector<SensorDefinitionCandidate> candidates;
+    candidates.reserve(screen.size() + audio.size());
+    for (const auto& proposal : screen) {
+        candidates.push_back(make_sensor_definition_candidate(
+            "screen_ocr", proposal.value, proposal.observation_indices, events));
+    }
+    for (const auto& proposal : audio) {
+        candidates.push_back(make_sensor_definition_candidate(
+            "system_audio_transcript", proposal.value,
+            proposal.observation_indices, events));
+    }
+    std::map<std::string, const OcrTermCandidate*> screen_by_term;
+    std::map<std::string, const OcrTermCandidate*> audio_by_term;
+    auto fold = [](std::string value) {
+        for (auto& byte : value) {
+            if (byte >= 'A' && byte <= 'Z') byte = static_cast<char>(byte + ('a' - 'A'));
+        }
+        return value;
+    };
+    for (const auto& proposal : screen) screen_by_term[fold(proposal.value)] = &proposal;
+    for (const auto& proposal : audio) audio_by_term[fold(proposal.value)] = &proposal;
+    for (const auto& [key, ocr] : screen_by_term) {
+        const auto found = audio_by_term.find(key);
+        if (found == audio_by_term.end()) continue;
+        std::vector<std::size_t> indices;
+        std::set_intersection(
+            ocr->observation_indices.begin(), ocr->observation_indices.end(),
+            found->second->observation_indices.begin(),
+            found->second->observation_indices.end(),
+            std::back_inserter(indices));
+        if (indices.size() >= minimum_observations) {
+            candidates.push_back(make_sensor_definition_candidate(
+                "cross_modal_exact_term", ocr->value, indices, events));
+        }
+    }
+    std::sort(candidates.begin(), candidates.end(), [&](const auto& left, const auto& right) {
+        return std::tuple{left.modality, fold(left.term), left.candidate_id} <
+               std::tuple{right.modality, fold(right.term), right.candidate_id};
+    });
+    return candidates;
 }
 
 std::vector<EvidenceObservation> candidate_insufficient_observations(

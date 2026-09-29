@@ -11,6 +11,8 @@
 
 namespace swegca::world {
 
+struct SensorTermIndex;
+
 struct ContinuousSensorEvent final {
     std::size_t index = 0;
     std::string timestamp;
@@ -53,6 +55,12 @@ struct SensorDefinitionCandidate final {
     std::string modality, std::string term,
     std::span<const std::size_t> source_event_indices,
     std::span<const ContinuousSensorEvent> events);
+
+[[nodiscard]] std::vector<SensorDefinitionCandidate> propose_sensor_definition_candidates(
+    std::span<const ContinuousSensorEvent> events,
+    std::size_t minimum_observations = 2,
+    std::size_t maximum_candidates_per_modality = 8,
+    const SensorTermIndex* term_index = nullptr);
 
 [[nodiscard]] std::vector<EvidenceObservation> candidate_insufficient_observations(
     const SensorDefinitionCandidate& candidate, std::string source_family);
