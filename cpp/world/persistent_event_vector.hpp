@@ -65,6 +65,10 @@ public:
     [[nodiscard]] bool is_dense_root() const noexcept {
         return size_ == base_->size() && tree_->children.empty();
     }
+    [[nodiscard]] bool same_representation(
+        const PersistentEventVector& other) const noexcept {
+        return base_ == other.base_ && tree_ == other.tree_ && size_ == other.size_;
+    }
     [[nodiscard]] std::vector<T> materialize() const {
         std::vector<T> result;
         result.reserve(size_);
