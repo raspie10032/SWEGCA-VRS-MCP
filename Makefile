@@ -29,6 +29,10 @@ WORLD_SOURCES := cpp/world/cognitive_state.cpp cpp/world/cognitive_event.cpp \
 	cpp/world/vrs_canonicalization.cpp \
 	cpp/world/vrs_sparse_lineage.cpp \
 	cpp/world/term_address_index.cpp \
+	cpp/world/proposition_directory.cpp \
+	cpp/world/semantic_family_directory.cpp \
+	cpp/world/snapshot_digest.cpp \
+	cpp/world/memory_activation.cpp \
 	cpp/world/semantic_vrs_ingress.cpp \
 	cpp/world/session_semantic_binding.cpp \
 	cpp/world/session_message_content.cpp \
