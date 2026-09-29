@@ -1,4 +1,5 @@
 #include "world/vrs_canonicalization.hpp"
+#include "world/vrs_sparse_lineage.hpp"
 
 #include <algorithm>
 #include <bit>
@@ -37,10 +38,11 @@ struct RunningMean final {
     std::vector<std::uint32_t> new_members;
 };
 
+template<class Lineage>
 CanonicalVrsAppendDelta prepare_delta(
     const PersistentEventVector<EventSignalEdge>& parent_edges,
     const PersistentEventVector<float>& parent_strengths,
-    const CanonicalVrsMemberLineage& parent_lineage,
+    const Lineage& parent_lineage,
     const std::span<const EventSignalEdge> appended_edges,
     const std::span<const float> appended_strengths,
     const CanonicalEdgeAddressIndex& parent_address_index) {
@@ -254,6 +256,30 @@ CanonicalVrsAppendDelta prepare_canonical_vrs_append_delta(
     const PersistentEventVector<EventSignalEdge>& parent_edges,
     const PersistentEventVector<float>& parent_strengths,
     const CanonicalVrsMemberLineage& parent_lineage,
+    const std::span<const EventSignalEdge> appended_edges,
+    const std::span<const float> appended_strengths,
+    const CanonicalEdgeAddressIndex& parent_address_index) {
+    parent_address_index.require_source(parent_edges);
+    (void)parent_lineage.require_validated_immutable();
+    if (parent_strengths.size() != parent_edges.size() ||
+        parent_lineage.group_count() != parent_edges.size() ||
+        appended_strengths.size() != appended_edges.size())
+        reject("canonical append delta layout changed");
+    for (std::size_t index = 0; index < appended_edges.size(); ++index)
+        if (!finite_nonnegative(appended_edges[index].vrs_strength) ||
+            !finite_nonnegative(appended_strengths[index]))
+            reject("canonical append strengths must be finite nonnegative");
+    if (parent_lineage.member_count() + appended_edges.size() >
+        (std::uint64_t{1} << 32U))
+        reject("canonical member append exceeds uint32 addressing");
+    return prepare_delta(parent_edges, parent_strengths, parent_lineage,
+                         appended_edges, appended_strengths, parent_address_index);
+}
+
+CanonicalVrsAppendDelta prepare_canonical_vrs_append_delta(
+    const PersistentEventVector<EventSignalEdge>& parent_edges,
+    const PersistentEventVector<float>& parent_strengths,
+    const SparseCanonicalLineage& parent_lineage,
     const std::span<const EventSignalEdge> appended_edges,
     const std::span<const float> appended_strengths,
     const CanonicalEdgeAddressIndex& parent_address_index) {

@@ -11,6 +11,8 @@
 
 namespace swegca::world {
 
+class SparseCanonicalLineage;
+
 inline constexpr std::string_view vrs_canonicalization_source_sha256 =
     "979c9a470e99814b91571c243ee339f657d810665943c3b9b5032dca66ea6614";
 inline constexpr std::string_view canonical_vrs_member_schema =
@@ -106,6 +108,14 @@ struct CanonicalVrsExtension final {
     const PersistentEventVector<EventSignalEdge>& parent_edges,
     const PersistentEventVector<float>& parent_strengths,
     const CanonicalVrsMemberLineage& parent_lineage,
+    std::span<const EventSignalEdge> appended_edges,
+    std::span<const float> appended_strengths,
+    const CanonicalEdgeAddressIndex& parent_address_index);
+
+[[nodiscard]] CanonicalVrsAppendDelta prepare_canonical_vrs_append_delta(
+    const PersistentEventVector<EventSignalEdge>& parent_edges,
+    const PersistentEventVector<float>& parent_strengths,
+    const SparseCanonicalLineage& parent_lineage,
     std::span<const EventSignalEdge> appended_edges,
     std::span<const float> appended_strengths,
     const CanonicalEdgeAddressIndex& parent_address_index);
