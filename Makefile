@@ -29,6 +29,7 @@ WORLD_SOURCES := cpp/world/cognitive_state.cpp cpp/world/cognitive_event.cpp \
 	cpp/world/vrs_canonicalization.cpp \
 	cpp/world/vrs_sparse_lineage.cpp \
 	cpp/world/term_address_index.cpp \
+	cpp/world/semantic_vrs_ingress.cpp \
 	cpp/world/counterfactual_replay.cpp \
 	cpp/world/hypothesis_proposer.cpp cpp/world/sensor_definition.cpp \
 	cpp/world/sensor_counterfactual.cpp \
@@ -540,6 +541,9 @@ $(BUILD)/vrs-sparse-lineage-tests: tests/vrs_sparse_lineage_tests.cpp cpp/world/
 $(BUILD)/term-address-index-tests: tests/term_address_index_tests.cpp cpp/world/term_address_index.cpp cpp/world/term_address_index.hpp | $(BUILD)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< cpp/world/term_address_index.cpp -o $@
 
+$(BUILD)/semantic-vrs-ingress-tests: tests/semantic_vrs_ingress_tests.cpp cpp/world/semantic_vrs_ingress.cpp cpp/world/semantic_vrs_ingress.hpp cpp/world/term_address_index.cpp cpp/world/term_address_index.hpp cpp/world/cognitive_state.cpp cpp/world/cognitive_state.hpp cpp/world/vrs_event_signal.hpp cpp/swegca_architecture/sha256.cpp cpp/swegca_architecture/sha256.hpp | $(BUILD)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< cpp/world/semantic_vrs_ingress.cpp cpp/world/term_address_index.cpp cpp/world/cognitive_state.cpp cpp/swegca_architecture/sha256.cpp -o $@
+
 $(BUILD)/sensor-definition-tests: tests/sensor_definition_tests.cpp cpp/world/sensor_definition.cpp cpp/world/sensor_definition.hpp cpp/world/sensor_term_index.cpp cpp/world/sensor_term_index.hpp cpp/world/unicode_nfkc.cpp cpp/world/unicode_nfkc.hpp cpp/world/unicode_nfkc_data.hpp cpp/world/definition_contract.cpp cpp/world/definition_contract.hpp cpp/world/evidence_accumulator.cpp cpp/world/evidence_accumulator.hpp cpp/swegca_architecture/sha256.cpp cpp/swegca_architecture/sha256.hpp | $(BUILD)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< cpp/world/sensor_definition.cpp cpp/world/sensor_term_index.cpp cpp/world/unicode_nfkc.cpp cpp/world/definition_contract.cpp cpp/world/evidence_accumulator.cpp cpp/swegca_architecture/sha256.cpp -o $@
 
@@ -631,6 +635,7 @@ check-world: $(BUILD)/cognitive-state-tests $(BUILD)/definition-contract-tests \
 	$(BUILD)/vrs-canonicalization-tests \
 	$(BUILD)/vrs-sparse-lineage-tests \
 	$(BUILD)/term-address-index-tests \
+	$(BUILD)/semantic-vrs-ingress-tests \
 	$(BUILD)/sensor-definition-tests $(BUILD)/sensor-term-index-tests \
 	$(BUILD)/sensor-counterfactual-tests $(BUILD)/counterfactual-replay-tests \
 	$(BUILD)/autonomous-cognition-tests $(BUILD)/accelerated-verification-tests \
@@ -654,6 +659,7 @@ check-world: $(BUILD)/cognitive-state-tests $(BUILD)/definition-contract-tests \
 	./$(BUILD)/vrs-canonicalization-tests
 	./$(BUILD)/vrs-sparse-lineage-tests
 	./$(BUILD)/term-address-index-tests
+	./$(BUILD)/semantic-vrs-ingress-tests
 	./$(BUILD)/sensor-definition-tests
 	./$(BUILD)/sensor-term-index-tests
 	./$(BUILD)/sensor-counterfactual-tests
