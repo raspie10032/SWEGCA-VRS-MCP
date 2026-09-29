@@ -31,6 +31,7 @@ WORLD_SOURCES := cpp/world/cognitive_state.cpp cpp/world/cognitive_event.cpp \
 	cpp/world/term_address_index.cpp \
 	cpp/world/semantic_vrs_ingress.cpp \
 	cpp/world/session_semantic_binding.cpp \
+	cpp/world/session_message_content.cpp \
 	cpp/world/semantic_event_append.cpp \
 	cpp/world/counterfactual_replay.cpp \
 	cpp/world/hypothesis_proposer.cpp cpp/world/sensor_definition.cpp \
@@ -549,6 +550,9 @@ $(BUILD)/semantic-vrs-ingress-tests: tests/semantic_vrs_ingress_tests.cpp cpp/wo
 $(BUILD)/session-semantic-binding-tests: tests/session_semantic_binding_tests.cpp cpp/world/session_semantic_binding.cpp cpp/world/session_semantic_binding.hpp cpp/world/semantic_vrs_ingress.cpp cpp/world/semantic_vrs_ingress.hpp cpp/world/term_address_index.cpp cpp/world/term_address_index.hpp cpp/world/cognitive_state.cpp cpp/world/cognitive_state.hpp cpp/world/vrs_event_signal.hpp cpp/swegca_architecture/sha256.cpp cpp/swegca_architecture/sha256.hpp | $(BUILD)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< cpp/world/session_semantic_binding.cpp cpp/world/semantic_vrs_ingress.cpp cpp/world/term_address_index.cpp cpp/world/cognitive_state.cpp cpp/swegca_architecture/sha256.cpp -o $@
 
+$(BUILD)/session-message-content-tests: tests/session_message_content_tests.cpp cpp/world/session_message_content.cpp cpp/world/session_message_content.hpp cpp/transport/json.cpp cpp/transport/json.hpp | $(BUILD)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< cpp/world/session_message_content.cpp cpp/transport/json.cpp -o $@
+
 $(BUILD)/semantic-event-append-tests: tests/semantic_event_append_tests.cpp cpp/world/semantic_event_append.cpp cpp/world/semantic_event_append.hpp cpp/world/session_semantic_binding.cpp cpp/world/session_semantic_binding.hpp cpp/world/semantic_vrs_ingress.cpp cpp/world/semantic_vrs_ingress.hpp cpp/world/term_address_index.cpp cpp/world/term_address_index.hpp cpp/world/vrs_canonicalization.cpp cpp/world/vrs_canonicalization.hpp cpp/world/vrs_sparse_lineage.cpp cpp/world/vrs_sparse_lineage.hpp cpp/world/vrs_edge_address_index.cpp cpp/world/vrs_edge_address_index.hpp cpp/world/vrs_event_delta.cpp cpp/world/vrs_event_delta.hpp cpp/world/vrs_event_signal.cpp cpp/world/vrs_event_signal.hpp cpp/world/detached_vrs_state_update.cpp cpp/world/detached_vrs_state_update.hpp cpp/world/cognitive_state.cpp cpp/world/cognitive_state.hpp cpp/swegca_architecture/sha256.cpp cpp/swegca_architecture/sha256.hpp | $(BUILD)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< cpp/world/semantic_event_append.cpp cpp/world/session_semantic_binding.cpp cpp/world/semantic_vrs_ingress.cpp cpp/world/term_address_index.cpp cpp/world/vrs_canonicalization.cpp cpp/world/vrs_sparse_lineage.cpp cpp/world/vrs_edge_address_index.cpp cpp/world/vrs_event_delta.cpp cpp/world/vrs_event_signal.cpp cpp/world/detached_vrs_state_update.cpp cpp/world/cognitive_state.cpp cpp/swegca_architecture/sha256.cpp -o $@
 
@@ -645,6 +649,7 @@ check-world: $(BUILD)/cognitive-state-tests $(BUILD)/definition-contract-tests \
 	$(BUILD)/term-address-index-tests \
 	$(BUILD)/semantic-vrs-ingress-tests \
 	$(BUILD)/session-semantic-binding-tests \
+	$(BUILD)/session-message-content-tests \
 	$(BUILD)/semantic-event-append-tests \
 	$(BUILD)/sensor-definition-tests $(BUILD)/sensor-term-index-tests \
 	$(BUILD)/sensor-counterfactual-tests $(BUILD)/counterfactual-replay-tests \
@@ -671,6 +676,7 @@ check-world: $(BUILD)/cognitive-state-tests $(BUILD)/definition-contract-tests \
 	./$(BUILD)/term-address-index-tests
 	./$(BUILD)/semantic-vrs-ingress-tests
 	./$(BUILD)/session-semantic-binding-tests
+	./$(BUILD)/session-message-content-tests
 	./$(BUILD)/semantic-event-append-tests
 	./$(BUILD)/sensor-definition-tests
 	./$(BUILD)/sensor-term-index-tests
