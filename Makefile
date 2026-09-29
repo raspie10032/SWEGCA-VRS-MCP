@@ -57,6 +57,8 @@ WORLD_SOURCES := cpp/world/cognitive_state.cpp cpp/world/cognitive_event.cpp \
 	cpp/world/prototype_recurrent_cognition.cpp
 
 SESSION_BINDING_SUPPORT_SOURCES := cpp/world/session_speech_ingress.cpp \
+	cpp/world/session_speech_segments.cpp \
+	cpp/world/prepared_session_cache.cpp cpp/world/session_occurrences.cpp \
 	cpp/world/session_document_directory.cpp cpp/world/session_document.cpp \
 	cpp/world/session_event_index.cpp cpp/world/session_message_content.cpp \
 	cpp/world/session_call_content.cpp cpp/world/session_result_content.cpp \
@@ -586,7 +588,8 @@ $(BUILD)/session-archive-pipeline-tests: tests/session_archive_pipeline_tests.cp
 	cpp/world/session_occurrences.cpp cpp/world/session_document_directory.cpp \
 	cpp/world/prepared_session_cache.cpp cpp/world/session_result_collection.cpp \
 	cpp/world/session_speech_ingress.cpp cpp/world/session_speech_segments.cpp \
-	cpp/world/session_semantic_binding.cpp cpp/world/semantic_vrs_ingress.cpp \
+	cpp/world/session_semantic_binding.cpp cpp/world/session_content_encoding.cpp \
+	cpp/world/semantic_vrs_ingress.cpp \
 	cpp/world/term_address_index.cpp cpp/world/cognitive_state.cpp \
 	cpp/world/session_message_content.cpp cpp/world/session_call_content.cpp \
 	cpp/world/session_result_content.cpp cpp/world/session_operation_content.cpp \

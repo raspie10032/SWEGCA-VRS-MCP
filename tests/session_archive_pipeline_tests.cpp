@@ -1,6 +1,7 @@
 #include "swegca_architecture/sha256.hpp"
 #include "world/prepared_session_cache.hpp"
 #include "world/session_result_collection.hpp"
+#include "world/session_content_encoding.hpp"
 #include "world/session_semantic_binding.hpp"
 #include "world/session_speech_ingress.hpp"
 #include "world/session_speech_segments.hpp"
@@ -136,6 +137,9 @@ void test_complete_session_archive_pipeline() {
     assert(interpretation.units.size() == 1);
     const auto receipt = session_speech_receipt(interpretation);
     assert(receipt.at("schema").as_string() == session_speech_interpretation_schema);
+    const auto restored_interpretation =
+        restore_session_speech_interpretation(receipt, *entry);
+    assert(session_speech_receipt(restored_interpretation) == receipt);
 
     auto segmented_input = prepare_session_speech_input(*entry, {2}, "fixture-model");
     const auto segmented = from_segment_annotations(std::move(segmented_input),
@@ -146,6 +150,10 @@ void test_complete_session_archive_pipeline() {
     const auto& segment_row = segmented.segments->at("segments").as_array().front();
     assert(segment_row.at("addressees").as_array().size() == 1);
     assert(segment_row.at("topics").as_array().size() == 1);
+    const auto segmented_receipt = session_speech_receipt(segmented);
+    assert(session_speech_receipt(
+        restore_session_speech_interpretation(segmented_receipt, *entry)) ==
+        segmented_receipt);
 
     const auto bound = bind_session_semantics(prepared, episodes, entry, interpretation);
     assert(bound->original_episodes.size() == 1);
@@ -154,6 +162,22 @@ void test_complete_session_archive_pipeline() {
     assert(bound->units.front().events.size() == 1);
     assert(bound->units.front().occurrences.size() == 1);
     assert(!bound->grants_authority());
+    assert(bound->entry.get() == entry.get());
+
+    const auto restored_bound = restore_session_semantics(
+        bound->derivative.steps.front().observation, prepared, episodes);
+    assert(restored_bound->derivative.episode_id == bound->derivative.episode_id);
+    assert(restored_bound->units.size() == bound->units.size());
+    assert(&restored_bound->unit(0, "memory-1") == &restored_bound->units.front());
+    const auto encoded = prepare_session_recorded_event(
+        bound->derivative, 0, prepared, episodes);
+    assert(encoded.semantic_encoding);
+    assert(encoded.claims.size() == 1);
+    assert(encoded.claims.front().semantic_anchor_resolution.attributable_document_key ==
+           bound->document_key);
+    assert(encoded.unresolved.empty());
+    assert(encoded.semantic_encoding->outcomes() == std::vector<std::string>{"pending"});
+    assert(encoded.semantic_encoding->model() == "fixture-model");
 }
 
 }  // namespace

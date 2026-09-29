@@ -48,6 +48,13 @@ struct BoundSessionSemantics final {
     std::vector<SemanticAnchor> source_parts;
     std::vector<SessionSemanticUnitBinding> units;
     std::vector<std::string> unresolved;
+    PreparedSessionEntryPtr entry{};
+
+    [[nodiscard]] const SemanticSourceEpisode& episode() const noexcept {
+        return derivative;
+    }
+    [[nodiscard]] const SessionSemanticUnitBinding& unit(
+        std::size_t ordinal, std::string_view expected_memory_snapshot_id) const;
 
     [[nodiscard]] constexpr std::uint64_t new_observation_count() const noexcept {
         return 0;
@@ -133,5 +140,12 @@ public:
     const std::vector<SemanticSourceEpisode>& source_episodes,
     PreparedSessionEntryPtr entry,
     const SessionSpeechInterpretation& interpretation);
+
+// Restore a portable semantic proposal against the current prepared-memory
+// generation. The retained payload must reproduce byte-canonical content.
+[[nodiscard]] std::shared_ptr<const BoundSessionSemantics> restore_session_semantics(
+    const JsonValue& payload,
+    const PreparedSessionView& view,
+    const std::vector<SemanticSourceEpisode>& source_episodes);
 
 }  // namespace swegca::world

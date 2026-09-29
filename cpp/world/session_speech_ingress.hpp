@@ -102,4 +102,9 @@ struct SessionSpeechAnnotation final {
 [[nodiscard]] JsonValue session_speech_receipt(
     const SessionSpeechInterpretation& interpretation);
 
+// Rebind a portable receipt to the current prepared source. This performs no
+// model call and rejects any source, interpretation, or construction drift.
+[[nodiscard]] SessionSpeechInterpretation restore_session_speech_interpretation(
+    const JsonValue& record, const PreparedSessionEntry& entry);
+
 }  // namespace swegca::world

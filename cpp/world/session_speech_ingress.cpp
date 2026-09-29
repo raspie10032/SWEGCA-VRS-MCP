@@ -1,5 +1,7 @@
 #include "world/session_speech_ingress.hpp"
 
+#include "world/session_speech_segments.hpp"
+
 #include <algorithm>
 #include <charconv>
 #include <set>
@@ -145,6 +147,120 @@ void validate_units(const SessionSpeechInput& prepared,
         {"value", unit.value}, {"polarity", unit.polarity}, {"basis", unit.basis},
         {"anchors", strings(unit.anchors)}, {"qualifiers", JsonValue(std::move(qualifiers))},
         {"value_kind", unit.value_kind}};
+}
+
+[[nodiscard]] const JsonValue::Object& object(const JsonValue& value,
+                                               const char* reason) {
+    if (!value.is_object()) throw std::invalid_argument(reason);
+    return value.as_object();
+}
+
+[[nodiscard]] const JsonValue::Array& array(const JsonValue& value,
+                                             const char* reason) {
+    if (!value.is_array()) throw std::invalid_argument(reason);
+    return value.as_array();
+}
+
+[[nodiscard]] std::int64_t integer(const JsonValue& value, const char* reason) {
+    if (const auto* result = std::get_if<std::int64_t>(&value.storage())) return *result;
+    throw std::invalid_argument(reason);
+}
+
+[[nodiscard]] std::vector<std::string> string_values(
+    const JsonValue& value, const char* reason) {
+    std::vector<std::string> result;
+    for (const auto& row : array(value, reason)) {
+        if (!std::holds_alternative<std::string>(row.storage()))
+            throw std::invalid_argument(reason);
+        result.emplace_back(row.as_string());
+    }
+    return result;
+}
+
+[[nodiscard]] std::vector<SemanticQualifier> qualifier_values(
+    const JsonValue& value, const char* reason) {
+    std::vector<SemanticQualifier> result;
+    for (const auto& row : array(value, reason)) {
+        const auto& fields = object(row, reason);
+        if (fields.size() != 3 || !fields.contains("kind") ||
+            !fields.contains("value") || !fields.contains("anchors"))
+            throw std::invalid_argument(reason);
+        result.push_back({std::string(fields.at("kind").as_string()),
+            std::string(fields.at("value").as_string()),
+            string_values(fields.at("anchors"), reason)});
+    }
+    return result;
+}
+
+[[nodiscard]] std::vector<SemanticMeaningUnit> meaning_units(
+    const JsonValue& value, const char* reason) {
+    std::vector<SemanticMeaningUnit> result;
+    for (const auto& row : array(value, reason)) {
+        const auto& fields = object(row, reason);
+        static const std::set<std::string, std::less<>> names{
+            "subject", "predicate", "value", "polarity", "basis",
+            "anchors", "qualifiers", "value_kind"};
+        if (fields.size() != names.size() ||
+            !std::ranges::all_of(names, [&](const auto& name) { return fields.contains(name); }))
+            throw std::invalid_argument(reason);
+        result.push_back({std::string(fields.at("subject").as_string()),
+            std::string(fields.at("predicate").as_string()), fields.at("value"),
+            std::string(fields.at("polarity").as_string()),
+            std::string(fields.at("basis").as_string()),
+            string_values(fields.at("anchors"), reason),
+            qualifier_values(fields.at("qualifiers"), reason),
+            std::string(fields.at("value_kind").as_string())});
+    }
+    return result;
+}
+
+[[nodiscard]] std::vector<SessionSpeechAnnotation> annotation_values(
+    const JsonValue& value) {
+    constexpr auto reason = "session_speech_annotations_required";
+    const auto& body = object(value, reason);
+    if (body.size() != 2 || !body.contains("annotations") || !body.contains("unresolved"))
+        throw std::invalid_argument(reason);
+    std::vector<SessionSpeechAnnotation> result;
+    for (const auto& row : array(body.at("annotations"), reason)) {
+        const auto& fields = object(row, "session_speech_annotation_fields_changed");
+        static const std::set<std::string, std::less<>> names{
+            "anchor", "kind", "speaker", "addressees", "topics", "anchors", "qualifiers"};
+        if (fields.size() != names.size() ||
+            !std::ranges::all_of(names, [&](const auto& name) { return fields.contains(name); }))
+            throw std::invalid_argument("session_speech_annotation_fields_changed");
+        result.push_back({std::string(fields.at("anchor").as_string()),
+            std::string(fields.at("kind").as_string()), fields.at("speaker"),
+            array(fields.at("addressees"), reason), array(fields.at("topics"), reason),
+            string_values(fields.at("anchors"), reason),
+            qualifier_values(fields.at("qualifiers"), reason)});
+    }
+    return result;
+}
+
+[[nodiscard]] std::vector<SessionSegmentAnnotation> segment_values(const JsonValue& value) {
+    constexpr auto reason = "session_segment_annotations_required";
+    const auto& body = object(value, reason);
+    if (body.size() != 2 || !body.contains("segments") || !body.contains("unresolved"))
+        throw std::invalid_argument(reason);
+    std::vector<SessionSegmentAnnotation> result;
+    for (const auto& row : array(body.at("segments"), reason)) {
+        const auto& fields = object(row, "session_segment_annotation_fields_changed");
+        static const std::set<std::string, std::less<>> names{
+            "anchor", "quote", "occurrence", "kind", "speaker", "addressees",
+            "topics", "anchors", "qualifiers"};
+        if (fields.size() != names.size() ||
+            !std::ranges::all_of(names, [&](const auto& name) { return fields.contains(name); }))
+            throw std::invalid_argument("session_segment_annotation_fields_changed");
+        const auto occurrence = integer(fields.at("occurrence"), reason);
+        if (occurrence < 0) throw std::invalid_argument(reason);
+        result.push_back({std::string(fields.at("anchor").as_string()),
+            std::string(fields.at("quote").as_string()), static_cast<std::size_t>(occurrence),
+            std::string(fields.at("kind").as_string()), fields.at("speaker"),
+            array(fields.at("addressees"), reason), array(fields.at("topics"), reason),
+            string_values(fields.at("anchors"), reason),
+            qualifier_values(fields.at("qualifiers"), reason)});
+    }
+    return result;
 }
 
 }  // namespace
@@ -365,6 +481,56 @@ JsonValue session_speech_receipt(const SessionSpeechInterpretation& interpretati
         record.emplace("segments", *interpretation.segments);
     }
     return JsonValue(std::move(record));
+}
+
+SessionSpeechInterpretation restore_session_speech_interpretation(
+    const JsonValue& record, const PreparedSessionEntry& entry) {
+    try {
+        const auto& fields = object(record, "session_speech_receipt_required");
+        if (!fields.contains("schema") ||
+            fields.at("schema").as_string() != session_speech_interpretation_schema)
+            throw std::invalid_argument("session_speech_receipt_required");
+        const auto& source = object(fields.at("source"), "session_speech_receipt_malformed");
+        const auto event_values = array(source.at("event_ordinals"),
+                                        "session_speech_receipt_malformed");
+        std::vector<std::size_t> event_ordinals;
+        event_ordinals.reserve(event_values.size());
+        for (const auto& value : event_values) {
+            const auto ordinal = integer(value, "session_speech_receipt_malformed");
+            if (ordinal < 0) throw std::invalid_argument("session_speech_receipt_malformed");
+            event_ordinals.push_back(static_cast<std::size_t>(ordinal));
+        }
+        const auto model = std::string(fields.at("model").as_string());
+        auto prepared = prepare_session_speech_input(entry, event_ordinals, model);
+        if (fields.contains("segments")) {
+            auto result = from_segment_annotations(std::move(prepared),
+                segment_values(fields.at("segments")),
+                string_values(fields.at("segments").at("unresolved"),
+                              "session_segment_annotations_required"));
+            if (session_speech_receipt(result) != record)
+                throw std::invalid_argument("session_speech_receipt_changed");
+            return result;
+        }
+        const SessionSpeechInterpretation source_probe{
+            prepared, model, {}, {}, std::nullopt, std::nullopt};
+        if (session_speech_receipt(source_probe).at("source") != fields.at("source"))
+            throw std::invalid_argument("session_speech_source_binding_changed");
+        const auto unresolved = string_values(fields.at("unresolved"),
+                                              "session_speech_receipt_malformed");
+        SessionSpeechInterpretation result = fields.contains("annotations")
+            ? interpret_session_speech_annotations(std::move(prepared),
+                annotation_values(fields.at("annotations")), unresolved)
+            : interpret_session_speech(std::move(prepared),
+                meaning_units(fields.at("units"), "session_speech_receipt_malformed"),
+                unresolved);
+        if (session_speech_receipt(result) != record)
+            throw std::invalid_argument("session_speech_receipt_changed");
+        return result;
+    } catch (const std::out_of_range&) {
+        throw std::invalid_argument("session_speech_receipt_malformed");
+    } catch (const std::bad_variant_access&) {
+        throw std::invalid_argument("session_speech_receipt_malformed");
+    }
 }
 
 }  // namespace swegca::world
