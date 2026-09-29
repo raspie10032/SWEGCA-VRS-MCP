@@ -150,6 +150,8 @@ private:
 };
 
 [[nodiscard]] std::string semantic_source_digest(const SemanticSourceEpisode& source);
+[[nodiscard]] std::string semantic_canonical_json(const JsonValue& value);
+[[nodiscard]] std::string semantic_json_digest(const JsonValue& value);
 [[nodiscard]] std::string semantic_encoding_episode_id(const SemanticEncoding& encoding);
 [[nodiscard]] std::string semantic_scoped_address(
     std::string_view kind, const JsonValue& scope, const JsonValue& value);

@@ -33,6 +33,46 @@ namespace {
         left.region == right.region && left.time_ns == right.time_ns;
 }
 
+[[nodiscard]] JsonValue occurrence_value(const BoundSessionOccurrence& occurrence) {
+    JsonValue::Array call_key;
+    if (occurrence.call_key)
+        call_key = {occurrence.call_key->session, occurrence.call_key->turn,
+                    occurrence.call_key->family, occurrence.call_key->call_id};
+    return JsonValue::Object{{"session", occurrence.session}, {"turn", occurrence.turn},
+        {"call_key", occurrence.call_key ? JsonValue(std::move(call_key)) : JsonValue(nullptr)},
+        {"role", occurrence.role ? JsonValue(*occurrence.role) : JsonValue(nullptr)},
+        {"source_position", JsonValue::Object{
+            {"path", occurrence.source_position.path},
+            {"sha256", occurrence.source_position.sha256},
+            {"byte_boundary", static_cast<std::int64_t>(occurrence.source_position.byte_boundary)},
+            {"line", static_cast<std::int64_t>(occurrence.source_position.line)},
+            {"offset", static_cast<std::int64_t>(occurrence.source_position.offset)},
+            {"bytes", static_cast<std::int64_t>(occurrence.source_position.bytes)}}},
+        {"source_claim", occurrence.source_claim}, {"metadata", occurrence.metadata}};
+}
+
+[[nodiscard]] std::vector<std::string> references(const SemanticMeaningUnit& unit) {
+    std::vector<std::string> result;
+    std::set<std::string> seen;
+    const auto insert = [&](const std::string& value) {
+        if (seen.insert(value).second) result.push_back(value);
+    };
+    for (const auto& value : unit.anchors) insert(value);
+    for (const auto& qualifier : unit.qualifiers)
+        for (const auto& value : qualifier.anchors) insert(value);
+    return result;
+}
+
+[[nodiscard]] std::size_t event_ordinal(const SemanticAnchor& anchor) {
+    if (anchor.path.size() < 2 ||
+        !std::holds_alternative<std::string>(anchor.path[0]) ||
+        std::get<std::string>(anchor.path[0]) != "historical_records" ||
+        !std::holds_alternative<std::int64_t>(anchor.path[1]) ||
+        std::get<std::int64_t>(anchor.path[1]) < 0)
+        reject("session semantic event anchor required");
+    return static_cast<std::size_t>(std::get<std::int64_t>(anchor.path[1]));
+}
+
 void validate_binding(const BoundSessionSemantics& bound) {
     if (!text(bound.memory_snapshot_id) || bound.document_key.empty() ||
         !std::ranges::all_of(bound.document_key, [](const auto& value) { return text(value); }) ||
@@ -70,6 +110,134 @@ void validate_binding(const BoundSessionSemantics& bound) {
 }
 
 }  // namespace
+
+std::shared_ptr<const BoundSessionSemantics> bind_session_semantics(
+    const PreparedSessionView& view,
+    const std::vector<SemanticSourceEpisode>& source_episodes,
+    PreparedSessionEntryPtr entry,
+    const SessionSpeechInterpretation& interpretation) {
+    if (!entry || interpretation.model.empty() ||
+        interpretation.source.document_key != SessionDocumentKey{
+            entry->document.document_id, entry->document.declared_sha256})
+        reject("session_semantic_document_not_prepared");
+    const auto key = interpretation.source.document_key;
+    const auto indexed = view.directory.fragments(key, view.memory_snapshot_id);
+    std::set<std::tuple<std::string, std::size_t, std::size_t>> indexed_members;
+    for (const auto& row : indexed)
+        indexed_members.emplace(row.episode_id, row.step, row.character_offset);
+    std::set<std::tuple<std::string, std::size_t, std::size_t>> fragment_members;
+    for (const auto& row : entry->document.fragments)
+        fragment_members.emplace(row.episode_id, row.step, row.character_offset);
+    if (indexed_members != fragment_members)
+        reject("session_semantic_document_membership_changed");
+
+    std::map<std::string, SemanticSourceEpisode, std::less<>> originals;
+    for (const auto& fragment : entry->document.fragments) {
+        const auto source = std::ranges::find_if(source_episodes, [&](const auto& episode) {
+            return episode.episode_id == fragment.episode_id;
+        });
+        if (source == source_episodes.end() || source->revision != fragment.revision ||
+            source->source_addresses != fragment.source_addresses ||
+            fragment.step >= source->steps.size() ||
+            source->steps[fragment.step].outcome != fragment.outcome)
+            reject("session_semantic_parent_revision_changed");
+        originals.emplace(source->episode_id, *source);
+    }
+    const auto receipt = session_speech_receipt(interpretation);
+    const JsonValue payload = JsonValue::Object{
+        {"schema", std::string(session_semantic_input_schema)},
+        {"interpretation", receipt}, {"new_observation_count", 0},
+        {"independent_evidence_count", 0}, {"grants_authority", false}};
+    const auto digest = semantic_json_digest(payload);
+    std::vector<std::string> parents;
+    std::vector<std::string> addresses;
+    std::set<std::string> address_seen;
+    std::vector<SemanticSourceEpisode> parent_episodes;
+    for (const auto& [identifier, source] : originals) {
+        parents.push_back(identifier);
+        parent_episodes.push_back(source);
+        for (const auto& address : source.source_addresses)
+            if (address_seen.insert(address).second) addresses.push_back(address);
+    }
+    std::vector<std::string> cues{key.first};
+    cues.insert(cues.end(), parents.begin(), parents.end());
+    for (const auto& unit : interpretation.units) {
+        cues.push_back(unit.subject);
+        cues.push_back(unit.predicate);
+        if (unit.value_kind == "entity" &&
+            std::holds_alternative<std::string>(unit.value.storage()))
+            cues.push_back(std::get<std::string>(unit.value.storage()));
+    }
+    std::vector<std::string> unique_cues;
+    std::set<std::string> cue_seen;
+    for (auto& cue : cues) if (cue_seen.insert(cue).second) unique_cues.push_back(std::move(cue));
+    std::vector<std::string> evidence = parents;
+    evidence.insert(evidence.end(), addresses.begin(), addresses.end());
+    SemanticMemoryStep step{"session_semantic_proposal", payload, parents,
+        "Multi-fragment source interpretation, not an independent observation",
+        "pending", evidence};
+    SemanticSourceEpisode derivative{"session-semantic:" + digest,
+        std::move(unique_cues), {std::move(step)}, addresses, digest,
+        "derived_semantic_unverified_proposal"};
+
+    std::map<std::string, SemanticAnchor, std::less<>> parts;
+    std::vector<SemanticAnchor> source_parts;
+    for (const auto& part : interpretation.source.request.parts) {
+        parts.emplace(part.anchor.identifier, part.anchor);
+        source_parts.push_back(part.anchor);
+    }
+    std::map<std::string, JsonValue::Array, std::less<>> contexts;
+    for (const auto& context : interpretation.source.request.source_context)
+        for (const auto& identifier : context.anchor_ids)
+            contexts[identifier].push_back(context.value);
+    const std::set<std::string> unresolved_set(
+        interpretation.unresolved.begin(), interpretation.unresolved.end());
+    std::vector<SessionSemanticUnitBinding> units;
+    for (const auto& unit : interpretation.units) {
+        const auto refs = references(unit);
+        std::vector<SemanticAnchor> anchors;
+        std::vector<std::size_t> ordinals;
+        JsonValue::Array input_context;
+        std::set<std::string> context_seen;
+        std::vector<std::string> unresolved_anchors;
+        for (const auto& identifier : refs) {
+            const auto found = parts.find(identifier);
+            if (found == parts.end()) reject("session semantic anchor unavailable");
+            anchors.push_back(found->second);
+            const auto ordinal = event_ordinal(found->second);
+            if (std::ranges::find(ordinals, ordinal) == ordinals.end()) ordinals.push_back(ordinal);
+            if (const auto rows = contexts.find(identifier); rows != contexts.end())
+                for (const auto& context : rows->second) {
+                    const auto encoded = semantic_canonical_json(context);
+                    if (context_seen.insert(encoded).second) input_context.push_back(context);
+                }
+            if (unresolved_set.contains(identifier)) unresolved_anchors.push_back(identifier);
+        }
+        JsonValue::Array events;
+        JsonValue::Array occurrences;
+        for (const auto ordinal : ordinals) {
+            const auto& event = entry->document.archive->event(
+                ordinal, entry->document.declared_sha256);
+            events.emplace_back(JsonValue::Object{
+                {"ordinal", static_cast<std::int64_t>(event.ordinal)},
+                {"content_sha256", event.declared_content_sha256},
+                {"payload", session_json_value(event.payload)},
+                {"content_digest_matches", event.content_digest_matches}});
+            if (const auto rows = entry->occurrence_index.by_event.find(ordinal);
+                rows != entry->occurrence_index.by_event.end())
+                for (const auto index : rows->second)
+                    occurrences.push_back(occurrence_value(
+                        entry->occurrence_index.occurrences.at(index)));
+        }
+        units.push_back({unit, std::move(anchors), std::move(events),
+            std::move(occurrences), std::move(input_context),
+            std::move(unresolved_anchors)});
+    }
+    return std::make_shared<const BoundSessionSemantics>(BoundSessionSemantics{
+        view.memory_snapshot_id, {key.first, key.second}, receipt,
+        std::move(parent_episodes), std::move(derivative), std::move(source_parts),
+        std::move(units), interpretation.unresolved});
+}
 
 SessionSemanticGraphDelta::SessionSemanticGraphDelta(
     std::shared_ptr<const TermAddressIndex> address_index_value,

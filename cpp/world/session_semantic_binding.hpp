@@ -1,6 +1,8 @@
 #pragma once
 
 #include "world/semantic_vrs_ingress.hpp"
+#include "world/prepared_session_cache.hpp"
+#include "world/session_speech_ingress.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -125,5 +127,11 @@ public:
     std::size_t edge_count,
     std::string memory_snapshot_id,
     std::string vrs_snapshot_id);
+
+[[nodiscard]] std::shared_ptr<const BoundSessionSemantics> bind_session_semantics(
+    const PreparedSessionView& view,
+    const std::vector<SemanticSourceEpisode>& source_episodes,
+    PreparedSessionEntryPtr entry,
+    const SessionSpeechInterpretation& interpretation);
 
 }  // namespace swegca::world

@@ -540,6 +540,14 @@ void validate_source(const SemanticSourceEpisode& source) {
 
 }  // namespace
 
+std::string semantic_canonical_json(const JsonValue& value) {
+    return canonical_json(value);
+}
+
+std::string semantic_json_digest(const JsonValue& value) {
+    return digest(canonical_json(value));
+}
+
 std::string semantic_source_digest(const SemanticSourceEpisode& source) {
     validate_source(source);
     return digest(canonical_json(source_payload(source)));
