@@ -19,6 +19,7 @@ WORLD_HEADERS := $(wildcard cpp/world/*.hpp)
 WORLD_SOURCES := cpp/world/cognitive_state.cpp cpp/world/cognitive_event.cpp \
 	cpp/world/world_state.cpp cpp/world/definition_contract.cpp \
 	cpp/world/evidence_accumulator.cpp cpp/world/evidence_revision.cpp \
+	cpp/world/counterfactual_replay.cpp \
 	cpp/world/hypothesis_proposer.cpp cpp/world/sensor_definition.cpp \
 	cpp/world/sensor_counterfactual.cpp \
 	cpp/world/sensor_term_index.cpp cpp/world/unicode_nfkc.cpp \
@@ -508,6 +509,9 @@ $(BUILD)/sensor-term-index-tests: tests/sensor_term_index_tests.cpp cpp/world/se
 $(BUILD)/sensor-counterfactual-tests: tests/sensor_counterfactual_tests.cpp cpp/world/sensor_counterfactual.cpp cpp/world/sensor_counterfactual.hpp cpp/world/sensor_term_index.cpp cpp/world/sensor_term_index.hpp cpp/world/sensor_definition.cpp cpp/world/sensor_definition.hpp cpp/world/unicode_nfkc.cpp cpp/world/unicode_nfkc.hpp cpp/world/unicode_nfkc_data.hpp cpp/world/definition_contract.cpp cpp/world/definition_contract.hpp cpp/world/evidence_accumulator.cpp cpp/world/evidence_accumulator.hpp cpp/swegca_architecture/sha256.cpp cpp/swegca_architecture/sha256.hpp | $(BUILD)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< cpp/world/sensor_counterfactual.cpp cpp/world/sensor_term_index.cpp cpp/world/sensor_definition.cpp cpp/world/unicode_nfkc.cpp cpp/world/definition_contract.cpp cpp/world/evidence_accumulator.cpp cpp/swegca_architecture/sha256.cpp -o $@
 
+$(BUILD)/counterfactual-replay-tests: tests/counterfactual_replay_tests.cpp cpp/world/counterfactual_replay.cpp cpp/world/counterfactual_replay.hpp cpp/world/evidence_accumulator.cpp cpp/world/evidence_accumulator.hpp cpp/swegca_architecture/sha256.cpp cpp/swegca_architecture/sha256.hpp | $(BUILD)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< cpp/world/counterfactual_replay.cpp cpp/world/evidence_accumulator.cpp cpp/swegca_architecture/sha256.cpp -o $@
+
 $(BUILD)/cognitive-event-tests: tests/cognitive_event_tests.cpp cpp/world/cognitive_event.cpp cpp/world/cognitive_event.hpp cpp/world/cognitive_state.cpp cpp/world/cognitive_state.hpp | $(BUILD)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< cpp/world/cognitive_event.cpp cpp/world/cognitive_state.cpp -o $@
 
@@ -567,7 +571,7 @@ check-prototype-recurrent-artifacts: $(BUILD)/prototype-checkpoint-tests \
 check-world: $(BUILD)/cognitive-state-tests $(BUILD)/definition-contract-tests \
 	$(BUILD)/cognitive-event-tests $(BUILD)/hypothesis-proposer-tests \
 	$(BUILD)/sensor-definition-tests $(BUILD)/sensor-term-index-tests \
-	$(BUILD)/sensor-counterfactual-tests \
+	$(BUILD)/sensor-counterfactual-tests $(BUILD)/counterfactual-replay-tests \
 	$(BUILD)/world-state-tests $(BUILD)/evidence-accumulator-tests $(BUILD)/evidence-revision-tests \
 	$(BUILD)/synapse-arbiter-world-tests $(BUILD)/dynamic-cognition-tests \
 		$(BUILD)/bounded-world-write-tests $(BUILD)/re-evidence-receipt-tests \
@@ -580,6 +584,7 @@ check-world: $(BUILD)/cognitive-state-tests $(BUILD)/definition-contract-tests \
 	./$(BUILD)/sensor-definition-tests
 	./$(BUILD)/sensor-term-index-tests
 	./$(BUILD)/sensor-counterfactual-tests
+	./$(BUILD)/counterfactual-replay-tests
 	./$(BUILD)/world-state-tests
 	./$(BUILD)/evidence-accumulator-tests
 	./$(BUILD)/evidence-revision-tests
