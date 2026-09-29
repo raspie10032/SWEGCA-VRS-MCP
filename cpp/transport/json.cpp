@@ -4,6 +4,8 @@
 #include <array>
 #include <algorithm>
 #include <bit>
+#include <charconv>
+#include <cmath>
 #include <limits>
 #include <optional>
 #if defined(__SSE2__) && !defined(SWEGCA_JSON_SCALAR_ONLY)
@@ -209,6 +211,95 @@ void encode(std::pmr::string& out,const Json& value){
         for(std::size_t i=0;i<value.values.size();++i){if(i)out+=',';if(object){quote(out,value.keys[i]);out+=':';}encode(out,value.values[i]);}out+=object?'}':']';return;}
     }
 }
+
+void quote_python(std::pmr::string& out,std::string_view text){
+    constexpr char digits[]="0123456789abcdef";out+='"';
+    std::size_t pos=0;
+    while(pos<text.size()){
+        const auto count=prefix<true>(text.substr(pos));out.append(text.substr(pos,count));pos+=count;
+        if(pos==text.size())break;
+        const auto c=static_cast<unsigned char>(text[pos++]);
+        if(c=='"'||c=='\\'){out+='\\';out+=char(c);}
+        else if(c=='\b')out+="\\b";
+        else if(c=='\f')out+="\\f";
+        else if(c=='\n')out+="\\n";
+        else if(c=='\r')out+="\\r";
+        else if(c=='\t')out+="\\t";
+        else{out+="\\u00";out+=digits[c>>4];out+=digits[c&15];}
+    }
+    out+='"';
+}
+
+bool decimal_magnitude_less_than_one(std::string_view token) noexcept {
+    auto index=std::size_t{token.starts_with('-')?1U:0U};
+    std::int64_t before=0,digit_index=0,first_nonzero=-1;bool before_decimal=true;
+    for(;index<token.size()&&token[index]!='e'&&token[index]!='E';++index){
+        if(token[index]=='.'){before_decimal=false;continue;}
+        if(before_decimal&&before<1'000'000)++before;
+        if(first_nonzero<0&&token[index]!='0')first_nonzero=digit_index;
+        if(digit_index<1'000'000)++digit_index;
+    }
+    if(first_nonzero<0)return true;
+    std::int64_t exponent=0;
+    if(index<token.size()){
+        ++index;bool negative=false;
+        if(index<token.size()&&(token[index]=='+'||token[index]=='-')){negative=token[index]=='-';++index;}
+        for(;index<token.size();++index){
+            const auto digit=static_cast<std::int64_t>(token[index]-'0');
+            if(exponent>100'000){exponent=1'000'000;break;}
+            exponent=exponent*10+digit;
+        }
+        if(negative)exponent=-exponent;
+    }
+    return exponent+before-first_nonzero-1<0;
+}
+
+std::string python_float(double value){
+    if(!std::isfinite(value))invalid();
+    char buffer[128];
+    const auto absolute=std::abs(value);
+    const auto format=(absolute!=0.0&&absolute<1e-4)||absolute>=1e16
+        ?std::chars_format::scientific:std::chars_format::general;
+    const auto converted=std::to_chars(std::begin(buffer),std::end(buffer),value,format);
+    if(converted.ec!=std::errc{})invalid();
+    std::string result(buffer,converted.ptr);
+    const auto exponent_at=result.find('e');
+    if(exponent_at==std::string::npos){if(result.find('.')==std::string::npos)result+=".0";return result;}
+    auto exponent_text=std::string_view(result).substr(exponent_at+1);bool negative_exponent=false;
+    if(!exponent_text.empty()&&(exponent_text.front()=='+'||exponent_text.front()=='-')){
+        negative_exponent=exponent_text.front()=='-';exponent_text.remove_prefix(1);
+    }
+    unsigned magnitude=0;const auto parsed=std::from_chars(exponent_text.data(),exponent_text.data()+exponent_text.size(),magnitude);
+    if(exponent_text.empty()||parsed.ec!=std::errc{}||parsed.ptr!=exponent_text.data()+exponent_text.size())invalid();
+    int exponent=static_cast<int>(magnitude);if(negative_exponent)exponent=-exponent;
+    if(exponent>=-4&&exponent<16){
+        const bool negative=result.front()=='-';const auto begin=negative?1U:0U;std::string digits;
+        for(std::size_t i=begin;i<exponent_at;++i)if(result[i]!='.')digits.push_back(result[i]);
+        const auto decimal=std::int64_t{1}+exponent;std::string fixed=negative?"-":"";
+        if(decimal<=0){fixed+="0.";fixed.append(static_cast<std::size_t>(-decimal),'0');fixed+=digits;}
+        else if(static_cast<std::size_t>(decimal)>=digits.size()){
+            fixed+=digits;fixed.append(static_cast<std::size_t>(decimal)-digits.size(),'0');fixed+=".0";
+        }else{fixed.append(digits,0,static_cast<std::size_t>(decimal));fixed.push_back('.');fixed.append(digits,static_cast<std::size_t>(decimal),std::string::npos);}
+        return fixed;
+    }
+    std::string scientific=result.substr(0,exponent_at+1);scientific.push_back(exponent<0?'-':'+');
+    magnitude=static_cast<unsigned>(exponent<0?-static_cast<long long>(exponent):exponent);
+    char digits[32];const auto encoded=std::to_chars(std::begin(digits),std::end(digits),magnitude);
+    const auto count=static_cast<std::size_t>(encoded.ptr-digits);if(count<2)scientific.push_back('0');
+    scientific.append(digits,encoded.ptr);return scientific;
+}
+
+void encode_python(std::pmr::string& out,const Json& value){
+    switch(value.kind){
+    case Json::Kind::null:out+="null";return;
+    case Json::Kind::boolean:out+=value.scalar;return;
+    case Json::Kind::number:{const auto normalized=normalize_python_json_number(value.scalar);out+=normalized;return;}
+    case Json::Kind::string:quote_python(out,value.scalar);return;
+    case Json::Kind::array:case Json::Kind::object:{
+        const bool object=value.kind==Json::Kind::object;if(object&&value.keys.size()!=value.values.size())invalid();out+=object?'{':'[';
+        for(std::size_t i=0;i<value.values.size();++i){if(i)out+=',';if(object){quote_python(out,value.keys[i]);out+=':';}encode_python(out,value.values[i]);}out+=object?'}':']';return;}
+    }
+}
 }
 static void write_escaped_content(std::ostream& out,std::string_view text){
     constexpr char digits[]="0123456789abcdef";
@@ -255,6 +346,18 @@ JsonMemberSource locate_json_member(std::string_view text,std::pmr::memory_resou
     (void)Parser(text,memory,depth,path,&source,true,false).parse();return source;
 }
 std::pmr::string encode_json(const Json& value,std::pmr::memory_resource& memory){std::pmr::string out(&memory);out.reserve(encoded_size(value));encode(out,value);return out;}
+std::string normalize_python_json_number(const std::string_view token){
+    if(token.find_first_of(".eE")==std::string_view::npos)return token=="-0"?"0":std::string(token);
+    double value=0.0;const auto begin=token.data();const auto parsed=std::from_chars(begin,begin+token.size(),value,std::chars_format::general);
+    if(parsed.ptr!=begin+token.size())invalid();
+    if(parsed.ec==std::errc::result_out_of_range&&decimal_magnitude_less_than_one(token))
+        value=std::copysign(0.0,token.starts_with('-')?-1.0:1.0);
+    else if(parsed.ec!=std::errc{}||!std::isfinite(value))invalid();
+    return python_float(value);
+}
+std::string encode_python_json(const Json& value){
+    std::pmr::monotonic_buffer_resource memory;std::pmr::string out(&memory);out.reserve(encoded_size(value));encode_python(out,value);return std::string(out);
+}
 void append_json(std::pmr::string& destination,const Json& value,std::size_t suffix_capacity){
     destination.reserve(add_size(add_size(destination.size(),encoded_size(value)),suffix_capacity));encode(destination,value);
 }

@@ -44,6 +44,8 @@ struct PreparedSessionCacheLayer final {
     std::map<SessionSourcePosition, std::vector<SessionDocumentKey>> position_documents;
 };
 
+class PreparedSessionView;
+
 class PreparedSessionCache final {
 public:
     PreparedSessionCache() = default;
@@ -58,6 +60,8 @@ public:
         const SessionCallKey& key) const;
     [[nodiscard]] std::vector<SessionDocumentKey> documents_for_position(
         const SessionSourcePosition& key) const;
+    [[nodiscard]] PreparedSessionView bind(
+        std::string memory_snapshot_id, SessionDocumentDirectoryView directory) const;
     [[nodiscard]] const std::vector<PreparedSessionCacheLayer>& layers() const noexcept;
 
 private:

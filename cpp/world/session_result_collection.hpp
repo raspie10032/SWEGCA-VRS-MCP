@@ -18,6 +18,9 @@ struct SessionSelectedStep final {
     std::string selection_reason;
 };
 
+using SessionSelectedSteps = std::vector<
+    std::pair<std::pair<std::string, std::size_t>, SessionSelectedStep>>;
+
 struct SessionAnswerSource final {
     std::string episode_id;
     std::size_t step{};
@@ -73,15 +76,19 @@ struct RecordedSessionOperation final {
 
 struct SessionEventOccurrenceAddress final {
     std::string session;
-    std::string turn;
+    JsonValue turn;
     std::optional<SessionCallKey> call_key;
     std::optional<std::string> role;
     SessionSourcePosition source_position;
+    friend bool operator==(const SessionEventOccurrenceAddress&,
+                           const SessionEventOccurrenceAddress&) = default;
 };
 
 struct SessionCallLinkStatus final {
     SessionCallKey key;
     std::string status;
+    friend bool operator==(const SessionCallLinkStatus&,
+                           const SessionCallLinkStatus&) = default;
 };
 
 struct SessionEventObligation final {
@@ -92,6 +99,8 @@ struct SessionEventObligation final {
     std::vector<SessionCallLinkStatus> call_links;
     std::vector<std::string> explicit_request_targets;
     [[nodiscard]] constexpr bool grants_authority() const noexcept { return false; }
+    friend bool operator==(const SessionEventObligation&,
+                           const SessionEventObligation&) = default;
 };
 
 struct SessionUnresolvedSource final {
@@ -99,6 +108,8 @@ struct SessionUnresolvedSource final {
     std::size_t step{};
     std::string reason;
     std::optional<SessionEventObligation> event_obligation;
+    friend bool operator==(const SessionUnresolvedSource&,
+                           const SessionUnresolvedSource&) = default;
 };
 
 struct SessionResultCollection final {
@@ -110,9 +121,14 @@ struct SessionResultCollection final {
     std::vector<PreparedSessionEntryPtr> retained_entries;
 };
 
+[[nodiscard]] std::string session_message_text(
+    const RecordedSessionMessage& message, bool include_literal = true);
+[[nodiscard]] std::string session_result_text(const RecordedSessionResult& result);
+[[nodiscard]] std::string session_operation_text(const RecordedSessionOperation& operation);
+
 [[nodiscard]] SessionResultCollection collect_session_results(
     const PreparedSessionView& view,
-    const std::map<std::pair<std::string, std::size_t>, SessionSelectedStep>& selected_steps,
+    const SessionSelectedSteps& selected_steps,
     bool include_messages = false,
     bool include_event_obligations = false,
     bool include_operations = false);

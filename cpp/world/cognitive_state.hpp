@@ -12,17 +12,24 @@
 
 namespace swegca::world {
 
+struct JsonInteger final {
+    std::string value;
+    friend bool operator==(const JsonInteger&, const JsonInteger&) = default;
+};
+
 class JsonValue final {
 public:
     using Array = std::vector<JsonValue>;
     using Object = std::map<std::string, JsonValue, std::less<>>;
     using Storage =
-        std::variant<std::nullptr_t, bool, std::int64_t, double, std::string, Array, Object>;
+        std::variant<std::nullptr_t, bool, std::int64_t, JsonInteger,
+                     double, std::string, Array, Object>;
 
     JsonValue() noexcept;
     JsonValue(std::nullptr_t) noexcept;
     JsonValue(bool value) noexcept;
     JsonValue(std::int64_t value) noexcept;
+    JsonValue(JsonInteger value);
     JsonValue(int value) noexcept;
     JsonValue(double value) noexcept;
     JsonValue(std::string value);

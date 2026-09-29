@@ -25,9 +25,9 @@ struct SessionDeliveredPart final {
 struct SessionSourceContext final {
     std::int64_t step{};
     std::vector<SemanticPathElement> path;
-    std::vector<SemanticPathElement> value_path;
+    std::vector<SemanticPathElement> excluded_fields;
     std::vector<std::string> anchor_ids;
-    JsonValue value;
+    std::string value_json;
 };
 
 struct SessionSpeechRequest final {
@@ -56,6 +56,8 @@ struct SessionSpeechInput final {
     std::vector<std::size_t> event_ordinals;
     std::vector<SessionParentFragment> parent_fragments;
     SessionSpeechRequest request;
+
+    [[nodiscard]] JsonValue binding() const;
 };
 
 struct SessionSpeechInterpretation final {
@@ -70,6 +72,7 @@ struct SessionSpeechInterpretation final {
     [[nodiscard]] constexpr bool semantic_authority() const noexcept { return false; }
     [[nodiscard]] constexpr bool persistent_write_authority() const noexcept { return false; }
     [[nodiscard]] constexpr bool native_admission_complete() const noexcept { return false; }
+    [[nodiscard]] JsonValue receipt() const;
 };
 
 struct SessionSpeechAnnotation final {
@@ -94,10 +97,18 @@ struct SessionSpeechAnnotation final {
     std::vector<SemanticMeaningUnit> units,
     std::vector<std::string> unresolved);
 
+// Validate one raw producer response before any typed fields can be dropped.
+// The producer remains outside the core; this boundary performs no model call.
+[[nodiscard]] SessionSpeechInterpretation interpret_session_speech_response(
+    SessionSpeechInput prepared, std::string_view response_json);
+
 [[nodiscard]] SessionSpeechInterpretation interpret_session_speech_annotations(
     SessionSpeechInput prepared,
     std::vector<SessionSpeechAnnotation> annotations,
     std::vector<std::string> unresolved);
+
+[[nodiscard]] SessionSpeechInterpretation interpret_session_speech_annotations_response(
+    SessionSpeechInput prepared, std::string_view response_json);
 
 [[nodiscard]] JsonValue session_speech_receipt(
     const SessionSpeechInterpretation& interpretation);

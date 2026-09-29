@@ -72,11 +72,13 @@ class SessionDocumentPreparation final {
 public:
     SessionDocumentPreparation(std::string memory_snapshot_id,
         std::map<SessionDocumentKey, SessionDocument> documents,
+        std::vector<SessionDocumentKey> document_order,
         std::map<std::string, std::vector<SessionDocumentKey>, std::less<>> by_episode,
         std::vector<SessionDocumentUnresolvedStep> unresolved_steps);
 
     const std::string memory_snapshot_id;
     const std::map<SessionDocumentKey, SessionDocument> documents;
+    const std::vector<SessionDocumentKey> document_order;
     const std::map<std::string, std::vector<SessionDocumentKey>, std::less<>> by_episode;
     const std::vector<SessionDocumentUnresolvedStep> unresolved_steps;
 

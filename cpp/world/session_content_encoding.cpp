@@ -48,7 +48,7 @@ std::vector<std::string> SessionContentEncoding::outcomes() const {
 }
 
 std::string_view SessionContentEncoding::model() const {
-    return binding->interpretation_receipt.at("model").as_string();
+    return binding->interpretation.model;
 }
 
 const std::vector<SemanticAnchor>& SessionContentEncoding::anchors() const {
@@ -70,12 +70,12 @@ const std::vector<std::string>& SessionContentEncoding::document_key() const {
     return binding->document_key;
 }
 
-const JsonValue& SessionContentEncoding::input_context() const {
-    return binding->interpretation_receipt.at("source").at("input_context");
+const std::vector<SessionSourceContext>& SessionContentEncoding::input_context() const {
+    return binding->interpretation.source.request.source_context;
 }
 
-const JsonValue& SessionContentEncoding::parent_fragments() const {
-    return binding->interpretation_receipt.at("source").at("parent_fragments");
+const std::vector<SessionParentFragment>& SessionContentEncoding::parent_fragments() const {
+    return binding->interpretation.source.parent_fragments;
 }
 
 std::vector<std::vector<SessionSemanticEdgeRole>>
@@ -110,12 +110,25 @@ claim_graph_addresses(const BoundSessionSemantics& bound) {
 
 namespace {
 
+[[nodiscard]] const JsonValue* object_field(
+    const JsonValue& value, const std::string_view name) {
+    if (!value.is_object()) return nullptr;
+    const auto found = value.as_object().find(name);
+    return found == value.as_object().end() ? nullptr : &found->second;
+}
+
 [[nodiscard]] std::string value_type(const JsonValue& value) {
+    if (const auto* schema = object_field(value, "schema"); schema &&
+        std::holds_alternative<std::string>(schema->storage())) {
+        if (schema->as_string() == "rozephine-speech-value-v1") return "SpeechValue";
+        if (schema->as_string() == "rozephine-table-value-v1") return "TableValue";
+    }
     return std::visit([](const auto& current) -> std::string {
         using T = std::decay_t<decltype(current)>;
         if constexpr (std::is_same_v<T, std::nullptr_t>) return "NoneType";
         if constexpr (std::is_same_v<T, bool>) return "bool";
         if constexpr (std::is_same_v<T, std::int64_t>) return "int";
+        if constexpr (std::is_same_v<T, JsonInteger>) return "int";
         if constexpr (std::is_same_v<T, double>) return "float";
         if constexpr (std::is_same_v<T, std::string>) return "str";
         if constexpr (std::is_same_v<T, JsonValue::Array>) return "list";
@@ -123,12 +136,43 @@ namespace {
     }, value.storage());
 }
 
+[[nodiscard]] JsonValue speech_entity(const JsonValue& value) {
+    if (std::holds_alternative<std::nullptr_t>(value.storage())) return JsonValue(nullptr);
+    return value.at("entity");
+}
+
+[[nodiscard]] JsonValue speech_entities(const JsonValue& value) {
+    JsonValue::Array result;
+    for (const auto& row : value.as_array()) result.push_back(speech_entity(row));
+    return JsonValue(std::move(result));
+}
+
+[[nodiscard]] JsonValue comparison_value(const JsonValue& value) {
+    const auto* schema = object_field(value, "schema");
+    if (!schema || !std::holds_alternative<std::string>(schema->storage())) return value;
+    if (schema->as_string() == "rozephine-speech-value-v1")
+        return JsonValue::Array{value.at("kind"), speech_entity(value.at("speaker")),
+            speech_entities(value.at("addressees")), speech_entities(value.at("topics")),
+            value.at("content")};
+    if (schema->as_string() == "rozephine-table-value-v1") {
+        JsonValue::Array rows;
+        for (const auto& row : value.at("rows").as_array()) {
+            JsonValue::Array cells;
+            for (const auto& cell : row.as_array())
+                cells.emplace_back(JsonValue::Array{value_type(cell), cell});
+            rows.emplace_back(std::move(cells));
+        }
+        return JsonValue::Array{value.at("columns"), JsonValue(std::move(rows))};
+    }
+    return value;
+}
+
 [[nodiscard]] SessionSemanticPropositionKey proposition_key(
     const SemanticMeaningUnit& unit) {
     std::set<std::pair<std::string, std::string>> unique;
     for (const auto& qualifier : unit.qualifiers)
         unique.emplace(qualifier.kind, qualifier.value);
-    return {unit.subject, unit.predicate, value_type(unit.value), unit.value,
+    return {unit.subject, unit.predicate, value_type(unit.value), comparison_value(unit.value),
             {unique.begin(), unique.end()}, unit.value_kind};
 }
 
@@ -155,7 +199,7 @@ namespace {
 SessionEncodedEvent prepare_session_recorded_event(
     const SemanticSourceEpisode& episode,
     const std::size_t ordinal,
-    const PreparedSessionView& source_memory,
+    const PreparedSessionView* source_memory,
     const std::vector<SemanticSourceEpisode>& source_episodes) {
     if (ordinal >= episode.steps.size())
         throw std::invalid_argument("session semantic event ordinal required");
@@ -164,8 +208,11 @@ SessionEncodedEvent prepare_session_recorded_event(
     std::vector<std::string> unresolved{"semantic_source_binding_unresolved"};
     std::shared_ptr<const SessionContentEncoding> encoding;
     try {
+        if (!source_memory)
+            throw std::invalid_argument("session source memory unavailable");
         const auto bound = restore_session_semantics(
-            step.observation, source_memory, source_episodes);
+            step.observation, *source_memory, source_episodes,
+            source_memory->memory_snapshot_id);
         if (ordinal != 0 || !same_episode(bound->derivative, episode))
             throw std::invalid_argument("session derivative lineage changed");
         encoding = std::make_shared<const SessionContentEncoding>(bound);
@@ -179,9 +226,10 @@ SessionEncodedEvent prepare_session_recorded_event(
             const auto other = bound->unresolved.size() >= row.unresolved_anchors.size()
                 ? bound->unresolved.size() - row.unresolved_anchors.size() : 0;
             claims.push_back({{episode.episode_id, ordinal, index}, row.unit.subject,
-                row.unit.predicate, row.unit.value, row.unit, proposition_key(row.unit),
-                graph.at(index), {std::move(referenced), row.unresolved_anchors, other,
-                                  row.input_context, bound->document_key}});
+                row.unit.predicate, row.unit.value, std::nullopt, row.unit,
+                proposition_key(row.unit), graph.at(index), {},
+                {std::move(referenced), row.unresolved_anchors, other, {},
+                 row.input_context, bound->document_key}});
         }
         unresolved.clear();
         for (const auto& anchor : bound->unresolved)
@@ -193,8 +241,9 @@ SessionEncodedEvent prepare_session_recorded_event(
     }
     return {episode.episode_id, ordinal, episode.episode_id,
         "source_bound_session_semantic_proposal", "semantic_interpretation_proposal",
-        std::move(claims), episode.source_addresses, step.evidence_refs, episode.revision,
-        step.outcome, episode.verification_state, std::move(unresolved), std::move(encoding)};
+        std::move(claims), JsonValue(nullptr), {}, episode.source_addresses,
+        step.evidence_refs, episode.revision, step.outcome, episode.verification_state,
+        std::move(unresolved), std::move(encoding)};
 }
 
 }  // namespace swegca::world

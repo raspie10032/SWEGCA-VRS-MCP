@@ -97,6 +97,7 @@ std::string canonical_json(const JsonValue& value) {
     if (std::holds_alternative<std::nullptr_t>(storage)) return "null";
     if (const auto* item = std::get_if<bool>(&storage)) return *item ? "true" : "false";
     if (const auto* item = std::get_if<std::int64_t>(&storage)) return std::to_string(*item);
+    if (const auto* item = std::get_if<JsonInteger>(&storage)) return item->value;
     if (const auto* item = std::get_if<double>(&storage)) return python_float(*item);
     if (const auto* item = std::get_if<std::string>(&storage)) return json_string(*item);
     if (const auto* items = std::get_if<JsonValue::Array>(&storage)) {

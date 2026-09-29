@@ -18,8 +18,8 @@
 namespace swegca::world {
 namespace {
 
-[[nodiscard]] bool text(const std::string_view value) noexcept {
-    return value.find_first_not_of(" \t\r\n\f\v") != std::string_view::npos;
+[[nodiscard]] bool text(const std::string_view value) {
+    return !strip_unicode_whitespace(value).empty();
 }
 
 [[nodiscard]] bool digest_text(const std::string_view value) noexcept {
@@ -49,6 +49,8 @@ namespace {
 
 [[nodiscard]] bool finite_numbers(const transport::Json& value) {
     if (value.kind == transport::Json::Kind::number) {
+        if (value.scalar.find_first_of(".eE") == std::string_view::npos)
+            return value.scalar.size() - (value.scalar.starts_with('-') ? 1U : 0U) <= 4300;
         const std::string source(value.scalar);
         char* end = nullptr;
         const auto number = std::strtod(source.c_str(), &end);
@@ -279,7 +281,7 @@ std::optional<PreparedSessionArchive> prepare_session_archive(
             !digest_text(declared->scalar) || !payload ||
             payload->kind != transport::Json::Kind::object)
             return std::nullopt;
-        const auto encoded = transport::encode_json(*payload, memory);
+        const auto encoded = transport::encode_python_json(*payload);
         events.push_back({ordinal, std::string(declared->scalar), freeze(*payload),
             sha256(encoded) == std::string_view(declared->scalar), prepare_result_meaning(*payload),
             prepare_call_meaning(*payload), prepare_message_meaning(*payload),

@@ -9,6 +9,7 @@
 #include <string>
 #include <string_view>
 #include <tuple>
+#include <variant>
 #include <vector>
 
 namespace swegca::world {
@@ -18,8 +19,11 @@ inline constexpr std::string_view session_occurrences_source_sha256 =
 
 struct OccurrenceReference final {
     std::string episode_id;
+    std::string revision;
     std::size_t step{};
     std::size_t variant{};
+    std::vector<std::string> source_addresses;
+    std::string outcome;
     std::size_t occurrence_index{};
     friend bool operator==(const OccurrenceReference&, const OccurrenceReference&) = default;
 };
@@ -46,11 +50,11 @@ struct BoundSessionOccurrence final {
     std::shared_ptr<const PreparedSessionArchive> archive;
     std::size_t event_ordinal{};
     std::string session;
-    std::string turn;
+    JsonValue turn;
     std::optional<SessionCallKey> call_key;
     std::optional<std::string> role;
     SessionSourcePosition source_position;
-    std::string source_claim;
+    JsonValue source_claim;
     JsonValue metadata;
     std::vector<OccurrenceReference> references;
 
@@ -60,7 +64,7 @@ struct BoundSessionOccurrence final {
 
 struct UnresolvedOccurrence final {
     std::string reason;
-    std::optional<OccurrenceReference> reference;
+    std::variant<std::monostate, SessionFragment, OccurrenceReference> reference;
     std::optional<std::size_t> event_ordinal;
 };
 

@@ -1,7 +1,12 @@
 #include "world/session_semantic_binding.hpp"
 
+#include "transport/json.hpp"
+#include "world/unicode_nfkc.hpp"
+
 #include <algorithm>
+#include <charconv>
 #include <limits>
+#include <memory_resource>
 #include <set>
 #include <stdexcept>
 #include <tuple>
@@ -14,8 +19,45 @@ namespace {
 
 [[noreturn]] void reject(const char* reason) { throw std::invalid_argument(reason); }
 
-[[nodiscard]] bool text(const std::string_view value) noexcept {
-    return value.find_first_not_of(" \t\r\n\f\v") != std::string_view::npos;
+[[nodiscard]] bool text(const std::string_view value) {
+    return !strip_unicode_whitespace(value).empty();
+}
+
+[[nodiscard]] JsonValue detached_json(const transport::Json& source) {
+    switch (source.kind) {
+    case transport::Json::Kind::null: return JsonValue(nullptr);
+    case transport::Json::Kind::boolean: return JsonValue(source.scalar == "true");
+    case transport::Json::Kind::string: return JsonValue(source.scalar);
+    case transport::Json::Kind::number: {
+        std::int64_t integer{};
+        const auto parsed_integer = std::from_chars(
+            source.scalar.data(), source.scalar.data() + source.scalar.size(), integer);
+        if (parsed_integer.ec == std::errc{} &&
+            parsed_integer.ptr == source.scalar.data() + source.scalar.size())
+            return JsonValue(integer);
+        double number{};
+        const auto parsed_number = std::from_chars(
+            source.scalar.data(), source.scalar.data() + source.scalar.size(),
+            number, std::chars_format::general);
+        if (parsed_number.ec != std::errc{} ||
+            parsed_number.ptr != source.scalar.data() + source.scalar.size())
+            reject("session_semantic_input_changed");
+        return JsonValue(number);
+    }
+    case transport::Json::Kind::array: {
+        JsonValue::Array values;
+        values.reserve(source.values.size());
+        for (const auto& value : source.values) values.push_back(detached_json(value));
+        return JsonValue(std::move(values));
+    }
+    case transport::Json::Kind::object: {
+        JsonValue::Object values;
+        for (std::size_t index = 0; index != source.values.size(); ++index)
+            values.emplace(source.keys[index], detached_json(source.values[index]));
+        return JsonValue(std::move(values));
+    }
+    }
+    reject("session_semantic_input_changed");
 }
 
 [[nodiscard]] JsonValue strings(const std::vector<std::string>& values) {
@@ -25,31 +67,13 @@ namespace {
     return JsonValue(std::move(result));
 }
 
-[[nodiscard]] JsonValue path_value(const std::vector<SemanticPathElement>& values) {
-    JsonValue::Array result;
-    for (const auto& value : values) {
-        if (const auto* integer = std::get_if<std::int64_t>(&value))
-            result.emplace_back(*integer);
-        else
-            result.emplace_back(std::get<std::string>(value));
-    }
-    return JsonValue(std::move(result));
-}
-
-[[nodiscard]] JsonValue source_context_value(const SessionSourceContext& context) {
-    return JsonValue::Object{{"step", context.step}, {"path", path_value(context.path)},
-        {"value_path", path_value(context.value_path)},
-        {"anchor_ids", strings(context.anchor_ids)}, {"value", context.value}};
-}
-
 void append_speech_entity_cues(const JsonValue& value, std::vector<std::string>& cues) {
     if (!value.is_object()) return;
     const auto& fields = value.as_object();
     const auto schema = fields.find("schema");
     if (schema == fields.end() ||
         !std::holds_alternative<std::string>(schema->second.storage()) ||
-        (schema->second.as_string() != "rozephine-speech-value-v1" &&
-         schema->second.as_string() != "rozephine-semantic-speech-value-v1")) return;
+        schema->second.as_string() != "rozephine-speech-value-v1") return;
     const auto append = [&](const JsonValue& referent) {
         if (!referent.is_object()) return;
         const auto entity = referent.as_object().find("entity");
@@ -72,24 +96,6 @@ void append_speech_entity_cues(const JsonValue& value, std::vector<std::string>&
         left.region == right.region && left.time_ns == right.time_ns;
 }
 
-[[nodiscard]] JsonValue occurrence_value(const BoundSessionOccurrence& occurrence) {
-    JsonValue::Array call_key;
-    if (occurrence.call_key)
-        call_key = {occurrence.call_key->session, occurrence.call_key->turn,
-                    occurrence.call_key->family, occurrence.call_key->call_id};
-    return JsonValue::Object{{"session", occurrence.session}, {"turn", occurrence.turn},
-        {"call_key", occurrence.call_key ? JsonValue(std::move(call_key)) : JsonValue(nullptr)},
-        {"role", occurrence.role ? JsonValue(*occurrence.role) : JsonValue(nullptr)},
-        {"source_position", JsonValue::Object{
-            {"path", occurrence.source_position.path},
-            {"sha256", occurrence.source_position.sha256},
-            {"byte_boundary", static_cast<std::int64_t>(occurrence.source_position.byte_boundary)},
-            {"line", static_cast<std::int64_t>(occurrence.source_position.line)},
-            {"offset", static_cast<std::int64_t>(occurrence.source_position.offset)},
-            {"bytes", static_cast<std::int64_t>(occurrence.source_position.bytes)}}},
-        {"source_claim", occurrence.source_claim}, {"metadata", occurrence.metadata}};
-}
-
 [[nodiscard]] std::vector<std::string> references(const SemanticMeaningUnit& unit) {
     std::vector<std::string> result;
     std::set<std::string> seen;
@@ -99,6 +105,22 @@ void append_speech_entity_cues(const JsonValue& value, std::vector<std::string>&
     for (const auto& value : unit.anchors) insert(value);
     for (const auto& qualifier : unit.qualifiers)
         for (const auto& value : qualifier.anchors) insert(value);
+    return result;
+}
+
+[[nodiscard]] SemanticSourceEpisode normalized_episode(
+    const SemanticSourceEpisode& source) {
+    (void)semantic_source_digest(source);
+    auto result = source;
+    std::vector<std::string> cues;
+    std::set<std::string> seen;
+    for (const auto& cue : source.cues) {
+        auto normalized = unicode_casefold(collapse_unicode_whitespace(cue));
+        if (!text(normalized)) reject("cue must not be empty");
+        if (seen.insert(normalized).second) cues.push_back(std::move(normalized));
+    }
+    if (cues.empty()) reject("memory episode is incomplete");
+    result.cues = std::move(cues);
     return result;
 }
 
@@ -153,14 +175,19 @@ void validate_binding(const BoundSessionSemantics& bound) {
 std::shared_ptr<const BoundSessionSemantics> bind_session_semantics(
     const PreparedSessionView& view,
     const std::vector<SemanticSourceEpisode>& source_episodes,
-    PreparedSessionEntryPtr entry,
-    const SessionSpeechInterpretation& interpretation) {
-    if (!entry || interpretation.model.empty() ||
-        interpretation.source.document_key != SessionDocumentKey{
-            entry->document.document_id, entry->document.declared_sha256})
+    const SessionSpeechInterpretation& supplied_interpretation,
+    const std::string_view expected_memory_snapshot_id) {
+    if (view.memory_snapshot_id != expected_memory_snapshot_id)
+        reject("session_semantic_memory_generation_changed");
+    const auto key = supplied_interpretation.source.document_key;
+    auto entry = view.get(key, expected_memory_snapshot_id);
+    if (!entry)
         reject("session_semantic_document_not_prepared");
-    const auto key = interpretation.source.document_key;
-    const auto indexed = view.directory.fragments(key, view.memory_snapshot_id);
+    const auto interpretation = restore_session_speech_interpretation(
+        session_speech_receipt(supplied_interpretation), *entry);
+    if (!text(interpretation.model))
+        reject("session_semantic_model_identity_required");
+    const auto indexed = view.directory.fragments(key, expected_memory_snapshot_id);
     std::set<std::tuple<std::string, std::size_t, std::size_t>> indexed_members;
     for (const auto& row : indexed)
         indexed_members.emplace(row.episode_id, row.step, row.character_offset);
@@ -183,7 +210,7 @@ std::shared_ptr<const BoundSessionSemantics> bind_session_semantics(
             reject("session_semantic_parent_revision_changed");
         if (!original_indices.contains(source->episode_id)) {
             original_indices.emplace(source->episode_id, parent_episodes.size());
-            parent_episodes.push_back(*source);
+            parent_episodes.push_back(normalized_episode(*source));
         }
     }
     const auto receipt = session_speech_receipt(interpretation);
@@ -191,6 +218,7 @@ std::shared_ptr<const BoundSessionSemantics> bind_session_semantics(
         {"schema", std::string(session_semantic_input_schema)},
         {"interpretation", receipt}, {"new_observation_count", 0},
         {"independent_evidence_count", 0}, {"grants_authority", false}};
+    const auto payload_bytes = semantic_canonical_json(payload);
     const auto digest = semantic_json_digest(payload);
     std::vector<std::string> parents;
     std::vector<std::string> addresses;
@@ -205,14 +233,22 @@ std::shared_ptr<const BoundSessionSemantics> bind_session_semantics(
     for (const auto& unit : interpretation.units) {
         cues.push_back(unit.subject);
         cues.push_back(unit.predicate);
+    }
+    for (const auto& unit : interpretation.units) {
         if (unit.value_kind == "entity" &&
             std::holds_alternative<std::string>(unit.value.storage()))
             cues.push_back(std::get<std::string>(unit.value.storage()));
-        append_speech_entity_cues(unit.value, cues);
     }
+    for (const auto& unit : interpretation.units)
+        append_speech_entity_cues(unit.value, cues);
     std::vector<std::string> unique_cues;
     std::set<std::string> cue_seen;
-    for (auto& cue : cues) if (cue_seen.insert(cue).second) unique_cues.push_back(std::move(cue));
+    for (const auto& cue : cues) {
+        auto normalized = unicode_casefold(collapse_unicode_whitespace(cue));
+        if (!text(normalized)) reject("memory episode is incomplete");
+        if (cue_seen.insert(normalized).second)
+            unique_cues.push_back(std::move(normalized));
+    }
     std::vector<std::string> evidence = parents;
     evidence.insert(evidence.end(), addresses.begin(), addresses.end());
     SemanticMemoryStep step{"session_semantic_proposal", payload, parents,
@@ -228,10 +264,10 @@ std::shared_ptr<const BoundSessionSemantics> bind_session_semantics(
         parts.emplace(part.anchor.identifier, part.anchor);
         source_parts.push_back(part.anchor);
     }
-    std::map<std::string, JsonValue::Array, std::less<>> contexts;
+    std::map<std::string, std::vector<const SessionSourceContext*>, std::less<>> contexts;
     for (const auto& context : interpretation.source.request.source_context)
         for (const auto& identifier : context.anchor_ids)
-            contexts[identifier].push_back(source_context_value(context));
+            contexts[identifier].push_back(&context);
     const std::set<std::string> unresolved_set(
         interpretation.unresolved.begin(), interpretation.unresolved.end());
     std::vector<SessionSemanticUnitBinding> units;
@@ -239,8 +275,8 @@ std::shared_ptr<const BoundSessionSemantics> bind_session_semantics(
         const auto refs = references(unit);
         std::vector<SemanticAnchor> anchors;
         std::vector<std::size_t> ordinals;
-        JsonValue::Array input_context;
-        std::set<std::string> context_seen;
+        std::vector<SessionSourceContext> input_context;
+        std::set<const SessionSourceContext*> context_seen;
         std::vector<std::string> unresolved_anchors;
         for (const auto& identifier : refs) {
             const auto found = parts.find(identifier);
@@ -250,35 +286,30 @@ std::shared_ptr<const BoundSessionSemantics> bind_session_semantics(
             if (std::ranges::find(ordinals, ordinal) == ordinals.end()) ordinals.push_back(ordinal);
             if (const auto rows = contexts.find(identifier); rows != contexts.end())
                 for (const auto& context : rows->second) {
-                    const auto encoded = semantic_canonical_json(context);
-                    if (context_seen.insert(encoded).second) input_context.push_back(context);
+                    if (context_seen.insert(context).second) input_context.push_back(*context);
                 }
             if (unresolved_set.contains(identifier)) unresolved_anchors.push_back(identifier);
         }
-        JsonValue::Array events;
-        JsonValue::Array occurrences;
+        std::vector<const SessionEvent*> events;
+        std::vector<const BoundSessionOccurrence*> occurrences;
         for (const auto ordinal : ordinals) {
             const auto& event = entry->document.archive->event(
                 ordinal, entry->document.declared_sha256);
-            events.emplace_back(JsonValue::Object{
-                {"ordinal", static_cast<std::int64_t>(event.ordinal)},
-                {"content_sha256", event.declared_content_sha256},
-                {"payload", session_json_value(event.payload)},
-                {"content_digest_matches", event.content_digest_matches}});
+            events.push_back(&event);
             if (const auto rows = entry->occurrence_index.by_event.find(ordinal);
                 rows != entry->occurrence_index.by_event.end())
                 for (const auto index : rows->second)
-                    occurrences.push_back(occurrence_value(
-                        entry->occurrence_index.occurrences.at(index)));
+                    occurrences.push_back(&entry->occurrence_index.occurrences.at(index));
         }
         units.push_back({unit, std::move(anchors), std::move(events),
             std::move(occurrences), std::move(input_context),
             std::move(unresolved_anchors)});
     }
     return std::make_shared<const BoundSessionSemantics>(BoundSessionSemantics{
-        view.memory_snapshot_id, {key.first, key.second}, receipt,
+        std::string(expected_memory_snapshot_id), {key.first, key.second}, receipt,
         std::move(parent_episodes), std::move(derivative), std::move(source_parts),
-        std::move(units), interpretation.unresolved, std::move(entry)});
+        std::move(units), interpretation.unresolved, std::move(entry), interpretation,
+        payload_bytes, digest});
 }
 
 const SessionSemanticUnitBinding& BoundSessionSemantics::unit(
@@ -293,8 +324,11 @@ const SessionSemanticUnitBinding& BoundSessionSemantics::unit(
 std::shared_ptr<const BoundSessionSemantics> restore_session_semantics(
     const JsonValue& payload,
     const PreparedSessionView& view,
-    const std::vector<SemanticSourceEpisode>& source_episodes) {
+    const std::vector<SemanticSourceEpisode>& source_episodes,
+    const std::string_view expected_memory_snapshot_id) {
     try {
+        if (view.memory_snapshot_id != expected_memory_snapshot_id)
+            reject("session_semantic_memory_generation_changed");
         if (!payload.is_object() ||
             payload.at("schema").as_string() != session_semantic_input_schema)
             reject("session_semantic_bytes_required");
@@ -304,17 +338,35 @@ std::shared_ptr<const BoundSessionSemantics> restore_session_semantics(
             reject("session_speech_receipt_malformed");
         const SessionDocumentKey key{std::string(document_key[0].as_string()),
                                      std::string(document_key[1].as_string())};
-        auto entry = view.get(key, view.memory_snapshot_id);
+        auto entry = view.get(key, expected_memory_snapshot_id);
         if (!entry) reject("session_semantic_document_not_prepared");
         const auto interpretation = restore_session_speech_interpretation(receipt, *entry);
-        auto bound = bind_session_semantics(view, source_episodes, std::move(entry), interpretation);
-        if (bound->derivative.steps.size() != 1 ||
-            bound->derivative.steps.front().observation != payload)
+        auto bound = bind_session_semantics(
+            view, source_episodes, interpretation, expected_memory_snapshot_id);
+        if (bound->payload != semantic_canonical_json(payload))
             reject("session_semantic_input_changed");
         return bound;
     } catch (const std::out_of_range&) {
         reject("session_semantic_input_changed");
     } catch (const std::bad_variant_access&) {
+        reject("session_semantic_input_changed");
+    }
+}
+
+std::shared_ptr<const BoundSessionSemantics> restore_session_semantics_bytes(
+    const std::string_view payload_bytes,
+    const PreparedSessionView& view,
+    const std::vector<SemanticSourceEpisode>& source_episodes,
+    const std::string_view expected_memory_snapshot_id) {
+    try {
+        std::pmr::monotonic_buffer_resource memory;
+        const auto parsed = transport::parse_json(payload_bytes, memory, 1000);
+        auto payload = detached_json(parsed);
+        if (semantic_canonical_json(payload) != payload_bytes)
+            reject("session_semantic_input_changed");
+        return restore_session_semantics(
+            payload, view, source_episodes, expected_memory_snapshot_id);
+    } catch (const std::length_error&) {
         reject("session_semantic_input_changed");
     }
 }

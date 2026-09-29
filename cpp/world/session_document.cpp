@@ -38,6 +38,8 @@ namespace {
     if (!value || std::holds_alternative<std::nullptr_t>(value->storage())) return false;
     if (const auto* boolean = std::get_if<bool>(&value->storage())) return *boolean;
     if (const auto* integer = std::get_if<std::int64_t>(&value->storage())) return *integer != 0;
+    if (const auto* integer = std::get_if<JsonInteger>(&value->storage()))
+        return integer->value != "0";
     if (const auto* number = std::get_if<double>(&value->storage())) return *number != 0;
     if (const auto* text = std::get_if<std::string>(&value->storage())) return !text->empty();
     if (const auto* array = std::get_if<JsonValue::Array>(&value->storage())) return !array->empty();
@@ -135,10 +137,12 @@ SessionDocumentBinding session_document_binding(const JsonValue& observation) {
 SessionDocumentPreparation::SessionDocumentPreparation(
     std::string memory_snapshot_id_value,
     std::map<SessionDocumentKey, SessionDocument> documents_value,
+    std::vector<SessionDocumentKey> document_order_value,
     std::map<std::string, std::vector<SessionDocumentKey>, std::less<>> by_episode_value,
     std::vector<SessionDocumentUnresolvedStep> unresolved_steps_value)
     : memory_snapshot_id(std::move(memory_snapshot_id_value)),
-      documents(std::move(documents_value)), by_episode(std::move(by_episode_value)),
+      documents(std::move(documents_value)), document_order(std::move(document_order_value)),
+      by_episode(std::move(by_episode_value)),
       unresolved_steps(std::move(unresolved_steps_value)) {}
 
 std::vector<const SessionDocument*> SessionDocumentPreparation::for_episode(
@@ -159,6 +163,7 @@ SessionDocumentPreparation prepare_session_documents(
     if (memory_snapshot_id.empty() || maximum_document_bytes == 0)
         throw std::invalid_argument("main snapshot and positive preparation capacity required");
     std::map<SessionDocumentKey, std::vector<SessionFragment>> groups;
+    std::vector<SessionDocumentKey> group_order;
     std::vector<SessionDocumentUnresolvedStep> unresolved;
     std::set<std::string> seen;
     for (const auto& episode : episodes) {
@@ -188,7 +193,9 @@ SessionDocumentPreparation prepare_session_documents(
                     unresolved.push_back({episode.episode_id, ordinal, "unknown_document_variant"});
                     continue;
                 }
-                groups[binding.document_key].push_back({episode.episode_id, episode.revision,
+                auto [group, inserted] = groups.try_emplace(binding.document_key);
+                if (inserted) group_order.push_back(binding.document_key);
+                group->second.push_back({episode.episode_id, episode.revision,
                     ordinal, position, binding.character_offset, std::string(*text_value),
                     episode.source_addresses, step.outcome, *provenance});
             }
@@ -196,14 +203,16 @@ SessionDocumentPreparation prepare_session_documents(
     }
     std::map<SessionDocumentKey, SessionDocument> documents;
     std::map<std::string, std::vector<SessionDocumentKey>, std::less<>> by_episode;
-    for (auto& [key, fragments] : groups) {
+    for (const auto& key : group_order) {
+        auto& fragments = groups.at(key);
         for (const auto& fragment : fragments) {
             auto& keys = by_episode[fragment.episode_id];
             if (std::ranges::find(keys, key) == keys.end()) keys.push_back(key);
         }
         documents.emplace(key, assemble(key, std::move(fragments), maximum_document_bytes));
     }
-    return {std::move(memory_snapshot_id), std::move(documents), std::move(by_episode),
+    return {std::move(memory_snapshot_id), std::move(documents), std::move(group_order),
+            std::move(by_episode),
             std::move(unresolved)};
 }
 

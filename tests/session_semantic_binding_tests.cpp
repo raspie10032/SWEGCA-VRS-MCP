@@ -177,6 +177,12 @@ void test_large_parent_is_never_materialized_or_replaced() {
     assert(parent->lookup("cold:90000").has_value());
 }
 
+void test_python_float_spelling_in_semantic_payloads() {
+    assert(semantic_canonical_json(JsonValue(1.2345678901234568e16)) ==
+           "1.2345678901234568e+16");
+    assert(semantic_canonical_json(JsonValue(1e-4)) == "0.0001");
+}
+
 }  // namespace
 
 int main() {
@@ -185,6 +191,7 @@ int main() {
     test_model_replacement_reuses_document_anchor_and_unit_addresses();
     test_missing_parent_duplicate_derivative_and_malformed_binding_reject();
     test_large_parent_is_never_materialized_or_replaced();
+    test_python_float_spelling_in_semantic_payloads();
     std::cout << "PASS session semantic binding: Python address parity, sparse parent lineage, "
                  "generation guards and 100k parent sharing\n";
 }

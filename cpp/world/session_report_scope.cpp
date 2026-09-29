@@ -82,19 +82,26 @@ SessionReportSelection select_session_report_context(
     std::string subject,
     const std::vector<SessionUnresolvedSource>& unresolved,
     const std::map<std::string, SessionReportJudgment, std::less<>>& judgments,
-    std::vector<std::string> subjects) {
-    if (subjects.empty()) subjects.push_back(std::move(subject));
+    std::optional<std::vector<std::string>> explicit_subjects) {
+    auto subjects = explicit_subjects
+        ? std::move(*explicit_subjects)
+        : std::vector<std::string>{std::move(subject)};
     std::set<SessionDocumentKey> documents;
     for (const auto& scope : partial_scopes)
         if (!scope.document_key.first.empty() || !scope.document_key.second.empty())
             documents.insert(scope.document_key);
     std::set<SessionEventCoordinate> selected;
     std::set<SessionDocumentKey> invalid_documents;
+    std::map<std::pair<std::string, std::size_t>,
+             std::map<std::string, SemanticAnchor, std::less<>>> anchor_maps;
     for (const auto& adoption : adoptions) {
         if (!documents.contains(adoption.document_key)) continue;
-        std::map<std::string, SemanticAnchor, std::less<>> anchors;
-        for (const auto& anchor : adoption.encoding_anchors)
-            anchors.emplace(anchor.identifier, anchor);
+        const auto event_key = std::pair{adoption.episode_id, adoption.step};
+        auto [entry, inserted] = anchor_maps.try_emplace(event_key);
+        if (inserted)
+            for (const auto& anchor : adoption.encoding_anchors)
+                entry->second.emplace(anchor.identifier, anchor);
+        const auto& anchors = entry->second;
         if (adoption.referenced_anchors.empty()) invalid_documents.insert(adoption.document_key);
         for (const auto& identifier : adoption.referenced_anchors) {
             const auto found = anchors.find(identifier);
@@ -173,10 +180,12 @@ SessionReportSelection select_session_report_context(
         if (!row.event_obligation) continue;
         const SessionEventCoordinate coordinate{
             row.event_obligation->document_key, row.event_obligation->event_ordinal};
-        const auto judgment = judgments.find(row.episode_id);
         if (!documents.contains(coordinate.first) || selected.contains(coordinate) ||
-            protected_events.contains(coordinate) ||
-            (judgment != judgments.end() && judgment->second.verdict == "conflict") ||
+            protected_events.contains(coordinate)) continue;
+        const auto judgment = judgments.find(row.episode_id);
+        if (judgment == judgments.end())
+            throw std::invalid_argument("session report judgment required");
+        if (judgment->second.verdict == "conflict" ||
             std::ranges::any_of(row.event_obligation->call_links, [&](const auto& link) {
                 return protected_calls.contains(link.key);
             })) continue;

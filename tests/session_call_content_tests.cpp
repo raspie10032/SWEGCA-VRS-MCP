@@ -1,4 +1,5 @@
 #include "world/session_call_content.hpp"
+#include "world/unicode_nfkc.hpp"
 
 #include "transport/json.hpp"
 
@@ -69,10 +70,16 @@ void test_shell_programs_are_not_reported_as_one_literal_command() {
         assert(result && !result->unresolved.empty());
         assert(!result->addresses_subject("pytest"));
     }
+    const auto forbidden = command("pytest; echo yes");
+    assert(forbidden->unresolved ==
+           std::vector<std::string>({"shell_program_semantics_not_resolved"}));
+    const auto empty_argv = command("\"\"");
+    assert(empty_argv->unresolved ==
+           std::vector<std::string>({"no_literal_command_target"}));
 }
 
 void test_options_are_typed_and_invalid_values_remain_unresolved() {
-    const auto valid = command("pytest", R"(,"tty":true,"yield-time-ms":0,"max_output_tokens":184467440737095516160)");
+    const auto valid = command("pytest", R"(,"tty":true,"yield_time_ms":0,"max_output_tokens":184467440737095516160)");
     assert(valid && valid->unresolved.empty());
     assert(valid->requested_options.size() == 3);
     assert(std::get<bool>(valid->requested_options[0].value));
@@ -114,6 +121,31 @@ void test_function_arguments_duplicate_keys_and_nonfinite_numbers() {
     assert(underflow->unresolved ==
            std::vector<std::string>({"call_option_not_resolved:max_output_tokens"}));
     assert(!prepare(R"({"type":"message","content":"run pytest"})"));
+
+    const auto huge_integer_arguments = std::string{"{\"cmd\":\"pytest\","
+        "\"max_output_tokens\":"} + std::string(4301, '9') + "}";
+    const auto huge_integer = prepare(
+        "{\"type\":\"function_call\",\"name\":\"functions.exec_command\","
+        "\"arguments\":" + quoted(huge_integer_arguments) + "}");
+    assert(huge_integer && huge_integer->operation == "uninterpreted_call");
+    assert(contains(huge_integer->unresolved, "call_arguments_not_structured"));
+}
+
+void test_python_json_number_spelling_for_source_hashes() {
+    assert(transport::normalize_python_json_number("1e-400") == "0.0");
+    assert(transport::normalize_python_json_number("-1e-400") == "-0.0");
+    assert(transport::normalize_python_json_number("1.2345678901234568e16") ==
+           "1.2345678901234568e+16");
+    assert(transport::normalize_python_json_number("1e-4") == "0.0001");
+}
+
+void test_python_string_repr_spelling() {
+    assert(world::python_string_repr("it's") == "\"it's\"");
+    assert(world::python_string_repr("a\"b") == "'a\"b'");
+    assert(world::python_string_repr(std::string_view{"\xc2\xa0", 2}) == "'\\xa0'");
+    assert(world::python_string_repr(std::string_view{"\xe2\x80\x8b", 3}) == "'\\u200b'");
+    assert(world::python_string_repr(std::string_view{"\xee\x80\x80", 3}) == "'\\ue000'");
+    assert(world::python_string_repr(std::string_view{"\x01", 1}) == "'\\x01'");
 }
 
 void test_namespace_is_exact_recorded_identity() {
@@ -163,6 +195,8 @@ int main() {
     test_shell_programs_are_not_reported_as_one_literal_command();
     test_options_are_typed_and_invalid_values_remain_unresolved();
     test_function_arguments_duplicate_keys_and_nonfinite_numbers();
+    test_python_json_number_spelling_for_source_hashes();
+    test_python_string_repr_spelling();
     test_namespace_is_exact_recorded_identity();
     test_missing_or_unstructured_fields_stay_explicit();
     assert(world::session_call_content_source_sha256 ==

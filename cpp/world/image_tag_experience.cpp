@@ -168,6 +168,7 @@ namespace {
     if (std::holds_alternative<std::nullptr_t>(storage)) return "null";
     if (const auto* item = std::get_if<bool>(&storage)) return *item ? "true" : "false";
     if (const auto* item = std::get_if<std::int64_t>(&storage)) return std::to_string(*item);
+    if (const auto* item = std::get_if<JsonInteger>(&storage)) return item->value;
     if (const auto* item = std::get_if<double>(&storage)) return python_float(*item);
     if (const auto* item = std::get_if<std::string>(&storage)) return json_string(*item);
     if (const auto* items = std::get_if<JsonValue::Array>(&storage)) {
@@ -314,6 +315,8 @@ void append_unique(std::vector<std::string>& values, std::string value) {
     if (value == nullptr || std::holds_alternative<std::nullptr_t>(value->storage())) return false;
     if (const auto* item = std::get_if<bool>(&value->storage())) return *item;
     if (const auto* item = std::get_if<std::int64_t>(&value->storage())) return *item != 0;
+    if (const auto* item = std::get_if<JsonInteger>(&value->storage()))
+        return item->value != "0";
     if (const auto* item = std::get_if<double>(&value->storage())) return *item != 0.0;
     if (const auto* item = std::get_if<std::string>(&value->storage())) return !item->empty();
     if (const auto* item = std::get_if<JsonValue::Array>(&value->storage())) return !item->empty();

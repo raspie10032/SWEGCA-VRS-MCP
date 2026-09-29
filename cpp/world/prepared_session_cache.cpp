@@ -128,6 +128,13 @@ PreparedSessionCache PreparedSessionCache::invalidate(
     return with_changes(changes);
 }
 
+PreparedSessionView PreparedSessionCache::bind(
+    std::string memory_snapshot_id,
+    SessionDocumentDirectoryView directory) const {
+    return PreparedSessionView(
+        std::move(memory_snapshot_id), *this, std::move(directory));
+}
+
 const std::vector<PreparedSessionCacheLayer>& PreparedSessionCache::layers() const noexcept {
     return layers_;
 }
@@ -198,16 +205,18 @@ PreparedSessionCache prepare_session_cache_document(
     const std::size_t maximum_document_bytes) {
     if (maximum_document_bytes == 0)
         throw std::invalid_argument("positive document preparation capacity required");
+    check_generation(memory_snapshot_id, directory.memory_snapshot_id);
     const auto previous = cache.get(key);
     if (previous && !(previous->status() == "capacity_deferred" &&
                       maximum_document_bytes > previous->maximum_document_bytes))
         return cache;
     auto result = prepare_indexed_session_document(
-        episodes, directory, key, std::move(memory_snapshot_id), maximum_document_bytes);
+        episodes, directory, key, memory_snapshot_id, maximum_document_bytes);
     const auto found = result.documents.find(key);
-    if (found == result.documents.end())
-        throw std::logic_error("indexed session document was not reconstructed");
-    auto document = found->second;
+    auto document = found == result.documents.end()
+        ? SessionDocument{key.first, key.second, {},
+              "unresolved_document_variants", nullptr, {}}
+        : found->second;
     auto occurrences = prepare_session_occurrences(&document);
     auto entry = std::make_shared<PreparedSessionEntry>(
         std::move(document), result.unresolved_steps,

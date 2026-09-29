@@ -215,4 +215,74 @@ std::string strip_unicode_whitespace(const std::string_view input) {
     return output;
 }
 
+std::string collapse_unicode_whitespace(const std::string_view input) {
+    const auto decoded = decode_utf8(input);
+    const auto whitespace = [](const char32_t point) {
+        return std::binary_search(
+            unicode_data::whitespace.begin(), unicode_data::whitespace.end(), point);
+    };
+    std::string output;
+    bool pending_space = false;
+    bool has_content = false;
+    for (const auto point : decoded) {
+        if (whitespace(point)) {
+            pending_space = has_content;
+            continue;
+        }
+        if (pending_space) output.push_back(' ');
+        append_utf8(output, point);
+        pending_space = false;
+        has_content = true;
+    }
+    return output;
+}
+
+std::string python_string_repr(const std::string_view input) {
+    const auto points = decode_utf8(input);
+    const bool has_single = std::ranges::find(points, U'\'') != points.end();
+    const bool has_double = std::ranges::find(points, U'"') != points.end();
+    const auto quote = has_single && !has_double ? U'"' : U'\'';
+    const auto printable = [](const char32_t point) {
+        const auto found = std::ranges::lower_bound(
+            unicode_data::printable_ranges, point, {},
+            [](const auto& range) { return range.last; });
+        return found != unicode_data::printable_ranges.end() &&
+            found->first <= point && point <= found->last;
+    };
+    constexpr char digits[] = "0123456789abcdef";
+    const auto escaped = [&](std::string& output, const char prefix,
+                             const char32_t point, const unsigned width) {
+        output.push_back('\\');
+        output.push_back(prefix);
+        for (unsigned shift = (width - 1U) * 4U;; shift -= 4U) {
+            output.push_back(digits[(point >> shift) & 0xfU]);
+            if (shift == 0) break;
+        }
+    };
+    std::string output;
+    output.push_back(static_cast<char>(quote));
+    for (const auto point : points) {
+        if (point == quote || point == U'\\') {
+            output.push_back('\\');
+            output.push_back(static_cast<char>(point));
+        } else if (point == U'\t') {
+            output += "\\t";
+        } else if (point == U'\n') {
+            output += "\\n";
+        } else if (point == U'\r') {
+            output += "\\r";
+        } else if (printable(point)) {
+            append_utf8(output, point);
+        } else if (point <= 0xffU) {
+            escaped(output, 'x', point, 2);
+        } else if (point <= 0xffffU) {
+            escaped(output, 'u', point, 4);
+        } else {
+            escaped(output, 'U', point, 8);
+        }
+    }
+    output.push_back(static_cast<char>(quote));
+    return output;
+}
+
 }  // namespace swegca::world

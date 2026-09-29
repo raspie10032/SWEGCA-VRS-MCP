@@ -54,28 +54,7 @@ namespace {
 }
 
 [[nodiscard]] std::string python_repr(const std::string_view value) {
-    static constexpr char hex[] = "0123456789abcdef";
-    std::string result{"'"};
-    for (const auto raw : value) {
-        const auto byte = static_cast<unsigned char>(raw);
-        switch (byte) {
-        case '\\': result += "\\\\"; break;
-        case '\'': result += "\\'"; break;
-        case '\t': result += "\\t"; break;
-        case '\n': result += "\\n"; break;
-        case '\r': result += "\\r"; break;
-        default:
-            if (byte < 0x20U || byte == 0x7fU) {
-                result += "\\x";
-                result.push_back(hex[byte >> 4U]);
-                result.push_back(hex[byte & 0x0fU]);
-            } else {
-                result.push_back(raw);
-            }
-        }
-    }
-    result.push_back('\'');
-    return result;
+    return python_string_repr(value);
 }
 
 [[nodiscard]] std::string optional_repr(

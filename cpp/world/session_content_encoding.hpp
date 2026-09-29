@@ -34,8 +34,8 @@ public:
     [[nodiscard]] std::vector<SemanticMeaningUnit> units() const;
     [[nodiscard]] const std::vector<std::string>& unresolved() const;
     [[nodiscard]] const std::vector<std::string>& document_key() const;
-    [[nodiscard]] const JsonValue& input_context() const;
-    [[nodiscard]] const JsonValue& parent_fragments() const;
+    [[nodiscard]] const std::vector<SessionSourceContext>& input_context() const;
+    [[nodiscard]] const std::vector<SessionParentFragment>& parent_fragments() const;
     [[nodiscard]] constexpr std::vector<std::size_t> partial_response_units() const {
         return {};
     }
@@ -67,7 +67,8 @@ struct SessionSemanticAnchorResolution final {
     std::vector<std::string> referenced_anchors;
     std::vector<std::string> unresolved_anchors;
     std::size_t other_unresolved_anchor_count{};
-    JsonValue::Array input_context;
+    std::vector<std::size_t> attributable_input_steps;
+    std::vector<SessionSourceContext> input_context;
     std::vector<std::string> attributable_document_key;
     [[nodiscard]] constexpr bool response_incomplete() const noexcept { return false; }
 };
@@ -77,9 +78,11 @@ struct SessionEncodedClaim final {
     std::string subject;
     std::string predicate;
     JsonValue value;
+    std::optional<double> reported_confidence;
     SemanticMeaningUnit semantic_unit;
     SessionSemanticPropositionKey semantic_key;
     std::vector<SessionSemanticEdgeRole> semantic_graph_addresses;
+    std::vector<std::string> unresolved;
     SessionSemanticAnchorResolution semantic_anchor_resolution;
 };
 
@@ -90,6 +93,8 @@ struct SessionEncodedEvent final {
     std::string event_type;
     std::string evidence_kind;
     std::vector<SessionEncodedClaim> claims;
+    JsonValue declared_source;
+    std::vector<std::string> declared_evidence_refs;
     std::vector<std::string> source_addresses;
     std::vector<std::string> evidence_refs;
     std::string revision;
@@ -107,7 +112,16 @@ struct SessionEncodedEvent final {
 [[nodiscard]] SessionEncodedEvent prepare_session_recorded_event(
     const SemanticSourceEpisode& episode,
     std::size_t ordinal,
-    const PreparedSessionView& source_memory,
+    const PreparedSessionView* source_memory,
     const std::vector<SemanticSourceEpisode>& source_episodes);
+
+[[nodiscard]] inline SessionEncodedEvent prepare_session_recorded_event(
+    const SemanticSourceEpisode& episode,
+    const std::size_t ordinal,
+    const PreparedSessionView& source_memory,
+    const std::vector<SemanticSourceEpisode>& source_episodes) {
+    return prepare_session_recorded_event(
+        episode, ordinal, &source_memory, source_episodes);
+}
 
 }  // namespace swegca::world

@@ -10,6 +10,9 @@ namespace {
 
 [[nodiscard]] SessionDocumentDirectoryShard merge(
     SessionDocumentDirectoryShard left, const SessionDocumentDirectoryShard& right) {
+    for (const auto& key : right.document_order)
+        if (std::ranges::find(left.document_order, key) == left.document_order.end())
+            left.document_order.push_back(key);
     for (const auto& [key, rows] : right.by_document) {
         auto& target = left.by_document[key];
         target.insert(target.end(), rows.begin(), rows.end());
@@ -44,6 +47,8 @@ void DocumentDirectoryBuilder::observe(
     }
     DocumentFragmentAddress reference{binding.document_key, std::move(identifier),
                                       step, binding.character_offset};
+    if (!shard_.by_document.contains(binding.document_key))
+        shard_.document_order.push_back(binding.document_key);
     shard_.by_document[binding.document_key].push_back(reference);
     shard_.by_episode[reference.episode_id].push_back(std::move(reference));
 }
@@ -139,8 +144,7 @@ SessionDocumentDirectory::append_with_keys(
             builder.observe(episode.episode_id, ordinal, episode.steps[ordinal].observation);
     auto shard = builder.finish();
     std::vector<SessionDocumentKey> keys;
-    keys.reserve(shard.by_document.size());
-    for (const auto& [key, unused] : shard.by_document) { (void)unused; keys.push_back(key); }
+    keys = shard.document_order;
     return {append_shard(std::move(shard)), std::move(keys)};
 }
 
@@ -161,11 +165,17 @@ SessionDocumentPreparation prepare_indexed_session_document(
     const std::size_t maximum_document_bytes) {
     const auto references = directory.fragments(key, memory_snapshot_id);
     if (references.empty()) throw std::out_of_range("session document key not indexed");
-    std::set<std::string> identifiers;
-    for (const auto& reference : references) identifiers.insert(reference.episode_id);
+    std::vector<std::string> identifiers;
+    for (const auto& reference : references)
+        if (std::ranges::find(identifiers, reference.episode_id) == identifiers.end())
+            identifiers.push_back(reference.episode_id);
     std::vector<SemanticSourceEpisode> selected;
-    for (const auto& episode : episodes)
-        if (identifiers.contains(episode.episode_id)) selected.push_back(episode);
+    for (const auto& identifier : identifiers) {
+        const auto episode = std::ranges::find_if(episodes, [&](const auto& candidate) {
+            return candidate.episode_id == identifier;
+        });
+        if (episode != episodes.end()) selected.push_back(*episode);
+    }
     if (selected.size() != identifiers.size())
         throw std::invalid_argument("indexed session parent unavailable");
     return prepare_session_documents(selected, std::move(memory_snapshot_id),

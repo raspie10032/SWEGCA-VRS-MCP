@@ -32,6 +32,7 @@ struct SessionDirectoryUnresolved final {
 
 struct SessionDocumentDirectoryShard final {
     std::map<SessionDocumentKey, std::vector<DocumentFragmentAddress>> by_document;
+    std::vector<SessionDocumentKey> document_order;
     std::map<std::string, std::vector<DocumentFragmentAddress>, std::less<>> by_episode;
     std::map<std::string, std::vector<SessionDirectoryUnresolved>, std::less<>> unresolved;
     std::size_t size{};

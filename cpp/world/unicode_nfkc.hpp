@@ -10,6 +10,8 @@ namespace swegca::world {
 [[nodiscard]] std::string normalize_nfkc(std::string_view input);
 [[nodiscard]] std::string unicode_casefold(std::string_view input);
 [[nodiscard]] std::string strip_unicode_whitespace(std::string_view input);
+[[nodiscard]] std::string collapse_unicode_whitespace(std::string_view input);
+[[nodiscard]] std::string python_string_repr(std::string_view input);
 
 [[nodiscard]] constexpr std::string_view unicode_nfkc_version() noexcept {
     return "16.0.0";

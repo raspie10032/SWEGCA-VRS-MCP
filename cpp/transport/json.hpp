@@ -40,6 +40,10 @@ struct JsonMemberSource {
 [[nodiscard]] JsonMemberSource locate_json_member(std::string_view text,std::pmr::memory_resource&,
     std::span<const std::string_view> path,std::size_t max_depth=64);
 [[nodiscard]] std::pmr::string encode_json(const Json&,std::pmr::memory_resource&);
+// Python json.loads + compact JSONEncoder number/string semantics. Objects
+// retain their parsed insertion order, matching Python dictionaries.
+[[nodiscard]] std::string encode_python_json(const Json&);
+[[nodiscard]] std::string normalize_python_json_number(std::string_view);
 // Append directly to an exclusively owned destination. The caller must discard
 // the unfinished message on failure; value must not alias the destination.
 // Optional suffix capacity reserves space for a caller-owned enclosing frame.

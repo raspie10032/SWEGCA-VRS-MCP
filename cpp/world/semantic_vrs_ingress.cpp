@@ -98,8 +98,11 @@ void append_json_string(std::string& result, const std::string_view value) {
 [[nodiscard]] std::string python_float(const double value) {
     if (!std::isfinite(value)) reject("semantic JSON rejects non-finite real values");
     char buffer[128];
+    const auto absolute = std::abs(value);
+    const auto format = (absolute != 0.0 && absolute < 1e-4) || absolute >= 1e16
+        ? std::chars_format::scientific : std::chars_format::general;
     const auto converted = std::to_chars(std::begin(buffer), std::end(buffer), value,
-                                         std::chars_format::general);
+                                         format);
     if (converted.ec != std::errc{}) reject("semantic binary64 conversion failed");
     std::string result(buffer, converted.ptr);
     const auto exponent_at = result.find('e');
@@ -169,6 +172,8 @@ void append_json(std::string& result, const JsonValue& value) {
         const auto encoded = std::to_chars(std::begin(buffer), std::end(buffer), *item);
         if (encoded.ec != std::errc{}) reject("semantic integer conversion failed");
         result.append(buffer, encoded.ptr);
+    } else if (const auto* item = std::get_if<JsonInteger>(&storage)) {
+        result += item->value;
     } else if (const auto* item = std::get_if<double>(&storage)) {
         result += python_float(*item);
     } else if (const auto* item = std::get_if<std::string>(&storage)) {
@@ -527,7 +532,7 @@ void validate_source(const SemanticSourceEpisode& source) {
         reject("memory episode is incomplete");
     std::unordered_set<std::string> addresses;
     for (const auto& item : source.source_addresses)
-        if (!text(item) || !addresses.insert(item).second)
+        if (!addresses.insert(item).second)
             reject("memory source addresses must be unique");
     static const std::set<std::string_view> outcomes{
         "success", "failure", "negative", "uncertain", "conflict", "pending"};

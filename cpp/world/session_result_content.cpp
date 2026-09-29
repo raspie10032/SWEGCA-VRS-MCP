@@ -62,6 +62,9 @@ namespace {
 
 [[nodiscard]] bool finite_numbers(const transport::Json& value) {
     if (value.kind == transport::Json::Kind::number &&
+        value.scalar.find_first_of(".eE") == std::string_view::npos)
+        return value.scalar.size() - (value.scalar.starts_with('-') ? 1U : 0U) <= 4300;
+    if (value.kind == transport::Json::Kind::number &&
         value.scalar.find_first_of(".eE") != std::string_view::npos) {
         double parsed = 0.0;
         const auto begin = value.scalar.data();

@@ -31,6 +31,8 @@ struct Span final {
                           const std::size_t occurrence) {
     if (strip_unicode_whitespace(quote).empty())
         throw std::invalid_argument("session_segment_quote_required");
+    if (occurrence >= unicode_length(text))
+        throw std::invalid_argument("session_segment_occurrence_missing");
     auto begin = std::string::npos;
     std::size_t search = 0;
     for (std::size_t index = 0; index <= occurrence; ++index) {
@@ -72,7 +74,8 @@ SessionSpeechInterpretation from_segment_annotations(
             throw std::invalid_argument("session_segment_unresolved_anchor_changed");
     std::set<std::string> unresolved_set(unresolved.begin(), unresolved.end());
     std::map<std::string, std::vector<std::pair<std::size_t, std::size_t>>, std::less<>> ranges;
-    std::map<std::string, std::string, std::less<>> span_parents;
+    std::vector<std::pair<std::string, std::string>> span_parents;
+    std::set<std::string, std::less<>> span_identifiers;
     std::vector<SemanticMeaningUnit> units;
     for (auto& row : segments) {
         const auto parent = originals.find(row.anchor);
@@ -87,7 +90,7 @@ SessionSpeechInterpretation from_segment_annotations(
         const auto span = locate(original.content, row.quote, row.occurrence);
         const auto identifier = row.anchor + ":span:" + std::to_string(span.char_begin) +
                                 ":" + std::to_string(span.char_end);
-        if (span_parents.contains(identifier))
+        if (!span_identifiers.insert(identifier).second)
             throw std::invalid_argument("session_segment_duplicate_span");
         auto anchor = original.anchor;
         anchor.identifier = identifier;
@@ -96,9 +99,9 @@ SessionSpeechInterpretation from_segment_annotations(
         prepared.request.parts.push_back({anchor,
             original.content.substr(span.byte_begin, span.byte_end - span.byte_begin),
             original.media_type});
-        span_parents.emplace(identifier, row.anchor);
+        span_parents.emplace_back(identifier, row.anchor);
         ranges[row.anchor].push_back({span.byte_begin, span.byte_end});
-        JsonValue::Object speech{{"schema", "rozephine-semantic-speech-value-v1"},
+        JsonValue::Object speech{{"schema", "rozephine-speech-value-v1"},
             {"kind", row.kind}, {"speaker", row.speaker},
             {"addressees", entities(row.addressees)},
             {"topics", entities(row.topics)},
@@ -107,7 +110,7 @@ SessionSpeechInterpretation from_segment_annotations(
         std::vector<std::string> anchors{identifier};
         anchors.insert(anchors.end(), row.anchors.begin(), row.anchors.end());
         units.push_back({"utterance:" + identifier, "utterance", JsonValue(std::move(speech)),
-            "affirmed", "reported", std::move(anchors), std::move(row.qualifiers), "literal"});
+            "affirmed", "reported", std::move(anchors), row.qualifiers, "literal"});
     }
     for (const auto& [identifier, part_index] : originals) {
         const auto& part = prepared.request.parts[part_index];

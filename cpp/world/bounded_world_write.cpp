@@ -120,6 +120,7 @@ void append_json_value(std::string& out, const JsonValue& value) {
     if (std::holds_alternative<std::nullptr_t>(storage)) out += "null";
     else if (const auto* item = std::get_if<bool>(&storage)) out += *item ? "true" : "false";
     else if (const auto* item = std::get_if<std::int64_t>(&storage)) out += std::to_string(*item);
+    else if (const auto* item = std::get_if<JsonInteger>(&storage)) out += item->value;
     else if (const auto* item = std::get_if<double>(&storage)) out += json_double(*item);
     else if (const auto* item = std::get_if<std::string>(&storage)) append_json_string(out, *item);
     else if (const auto* array = std::get_if<JsonValue::Array>(&storage)) {

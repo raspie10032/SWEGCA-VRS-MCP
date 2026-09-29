@@ -50,7 +50,11 @@ void token(const JsonValue& value, std::string& out) {
     if (const auto* integer = std::get_if<std::int64_t>(&value.storage())) {
         append("int", std::to_string(*integer)); return;
     }
+    if (const auto* integer = std::get_if<JsonInteger>(&value.storage())) {
+        append("int", integer->value); return;
+    }
     if (const auto* number = std::get_if<double>(&value.storage())) {
+        if (*number == 0.0) { append("float", "0"); return; }
         std::ostringstream stream; stream.precision(17); stream << *number;
         append("float", stream.str()); return;
     }
@@ -73,6 +77,31 @@ void token(const JsonValue& value, std::string& out) {
     return result;
 }
 
+[[nodiscard]] JsonValue claim_token(const JsonValue& value) {
+    if (std::holds_alternative<std::nullptr_t>(value.storage()))
+        return JsonValue::Array{"NoneType", JsonValue(nullptr)};
+    if (const auto* boolean = std::get_if<bool>(&value.storage()))
+        return JsonValue::Array{"bool", *boolean};
+    if (const auto* integer = std::get_if<std::int64_t>(&value.storage()))
+        return JsonValue::Array{"int", *integer};
+    if (const auto* integer = std::get_if<JsonInteger>(&value.storage()))
+        return JsonValue::Array{"int", JsonValue(*integer)};
+    if (const auto* number = std::get_if<double>(&value.storage()))
+        return JsonValue::Array{"float", *number};
+    if (const auto* text = std::get_if<std::string>(&value.storage()))
+        return JsonValue::Array{"str", *text};
+    if (const auto* array = std::get_if<JsonValue::Array>(&value.storage())) {
+        JsonValue::Array children;
+        children.reserve(array->size());
+        for (const auto& child : *array) children.push_back(claim_token(child));
+        return JsonValue::Array{"array", JsonValue(std::move(children))};
+    }
+    JsonValue::Array members;
+    for (const auto& [key, child] : std::get<JsonValue::Object>(value.storage()))
+        members.emplace_back(JsonValue::Array{key, claim_token(child)});
+    return JsonValue::Array{"object", JsonValue(std::move(members))};
+}
+
 [[nodiscard]] std::optional<std::pair<std::string, std::string>> role_for(
     const std::string_view type) {
     if (type == "function_call") return std::pair<std::string, std::string>{"function", "call"};
@@ -86,11 +115,11 @@ struct Pending final {
     std::shared_ptr<const PreparedSessionArchive> archive;
     std::size_t event_ordinal{};
     std::string session;
-    std::string turn;
+    JsonValue turn;
     std::optional<SessionCallKey> call_key;
     std::optional<std::string> role;
     SessionSourcePosition position;
-    std::string claim;
+    JsonValue claim;
     JsonValue metadata;
     std::vector<OccurrenceReference> references;
 };
@@ -106,7 +135,7 @@ const SessionEvent& BoundSessionOccurrence::event() const {
 SessionOccurrenceIndex prepare_session_occurrences(const SessionDocument* document) {
     SessionOccurrenceIndex result;
     if (!document || !document->archive) {
-        result.unresolved.push_back({"document_not_prepared", std::nullopt, std::nullopt});
+        result.unresolved.push_back({"document_not_prepared", std::monostate{}, std::nullopt});
         return result;
     }
     const auto archive = document->archive;
@@ -120,14 +149,14 @@ SessionOccurrenceIndex prepare_session_occurrences(const SessionDocument* docume
         const auto* rows = field(fragment.historical_provenance, "occurrences");
         const auto* files = field(fragment.historical_provenance, "files");
         if (!rows || !rows->is_array()) {
-            result.unresolved.push_back({"missing_occurrence_list",
-                OccurrenceReference{fragment.episode_id, fragment.step, fragment.variant, 0}, std::nullopt});
+            result.unresolved.push_back({"missing_occurrence_list", fragment, std::nullopt});
             continue;
         }
         for (std::size_t ordinal = 0; ordinal != rows->as_array().size(); ++ordinal) {
             const auto& row = rows->as_array()[ordinal];
-            const OccurrenceReference reference{fragment.episode_id, fragment.step,
-                                                fragment.variant, ordinal};
+            const OccurrenceReference reference{fragment.episode_id, fragment.revision,
+                fragment.step, fragment.variant, fragment.source_addresses,
+                fragment.outcome, ordinal};
             if (!row.is_object()) {
                 result.unresolved.push_back({"invalid_occurrence", reference, std::nullopt});
                 continue;
@@ -163,6 +192,7 @@ SessionOccurrenceIndex prepare_session_occurrences(const SessionDocument* docume
             }
             const auto session = string_field(row, "session");
             const auto turn = string_field(row, "turn");
+            const auto* retained_turn = field(row, "turn");
             const auto kind = string_field(row, "kind");
             const auto* metadata = field(row, "item_metadata");
             if (!session || session->empty() || *session == "unknown" || !metadata ||
@@ -173,8 +203,8 @@ SessionOccurrenceIndex prepare_session_occurrences(const SessionDocument* docume
             SessionSourcePosition position{*path, *file_sha, static_cast<std::size_t>(*boundary),
                 static_cast<std::size_t>(*line), static_cast<std::size_t>(*offset),
                 static_cast<std::size_t>(*bytes)};
-            auto claim = source_token(row);
-            const Signature signature{event.ordinal, position, claim};
+            auto claim = claim_token(row);
+            const Signature signature{event.ordinal, position, source_token(row)};
             if (const auto duplicate = seen.find(signature); duplicate != seen.end()) {
                 prepared[duplicate->second].references.push_back(reference);
                 continue;
@@ -195,9 +225,10 @@ SessionOccurrenceIndex prepare_session_occurrences(const SessionDocument* docume
                 }
             }
             seen.emplace(signature, prepared.size());
-            prepared.push_back({archive, event.ordinal, *session, turn.value_or(""),
+            prepared.push_back({archive, event.ordinal, *session,
+                retained_turn ? *retained_turn : JsonValue(nullptr),
                 std::move(call_key), std::move(role), std::move(position), std::move(claim),
-                *metadata, {reference}});
+                row, {reference}});
         }
     }
     result.occurrences.reserve(prepared.size());
@@ -214,7 +245,8 @@ SessionOccurrenceIndex prepare_session_occurrences(const SessionDocument* docume
     }
     for (const auto& event : archive->events)
         if (!result.by_event.contains(event.ordinal))
-            result.unresolved.push_back({"event_without_bound_occurrence", std::nullopt, event.ordinal});
+            result.unresolved.push_back(
+                {"event_without_bound_occurrence", std::monostate{}, event.ordinal});
     return result;
 }
 
@@ -223,9 +255,10 @@ SessionCallJoin join_session_call(
     const std::vector<const BoundSessionOccurrence*>& occurrences,
     std::string memory_snapshot_id,
     const std::vector<const BoundSessionOccurrence*>& position_witnesses) {
-    using Fingerprint = std::tuple<std::optional<std::string>, std::string, std::string>;
+    using Fingerprint = std::tuple<std::optional<std::string>, std::string, JsonValue>;
     std::map<SessionSourcePosition, Fingerprint> positions;
     std::map<std::string, std::vector<const BoundSessionOccurrence*>, std::less<>> calls, results;
+    std::vector<std::string> call_order, result_order;
     bool conflict = false;
     for (const auto* occurrence : occurrences) {
         if (!occurrence || !occurrence->call_key || *occurrence->call_key != key)
@@ -235,10 +268,14 @@ SessionCallJoin join_session_call(
         const auto [found, inserted] = positions.emplace(occurrence->source_position, fingerprint);
         if (!inserted && found->second != fingerprint) conflict = true;
         auto& target = occurrence->role == std::optional<std::string>{"call"} ? calls : results;
+        auto& order = occurrence->role == std::optional<std::string>{"call"}
+            ? call_order : result_order;
+        if (!target.contains(occurrence->event().declared_content_sha256))
+            order.push_back(occurrence->event().declared_content_sha256);
         target[occurrence->event().declared_content_sha256].push_back(occurrence);
     }
     for (const auto* witness : position_witnesses) {
-        if (!witness) continue;
+        if (!witness) throw std::invalid_argument("session position witness required");
         const Fingerprint fingerprint{witness->role,
             witness->event().declared_content_sha256, witness->source_claim};
         if (const auto found = positions.find(witness->source_position);
@@ -269,8 +306,8 @@ SessionCallJoin join_session_call(
             ? "inconsistent_source_order" : "linked_by_scoped_call_id";
     }
     SessionCallJoin joined{std::move(memory_snapshot_id), key, {}, {}, std::move(status)};
-    for (auto& [unused, rows] : calls) { (void)unused; joined.calls.push_back(std::move(rows)); }
-    for (auto& [unused, rows] : results) { (void)unused; joined.results.push_back(std::move(rows)); }
+    for (const auto& digest : call_order) joined.calls.push_back(std::move(calls.at(digest)));
+    for (const auto& digest : result_order) joined.results.push_back(std::move(results.at(digest)));
     return joined;
 }
 

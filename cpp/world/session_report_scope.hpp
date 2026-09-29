@@ -4,6 +4,7 @@
 
 #include <cstddef>
 #include <map>
+#include <optional>
 #include <set>
 #include <string>
 #include <string_view>
@@ -47,6 +48,6 @@ public:
     std::string subject,
     const std::vector<SessionUnresolvedSource>& unresolved,
     const std::map<std::string, SessionReportJudgment, std::less<>>& judgments,
-    std::vector<std::string> subjects = {});
+    std::optional<std::vector<std::string>> subjects = std::nullopt);
 
 }  // namespace swegca::world

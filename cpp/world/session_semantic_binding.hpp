@@ -26,9 +26,9 @@ inline constexpr std::string_view session_semantic_graph_schema =
 struct SessionSemanticUnitBinding final {
     SemanticMeaningUnit unit;
     std::vector<SemanticAnchor> anchors;
-    JsonValue::Array events;
-    JsonValue::Array occurrences;
-    JsonValue::Array input_context;
+    std::vector<const SessionEvent*> events;
+    std::vector<const BoundSessionOccurrence*> occurrences;
+    std::vector<SessionSourceContext> input_context;
     std::vector<std::string> unresolved_anchors;
 
     [[nodiscard]] constexpr bool source_interpretation_verified() const noexcept {
@@ -49,6 +49,9 @@ struct BoundSessionSemantics final {
     std::vector<SessionSemanticUnitBinding> units;
     std::vector<std::string> unresolved;
     PreparedSessionEntryPtr entry{};
+    SessionSpeechInterpretation interpretation{};
+    std::string payload{};
+    std::string sha256{};
 
     [[nodiscard]] const SemanticSourceEpisode& episode() const noexcept {
         return derivative;
@@ -138,14 +141,21 @@ public:
 [[nodiscard]] std::shared_ptr<const BoundSessionSemantics> bind_session_semantics(
     const PreparedSessionView& view,
     const std::vector<SemanticSourceEpisode>& source_episodes,
-    PreparedSessionEntryPtr entry,
-    const SessionSpeechInterpretation& interpretation);
+    const SessionSpeechInterpretation& interpretation,
+    std::string_view expected_memory_snapshot_id);
 
 // Restore a portable semantic proposal against the current prepared-memory
 // generation. The retained payload must reproduce byte-canonical content.
 [[nodiscard]] std::shared_ptr<const BoundSessionSemantics> restore_session_semantics(
     const JsonValue& payload,
     const PreparedSessionView& view,
-    const std::vector<SemanticSourceEpisode>& source_episodes);
+    const std::vector<SemanticSourceEpisode>& source_episodes,
+    std::string_view expected_memory_snapshot_id);
+
+[[nodiscard]] std::shared_ptr<const BoundSessionSemantics> restore_session_semantics_bytes(
+    std::string_view payload_bytes,
+    const PreparedSessionView& view,
+    const std::vector<SemanticSourceEpisode>& source_episodes,
+    std::string_view expected_memory_snapshot_id);
 
 }  // namespace swegca::world

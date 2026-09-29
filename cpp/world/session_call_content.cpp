@@ -67,6 +67,9 @@ namespace {
 
 [[nodiscard]] bool finite_numbers(const transport::Json& value) {
     if (value.kind == transport::Json::Kind::number &&
+        value.scalar.find_first_of(".eE") == std::string_view::npos)
+        return value.scalar.size() - (value.scalar.starts_with('-') ? 1U : 0U) <= 4300;
+    if (value.kind == transport::Json::Kind::number &&
         value.scalar.find_first_of(".eE") != std::string_view::npos) {
         double parsed = 0.0;
         const auto begin = value.scalar.data();
@@ -158,19 +161,7 @@ void append_unique(std::vector<std::string>& values, std::string value) {
 }
 
 [[nodiscard]] std::string python_repr(const std::string_view value) {
-    std::string result{"'"};
-    for (const auto byte : value) {
-        switch (byte) {
-        case '\\': result += "\\\\"; break;
-        case '\'': result += "\\'"; break;
-        case '\t': result += "\\t"; break;
-        case '\n': result += "\\n"; break;
-        case '\r': result += "\\r"; break;
-        default: result.push_back(byte);
-        }
-    }
-    result.push_back('\'');
-    return result;
+    return python_string_repr(value);
 }
 
 [[nodiscard]] std::string tuple_repr(const std::vector<std::string>& values) {
@@ -290,9 +281,10 @@ std::optional<SessionCallMeaning> prepare_call_meaning(const transport::Json& pa
         "\n\r\0;&|<>()$`*?[]{}~#";
     static constexpr std::string_view forbidden{
         forbidden_characters, sizeof(forbidden_characters) - 1};
-    if (!string_value(arguments->find("cmd"), command) ||
+    const bool command_is_invalid = !string_value(arguments->find("cmd"), command) ||
         strip_unicode_whitespace(command).empty() ||
-        command.find_first_of(forbidden) != std::string_view::npos) {
+        command.find_first_of(forbidden) != std::string_view::npos;
+    if (command_is_invalid) {
         unresolved.emplace_back("shell_program_semantics_not_resolved");
     } else if (auto parsed = split_simple_command(command)) {
         argv = std::move(*parsed);
@@ -303,13 +295,15 @@ std::optional<SessionCallMeaning> prepare_call_meaning(const transport::Json& pa
     static const std::set<std::string_view> reserved{
         "if", "then", "elif", "else", "fi", "for", "while", "until",
         "do", "done", "case", "esac", "in", "!", "time", "function"};
-    if (!argv.empty() && (argv.front().find('=') != std::string::npos ||
-                         reserved.contains(argv.front()))) {
-        argv.clear();
-        unresolved.emplace_back("shell_program_semantics_not_resolved");
+    if (!command_is_invalid) {
+        if (!argv.empty() && (argv.front().find('=') != std::string::npos ||
+                             reserved.contains(argv.front()))) {
+            argv.clear();
+            unresolved.emplace_back("shell_program_semantics_not_resolved");
+        }
+        if (argv.empty() || argv.front().empty())
+            unresolved.emplace_back("no_literal_command_target");
     }
-    if (argv.empty() || argv.front().empty())
-        unresolved.emplace_back("no_literal_command_target");
 
     std::vector<SessionCallOption> options;
     for (std::size_t index = 0; index < arguments->keys.size(); ++index) {
@@ -326,7 +320,7 @@ std::optional<SessionCallMeaning> prepare_call_meaning(const transport::Json& pa
                    child.kind == transport::Json::Kind::boolean) {
             valid = true;
             option_value = child.scalar == "true";
-        } else if ((key == "yield-time-ms" || key == "max_output_tokens") &&
+        } else if ((key == "yield_time_ms" || key == "max_output_tokens") &&
                    integer_token(child) && integer_nonnegative(child.scalar)) {
             valid = true;
             option_value = SessionDecimalInteger{normalized_integer(child.scalar)};

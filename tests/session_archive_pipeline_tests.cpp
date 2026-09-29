@@ -10,6 +10,7 @@
 #include <cstddef>
 #include <iostream>
 #include <map>
+#include <memory_resource>
 #include <string>
 #include <utility>
 #include <vector>
@@ -81,9 +82,13 @@ void test_complete_session_archive_pipeline() {
     const std::vector<std::string> payloads{
         R"({"type":"function_call","name":"functions.exec_command","arguments":"{\"cmd\":\"true\"}"})",
         R"({"type":"function_call_output","output":{"exit_code":0}})",
-        R"({"type":"message","role":"user","content":[{"type":"text","text":"Alpha 요청","text_elements":[{"condition":"quoted only"}]},{"type":"image","url":"retained://opaque"}]})"};
+        R"({"type":"message","role":"user","big":123456789012345678901234567890,"tiny":1e-400,"content":[{"type":"text","text":"Alpha\n요청","text_elements":[{"condition":"quoted only"}]},{"type":"image","url":"retained://opaque"}]})"};
     std::vector<std::string> payload_digests;
-    for (const auto& payload : payloads) payload_digests.push_back(sha(payload));
+    for (std::size_t index = 0; index != payloads.size(); ++index) {
+        auto canonical = payloads[index];
+        if (index == 2) canonical.replace(canonical.find("1e-400"), 6, "0.0");
+        payload_digests.push_back(sha(canonical));
+    }
     std::string document = "{\"historical_records\":[";
     for (std::size_t index = 0; index != payloads.size(); ++index) {
         if (index) document += ',';
@@ -101,7 +106,9 @@ void test_complete_session_archive_pipeline() {
     const auto key = changed.front();
     const auto cache = prepare_session_cache_document(
         episodes, view, "memory-1", PreparedSessionCache{}, key);
-    const PreparedSessionView prepared("memory-1", cache, view);
+    const auto prepared = cache.bind("memory-1", view);
+    const auto rebound = cache.bind("memory-2", directory.bind("memory-2"));
+    assert(rebound.get(key, "memory-2"));
     const auto entry = prepared.get(key, "memory-1");
     assert(entry && entry->status() == "prepared");
     assert(entry->document.archive->events.size() == 3);
@@ -112,7 +119,7 @@ void test_complete_session_archive_pipeline() {
     assert(joined.status == "linked_by_scoped_call_id");
     assert(joined.calls.size() == 1 && joined.results.size() == 1);
 
-    std::map<std::pair<std::string, std::size_t>, SessionSelectedStep> selected{
+    SessionSelectedSteps selected{
         {{"episode-1", 0}, {revision, JsonValue::Object{{"verdict", "available"}},
                             "selected"}}};
     const auto collected = collect_session_results(
@@ -123,15 +130,70 @@ void test_complete_session_archive_pipeline() {
     assert(collected.messages.size() == 1);
 
     auto speech = prepare_session_speech_input(*entry, {2}, "fixture-model");
-    const auto& source_context = speech.request.source_context.front().value;
-    const auto& block_context = source_context.at("block_context").as_array();
-    assert(block_context.size() == 2);
-    assert(!block_context.front().at("value").as_object().contains("text"));
-    assert(block_context.front().at("value").as_object().contains("text_elements"));
-    assert(block_context.back().at("value").as_object().contains("url"));
-    assert((source_context.at("unrepresented_block_indices").as_array() ==
-            JsonValue::Array{JsonValue(1)}));
+    std::pmr::monotonic_buffer_resource context_memory;
+    const auto source_context = swegca::transport::parse_json(
+        speech.request.source_context.front().value_json, context_memory, 1000);
+    const auto* block_context = source_context.find("block_context");
+    const auto* original_fields = source_context.find("original_message_fields");
+    assert(original_fields && original_fields->find("big") && original_fields->find("tiny"));
+    assert(original_fields->find("big")->scalar == "123456789012345678901234567890");
+    assert(original_fields->find("tiny")->scalar == "0.0");
+    assert(block_context && block_context->kind == swegca::transport::Json::Kind::array);
+    assert(block_context->values.size() == 2);
+    const auto* first_value = block_context->values.front().find("value");
+    const auto* last_value = block_context->values.back().find("value");
+    assert(first_value && first_value->find("text") == nullptr);
+    assert(first_value->find("text_elements") != nullptr);
+    assert(last_value && last_value->find("url") != nullptr);
+    const auto* occurrence_context = source_context.find("occurrences");
+    assert(occurrence_context &&
+           occurrence_context->kind == swegca::transport::Json::Kind::array &&
+           occurrence_context->values.size() == 1);
+    const auto& occurrence_row = occurrence_context->values.front();
+    const auto* source_position = occurrence_row.find("source_position");
+    const auto* source_claim = occurrence_row.find("source_claim");
+    const auto* metadata = occurrence_row.find("metadata");
+    assert(source_position &&
+           source_position->kind == swegca::transport::Json::Kind::array &&
+           source_position->values.size() == 6);
+    assert(source_claim && source_claim->kind == swegca::transport::Json::Kind::array);
+    assert(metadata && metadata->find("content_sha256") && metadata->find("item_metadata"));
+    const auto* unrepresented = source_context.find("unrepresented_block_indices");
+    assert(unrepresented && unrepresented->kind == swegca::transport::Json::Kind::array &&
+           unrepresented->values.size() == 1 && unrepresented->values.front().scalar == "1");
     const auto anchor = speech.request.parts.front().anchor.identifier;
+    auto raw_input = prepare_session_speech_input(*entry, {2}, "fixture-model");
+    const auto raw_response = std::string{"{\"units\":[{\"subject\":\"subject\","}
+        + "\"predicate\":\"said\",\"value\":\"Alpha\",\"value_kind\":\"literal\","
+          "\"polarity\":\"affirmed\",\"basis\":\"reported\",\"anchors\":[\"" +
+        anchor + "\"],\"qualifiers\":[]}],\"unresolved\":[]}";
+    const auto raw_interpretation = interpret_session_speech_response(
+        std::move(raw_input), raw_response);
+    assert(raw_interpretation.units.size() == 1);
+    bool extra_proposal_field_rejected = false;
+    try {
+        auto extra_input = prepare_session_speech_input(*entry, {2}, "fixture-model");
+        (void)interpret_session_speech_response(
+            std::move(extra_input),
+            raw_response.substr(0, raw_response.size() - 1) + ",\"summary\":\"x\"}");
+    } catch (const std::invalid_argument& error) {
+        extra_proposal_field_rejected =
+            std::string_view(error.what()) == "semantic_units_required_not_summary";
+    }
+    assert(extra_proposal_field_rejected);
+    bool oversized_integer_rejected = false;
+    try {
+        auto oversized_input = prepare_session_speech_input(*entry, {2}, "fixture-model");
+        auto oversized_response = raw_response;
+        const auto value = oversized_response.find("\"Alpha\"");
+        oversized_response.replace(value, 7, std::string(4301, '9'));
+        (void)interpret_session_speech_response(
+            std::move(oversized_input), oversized_response);
+    } catch (const std::invalid_argument& error) {
+        oversized_integer_rejected =
+            std::string_view(error.what()) == "invalid_json_object";
+    }
+    assert(oversized_integer_rejected);
     auto interpretation = interpret_session_speech_annotations(
         std::move(speech), {{anchor, "request", JsonValue(nullptr), {}, {}, {anchor}, {}}}, {});
     assert(interpretation.units.size() == 1);
@@ -144,18 +206,24 @@ void test_complete_session_archive_pipeline() {
     auto segmented_input = prepare_session_speech_input(*entry, {2}, "fixture-model");
     const auto segmented = from_segment_annotations(std::move(segmented_input),
         {{anchor, "Alpha", 0, "request", JsonValue(nullptr),
-          JsonValue::Array{JsonValue::Object{{"entity", "reader"}}},
-          JsonValue::Array{JsonValue::Object{{"entity", "Alpha"}}}, {anchor}, {}}},
+          JsonValue::Array{JsonValue::Object{{"entity", "reader"},
+                                             {"anchors", JsonValue::Array{anchor}}}},
+          JsonValue::Array{JsonValue::Object{{"entity", "Alpha"},
+                                             {"anchors", JsonValue::Array{anchor}}}},
+          {anchor}, {{"condition", "reported", {anchor}}}}},
         {anchor});
     const auto& segment_row = segmented.segments->at("segments").as_array().front();
     assert(segment_row.at("addressees").as_array().size() == 1);
     assert(segment_row.at("topics").as_array().size() == 1);
+    assert(segment_row.at("qualifiers").as_array().size() == 1);
+    assert(segmented.units.front().qualifiers.size() == 1);
     const auto segmented_receipt = session_speech_receipt(segmented);
     assert(session_speech_receipt(
         restore_session_speech_interpretation(segmented_receipt, *entry)) ==
         segmented_receipt);
 
-    const auto bound = bind_session_semantics(prepared, episodes, entry, interpretation);
+    const auto bound = bind_session_semantics(
+        prepared, episodes, interpretation, "memory-1");
     assert(bound->original_episodes.size() == 1);
     assert(bound->derivative.episode_id.starts_with("session-semantic:"));
     assert(bound->units.size() == 1);
@@ -163,12 +231,36 @@ void test_complete_session_archive_pipeline() {
     assert(bound->units.front().occurrences.size() == 1);
     assert(!bound->grants_authority());
     assert(bound->entry.get() == entry.get());
+    assert(bound->interpretation.receipt() == receipt);
+    assert(bound->payload == semantic_canonical_json(
+        bound->derivative.steps.front().observation));
+    assert(bound->sha256 == bound->derivative.revision);
+    bool stale_generation_rejected = false;
+    try {
+        (void)bind_session_semantics(prepared, episodes, interpretation, "memory-2");
+    } catch (const std::invalid_argument& error) {
+        stale_generation_rejected =
+            std::string_view(error.what()) == "session_semantic_memory_generation_changed";
+    }
+    assert(stale_generation_rejected);
 
     const auto restored_bound = restore_session_semantics(
-        bound->derivative.steps.front().observation, prepared, episodes);
+        bound->derivative.steps.front().observation, prepared, episodes, "memory-1");
     assert(restored_bound->derivative.episode_id == bound->derivative.episode_id);
     assert(restored_bound->units.size() == bound->units.size());
     assert(&restored_bound->unit(0, "memory-1") == &restored_bound->units.front());
+    const auto restored_bytes = restore_session_semantics_bytes(
+        bound->payload, prepared, episodes, "memory-1");
+    assert(restored_bytes->sha256 == bound->sha256);
+    bool noncanonical_bytes_rejected = false;
+    try {
+        (void)restore_session_semantics_bytes(
+            bound->payload + " ", prepared, episodes, "memory-1");
+    } catch (const std::invalid_argument& error) {
+        noncanonical_bytes_rejected =
+            std::string_view(error.what()) == "session_semantic_input_changed";
+    }
+    assert(noncanonical_bytes_rejected);
     const auto encoded = prepare_session_recorded_event(
         bound->derivative, 0, prepared, episodes);
     assert(encoded.semantic_encoding);
@@ -178,6 +270,11 @@ void test_complete_session_archive_pipeline() {
     assert(encoded.unresolved.empty());
     assert(encoded.semantic_encoding->outcomes() == std::vector<std::string>{"pending"});
     assert(encoded.semantic_encoding->model() == "fixture-model");
+    const auto unavailable = prepare_session_recorded_event(
+        bound->derivative, 0, static_cast<const PreparedSessionView*>(nullptr), episodes);
+    assert(!unavailable.semantic_encoding && unavailable.claims.empty());
+    assert(unavailable.unresolved ==
+           std::vector<std::string>{"semantic_source_binding_unresolved"});
 }
 
 }  // namespace

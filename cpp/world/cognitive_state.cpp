@@ -280,6 +280,18 @@ JsonValue::JsonValue() noexcept : storage_(nullptr) {}
 JsonValue::JsonValue(std::nullptr_t) noexcept : storage_(nullptr) {}
 JsonValue::JsonValue(const bool value) noexcept : storage_(value) {}
 JsonValue::JsonValue(const std::int64_t value) noexcept : storage_(value) {}
+JsonValue::JsonValue(JsonInteger value) : storage_(std::move(value)) {
+    auto& token = std::get<JsonInteger>(storage_).value;
+    const auto negative = token.starts_with('-');
+    const auto digits = std::string_view(token).substr(negative ? 1U : 0U);
+    if (digits.empty() || digits.size() > 4300 ||
+        (digits.size() > 1 && digits.front() == '0') ||
+        !std::ranges::all_of(digits, [](const unsigned char c) {
+            return c >= '0' && c <= '9';
+        }))
+        throw std::invalid_argument("invalid JSON integer");
+    if (negative && digits == "0") token = "0";
+}
 JsonValue::JsonValue(const int value) noexcept : storage_(static_cast<std::int64_t>(value)) {}
 JsonValue::JsonValue(const double value) noexcept : storage_(value) {}
 JsonValue::JsonValue(std::string value) : storage_(std::move(value)) {}
