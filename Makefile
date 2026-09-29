@@ -518,6 +518,12 @@ $(BUILD)/autonomous-cognition-tests: tests/autonomous_cognition_tests.cpp cpp/wo
 $(BUILD)/accelerated-verification-tests: tests/accelerated_verification_tests.cpp cpp/world/accelerated_verification.cpp cpp/world/accelerated_verification.hpp cpp/world/autonomous_cognition.cpp cpp/world/autonomous_cognition.hpp cpp/world/counterfactual_replay.cpp cpp/world/counterfactual_replay.hpp cpp/world/cognitive_state.cpp cpp/world/cognitive_state.hpp cpp/world/evidence_accumulator.cpp cpp/world/evidence_accumulator.hpp cpp/world/unicode_nfkc.cpp cpp/world/unicode_nfkc.hpp cpp/world/unicode_nfkc_data.hpp cpp/swegca_architecture/sha256.cpp cpp/swegca_architecture/sha256.hpp | $(BUILD)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< cpp/world/accelerated_verification.cpp cpp/world/autonomous_cognition.cpp cpp/world/counterfactual_replay.cpp cpp/world/cognitive_state.cpp cpp/world/evidence_accumulator.cpp cpp/world/unicode_nfkc.cpp cpp/swegca_architecture/sha256.cpp -o $@
 
+$(BUILD)/hybrid-verification-tests: tests/hybrid_verification_tests.cpp cpp/world/hybrid_verification.cpp cpp/world/hybrid_verification.hpp cpp/world/accelerated_verification.cpp cpp/world/accelerated_verification.hpp cpp/world/autonomous_cognition.cpp cpp/world/autonomous_cognition.hpp cpp/world/counterfactual_replay.cpp cpp/world/counterfactual_replay.hpp cpp/world/cognitive_state.cpp cpp/world/cognitive_state.hpp cpp/world/evidence_accumulator.cpp cpp/world/evidence_accumulator.hpp cpp/world/unicode_nfkc.cpp cpp/world/unicode_nfkc.hpp cpp/world/unicode_nfkc_data.hpp cpp/swegca_architecture/sha256.cpp cpp/swegca_architecture/sha256.hpp | $(BUILD)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< cpp/world/hybrid_verification.cpp cpp/world/accelerated_verification.cpp cpp/world/autonomous_cognition.cpp cpp/world/counterfactual_replay.cpp cpp/world/cognitive_state.cpp cpp/world/evidence_accumulator.cpp cpp/world/unicode_nfkc.cpp cpp/swegca_architecture/sha256.cpp -o $@
+
+$(BUILD)/incremental-definition-loop-tests: tests/incremental_definition_loop_tests.cpp cpp/world/hybrid_verification.cpp cpp/world/hybrid_verification.hpp cpp/world/accelerated_verification.cpp cpp/world/accelerated_verification.hpp cpp/world/autonomous_cognition.cpp cpp/world/autonomous_cognition.hpp cpp/world/counterfactual_replay.cpp cpp/world/counterfactual_replay.hpp cpp/world/sensor_counterfactual.cpp cpp/world/sensor_counterfactual.hpp cpp/world/sensor_term_index.cpp cpp/world/sensor_term_index.hpp cpp/world/sensor_definition.cpp cpp/world/sensor_definition.hpp cpp/world/definition_contract.cpp cpp/world/definition_contract.hpp cpp/world/cognitive_state.cpp cpp/world/cognitive_state.hpp cpp/world/evidence_accumulator.cpp cpp/world/evidence_accumulator.hpp cpp/world/unicode_nfkc.cpp cpp/world/unicode_nfkc.hpp cpp/world/unicode_nfkc_data.hpp cpp/swegca_architecture/sha256.cpp cpp/swegca_architecture/sha256.hpp | $(BUILD)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< cpp/world/hybrid_verification.cpp cpp/world/accelerated_verification.cpp cpp/world/autonomous_cognition.cpp cpp/world/counterfactual_replay.cpp cpp/world/sensor_counterfactual.cpp cpp/world/sensor_term_index.cpp cpp/world/sensor_definition.cpp cpp/world/definition_contract.cpp cpp/world/cognitive_state.cpp cpp/world/evidence_accumulator.cpp cpp/world/unicode_nfkc.cpp cpp/swegca_architecture/sha256.cpp -o $@
+
 $(BUILD)/cognitive-event-tests: tests/cognitive_event_tests.cpp cpp/world/cognitive_event.cpp cpp/world/cognitive_event.hpp cpp/world/cognitive_state.cpp cpp/world/cognitive_state.hpp | $(BUILD)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< cpp/world/cognitive_event.cpp cpp/world/cognitive_state.cpp -o $@
 
@@ -579,6 +585,7 @@ check-world: $(BUILD)/cognitive-state-tests $(BUILD)/definition-contract-tests \
 	$(BUILD)/sensor-definition-tests $(BUILD)/sensor-term-index-tests \
 	$(BUILD)/sensor-counterfactual-tests $(BUILD)/counterfactual-replay-tests \
 	$(BUILD)/autonomous-cognition-tests $(BUILD)/accelerated-verification-tests \
+	$(BUILD)/hybrid-verification-tests $(BUILD)/incremental-definition-loop-tests \
 	$(BUILD)/world-state-tests $(BUILD)/evidence-accumulator-tests $(BUILD)/evidence-revision-tests \
 	$(BUILD)/synapse-arbiter-world-tests $(BUILD)/dynamic-cognition-tests \
 		$(BUILD)/bounded-world-write-tests $(BUILD)/re-evidence-receipt-tests \
@@ -594,6 +601,8 @@ check-world: $(BUILD)/cognitive-state-tests $(BUILD)/definition-contract-tests \
 	./$(BUILD)/counterfactual-replay-tests
 	./$(BUILD)/autonomous-cognition-tests
 	./$(BUILD)/accelerated-verification-tests
+	./$(BUILD)/hybrid-verification-tests
+	./$(BUILD)/incremental-definition-loop-tests
 	./$(BUILD)/world-state-tests
 	./$(BUILD)/evidence-accumulator-tests
 	./$(BUILD)/evidence-revision-tests
