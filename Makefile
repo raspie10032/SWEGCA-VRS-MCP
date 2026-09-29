@@ -17,7 +17,9 @@ CHECKPOINT_SOURCES := cpp/checkpoint/restricted_zip.cpp cpp/checkpoint/restricte
 	cpp/checkpoint/prototype_checkpoint.cpp cpp/checkpoint/prototype_materialized_tensor.cpp
 WORLD_HEADERS := $(wildcard cpp/world/*.hpp)
 WORLD_SOURCES := cpp/world/cognitive_state.cpp cpp/world/cognitive_event.cpp \
-	cpp/world/world_state.cpp cpp/world/evidence_accumulator.cpp cpp/world/evidence_revision.cpp \
+	cpp/world/world_state.cpp cpp/world/definition_contract.cpp \
+	cpp/world/evidence_accumulator.cpp cpp/world/evidence_revision.cpp \
+	cpp/world/hypothesis_proposer.cpp cpp/world/sensor_definition.cpp \
 	cpp/world/synapse_arbiter.cpp cpp/world/dynamic_cognition.cpp \
 	cpp/world/bounded_world_write.cpp cpp/world/re_evidence_receipt.cpp \
 	cpp/world/re_evidence_transaction.cpp cpp/world/re_evidence_arbitration.cpp \
@@ -489,6 +491,15 @@ $(BUILD)/materialized-tensor-tests: tests/materialized_tensor_tests.cpp cpp/chec
 $(BUILD)/cognitive-state-tests: tests/cognitive_state_tests.cpp cpp/world/cognitive_state.cpp cpp/world/cognitive_state.hpp | $(BUILD)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< cpp/world/cognitive_state.cpp -o $@
 
+$(BUILD)/definition-contract-tests: tests/definition_contract_tests.cpp cpp/world/definition_contract.cpp cpp/world/definition_contract.hpp | $(BUILD)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< cpp/world/definition_contract.cpp -o $@
+
+$(BUILD)/hypothesis-proposer-tests: tests/hypothesis_proposer_tests.cpp cpp/world/hypothesis_proposer.cpp cpp/world/hypothesis_proposer.hpp cpp/world/cognitive_event.cpp cpp/world/cognitive_event.hpp cpp/world/cognitive_state.cpp cpp/world/cognitive_state.hpp cpp/world/evidence_accumulator.cpp cpp/world/evidence_accumulator.hpp cpp/swegca_architecture/sha256.cpp cpp/swegca_architecture/sha256.hpp | $(BUILD)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< cpp/world/hypothesis_proposer.cpp cpp/world/cognitive_event.cpp cpp/world/cognitive_state.cpp cpp/world/evidence_accumulator.cpp cpp/swegca_architecture/sha256.cpp -o $@
+
+$(BUILD)/sensor-definition-tests: tests/sensor_definition_tests.cpp cpp/world/sensor_definition.cpp cpp/world/sensor_definition.hpp cpp/world/definition_contract.cpp cpp/world/definition_contract.hpp cpp/world/evidence_accumulator.cpp cpp/world/evidence_accumulator.hpp cpp/swegca_architecture/sha256.cpp cpp/swegca_architecture/sha256.hpp | $(BUILD)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< cpp/world/sensor_definition.cpp cpp/world/definition_contract.cpp cpp/world/evidence_accumulator.cpp cpp/swegca_architecture/sha256.cpp -o $@
+
 $(BUILD)/cognitive-event-tests: tests/cognitive_event_tests.cpp cpp/world/cognitive_event.cpp cpp/world/cognitive_event.hpp cpp/world/cognitive_state.cpp cpp/world/cognitive_state.hpp | $(BUILD)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< cpp/world/cognitive_event.cpp cpp/world/cognitive_state.cpp -o $@
 
@@ -545,14 +556,19 @@ check-prototype-recurrent-artifacts: $(BUILD)/prototype-checkpoint-tests \
 	./$(BUILD)/prototype-recurrent-cognition-tests
 	OPENBLAS_NUM_THREADS=10 ./$(BUILD)/prototype-recurrent-activation-tests
 
-check-world: $(BUILD)/cognitive-state-tests $(BUILD)/cognitive-event-tests \
+check-world: $(BUILD)/cognitive-state-tests $(BUILD)/definition-contract-tests \
+	$(BUILD)/cognitive-event-tests $(BUILD)/hypothesis-proposer-tests \
+	$(BUILD)/sensor-definition-tests \
 	$(BUILD)/world-state-tests $(BUILD)/evidence-accumulator-tests $(BUILD)/evidence-revision-tests \
 	$(BUILD)/synapse-arbiter-world-tests $(BUILD)/dynamic-cognition-tests \
 		$(BUILD)/bounded-world-write-tests $(BUILD)/re-evidence-receipt-tests \
 		$(BUILD)/re-evidence-transaction-tests $(BUILD)/re-evidence-arbitration-tests \
 		$(BUILD)/modal-to-world-tests $(BUILD)/recurrent-cognition-tests
 	./$(BUILD)/cognitive-state-tests
+	./$(BUILD)/definition-contract-tests
 	./$(BUILD)/cognitive-event-tests
+	./$(BUILD)/hypothesis-proposer-tests
+	./$(BUILD)/sensor-definition-tests
 	./$(BUILD)/world-state-tests
 	./$(BUILD)/evidence-accumulator-tests
 	./$(BUILD)/evidence-revision-tests
