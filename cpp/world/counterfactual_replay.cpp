@@ -336,7 +336,7 @@ ReplayBatchResult evaluate_compiled_counterfactual_replays(
         }
         decisions.push_back(evaluate_one(cache, interventions.variants[index], config));
     }
-    return {cache.cache_hash, std::move(decisions)};
+    return {cache.cache_hash, std::move(decisions), cache.stats.applied};
 }
 
 ReplayBatchResult evaluate_counterfactual_replays(

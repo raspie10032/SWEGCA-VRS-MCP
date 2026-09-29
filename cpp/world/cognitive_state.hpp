@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <map>
+#include <memory>
 #include <span>
 #include <string>
 #include <string_view>
@@ -62,6 +63,7 @@ public:
     [[nodiscard]] std::span<const double> values() const noexcept;
     [[nodiscard]] std::string_view device() const noexcept;
     [[nodiscard]] std::size_t rank() const noexcept;
+    [[nodiscard]] const void* storage_identity() const noexcept;
     [[nodiscard]] Tensor clone() const;
     [[nodiscard]] bool exact_equal(const Tensor& other) const noexcept;
     [[nodiscard]] JsonValue to_json_payload() const;
@@ -70,7 +72,7 @@ public:
 private:
     TensorDType dtype_;
     std::vector<std::uint64_t> shape_;
-    std::vector<double> values_;
+    std::shared_ptr<std::vector<double>> values_;
     std::string device_;
 };
 
@@ -150,6 +152,8 @@ public:
     [[nodiscard]] constexpr std::size_t persistent_state_count() const noexcept { return 1; }
 
     void validate(const CognitiveKernelConfig& config) const;
+    [[nodiscard]] CognitiveState with_metadata(JsonValue::Object goal_state,
+                                               JsonValue::Object self_state) const;
     [[nodiscard]] CognitiveState clone() const;
     [[nodiscard]] bool exact_equal(const CognitiveState& other) const noexcept;
     [[nodiscard]] JsonValue to_dict() const;

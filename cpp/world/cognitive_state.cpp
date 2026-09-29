@@ -338,7 +338,8 @@ const JsonValue::Storage& JsonValue::storage() const noexcept { return storage_;
 
 Tensor::Tensor(const TensorDType dtype, std::vector<std::uint64_t> shape,
                std::vector<double> values, std::string device)
-    : dtype_(dtype), shape_(std::move(shape)), values_(std::move(values)),
+    : dtype_(dtype), shape_(std::move(shape)),
+      values_(std::make_shared<std::vector<double>>(std::move(values))),
       device_(std::move(device)) {
     if (dtype_name(dtype_).empty()) {
         throw std::invalid_argument("unsupported cognitive state dtype");
@@ -346,27 +347,30 @@ Tensor::Tensor(const TensorDType dtype, std::vector<std::uint64_t> shape,
     require_text(device_, "device");
     const auto count = checked_numel(shape_);
     if (count > std::numeric_limits<std::size_t>::max() ||
-        static_cast<std::size_t>(count) != values_.size()) {
+        static_cast<std::size_t>(count) != values_->size()) {
         throw std::invalid_argument("tensor shape does not match value count");
     }
-    for (double& value : values_) value = canonical_tensor_value(dtype_, value);
+    for (double& value : *values_) value = canonical_tensor_value(dtype_, value);
 }
 
 TensorDType Tensor::dtype() const noexcept { return dtype_; }
 std::span<const std::uint64_t> Tensor::shape() const noexcept { return shape_; }
-std::span<const double> Tensor::values() const noexcept { return values_; }
+std::span<const double> Tensor::values() const noexcept { return *values_; }
 std::string_view Tensor::device() const noexcept { return device_; }
 std::size_t Tensor::rank() const noexcept { return shape_.size(); }
-Tensor Tensor::clone() const { return *this; }
+const void* Tensor::storage_identity() const noexcept { return values_.get(); }
+Tensor Tensor::clone() const {
+    return Tensor(dtype_, shape_, std::vector<double>(values_->begin(), values_->end()), device_);
+}
 
 bool Tensor::exact_equal(const Tensor& other) const noexcept {
     if (dtype_ != other.dtype_ || shape_ != other.shape_ || device_ != other.device_ ||
-        values_.size() != other.values_.size()) {
+        values_->size() != other.values_->size()) {
         return false;
     }
-    for (std::size_t index = 0; index < values_.size(); ++index) {
-        if (std::bit_cast<std::uint64_t>(values_[index]) !=
-            std::bit_cast<std::uint64_t>(other.values_[index])) {
+    for (std::size_t index = 0; index < values_->size(); ++index) {
+        if (std::bit_cast<std::uint64_t>((*values_)[index]) !=
+            std::bit_cast<std::uint64_t>((*other.values_)[index])) {
             return false;
         }
     }
@@ -375,8 +379,8 @@ bool Tensor::exact_equal(const Tensor& other) const noexcept {
 
 JsonValue Tensor::to_json_payload() const {
     std::size_t cursor = 0;
-    auto values = nested_values(shape_, values_, 0, cursor);
-    if (cursor != values_.size()) {
+    auto values = nested_values(shape_, *values_, 0, cursor);
+    if (cursor != values_->size()) {
         throw std::logic_error("tensor serialization did not consume every value");
     }
     return JsonValue::Object{{"dtype", dtype_name(dtype_)}, {"values", std::move(values)}};
@@ -573,6 +577,13 @@ void CognitiveState::validate(const CognitiveKernelConfig& config) const {
         scratch[1] != config.scratch_slots || scratch[2] != config.hidden_dim) {
         throw std::invalid_argument("unexpected cognitive slot shapes");
     }
+}
+
+CognitiveState CognitiveState::with_metadata(JsonValue::Object goal,
+                                             JsonValue::Object self) const {
+    return CognitiveState(semantic_slots_, executive_slots_, scratch_slots_,
+                          structured_world_graph_, evidence_refs_, std::move(goal),
+                          value_state_, std::move(self), owner_id_);
 }
 
 CognitiveState CognitiveState::clone() const {

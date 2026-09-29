@@ -265,6 +265,19 @@ void test_deep_ownership_clone_and_input_nonmutation() {
     const auto cloned = owned.clone();
     CHECK(copied.exact_equal(owned));
     CHECK(cloned.exact_equal(owned));
+    CHECK(copied.semantic_slots().storage_identity() ==
+          owned.semantic_slots().storage_identity());
+    CHECK(cloned.semantic_slots().storage_identity() !=
+          owned.semantic_slots().storage_identity());
+    const auto metadata = owned.with_metadata(
+        {{"autonomy_phase", "verify"}}, {{"autonomy_action_failures", 0}});
+    CHECK(metadata.semantic_slots().storage_identity() ==
+          owned.semantic_slots().storage_identity());
+    CHECK(metadata.executive_slots().storage_identity() ==
+          owned.executive_slots().storage_identity());
+    CHECK(metadata.scratch_slots().storage_identity() ==
+          owned.scratch_slots().storage_identity());
+    CHECK(metadata.goal_state().at("autonomy_phase").as_string() == "verify");
     CHECK(owned.to_dict() == before);
 
     const auto roundtrip = CognitiveState::from_dict(before);

@@ -69,6 +69,7 @@ struct ReplayDecision final {
 struct ReplayBatchResult final {
     std::string cache_hash;
     std::vector<ReplayDecision> decisions;
+    std::size_t revision = 0;
 
     friend bool operator==(const ReplayBatchResult&, const ReplayBatchResult&) = default;
 };
