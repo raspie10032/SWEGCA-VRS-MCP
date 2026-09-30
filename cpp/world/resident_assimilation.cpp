@@ -87,9 +87,12 @@ IncrementalResidentAssimilationController::IncrementalResidentAssimilationContro
     FullCurrentMemoryVrsSnapshot initial, const std::size_t maximum_rows_per_wave,
     ResidentGenerationPreparer prepare_generation,
     std::shared_ptr<DurableAssimilationMarker> durable_marker,
-    std::shared_ptr<const void> initial_runtime, const std::size_t cold_bootstrap_count)
+    std::shared_ptr<const void> initial_runtime, const std::size_t cold_bootstrap_count,
+    NumericRuntimePreparer prepare_numeric_runtime)
     : owner_(std::move(initial)), maximum_rows_(maximum_rows_per_wave),
-      prepare_(std::move(prepare_generation)), durable_marker_(std::move(durable_marker)),
+      prepare_(std::move(prepare_generation)),
+      prepare_numeric_(std::move(prepare_numeric_runtime)),
+      durable_marker_(std::move(durable_marker)),
       runtime_(std::move(initial_runtime)) {
     const auto resident = owner_.snapshot();
     if (resident.memory->lookup_requires_io())
@@ -158,6 +161,60 @@ ResidentAssimilationReceipt IncrementalResidentAssimilationController::assimilat
     receipt.commit_count_this_resident = commit_count_ + 1;
     receipt.preparation = prepared.receipt;
 
+    const auto pending = durable_marker_->prepare(receipt);
+    if (pending.empty())
+        throw std::invalid_argument("durable precommit marker must not be empty");
+    pending_marker_ = pending;
+    owner_.replace(base.snapshot_id, replacement);
+    runtime_ = std::move(prepared.runtime);
+    commit_count_ = receipt.commit_count_this_resident;
+    receipt.durable_commit_marker = pending;
+    try {
+        durable_marker_->publish(pending);
+        receipt.durable_commit_marker_ready = true;
+        pending_marker_.reset();
+    } catch (const std::exception& error) {
+        receipt.durable_commit_marker_error = error.what();
+    } catch (...) {
+        receipt.durable_commit_marker_error = "durable marker publication failed";
+    }
+    return receipt;
+}
+
+ResidentAssimilationReceipt IncrementalResidentAssimilationController::commit_numeric_event(
+    const std::string_view expected_pair_snapshot_id,
+    const PreparedDurableEvent& event) {
+    const auto expected = normalized_digest(
+        std::string(expected_pair_snapshot_id), "expected pair snapshot");
+    std::lock_guard lock(mutex_);
+    if (pending_marker_)
+        throw std::invalid_argument("previous main commit marker requires explicit reconciliation");
+    if (!prepare_numeric_)
+        throw std::invalid_argument("main numeric runtime preparer required");
+    const auto base = owner_.snapshot();
+    if (base.snapshot_id != expected ||
+        event.hot.receipt.bound_parent_pair_snapshot_id != expected)
+        throw std::invalid_argument("resident pair changed before numeric event commit");
+    auto prepared = prepare_numeric_(base, runtime_, event);
+    const auto& replacement = prepared.pair;
+    if (replacement.snapshot_id != event.hot.pair.snapshot_id ||
+        replacement.memory.get() != event.hot.pair.memory.get() ||
+        replacement.snapshot_id == base.snapshot_id ||
+        replacement.vrs_snapshot_id != event.report_sha256 ||
+        replacement.memory->lookup_requires_io())
+        throw std::invalid_argument("numeric runtime preparation changed the bound hot event");
+    ++attempt_count_;
+    ResidentAssimilationReceipt receipt;
+    receipt.input_kind = "numeric_vrs_event";
+    receipt.previous_pair_snapshot_id = base.snapshot_id;
+    receipt.replacement_pair_snapshot_id = replacement.snapshot_id;
+    receipt.replacement_memory_snapshot_id = std::string(replacement.memory->snapshot_id());
+    receipt.replacement_vrs_snapshot_id = replacement.vrs_snapshot_id;
+    for (const auto& outcome : memory_outcomes) receipt.actual_outcome_counts.emplace(outcome, 0);
+    receipt.incremental_memory_leaf_append = false;
+    receipt.lookup_requires_io = false;
+    receipt.commit_count_this_resident = commit_count_ + 1;
+    receipt.preparation = prepared.receipt;
     const auto pending = durable_marker_->prepare(receipt);
     if (pending.empty())
         throw std::invalid_argument("durable precommit marker must not be empty");

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "world/memory_activation.hpp"
+#include "world/vrs_event_durable.hpp"
 
 #include <cstddef>
 #include <functional>
@@ -42,6 +43,7 @@ struct PreparedResidentGeneration final {
 struct ResidentAssimilationReceipt final {
     std::string schema_version{"rozephine-paper-resident-assimilation-commit-v1"};
     std::string status{"atomic_incremental_assimilation_committed"};
+    std::string input_kind{"numeric_observation_wave"};
     std::string previous_pair_snapshot_id;
     std::string replacement_pair_snapshot_id;
     std::string replacement_memory_snapshot_id;
@@ -72,6 +74,9 @@ struct ResidentAssimilationReceipt final {
 using ResidentGenerationPreparer = std::function<PreparedResidentGeneration(
     const FullCurrentMemoryVrsSnapshot&, std::shared_ptr<const HotMemoryIndex>,
     const SealedOutcomeWave&, std::shared_ptr<const void>)>;
+using NumericRuntimePreparer = std::function<PreparedResidentGeneration(
+    const FullCurrentMemoryVrsSnapshot&, std::shared_ptr<const void>,
+    const PreparedDurableEvent&)>;
 
 class DurableAssimilationMarker {
 public:
@@ -88,7 +93,8 @@ public:
         ResidentGenerationPreparer prepare_generation,
         std::shared_ptr<DurableAssimilationMarker> durable_marker,
         std::shared_ptr<const void> initial_runtime = {},
-        std::size_t cold_bootstrap_count = 1);
+        std::size_t cold_bootstrap_count = 1,
+        NumericRuntimePreparer prepare_numeric_runtime = {});
 
     [[nodiscard]] FullCurrentMemoryVrsSnapshot snapshot() const;
     [[nodiscard]] std::pair<FullCurrentMemoryVrsSnapshot, std::shared_ptr<const void>>
@@ -96,6 +102,9 @@ public:
     [[nodiscard]] ResidentAssimilationReceipt assimilate(
         std::string_view expected_pair_snapshot_id,
         const SealedOutcomeWave& wave);
+    [[nodiscard]] ResidentAssimilationReceipt commit_numeric_event(
+        std::string_view expected_pair_snapshot_id,
+        const PreparedDurableEvent& event);
     void reconcile_pending_marker(std::string_view marker);
     [[nodiscard]] std::size_t commit_count() const;
     [[nodiscard]] std::size_t attempt_count() const;
@@ -105,6 +114,7 @@ private:
     AtomicFullCurrentMemoryVrsOwner owner_;
     std::size_t maximum_rows_{};
     ResidentGenerationPreparer prepare_;
+    NumericRuntimePreparer prepare_numeric_;
     std::shared_ptr<DurableAssimilationMarker> durable_marker_;
     std::shared_ptr<const void> runtime_;
     std::size_t commit_count_{};
