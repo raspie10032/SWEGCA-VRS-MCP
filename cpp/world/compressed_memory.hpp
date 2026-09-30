@@ -51,6 +51,7 @@ public:
     [[nodiscard]] const std::map<std::string, std::size_t, std::less<>>&
         outcome_counts() const noexcept override;
     [[nodiscard]] const MemoryEpisode& episode(std::string_view episode_id) const override;
+    [[nodiscard]] bool contains_episode(std::string_view episode_id) const override;
     [[nodiscard]] std::vector<std::string> episode_ids_for_cue(
         std::string_view cue) const override;
     [[nodiscard]] std::vector<std::string> iter_episode_ids() const override;

@@ -62,6 +62,7 @@ public:
     [[nodiscard]] virtual const std::map<std::string, std::size_t, std::less<>>&
         outcome_counts() const noexcept = 0;
     [[nodiscard]] virtual const MemoryEpisode& episode(std::string_view episode_id) const = 0;
+    [[nodiscard]] virtual bool contains_episode(std::string_view episode_id) const;
     [[nodiscard]] virtual std::vector<std::string> episode_ids_for_cue(
         std::string_view cue) const = 0;
     [[nodiscard]] virtual std::vector<std::string> iter_episode_ids() const = 0;
@@ -84,6 +85,7 @@ public:
     [[nodiscard]] const std::map<std::string, std::size_t, std::less<>>&
         outcome_counts() const noexcept override;
     [[nodiscard]] const MemoryEpisode& episode(std::string_view episode_id) const override;
+    [[nodiscard]] bool contains_episode(std::string_view episode_id) const override;
     [[nodiscard]] std::vector<std::string> episode_ids_for_cue(
         std::string_view cue) const override;
     [[nodiscard]] std::vector<std::string> iter_episode_ids() const override;
@@ -108,6 +110,7 @@ public:
     [[nodiscard]] const std::map<std::string, std::size_t, std::less<>>&
         outcome_counts() const noexcept override;
     [[nodiscard]] const MemoryEpisode& episode(std::string_view episode_id) const override;
+    [[nodiscard]] bool contains_episode(std::string_view episode_id) const override;
     [[nodiscard]] std::vector<std::string> episode_ids_for_cue(
         std::string_view cue) const override;
     [[nodiscard]] std::vector<std::string> iter_episode_ids() const override;

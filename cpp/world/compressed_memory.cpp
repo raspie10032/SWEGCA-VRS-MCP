@@ -130,6 +130,9 @@ CompressedMemoryActivationIndex::outcome_counts() const noexcept {
 const MemoryEpisode& CompressedMemoryActivationIndex::episode(const std::string_view id) const {
     return index->episode(id);
 }
+bool CompressedMemoryActivationIndex::contains_episode(const std::string_view id) const {
+    return index->contains_episode(id);
+}
 std::vector<std::string> CompressedMemoryActivationIndex::episode_ids_for_cue(
     const std::string_view cue) const { return index->episode_ids_for_cue(cue); }
 std::vector<std::string> CompressedMemoryActivationIndex::iter_episode_ids() const {

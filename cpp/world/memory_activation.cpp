@@ -68,6 +68,11 @@ void validate_required_outcomes(
 
 }  // namespace
 
+bool HotMemoryIndex::contains_episode(const std::string_view episode_id) const {
+    try { (void)episode(episode_id); return true; }
+    catch (const std::out_of_range&) { return false; }
+}
+
 MemoryStep::MemoryStep(
     std::string phase_value, JsonValue::Object observation_value,
     std::vector<std::string> relations_value, std::string judgment_value,
@@ -158,6 +163,9 @@ const MemoryEpisode& MemoryActivationIndex::episode(const std::string_view ident
     if (found == episodes_by_id.end()) throw std::out_of_range("memory episode unavailable");
     return found->second;
 }
+bool MemoryActivationIndex::contains_episode(const std::string_view identifier) const {
+    return episodes_by_id.contains(identifier);
+}
 
 std::vector<std::string> MemoryActivationIndex::episode_ids_for_cue(
     const std::string_view value) const {
@@ -225,6 +233,12 @@ const MemoryEpisode& CompositeMemoryActivationIndex::episode(
     }
     if (!found) throw std::out_of_range("memory episode unavailable");
     return *found;
+}
+bool CompositeMemoryActivationIndex::contains_episode(const std::string_view identifier) const {
+    if (routed_.contains(identifier)) return true;
+    for (const auto& source : unrouted_)
+        if (source->contains_episode(identifier)) return true;
+    return false;
 }
 
 std::vector<std::string> CompositeMemoryActivationIndex::episode_ids_for_cue(
