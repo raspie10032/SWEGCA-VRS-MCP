@@ -34,6 +34,7 @@ WORLD_SOURCES := cpp/world/cognitive_state.cpp cpp/world/cognitive_event.cpp \
 	cpp/world/episode_flow.cpp \
 	cpp/world/memory_promotion.cpp \
 	cpp/world/vrs_memory_bridge.cpp \
+	cpp/world/vrs_dialogue.cpp \
 	cpp/world/vrs_generation_rebind.cpp \
 	cpp/world/atom_hot_index.cpp \
 	cpp/world/premise_hot_index.cpp \
