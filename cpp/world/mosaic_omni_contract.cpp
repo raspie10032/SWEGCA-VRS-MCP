@@ -33,21 +33,112 @@ void utf8(std::string& output, const char32_t value) {
     }
 }
 
+void replacement(std::string& output) {
+    utf8(output, 0xfffd);
+}
+
+std::string utf8_replace(const std::string_view raw) {
+    std::string result;
+    result.reserve(raw.size());
+    std::size_t offset = 0;
+    while (offset < raw.size()) {
+        const auto first = static_cast<unsigned char>(raw[offset]);
+        if (first <= 0x7f) {
+            result.push_back(raw[offset++]);
+            continue;
+        }
+        std::size_t length = 0;
+        unsigned char second_min = 0x80;
+        unsigned char second_max = 0xbf;
+        char32_t value = 0;
+        if (first >= 0xc2 && first <= 0xdf) {
+            length = 2;
+            value = first & 0x1fU;
+        } else if (first >= 0xe0 && first <= 0xef) {
+            length = 3;
+            value = first & 0x0fU;
+            if (first == 0xe0) second_min = 0xa0;
+            if (first == 0xed) second_max = 0x9f;
+        } else if (first >= 0xf0 && first <= 0xf4) {
+            length = 4;
+            value = first & 0x07U;
+            if (first == 0xf0) second_min = 0x90;
+            if (first == 0xf4) second_max = 0x8f;
+        } else {
+            replacement(result);
+            ++offset;
+            continue;
+        }
+        if (offset + 1 == raw.size()) {
+            replacement(result);
+            break;
+        }
+        const auto second = static_cast<unsigned char>(raw[offset + 1]);
+        if (second < second_min || second > second_max) {
+            replacement(result);
+            ++offset;
+            continue;
+        }
+        value = (value << 6U) | (second & 0x3fU);
+        std::size_t consumed = 2;
+        while (consumed < length) {
+            if (offset + consumed == raw.size()) {
+                replacement(result);
+                offset = raw.size();
+                break;
+            }
+            const auto next = static_cast<unsigned char>(raw[offset + consumed]);
+            if (next < 0x80 || next > 0xbf) {
+                replacement(result);
+                offset += consumed;
+                break;
+            }
+            value = (value << 6U) | (next & 0x3fU);
+            ++consumed;
+        }
+        if (offset == raw.size()) break;
+        if (consumed != length) continue;
+        utf8(result, value);
+        offset += length;
+    }
+    return result;
+}
+
 std::string log_text(const std::optional<std::filesystem::path>& path) {
     if (!path || !std::filesystem::is_regular_file(*path)) return {};
     const auto raw = bytes(*path);
     if (raw.size() < 2 || !((static_cast<unsigned char>(raw[0]) == 0xff &&
         static_cast<unsigned char>(raw[1]) == 0xfe) ||
         (static_cast<unsigned char>(raw[0]) == 0xfe && static_cast<unsigned char>(raw[1]) == 0xff)))
-        return raw;
+        return utf8_replace(raw);
     const bool little = static_cast<unsigned char>(raw[0]) == 0xff;
     std::string result;
-    for (std::size_t offset = 2; offset + 1 < raw.size(); offset += 2) {
+    std::size_t offset = 2;
+    while (offset + 1 < raw.size()) {
         const auto left = static_cast<unsigned char>(raw[offset]);
         const auto right = static_cast<unsigned char>(raw[offset + 1]);
         const auto unit = static_cast<char32_t>(little ? left | (right << 8) : (left << 8) | right);
-        utf8(result, unit);
+        offset += 2;
+        if (unit >= 0xd800 && unit <= 0xdbff) {
+            if (offset + 1 < raw.size()) {
+                const auto next_left = static_cast<unsigned char>(raw[offset]);
+                const auto next_right = static_cast<unsigned char>(raw[offset + 1]);
+                const auto next = static_cast<char32_t>(
+                    little ? next_left | (next_right << 8) : (next_left << 8) | next_right);
+                if (next >= 0xdc00 && next <= 0xdfff) {
+                    utf8(result, 0x10000 + ((unit - 0xd800) << 10U) + (next - 0xdc00));
+                    offset += 2;
+                    continue;
+                }
+            }
+            replacement(result);
+        } else if (unit >= 0xdc00 && unit <= 0xdfff) {
+            replacement(result);
+        } else {
+            utf8(result, unit);
+        }
     }
+    if (offset < raw.size()) replacement(result);
     return result;
 }
 
@@ -105,7 +196,9 @@ std::optional<std::uint64_t> existing_bytes(const JsonValue::Object& assets,
     const std::initializer_list<std::string_view> names) {
     std::uint64_t result = 0;
     for (const auto name : names) {
-        const auto& row = assets.at(name).as_object();
+        const auto found = assets.find(name);
+        if (found == assets.end() || !found->second.is_object()) return std::nullopt;
+        const auto& row = found->second.as_object();
         const auto* exists = std::get_if<bool>(&row.at("exists").storage());
         if (!exists || !*exists) return std::nullopt;
         const auto& stored = row.at("bytes").storage();
