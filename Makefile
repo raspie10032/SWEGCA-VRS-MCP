@@ -1,4 +1,5 @@
 CXX ?= c++
+AR ?= ar
 CPPFLAGS ?=
 CXXFLAGS ?= -O3
 BUILD := build
@@ -38,6 +39,9 @@ WORLD_SOURCES := cpp/world/cognitive_state.cpp cpp/world/cognitive_event.cpp \
 	cpp/world/mosaic_omni_world_pipeline.cpp \
 	cpp/world/mosaic_omni_output.cpp \
 	cpp/world/mosaic_omni_phase0.cpp \
+	cpp/world/mosaic_omni_video_pipeline.cpp \
+	cpp/world/mosaic_unified_materialization.cpp \
+	cpp/world/mosaic_unified.cpp \
 	cpp/world/mosaic_te.cpp \
 	cpp/world/text_lm.cpp \
 	cpp/world/text_lm_runtime.cpp \
@@ -151,6 +155,7 @@ WORLD_SOURCES := cpp/world/cognitive_state.cpp cpp/world/cognitive_event.cpp \
 	cpp/world/re_evidence_transaction.cpp cpp/world/re_evidence_arbitration.cpp \
 	cpp/world/modal_to_world.cpp cpp/world/recurrent_cognition.cpp \
 	cpp/world/prototype_recurrent_cognition.cpp
+WORLD_OBJECTS := $(patsubst %.cpp,$(BUILD)/world/%.o,$(WORLD_SOURCES))
 
 SESSION_BINDING_SUPPORT_SOURCES := cpp/world/session_speech_ingress.cpp \
 	cpp/world/session_speech_segments.cpp \
@@ -218,6 +223,17 @@ EXPERIMENTAL_CPU_TESTS := $(BUILD)/cooccurrence-tests $(BUILD)/input-collision-t
 EXPERIMENTAL_GPU_TESTS := $(BUILD)/gpu-evidence-tests $(BUILD)/collision-dispatch-tests \
 	$(BUILD)/work-pipeline-tests $(BUILD)/codec-pipeline-tests $(BUILD)/block-ingress-tests $(BUILD)/block-session-tests
 
+OMNI_PHASE0_SOURCES := cpp/world/mosaic_omni_phase0.cpp cpp/world/mosaic_omni.cpp \
+	cpp/world/mosaic_omni_contract.cpp cpp/world/mosaic_resource_profile.cpp \
+	cpp/world/cognitive_state.cpp cpp/world/mosaic_omni_ops.cpp \
+	cpp/world/mosaic_phase1.cpp cpp/world/mosaic_v0.cpp \
+	cpp/world/mosaic_te.cpp cpp/world/modal_to_world.cpp cpp/world/world_to_anima.cpp \
+	cpp/world/world_state.cpp cpp/swegca_architecture/sha256.cpp \
+	cpp/checkpoint/restricted_zip.cpp cpp/checkpoint/restricted_pickle.cpp \
+	cpp/checkpoint/canonical_symbolic_json.cpp cpp/checkpoint/checkpoint_profile.cpp \
+	cpp/checkpoint/restricted_checkpoint.cpp cpp/checkpoint/materialized_tensor.cpp \
+	cpp/transport/json.cpp
+
 # VRS experience/synapse maintenance builds without Runtime, SessionRuntime,
 # transport, or the four-stage memory activation path.
 SYNAPSE_SOURCES := cpp/vrs/block_store.cpp cpp/vrs/synapse.cpp cpp/vrs/experience_page.cpp cpp/vrs/experience_block.cpp cpp/vrs/evidence_experience.cpp cpp/vrs/connection.cpp cpp/vrs/session_store.cpp cpp/vrs/persistent_connection.cpp
@@ -260,10 +276,25 @@ check-raw-observation: $(BUILD)/raw-content-observation-tests $(BUILD)/original-
 	./$(BUILD)/raw-content-observation-tests
 	./$(BUILD)/original-observation-tests
 
-.PHONY: check-agent-event all production check check-production check-checkpoint check-world check-prototype-recurrent-artifacts check-prototype-recurrent-activation check-experimental-cpu check-experimental-gpu stage0-gate check-stdio check-sha256 check-resource-profile check-oom-recovery bench clean
+.PHONY: check-agent-event all production check check-production check-checkpoint check-world check-prototype-recurrent-artifacts check-prototype-recurrent-activation check-experimental-cpu check-experimental-gpu stage0-gate check-stdio check-sha256 check-resource-profile check-oom-recovery world-port mosaic-omni-phase0 bench clean
 all: production
 
 production: $(PRODUCTION_BINARIES)
+
+$(BUILD)/mosaic-omni-phase0: tools/mosaic_omni_phase0.cpp $(OMNI_PHASE0_SOURCES) \
+	$(WORLD_HEADERS) $(CHECKPOINT_HEADERS) | $(BUILD)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< $(OMNI_PHASE0_SOURCES) -ldl -o $@
+
+mosaic-omni-phase0: $(BUILD)/mosaic-omni-phase0
+
+$(BUILD)/world/%.o: %.cpp $(WORLD_HEADERS) $(CHECKPOINT_HEADERS) $(CORE_HEADERS) | $(BUILD)
+	mkdir -p $(@D)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) -c $< -o $@
+
+$(BUILD)/libswegca-world.a: $(WORLD_OBJECTS)
+	$(AR) rcs $@ $^
+
+world-port: $(BUILD)/libswegca-world.a
 
 $(BUILD)/swegca-content-observer: cpp/transport/content_observer_main.cpp cpp/transport/agent_query_client.hpp cpp/transport/socket_frames.hpp cpp/transport/requirement_anchor.hpp cpp/transport/json.cpp cpp/transport/json.hpp cpp/transport/stdio_frames.hpp cpp/vrs/file_observation.cpp cpp/vrs/file_observation.hpp cpp/vrs/memory_budget.hpp cpp/vrs/transfer_budget.hpp cpp/vrs/shared_transfer_state.hpp $(CORE_HEADERS) cpp/swegca_architecture/sha256.cpp | $(BUILD)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CORE_FLAGS) $(INCLUDES) $< cpp/transport/json.cpp cpp/vrs/file_observation.cpp cpp/swegca_architecture/sha256.cpp -o $@

@@ -63,4 +63,19 @@ std::optional<Tensor>teacher,teacher_seq,world_teacher,ctc,gctc,aret,tret;if(wei
 if(weights_.audio_ctc_projection&&head_sequence)ctc=tensor(*head_sequence,{head_sequence->shape()[0],head_sequence->shape()[1],byte_vocabulary_size},linear(std::vector<double>(head_sequence->values().begin(),head_sequence->values().end()),batch*T,D,byte_vocabulary_size,*weights_.audio_ctc_projection));if(weights_.audio_grapheme_ctc_projection&&content_features)gctc=tensor(*content_features,{content_features->shape()[0],content_features->shape()[1],static_cast<std::uint64_t>(config_.audio_grapheme_ctc_vocabulary_size+1)},linear(std::vector<double>(content_features->values().begin(),content_features->values().end()),batch*T,D,config_.audio_grapheme_ctc_vocabulary_size+1,*weights_.audio_grapheme_ctc_projection));if(weights_.audio_text_retrieval_projection){aret=tensor(embedding,{static_cast<std::uint64_t>(batch),static_cast<std::uint64_t>(D)},linear(std::vector<double>(embedding.values().begin(),embedding.values().end()),batch,D,D,*weights_.audio_text_retrieval_projection));if(text_source){if(text_source->shape().size()!=2||text_source->shape()[0]!=batch||text_source->shape()[1]!=D)throw std::invalid_argument("text retrieval source must be [B,D]");tret=tensor(*text_source,{static_cast<std::uint64_t>(batch),static_cast<std::uint64_t>(D)},linear(std::vector<double>(text_source->values().begin(),text_source->values().end()),batch,D,D,*weights_.text_audio_retrieval_projection));}}
 auto evidence=tensor(raw,{static_cast<std::uint64_t>(batch),static_cast<std::uint64_t>(T),static_cast<std::uint64_t>(D)},audio);for(std::size_t b=0;b<batch;++b)for(std::size_t t=0;t<T;++t)for(std::size_t d=0;d<D;++d)audio[(b*T+t)*D+d]+=weights_.audio_modality_embedding[d];auto tok=tensor(raw,{static_cast<std::uint64_t>(batch),static_cast<std::uint64_t>(T),static_cast<std::uint64_t>(D)},std::move(audio));auto mask=full_mask(tok);return {std::move(tok),std::move(mask),std::move(embedding),std::move(evidence),std::move(world_summary),std::move(temporal_states),std::move(temporal_features),std::move(events),std::move(projected_events),std::move(content_summary),std::move(content_features),std::move(content_events),std::move(projected_content),std::move(temporal_logits),std::move(teacher),std::move(teacher_seq),std::move(world_teacher),std::move(ctc),std::move(gctc),std::move(aret),std::move(tret)};}
 
+Tensor MosaicOmniModalFrontends::project_text_audio_retrieval(
+    const Tensor& source) const {
+    if (!weights_.text_audio_retrieval_projection)
+        throw std::runtime_error("text-audio retrieval head is disabled");
+    cpu(source);
+    const auto shape = source.shape();
+    if (shape.size() != 2 || shape[1] != config_.world_dim)
+        throw std::invalid_argument("text retrieval source must be [B,D]");
+    const auto batch = static_cast<std::size_t>(shape[0]);
+    return tensor(source, {shape[0], shape[1]},
+                  linear(std::vector<double>(source.values().begin(), source.values().end()),
+                         batch, config_.world_dim, config_.world_dim,
+                         *weights_.text_audio_retrieval_projection));
+}
+
 }  // namespace swegca::world

@@ -2,6 +2,7 @@
 
 #include "world/parallel_experience_transport.hpp"
 #include "world/provider_transport.hpp"
+#include "world/language_generation.hpp"
 
 #include <filesystem>
 #include <functional>
@@ -67,7 +68,8 @@ private:
     std::map<std::string, ProposalAdapterFactory, std::less<>> factories_;
 };
 
-class ProfiledProposalEngine final : public ResidentProposalEngine {
+class ProfiledProposalEngine final : public ResidentProposalEngine,
+                                     public LanguageGenerationBackend {
 public:
     ProfiledProposalEngine(
         std::shared_ptr<const ProviderRegistry> registry, std::string profile);

@@ -142,6 +142,8 @@ public:
         const Tensor& audio_values, std::size_t batch,
         const Tensor* text_retrieval_source = nullptr,
         const Tensor* world_audio_event_slots = nullptr) const;
+    [[nodiscard]] Tensor project_text_audio_retrieval(
+        const Tensor& text_retrieval_source) const;
 
 private:
     MosaicOmniModalFrontendConfig config_;

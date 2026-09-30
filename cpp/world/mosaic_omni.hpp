@@ -215,7 +215,7 @@ struct MosaicUnifiedOutput final {
     std::optional<Tensor> video_egomotion_logits;
     std::optional<Tensor> video_egomotion_validity_logits;
     std::optional<Tensor> video_egomotion_motion_evidence;
-    std::optional<Tensor> video_egomotion_sufficient_mask;
+    std::optional<BooleanMask> video_egomotion_sufficient_mask;
     std::optional<Tensor> audio_temporal_logits;
     std::optional<Tensor> video_embedding;
     std::optional<Tensor> audio_embedding;
@@ -240,11 +240,6 @@ struct MosaicUnifiedOutput final {
 
     [[nodiscard]] const Tensor& logits() const noexcept { return text.logits; }
     [[nodiscard]] const std::optional<double>& loss() const noexcept { return text.loss; }
-};
-
-struct NarrativeContinuityOutput final {
-    Tensor score;
-    Tensor world_delta;
 };
 
 struct OmniLocalContractPaths final {

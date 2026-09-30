@@ -33,7 +33,7 @@ struct MosaicOmniOutputInputs final {
     std::optional<Tensor> video_egomotion_logits;
     std::optional<Tensor> video_egomotion_validity_logits;
     std::optional<Tensor> video_egomotion_motion_evidence;
-    std::optional<Tensor> video_egomotion_sufficient_mask;
+    std::optional<BooleanMask> video_egomotion_sufficient_mask;
     std::optional<Tensor> audio_temporal_logits;
     std::optional<Tensor> video_embedding;
     std::optional<Tensor> audio_embedding;
