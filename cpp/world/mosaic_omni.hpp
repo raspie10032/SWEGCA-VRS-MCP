@@ -6,6 +6,7 @@
 
 #include <cstdint>
 #include <array>
+#include <filesystem>
 #include <optional>
 #include <span>
 #include <string>
@@ -169,5 +170,19 @@ inline constexpr std::array<std::size_t, 3> answerability_ngram_widths{4, 8, 12}
     const Tensor& cosine_peak, const Tensor& cosine_margin);
 [[nodiscard]] Tensor normalized_evidence_preference(
     const Tensor& weights, double margin = 0.0);
+
+struct OmniLocalContractPaths final {
+    std::optional<std::filesystem::path> gemma_config;
+    std::optional<std::filesystem::path> gemma_processor;
+    std::optional<std::filesystem::path> raw_image_smoke_log;
+    std::optional<std::filesystem::path> anima_q4;
+    std::optional<std::filesystem::path> anima_bf16;
+    std::optional<std::filesystem::path> anima_vae;
+    std::optional<std::filesystem::path> anima_text_encoder;
+    std::optional<std::filesystem::path> gemma_q4;
+};
+
+[[nodiscard]] JsonValue::Object inspect_omni_local_contract(
+    const OmniLocalContractPaths& paths);
 
 }  // namespace swegca::world
