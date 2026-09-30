@@ -54,12 +54,18 @@ private:
     bool lookup_requires_io_{};
 };
 
-class EpisodeRoleIndex final {
+class HotEpisodeRoleIndex {
+public:
+    virtual ~HotEpisodeRoleIndex() = default;
+    [[nodiscard]] virtual EpisodeRole role(std::string_view episode_id) const noexcept = 0;
+};
+
+class EpisodeRoleIndex final : public HotEpisodeRoleIndex {
 public:
     EpisodeRoleIndex(std::map<std::string, EpisodeRole, std::less<>> overrides,
                      EpisodeRole default_role = EpisodeRole::base,
                      bool codex_or_evaluator_allowlist_used = false);
-    [[nodiscard]] EpisodeRole role(std::string_view episode_id) const noexcept;
+    [[nodiscard]] EpisodeRole role(std::string_view episode_id) const noexcept override;
 private:
     std::map<std::string, EpisodeRole, std::less<>> overrides_;
     EpisodeRole default_role_{};
@@ -116,6 +122,10 @@ public:
         std::shared_ptr<const HotVrsStrengthIndex> current_vrs,
         std::shared_ptr<const HotVrsStrengthIndex> frozen_vrs,
         EpisodeRoleIndex episode_roles);
+    HotCausalAblationEngine(FullCurrentMemoryVrsSnapshot pair,
+        std::shared_ptr<const HotVrsStrengthIndex> current_vrs,
+        std::shared_ptr<const HotVrsStrengthIndex> frozen_vrs,
+        std::shared_ptr<const HotEpisodeRoleIndex> episode_roles);
     [[nodiscard]] CausalEvaluationReceipt evaluate(std::string query,
         const std::vector<std::string>& current_cues,
         const EvidenceJudge& assess_current_evidence,
@@ -127,7 +137,7 @@ private:
     FullCurrentMemoryVrsSnapshot pair_;
     std::shared_ptr<const HotVrsStrengthIndex> current_vrs_;
     std::shared_ptr<const HotVrsStrengthIndex> frozen_vrs_;
-    EpisodeRoleIndex episode_roles_;
+    std::shared_ptr<const HotEpisodeRoleIndex> episode_roles_;
     mutable std::mutex counter_mutex_;
     mutable std::size_t request_count_{};
 };

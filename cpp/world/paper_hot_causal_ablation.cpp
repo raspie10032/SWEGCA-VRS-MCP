@@ -181,9 +181,17 @@ HotCausalAblationEngine::HotCausalAblationEngine(
     std::shared_ptr<const HotVrsStrengthIndex> current,
     std::shared_ptr<const HotVrsStrengthIndex> frozen,
     EpisodeRoleIndex roles)
+    : HotCausalAblationEngine(std::move(pair_value), std::move(current),
+          std::move(frozen), std::make_shared<const EpisodeRoleIndex>(std::move(roles))) {}
+
+HotCausalAblationEngine::HotCausalAblationEngine(
+    FullCurrentMemoryVrsSnapshot pair_value,
+    std::shared_ptr<const HotVrsStrengthIndex> current,
+    std::shared_ptr<const HotVrsStrengthIndex> frozen,
+    std::shared_ptr<const HotEpisodeRoleIndex> roles)
     : pair_(std::move(pair_value)), current_vrs_(std::move(current)),
       frozen_vrs_(std::move(frozen)), episode_roles_(std::move(roles)) {
-    if (!current_vrs_ || !frozen_vrs_ || current_vrs_->lookup_requires_io() ||
+    if (!current_vrs_ || !frozen_vrs_ || !episode_roles_ || current_vrs_->lookup_requires_io() ||
         frozen_vrs_->lookup_requires_io())
         throw std::invalid_argument("VRS strength index is not hot");
     if (current_vrs_->snapshot_id() != pair_.vrs_snapshot_id)
@@ -221,7 +229,7 @@ CausalEvaluationReceipt HotCausalAblationEngine::evaluate(
     for (const auto& definition : definitions) {
         auto judge = [&](const ReplayedEpisode& episode) {
             const auto strength = !definition.projection ||
-                !has_role(definition.roles, episode_roles_.role(episode.episode_id))
+                !has_role(definition.roles, episode_roles_->role(episode.episode_id))
                     ? 0.0 : definition.projection->strength(episode.episode_id);
             if (strength < vrs_promotion_threshold)
                 return CurrentEvidenceVerdict(episode.episode_id,
