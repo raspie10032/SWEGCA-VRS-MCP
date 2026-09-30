@@ -22,6 +22,7 @@ WORLD_SOURCES := cpp/world/cognitive_state.cpp cpp/world/cognitive_event.cpp \
 	cpp/world/image_tag_experience.cpp \
 	cpp/world/detached_vrs_state_update.cpp \
 	cpp/world/vrs_event_signal.cpp \
+	cpp/world/vrs_event_kernel.cpp \
 	cpp/world/vrs_array_blocks.cpp \
 	cpp/world/vrs_event_storage.cpp \
 	cpp/world/vrs_event_delta.cpp \
