@@ -64,6 +64,7 @@ WORLD_SOURCES := cpp/world/cognitive_state.cpp cpp/world/cognitive_event.cpp \
 	cpp/world/snapshot_digest.cpp \
 	cpp/world/memory_activation.cpp \
 	cpp/world/experience_organization.cpp \
+	cpp/world/novel_teacher_grounding.cpp \
 	cpp/world/hot_memory_step.cpp \
 	cpp/world/hot_review_throughput.cpp \
 	cpp/world/packed_memberships.cpp \
