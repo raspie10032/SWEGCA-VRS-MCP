@@ -45,6 +45,7 @@ WORLD_SOURCES := cpp/world/cognitive_state.cpp cpp/world/cognitive_event.cpp \
 	cpp/world/expression_wire.cpp \
 	cpp/world/agent_interface.cpp \
 	cpp/world/vrs_joint_summary.cpp \
+	cpp/world/semantic_comparison.cpp \
 	cpp/world/semantic_response_error.cpp \
 	cpp/world/offline_semantic_batch.cpp \
 	cpp/world/semantic_local_provider.cpp \
