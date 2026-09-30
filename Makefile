@@ -36,6 +36,7 @@ WORLD_SOURCES := cpp/world/cognitive_state.cpp cpp/world/cognitive_event.cpp \
 	cpp/world/vrs_generation_rebind.cpp \
 	cpp/world/atom_hot_index.cpp \
 	cpp/world/premise_hot_index.cpp \
+	cpp/world/compressed_memory.cpp \
 	cpp/world/vrs_event_storage.cpp \
 	cpp/world/vrs_event_delta.cpp \
 	cpp/world/vrs_edge_address_index.cpp \
