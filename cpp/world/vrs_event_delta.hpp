@@ -1,5 +1,6 @@
 #pragma once
 
+#include "world/vrs_array_blocks.hpp"
 #include "world/vrs_event_signal.hpp"
 
 #include <memory>
@@ -10,7 +11,7 @@
 namespace swegca::world {
 
 inline constexpr std::string_view vrs_event_delta_source_sha256 =
-    "ab60dccb5914d6eb01319c61094d1e43f1e883da180c4e815a7201f99cc9cfdd";
+    "4fe59c75cb81c2eca7e52ad9b864efa75547b6822a07c1942de1ada72e1b4334";
 
 [[nodiscard]] std::shared_ptr<const EventSignalInputs> prepare_event_delta(
     const std::shared_ptr<const EventSignalInputs>& parent,
@@ -30,5 +31,13 @@ inline constexpr std::string_view vrs_event_delta_source_sha256 =
     std::span<const float> score_values = {},
     std::span<const std::size_t> unresolved_indices = {},
     std::span<const std::uint8_t> unresolved_values = {});
+
+// Prepare changed score blocks for a settled event. The returned object is a
+// detached storage candidate; it neither commits main nor stores strengths.
+[[nodiscard]] VrsArrayBlocks::Patched prepare_signal_score_storage(
+    const EventSignalInputs& parent_inputs,
+    const EventSignalProposal& proposal,
+    const std::shared_ptr<const VrsArrayBlocks>& parent_blocks,
+    VrsBlockCodec codec = VrsBlockCodec::zlib);
 
 }  // namespace swegca::world

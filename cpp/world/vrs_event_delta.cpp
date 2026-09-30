@@ -1,7 +1,9 @@
 #include "world/vrs_event_delta.hpp"
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
+#include <cstring>
 #include <set>
 #include <stdexcept>
 #include <utility>
@@ -32,6 +34,12 @@ void require_finite(const std::span<const float> values, const bool nonnegative 
     for (const auto value : values)
         if (!std::isfinite(value) || (nonnegative && value < 0))
             throw std::invalid_argument("event delta contains invalid numeric values");
+}
+
+std::vector<std::byte> float32_bytes(const std::span<const float> values) {
+    static_assert(std::endian::native == std::endian::little);
+    const auto bytes = std::as_bytes(values);
+    return {bytes.begin(), bytes.end()};
 }
 
 }  // namespace
@@ -105,6 +113,55 @@ std::shared_ptr<const EventSignalInputs> prepare_event_delta(
         std::vector<std::size_t>(score_indices.begin(), score_indices.end()),
         std::vector<std::size_t>(strength_indices.begin(), strength_indices.end()),
         std::vector<std::size_t>(direct_indices.begin(), direct_indices.end())));
+}
+
+VrsArrayBlocks::Patched prepare_signal_score_storage(
+    const EventSignalInputs& parent_inputs,
+    const EventSignalProposal& proposal,
+    const std::shared_ptr<const VrsArrayBlocks>& parent_blocks,
+    const VrsBlockCodec codec) {
+    if (proposal.pending() || !parent_blocks || parent_blocks->dtype != "<f4" ||
+        parent_blocks->shape !=
+            std::vector<std::size_t>{parent_inputs.score.size()})
+        throw std::invalid_argument("settled event and matching score storage required");
+
+    const auto& candidate = proposal.inputs();
+    if (&candidate != &parent_inputs && candidate.delta_parent() != &parent_inputs)
+        throw std::invalid_argument("event storage parent generation changed");
+
+    const auto count = parent_inputs.score.size();
+    std::vector<float> tail;
+    tail.reserve(candidate.score.size() - count);
+    for (std::size_t index = count; index < candidate.score.size(); ++index) {
+        const auto found = proposal.scores.find(index);
+        tail.push_back(found == proposal.scores.end()
+            ? candidate.score[index] : found->second);
+    }
+
+    std::set<std::size_t> changed(
+        candidate.score_indices().begin(), candidate.score_indices().end());
+    for (const auto& [index, unused] : proposal.scores) {
+        static_cast<void>(unused);
+        changed.insert(index);
+    }
+    std::vector<std::size_t> indices;
+    std::vector<float> values;
+    for (const auto index : changed) {
+        if (index >= count) continue;
+        indices.push_back(index);
+        const auto found = proposal.scores.find(index);
+        values.push_back(found == proposal.scores.end()
+            ? candidate.score[index] : found->second);
+    }
+
+    const auto value_bytes = float32_bytes(values);
+    const std::vector<std::size_t> value_shape{values.size()};
+    const NumericArrayView value_view{"<f4", value_shape, value_bytes};
+    const auto tail_bytes = float32_bytes(tail);
+    const std::vector<std::size_t> tail_shape{tail.size()};
+    const NumericArrayView tail_view{"<f4", tail_shape, tail_bytes};
+    return VrsArrayBlocks::patch_and_append(
+        parent_blocks, indices, &value_view, &tail_view, codec);
 }
 
 }  // namespace swegca::world

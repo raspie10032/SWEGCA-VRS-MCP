@@ -124,6 +124,7 @@ public:
     [[nodiscard]] bool belongs_to(const EventSignalInputs& inputs) const noexcept {
         return inputs_ == &inputs;
     }
+    [[nodiscard]] const EventSignalInputs& inputs() const noexcept { return *inputs_; }
     [[nodiscard]] std::size_t input_strength_proposal_count() const noexcept {
         return strength_receipt ? strength_receipt->updates.size() : 0;
     }
