@@ -27,6 +27,7 @@ WORLD_SOURCES := cpp/world/cognitive_state.cpp cpp/world/cognitive_event.cpp \
 	cpp/world/lossless_blocks.cpp \
 	cpp/world/lossless_float_tuple.cpp \
 	cpp/world/temporal_axis_concept.cpp \
+	cpp/world/source_specific_temporal_outcome.cpp \
 	cpp/world/experience_atoms.cpp \
 	cpp/world/episode_atoms.cpp \
 	cpp/world/media_atoms.cpp \
@@ -42,6 +43,8 @@ WORLD_SOURCES := cpp/world/cognitive_state.cpp cpp/world/cognitive_event.cpp \
 	cpp/world/resident_archive_stream.cpp \
 	cpp/world/ordinary_source_router.cpp \
 	cpp/world/paper_hot_causal_ablation.cpp \
+	cpp/world/paper_source_diverse_growth.cpp \
+	cpp/world/paper_distinct_pilot_gate.cpp \
 	cpp/world/vrs_resident_adapter.cpp \
 	cpp/world/crossing_provenance.cpp \
 	cpp/world/hot_source_provenance.cpp \
