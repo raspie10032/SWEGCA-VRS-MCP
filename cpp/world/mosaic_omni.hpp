@@ -185,4 +185,22 @@ struct OmniLocalContractPaths final {
 [[nodiscard]] JsonValue::Object inspect_omni_local_contract(
     const OmniLocalContractPaths& paths);
 
+struct WorldToAnimaWeights final {
+    std::vector<float> conditioning_queries;
+    std::vector<float> attention_in_weight, attention_in_bias;
+    std::vector<float> attention_out_weight, attention_out_bias;
+    std::vector<float> output_norm_weight, output_norm_bias;
+    std::vector<float> output_weight;
+    void validate(const MosaicOmniConfig& config) const;
+};
+
+class WorldToAnimaConditioning final {
+public:
+    WorldToAnimaConditioning(MosaicOmniConfig config, WorldToAnimaWeights weights);
+    [[nodiscard]] Tensor forward(const WorldState& world_state) const;
+private:
+    MosaicOmniConfig config_;
+    WorldToAnimaWeights weights_;
+};
+
 }  // namespace swegca::world

@@ -22,6 +22,7 @@ WORLD_SOURCES := cpp/world/cognitive_state.cpp cpp/world/cognitive_event.cpp \
 	cpp/world/mosaic_omni.cpp \
 	cpp/world/mosaic_omni_ops.cpp \
 	cpp/world/mosaic_omni_contract.cpp \
+	cpp/world/world_to_anima.cpp \
 	cpp/world/mosaic_te.cpp \
 	cpp/world/text_lm.cpp \
 	cpp/world/text_lm_runtime.cpp \
