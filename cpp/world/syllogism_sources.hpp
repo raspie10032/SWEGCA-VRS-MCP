@@ -62,6 +62,12 @@ public:
     using PairMap = std::map<Pair, std::vector<PremiseAddress>>;
     using TermMap = std::map<std::string, std::vector<PremiseAddress>, std::less<>>;
 
+    [[nodiscard]] static PremiseReadView from_indexes(
+        std::string memory_snapshot_id,
+        std::shared_ptr<const AddressMap> by_address,
+        std::shared_ptr<const PairMap> by_pair,
+        std::shared_ptr<const TermMap> by_term);
+
     [[nodiscard]] const SourcePremise& premise(const PremiseAddress& address) const;
     [[nodiscard]] std::vector<PremiseAddress> term_addresses(
         std::string_view term) const;
@@ -89,6 +95,12 @@ class PremiseSegment final {
 public:
     [[nodiscard]] PremiseReadView bind(
         const std::shared_ptr<const HotMemoryIndex>& memory) const;
+    [[nodiscard]] const std::shared_ptr<const PremiseReadView::AddressMap>&
+        address_index() const noexcept { return by_address_; }
+    [[nodiscard]] const std::shared_ptr<const PremiseReadView::PairMap>&
+        pair_index() const noexcept { return by_pair_; }
+    [[nodiscard]] const std::shared_ptr<const PremiseReadView::TermMap>&
+        term_index() const noexcept { return by_term_; }
 
     const std::string memory_snapshot_id;
     const std::vector<std::string> inspected_episode_ids;

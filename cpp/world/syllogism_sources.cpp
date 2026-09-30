@@ -39,6 +39,17 @@ PremiseReadView::PremiseReadView(
       by_address_(std::move(by_address)), by_pair_(std::move(by_pair)),
       by_term_(std::move(by_term)) {}
 
+PremiseReadView PremiseReadView::from_indexes(
+    std::string memory_snapshot_id,
+    std::shared_ptr<const AddressMap> by_address,
+    std::shared_ptr<const PairMap> by_pair,
+    std::shared_ptr<const TermMap> by_term) {
+    if (!by_address || !by_pair || !by_term)
+        throw std::invalid_argument("premise index required");
+    return PremiseReadView(std::move(memory_snapshot_id), std::move(by_address),
+                           std::move(by_pair), std::move(by_term));
+}
+
 const SourcePremise& PremiseReadView::premise(
     const PremiseAddress& address) const {
     const auto item = by_address_->find(address);
