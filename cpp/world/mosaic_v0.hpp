@@ -3,7 +3,10 @@
 #include "world/cognitive_state.hpp"
 
 #include <cstddef>
+#include <cstdint>
+#include <filesystem>
 #include <map>
+#include <optional>
 #include <set>
 #include <string>
 #include <string_view>
@@ -14,7 +17,41 @@ namespace swegca::world {
 
 inline constexpr std::string_view mosaic_v0_source_sha256 =
     "70ca9dbf4232a30b0310c6f39939b337d214d3f4fc77960cfb9f917a8e89d28f";
+inline constexpr std::string_view conversation_memory_source_sha256 =
+    "5fc8b9fae71a49bf55dcf29aaa3eb6ce27bd4e35008cb1bf347821cdac924c7c";
 using MosaicVector = std::vector<double>;
+
+struct ConversationMemoryEvent final {
+    std::int64_t id{};
+    std::string namespace_name;
+    std::string kind;
+    std::string subject;
+    std::string predicate;
+    std::string value;
+    std::string source_turn;
+    double confidence{};
+    std::optional<std::int64_t> supersedes_id;
+    std::int64_t created_ns{};
+
+    [[nodiscard]] JsonValue::Object to_dict() const;
+};
+
+class ConversationMemory final {
+public:
+    explicit ConversationMemory(std::filesystem::path path);
+
+    [[nodiscard]] const std::filesystem::path& path() const noexcept { return path_; }
+    [[nodiscard]] std::int64_t remember_fact(std::string_view namespace_name,
+        std::string_view subject, std::string_view predicate, std::string_view value,
+        std::string_view source_turn, double confidence = 1.0) const;
+    [[nodiscard]] std::vector<ConversationMemoryEvent> active_facts(
+        std::string_view namespace_name) const;
+    [[nodiscard]] std::int64_t forget_fact(std::string_view namespace_name,
+        std::string_view subject, std::string_view predicate) const;
+
+private:
+    std::filesystem::path path_;
+};
 
 struct MosaicConfig final {
     std::size_t workspace_dim{4};
@@ -98,6 +135,7 @@ private:
     RecurrentCell cell_;
 };
 
-[[nodiscard]] JsonValue::Object run_mosaic_v0_demo();
+[[nodiscard]] JsonValue::Object run_mosaic_v0_demo(
+    const std::filesystem::path& memory_path);
 
 }  // namespace swegca::world
