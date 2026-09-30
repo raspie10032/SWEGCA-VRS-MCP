@@ -4,6 +4,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -73,7 +74,74 @@ struct MosaicTextModelProfile final {
     [[nodiscard]] JsonValue::Object receipt(const MosaicTextConfig& config) const;
 };
 
+using MosaicTokenBatch = std::vector<std::vector<std::int64_t>>;
+
+struct MosaicTransformerBlockWeights final {
+    std::vector<float> attention_norm_weight, attention_norm_bias;
+    std::vector<float> attention_in_projection_weight, attention_in_projection_bias;
+    std::vector<float> attention_out_projection_weight, attention_out_projection_bias;
+    std::vector<float> feedforward_norm_weight, feedforward_norm_bias;
+    std::vector<float> feedforward_in_weight, feedforward_in_bias;
+    std::vector<float> feedforward_out_weight, feedforward_out_bias;
+    void validate(const MosaicTextConfig& config) const;
+};
+
+// PyTorch state_dict topology of MosaicTextLM. Matrices retain nn.Linear's
+// row-major [out_features, in_features] layout and GRU gates use r,z,n order.
+struct MosaicTextWeights final {
+    std::vector<float> byte_embedding;
+    std::vector<float> patch_projection_weight, patch_projection_bias;
+    std::vector<float> patch_norm_weight, patch_norm_bias;
+    std::vector<float> segment_embedding;
+    std::vector<float> workspace, bos_patch;
+    std::vector<float> retriever_projection_weight, retriever_projection_bias;
+    std::vector<float> round_embedding;
+    std::vector<MosaicTransformerBlockWeights> blocks;
+    std::vector<float> operator_left, operator_right;
+    std::vector<float> decoder_weight_ih, decoder_weight_hh;
+    std::vector<float> decoder_bias_ih, decoder_bias_hh;
+    std::vector<float> output_norm_weight, output_norm_bias;
+    std::vector<float> lm_head_weight, lm_head_bias;
+    void validate(const MosaicTextConfig& config) const;
+};
+
+struct MosaicTextOutput final {
+    Tensor logits;
+    std::optional<double> loss;
+    std::size_t rounds{};
+    std::vector<std::uint8_t> target_mask;
+    Tensor decoder_states;
+    Tensor context_states;
+};
+
+class MosaicTextLM final {
+public:
+    MosaicTextLM(MosaicTextConfig config, MosaicTextWeights weights);
+    [[nodiscard]] const MosaicTextConfig& config() const noexcept { return config_; }
+    [[nodiscard]] const MosaicTextWeights& weights() const noexcept { return weights_; }
+    [[nodiscard]] MosaicTextOutput forward(
+        const MosaicTokenBatch& input_ids,
+        const MosaicTokenBatch* targets = nullptr,
+        std::optional<std::size_t> rounds = std::nullopt,
+        const MosaicTokenBatch* memory_ids = nullptr,
+        const Tensor* memory_summary = nullptr,
+        const Tensor* operator_coefficients = nullptr) const;
+    [[nodiscard]] MosaicTokenBatch generate(
+        const MosaicTokenBatch& input_ids,
+        std::size_t max_new_bytes,
+        std::optional<std::size_t> rounds = std::nullopt,
+        const MosaicTokenBatch* memory_ids = nullptr,
+        const Tensor* memory_summary = nullptr,
+        const Tensor* operator_coefficients = nullptr) const;
+private:
+    MosaicTextConfig config_;
+    MosaicTextWeights weights_;
+};
+
 [[nodiscard]] MosaicTextModelProfile profile_mosaic_text_model(
     const MosaicTextConfig& config);
+
+inline constexpr std::string_view mosaic_text_lm_source_sha256 =
+    "19d9c4a9cbb8af540534af51e97fe88791752dec06e5f3cb5421be45d5cb140e";
 
 }  // namespace swegca::world
