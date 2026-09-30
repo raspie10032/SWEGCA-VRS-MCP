@@ -114,11 +114,21 @@ struct MosaicTextOutput final {
     Tensor context_states;
 };
 
+// Exact public form of MosaicTextLM._pad_tokens + _encode_patches used by the
+// unified model before its recurrent text decoder runs.  `states` includes the
+// learned BOS patch at index zero; `patch_mask` describes body patches only.
+struct MosaicEncodedTextSource final {
+    Tensor states;
+    BooleanMask patch_mask;
+};
+
 class MosaicTextLM final {
 public:
     MosaicTextLM(MosaicTextConfig config, MosaicTextWeights weights);
     [[nodiscard]] const MosaicTextConfig& config() const noexcept { return config_; }
     [[nodiscard]] const MosaicTextWeights& weights() const noexcept { return weights_; }
+    [[nodiscard]] MosaicEncodedTextSource encode_unified_source(
+        const MosaicTokenBatch& input_ids) const;
     [[nodiscard]] MosaicTextOutput forward(
         const MosaicTokenBatch& input_ids,
         const MosaicTokenBatch* targets = nullptr,

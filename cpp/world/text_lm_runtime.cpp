@@ -296,6 +296,41 @@ void MosaicTextWeights::validate(const MosaicTextConfig& config) const {
 MosaicTextLM::MosaicTextLM(MosaicTextConfig config, MosaicTextWeights weights)
     : config_(std::move(config)), weights_(std::move(weights)) { weights_.validate(config_); }
 
+MosaicEncodedTextSource MosaicTextLM::encode_unified_source(
+    const MosaicTokenBatch& input_ids) const {
+    validate_tokens(input_ids, "world_input_ids", true);
+    MosaicTokenBatch body(input_ids.size());
+    for (std::size_t batch = 0; batch < input_ids.size(); ++batch)
+        body[batch] = {input_ids[batch].begin() + 1, input_ids[batch].end()};
+    const auto patches = pad_tokens(body, config_.patch_size, mosaic_pad_id);
+    const auto encoded = encode_patches(patches, config_, weights_);
+
+    const auto batch_count = input_ids.size();
+    const auto patch_count = patches.patches;
+    const auto dimension = config_.model_dim;
+    std::vector<double> states(batch_count * (patch_count + 1) * dimension);
+    std::vector<std::uint8_t> mask(batch_count * patch_count);
+    for (std::size_t batch = 0; batch < batch_count; ++batch) {
+        for (std::size_t dim = 0; dim < dimension; ++dim)
+            states[(batch * (patch_count + 1)) * dimension + dim] =
+                weights_.bos_patch[dim];
+        for (std::size_t patch = 0; patch < patch_count; ++patch) {
+            bool active = false;
+            for (std::size_t offset = 0; offset < config_.patch_size; ++offset)
+                active = active || patches.at(batch, patch, offset) != mosaic_pad_id;
+            mask[batch * patch_count + patch] = static_cast<std::uint8_t>(active);
+            for (std::size_t dim = 0; dim < dimension; ++dim)
+                states[((batch * (patch_count + 1) + patch + 1) * dimension) + dim] =
+                    encoded.at(batch, patch, dim);
+        }
+    }
+    return {
+        Tensor(TensorDType::float32, {batch_count, patch_count + 1, dimension},
+               std::move(states), "cpu"),
+        BooleanMask({batch_count, patch_count}, std::move(mask)),
+    };
+}
+
 MosaicTextOutput MosaicTextLM::forward(
     const MosaicTokenBatch& input_ids, const MosaicTokenBatch* targets,
     const std::optional<std::size_t> rounds, const MosaicTokenBatch* memory_ids,
