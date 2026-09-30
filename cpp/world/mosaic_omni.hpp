@@ -181,6 +181,56 @@ struct DescriptorObjectMemoryOutput final { Tensor features; Tensor margin; };
 [[nodiscard]] Tensor sort_object_slots_by_temporal_activity(
     const Tensor& object_slots, const Tensor& frame_grid);
 
+struct MosaicUnifiedOutput final {
+    MosaicTextOutput text;
+    WorldState world_state;
+    std::vector<std::string> modalities;
+    std::optional<Tensor> video_order_logits;
+    std::optional<Tensor> video_object_evidence_weights;
+    std::optional<Tensor> video_object_attention;
+    std::optional<Tensor> video_object_trajectory_weights;
+    std::optional<Tensor> video_object_pair_trajectory_weights;
+    std::optional<Tensor> video_descriptor_trajectory_attention;
+    std::optional<Tensor> video_descriptor_visibility_logits;
+    std::optional<Tensor> video_descriptor_memory_margin;
+    std::optional<Tensor> video_descriptor_memory_reliability_logits;
+    std::optional<Tensor> video_camera_robustness_gate;
+    std::optional<Tensor> video_spatial_relation_logits;
+    std::optional<Tensor> video_egomotion_logits;
+    std::optional<Tensor> video_egomotion_validity_logits;
+    std::optional<Tensor> video_egomotion_motion_evidence;
+    std::optional<Tensor> video_egomotion_sufficient_mask;
+    std::optional<Tensor> audio_temporal_logits;
+    std::optional<Tensor> video_embedding;
+    std::optional<Tensor> audio_embedding;
+    std::optional<Tensor> visual_embedding;
+    std::optional<Tensor> text_retrieval_embedding;
+    std::optional<Tensor> video_teacher_embedding;
+    std::optional<Tensor> audio_teacher_embedding;
+    std::optional<Tensor> audio_teacher_temporal_states;
+    std::optional<Tensor> audio_world_teacher_embedding;
+    std::optional<Tensor> audio_ctc_logits;
+    std::optional<Tensor> audio_grapheme_ctc_logits;
+    std::optional<Tensor> audio_text_retrieval_embedding;
+    std::optional<Tensor> text_audio_retrieval_embedding;
+    std::optional<Tensor> cross_modal_evidence_logits;
+    std::optional<Tensor> cross_modal_evidence_delta;
+    std::optional<Tensor> visual_text_retrieval_embedding;
+    std::optional<Tensor> text_visual_retrieval_embedding;
+    std::optional<Tensor> answerability_logits;
+    std::optional<Tensor> answerability_loss;
+    std::optional<Tensor> explicit_relation_logits;
+    std::optional<Tensor> explicit_object_attention;
+
+    [[nodiscard]] const Tensor& logits() const noexcept { return text.logits; }
+    [[nodiscard]] const std::optional<double>& loss() const noexcept { return text.loss; }
+};
+
+struct NarrativeContinuityOutput final {
+    Tensor score;
+    Tensor world_delta;
+};
+
 struct OmniLocalContractPaths final {
     std::optional<std::filesystem::path> gemma_config;
     std::optional<std::filesystem::path> gemma_processor;
