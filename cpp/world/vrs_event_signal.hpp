@@ -69,6 +69,7 @@ public:
 
 private:
     friend class PreparedEventSignalStorage;
+    friend class BoundEventSignalStorage;
     friend std::shared_ptr<const EventSignalInputs> prepare_event_delta(
         const std::shared_ptr<const EventSignalInputs>&, std::string,
         std::span<const float>, std::span<const float>,

@@ -51,6 +51,8 @@ WORLD_SOURCES := cpp/world/cognitive_state.cpp cpp/world/cognitive_event.cpp \
 	cpp/world/sealed_generation_restore.cpp \
 	cpp/world/resident_assimilation.cpp \
 	cpp/world/vrs_event_storage.cpp \
+	cpp/world/vrs_event_hot_publication.cpp \
+	cpp/world/vrs_event_durable.cpp \
 	cpp/world/vrs_event_delta.cpp \
 	cpp/world/vrs_edge_address_index.cpp \
 	cpp/world/vrs_canonicalization.cpp \

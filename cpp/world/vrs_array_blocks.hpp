@@ -94,6 +94,9 @@ public:
     load(std::string_view digest, std::size_t maximum_raw_bytes,
          std::size_t maximum_manifest_bytes = 16U * 1024U * 1024U);
     [[nodiscard]] const std::filesystem::path& root() const noexcept { return root_; }
+    void publish_immutable(std::string_view name, std::span<const std::byte> data);
+    [[nodiscard]] std::vector<std::byte> read_immutable(
+        std::string_view name, std::size_t maximum_bytes) const;
 
 private:
     friend class VrsArrayBundle;

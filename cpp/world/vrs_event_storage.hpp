@@ -102,6 +102,15 @@ public:
         const StorageBoundEventSignalProposal& proposal,
         VrsBlockCodec codec = VrsBlockCodec::zlib) const;
 
+    // Rebind unchanged numeric storage to the full-current memory generation
+    // produced by Main's VRS source replacement. No numeric bytes are copied.
+    [[nodiscard]] std::shared_ptr<const BoundEventSignalStorage> rebind_snapshot(
+        std::string snapshot_id) const;
+    [[nodiscard]] std::shared_ptr<const BoundEventSignalStorage> restore_numeric_snapshot(
+        std::string snapshot_id,
+        std::shared_ptr<const VrsArrayBlocks> restored_scores,
+        std::shared_ptr<const VrsArrayBlocks> restored_strengths) const;
+
     const std::shared_ptr<const EventSignalInputs> inputs;
     const std::shared_ptr<const VrsArrayBlocks> scores;
     const std::shared_ptr<const VrsArrayBlocks> strengths;

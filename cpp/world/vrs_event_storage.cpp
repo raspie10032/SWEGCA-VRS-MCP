@@ -146,6 +146,43 @@ std::shared_ptr<const BoundEventSignalStorage> BoundEventSignalStorage::cold_bin
         new BoundEventSignalStorage(std::move(inputs), std::move(scores), std::move(strengths)));
 }
 
+std::shared_ptr<const BoundEventSignalStorage> BoundEventSignalStorage::rebind_snapshot(
+    std::string snapshot_id) const {
+    if (!digest(snapshot_id) || snapshot_id == inputs->snapshot_id)
+        reject("event storage snapshot rebind changed");
+    auto rebound = std::shared_ptr<const EventSignalInputs>(new EventSignalInputs(
+        std::move(snapshot_id), inputs->direct, inputs->score, inputs->edges,
+        inputs->strength, inputs->unresolved, inputs->dependencies_));
+    return std::shared_ptr<const BoundEventSignalStorage>(new BoundEventSignalStorage(
+        std::move(rebound), scores, strengths));
+}
+
+std::shared_ptr<const BoundEventSignalStorage>
+BoundEventSignalStorage::restore_numeric_snapshot(
+    std::string snapshot_id,
+    std::shared_ptr<const VrsArrayBlocks> restored_scores,
+    std::shared_ptr<const VrsArrayBlocks> restored_strengths) const {
+    if (!digest(snapshot_id) || !restored_scores || !restored_strengths ||
+        restored_scores->dtype != "<f4" || restored_strengths->dtype != "<f2" ||
+        restored_scores->shape != std::vector<std::size_t>{inputs->score.size()} ||
+        restored_strengths->shape != std::vector<std::size_t>{inputs->strength.size()})
+        reject("restored event numeric layout changed");
+    const auto score_bytes = restored_scores->restore();
+    if (score_bytes.size() % sizeof(float)) reject("restored event score bytes changed");
+    std::vector<float> restored_score(score_bytes.size() / sizeof(float));
+    std::memcpy(restored_score.data(), score_bytes.data(), score_bytes.size());
+    auto restored_strength = decode_float16(restored_strengths->restore());
+    if (std::ranges::any_of(restored_score, [](const auto value) { return !std::isfinite(value); }) ||
+        std::ranges::any_of(restored_strength, [](const auto value) {
+            return !std::isfinite(value) || value < 0;
+        })) reject("restored event numeric state invalid");
+    auto rebound = std::make_shared<const EventSignalInputs>(
+        std::move(snapshot_id), inputs->direct.materialize(), std::move(restored_score),
+        inputs->edges.materialize(), std::move(restored_strength), inputs->unresolved.materialize());
+    return cold_bind(std::move(rebound), std::move(restored_scores),
+                     std::move(restored_strengths));
+}
+
 StorageBoundEventSignalProposal BoundEventSignalStorage::settle(
     const std::span<const std::size_t> changed_nodes,
     std::shared_ptr<const DetachedVrsStateUpdateReceipt> strength_updates,

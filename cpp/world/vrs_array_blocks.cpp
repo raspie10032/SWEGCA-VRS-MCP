@@ -360,6 +360,19 @@ VrsGenerationBlockStore::VrsGenerationBlockStore(std::filesystem::path root)
     std::filesystem::create_directories(root_);
 }
 
+void VrsGenerationBlockStore::publish_immutable(
+    const std::string_view name, const std::span<const std::byte> data) {
+    publish(name, data);
+}
+
+std::vector<std::byte> VrsGenerationBlockStore::read_immutable(
+    const std::string_view name, const std::size_t maximum_bytes) const {
+    if (name.empty() || name.find('/') != std::string_view::npos ||
+        name.find('\\') != std::string_view::npos)
+        throw std::invalid_argument("immutable record name changed");
+    return read_limited(root_ / name, maximum_bytes);
+}
+
 void VrsGenerationBlockStore::publish(const std::string_view name,
                                       const std::span<const std::byte> data) {
     if (name.empty() || name.find('/') != std::string_view::npos) reject("invalid candidate name");
