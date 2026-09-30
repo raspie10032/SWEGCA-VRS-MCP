@@ -96,6 +96,8 @@ struct AudioFrontendOutput final {
     Tensor tokens;
     BooleanMask mask;
     Tensor summary;
+    // Pre-modality sequence used by the original cross-modal evidence path.
+    Tensor evidence_tokens;
     std::optional<Tensor> world_summary;
     std::optional<Tensor> temporal_states;
     std::optional<Tensor> temporal_features;
