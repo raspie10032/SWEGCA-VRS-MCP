@@ -34,6 +34,7 @@ WORLD_SOURCES := cpp/world/cognitive_state.cpp cpp/world/cognitive_event.cpp \
 	cpp/world/mosaic_omni_geometry.cpp \
 	cpp/world/mosaic_omni_text_pipeline.cpp \
 	cpp/world/mosaic_omni_cross_modal.cpp \
+	cpp/world/mosaic_omni_modal_frontends.cpp \
 	cpp/world/mosaic_te.cpp \
 	cpp/world/text_lm.cpp \
 	cpp/world/text_lm_runtime.cpp \
