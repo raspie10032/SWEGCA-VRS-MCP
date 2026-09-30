@@ -41,6 +41,7 @@ WORLD_SOURCES := cpp/world/cognitive_state.cpp cpp/world/cognitive_event.cpp \
 	cpp/world/semantic_source_context.cpp \
 	cpp/world/provider_cancellation.cpp \
 	cpp/world/provider_transport.cpp \
+	cpp/world/parallel_experience_transport.cpp \
 	cpp/world/semantic_response_error.cpp \
 	cpp/world/offline_semantic_batch.cpp \
 	cpp/world/semantic_local_provider.cpp \
