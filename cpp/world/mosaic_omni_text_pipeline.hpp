@@ -30,7 +30,7 @@ struct MosaicOmniTextPipelineConfig final {
     std::size_t epistemic_supported_class{};
     double epistemic_output_threshold{0.5};
     std::string answerability_mode{"pooled"};
-    bool answerability_head{}, text_only{true};
+    bool answerability_head{};
     void validate(const MosaicTextConfig&) const;
 };
 struct MosaicOmniTextSourceInputs final {
@@ -52,6 +52,7 @@ struct MosaicOmniTextPipelineInputs final {
     std::optional<MosaicTokenBatch> targets;
     std::optional<std::vector<std::int64_t>> answerability_labels;
     std::optional<std::size_t> text_rounds;
+    bool text_only{};
     Tensor world;
     Tensor text_states; // upstream [B,1+evidence patches,text_dim]
     BooleanMask text_mask; // upstream evidence patch mask, excludes BOS
