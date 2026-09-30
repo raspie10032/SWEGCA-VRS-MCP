@@ -203,4 +203,33 @@ private:
     WorldToAnimaWeights weights_;
 };
 
+struct LongVideoWorldWeights final {
+    std::vector<float> position_weight;
+    std::vector<float> transition_weight, transition_bias;
+    std::vector<float> gru_weight_ih, gru_weight_hh, gru_bias_ih, gru_bias_hh;
+    std::vector<float> norm_weight, norm_bias;
+    std::vector<float> order_norm_weight, order_norm_bias;
+    std::vector<float> order_weight, order_bias;
+    void validate(const MosaicOmniConfig& config, bool transition_features) const;
+};
+
+struct LongVideoWorldOutput final {
+    WorldState world_state;
+    Tensor order_logits;
+    Tensor checkpoint_states;
+};
+
+class LongVideoWorldAccumulator final {
+public:
+    LongVideoWorldAccumulator(MosaicOmniConfig config, bool transition_features,
+        LongVideoWorldWeights weights);
+    [[nodiscard]] LongVideoWorldOutput forward(
+        const Tensor& clip_world_states, const BooleanMask& clip_mask,
+        const WorldState* initial_state = nullptr) const;
+private:
+    MosaicOmniConfig config_;
+    bool transition_features_{};
+    LongVideoWorldWeights weights_;
+};
+
 }  // namespace swegca::world
