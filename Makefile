@@ -20,6 +20,7 @@ WORLD_SOURCES := cpp/world/cognitive_state.cpp cpp/world/cognitive_event.cpp \
 	cpp/world/cognitive_kernel_contracts.cpp \
 	cpp/world/mosaic_v0.cpp \
 	cpp/world/text_lm.cpp \
+	cpp/world/retrieval_pilot.cpp \
 	cpp/world/world_state.cpp cpp/world/definition_contract.cpp \
 	cpp/world/evidence_accumulator.cpp cpp/world/evidence_revision.cpp \
 	cpp/world/evidence_accumulator_bridge.cpp \

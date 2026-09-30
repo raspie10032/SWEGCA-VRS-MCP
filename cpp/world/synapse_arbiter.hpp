@@ -13,6 +13,9 @@
 
 namespace swegca::world {
 
+inline constexpr std::string_view synapse_arbiter_source_sha256 =
+    "092d8ea9b5687ce53444aa9632b2863840af8eea608eb0193d26731aa7cf036c";
+
 using ProposalTargetSlot = std::variant<std::int64_t, std::string>;
 
 [[nodiscard]] Tensor state_slot_tensor(std::shared_ptr<const WorldState> world);
