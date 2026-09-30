@@ -26,6 +26,7 @@ struct SemanticDeliveredPart final {
     SemanticAnchor anchor;
     SemanticDeliveredContent content;
     std::string mime_type;
+    friend bool operator==(const SemanticDeliveredPart&, const SemanticDeliveredPart&) = default;
 };
 
 struct SemanticEncodingInput final {

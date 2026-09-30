@@ -53,12 +53,14 @@ struct SemanticAnchor final {
     std::vector<std::int64_t> char_range;
     std::vector<std::int64_t> region;
     std::vector<std::int64_t> time_ns;
+    friend bool operator==(const SemanticAnchor&, const SemanticAnchor&) = default;
 };
 
 struct SemanticQualifier final {
     std::string kind;
     std::string value;
     std::vector<std::string> anchors;
+    friend bool operator==(const SemanticQualifier&, const SemanticQualifier&) = default;
 };
 
 struct SemanticMeaningUnit final {
@@ -70,6 +72,7 @@ struct SemanticMeaningUnit final {
     std::vector<std::string> anchors;
     std::vector<SemanticQualifier> qualifiers;
     std::string value_kind{"unspecified"};
+    friend bool operator==(const SemanticMeaningUnit&, const SemanticMeaningUnit&) = default;
 };
 
 // A source-bound, already produced semantic proposal. Ingress revalidates its
