@@ -135,27 +135,12 @@ struct SemanticPromotionThresholds {
     return false;
 }
 
-// Lineage: direct — the author's five branches in the author's order:
-// incomplete provenance quarantines; a rejection retracts; an acceptance with
-// a verified counterfactual promotes (or refreshes a semantic memory) and
-// alone allows semantic reads; a semantic memory under a suspected regime
-// change or without a verified counterfactual is quarantined; anything else
-// is recorded as an episode. An input the author cannot reach (see
-// memory_promotion_input_valid) yields no decision: the function returns
-// false and resets `out` to an invalid, no-action result. Failed calls cannot
-// leave a previous semantic-read permission in the output. Main still checks
-// the return and owns any mutation or authorization.
-// SWEGCA: src/tinylm_slicer/mosaic_memory_promotion.py@3bddcb7:193-246
-[[nodiscard]] constexpr bool decide_memory_promotion(MemoryTier current,
-                                                     const EvidenceJudgment& judgment,
-                                                     bool counterfactual_verified,
-                                                     bool provenance_complete,
-                                                     MemoryPromotionDecision& out) noexcept {
+[[nodiscard]] constexpr bool decide_memory_promotion_fields(
+    MemoryTier current, EvidenceStatus status, EvidenceReason reason,
+    bool counterfactual_verified, bool provenance_complete,
+    MemoryPromotionDecision& out) noexcept {
     out = {};
-    const auto status = judgment.status();
-    const auto reason = judgment.reason();
-    if (!memory_promotion_input_valid(current, status, reason))
-        return false;
+    if (!memory_promotion_input_valid(current, status, reason)) return false;
     const auto carried = static_cast<MemoryPromotionReason>(reason);
     MemoryPromotionDecision decision;
     decision.previous_tier = current;
@@ -186,6 +171,30 @@ struct SemanticPromotionThresholds {
     }
     out = decision;
     return true;
+}
+
+// Lineage: direct — the author's five branches in the author's order:
+// incomplete provenance quarantines; a rejection retracts; an acceptance with
+// a verified counterfactual promotes (or refreshes a semantic memory) and
+// alone allows semantic reads; a semantic memory under a suspected regime
+// change or without a verified counterfactual is quarantined; anything else
+// is recorded as an episode. An input the author cannot reach (see
+// memory_promotion_input_valid) yields no decision: the function returns
+// false and resets `out` to an invalid, no-action result. Failed calls cannot
+// leave a previous semantic-read permission in the output. Main still checks
+// the return and owns any mutation or authorization.
+// SWEGCA: src/tinylm_slicer/mosaic_memory_promotion.py@3bddcb7:193-246
+[[nodiscard]] constexpr bool decide_memory_promotion(MemoryTier current,
+                                                     const EvidenceJudgment& judgment,
+                                                     bool counterfactual_verified,
+                                                     bool provenance_complete,
+                                                     MemoryPromotionDecision& out) noexcept {
+    out = {};
+    const auto status = judgment.status();
+    const auto reason = judgment.reason();
+    return decide_memory_promotion_fields(current, status, reason,
+                                          counterfactual_verified,
+                                          provenance_complete, out);
 }
 
 }  // namespace swegca::architecture::kernel

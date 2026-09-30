@@ -31,6 +31,7 @@ WORLD_SOURCES := cpp/world/cognitive_state.cpp cpp/world/cognitive_event.cpp \
 	cpp/world/episode_atoms.cpp \
 	cpp/world/media_atoms.cpp \
 	cpp/world/episode_flow.cpp \
+	cpp/world/memory_promotion.cpp \
 	cpp/world/vrs_event_storage.cpp \
 	cpp/world/vrs_event_delta.cpp \
 	cpp/world/vrs_edge_address_index.cpp \
