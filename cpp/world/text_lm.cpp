@@ -1,8 +1,10 @@
 #include "world/text_lm.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <limits>
 #include <stdexcept>
+#include <utility>
 
 namespace swegca::world {
 namespace {
@@ -152,6 +154,75 @@ std::vector<std::int64_t> BytePatchCodec::unpack(
     }
     while (!result.empty() && result.back() == mosaic_pad_id) result.pop_back();
     return result;
+}
+
+SparseOperatorAdapter::SparseOperatorAdapter(
+    Tensor left, Tensor right, const double maximum_update)
+    : left_(std::move(left)), right_(std::move(right)),
+      maximum_update_(maximum_update) {
+    const auto left_shape = left_.shape();
+    const auto right_shape = right_.shape();
+    if (left_shape.size() != 3 || right_shape.size() != 3 ||
+        left_shape[0] != right_shape[0] || left_shape[1] != right_shape[2] ||
+        left_shape[2] != right_shape[1] || !(maximum_update_ > 0 && maximum_update_ <= 1))
+        throw std::invalid_argument("sparse operator adapter shape or update limit changed");
+}
+
+Tensor SparseOperatorAdapter::forward(
+    const Tensor& state, const Tensor& coefficients) const {
+    const auto shape = state.shape();
+    const auto coefficient_shape = coefficients.shape();
+    const auto left_shape = left_.shape();
+    if (shape.size() != 3 || coefficient_shape.size() != 2 ||
+        coefficient_shape[0] != shape[0] || coefficient_shape[1] != left_shape[0] ||
+        shape[2] != left_shape[1])
+        throw std::invalid_argument("sparse operator adapter input shape changed");
+    const auto batch_count = static_cast<std::size_t>(shape[0]);
+    const auto token_count = static_cast<std::size_t>(shape[1]);
+    const auto dimension = static_cast<std::size_t>(shape[2]);
+    const auto basis_count = static_cast<std::size_t>(left_shape[0]);
+    const auto rank = static_cast<std::size_t>(left_shape[2]);
+    const auto& state_values = state.values();
+    const auto& coefficient_values = coefficients.values();
+    const auto& left_values = left_.values();
+    const auto& right_values = right_.values();
+    std::vector<double> result(state_values.begin(), state_values.end());
+    std::vector<double> delta(dimension);
+    std::vector<double> projected(rank);
+    for (std::size_t batch = 0; batch < batch_count; ++batch) {
+        for (std::size_t token = 0; token < token_count; ++token) {
+            std::ranges::fill(delta, 0.0);
+            const auto state_base = (batch * token_count + token) * dimension;
+            for (std::size_t basis = 0; basis < basis_count; ++basis) {
+                const auto raw = coefficient_values[batch * basis_count + basis];
+                const auto coefficient = std::clamp(raw, -1.0, 1.0);
+                for (std::size_t inner = 0; inner < rank; ++inner) {
+                    double value = 0.0;
+                    for (std::size_t column = 0; column < dimension; ++column)
+                        value += state_values[state_base + column] *
+                            right_values[(basis * rank + inner) * dimension + column];
+                    projected[inner] = value;
+                }
+                for (std::size_t column = 0; column < dimension; ++column)
+                    for (std::size_t inner = 0; inner < rank; ++inner)
+                        delta[column] += projected[inner] *
+                            left_values[(basis * dimension + column) * rank + inner] * coefficient;
+            }
+            const auto divisor = std::sqrt(static_cast<double>(rank));
+            float squared = 0.0F;
+            for (auto& value : delta) {
+                value /= divisor;
+                const auto single = static_cast<float>(value);
+                squared += single * single;
+            }
+            const auto norm = std::max(std::sqrt(squared), 1e-6F);
+            const auto scale = std::min(1.0, maximum_update_ / static_cast<double>(norm));
+            for (std::size_t column = 0; column < dimension; ++column)
+                result[state_base + column] += delta[column] * scale;
+        }
+    }
+    return Tensor(state.dtype(), std::vector<std::uint64_t>(shape.begin(), shape.end()),
+        std::move(result), std::string(state.device()));
 }
 
 JsonValue::Object MosaicTextModelProfile::receipt(const MosaicTextConfig& config) const {

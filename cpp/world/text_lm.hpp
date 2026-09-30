@@ -52,6 +52,19 @@ private:
     std::size_t patch_size_;
 };
 
+class SparseOperatorAdapter final {
+public:
+    SparseOperatorAdapter(Tensor left, Tensor right, double maximum_update);
+    [[nodiscard]] Tensor forward(const Tensor& state,
+        const Tensor& coefficients) const;
+    [[nodiscard]] const Tensor& left() const noexcept { return left_; }
+    [[nodiscard]] const Tensor& right() const noexcept { return right_; }
+private:
+    Tensor left_;
+    Tensor right_;
+    double maximum_update_{};
+};
+
 struct MosaicTextModelProfile final {
     std::uint64_t parameter_count{};
     double raw_weight_mib_bf16{};
