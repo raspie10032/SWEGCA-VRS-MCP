@@ -1,0 +1,140 @@
+#pragma once
+
+#include "world/cognitive_state.hpp"
+#include "world/text_lm.hpp"
+#include "world/world_state.hpp"
+
+#include <cstdint>
+#include <optional>
+#include <string>
+#include <string_view>
+#include <vector>
+
+namespace swegca::world {
+
+struct MosaicOmniConfig final {
+    std::size_t world_slots{32};
+    std::size_t world_dim{256};
+    std::size_t object_slots{8};
+    std::size_t attention_heads{8};
+    std::size_t gemma_hidden_dim{3840};
+    std::size_t anima_conditioning_tokens{512};
+    std::size_t anima_conditioning_dim{1024};
+    void validate() const;
+    [[nodiscard]] JsonValue::Object to_dict() const;
+};
+
+struct MosaicUnifiedConfig final {
+    MosaicTextConfig text;
+    MosaicOmniConfig omni;
+    std::int64_t vision_patch_size{16};
+    bool visual_semantic_encoder{false};
+    bool visual_semantic_split_frontend{false};
+    std::int64_t visual_semantic_rounds{2};
+    bool image_visual_adapter{false};
+    std::int64_t image_visual_adapter_rank{32};
+    double image_visual_adapter_scale{1.0};
+    bool visual_teacher_slot_bridge{false};
+    std::int64_t visual_teacher_slot_rank{32};
+    bool explicit_object_relation_grounder{false};
+    std::int64_t explicit_object_relation_rank{64};
+    std::int64_t explicit_relation_classes{6};
+    std::int64_t audio_patch_samples{320};
+    std::int64_t world_ffn_dim{1024};
+    std::int64_t world_rounds{2};
+    std::int64_t vision_teacher_dim{0};
+    std::int64_t audio_teacher_dim{0};
+    bool audio_temporal_encoder{false};
+    bool audio_content_encoder{false};
+    bool audio_spectral_content_frontend{false};
+    std::int64_t audio_spectral_n_fft{400};
+    std::int64_t audio_spectral_hop_samples{160};
+    bool audio_event_slot_injection{false};
+    bool audio_ctc_head{false};
+    std::int64_t audio_grapheme_ctc_vocabulary_size{0};
+    bool audio_text_retrieval_head{false};
+    std::string audio_text_retrieval_text_source{"world_global"};
+    bool cross_modal_evidence_head{false};
+    std::int64_t cross_modal_evidence_rank{32};
+    bool cross_modal_evidence_direct_features{false};
+    bool cross_modal_text_query_pooling{false};
+    bool cross_modal_text_sequence_pooling{false};
+    bool cross_modal_text_contextual_pooling{false};
+    bool narrative_evidence_head{false};
+    std::int64_t narrative_evidence_hidden_dim{64};
+    bool visual_text_retrieval_head{false};
+    std::int64_t visual_text_retrieval_dim{512};
+    bool audio_temporal_binary_head{false};
+    bool video_object_temporal_encoder{false};
+    bool video_object_frame_normalized_input{false};
+    bool video_object_camera_invariant_residual{false};
+    double video_object_frame_normalized_residual_scale{1.0};
+    bool video_object_time_centered_input{false};
+    bool video_object_activity_sorted_slots{false};
+    bool video_object_dual_evidence{false};
+    bool video_object_set_decision{false};
+    bool video_object_identity_event_binding{false};
+    bool video_object_learned_queries{false};
+    bool video_object_spatial_coordinates{false};
+    bool video_object_spatial_event_binding{false};
+    bool video_spatial_temporal_moment{false};
+    bool video_query_spatial_temporal_moment{false};
+    bool video_spatial_temporal_y_moment{false};
+    bool video_spatial_temporal_logit_head{false};
+    bool video_spatial_temporal_bilinear_head{false};
+    bool video_object_trajectory_binding{false};
+    bool video_object_pair_trajectory_binding{false};
+    bool video_descriptor_trajectory_binding{false};
+    bool video_descriptor_pair_centered_queries{false};
+    bool video_descriptor_persistent_identity_state{false};
+    bool video_descriptor_object_memory{false};
+    double video_descriptor_object_memory_scale{1.0};
+    bool video_descriptor_object_memory_query_gate{false};
+    bool video_descriptor_object_memory_reliability_gate{false};
+    bool video_descriptor_object_memory_contrast_visibility{false};
+    bool video_descriptor_object_memory_evidence_routing{false};
+    double video_descriptor_object_memory_evidence_routing_margin{0.0};
+    bool video_descriptor_object_memory_contrast_readout{false};
+    bool video_descriptor_object_memory_temporal_relative_visibility{false};
+    bool video_descriptor_object_memory_temporal_relative_readout{false};
+    bool video_isolated_identity_descriptors{false};
+    bool video_query_conditioned_head{false};
+    bool video_camera_robustness_adapter{false};
+    bool video_camera_robustness_nonlinear_gate{false};
+    std::int64_t video_camera_pose_dim{0};
+    std::int64_t video_spatial_relation_classes{0};
+    std::int64_t video_action_dim{0};
+    std::int64_t video_egomotion_classes{0};
+    bool video_egomotion_validity_head{false};
+    bool video_egomotion_evidence_gate{false};
+    double video_egomotion_minimum_motion_evidence{1e-06};
+    bool video_uses_visual_semantic_encoder{false};
+    double video_visual_semantic_scale{1.0};
+    bool video_explicit_temporal_delta{false};
+    double video_explicit_temporal_delta_scale{1.0};
+    bool video_separate_temporal_delta_projection{false};
+    bool long_video_world_accumulator{false};
+    bool long_video_transition_features{false};
+    bool text_only_bridge_adapter{false};
+    bool text_only_output_adapter{false};
+    bool text_only_cross_memory_adapter{false};
+    bool text_only_hidden_cross_memory_adapter{false};
+    bool text_answerability_head{false};
+    std::string text_answerability_mode{"pooled"};
+    std::int64_t text_answerability_classes{2};
+    bool text_epistemic_memory_adapter{false};
+    std::int64_t text_epistemic_memory_slots{1};
+    std::int64_t text_epistemic_output_rank{0};
+    std::int64_t text_epistemic_supported_class{0};
+    double text_epistemic_output_threshold{0.5};
+    std::vector<std::int64_t> text_answerability_fallback_bytes{};
+    double text_answerability_threshold{0.5};
+
+    void validate() const;
+    [[nodiscard]] JsonValue::Object to_dict() const;
+    [[nodiscard]] static MosaicUnifiedConfig from_dict(const JsonValue::Object& values);
+};
+
+inline constexpr std::string_view mosaic_omni_schema_version = "mosaic-unified-config-v0";
+
+}  // namespace swegca::world
