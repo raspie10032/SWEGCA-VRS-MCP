@@ -2,6 +2,7 @@
 
 #include "world/unicode_nfkc.hpp"
 #include "world/unicode_word_data.hpp"
+#include "world/unicode_whitespace_data.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -77,9 +78,9 @@ std::vector<std::string> retrieval_text_features(const std::string_view text) {
         if (!word.empty()) { result.push_back("w:" + encode(word, 0, word.size())); word.clear(); }
     };
     for (const auto point : points) {
-        if (member(unicode_word_data::word_ranges, point)) word.push_back(point);
+        if (member(unicode_word_data::ranges, point)) word.push_back(point);
         else flush();
-        if (!member(unicode_word_data::whitespace_ranges, point)) compact.push_back(point);
+        if (!member(unicode_whitespace_data::ranges, point)) compact.push_back(point);
     }
     flush();
     if (compact.size() >= 3) for (std::size_t index = 0; index + 3 <= compact.size(); ++index)
