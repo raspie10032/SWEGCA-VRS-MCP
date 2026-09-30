@@ -88,7 +88,65 @@ MosaicTextOutput replace_logits(const MosaicTextLM& model,const MosaicTokenBatch
 
 void MosaicOmniTextPipelineConfig::validate(const MosaicTextConfig& text) const {static const std::set<std::string,std::less<>> modes{"pooled","token-cross","contextual-cross","consistency-cross","body-cross","core-body-cross","core-compact-body-cross","core-projected-compact-body-cross","core-lexical-compact-body-cross","core-lexical-consistency-cross"};if(!world_dim||!modes.contains(answerability_mode)||answerability_classes<2||answerability_classes>8||epistemic_supported_class>=answerability_classes||epistemic_memory_slots==0||!(epistemic_output_threshold>=0&&epistemic_output_threshold<=1))throw std::invalid_argument("invalid text pipeline configuration");text.validate();}
 
-MosaicOmniTextPipeline::MosaicOmniTextPipeline(const MosaicTextLM& text,MosaicOmniTextPipelineConfig config,MosaicOmniTextPipelineWeights weights,MosaicOmniTextPipelineAdapters adapters):text_core_(&text),config_(std::move(config)),weights_(std::move(weights)),adapters_(adapters){config_.validate(text.config());const auto& c=text.config();linear_shape(weights_.text_to_world,c.model_dim,config_.world_dim);linear_shape(weights_.world_to_text_memory,config_.world_dim,c.retriever_dim);if(weights_.text_only_to_world)linear_shape(*weights_.text_only_to_world,c.model_dim,config_.world_dim);if(weights_.text_only_world_to_text_memory)linear_shape(*weights_.text_only_world_to_text_memory,config_.world_dim,c.retriever_dim);if(weights_.logit_hidden&&weights_.logit_output){linear_shape(*weights_.logit_hidden,vocab,vocab*2);linear_shape(*weights_.logit_output,vocab*2,vocab);}else if(weights_.logit_hidden||weights_.logit_output)throw std::invalid_argument("logit adapter topology mismatch");if(config_.answerability_head){if(cross_modes.contains(config_.answerability_mode)){if(!adapters_.answerability)throw std::invalid_argument("cross answerability verifier is missing");}else{if(!weights_.pooled_answerability)throw std::invalid_argument("pooled answerability weights are missing");const auto& p=*weights_.pooled_answerability;norm_shape(p.norm,config_.world_dim*4+2);linear_shape(p.hidden,config_.world_dim*4+2,config_.world_dim);linear_shape(p.output,config_.world_dim,config_.answerability_classes);}}if(weights_.epistemic_memory)linear_shape(*weights_.epistemic_memory,config_.answerability_classes,c.retriever_dim,false);}
+MosaicOmniTextPipeline::MosaicOmniTextPipeline(const MosaicTextLM& text,MosaicOmniTextPipelineConfig config,MosaicOmniTextPipelineWeights weights,MosaicOmniTextPipelineAdapters adapters):text_core_(&text),config_(std::move(config)),weights_(std::move(weights)),adapters_(adapters){config_.validate(text.config());const auto& c=text.config();linear_shape(weights_.text_to_world,c.model_dim,config_.world_dim);linear_shape(weights_.world_to_text_memory,config_.world_dim,c.retriever_dim);if(weights_.text_modality_embedding.size()!=config_.world_dim)throw std::invalid_argument("text modality embedding shape mismatch");if(weights_.text_only_to_world)linear_shape(*weights_.text_only_to_world,c.model_dim,config_.world_dim);if(weights_.text_only_world_to_text_memory)linear_shape(*weights_.text_only_world_to_text_memory,config_.world_dim,c.retriever_dim);if(weights_.logit_hidden&&weights_.logit_output){linear_shape(*weights_.logit_hidden,vocab,vocab*2);linear_shape(*weights_.logit_output,vocab*2,vocab);}else if(weights_.logit_hidden||weights_.logit_output)throw std::invalid_argument("logit adapter topology mismatch");if(config_.answerability_head){if(cross_modes.contains(config_.answerability_mode)){if(!adapters_.answerability)throw std::invalid_argument("cross answerability verifier is missing");}else{if(!weights_.pooled_answerability)throw std::invalid_argument("pooled answerability weights are missing");const auto& p=*weights_.pooled_answerability;norm_shape(p.norm,config_.world_dim*4+2);linear_shape(p.hidden,config_.world_dim*4+2,config_.world_dim);linear_shape(p.output,config_.world_dim,config_.answerability_classes);}}if(weights_.epistemic_memory)linear_shape(*weights_.epistemic_memory,config_.answerability_classes,c.retriever_dim,false);}
+
+MosaicOmniTextSourceOutput MosaicOmniTextPipeline::prepare_text_source(
+    const MosaicOmniTextSourceInputs& input) const {
+    auto encoded = text_core_->encode_unified_source(input.world_input_ids);
+    auto text_world = linear(
+        encoded.states, weights_.text_to_world, config_.world_dim);
+    if (input.text_only && weights_.text_only_to_world) {
+        text_world = add(
+            text_world,
+            linear(encoded.states, *weights_.text_only_to_world,
+                   config_.world_dim));
+    }
+
+    const auto patch_shape = encoded.patch_mask.shape();
+    if (patch_shape.size() != 2) {
+        throw std::invalid_argument("encoded text patch mask must have rank 2");
+    }
+    const auto batch = static_cast<std::size_t>(patch_shape[0]);
+    const auto patches = static_cast<std::size_t>(patch_shape[1]);
+    std::vector<std::uint8_t> mask_values(batch * (patches + 1));
+    for (std::size_t row = 0; row < batch; ++row) {
+        mask_values[row * (patches + 1)] = 1;
+        std::copy_n(
+            encoded.patch_mask.values().begin() +
+                static_cast<std::ptrdiff_t>(row * patches),
+            patches,
+            mask_values.begin() +
+                static_cast<std::ptrdiff_t>(row * (patches + 1) + 1));
+    }
+    BooleanMask source_mask(
+        {static_cast<std::uint64_t>(batch),
+         static_cast<std::uint64_t>(patches + 1)},
+        std::move(mask_values));
+    auto retrieval_summary = masked_mean(text_world, source_mask);
+
+    const auto shape = text_world.shape();
+    const auto rows = text_world.values().size() / config_.world_dim;
+    std::vector<double> token_values(text_world.values().begin(),
+                                     text_world.values().end());
+    for (std::size_t row = 0; row < rows; ++row) {
+        for (std::size_t dimension = 0; dimension < config_.world_dim;
+             ++dimension) {
+            token_values[row * config_.world_dim + dimension] +=
+                weights_.text_modality_embedding[dimension];
+        }
+    }
+    Tensor source_tokens(
+        text_world.dtype(), {shape.begin(), shape.end()},
+        std::move(token_values), std::string(text_world.device()));
+    return {
+        std::move(encoded.states),
+        std::move(text_world),
+        std::move(source_tokens),
+        std::move(source_mask),
+        std::move(retrieval_summary),
+        "text",
+    };
+}
 
 MosaicOmniTextPipelineOutput MosaicOmniTextPipeline::forward(const MosaicOmniTextPipelineInputs& in) const {
     const auto batch=in.input_ids.size();rectangular(in.input_ids,batch,"input_ids");const auto& world_ids=in.world_input_ids.empty()?in.input_ids:in.world_input_ids;rectangular(world_ids,batch,"world_input_ids");if(in.question_input_ids)rectangular(*in.question_input_ids,batch,"question_input_ids");

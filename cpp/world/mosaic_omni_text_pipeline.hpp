@@ -18,6 +18,7 @@ struct PooledAnswerabilityWeights final {
 };
 struct MosaicOmniTextPipelineWeights final {
     TextAdapterLinearWeights text_to_world, world_to_text_memory;
+    std::vector<double> text_modality_embedding;
     std::optional<TextAdapterLinearWeights> text_only_to_world;
     std::optional<TextAdapterLinearWeights> text_only_world_to_text_memory;
     std::optional<TextAdapterLinearWeights> logit_hidden, logit_output;
@@ -31,6 +32,18 @@ struct MosaicOmniTextPipelineConfig final {
     std::string answerability_mode{"pooled"};
     bool answerability_head{}, text_only{true};
     void validate(const MosaicTextConfig&) const;
+};
+struct MosaicOmniTextSourceInputs final {
+    MosaicTokenBatch world_input_ids;
+    bool text_only{};
+};
+struct MosaicOmniTextSourceOutput final {
+    Tensor text_states;
+    Tensor text_world;
+    Tensor source_tokens;
+    BooleanMask source_mask;
+    Tensor retrieval_summary;
+    std::string modality;
 };
 struct MosaicOmniTextPipelineInputs final {
     MosaicTokenBatch input_ids;
@@ -61,6 +74,8 @@ class MosaicOmniTextPipeline final {
 public:
     MosaicOmniTextPipeline(const MosaicTextLM&, MosaicOmniTextPipelineConfig,
         MosaicOmniTextPipelineWeights, MosaicOmniTextPipelineAdapters = {});
+    [[nodiscard]] MosaicOmniTextSourceOutput prepare_text_source(
+        const MosaicOmniTextSourceInputs&) const;
     [[nodiscard]] MosaicOmniTextPipelineOutput forward(
         const MosaicOmniTextPipelineInputs&) const;
 private:
