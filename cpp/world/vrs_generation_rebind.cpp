@@ -3,6 +3,7 @@
 #include "swegca_architecture/sha256.hpp"
 #include "world/atom_hot_index.hpp"
 #include "world/premise_hot_index.hpp"
+#include "world/paper_hot_causal_ablation.hpp"
 #include "world/semantic_vrs_ingress.hpp"
 
 #include <algorithm>
@@ -78,6 +79,7 @@ VrsGenerationBoundMemoryIndex::VrsGenerationBoundMemoryIndex(
         episode_count_ += source->episode_count();
         ordinary_ids.emplace_back(std::string(source->snapshot_id()));
     }
+    ordinary_router_ = std::make_unique<OrdinarySourceRouter>(ordinary_sources);
     snapshot_id_ = digest(semantic_canonical_json(JsonValue::Object{
         {"effective_vrs_snapshot_id", effective_vrs_snapshot_id},
         {"ordinary_source_snapshot_ids", std::move(ordinary_ids)},
@@ -94,11 +96,13 @@ VrsGenerationBoundMemoryIndex::outcome_counts() const noexcept { return outcome_
 const MemoryEpisode& VrsGenerationBoundMemoryIndex::episode(
     const std::string_view identifier) const {
     if (is_vrs_identifier(identifier)) return vrs_source->episode(identifier);
-    for (const auto& source : ordinary_sources) {
-        try { return source->episode(identifier); }
-        catch (const std::out_of_range&) {}
-    }
-    throw std::out_of_range(std::string(identifier));
+    return ordinary_router_->episode(identifier);
+}
+
+bool VrsGenerationBoundMemoryIndex::contains_episode(
+    const std::string_view identifier) const {
+    if (is_vrs_identifier(identifier)) return vrs_source->contains_episode(identifier);
+    return !ordinary_router_->known_sources_for(identifier).empty();
 }
 
 std::vector<std::string> VrsGenerationBoundMemoryIndex::episode_ids_for_cue(
@@ -221,6 +225,52 @@ ReboundFullCurrentVrs rebind_full_current_vrs_source(
     receipt.ordinary_source_count = ordinary.size();
     receipt.ordinary_sources_shared_by_identity = shared;
     return {std::move(rebound), std::move(receipt)};
+}
+
+BlindPilotGateReceipt validate_blind_pilot_gate(
+    const std::vector<CausalEvaluationReceipt>& receipts,
+    const std::size_t minimum_units) {
+    if (!minimum_units || receipts.size() < minimum_units)
+        throw std::invalid_argument("blind pilot has too few completed units");
+    const auto& pair_id = receipts.front().pair_snapshot_id;
+    const auto& memory_id = receipts.front().memory_snapshot_id;
+    BlindPilotGateReceipt result;
+    result.completed_unit_count = receipts.size();
+    result.pair_snapshot_id = pair_id;
+    result.memory_snapshot_id = memory_id;
+    for (const auto& row : receipts) {
+        if (row.pair_snapshot_id != pair_id || row.memory_snapshot_id != memory_id)
+            throw std::invalid_argument("blind pilot crossed an immutable snapshot generation");
+        if (row.arms.size() != causal_arms.size())
+            throw std::invalid_argument("blind pilot arm order changed");
+        std::vector<std::string> recalled;
+        for (const auto& candidate : row.arms.front().memory_activation.recall.candidates)
+            recalled.push_back(candidate.episode_id);
+        if (recalled.empty())
+            throw std::invalid_argument("blind pilot did not preserve nonempty identical recall");
+        for (std::size_t i = 0; i < row.arms.size(); ++i) {
+            if (row.arms[i].arm != causal_arms[i])
+                throw std::invalid_argument("blind pilot arm order changed");
+            std::vector<std::string> candidate_ids;
+            for (const auto& candidate : row.arms[i].memory_activation.recall.candidates)
+                candidate_ids.push_back(candidate.episode_id);
+            if (candidate_ids != recalled)
+                throw std::invalid_argument("blind pilot did not preserve nonempty identical recall");
+        }
+        const auto& current = row.arms[0];
+        const auto& frozen = row.arms[1];
+        const auto& no_vrs = row.arms[2];
+        if (current.decision == frozen.decision || current.decision == no_vrs.decision ||
+            no_vrs.decision != "abstain" || no_vrs.decisive ||
+            no_vrs.decision_rule_invoked || !current.effective_vrs_snapshot_id ||
+            !frozen.effective_vrs_snapshot_id ||
+            *current.effective_vrs_snapshot_id == *frozen.effective_vrs_snapshot_id ||
+            row.full_current_rebuilds_this_request || row.cold_bootstrap_count != 1)
+            throw std::invalid_argument("blind pilot did not identify a causal VRS-path change");
+        result.unit_receipts.push_back({row.request_sequence, std::move(recalled),
+            current.decision, frozen.decision, no_vrs.decision});
+    }
+    return result;
 }
 
 }  // namespace swegca::world
