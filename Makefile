@@ -44,6 +44,7 @@ WORLD_SOURCES := cpp/world/cognitive_state.cpp cpp/world/cognitive_event.cpp \
 	cpp/world/semantic_response_error.cpp \
 	cpp/world/offline_semantic_batch.cpp \
 	cpp/world/semantic_local_provider.cpp \
+	cpp/world/configured_semantic_ingress.cpp \
 	cpp/world/syllogism.cpp \
 	cpp/world/syllogism_sources.cpp \
 	cpp/world/utterance_receipt.cpp \
