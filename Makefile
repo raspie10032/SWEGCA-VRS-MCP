@@ -25,6 +25,7 @@ WORLD_SOURCES := cpp/world/cognitive_state.cpp cpp/world/cognitive_event.cpp \
 	cpp/world/vrs_event_kernel.cpp \
 	cpp/world/vrs_array_blocks.cpp \
 	cpp/world/lossless_blocks.cpp \
+	cpp/world/lossless_float_tuple.cpp \
 	cpp/world/vrs_event_storage.cpp \
 	cpp/world/vrs_event_delta.cpp \
 	cpp/world/vrs_edge_address_index.cpp \
