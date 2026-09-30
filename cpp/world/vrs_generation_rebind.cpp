@@ -1,6 +1,8 @@
 #include "world/vrs_generation_rebind.hpp"
 
 #include "swegca_architecture/sha256.hpp"
+#include "world/atom_hot_index.hpp"
+#include "world/premise_hot_index.hpp"
 #include "world/semantic_vrs_ingress.hpp"
 
 #include <algorithm>
@@ -153,6 +155,34 @@ ReboundFullCurrentVrs rebind_full_current_vrs_source(
     std::shared_ptr<const VrsHotMemorySource> replacement,
     std::string report_sha256) {
     if (!replacement) throw std::invalid_argument("replacement VRS source required");
+    if (const auto premises =
+            std::dynamic_pointer_cast<const PremiseHotMemoryIndex>(pair.memory)) {
+        FullCurrentMemoryVrsSnapshot plain_pair(premises->base, pair.vrs_snapshot_id);
+        auto plain = rebind_full_current_vrs_source(
+            plain_pair, replacement, report_sha256);
+        auto [wrapped, invalidated] = premises->after_vrs_rebind(plain.pair.memory);
+        FullCurrentMemoryVrsSnapshot rebound(wrapped, plain.pair.vrs_snapshot_id);
+        plain.receipt.replacement_pair_snapshot_id = rebound.snapshot_id;
+        plain.receipt.replacement_memory_snapshot_id = std::string(wrapped->snapshot_id());
+        plain.receipt.premise_index_rebound = true;
+        plain.receipt.expired_virtual_premise_source_count = invalidated;
+        plain.receipt.ordinary_premise_objects_shared = true;
+        return {std::move(rebound), std::move(plain.receipt)};
+    }
+    if (const auto atoms =
+            std::dynamic_pointer_cast<const AtomHotMemoryIndex>(pair.memory)) {
+        FullCurrentMemoryVrsSnapshot plain_pair(atoms->base, pair.vrs_snapshot_id);
+        auto plain = rebind_full_current_vrs_source(
+            plain_pair, replacement, report_sha256);
+        auto [wrapped, invalidated] = atoms->after_vrs_rebind(plain.pair.memory);
+        FullCurrentMemoryVrsSnapshot rebound(wrapped, plain.pair.vrs_snapshot_id);
+        plain.receipt.replacement_pair_snapshot_id = rebound.snapshot_id;
+        plain.receipt.replacement_memory_snapshot_id = std::string(wrapped->snapshot_id());
+        plain.receipt.atom_sidecar_rebound = true;
+        plain.receipt.expired_virtual_sidecar_parent_count = invalidated;
+        plain.receipt.ordinary_atom_sidecars_shared = true;
+        return {std::move(rebound), std::move(plain.receipt)};
+    }
     std::ranges::transform(report_sha256, report_sha256.begin(),
         [](const unsigned char c) { return static_cast<char>(std::tolower(c)); });
     if (!digest_id(report_sha256))

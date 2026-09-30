@@ -65,6 +65,12 @@ struct VrsGenerationRebindReceipt final {
     bool model_update_authority{};
     bool distribution_authority{};
     bool p3_authority{};
+    bool atom_sidecar_rebound{};
+    std::size_t expired_virtual_sidecar_parent_count{};
+    bool ordinary_atom_sidecars_shared{};
+    bool premise_index_rebound{};
+    std::size_t expired_virtual_premise_source_count{};
+    bool ordinary_premise_objects_shared{};
 };
 
 struct ReboundFullCurrentVrs final {
