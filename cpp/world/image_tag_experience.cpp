@@ -8,6 +8,7 @@
 #include <charconv>
 #include <cmath>
 #include <limits>
+#include <map>
 #include <set>
 #include <stdexcept>
 #include <string>
@@ -547,6 +548,259 @@ void validate_image_tag_experience(const JsonValue& episode) {
             }
         }
     }
+}
+
+void validate_media_observation(
+    const SemanticMemoryStep& step, const std::vector<std::string>& cues) {
+    const auto& observation = object(&step.observation,
+        "media observation/authority boundary changed");
+    const auto* schema = find(observation, "schema_version");
+    const auto* outcome = &step.outcome;
+    const auto* query = find(observation, "observation_query");
+    const auto query_text = text(query) ? std::string(query->as_string()) : std::string{};
+    const bool query_present = std::ranges::find(cues, query_text) != cues.end();
+    const bool query_kind = query_text.starts_with("steam-game:") ||
+        query_text.starts_with("authored-source:") ||
+        query_text.starts_with("image-source:");
+    const auto forbidden = [](const std::string_view cue) {
+        return cue.starts_with("actual-relation:") ||
+               cue.starts_with("phase7-temporal-profile-v2:");
+    };
+    if (!text(schema) || schema->as_string() != authored_media_observation_schema ||
+        step.phase != "observation_attempt_outcome" ||
+        (*outcome != "pending" && *outcome != "uncertain" && *outcome != "failure") ||
+        !exact_bool(find(observation, "semantics_verified"), false) ||
+        !exact_bool(find(observation, "growth_claimed"), false) ||
+        !exact_bool(find(observation, "translation_variants_are_new_events"), false) ||
+        !query_present || !query_kind || std::ranges::any_of(cues, forbidden) ||
+        std::ranges::any_of(step.relations, forbidden))
+        throw std::invalid_argument("media observation/authority boundary changed");
+    for (const auto required : {"source_id", "source_revision_receipt",
+                                "source_item_id", "source_family", "task_family"})
+        if (!text(find(observation, required)))
+            throw std::invalid_argument("media source binding incomplete");
+    if (!is_sha256(find(observation, "source_revision_receipt")->as_string()))
+        throw std::invalid_argument(
+            "media observation revision must be content addressed");
+    const auto* kind_value = find(observation, "media_kind");
+    const std::string kind = text(kind_value)
+        ? std::string(kind_value->as_string()) : std::string{};
+    const auto& content = object(find(observation, "content"),
+        "actual observed media content required");
+    if (content.empty())
+        throw std::invalid_argument("actual observed media content required");
+    const auto source_id = std::string(find(observation, "source_id")->as_string());
+    if (query_text.starts_with("image-source:")) {
+        if ((kind != "image_tag_observation" && kind != "image_caption_observation" &&
+             kind != "source_exception") || query_text != "image-source:" + source_id ||
+            !text(find(observation, "source_origin")) ||
+            find(observation, "source_origin")->as_string() != "user_authorized_local_image" ||
+            integer(find(observation, "actual_world_outcomes_claimed"), "image provenance") != 0 ||
+            integer(find(observation, "source_observation_count"), "image provenance") != 1 ||
+            !exact_bool(find(observation, "generated_views_are_new_events"), false) ||
+            integer(find(observation, "observed_at_unix_ns"), "image provenance") <= 0)
+            throw std::invalid_argument("image observation provenance boundary changed");
+    }
+    if (query_text.starts_with("authored-source:")) {
+        static const std::set<std::string, std::less<>> source_types{
+            "codex_session_record", "user_statement", "public_source_paraphrase",
+            "public_source_text", "codex_authored_teaching", "model_authored_teaching"};
+        static const std::set<std::string, std::less<>> origins{
+            "conversation", "public_web", "codex", "model_specialist"};
+        const auto* source_type_value = find(observation, "source_type");
+        const auto* source_origin_value = find(observation, "source_origin");
+        const auto source_type = text(source_type_value)
+            ? std::string(source_type_value->as_string()) : std::string{};
+        const auto source_origin = text(source_origin_value)
+            ? std::string(source_origin_value->as_string()) : std::string{};
+        if (kind != "authored_text" || query_text != "authored-source:" + source_id ||
+            !source_types.contains(source_type) || !origins.contains(source_origin) ||
+            integer(find(observation, "actual_world_outcomes_claimed"), "authored provenance") != 0 ||
+            integer(find(observation, "source_observation_count"), "authored provenance") != 1 ||
+            !exact_bool(find(observation, "synthetic_examples_count_as_new_experience"), false) ||
+            integer(find(observation, "observed_at_unix_ns"), "authored provenance") <= 0)
+            throw std::invalid_argument("authored explanation provenance boundary changed");
+        const std::map<std::string, std::string, std::less<>> expected{
+            {"user_statement", "conversation"}, {"public_source_paraphrase", "public_web"},
+            {"public_source_text", "public_web"}, {"codex_session_record", "codex"},
+            {"codex_authored_teaching", "codex"},
+            {"model_authored_teaching", "model_specialist"}};
+        if (expected.at(source_type) != source_origin)
+            throw std::invalid_argument("authored explanation source misclassified");
+        if (source_type == "model_authored_teaching") {
+            const auto* provenance_value = find(content, "model_provenance");
+            const auto& provenance = object(provenance_value,
+                "model teaching requires explicit non-authoritative provenance");
+            if (!text(find(provenance, "model")) || !text(find(provenance, "request_id")) ||
+                !text(find(provenance, "receipt_sha256")) ||
+                !is_sha256(find(provenance, "receipt_sha256")->as_string()) ||
+                !exact_bool(find(provenance, "proposal_only"), true) ||
+                !exact_bool(find(provenance, "examples_are_synthetic"), true))
+                throw std::invalid_argument(
+                    "model teaching requires explicit non-authoritative provenance");
+        }
+        if (source_type == "public_source_paraphrase" ||
+            source_type == "public_source_text") {
+            const auto* identity = find(observation, "source_identity");
+            if (!text(identity) || !identity->as_string().starts_with("https://") ||
+                identity->as_string().size() <= 8)
+                throw std::invalid_argument("public explanation requires actual source URL");
+        }
+        if (source_type == "public_source_text" || source_type == "codex_session_record") {
+            const auto& provenance = object(find(content, "source_document"),
+                "licensed original text document binding required");
+            if (!truthy(find(provenance, "license")) ||
+                !truthy(find(provenance, "identity")) ||
+                !text(find(provenance, "sha256")) ||
+                !is_sha256(find(provenance, "sha256")->as_string()) ||
+                !exact_bool(find(provenance,
+                    "fragments_are_independent_outcomes"), false))
+                throw std::invalid_argument(
+                    "licensed original text document binding required");
+        }
+    }
+    const auto dimensions = [&](const char* key, const char* error) {
+        const auto& values = array(find(content, key), error);
+        if (values.size() != 2) throw std::invalid_argument(error);
+        const auto width = integer(&values[0], error);
+        const auto height = integer(&values[1], error);
+        if (width <= 0 || height <= 0) throw std::invalid_argument(error);
+        return std::pair{width, height};
+    };
+    if (kind == "authored_text") {
+        const auto& variants = array(find(content, "variants"),
+            "authored text variants required");
+        if (variants.empty()) throw std::invalid_argument("authored text variants required");
+        for (const auto& value : variants) {
+            const auto& row = object(&value,
+                "text content/language/source binding incomplete");
+            if (!text(find(row, "text")) || !truthy(find(row, "source_address")) ||
+                !truthy(find(row, "language")) || !text(find(row, "source_sha256")) ||
+                !is_sha256(find(row, "source_sha256")->as_string()))
+                throw std::invalid_argument(
+                    "text content/language/source binding incomplete");
+        }
+    } else if (kind == "image_caption_observation") {
+        if (!query_text.starts_with("image-source:") ||
+            (step.outcome != "pending" && step.outcome != "uncertain") ||
+            !text(find(content, "schema")) ||
+            find(content, "schema")->as_string() != "rozephine-image-caption-proposal-v1" ||
+            !exact_bool(find(content, "raw_pixels_sent"), true) ||
+            !exact_bool(find(content, "proposal_only"), true) ||
+            !exact_bool(find(content, "semantics_verified"), false) ||
+            integer(find(content, "new_independent_observation_count"), "caption") != 0 ||
+            !exact_bool(find(content, "same_source_reobservation"), true) ||
+            !exact_bool(find(content, "counts_as_growth"), false) ||
+            !truthy(find(content, "source_address")) || !truthy(find(content, "model")))
+            throw std::invalid_argument(
+                "image caption must remain source-bound pixel proposal");
+        for (const auto key : {"source_sha256", "wire_image_sha256", "request_sha256",
+                               "model_sha256", "projector_sha256"})
+            if (!text(find(content, key)) || !is_sha256(find(content, key)->as_string()))
+                throw std::invalid_argument("image caption digest provenance incomplete");
+        const auto [native_width, native_height] = dimensions(
+            "oriented_dimensions", "image caption high-resolution geometry changed");
+        const auto [delivered_width, delivered_height] = dimensions(
+            "delivered_dimensions", "image caption high-resolution geometry changed");
+        const auto native_ratio = static_cast<double>(native_width) / native_height;
+        const auto delivered_ratio = static_cast<double>(delivered_width) / delivered_height;
+        const auto native_pixels = static_cast<long double>(native_width) * native_height;
+        const auto delivered_pixels = static_cast<long double>(delivered_width) * delivered_height;
+        if (std::abs(delivered_ratio - native_ratio) >
+                .005 * std::max(1.0, native_ratio) || delivered_pixels > 1'005'000 ||
+            (native_pixels > 1'000'000 && delivered_pixels < 995'000))
+            throw std::invalid_argument(
+                "image caption high-resolution geometry changed");
+        const auto& proposal = object(find(content, "proposal"),
+            "image caption bounded interpretation required");
+        const std::set<std::string, std::less<>> expected{
+            "visual_summary", "tag_agreement", "uncertainty"};
+        if (proposal.size() != expected.size() ||
+            std::ranges::any_of(expected, [&](const auto& key) {
+                const auto* value = find(proposal, key);
+                return !value || !std::holds_alternative<std::string>(value->storage()) ||
+                       value->as_string().size() > 4096;
+            }) || !text(find(proposal, "visual_summary")))
+            throw std::invalid_argument(
+                "image caption bounded interpretation required");
+        if (const auto* tags = find(content, "tags")) {
+            for (const auto& value : array(tags, "caption tags")) {
+                const auto& tag = object(&value, "caption tags");
+                const auto category = integer(find(tag, "category"), "caption tags");
+                const auto score = number(find(tag, "score"), "caption tags");
+                if (!truthy(find(tag, "name")) ||
+                    (category != 0 && category != 4 && category != 9) ||
+                    !std::isfinite(score) || score < 0 || score > 1)
+                    throw std::invalid_argument(
+                        "image caption tag proposal provenance changed");
+            }
+        }
+    } else if (kind == "image_tag_observation") {
+        JsonValue::Array cue_values;
+        for (const auto& cue : cues) cue_values.emplace_back(cue);
+        JsonValue::Array relation_values;
+        for (const auto& relation : step.relations) relation_values.emplace_back(relation);
+        JsonValue envelope(JsonValue::Object{
+            {"cues", std::move(cue_values)},
+            {"step", JsonValue::Object{{"phase", step.phase},
+                {"observation", step.observation}, {"relations", std::move(relation_values)},
+                {"outcome", step.outcome}}}});
+        validate_image_tag_experience(envelope);
+    } else if (kind == "audio_waveform") {
+        const auto& spectrum = array(find(content, "spectrum_probe_log16"),
+            "complete-duration acoustic observation required");
+        if (!exact_bool(find(content, "full_duration_decoded"), true) ||
+            number(find(content, "frames"), "audio frames") <= 0 ||
+            number(find(content, "sample_rate"), "audio rate") <= 0 ||
+            spectrum.size() != 16 || !truthy(find(content, "aliases")) ||
+            step.outcome != "pending")
+            throw std::invalid_argument(
+                "complete-duration acoustic observation required");
+        for (const auto& value : spectrum)
+            if (!std::isfinite(number(&value, "nonfinite acoustic features")))
+                throw std::invalid_argument("nonfinite acoustic features");
+        if (!std::isfinite(number(find(content, "rms"), "nonfinite acoustic features")) ||
+            !std::isfinite(number(find(content, "peak"), "nonfinite acoustic features")))
+            throw std::invalid_argument("nonfinite acoustic features");
+    } else if (kind == "source_exception") {
+        if (!truthy(find(content, "error")) ||
+            (step.outcome != "failure" && step.outcome != "uncertain"))
+            throw std::invalid_argument(
+                "source exception must retain unresolved evidence");
+    } else throw std::invalid_argument("unsupported generic media kind");
+}
+
+std::vector<std::string> media_publication_queries(
+    const std::vector<SemanticSourceEpisode>& episodes) {
+    std::vector<std::string> result;
+    std::set<std::string, std::less<>> seen;
+    for (const auto& episode : episodes) {
+        if (episode.steps.empty())
+            throw std::invalid_argument("legacy outcome lacks temporal profile cue");
+        const auto& observation = episode.steps.front().observation;
+        std::string query;
+        if (observation.is_object()) {
+            const auto* schema = find(observation.as_object(), "schema_version");
+            if (text(schema) && schema->as_string() == authored_media_observation_schema) {
+                const auto* query_value = find(observation.as_object(), "observation_query");
+                if (!text(query_value) ||
+                    std::ranges::find(episode.cues, query_value->as_string()) == episode.cues.end())
+                    throw std::invalid_argument("media query absent from episode");
+                query = query_value->as_string();
+            }
+        }
+        if (query.empty()) {
+            const auto profile = std::ranges::find_if(episode.cues, [](const auto& cue) {
+                return cue.starts_with("phase7-temporal-profile-v2:");
+            });
+            if (profile == episode.cues.end())
+                throw std::invalid_argument("legacy outcome lacks temporal profile cue");
+            query = *profile;
+        }
+        if (seen.insert(query).second) result.push_back(std::move(query));
+    }
+    if (result.empty()) throw std::invalid_argument("empty observation wave");
+    return result;
 }
 
 }  // namespace swegca::world

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "world/cognitive_state.hpp"
+#include "world/semantic_vrs_ingress.hpp"
 
 #include <cstdint>
 #include <string_view>
@@ -21,9 +22,14 @@ inline constexpr std::string_view authored_media_observation_schema =
     JsonValue::Object content, std::string_view source_family,
     std::int64_t observed_at_unix_ns);
 
-// Validate the image_tag_observation subset used by the pinned constructor.
-// This is deliberately not a claim of parity with every media kind accepted
-// by mosaic_media_observation.py.
+// Validate the image_tag_observation envelope emitted by the pinned constructor.
 void validate_image_tag_experience(const JsonValue& episode);
+
+// Complete source media boundary used by authored text, image caption/tag,
+// acoustic and source-exception episodes.
+void validate_media_observation(
+    const SemanticMemoryStep& step, const std::vector<std::string>& cues);
+[[nodiscard]] std::vector<std::string> media_publication_queries(
+    const std::vector<SemanticSourceEpisode>& episodes);
 
 }  // namespace swegca::world
