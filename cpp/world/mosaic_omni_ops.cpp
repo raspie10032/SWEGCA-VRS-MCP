@@ -263,6 +263,90 @@ std::pair<Tensor, Tensor> cross_modal_late_summaries(
             tensor(video_tokens.dtype(), {vs[0], vs[2]}, std::move(video_out))};
 }
 
+void CrossModalQuerySummaryWeights::validate(const std::size_t dimension) const {
+    if (!dimension || score_weight.size() != dimension)
+        throw std::invalid_argument("cross-modal query score weight shape mismatch");
+}
+
+Tensor cross_modal_query_summary(
+    const Tensor& tokens, const BooleanMask& mask,
+    const CrossModalQuerySummaryWeights& weights) {
+    require_storage(tokens); const auto shape = tokens.shape();
+    if (shape.size() != 3 || mask.shape().size() != 2 ||
+        mask.shape()[0] != shape[0] || mask.shape()[1] != shape[1])
+        throw std::invalid_argument("query summary expects [B,T,D] tokens and [B,T] mask");
+    const auto batch = static_cast<std::size_t>(shape[0]);
+    const auto count_ = static_cast<std::size_t>(shape[1]);
+    const auto dim = static_cast<std::size_t>(shape[2]); weights.validate(dim);
+    std::vector<double> output(batch * dim);
+    for (std::size_t b = 0; b < batch; ++b) {
+        std::vector<std::vector<double>> normalized(count_);
+        std::vector<double> logits(count_, -std::numeric_limits<double>::infinity());
+        bool active = false;
+        for (std::size_t t = 0; t < count_; ++t) {
+            normalized[t] = unit(tokens.values().subspan((b * count_ + t) * dim, dim));
+            if (!mask.at(b, t)) continue;
+            active = true; logits[t] = weights.score_bias;
+            for (std::size_t d = 0; d < dim; ++d)
+                logits[t] += normalized[t][d] * weights.score_weight[d];
+        }
+        if (!active) throw std::invalid_argument("query summary requires at least one active token");
+        const auto probabilities = softmax(logits);
+        for (std::size_t t = 0; t < count_; ++t) for (std::size_t d = 0; d < dim; ++d)
+            output[b * dim + d] += normalized[t][d] * probabilities[t];
+    }
+    return tensor(tokens.dtype(), {shape[0], shape[2]}, std::move(output));
+}
+
+void CrossModalSequenceSummaryWeights::validate(const std::size_t dimension) const {
+    const auto matrix = 3 * dimension * dimension;
+    if (!dimension || input_weight.size() != matrix || recurrent_weight.size() != matrix ||
+        input_bias.size() != 3 * dimension || recurrent_bias.size() != 3 * dimension)
+        throw std::invalid_argument("cross-modal sequence GRU weight shape mismatch");
+}
+
+Tensor cross_modal_sequence_summary(
+    const Tensor& tokens, const BooleanMask& mask,
+    const CrossModalSequenceSummaryWeights& weights) {
+    require_storage(tokens); const auto shape = tokens.shape();
+    if (shape.size() != 3 || mask.shape().size() != 2 ||
+        mask.shape()[0] != shape[0] || mask.shape()[1] != shape[1])
+        throw std::invalid_argument("sequence summary expects [B,T,D] tokens and [B,T] mask");
+    const auto batch = static_cast<std::size_t>(shape[0]);
+    const auto count_ = static_cast<std::size_t>(shape[1]);
+    const auto dim = static_cast<std::size_t>(shape[2]); weights.validate(dim);
+    std::vector<double> output(batch * dim);
+    const auto sigmoid = [](const double value) { return 1.0 / (1.0 + std::exp(-value)); };
+    for (std::size_t b = 0; b < batch; ++b) {
+        std::size_t active = 0; for (std::size_t t = 0; t < count_; ++t) active += mask.at(b, t);
+        if (!active) throw std::invalid_argument("sequence summary requires at least one active token");
+        std::vector<double> hidden(dim), next(dim), input_gates(3 * dim), recurrent_gates(3 * dim);
+        for (std::size_t t = 0; t < count_; ++t) {
+            const auto input = unit(tokens.values().subspan((b * count_ + t) * dim, dim));
+            for (std::size_t gate = 0; gate < 3 * dim; ++gate) {
+                input_gates[gate] = weights.input_bias[gate];
+                recurrent_gates[gate] = weights.recurrent_bias[gate];
+                for (std::size_t d = 0; d < dim; ++d) {
+                    input_gates[gate] += input[d] * weights.input_weight[gate * dim + d];
+                    recurrent_gates[gate] += hidden[d] * weights.recurrent_weight[gate * dim + d];
+                }
+            }
+            for (std::size_t d = 0; d < dim; ++d) {
+                const auto reset = sigmoid(input_gates[d] + recurrent_gates[d]);
+                const auto update = sigmoid(input_gates[dim + d] + recurrent_gates[dim + d]);
+                const auto candidate = std::tanh(input_gates[2 * dim + d] + reset * recurrent_gates[2 * dim + d]);
+                next[d] = candidate + update * (hidden[d] - candidate);
+            }
+            hidden.swap(next);
+            if (t + 1 == active) {
+                const auto normalized = unit(hidden);
+                std::copy(normalized.begin(), normalized.end(), output.begin() + b * dim);
+            }
+        }
+    }
+    return tensor(tokens.dtype(), {shape[0], shape[2]}, std::move(output));
+}
+
 Tensor cross_modal_last_summary(const Tensor& tokens, const BooleanMask& mask) {
     require_storage(tokens); const auto shape = tokens.shape();
     if (shape.size() != 3 || mask.shape().size() != 2 || mask.shape()[0] != shape[0] || mask.shape()[1] != shape[1])

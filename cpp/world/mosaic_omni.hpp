@@ -158,6 +158,22 @@ inline constexpr std::array<std::size_t, 3> answerability_ngram_widths{4, 8, 12}
 [[nodiscard]] std::pair<Tensor, Tensor> cross_modal_late_summaries(
     const Tensor& text_tokens, const BooleanMask& text_mask,
     const Tensor& video_tokens);
+struct CrossModalQuerySummaryWeights final {
+    std::vector<float> score_weight;
+    float score_bias{};
+    void validate(std::size_t dimension) const;
+};
+[[nodiscard]] Tensor cross_modal_query_summary(
+    const Tensor& tokens, const BooleanMask& mask,
+    const CrossModalQuerySummaryWeights& weights);
+struct CrossModalSequenceSummaryWeights final {
+    std::vector<float> input_weight, recurrent_weight;
+    std::vector<float> input_bias, recurrent_bias;
+    void validate(std::size_t dimension) const;
+};
+[[nodiscard]] Tensor cross_modal_sequence_summary(
+    const Tensor& tokens, const BooleanMask& mask,
+    const CrossModalSequenceSummaryWeights& weights);
 [[nodiscard]] Tensor cross_modal_last_summary(
     const Tensor& tokens, const BooleanMask& mask);
 [[nodiscard]] Tensor spatial_temporal_moment(
