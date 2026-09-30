@@ -310,6 +310,93 @@ Tensor spatial_temporal_moment(const Tensor& feature_map, const std::size_t batc
     return tensor(feature_map.dtype(), {batch}, std::move(output));
 }
 
+Tensor spatial_event_features(const Tensor& frame_grid, const Tensor& attention) {
+    require_storage(frame_grid); require_storage(attention);
+    const auto fs = frame_grid.shape(), as = attention.shape();
+    if (fs.size() != 4 || as.size() != 5)
+        throw std::invalid_argument("spatial event inputs must be [B,S,F,D]/[B,S,F,H,W]");
+    if (fs[0] != as[0] || fs[1] != as[1] || fs[2] != as[2] || fs[3] < 3)
+        throw std::invalid_argument("spatial event inputs must share batch/slots/frames and have D>=3");
+    const auto batch = static_cast<std::size_t>(fs[0]), slots = static_cast<std::size_t>(fs[1]);
+    const auto frames = static_cast<std::size_t>(fs[2]), dim = static_cast<std::size_t>(fs[3]);
+    const auto height = static_cast<std::size_t>(as[3]), width = static_cast<std::size_t>(as[4]);
+    std::vector<double> output(batch * slots * dim);
+    for (std::size_t b = 0; b < batch; ++b) for (std::size_t slot = 0; slot < slots; ++slot) {
+        std::vector<double> means(dim);
+        for (std::size_t frame = 0; frame < frames; ++frame) for (std::size_t d = 0; d < dim; ++d)
+            means[d] += frame_grid.values()[((b * slots + slot) * frames + frame) * dim + d] / frames;
+        double weighted_time = 0.0, activity_sum = 0.0;
+        for (std::size_t frame = 0; frame < frames; ++frame) {
+            double activity = 0.0; for (std::size_t d = 0; d < dim; ++d) {
+                const auto delta = frame_grid.values()[((b * slots + slot) * frames + frame) * dim + d] - means[d];
+                activity += delta * delta;
+            }
+            activity /= dim; const auto time = frames == 1 ? -1.0 : -1.0 + 2.0 * frame / (frames - 1);
+            weighted_time += activity * time; activity_sum += activity;
+        }
+        const auto event_time = weighted_time / std::max(activity_sum, 1.0e-6);
+        double position = 0.0;
+        for (std::size_t y = 0; y < height; ++y) for (std::size_t x = 0; x < width; ++x) {
+            const auto coordinate = width == 1 ? -1.0 : -1.0 + 2.0 * x / (width - 1);
+            position += attention.values()[(((b * slots + slot) * frames) * height + y) * width + x] * coordinate;
+        }
+        const auto base = (b * slots + slot) * dim;
+        output[base] = position; output[base + 1] = event_time; output[base + 2] = position * event_time;
+    }
+    return tensor(frame_grid.dtype(), {fs[0], fs[1], fs[3]}, std::move(output));
+}
+
+Tensor object_attention_trajectory(const Tensor& attention, const Tensor* match_logits) {
+    require_storage(attention); const auto shape = attention.shape();
+    if (shape.size() != 5 || !shape[0] || !shape[1] || !shape[2] || !shape[3] || !shape[4])
+        throw std::invalid_argument("object attention must be positive [B,S,F,H,W]");
+    const auto batch = static_cast<std::size_t>(shape[0]), slots = static_cast<std::size_t>(shape[1]);
+    const auto frames = static_cast<std::size_t>(shape[2]), height = static_cast<std::size_t>(shape[3]);
+    const auto width = static_cast<std::size_t>(shape[4]), pixels = height * width;
+    std::vector<double> positions(batch * slots * frames * 2), peak(batch * slots * frames), entropy(peak.size());
+    for (std::size_t b = 0; b < batch; ++b) for (std::size_t s = 0; s < slots; ++s)
+        for (std::size_t f = 0; f < frames; ++f) {
+            const auto base = ((b * slots + s) * frames + f) * pixels;
+            double denominator = 0.0; for (std::size_t i = 0; i < pixels; ++i) denominator += attention.values()[base + i];
+            denominator = std::max(denominator, 1.0e-6); double px = 0.0, py = 0.0, maximum = 0.0, disorder = 0.0;
+            for (std::size_t y = 0; y < height; ++y) for (std::size_t x = 0; x < width; ++x) {
+                const auto probability = attention.values()[base + y * width + x] / denominator;
+                maximum = std::max(maximum, probability);
+                disorder -= probability * std::log(std::max(probability, 1.0e-6));
+                px += probability * (width == 1 ? -1.0 : -1.0 + 2.0 * x / (width - 1));
+                py += probability * (height == 1 ? -1.0 : -1.0 + 2.0 * y / (height - 1));
+            }
+            const auto row = (b * slots + s) * frames + f;
+            positions[row * 2] = px; positions[row * 2 + 1] = py; peak[row] = maximum;
+            entropy[row] = disorder / std::log(static_cast<double>(std::max<std::size_t>(2, pixels)));
+        }
+    if (match_logits) {
+        const auto gated = confidence_gated_sequence(
+            tensor(attention.dtype(), {shape[0], shape[1], shape[2], 2}, std::move(positions)), *match_logits);
+        positions.assign(gated.values().begin(), gated.values().end());
+    }
+    std::vector<double> output(batch * slots * 12);
+    for (std::size_t b = 0; b < batch; ++b) for (std::size_t s = 0; s < slots; ++s) {
+        const auto sequence = (b * slots + s) * frames; const auto out = (b * slots + s) * 12;
+        for (std::size_t d = 0; d < 2; ++d) {
+            const auto first = positions[sequence * 2 + d], last = positions[(sequence + frames - 1) * 2 + d];
+            output[out + d] = first; output[out + 2 + d] = last; output[out + 4 + d] = last - first;
+            for (std::size_t f = 0; f < frames; ++f) {
+                const auto time = frames == 1 ? -1.0 : -1.0 + 2.0 * f / (frames - 1);
+                output[out + 6 + d] += positions[(sequence + f) * 2 + d] * time / frames;
+            }
+        }
+        for (std::size_t f = 0; f < frames; ++f) {
+            const auto time = frames == 1 ? -1.0 : -1.0 + 2.0 * f / (frames - 1);
+            output[out + 8] += peak[sequence + f] / frames;
+            output[out + 9] += peak[sequence + f] * time / frames;
+            output[out + 10] += entropy[sequence + f] / frames;
+            output[out + 11] += entropy[sequence + f] * time / frames;
+        }
+    }
+    return tensor(attention.dtype(), {shape[0], shape[1], 12}, std::move(output));
+}
+
 Tensor confidence_gated_sequence(const Tensor& values, const Tensor& match_logits) {
     require_storage(values); require_storage(match_logits); const auto shape = values.shape();
     if (shape.size() < 3 || match_logits.shape().size() + 1 != shape.size() ||
@@ -385,6 +472,118 @@ Tensor normalized_evidence_preference(const Tensor& weights, const double margin
         output[batch] = 2.0 * std::max(0.0, weights.values()[batch * 2 + 1] -
             weights.values()[batch * 2] - margin) / (1.0 - margin);
     return tensor(weights.dtype(), {shape[0]}, std::move(output));
+}
+
+DescriptorObjectMemoryOutput descriptor_object_memory(
+    const Tensor& attention, const Tensor& visibility_logits,
+    const bool use_temporal_relative_visibility) {
+    require_storage(attention); require_storage(visibility_logits); const auto shape = attention.shape();
+    if (shape.size() != 5 || shape[1] != 2 || visibility_logits.shape().size() != 3 ||
+        visibility_logits.shape()[0] != shape[0] || visibility_logits.shape()[1] != 2 ||
+        visibility_logits.shape()[2] != shape[2])
+        throw std::invalid_argument("object memory requires [B,2,F,H,W] and [B,2,F]");
+    const auto batch = static_cast<std::size_t>(shape[0]), frames = static_cast<std::size_t>(shape[2]);
+    const auto height = static_cast<std::size_t>(shape[3]), width = static_cast<std::size_t>(shape[4]);
+    const auto pixels = height * width;
+    std::vector<double> positions(batch * 2 * frames * 2);
+    for (std::size_t b = 0; b < batch; ++b) for (std::size_t role = 0; role < 2; ++role)
+        for (std::size_t f = 0; f < frames; ++f) {
+            const auto base = ((b * 2 + role) * frames + f) * pixels; double denominator = 0.0;
+            for (std::size_t i = 0; i < pixels; ++i) denominator += attention.values()[base + i];
+            denominator = std::max(denominator, 1.0e-6);
+            for (std::size_t y = 0; y < height; ++y) for (std::size_t x = 0; x < width; ++x) {
+                const auto probability = attention.values()[base + y * width + x] / denominator;
+                positions[((b * 2 + role) * frames + f) * 2] += probability *
+                    (width == 1 ? -1.0 : -1.0 + 2.0 * x / (width - 1));
+                positions[((b * 2 + role) * frames + f) * 2 + 1] += probability *
+                    (height == 1 ? -1.0 : -1.0 + 2.0 * y / (height - 1));
+            }
+        }
+    Tensor visibility = use_temporal_relative_visibility ? temporal_relative_visibility(visibility_logits)
+        : visibility_logits.clone();
+    std::vector<double> visible(visibility.values().size());
+    if (use_temporal_relative_visibility) std::copy(visibility.values().begin(), visibility.values().end(), visible.begin());
+    else std::ranges::transform(visibility.values(), visible.begin(), [](const double value) { return 1.0 / (1.0 + std::exp(-value)); });
+    std::vector<double> features(batch * 19), margins(batch);
+    for (std::size_t b = 0; b < batch; ++b) {
+        double anchors[2][2]{}, reads[2][2]{}, anchor_weight[2]{}, occluded[2]{}, returned[2]{};
+        for (std::size_t f = 0; f < frames; ++f) for (std::size_t role = 0; role < 2; ++role) {
+            const auto v = visible[(b * 2 + role) * frames + f];
+            const auto write = (1.0 - anchor_weight[role]) * v * (1.0 - occluded[role]);
+            for (std::size_t d = 0; d < 2; ++d)
+                anchors[role][d] += write * positions[((b * 2 + role) * frames + f) * 2 + d];
+            anchor_weight[role] += write;
+            const auto return_gate = occluded[role] * v * (1.0 - returned[role]);
+            for (std::size_t d = 0; d < 2; ++d)
+                reads[role][d] += return_gate * positions[((b * 2 + role) * frames + f) * 2 + d];
+            returned[role] += return_gate;
+            const auto occlusion_gate = anchor_weight[role] * (1.0 - v) * (1.0 - returned[role]);
+            occluded[role] += (1.0 - occluded[role]) * occlusion_gate;
+        }
+        for (std::size_t role = 0; role < 2; ++role) for (std::size_t d = 0; d < 2; ++d) {
+            anchors[role][d] /= std::max(anchor_weight[role], 1.0e-6);
+            reads[role][d] /= std::max(returned[role], 1.0e-6);
+        }
+        double same_cost = 0.0, swap_cost = 0.0;
+        for (std::size_t role = 0; role < 2; ++role) {
+            for (std::size_t d = 0; d < 2; ++d) {
+                const auto delta = reads[role][d] - anchors[role][d];
+                const auto base = b * 19 + role * 8;
+                features[base + d] = anchors[role][d]; features[base + 2 + d] = reads[role][d];
+                features[base + 4 + d] = delta; same_cost += delta * delta;
+                const auto swap_delta = reads[role][d] - anchors[1 - role][d]; swap_cost += swap_delta * swap_delta;
+            }
+            features[b * 19 + role * 8 + 6] = occluded[role];
+            features[b * 19 + role * 8 + 7] = returned[role];
+        }
+        const auto margin = same_cost - swap_cost; margins[b] = margin;
+        features[b * 19 + 16] = same_cost; features[b * 19 + 17] = swap_cost; features[b * 19 + 18] = margin;
+    }
+    return {tensor(attention.dtype(), {shape[0], 19}, std::move(features)),
+            tensor(attention.dtype(), {shape[0]}, std::move(margins))};
+}
+
+Tensor sort_object_slots_by_temporal_activity(const Tensor& object_slots, const Tensor& frame_grid) {
+    require_storage(object_slots); require_storage(frame_grid);
+    const auto os = object_slots.shape(), fs = frame_grid.shape();
+    if (os.size() != 3 || fs.size() != 4 || os[0] != fs[0] || os[1] != fs[1] || os[2] != fs[3])
+        throw std::invalid_argument("object slots/frame grid must be [B,S,D]/[B,S,F,D]");
+    const auto batch = static_cast<std::size_t>(os[0]), slots = static_cast<std::size_t>(os[1]);
+    const auto dim = static_cast<std::size_t>(os[2]), frames = static_cast<std::size_t>(fs[2]);
+    std::vector<double> output(object_slots.values().size());
+    for (std::size_t b = 0; b < batch; ++b) {
+        struct Key { std::size_t slot; double activity; double fingerprint[3]; };
+        std::vector<Key> keys(slots);
+        for (std::size_t slot = 0; slot < slots; ++slot) {
+            keys[slot].slot = slot; std::vector<double> means(dim);
+            for (std::size_t f = 0; f < frames; ++f) for (std::size_t d = 0; d < dim; ++d)
+                means[d] += frame_grid.values()[((b * slots + slot) * frames + f) * dim + d] / frames;
+            std::size_t feature = 1;
+            for (std::size_t f = 0; f < frames; ++f) for (std::size_t d = 0; d < dim; ++d, ++feature) {
+                const auto value = frame_grid.values()[((b * slots + slot) * frames + f) * dim + d] - means[d];
+                keys[slot].activity += value * value / (frames * dim);
+                keys[slot].fingerprint[0] += value * ((feature % 97) + 1);
+                keys[slot].fingerprint[1] += value * (((feature * 17) % 193) + 1);
+                keys[slot].fingerprint[2] += value * (((feature * feature) % 389) + 1);
+            }
+            for (std::size_t d = 0; d < dim; ++d, ++feature) {
+                const auto value = object_slots.values()[(b * slots + slot) * dim + d];
+                keys[slot].fingerprint[0] += value * ((feature % 97) + 1);
+                keys[slot].fingerprint[1] += value * (((feature * 17) % 193) + 1);
+                keys[slot].fingerprint[2] += value * (((feature * feature) % 389) + 1);
+            }
+        }
+        std::stable_sort(keys.begin(), keys.end(), [](const Key& left, const Key& right) {
+            if (left.activity != right.activity) return left.activity > right.activity;
+            for (std::size_t index = 3; index-- > 0;) if (left.fingerprint[index] != right.fingerprint[index])
+                return left.fingerprint[index] > right.fingerprint[index];
+            return false;
+        });
+        for (std::size_t destination = 0; destination < slots; ++destination)
+            std::copy_n(object_slots.values().begin() + (b * slots + keys[destination].slot) * dim, dim,
+                output.begin() + (b * slots + destination) * dim);
+    }
+    return tensor(object_slots.dtype(), {os.begin(), os.end()}, std::move(output));
 }
 
 }  // namespace swegca::world

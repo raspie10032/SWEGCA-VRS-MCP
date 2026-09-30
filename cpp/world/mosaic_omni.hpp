@@ -163,6 +163,10 @@ inline constexpr std::array<std::size_t, 3> answerability_ngram_widths{4, 8, 12}
 [[nodiscard]] Tensor spatial_temporal_moment(
     const Tensor& feature_map, std::size_t batch, std::size_t frames,
     char axis = 'x');
+[[nodiscard]] Tensor spatial_event_features(
+    const Tensor& frame_grid, const Tensor& attention);
+[[nodiscard]] Tensor object_attention_trajectory(
+    const Tensor& attention, const Tensor* match_logits = nullptr);
 [[nodiscard]] Tensor confidence_gated_sequence(
     const Tensor& values, const Tensor& match_logits);
 [[nodiscard]] Tensor temporal_relative_visibility(const Tensor& visibility_logits);
@@ -170,6 +174,12 @@ inline constexpr std::array<std::size_t, 3> answerability_ngram_widths{4, 8, 12}
     const Tensor& cosine_peak, const Tensor& cosine_margin);
 [[nodiscard]] Tensor normalized_evidence_preference(
     const Tensor& weights, double margin = 0.0);
+struct DescriptorObjectMemoryOutput final { Tensor features; Tensor margin; };
+[[nodiscard]] DescriptorObjectMemoryOutput descriptor_object_memory(
+    const Tensor& attention, const Tensor& visibility_logits,
+    bool temporal_relative_visibility = false);
+[[nodiscard]] Tensor sort_object_slots_by_temporal_activity(
+    const Tensor& object_slots, const Tensor& frame_grid);
 
 struct OmniLocalContractPaths final {
     std::optional<std::filesystem::path> gemma_config;
