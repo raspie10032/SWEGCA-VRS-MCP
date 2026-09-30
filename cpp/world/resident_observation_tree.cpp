@@ -330,6 +330,9 @@ JsonValue PackedResidentObservation::value(const std::string_view key) const {
         if (candidate == key) return decode(*blob_, start, stop, *externals_);
     throw std::out_of_range(std::string(key));
 }
+JsonValue::Object PackedResidentObservation::materialize() const {
+    return decode(*blob_, start_, stop_, *externals_).as_object();
+}
 PackedResidentObservation PackedResidentObservation::object_view(const std::string_view key) const {
     std::size_t start{}, stop{};
     if (fields_) std::tie(start, stop) = fields_->at(key);

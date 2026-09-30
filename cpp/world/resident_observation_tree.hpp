@@ -35,6 +35,7 @@ public:
     [[nodiscard]] std::size_t size() const;
     [[nodiscard]] bool contains(std::string_view key) const;
     [[nodiscard]] JsonValue value(std::string_view key) const;
+    [[nodiscard]] JsonValue::Object materialize() const;
     [[nodiscard]] PackedResidentObservation object_view(std::string_view key) const;
     [[nodiscard]] std::span<const std::byte> bytes() const noexcept;
     [[nodiscard]] const std::vector<ResidentObservationExternal>& externals() const noexcept;
