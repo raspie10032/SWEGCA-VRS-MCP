@@ -10,7 +10,7 @@ namespace swegca::world {
 SemanticResponseError::SemanticResponseError(
     std::string code, std::optional<std::string> content,
     std::optional<std::string> reason)
-    : std::runtime_error(code), failure_code(std::move(code)),
+    : InterfaceError(code), failure_code(std::move(code)),
       finish_reason([&] {
           static const std::set<std::string, std::less<>> known{
               "stop", "length", "tool_calls", "function_call", "content_filter"};

@@ -1,14 +1,15 @@
 #pragma once
 
 #include <optional>
-#include <stdexcept>
+#include "world/provider_transport.hpp"
+
 #include <string>
 
 namespace swegca::world {
 
 // Safe typed local-provider failure. Only retained model text may be carried;
 // transport envelopes, URLs and credentials never cross this boundary.
-class SemanticResponseError final : public std::runtime_error {
+class SemanticResponseError final : public InterfaceError {
 public:
     explicit SemanticResponseError(
         std::string code,
