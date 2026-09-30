@@ -78,6 +78,8 @@ WORLD_SOURCES := cpp/world/cognitive_state.cpp cpp/world/cognitive_event.cpp \
 	cpp/world/recorded_claims.cpp \
 	cpp/world/semantic_response_error.cpp \
 	cpp/world/offline_semantic_batch.cpp \
+	cpp/world/existing_semantic_input.cpp \
+	cpp/world/existing_session_semantic_input.cpp \
 	cpp/world/existing_text_preparation.cpp \
 	cpp/world/semantic_local_provider.cpp \
 	cpp/world/configured_semantic_ingress.cpp \

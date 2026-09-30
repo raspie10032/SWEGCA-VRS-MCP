@@ -88,10 +88,14 @@ IncrementalResidentAssimilationController::IncrementalResidentAssimilationContro
     ResidentGenerationPreparer prepare_generation,
     std::shared_ptr<DurableAssimilationMarker> durable_marker,
     std::shared_ptr<const void> initial_runtime, const std::size_t cold_bootstrap_count,
-    NumericRuntimePreparer prepare_numeric_runtime)
+    NumericRuntimePreparer prepare_numeric_runtime,
+    ExistingSemanticGenerationPreparer prepare_existing_semantics,
+    ExistingSessionGenerationPreparer prepare_session_semantics)
     : owner_(std::move(initial)), maximum_rows_(maximum_rows_per_wave),
       prepare_(std::move(prepare_generation)),
       prepare_numeric_(std::move(prepare_numeric_runtime)),
+      prepare_existing_(std::move(prepare_existing_semantics)),
+      prepare_session_(std::move(prepare_session_semantics)),
       durable_marker_(std::move(durable_marker)),
       runtime_(std::move(initial_runtime)) {
     const auto resident = owner_.snapshot();
@@ -164,6 +168,127 @@ ResidentAssimilationReceipt IncrementalResidentAssimilationController::assimilat
     const auto pending = durable_marker_->prepare(receipt);
     if (pending.empty())
         throw std::invalid_argument("durable precommit marker must not be empty");
+    pending_marker_ = pending;
+    owner_.replace(base.snapshot_id, replacement);
+    runtime_ = std::move(prepared.runtime);
+    commit_count_ = receipt.commit_count_this_resident;
+    receipt.durable_commit_marker = pending;
+    try {
+        durable_marker_->publish(pending);
+        receipt.durable_commit_marker_ready = true;
+        pending_marker_.reset();
+    } catch (const std::exception& error) {
+        receipt.durable_commit_marker_error = error.what();
+    } catch (...) {
+        receipt.durable_commit_marker_error = "durable marker publication failed";
+    }
+    return receipt;
+}
+
+ResidentAssimilationReceipt
+IncrementalResidentAssimilationController::assimilate_existing_semantics(
+    const std::string_view expected_pair_snapshot_id,
+    const ExistingSemanticInput& input) {
+    const auto expected = normalized_digest(
+        std::string(expected_pair_snapshot_id), "expected pair snapshot");
+    std::lock_guard lock(mutex_);
+    if (pending_marker_)
+        throw std::invalid_argument("previous main commit marker requires explicit reconciliation");
+    if (!prepare_existing_ || input.batch.source_ids.size() > maximum_rows_)
+        throw std::invalid_argument("existing semantic preparation exceeds transaction work budget");
+    const auto base = owner_.snapshot();
+    if (base.snapshot_id != expected)
+        throw std::invalid_argument("resident pair changed before semantic assimilation");
+    ++attempt_count_;
+    auto prepared = prepare_existing_(base, input, runtime_);
+    const auto& replacement = prepared.pair;
+    if (replacement.snapshot_id == base.snapshot_id ||
+        replacement.vrs_snapshot_id == base.vrs_snapshot_id ||
+        replacement.memory->lookup_requires_io() ||
+        !subset(ordinary_leaf_identities(base.memory),
+                ordinary_leaf_identities(replacement.memory)))
+        throw std::invalid_argument("prepared resident generation broke the hot COW boundary");
+    for (const auto& proposal : input.batch.proposals) {
+        const auto derivative = semantic_encoding_episode(proposal);
+        if (!replacement.memory->contains_episode(derivative.episode_id) ||
+            replacement.memory->episode(derivative.episode_id) != derivative)
+            throw std::invalid_argument("prepared generation lost an existing-source interpretation");
+    }
+    ResidentAssimilationReceipt receipt;
+    receipt.input_kind = "existing_source_semantics";
+    receipt.previous_pair_snapshot_id = base.snapshot_id;
+    receipt.replacement_pair_snapshot_id = replacement.snapshot_id;
+    receipt.replacement_memory_snapshot_id = std::string(replacement.memory->snapshot_id());
+    receipt.replacement_vrs_snapshot_id = replacement.vrs_snapshot_id;
+    for (const auto& outcome : memory_outcomes) receipt.actual_outcome_counts.emplace(outcome, 0);
+    receipt.wave_sha256 = input.sha256;
+    receipt.wave_bytes = input.canonical_payload.size();
+    receipt.commit_count_this_resident = commit_count_ + 1;
+    receipt.preparation = prepared.receipt;
+    const auto pending = durable_marker_->prepare(receipt);
+    if (pending.empty()) throw std::invalid_argument("durable precommit marker must not be empty");
+    pending_marker_ = pending;
+    owner_.replace(base.snapshot_id, replacement);
+    runtime_ = std::move(prepared.runtime);
+    commit_count_ = receipt.commit_count_this_resident;
+    receipt.durable_commit_marker = pending;
+    try {
+        durable_marker_->publish(pending);
+        receipt.durable_commit_marker_ready = true;
+        pending_marker_.reset();
+    } catch (const std::exception& error) {
+        receipt.durable_commit_marker_error = error.what();
+    } catch (...) {
+        receipt.durable_commit_marker_error = "durable marker publication failed";
+    }
+    return receipt;
+}
+
+ResidentAssimilationReceipt
+IncrementalResidentAssimilationController::assimilate_session_semantics(
+    const std::string_view expected_pair_snapshot_id,
+    const ExistingSessionSemanticInput& input) {
+    const auto expected = normalized_digest(
+        std::string(expected_pair_snapshot_id), "expected pair snapshot");
+    std::lock_guard lock(mutex_);
+    if (pending_marker_)
+        throw std::invalid_argument("previous main commit marker requires explicit reconciliation");
+    if (!prepare_session_ || input.batch.source_ids().size() > maximum_rows_)
+        throw std::invalid_argument("session semantic input exceeds transaction work budget");
+    const auto base = owner_.snapshot();
+    if (base.snapshot_id != expected)
+        throw std::invalid_argument("resident pair changed before session semantic assimilation");
+    ++attempt_count_;
+    auto prepared = prepare_session_(base, input, runtime_);
+    const auto& replacement = prepared.pair;
+    const auto& derivative = input.batch.binding->derivative;
+    const auto derivative_memory = MemoryEpisode(derivative.episode_id, derivative.cues,
+        [&] {
+            std::vector<MemoryStep> steps;
+            for (const auto& step : derivative.steps)
+                steps.emplace_back(step.phase, step.observation.as_object(), step.relations,
+                    step.judgment, step.outcome, step.evidence_refs);
+            return steps;
+        }(), derivative.source_addresses, derivative.revision, derivative.verification_state);
+    if (replacement.snapshot_id == base.snapshot_id ||
+        replacement.vrs_snapshot_id == base.vrs_snapshot_id ||
+        replacement.memory->lookup_requires_io() ||
+        !replacement.memory->contains_episode(derivative_memory.episode_id) ||
+        replacement.memory->episode(derivative_memory.episode_id) != derivative_memory)
+        throw std::invalid_argument("prepared generation lost an existing-source interpretation");
+    ResidentAssimilationReceipt receipt;
+    receipt.input_kind = "existing_session_semantics";
+    receipt.previous_pair_snapshot_id = base.snapshot_id;
+    receipt.replacement_pair_snapshot_id = replacement.snapshot_id;
+    receipt.replacement_memory_snapshot_id = std::string(replacement.memory->snapshot_id());
+    receipt.replacement_vrs_snapshot_id = replacement.vrs_snapshot_id;
+    for (const auto& outcome : memory_outcomes) receipt.actual_outcome_counts.emplace(outcome, 0);
+    receipt.wave_sha256 = std::string(input.sha256());
+    receipt.wave_bytes = input.payload().size();
+    receipt.commit_count_this_resident = commit_count_ + 1;
+    receipt.preparation = prepared.receipt;
+    const auto pending = durable_marker_->prepare(receipt);
+    if (pending.empty()) throw std::invalid_argument("durable precommit marker must not be empty");
     pending_marker_ = pending;
     owner_.replace(base.snapshot_id, replacement);
     runtime_ = std::move(prepared.runtime);

@@ -1,6 +1,8 @@
 #pragma once
 
 #include "world/memory_activation.hpp"
+#include "world/existing_semantic_input.hpp"
+#include "world/existing_session_semantic_input.hpp"
 #include "world/vrs_event_durable.hpp"
 
 #include <cstddef>
@@ -77,6 +79,12 @@ using ResidentGenerationPreparer = std::function<PreparedResidentGeneration(
 using NumericRuntimePreparer = std::function<PreparedResidentGeneration(
     const FullCurrentMemoryVrsSnapshot&, std::shared_ptr<const void>,
     const PreparedDurableEvent&)>;
+using ExistingSemanticGenerationPreparer = std::function<PreparedResidentGeneration(
+    const FullCurrentMemoryVrsSnapshot&, const ExistingSemanticInput&,
+    std::shared_ptr<const void>)>;
+using ExistingSessionGenerationPreparer = std::function<PreparedResidentGeneration(
+    const FullCurrentMemoryVrsSnapshot&, const ExistingSessionSemanticInput&,
+    std::shared_ptr<const void>)>;
 
 class DurableAssimilationMarker {
 public:
@@ -94,7 +102,9 @@ public:
         std::shared_ptr<DurableAssimilationMarker> durable_marker,
         std::shared_ptr<const void> initial_runtime = {},
         std::size_t cold_bootstrap_count = 1,
-        NumericRuntimePreparer prepare_numeric_runtime = {});
+        NumericRuntimePreparer prepare_numeric_runtime = {},
+        ExistingSemanticGenerationPreparer prepare_existing_semantics = {},
+        ExistingSessionGenerationPreparer prepare_session_semantics = {});
 
     [[nodiscard]] FullCurrentMemoryVrsSnapshot snapshot() const;
     [[nodiscard]] std::pair<FullCurrentMemoryVrsSnapshot, std::shared_ptr<const void>>
@@ -105,6 +115,12 @@ public:
     [[nodiscard]] ResidentAssimilationReceipt commit_numeric_event(
         std::string_view expected_pair_snapshot_id,
         const PreparedDurableEvent& event);
+    [[nodiscard]] ResidentAssimilationReceipt assimilate_existing_semantics(
+        std::string_view expected_pair_snapshot_id,
+        const ExistingSemanticInput& input);
+    [[nodiscard]] ResidentAssimilationReceipt assimilate_session_semantics(
+        std::string_view expected_pair_snapshot_id,
+        const ExistingSessionSemanticInput& input);
     void reconcile_pending_marker(std::string_view marker);
     [[nodiscard]] std::size_t commit_count() const;
     [[nodiscard]] std::size_t attempt_count() const;
@@ -115,6 +131,8 @@ private:
     std::size_t maximum_rows_{};
     ResidentGenerationPreparer prepare_;
     NumericRuntimePreparer prepare_numeric_;
+    ExistingSemanticGenerationPreparer prepare_existing_;
+    ExistingSessionGenerationPreparer prepare_session_;
     std::shared_ptr<DurableAssimilationMarker> durable_marker_;
     std::shared_ptr<const void> runtime_;
     std::size_t commit_count_{};
