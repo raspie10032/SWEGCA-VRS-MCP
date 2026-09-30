@@ -45,6 +45,7 @@ WORLD_SOURCES := cpp/world/cognitive_state.cpp cpp/world/cognitive_event.cpp \
 	cpp/world/vrs_resident_adapter.cpp \
 	cpp/world/crossing_provenance.cpp \
 	cpp/world/hot_source_provenance.cpp \
+	cpp/world/sealed_generation_restore.cpp \
 	cpp/world/vrs_event_storage.cpp \
 	cpp/world/vrs_event_delta.cpp \
 	cpp/world/vrs_edge_address_index.cpp \
