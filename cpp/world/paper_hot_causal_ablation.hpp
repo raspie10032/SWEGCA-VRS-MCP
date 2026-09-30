@@ -57,7 +57,7 @@ private:
 class HotEpisodeRoleIndex {
 public:
     virtual ~HotEpisodeRoleIndex() = default;
-    [[nodiscard]] virtual EpisodeRole role(std::string_view episode_id) const noexcept = 0;
+    [[nodiscard]] virtual EpisodeRole role(std::string_view episode_id) const = 0;
 };
 
 class EpisodeRoleIndex final : public HotEpisodeRoleIndex {
