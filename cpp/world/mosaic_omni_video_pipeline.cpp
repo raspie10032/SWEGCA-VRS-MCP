@@ -692,9 +692,9 @@ Tensor adaptive_object_grid(const Tensor& feature, const std::size_t batch,
             for (std::size_t gy = 0; gy < rows; ++gy)
                 for (std::size_t gx = 0; gx < columns; ++gx) {
                     const auto y0 = gy * height / rows;
-                    const auto y1 = (gy + 1) * height / rows;
+                    const auto y1 = ((gy + 1) * height + rows - 1) / rows;
                     const auto x0 = gx * width / columns;
-                    const auto x1 = (gx + 1) * width / columns;
+                    const auto x1 = ((gx + 1) * width + columns - 1) / columns;
                     const auto count = (y1 - y0) * (x1 - x0);
                     if (!count) invalid("adaptive object pool produced an empty bin");
                     const auto slot = gy * columns + gx;
