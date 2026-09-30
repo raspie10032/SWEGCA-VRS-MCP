@@ -20,6 +20,7 @@ WORLD_SOURCES := cpp/world/cognitive_state.cpp cpp/world/cognitive_event.cpp \
 	cpp/world/cognitive_kernel_contracts.cpp \
 	cpp/world/world_state.cpp cpp/world/definition_contract.cpp \
 	cpp/world/evidence_accumulator.cpp cpp/world/evidence_revision.cpp \
+	cpp/world/evidence_accumulator_bridge.cpp \
 	cpp/world/image_tag_experience.cpp \
 	cpp/world/detached_vrs_state_update.cpp \
 	cpp/world/vrs_event_signal.cpp \
