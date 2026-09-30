@@ -39,6 +39,7 @@ WORLD_SOURCES := cpp/world/cognitive_state.cpp cpp/world/cognitive_event.cpp \
 	cpp/world/compressed_memory.cpp \
 	cpp/world/resident_observation_tree.cpp \
 	cpp/world/resident_directory_archive.cpp \
+	cpp/world/resident_archive_stream.cpp \
 	cpp/world/ordinary_source_router.cpp \
 	cpp/world/paper_hot_causal_ablation.cpp \
 	cpp/world/vrs_event_storage.cpp \
