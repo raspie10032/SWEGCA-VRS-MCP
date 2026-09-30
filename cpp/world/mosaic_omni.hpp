@@ -5,9 +5,12 @@
 #include "world/world_state.hpp"
 
 #include <cstdint>
+#include <array>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace swegca::world {
@@ -136,5 +139,35 @@ struct MosaicUnifiedConfig final {
 };
 
 inline constexpr std::string_view mosaic_omni_schema_version = "mosaic-unified-config-v0";
+
+inline constexpr std::array<std::size_t, 3> answerability_ngram_widths{4, 8, 12};
+
+[[nodiscard]] MosaicTokenBatch compact_body_input_ids(const MosaicTokenBatch& input_ids);
+[[nodiscard]] Tensor byte_ngram_overlap_features(
+    const MosaicTokenBatch& question_input_ids,
+    const MosaicTokenBatch& evidence_input_ids,
+    std::span<const std::size_t> widths = answerability_ngram_widths);
+[[nodiscard]] Tensor time_center_object_frame_grid(const Tensor& frame_grid);
+[[nodiscard]] Tensor select_object_temporal_evidence(
+    const Tensor& frame_grid, bool time_centered, bool dual_evidence,
+    std::size_t raw_rows);
+[[nodiscard]] Tensor normalize_object_frontend_frames(const Tensor& frames);
+[[nodiscard]] Tensor camera_invariant_object_frames(const Tensor& frames);
+[[nodiscard]] Tensor video_camera_statistics(const Tensor& video);
+[[nodiscard]] std::pair<Tensor, Tensor> cross_modal_late_summaries(
+    const Tensor& text_tokens, const BooleanMask& text_mask,
+    const Tensor& video_tokens);
+[[nodiscard]] Tensor cross_modal_last_summary(
+    const Tensor& tokens, const BooleanMask& mask);
+[[nodiscard]] Tensor spatial_temporal_moment(
+    const Tensor& feature_map, std::size_t batch, std::size_t frames,
+    char axis = 'x');
+[[nodiscard]] Tensor confidence_gated_sequence(
+    const Tensor& values, const Tensor& match_logits);
+[[nodiscard]] Tensor temporal_relative_visibility(const Tensor& visibility_logits);
+[[nodiscard]] Tensor contrast_memory_summary(
+    const Tensor& cosine_peak, const Tensor& cosine_margin);
+[[nodiscard]] Tensor normalized_evidence_preference(
+    const Tensor& weights, double margin = 0.0);
 
 }  // namespace swegca::world
