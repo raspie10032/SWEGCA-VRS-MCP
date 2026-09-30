@@ -1,6 +1,7 @@
 #pragma once
 
 #include "world/lossless_blocks.hpp"
+#include "world/cognitive_state.hpp"
 #include "world/temporal_axis_concept.hpp"
 
 #include <cstddef>
@@ -16,6 +17,8 @@ namespace swegca::world {
 
 inline constexpr std::string_view experience_atoms_source_sha256 =
     "39ffd385f5909f5b1aa5ce3f44014da69d5203e835fcd8499eced748d116a23d";
+
+[[nodiscard]] std::string experience_atom_identifier(const JsonValue& value);
 
 struct AtomParent final {
     std::string parent_experience_id;

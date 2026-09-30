@@ -69,6 +69,12 @@ bool valid_utf8(const std::span<const std::byte> raw) {
 
 }  // namespace
 
+std::string experience_atom_identifier(const JsonValue& value) {
+    const auto wire = semantic_canonical_json(value);
+    return "experience-atom:" +
+        hex(Sha256::of(std::as_bytes(std::span(wire.data(), wire.size()))));
+}
+
 AtomParent::AtomParent(
     std::string parent_id, std::string address, std::string revision_value,
     std::vector<std::string> provenance_value, std::string outcome_value,

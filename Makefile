@@ -29,6 +29,7 @@ WORLD_SOURCES := cpp/world/cognitive_state.cpp cpp/world/cognitive_event.cpp \
 	cpp/world/temporal_axis_concept.cpp \
 	cpp/world/experience_atoms.cpp \
 	cpp/world/episode_atoms.cpp \
+	cpp/world/media_atoms.cpp \
 	cpp/world/vrs_event_storage.cpp \
 	cpp/world/vrs_event_delta.cpp \
 	cpp/world/vrs_edge_address_index.cpp \
