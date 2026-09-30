@@ -161,7 +161,7 @@ VideoPipelineMaterializedWeights materialize_video_pipeline(
     auto modality=r.d("modality_embedding.weight",{4,d});w.video_modality_embedding.assign(modality.begin()+3*d,modality.end());
     w.order_head=VideoNormLinear{r.d("video_order_head.0.weight",{d}),r.d("video_order_head.0.bias",{d}),ml(r,"video_order_head.1",2,d)};
     if(cfg.camera_robustness_adapter){
-        if(cfg.camera_robustness_nonlinear_gate){w.camera_robustness_gate_nonlinear=VideoNormMlp{std::vector<double>(8,1.0),std::vector<double>(8,0.0),ml(r,"video_camera_robustness_gate.0",16,8),ml(r,"video_camera_robustness_gate.2",1,16)};}
+        if(cfg.camera_robustness_nonlinear_gate){w.camera_robustness_gate_nonlinear=VideoMlp{ml(r,"video_camera_robustness_gate.0",16,8),ml(r,"video_camera_robustness_gate.2",1,16)};}
         else w.camera_robustness_gate_linear=ml(r,"video_camera_robustness_gate",1,8);
         w.camera_robustness_head=ml(r,"video_camera_robustness_head",2,d,false);
     }
